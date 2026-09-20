@@ -2,6 +2,7 @@
 #include "perf/PerfHarness.h"
 
 #include "editor/IndentDetect.h"
+#include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
 #include "WorkspaceShellEventHelpers.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -294,6 +295,104 @@ void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
         std::to_string(caret_count()) +
         " cursors, so the merge cascade this phase exists to time did not happen");
   }
+}
+
+// The EDIT half of the large-caret-set story. `editor_multi_caret_motion_burst`
+// covers moving a thousand cursors and `editor_shaping_multi_caret` covers one
+// line op over 32 of them; the verbs that arrived with the 2026-09 multi-caret
+// work — the per-cursor Tab (TD-2026-09-19-295), the per-caret block comment,
+// Join Lines, and Add Cursor Below — landed with no perf coverage at all, and
+// they are exactly the shape where a per-site rebuild goes quadratic: each one
+// plans N edits against the pre-edit buffer, sorts them, applies them
+// highest-first, and then rebuilds the caret set from where they landed.
+//
+// Every phase restores the buffer, so the ten iterations measure the same work,
+// and every phase asserts its verb actually did something — a phase whose subject
+// is an interaction needs that or it can drift onto a no-op and report a smaller
+// number forever (see the two scroll sweeps, TD-2026-09-20-298).
+void RunEditorMultiCaretEditBurst(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!RequireFixture(context, cpp_50k, "editor_multi_caret_edit_burst")) {
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.SetSetting("editor.shaping.toggle_comment.enabled", "true");
+  context.SetSetting("editor.shaping.line_ops.enabled", "true");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  if (vp.lines().size() <= 6000) {
+    throw std::runtime_error("editor_multi_caret_edit_burst: file too short");
+  }
+  vp.ClearSecondaryCarets();
+  vp.ClearColumnSelection();
+  vp.MoveCursorTo(4400, 4, false);
+  // The pane has painted before any real gesture, so the per-line width table the
+  // caret arithmetic reads is already built — measuring its construction instead
+  // would be a fiction no gesture pays.
+  context.PumpFrames(1);
+
+  const auto caret_count = [&] { return vp.secondary_caret_range_view().size() + 1; };
+  const auto place_box = [&] {
+    vp.ClearSecondaryCarets();
+    vp.SetBoxSelection(editor::TextPosition{4400, 4}, editor::TextPosition{5600, 4});
+    if (caret_count() < 1000) {
+      throw std::runtime_error(
+          "editor_multi_caret_edit_burst: the box produced only " +
+          std::to_string(caret_count()) + " carets, so this measures a small set");
+    }
+  };
+  const std::string before = vp.SerializeDocumentText(vp.line_ending());
+  const auto restore = [&](const char* phase) {
+    if (vp.SerializeDocumentText(vp.line_ending()) == before) {
+      throw std::runtime_error(std::string("editor_multi_caret_edit_burst: ") + phase +
+                               " did not change the buffer, so its number describes a no-op");
+    }
+    while (vp.SerializeDocumentText(vp.line_ending()) != before) {
+      if (!vp.Undo()) {
+        throw std::runtime_error(std::string("editor_multi_caret_edit_burst: ") + phase +
+                                 " could not be undone, so the next iteration starts elsewhere");
+      }
+    }
+  };
+
+  // One indent unit at each of 1,200 cursors' own columns. The per-cursor Tab
+  // plans a soft tab per SITE (each aligns to its own next tab stop) where the
+  // old machine decided one intent for the whole set.
+  place_box();
+  context.Measure("multi_caret_edit.soft_tab", [&] { vp.InsertTab(); });
+  restore("soft_tab");
+
+  // A block comment per caret region: N `TextInRange` reads and N wrapped
+  // replacements, planned together and applied as one undo entry.
+  place_box();
+  context.Measure("multi_caret_edit.toggle_block_comment",
+                  [&] { (void)editor::ToggleBlockComment(vp, "/*", "*/"); });
+  restore("toggle_block_comment");
+
+  // Join Lines folds each caret's region onto one line: 1,200 separate joins in
+  // one edit, each reading its own line and the one below it.
+  place_box();
+  context.Measure("multi_caret_edit.join_lines", [&] { (void)editor::JoinLinesAtCarets(vp); });
+  restore("join_lines");
+
+  // Growing the set rather than editing with it: one step from EVERY seed, then a
+  // dedupe, so a naive implementation doubles the column per press instead of
+  // adding one row to it. 32 presses over a set that starts at 1,200.
+  place_box();
+  const std::size_t carets_before_growth = caret_count();
+  context.Measure("multi_caret_edit.add_cursor_below", [&] {
+    for (int i = 0; i < 32; ++i) {
+      (void)vp.AddCaretVertical(1);
+    }
+  });
+  if (caret_count() <= carets_before_growth) {
+    throw std::runtime_error(
+        "editor_multi_caret_edit_burst: add_cursor_below left " + std::to_string(caret_count()) +
+        " cursors against " + std::to_string(carets_before_growth) +
+        " before it, so the growth this phase times did not happen");
+  }
+  vp.ClearSecondaryCarets();
 }
 
 void RunEditorShapingMultiCaret(ScenarioContext& context) {
@@ -1662,6 +1761,15 @@ const ScenarioRegistration g_perf_editor_multi_caret_motion_burst({Scenario{
     // first layout/width build, which dwarf the measured motion bursts.
     .warmup_iterations = 1,
     .run = RunEditorMultiCaretMotionBurst,
+}});
+const ScenarioRegistration g_perf_editor_multi_caret_edit_burst({Scenario{
+    .name = "editor_multi_caret_edit_burst",
+    .smoke = false,
+    .baseline_gated = true,
+    // warmup: the first pass pays the project's cold open and this buffer's first
+    // layout/width build, which dwarf the measured edits.
+    .warmup_iterations = 1,
+    .run = RunEditorMultiCaretEditBurst,
 }});
 const ScenarioRegistration g_perf_editor_column_selection_burst({Scenario{
     .name = "editor_column_selection_burst",
