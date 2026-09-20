@@ -598,6 +598,16 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
       compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index], choice);
   const std::size_t replacement_line_count = replacement_lines.size();
   const std::size_t previous_end = conflict.end_line;
+  // BEFORE the move, not after. `max_visual_columns` is what sizes the result
+  // pane's horizontal scroll extent and decides whether its scrollbar appears at
+  // all, and it is only ever raised -- so reading the replacement lines after
+  // they have been moved into ReplaceLines read an empty vector and raised it by
+  // nothing. Accepting a side wider than anything already measured left the pane
+  // unable to scroll far enough right to see the text it had just accepted
+  // (TD-2026-09-20-299). The failure path below now raises it without the edit
+  // landing, which is within the field's existing contract: it is a monotonic
+  // upper bound that nothing recomputes downward.
+  operations_.update_merge_max_visual_columns(*merge_tab, replacement_lines);
   if (!merge_tab->result_viewport.ReplaceLines(conflict.start_line, previous_end,
                                                std::move(replacement_lines))) {
     return;
@@ -617,7 +627,6 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
     merge_tab->conflicts[i].end_line = static_cast<std::size_t>(
         static_cast<long long>(merge_tab->conflicts[i].end_line) + line_delta);
   }
-  operations_.update_merge_max_visual_columns(*merge_tab, replacement_lines);
   merge_tab->hover_state.reset();
   // Accepting a side rewrote this conflict's span and shifted every following one,
   // so the cached overview-ruler markers (keyed on model_revision) are stale.

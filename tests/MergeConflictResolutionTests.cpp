@@ -621,6 +621,75 @@ void TestExternalStaleClearedAfterSelfSave() {
 
 }  // namespace
 
+// Accepting a side has to tell the result pane how wide the text it just accepted
+// is: `max_visual_columns` is what sizes the pane's horizontal scroll extent and
+// decides whether its scrollbar appears at all.
+//
+// It was told nothing. The coordinator moved the replacement lines into
+// `ReplaceLines` and then handed the moved-from vector to the width update, which
+// on libstdc++ is empty — so the update raised a monotonic maximum by zero, every
+// time, and accepting a side wider than anything already measured left the pane
+// unable to scroll right far enough to see it (TD-2026-09-20-299).
+//
+// The assertion is on what the coordinator HANDS the width hook, not on a width
+// this test recomputes: a second copy of the width rule here would be a second
+// thing to keep in step with the first.
+void TestAcceptingASideReportsTheAcceptedLines() {
+  const std::string wide(400, 'x');
+  const std::string base = "shared\nshort\ntail\n";
+  const std::string incoming = "shared\n" + wide + "\ntail\n";
+  const std::string current = "shared\ntiny\ntail\n";
+
+  ProjectWorkspaceState state;
+  MergeTabState merge_tab;
+  merge_tab.model = microide::compare::BuildMergeModel(base, incoming, current);
+  merge_tab.file_conflict.text_hunks_available = true;
+
+  std::size_t conflict_hunk = merge_tab.model.hunks.size();
+  for (std::size_t i = 0; i < merge_tab.model.hunks.size(); ++i) {
+    if (merge_tab.model.hunks[i].conflict) {
+      conflict_hunk = i;
+      break;
+    }
+  }
+  Expect(conflict_hunk < merge_tab.model.hunks.size(),
+         "the fixture should produce a conflicting hunk, or this test proves nothing");
+
+  microide::workspace::MergeTrackedConflict tracked;
+  tracked.hunk_index = conflict_hunk;
+  tracked.start_line = 1;
+  tracked.end_line = 2;
+  tracked.valid = true;
+  merge_tab.conflicts.push_back(tracked);
+  merge_tab.selected_hunk = 0;
+  merge_tab.result_viewport.LoadContent(current, {}, merge_tab.result_line_ending);
+
+  std::vector<std::vector<std::string>> reported;
+  CompareInteractionCoordinator::Operations ops;
+  ops.active_merge_tab = [&]() { return &merge_tab; };
+  ops.request_editor_surface_redraw = []() {};
+  ops.request_tab_strip_redraw = []() {};
+  ops.reveal_active_merge_selection = []() {};
+  ops.request_merge_result_line_to_bottom_redraw = [](std::size_t) {};
+  ops.request_active_editable_blame_neighborhood_redraw = [](std::size_t, std::size_t) {};
+  ops.update_merge_max_visual_columns = [&](MergeTabState&,
+                                            const std::vector<std::string>& lines) {
+    reported.push_back(lines);
+  };
+
+  CompareInteractionCoordinator coordinator(state, ops);
+  coordinator.ApplyMergeChoice(MergeChoice::Incoming);
+
+  Expect(reported.size() == 1, "accepting a side should report its width exactly once");
+  Expect(!reported.front().empty(),
+         "the width update must receive the accepted lines, not a moved-from vector");
+  bool saw_wide = false;
+  for (const std::string& line : reported.front()) {
+    saw_wide = saw_wide || line.size() >= wide.size();
+  }
+  Expect(saw_wide, "the reported lines must include the wide line that was accepted");
+}
+
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/FileDirectoryConflictClassification",
           TestFileDirectoryConflictClassification);
@@ -647,6 +716,8 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/BinaryDoesNotClobberExistenceChoice",
           TestBinaryDoesNotClobberExistenceChoice);
   AddTest(tests, "MergeConflict/BothMergeOrders", TestBothMergeOrders);
+  AddTest(tests, "MergeConflict/AcceptingASideReportsTheAcceptedLines",
+          TestAcceptingASideReportsTheAcceptedLines);
   AddTest(tests, "MergeConflict/MultiCaretEditInTheResultPaneIsValidated",
           TestMultiCaretEditInTheResultPaneIsValidated);
   AddTest(tests, "MergeConflict/ValidationBlocksConflictMarkers",
