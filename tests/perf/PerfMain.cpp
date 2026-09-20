@@ -718,18 +718,46 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
             context.PumpFrames(8);
+            // Start every iteration at the top. The scenario body runs once per
+            // iteration but the SHELL persists across them, so the tab this
+            // re-opens is the one the previous iteration left parked at its
+            // sweep's end: 640 page-downs is ~28,800 rows against a 50k-line
+            // fixture, so iteration 1 ran out of document partway and every
+            // iteration after it paged against the bottom, repainting one
+            // unchanging screen. The baseline carried the signature --
+            // p50_allocations 168 against max 9,370, a 56x bimodality, and a
+            // 74% wall spread -- and PASSED (TD-2026-09-20-298).
+            microide::editor::TextViewport& viewport = context.ActiveViewport();
+            viewport.MoveCursorTo(0, 0, false);
+            viewport.SetScrollLine(0);
+            context.PumpFrames(1);
             std::vector<double> samples_us;
             samples_us.reserve(640);
             // One downward sweep: ~640 page-downs over a 50k-line file paints a
             // continuously fresh viewport, so glyph-cache misses accumulate the
             // way they do when a user scrolls through a large file for real.
-            for (int i = 0; i < 640; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              context.KeyDown(SDLK_PAGEDOWN);
-              context.PumpFrames(1);
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
+            //
+            // Declared as a phase so the sweep is separable from the open that
+            // precedes it, which is what makes this an exact A/B against
+            // editor_cjk_scroll_paint's phase rather than a sweep-plus-setup
+            // compared against a sweep (TD-2026-09-06-289a).
+            context.Measure("scroll_fresh_content.page_down_sweep", [&] {
+              for (int i = 0; i < 640; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                context.KeyDown(SDLK_PAGEDOWN);
+                context.PumpFrames(1);
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+              }
+            });
+            // The guard the reset above exists for: a sweep that no longer
+            // scrolls has to fail loudly rather than report a smaller number
+            // forever.
+            if (context.ActiveViewport().scroll_line() < 12000) {
+              throw std::runtime_error(
+                  "editor_scroll_fresh_content_large: the page-down sweep did not scroll "
+                  "through fresh rows");
             }
             // Advisory envelope only -- a loose ceiling to catch gross blowups;
             // the real signal is p50 wall + the text_texture_cache_* counters.
