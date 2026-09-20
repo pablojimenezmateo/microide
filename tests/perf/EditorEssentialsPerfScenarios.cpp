@@ -436,6 +436,46 @@ void RunMenuHoverSwitch(ScenarioContext& context) {
 // the whole editor surface would change nothing any gate could see — repaint
 // scope is the regression class with the largest real-world typing-latency
 // effect and, until this scenario, zero paint-time coverage.
+// The non-ASCII render path, which had no perf coverage of any kind.
+//
+// `SdlTtfTextBackend::BuildGridCompositeSurface` draws a string containing any
+// non-ASCII one glyph CLUSTER at a time so each lands on its own grid cell, and
+// every cluster that misses the ASCII atlas is its own `TTF_RenderText_Blended`.
+// A row of CJK is therefore N rasterizations on its FIRST paint and a
+// texture-cache hit afterwards, so the cost only shows where the cache keeps
+// missing -- scrolling through fresh rows, not typing in one.
+//
+// Deliberately the same gesture and shape as `editor_scroll_fresh_content_large`,
+// which sweeps ASCII: the pair is a controlled A/B that isolates the per-cluster
+// path from everything else a scroll does.
+// `render.grid_composite_cluster_rasterizations` is the number TD-2026-09-06-289a
+// deferred its per-glyph coverage cache on -- that entry gated the fix on "a
+// CJK-heavy file measurably pays for it", and nothing in the suite could measure
+// it, so the condition could never be observed either way.
+void RunEditorCjkScrollPaint(ScenarioContext& context) {
+  const std::filesystem::path cjk =
+      "tests/perf/fixtures/editor_essentials_cjk/synthetic_cjk.py";
+  if (!RequireFixture(context, cjk, "editor_cjk_scroll_paint")) {
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cjk);
+  if (context.ActiveViewport().lines().size() <= 4000) {
+    throw std::runtime_error("editor_cjk_scroll_paint: fixture too short");
+  }
+  context.PumpFrames(8);
+
+  // One downward sweep through continuously fresh rows, so string-texture cache
+  // misses accumulate the way they do when a user scrolls a large file for real.
+  context.Measure("cjk_scroll_paint.page_down_sweep", [&] {
+    for (int i = 0; i < 160; ++i) {
+      context.KeyDown(SDLK_PAGEDOWN);
+      context.PumpFrames(1);
+    }
+  });
+  context.PumpFrames(2);
+}
+
 void RunEditorTypingPaint(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -1454,6 +1494,17 @@ const ScenarioRegistration g_perf_menu_hover_switch({Scenario{
     // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunMenuHoverSwitch,
+}});
+const ScenarioRegistration g_perf_editor_cjk_scroll_paint({Scenario{
+    .name = "editor_cjk_scroll_paint",
+    .smoke = false,
+    // Iteration 0 pays the cold open plus the font/atlas fill. Note what the
+    // steady state then measures: every iteration sweeps the SAME rows, so after
+    // the first the string-texture cache is warm and this reports HITS. That is
+    // the honest steady state for scrolling back over seen content; the
+    // first-paint miss cost is what the cluster-rasterization counter carries.
+    .warmup_iterations = 1,
+    .run = RunEditorCjkScrollPaint,
 }});
 const ScenarioRegistration g_perf_editor_typing_paint({Scenario{
     .name = "editor_typing_paint",

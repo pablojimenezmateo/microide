@@ -1298,7 +1298,7 @@ TD-2026-09-05-286). Every finding is its own commit with a regression test
   (asan/ubsan on the tree before the shared-buffer commits, tsan on the tree
   with the shared-buffer commit; nothing after that touches a thread).
 
-#### TD-2026-09-06-289a — a non-ASCII string's texture is composited one glyph cluster per SDL_ttf call. [OPEN — perf follow-up]
+#### TD-2026-09-06-289a — a non-ASCII string's texture is composited one glyph cluster per SDL_ttf call. [OPEN — perf follow-up; MEASURABLE as of 2026-09-20, and the numbers say the cache thrash matters more than the rasterization]
 
 `SdlTtfTextBackend::BuildGridCompositeSurface` renders each cluster of a
 non-ASCII string with its own `TTF_RenderText_Blended` so it can land on its
@@ -1309,6 +1309,49 @@ pays for it, is a per-glyph coverage cache for non-ASCII code points beside
 `AsciiGlyphAtlas`, so a cache miss is N blits rather than N rasterizations.
 `render::TextBackend::RasterizeString` is the trace scope that says whether it
 matters.
+
+**2026-09-20 — the trigger condition was unobservable, so it was made observable
+first.** This entry defers the fix until "a CJK-heavy file measurably pays for
+it", and nothing in the suite could measure that: there was no CJK fixture and no
+non-ASCII paint scenario at all, so the condition could never be met either way.
+Added: `editor_essentials_cjk` (20,000 lines, ~41 wide code points each, every
+line distinct — a first draft repeated 37% of its rows, which would have come
+back as string-texture-cache HITS and understated the very cost this measures),
+`editor_cjk_scroll_paint` (the same PageDown sweep as
+`editor_scroll_fresh_content_large`, so the pair is a controlled A/B), and two
+counters in the deferral's own units — `render.grid_composite_surfaces` and
+`render.grid_composite_cluster_rasterizations`.
+
+Per sweep, CJK (160 page-downs) against ASCII (640):
+
+    counter                              CJK        ASCII
+    grid_composite_surfaces            6,754            1
+    grid_composite_cluster_rasters   275,564            1
+    text_texture_cache_hits           26,227      131,587
+    text_texture_cache_misses         11,042        7,864
+    text_texture_cache_evictions      11,059        3,807
+
+**What this says, and it is not what the entry predicted.** The per-cluster cost
+is real and large — 1,722 rasterizations per painted frame, ~40.8 per composited
+string, which is exactly the fixture's wide-code-points-per-line, so the model in
+this entry is confirmed. But the wall cost does not follow it: ~1.02 ms per
+painted frame for CJK against ~0.87 ms for ASCII, about 17% more, for a path
+doing ~1,700 rasterizations the ASCII path does not. The sweep allocates nothing
+either.
+
+The number that does stand out is **evictions ≈ misses** (11,059 vs 11,042): the
+string-texture cache is thrashing on CJK rows and holding comfortably on ASCII
+ones (3,807 vs 7,864). So the lever is more likely the cache's sizing/keying for
+wide rows than the per-glyph coverage cache this entry proposes — a coverage
+cache makes each miss cheaper, but the misses are happening because rows are
+being evicted before they are reused. Measure a bigger/better-keyed texture cache
+against `editor_cjk_scroll_paint` before building the coverage cache.
+
+Method note: the A/B's first run reported `editor_scroll_fresh_content_large`
+FAILING on `p95_allocations` (+38.8%). That was the measurement, not the code — 5
+iterations against a baseline recorded over 10, where p95 lands on the worst
+pass. It passes at 10. The harness warns about short runs for rss and net-heap
+but not for allocation percentiles.
 
 ### TD-2026-09-05-288 — the second 2026-09-05 pass: thirty-one defects in the subsystems the earlier passes had not read, found mostly by comparing behaviour with VS Code's rule. [RESOLVED same session — open remainder zero.]
 

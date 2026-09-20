@@ -23,6 +23,9 @@ TARGET_BYTES_1MB = 1 << 20  # 1 MiB
 # measuring -- a regression that is a rounding error on a 40-character line is
 # megabytes of copying per keystroke on this one.
 TARGET_BYTES_MINIFIED = 2 << 20  # 2 MiB on a single line
+# Enough rows that a scroll burst keeps missing the string-texture cache, which
+# is where the per-cluster rasterization cost actually lands.
+TARGET_LINES_CJK = 20_000
 BLOCK_DEPTH = 64  # deep nesting chunks; 4 spaces each => conventional C++/Python indentation.
 INDENT_UNIT = "    "
 PY_LINE_COMMENT = "# perf fixture"
@@ -236,6 +239,56 @@ def write_fixture_minified(root: Path) -> None:
     path.write_text("".join(parts) + "\n", encoding="ascii")
 
 
+def write_fixture_cjk(root: Path) -> None:
+    """CJK-heavy source: the non-ASCII render path, which had no perf coverage.
+
+    The SDL_ttf backend draws a non-ASCII string one glyph CLUSTER at a time so
+    each lands on its own grid cell, while ASCII comes from the glyph atlas. A row
+    of 80 CJK glyphs is therefore 80 rasterizations on its first paint
+    (TD-2026-09-06-289a), and that entry defers the fix until "a CJK-heavy file
+    measurably pays for it" -- which nothing could measure, because no fixture and
+    no scenario existed. This is that measurement.
+
+    Deliberately MIXED rather than pure CJK: real CJK source is identifiers and
+    punctuation in ASCII with wide text in strings and comments, and the mix is
+    also what exercises the cell model's wide/narrow boundary (util::GridCellWidth)
+    rather than one uniform width.
+    """
+    wipe_tree(root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "synthetic_cjk.py"
+
+    # A fixed rotation of common CJK code points (CJK Unified Ideographs), so the
+    # content is deterministic without embedding a corpus.
+    # A long, non-repeating rotation: the string-texture cache is keyed on the
+    # whole rendered string, so rows that repeat would come back as cache HITS and
+    # the fixture would understate the very cost it exists to measure. A first
+    # draft reused a 256-code-point pool and left two of the five line shapes
+    # independent of `i`, which made 37% of the rows duplicates.
+    POOL = 0x1000
+    ideographs = "".join(chr(0x4E00 + (i * 37) % POOL) for i in range(POOL))
+    kana = "".join(chr(0x3042 + (i * 3) % 0x50) for i in range(64))
+
+    lines: list[str] = [
+        "# Regenerate: python3 tests/perf/generate_editor_essentials_perf_fixtures.py --fixture cjk",
+        "# CJK-heavy fixture for the non-ASCII render path (TD-2026-09-06-289a).",
+    ]
+    for i in range(TARGET_LINES_CJK):
+        start = (i * 41) % len(ideographs)
+        wide = (ideographs[start:] + ideographs)[:40]
+        if i % 5 == 0:
+            lines.append(f'    # {i}: {wide}')
+        elif i % 5 == 1:
+            lines.append(f'    label_{i} = "{wide}"')
+        elif i % 5 == 2:
+            lines.append(f'    text_{i} = "{kana}{wide[:20]}"')
+        elif i % 5 == 3:
+            lines.append(f'    def handler_{i}(value):  # {wide[:24]}')
+        else:
+            lines.append(f'        return f"{{value}}: {i} {wide[:16]}"')
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def write_fixture_moby_dick(root: Path) -> None:
     """Real Moby-Dick prose body (Gutenberg #2701), normalized to LF.
 
@@ -278,7 +331,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--fixture",
-        choices=("cpp", "py", "mb", "minified", "moby", "all"),
+        choices=("cpp", "py", "mb", "minified", "cjk", "moby", "all"),
         default="all",
         help="Which fixture subtree to regenerate (default: all).",
     )
@@ -299,6 +352,10 @@ def main() -> int:
         default="tests/perf/fixtures/editor_essentials_minified",
     )
     parser.add_argument(
+        "--output-cjk",
+        default="tests/perf/fixtures/editor_essentials_cjk",
+    )
+    parser.add_argument(
         "--output-moby",
         default="tests/perf/fixtures/editor_essentials_moby_dick",
     )
@@ -307,6 +364,9 @@ def main() -> int:
     parser.add_argument("--hash-1mb", default="tests/perf/fixtures/editor_essentials_1mb.sha256")
     parser.add_argument(
         "--hash-minified", default="tests/perf/fixtures/editor_essentials_minified.sha256"
+    )
+    parser.add_argument(
+        "--hash-cjk", default="tests/perf/fixtures/editor_essentials_cjk.sha256"
     )
     parser.add_argument(
         "--hash-moby", default="tests/perf/fixtures/editor_essentials_moby_dick.sha256"
@@ -335,6 +395,8 @@ def main() -> int:
             ("minified", Path(args.output_minified), Path(args.hash_minified),
              write_fixture_minified)
         )
+    if args.fixture in ("cjk", "all"):
+        specs.append(("cjk", Path(args.output_cjk), Path(args.hash_cjk), write_fixture_cjk))
     # `moby` is deliberately NOT part of `all`: it needs a network fetch, so it
     # stays opt-in (`--fixture moby`) to keep offline `--fixture all` working.
     if args.fixture == "moby":

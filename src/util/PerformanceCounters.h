@@ -368,6 +368,15 @@ namespace microide::util {
   X(RenderGlyphAtlasRuns, "render.glyph_atlas_runs")                                            \
   X(RenderGlyphAtlasGlyphs, "render.glyph_atlas_glyphs")                                        \
   X(RenderGlyphAtlasFallbacks, "render.glyph_atlas_fallbacks")                                  \
+  /* The non-ASCII composite path. A string with any non-ASCII in it is drawn one  */           \
+  /* glyph CLUSTER at a time so each lands on its own grid cell, and every cluster */           \
+  /* that misses the ASCII atlas is its own TTF_RenderText_Blended. `surfaces` is  */           \
+  /* how many such strings were built; `cluster_rasterizations` is what they cost. */           \
+  /* TD-2026-09-06-289a deferred a per-glyph coverage cache until this was         */           \
+  /* measurable -- it now is.                                                      */           \
+  X(RenderGridCompositeSurfaces, "render.grid_composite_surfaces")                              \
+  X(RenderGridCompositeClusterRasterizations,                                                   \
+    "render.grid_composite_cluster_rasterizations")                                             \
   /* --- project-change fan-out (shell thread; a branch switch is a burst) - */                 \
   X(EditorConfigResolveQueries, "editorconfig.resolve_queries")                                 \
   X(EditorConfigResolveMisses, "editorconfig.resolve_misses")                                   \
