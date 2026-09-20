@@ -1195,12 +1195,14 @@ void TestMultiCaretTabReplacesSingleLineSelectionsFromTheirStart() {
          std::string("the primary lands after its padding, collapsed: ") + CaretDump(viewport));
 }
 
-// --- The Tab key's three-way decision is made once for the whole caret set, by
-// ClassifyTabKey (VS Code's TypeOperations.tab). Two things the hand-copied
-// checks got wrong: only the primary was consulted, so a secondary's multi-line
-// selection was replaced by four spaces; and a selection covering a whole line
-// (Home, Shift+End) was treated as "single line", so Tab ate the line where VS
-// Code shifts it. ---
+// --- What the Tab key does is decided by ClassifyTabKey (VS Code's
+// TypeOperations.tab), per cursor. Three things the hand-copied checks got wrong:
+// only the primary was consulted, so a secondary's multi-line selection was
+// replaced by four spaces; a selection covering a whole line (Home, Shift+End)
+// was treated as "single line", so Tab ate the line where VS Code shifts it; and
+// the fix for the first of those decided ONE intent for every cursor, so a bare
+// caret beside a block selection had its line shifted rather than indenting at
+// its own column (TD-2026-09-19-295). That last case is kMixed. ---
 void TestTabKeyClassifierIndentsWholeLineAndSecondarySelections() {
   using microide::editor::ClassifyTabKey;
   using microide::editor::TabKeyIntent;
@@ -1226,8 +1228,17 @@ void TestTabKeyClassifierIndentsWholeLineAndSecondarySelections() {
   viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
       SelectionRange{TextPosition{1, 1}, TextPosition{2, 1}},
   });
+  Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kMixed,
+         "a bare primary beside a secondary's multi-line selection is a mixed set: one "
+         "shifts lines, the other inserts at its own column");
+  viewport.MoveCursorTo(1, 0);
+  viewport.MoveCursorTo(1, 3, /*extend_selection=*/true);  // the whole of "bar"
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{2, 0}, TextPosition{2, 3}},
+  });
   Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kIndentBlock,
-         "a secondary caret's multi-line selection makes Tab a block indent");
+         "when every cursor is a block the whole-set applier still runs");
+  viewport.MoveCursorTo(0, 2);  // bare primary again
   viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
       SelectionRange{TextPosition{1, 2}, TextPosition{1, 1}},  // reversed, partial
   });
@@ -1235,27 +1246,20 @@ void TestTabKeyClassifierIndentsWholeLineAndSecondarySelections() {
          "a secondary's partial single-line selection still inserts");
 }
 
-// Where the whole-set decision DIVERGES from VS Code, stated so it cannot change
-// by accident.
-//
-// VS Code's TypeOperations.tab builds `commands[i]` PER SELECTION: a cursor
-// whose selection covers a whole line gets a ShiftCommand, and a bare cursor
-// next to it gets `_replaceJumpToNextIndent` at its own column. ClassifyTabKey
-// resolves one intent for the whole caret set instead, so in a MIXED set the
-// bare caret's line is shifted rather than an indent being inserted at it:
+// Tab decides PER CURSOR, as VS Code's TypeOperations.tab does: a cursor whose
+// selection covers a whole line (or spans lines) shifts those lines, and a bare
+// cursor beside it inserts at its OWN column, both in one edit and one undo
+// entry.
 //
 //   "aaaa" selected whole + a bare caret at (2,2) in "cccc"
-//     VS Code   "    aaaa" / "cccc" -> "cc  cc"
-//     here      "    aaaa" / "    cccc"
+//     "    aaaa" / "bbbb" / "cc  cc"
 //
-// Sets are only mixed when a multi-line or whole-line selection coexists with a
-// caret that has none, which needs an Alt+click on top of a block selection --
-// and the safe direction was chosen deliberately: the per-primary check this
-// replaced silently replaced a secondary's multi-line selection with four
-// spaces. Matching VS Code needs a hybrid applier that shifts some line ranges
-// while replacing other ranges in one undo entry; see
-// known-tech-debt.md TD-2026-09-19-295.
-void TestTabKeyOnAMixedCaretSetShiftsTheBareCaretsLine() {
+// This used to resolve ONE intent for the whole set, so the bare caret's line was
+// shifted instead (TD-2026-09-19-295). The whole-set rule was itself the fix for
+// something worse — a per-PRIMARY check that silently replaced a secondary's
+// multi-line selection with four spaces — so what the applier must never do is
+// destroy a selection, which the round trip below is here to say.
+void TestTabKeyOnAMixedCaretSetIndentsPerCursor() {
   TextViewport viewport;
   viewport.SetViewportSize(20, 200);
   viewport.SetSoftTabs(true);
@@ -1266,22 +1270,110 @@ void TestTabKeyOnAMixedCaretSetShiftsTheBareCaretsLine() {
   viewport.AddSecondaryCaret(2, 2);                        // a BARE caret mid-line 2
 
   Expect(microide::editor::ClassifyTabKey(viewport, false) ==
-             microide::editor::TabKeyIntent::kIndentBlock,
-         "one block selection decides the whole set");
-  microide::editor::IndentSelection(viewport);
+             microide::editor::TabKeyIntent::kMixed,
+         "a block selection beside a bare caret is a mixed set");
+  Expect(microide::editor::ApplyMixedTabKey(viewport), "the mixed apply should change the buffer");
+  const auto joined = [&viewport]() {
+    return std::string(viewport.lines()[0]) + "/" + std::string(viewport.lines()[1]) + "/" +
+           std::string(viewport.lines()[2]);
+  };
+  Expect(joined() == "    aaaa/bbbb/cc  cc",
+         "the block selection shifts its line and the bare caret indents at its own column: " +
+             joined());
+
+  // The block cursor keeps its selection, shifted by what its line gained; the
+  // bare caret lands just past what it inserted.
+  const auto selection = viewport.selection_range();
+  Expect(selection.has_value() && selection->start.line == 0 && selection->start.column == 4 &&
+             selection->end.line == 0 && selection->end.column == 8,
+         "the block cursor's selection should still cover 'aaaa' after the shift");
+  const auto secondaries = viewport.secondary_caret_range_view();
+  Expect(secondaries.size() == 1 && secondaries[0].position.line == 2 &&
+             secondaries[0].position.column == 4,
+         "the bare caret should sit just past the indent it inserted");
+
+  // One undo entry, not two: the block half and the per-site half are one edit.
+  viewport.Undo();
+  Expect(joined() == "aaaa/bbbb/cccc", "one undo should take the whole mixed edit back: " + joined());
+}
+
+// The mixed applier must never do what the per-primary check it descends from did:
+// replace a secondary's multi-line selection with an indent unit.
+void TestTabKeyOnAMixedCaretSetNeverEatsASecondarySelection() {
+  TextViewport viewport;
+  viewport.SetViewportSize(20, 200);
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(2);
+  viewport.LoadContent("one\ntwo\nthree\nfour\n", "/tmp/ec-tab-mixed-secondary.cpp");
+  viewport.MoveCursorTo(0, 1);  // a bare PRIMARY caret, mid-line
+  // A secondary whose selection spans lines 2-3.
+  viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{2, 0}, TextPosition{3, 4}});
+
+  Expect(microide::editor::ClassifyTabKey(viewport, false) ==
+             microide::editor::TabKeyIntent::kMixed,
+         "a bare primary beside a multi-line secondary selection is a mixed set");
+  Expect(microide::editor::ApplyMixedTabKey(viewport), "the mixed apply should change the buffer");
+  const std::string text = std::string(viewport.lines()[0]) + "/" +
+                           std::string(viewport.lines()[1]) + "/" +
+                           std::string(viewport.lines()[2]) + "/" +
+                           std::string(viewport.lines()[3]);
+  Expect(text == "o ne/two/  three/  four",
+         "the secondary's lines shift and the bare primary indents at its column: " + text);
+}
+
+// Two block sites covering one line must indent it ONCE.
+void TestTabKeyOnAMixedCaretSetIndentsASharedLineOnce() {
+  TextViewport viewport;
+  viewport.SetViewportSize(20, 200);
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(2);
+  viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/ec-tab-mixed-shared.cpp");
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(1, 0, /*extend_selection=*/true);  // lines 0-1 (end col 0 drops line 1)
+  viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{0, 0}, TextPosition{0, 5}});
+  viewport.AddSecondaryCaret(2, 3);
+
+  Expect(microide::editor::ClassifyTabKey(viewport, false) ==
+             microide::editor::TabKeyIntent::kMixed,
+         "two block sites plus a bare caret is a mixed set");
+  Expect(microide::editor::ApplyMixedTabKey(viewport), "the mixed apply should change the buffer");
   const std::string text = std::string(viewport.lines()[0]) + "/" +
                            std::string(viewport.lines()[1]) + "/" +
                            std::string(viewport.lines()[2]);
-  Expect(text == "    aaaa/bbbb/    cccc",
-         "the bare caret's line is shifted, not indented at the caret (VS Code inserts "
-         "there): " + text);
+  Expect(text == "  alpha/beta/gam ma",
+         "a line two block sites both cover gains one indent, not two: " + text);
+}
+
+// Hard tabs: the block half inserts a tab and the point half inserts a tab, so
+// nothing about the mixed path depends on the soft-tab arithmetic.
+void TestTabKeyOnAMixedCaretSetWithHardTabs() {
+  TextViewport viewport;
+  viewport.SetViewportSize(20, 200);
+  viewport.SetSoftTabs(false);
+  viewport.SetIndentWidth(4);
+  viewport.LoadContent("aaaa\nbbbb\ncccc\n", "/tmp/ec-tab-mixed-hard.cpp");
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 4, /*extend_selection=*/true);
+  viewport.AddSecondaryCaret(2, 2);
+
+  Expect(microide::editor::ApplyMixedTabKey(viewport), "the mixed apply should change the buffer");
+  const std::string text = std::string(viewport.lines()[0]) + "/" +
+                           std::string(viewport.lines()[1]) + "/" +
+                           std::string(viewport.lines()[2]);
+  Expect(text == "\taaaa/bbbb/cc\tcc", "hard tabs shift and insert one tab each: " + text);
 }
 
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
-  AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetShiftsTheBareCaretsLine",
-          TestTabKeyOnAMixedCaretSetShiftsTheBareCaretsLine);
+  AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetIndentsPerCursor",
+          TestTabKeyOnAMixedCaretSetIndentsPerCursor);
+  AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetNeverEatsASecondarySelection",
+          TestTabKeyOnAMixedCaretSetNeverEatsASecondarySelection);
+  AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetIndentsASharedLineOnce",
+          TestTabKeyOnAMixedCaretSetIndentsASharedLineOnce);
+  AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetWithHardTabs",
+          TestTabKeyOnAMixedCaretSetWithHardTabs);
   AddTest(tests, "EditorEdgeCase/CollapsedFoldRemovesEveryWrappedRowOfItsBody",
           TestCollapsedFoldRemovesEveryWrappedRowOfItsBody);
   AddTest(tests, "EditorEdgeCase/VisualRowsStayMonotonicAcrossAFoldUnderWrap",

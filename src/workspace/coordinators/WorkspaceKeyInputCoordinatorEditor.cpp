@@ -144,10 +144,16 @@ bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
         return true;
       }
       return apply_edit([&]() {
-        if (intent == editor::TabKeyIntent::kOutdent) {
-          editor::OutdentSelection(viewport);
-        } else {
-          editor::IndentSelection(viewport);
+        switch (intent) {
+          case editor::TabKeyIntent::kOutdent:
+            editor::OutdentSelection(viewport);
+            break;
+          case editor::TabKeyIntent::kMixed:
+            editor::ApplyMixedTabKey(viewport);
+            break;
+          default:
+            editor::IndentSelection(viewport);
+            break;
         }
       });
     }
@@ -597,6 +603,18 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
             operations_, *editable_viewport,
             "KeyInputCoordinator::HandleDefaultEditorKeyDown::IndentSelection",
             [&]() { editor::IndentSelection(*editable_viewport); });
+      }
+      // A set where some cursors shift lines and others insert at their own
+      // column. Gated with the block case because half of what it does IS the
+      // block case (TD-2026-09-19-295).
+      if (intent == editor::TabKeyIntent::kMixed) {
+        if (!EditorShapingLineOpsSettingEnabled(operations_)) {
+          return true;
+        }
+        return ApplyDefaultEditorEdit(
+            operations_, *editable_viewport,
+            "KeyInputCoordinator::HandleDefaultEditorKeyDown::MixedTabKey",
+            [&]() { editor::ApplyMixedTabKey(*editable_viewport); });
       }
       return ApplyDefaultEditorEdit(operations_, *editable_viewport,
                                     "KeyInputCoordinator::HandleDefaultEditorKeyDown::InsertTab",

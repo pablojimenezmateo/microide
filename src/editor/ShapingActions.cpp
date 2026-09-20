@@ -1239,30 +1239,210 @@ bool SelectionIndentsAsBlock(const TextViewport& viewport, const SelectionRange&
 
 }  // namespace
 
+namespace {
+
+// One cursor's share of a Tab, in pre-edit coordinates. `block` sites shift every
+// line their range covers; the rest replace their own range with a tab to the next
+// stop at their own column.
+struct TabKeySite {
+  SelectionRange range;
+  bool block = false;
+};
+
+SelectionRange NormalizedCaretRange(TextPosition anchor, TextPosition cursor) {
+  const bool anchor_first =
+      anchor.line < cursor.line || (anchor.line == cursor.line && anchor.column <= cursor.column);
+  return anchor_first ? SelectionRange{anchor, cursor} : SelectionRange{cursor, anchor};
+}
+
+// The primary first, then every secondary, in the viewport's own order. The
+// primary stays at index 0 so the merged caret set can put it back as the primary.
+std::vector<TabKeySite> CollectTabKeySites(const TextViewport& viewport) {
+  const std::span<const SecondaryCaret> secondaries = viewport.secondary_caret_range_view();
+  std::vector<TabKeySite> sites;
+  sites.reserve(secondaries.size() + 1);
+  if (const std::optional<SelectionRange> selection = viewport.selection_range();
+      selection.has_value()) {
+    sites.push_back({*selection, SelectionIndentsAsBlock(viewport, *selection)});
+  } else {
+    const TextPosition caret{viewport.cursor_line(), viewport.cursor_column()};
+    sites.push_back({SelectionRange{caret, caret}, false});
+  }
+  for (const SecondaryCaret& secondary : secondaries) {
+    if (!secondary.selection_anchor.has_value() ||
+        *secondary.selection_anchor == secondary.position) {
+      sites.push_back({SelectionRange{secondary.position, secondary.position}, false});
+      continue;
+    }
+    const SelectionRange range =
+        NormalizedCaretRange(*secondary.selection_anchor, secondary.position);
+    sites.push_back({range, SelectionIndentsAsBlock(viewport, range)});
+  }
+  return sites;
+}
+
+}  // namespace
+
 TabKeyIntent ClassifyTabKey(const TextViewport& viewport, bool shift_held) {
   if (shift_held) {
     return TabKeyIntent::kOutdent;
   }
-  if (const std::optional<SelectionRange> selection = viewport.selection_range();
-      selection.has_value() && SelectionIndentsAsBlock(viewport, *selection)) {
-    return TabKeyIntent::kIndentBlock;
+  bool any_block = false;
+  bool any_point = false;
+  for (const TabKeySite& site : CollectTabKeySites(viewport)) {
+    (site.block ? any_block : any_point) = true;
   }
-  for (const SecondaryCaret& secondary : viewport.secondary_caret_range_view()) {
-    if (!secondary.selection_anchor.has_value() ||
-        *secondary.selection_anchor == secondary.position) {
+  if (any_block && any_point) {
+    return TabKeyIntent::kMixed;
+  }
+  return any_block ? TabKeyIntent::kIndentBlock : TabKeyIntent::kInsertTab;
+}
+
+bool ApplyMixedTabKey(TextViewport& viewport) {
+  const std::size_t line_count = viewport.line_count();
+  if (line_count == 0) {
+    return false;
+  }
+  const std::vector<TabKeySite> sites = CollectTabKeySites(viewport);
+  const std::size_t indent_width = std::max<std::size_t>(1, viewport.indent_width());
+  const bool soft_tabs = viewport.soft_tabs();
+  const std::string indent_unit = soft_tabs ? std::string(indent_width, ' ') : std::string("\t");
+  const TextBuffer& lines = viewport.lines();
+
+  const auto clamp_line = [&](std::size_t line) { return std::min(line, line_count - 1); };
+  const auto clamp_position = [&](TextPosition position) {
+    position.line = clamp_line(position.line);
+    position.column = std::min(position.column, lines.LineLength(position.line));
+    return position;
+  };
+
+  // Every line a block site shifts, deduped: two block sites may cover one line,
+  // and it must gain one indent, not two.
+  std::vector<std::size_t> block_lines;
+  for (const TabKeySite& site : sites) {
+    if (!site.block) {
       continue;
     }
-    const TextPosition& anchor = *secondary.selection_anchor;
-    const TextPosition& caret = secondary.position;
-    const bool anchor_first =
-        anchor.line < caret.line || (anchor.line == caret.line && anchor.column < caret.column);
-    const SelectionRange range =
-        anchor_first ? SelectionRange{anchor, caret} : SelectionRange{caret, anchor};
-    if (SelectionIndentsAsBlock(viewport, range)) {
-      return TabKeyIntent::kIndentBlock;
+    LineRange region = RangeForCaret(site.range.start, site.range.end);
+    region.first = clamp_line(region.first);
+    region.last = std::max(region.first, clamp_line(region.last));
+    for (std::size_t line = region.first; line <= region.last; ++line) {
+      block_lines.push_back(line);
     }
   }
-  return TabKeyIntent::kInsertTab;
+  std::sort(block_lines.begin(), block_lines.end());
+  block_lines.erase(std::unique(block_lines.begin(), block_lines.end()), block_lines.end());
+
+  // One replacement per edit site, in pre-edit coordinates. A block line's edit is
+  // an insert of the indent unit at column 0; a point site replaces its own range
+  // with the padding that reaches ITS next tab stop.
+  struct TabKeyEdit {
+    SelectionRange range;
+    std::size_t insert_length = 0;
+    bool indent_unit_text = false;
+    std::string text;
+
+    std::string_view Text(std::string_view unit) const {
+      return indent_unit_text ? unit : std::string_view(text);
+    }
+  };
+  std::vector<TabKeyEdit> edits;
+  edits.reserve(block_lines.size() + sites.size());
+  for (const std::size_t line : block_lines) {
+    // An empty line gains no indent, exactly as IndentSelection's transform says.
+    if (lines.LineLength(line) == 0) {
+      continue;
+    }
+    edits.push_back({SelectionRange{TextPosition{line, 0}, TextPosition{line, 0}},
+                     indent_unit.size(), /*indent_unit_text=*/true, {}});
+  }
+  for (const TabKeySite& site : sites) {
+    if (site.block) {
+      continue;
+    }
+    const SelectionRange range{clamp_position(site.range.start), clamp_position(site.range.end)};
+    std::string text;
+    if (soft_tabs) {
+      const std::size_t remainder =
+          viewport.VisualColumnAt(range.start.line, range.start.column) % indent_width;
+      text.assign(remainder == 0 ? indent_width : indent_width - remainder, ' ');
+    } else {
+      text = "\t";
+    }
+    edits.push_back({range, text.size(), /*indent_unit_text=*/false, std::move(text)});
+  }
+  if (edits.empty()) {
+    return false;
+  }
+
+  // Where a pre-edit position ends up. Only same-line edits that end at or before
+  // the position can move it: the edits are disjoint, none inserts a line break,
+  // and a block insert at column 0 is exactly the `shift_col` rule the pure-block
+  // path already applies to every caret on a shifted line.
+  const auto remap = [&](TextPosition position) {
+    position = clamp_position(position);
+    std::ptrdiff_t delta = 0;
+    for (const TabKeyEdit& edit : edits) {
+      if (edit.range.start.line != position.line || edit.range.end.column > position.column) {
+        continue;
+      }
+      delta += static_cast<std::ptrdiff_t>(edit.insert_length) -
+               static_cast<std::ptrdiff_t>(edit.range.end.column - edit.range.start.column);
+    }
+    const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(position.column) + delta;
+    position.column = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
+    return position;
+  };
+
+  // Final carets, computed from the pre-edit document before anything moves.
+  std::vector<SelectionRange> final_ranges;
+  final_ranges.reserve(sites.size());
+  for (const TabKeySite& site : sites) {
+    if (site.block) {
+      final_ranges.push_back(SelectionRange{remap(site.range.start), remap(site.range.end)});
+      continue;
+    }
+    // A point site's caret lands just past what it inserted, which is what remap
+    // of its range END reports (its own edit is the last one counted there).
+    const TextPosition caret = remap(site.range.end);
+    final_ranges.push_back(SelectionRange{caret, caret});
+  }
+
+  // Highest-first, so every edit still standing is expressed in coordinates the
+  // document has not moved yet.
+  std::sort(edits.begin(), edits.end(), [](const TabKeyEdit& a, const TabKeyEdit& b) {
+    if (a.range.start.line != b.range.start.line) {
+      return a.range.start.line > b.range.start.line;
+    }
+    return a.range.start.column > b.range.start.column;
+  });
+
+  viewport.BeginUndoGroup();
+  // The secondaries are rebuilt below; leaving them installed would have every
+  // ReplaceRange adjust a set that is about to be replaced wholesale.
+  viewport.ClearSecondaryCarets();
+  bool changed = false;
+  for (const TabKeyEdit& edit : edits) {
+    changed |= viewport.ReplaceRange(edit.range, edit.Text(indent_unit), /*record_undo=*/true);
+  }
+  if (!changed) {
+    viewport.EndUndoGroup();
+    return false;
+  }
+
+  // Grouping the caret restore WITH the edits is what makes the aggregate entry's
+  // after_state carry the restored carets, exactly as ReindentRegions does.
+  const SelectionRange& primary = final_ranges.front();
+  viewport.MoveCursorTo(primary.start.line, primary.start.column, /*extend_selection=*/false);
+  if (primary.end != primary.start) {
+    viewport.MoveCursorTo(primary.end.line, primary.end.column, /*extend_selection=*/true);
+  }
+  if (final_ranges.size() > 1) {
+    viewport.SetSecondaryCaretsWithRanges(
+        std::span<const SelectionRange>(final_ranges).subspan(1));
+  }
+  viewport.EndUndoGroup();
+  return true;
 }
 
 bool OutdentSelection(TextViewport& viewport) {

@@ -41,16 +41,28 @@ bool DeleteLine(TextViewport& viewport);
 bool IndentSelection(TextViewport& viewport);
 bool OutdentSelection(TextViewport& viewport);
 
-// What the Tab key does, decided once for the whole caret set (VS Code's
-// TypeOperations.tab): Shift outdents the caret regions; a selection at ANY
-// caret that spans lines, or covers a whole line's content, indents the caret
-// regions as a block; otherwise every caret inserts one indent, replacing its
-// single-line selection if it has one. Both editable key surfaces (the editor
-// pane and the compare/merge panes) route through this so they cannot drift --
-// each used to hand-copy the test, read the primary only, and replace a
-// whole-line selection with four spaces where VS Code indents the line.
-enum class TabKeyIntent { kInsertTab, kIndentBlock, kOutdent };
+// What the Tab key does (VS Code's TypeOperations.tab). Shift outdents the caret
+// regions. Otherwise each cursor decides for ITSELF: a selection that spans lines
+// or covers a whole line's content shifts those lines, and a partial or empty
+// selection inserts one indent at that cursor's own column. When every cursor
+// agrees the answer is kIndentBlock or kInsertTab and the existing whole-set
+// appliers run; when they disagree it is kMixed, which `ApplyMixedTabKey` runs as
+// one edit (TD-2026-09-19-295).
+//
+// Both editable key surfaces (the editor pane and the compare/merge panes) route
+// through this so they cannot drift -- each used to hand-copy the test, read the
+// primary only, and replace a whole-line selection with four spaces where VS Code
+// indents the line.
+enum class TabKeyIntent { kInsertTab, kIndentBlock, kOutdent, kMixed };
 [[nodiscard]] TabKeyIntent ClassifyTabKey(const TextViewport& viewport, bool shift_held);
+
+// The kMixed applier: every cursor's share of the Tab, applied highest-first as
+// one undo entry. The sites are textually disjoint (a bare caret inside another
+// cursor's selection cannot exist -- MergeOverlappingCaretRanges merges it away),
+// so the model is a set of disjoint (range, text) replacements; what made this
+// hard before was that the block half and the per-site half were two separate
+// machines with two separate undo entries.
+bool ApplyMixedTabKey(TextViewport& viewport);
 
 // VS Code's editor.action.joinLines. NOT named JoinLines: `util::JoinLines`
 // already joins a span of strings, and a second overload in this namespace is
