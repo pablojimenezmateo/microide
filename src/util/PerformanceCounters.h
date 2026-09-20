@@ -142,6 +142,20 @@ namespace microide::util {
   /* table_builds is exactly how many of those standalone rescans happened.              */      \
   X(EditorLineWidthMaxScans, "editor.line_width_max_scans")                                      \
   X(EditorLineWidthMaxScanLines, "editor.line_width_max_scan_lines")                             \
+  /* The rescans that did NOT happen: an edit replaced the widest line with something   */      \
+  /* at least as wide, so the new maximum is the widest inserted line and no other line */      \
+  /* has to be read. This is the counter that says the keystroke-on-the-longest-line    */      \
+  /* path is O(1); if it stops moving, that path is back to an O(document) walk.        */      \
+  X(EditorLineWidthMaxKeptOnReplace, "editor.line_width_max_kept_on_replace")                    \
+  /* ...and the two ways the memo IS dropped, which is what forces the next reader to   */      \
+  /* walk the table. `replaced_narrower` is the case that genuinely cannot be answered  */      \
+  /* without reading other lines; `already_absent` means an earlier edit dropped it and */      \
+  /* nothing read it back before this one, so the drops cascade and only the first cost */      \
+  /* a scan. The two sum to the standalone rescans (max_scans minus table_builds).      */      \
+  X(EditorLineWidthMaxDroppedReplacedNarrower,                                                   \
+    "editor.line_width_max_dropped_replaced_narrower")                                           \
+  X(EditorLineWidthMaxDroppedAlreadyAbsent,                                                      \
+    "editor.line_width_max_dropped_already_absent")                                              \
   X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
   X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
   X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \

@@ -3292,6 +3292,72 @@ void TestTextViewportMaxVisualColumnsUpdatesIncrementally() {
          "shrinking the former widest line should recompute the new maximum width");
 }
 
+// Typing on the WIDEST line must not walk the whole width table.
+//
+// `ClampScrollState` runs on every paint and reads MaxVisualColumns() once the
+// horizontal offset is non-zero, and the memoized maximum used to be dropped
+// whenever the widest line was rewritten -- even when the rewrite made it wider.
+// The two conditions are correlated: you only scroll horizontally while working
+// on a long line, so the guard that was supposed to make the rescan rare was
+// satisfied exactly when the rescan fired. On a 50k-line file that was a
+// 50,000-entry deque walk per keystroke (TD-2026-09-20-297).
+//
+// The oracle is a from-scratch measure, so the fast path cannot be "fast but
+// wrong"; the counters are what say it was actually taken.
+void TestTextViewportTypingOnTheWidestLineDoesNotRescanTheWidthTable() {
+  using microide::editor::TextLayout;
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "short line\n";
+  }
+  content += "this one is by a wide margin the widest line in the whole document\n";
+  for (int i = 0; i < 400; ++i) {
+    content += "short line\n";
+  }
+  viewport.LoadContent(content, "/tmp/widest-line-typing.txt");
+  const std::size_t widest_line = 400;
+  const std::size_t tab_size = viewport.tab_size();
+
+  const auto fresh_widest = [&]() {
+    std::size_t widest = 0;
+    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+      widest = std::max(
+          widest, TextLayout::MeasureLineFacts(viewport.lines()[i], tab_size).visual_columns);
+    }
+    return widest;
+  };
+
+  (void)viewport.max_visual_columns();  // warm the table and the memo, as a paint does
+  Expect(viewport.max_visual_columns() == fresh_widest(),
+         "the warmed maximum should match a fresh measure");
+
+  // Typing on the widest line: it stays the widest, so nothing else need be read.
+  const auto before = util::CapturePerformanceCounters();
+  viewport.MoveCursorTo(widest_line, viewport.lines()[widest_line].size());
+  viewport.InsertText("X");
+  const std::size_t after_insert = viewport.max_visual_columns();
+  const auto after = util::CapturePerformanceCounters();
+
+  Expect(after_insert == fresh_widest(),
+         "the maximum after typing on the widest line must match a fresh measure");
+  Expect(after[static_cast<std::size_t>(util::PerfCounterId::EditorLineWidthMaxScanLines)] ==
+             before[static_cast<std::size_t>(util::PerfCounterId::EditorLineWidthMaxScanLines)],
+         "typing on the widest line must not walk the width table at all");
+  Expect(after[static_cast<std::size_t>(util::PerfCounterId::EditorLineWidthMaxKeptOnReplace)] >
+             before[static_cast<std::size_t>(util::PerfCounterId::EditorLineWidthMaxKeptOnReplace)],
+         "the widened-replacement path is what should have answered, and it should say so");
+
+  // Shrinking the widest line is the case that genuinely cannot be answered
+  // without reading other lines: its old width is gone and the runner-up is
+  // recorded nowhere. It must still be CORRECT, and it is allowed to scan.
+  viewport.MoveCursorTo(widest_line, 0);
+  viewport.ReplaceRange({{widest_line, 0}, {widest_line, viewport.lines()[widest_line].size()}},
+                        "tiny");
+  Expect(viewport.max_visual_columns() == fresh_widest(),
+         "shrinking the widest line must still yield the true maximum");
+}
+
 void TestTextViewportReplaceAllUndoRedoHandlesLargeSparseDocument() {
   TextViewport viewport;
   std::string content;
@@ -6436,6 +6502,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportCollapsedFoldHitTestingUsesVisibleRows);
   AddTest(tests, "TextViewport/ReplaceLinesAppendMovesCursorToInsertedBlock",
           TestTextViewportReplaceLinesAppendMovesCursorToInsertedBlock);
+  AddTest(tests, "TextViewport/TypingOnTheWidestLineDoesNotRescanTheWidthTable",
+          TestTextViewportTypingOnTheWidestLineDoesNotRescanTheWidthTable);
   AddTest(tests, "TextViewport/MaxVisualColumnsUpdatesIncrementally",
           TestTextViewportMaxVisualColumnsUpdatesIncrementally);
   AddTest(tests, "TextViewport/OccurrenceSeedSpanUsesWordUnderCaret",

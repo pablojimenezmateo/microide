@@ -398,7 +398,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-09-20-297 — uncommenting a block rescans the whole document's width table. [OPEN — perf]
+### TD-2026-09-20-297 — uncommenting a block rescans the whole document's width table. [PARTLY RESOLVED 2026-09-20 — the correlated keystroke case is fixed; the uncomment case is what remains]
 
 Found by tracing TD-2026-09-06-290a's phase rather than by a failing gate.
 `editor_toggle_comment_large_selection` reports `editor.line_width_max_scans` = 8
@@ -429,6 +429,44 @@ the scenario that shows it.
 
 Do not confuse this with 290a's +32 allocations — this costs no allocations at
 all, which is exactly why the allocation gate never saw it.
+
+**2026-09-20 — the half that mattered more is fixed, and it was not the half this
+entry was filed about.** Reading the drop site found that the memo was discarded
+whenever the widest line was rewritten **even when the rewrite made it wider**.
+That matters because `ClampScrollState` runs on every paint and reads
+`MaxVisualColumns()` once the horizontal offset is non-zero — and the two
+conditions are correlated: you only scroll horizontally while working on a long
+line, so the guard that was supposed to make the rescan rare was satisfied
+exactly when it fired. Typing on the widest line of a 50k-line file walked the
+whole width table on every keystroke.
+
+It does not have to. Every line outside the affected range is untouched and was
+<= the old maximum, and every line inside it is one of `inserted_columns` — so
+when the widest inserted line reaches the old maximum it IS the new maximum, and
+no other line is read. `TextViewport/TypingOnTheWidestLineDoesNotRescanTheWidthTable`
+pins it against a from-scratch measure (so the fast path cannot be fast-but-wrong)
+and against the counters (so it cannot silently stop being taken).
+
+**The scenario in this entry is the other half, and the counters now say so
+exactly.** Three counters were added — `line_width_max_kept_on_replace`,
+`line_width_max_dropped_replaced_narrower`, `line_width_max_dropped_already_absent` —
+and `editor_toggle_comment_large_selection` reports:
+
+    max_dropped_replaced_narrower  8      (== max_scans, 8)
+    max_dropped_already_absent     0
+    max_kept_on_replace            0
+
+So all 8 rescans are the narrower-replacement case and none is a cascade. The
+cycle is: a comment pass WIDENS a line in the edited range, the existing "the
+maximum can only grow" branch moves the memo's index INTO that range at O(1)
+cost; the next uncomment pass narrows that same line, which is the one case
+nothing can answer without reading other lines. `max_kept_on_replace` is 0 here
+precisely because the comment pass never needs it — the max sits outside the
+range going in.
+
+What is left is therefore exactly the segmented-maximum question, now with the
+measurement attached: 8 walks x 50,001 entries per iteration, all of them the
+narrower case. The counters above are the before/after.
 
 ### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn. [RESOLVED 2026-09-20 — all three instances, and the two ambiguous ones went opposite ways.]
 

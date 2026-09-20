@@ -978,8 +978,48 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
   const bool max_line_replaced = cached_max_visual_columns_line_index_.has_value() &&
                                  *cached_max_visual_columns_line_index_ >= clamped_start &&
                                  *cached_max_visual_columns_line_index_ < affected_end;
-  if (!cached_max_visual_columns_.has_value() ||
+  // ... unless what replaced it is at least as wide. Every line OUTSIDE the
+  // affected range is untouched and was <= the old maximum, and every line
+  // inside it is one of `inserted_columns` -- so when the widest inserted line
+  // reaches the old maximum, it IS the new maximum and no other line has to be
+  // read. That is the case that matters most in practice: you only scroll
+  // horizontally while working on a long line, and `ClampScrollState` calls
+  // MaxVisualColumns() on every paint once the horizontal offset is non-zero.
+  // Typing on the widest line of a 50k-line file therefore rescanned the whole
+  // width table on every keystroke, and typing there is precisely what makes the
+  // offset non-zero (TD-2026-09-20-297).
+  bool adopted_wider_replacement = false;
+  if (max_line_replaced && cached_max_visual_columns_.has_value()) {
+    std::size_t widest_inserted = 0;
+    std::size_t widest_inserted_line = clamped_start;
+    for (std::size_t i = 0; i < inserted_columns.size(); ++i) {
+      // `>=` so a tie keeps the LAST such line, matching the full scan's rule.
+      if (inserted_columns[i].visual_columns() >= widest_inserted) {
+        widest_inserted = inserted_columns[i].visual_columns();
+        widest_inserted_line = clamped_start + i;
+      }
+    }
+    if (!inserted_columns.empty() && widest_inserted >= *cached_max_visual_columns_) {
+      cached_max_visual_columns_ = widest_inserted;
+      cached_max_visual_columns_line_index_ = widest_inserted_line;
+      adopted_wider_replacement = true;
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxKeptOnReplace);
+    }
+  }
+  if (adopted_wider_replacement) {
+    // Already exact; the growth loop below would only re-derive the same answer.
+  } else if (!cached_max_visual_columns_.has_value() ||
       !cached_max_visual_columns_line_index_.has_value() || max_line_replaced) {
+    // Which of the two drops this is decides whether it is fixable at all, so
+    // count them apart rather than inferring from the rescan total. Spelled as
+    // two statements, not a ternary: `CheckEveryPerfCounterHasAProducer` scans
+    // for `PerfCounterId::<Name>` textually, and a ternary long enough to wrap
+    // splits that token across lines and reads as having no producer at all.
+    if (cached_max_visual_columns_.has_value()) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxDroppedReplacedNarrower);
+    } else {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxDroppedAlreadyAbsent);
+    }
     cached_max_visual_columns_.reset();
     cached_max_visual_columns_line_index_.reset();
   } else {
