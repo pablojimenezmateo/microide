@@ -344,9 +344,23 @@ void TestControlDiscoveryIgnoresForgedSocketAndPid() {
   // (b) A descriptor whose filename claims a live pid but whose body pid disagrees
   //     (forged) — filename is a *different* live pid so ProcessIsAlive passes.
   const int other_alive_pid = static_cast<int>(::getppid());
-  if (other_alive_pid > 0 && other_alive_pid != alive_pid) {
+  Expect(other_alive_pid > 0 && other_alive_pid != alive_pid,
+         "the forgery case needs a second live pid, or it never gets written and this "
+         "test passes without testing anything");
+  // The forged BODY pid must differ from the filename's and from every pid a valid
+  // descriptor can carry — enumeration only ever reports a descriptor's filename
+  // pid, so the only candidate is `alive_pid`. `getppid() + 1 == getpid()` whenever
+  // the parent forked this process with no pid allocation in between, which is the
+  // common case on a fresh CI container and near-impossible on a busy workstation:
+  // taking it unguarded made the assertion below fire on case (a)'s own well-formed
+  // descriptor, so this test failed every CI lane and passed locally.
+  int forged_body_pid = other_alive_pid + 1;
+  while (forged_body_pid == alive_pid || forged_body_pid == other_alive_pid) {
+    ++forged_body_pid;
+  }
+  {
     std::ofstream out(instances / (std::to_string(other_alive_pid) + ".json"), std::ios::trunc);
-    out << R"({"pid":)" << (other_alive_pid + 1) << R"(,"socket":"/tmp/x.sock"})";
+    out << R"({"pid":)" << forged_body_pid << R"(,"socket":"/tmp/x.sock"})";
   }
 
   const auto instances_list = microide::workspace::EnumerateControlInstances();
@@ -359,8 +373,13 @@ void TestControlDiscoveryIgnoresForgedSocketAndPid() {
       Expect(descriptor.socket == canonical,
              "the advertised socket field must be ignored in favor of the canonical path");
     }
-    Expect(descriptor.pid != other_alive_pid + 1,
+    Expect(descriptor.pid != forged_body_pid,
            "a descriptor whose body pid disagrees with its filename must be rejected");
+    // The mismatch must drop the file outright, not fall back to trusting the
+    // filename: a descriptor carrying the FILENAME pid would mean the forged body
+    // was merely overridden, which is a weaker guarantee than the one claimed.
+    Expect(descriptor.pid != other_alive_pid,
+           "the mismatching descriptor must be dropped, not accepted under its filename pid");
   }
   Expect(found_alive, "the live, well-formed descriptor should still be discovered");
 
