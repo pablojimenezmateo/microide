@@ -323,6 +323,10 @@ bool TextViewport::ApplyHistoryStep(bool redo) {
   // `secondary_carets_` and index into it afterwards. A normalise there shrinks
   // the vector mid-walk and the walk writes past its end (found exactly that
   // way, as a null write under ASAN).
+  // Clamp before the dedupe, the same order SyncCaretsWithSharedDocument uses:
+  // clamping is what can land two carets on one position, and the dedupe is what
+  // removes the pair. Once per STEP, not once per caret -- see RestoreViewState.
+  ClampCaretSetToDocument();
   DedupeSecondaryCaretsAgainstPrimary();
   {
     util::PerformanceTrace::Scope scope(redo ? "TextViewport::Redo::BuildAppliedEdit"
@@ -665,18 +669,24 @@ void TextViewport::RestoreViewState(const ViewState& state) {
   secondary_carets_ = state.secondary_carets;
   document_->placeholder = state.placeholder;
   document_->dirty = state.dirty;
-  // The restored set is written in verbatim, so it owes the same reconciliation
-  // every other caret-set writer does: the captured state describes the document
-  // as it WAS, and on a SHARED document that is not necessarily the document it
-  // is being restored into.
+  // NO reconciliation here. The restored set owes the same clamp+normalise every
+  // other caret-set writer does, but this function is NOT the place to pay it:
+  // ApplyHistoryEntry is the per-caret applier for multi-caret edits and calls
+  // this once PER CARET, while ClampCaretSetToDocument walks the WHOLE set. That
+  // that is O(carets^2) per keystroke -- 151 mirrors of a snippet placeholder made
+  // it ~23k piece-tree neighbourhood reads for one character, measured at +32% on
+  // snippet_many_mirror_edit against the commit that introduced it (08fcae51).
   //
-  // Only the clamp here, though. It reads `document_->lines`, which every caller
-  // has already updated. The NORMALISE reads the per-line width table through
-  // PreferredColumnForCaret, and ApplyHistoryEntry's main path restores the view
-  // state BEFORE it splices that table -- so normalising here indexed a table
-  // still describing the pre-undo document and crashed. The callers run it at
-  // the point their caches are consistent.
-  ClampCaretSetToDocument();
+  // The clamp lives at the three places that actually restore a state describing
+  // a document this viewport may not have:
+  //   - ApplyHistoryStep, once per undo/redo step, beside the normalise that was
+  //     hoisted there for the same per-caret-applier reason;
+  //   - the format-on-save restore in TextViewportFileIO, which already called it
+  //     explicitly;
+  //   - SyncCaretsWithSharedDocument, which every edit entry point runs through
+  //     SyncCaretsIfDocumentChangedElsewhere when a SIBLING moved the document.
+  // The multi-caret appliers are covered by the third: by the time they replay a
+  // per-caret entry, a foreign edit has already been reconciled at the entry point.
 }
 
 void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
