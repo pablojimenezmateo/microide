@@ -6,6 +6,124 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.12.0] - 2026-09-20
+
+This cycle is a multi-caret, soft-wrap and word-selection correctness pass —
+the VS Code verb list walked end to end against this editor, with the gaps
+closed and each rule pinned by a differential test — plus the render and edit
+paths that pass made measurable.
+
+### Added
+
+- **Add Cursor Above / Below (`Ctrl+Alt+Up` / `Ctrl+Alt+Down`) and Add Cursors
+  to Line Ends (`Shift+Alt+I`).** The two multi-cursor gestures a VS Code user
+  reaches for after `Ctrl+D` did not exist at all. Both step *visual* rows, so
+  under soft wrap one press moves one wrapped row and every caret keeps its own
+  sticky column; the vertical pair adds below every caret and dedupes, so a held
+  chord grows the column one caret at a time instead of doubling it, and at the
+  buffer edge it adds nothing rather than piling carets on one position.
+- **Join Lines, at every caret** (`join-lines`). A bare caret joins its line with
+  the one below, so a repeated press pulls a block up a line at a time; a
+  selection joins every line it touches, separated by one space with the
+  appended lines' leading whitespace trimmed. Each caret joins its own region,
+  and two carets on adjacent lines join once instead of fighting. A collapsed
+  fold is deliberately not expanded — folding a hidden block onto one line is a
+  destructive edit whose result cannot be seen.
+- **A vertical step off the edge of the document lands on the edge.** `Up` from
+  the first visual row goes to its start and `Down` from the last to its end
+  (VS Code's `allowMoveOnFirstLine`/`LastLine`), including the overshoot case —
+  `PageUp` from the middle of the first screen reaches the document start.
+  The editor used to clamp to the edge row and keep the column, so the key was a
+  silent no-op, and vertical motion alone could never reach column 0.
+  `Shift+Up` extends to the row start the same way.
+
+### Fixed
+
+- **Soft wrap and the scrollbar.** The editor scrollbar was sized in document
+  lines while the position it displays is a visual row: a twelve-line file
+  wrapping to forty-one rows in a fourteen-row pane reported a maximum scroll of
+  zero — no vertical scrollbar at all — and where the bar did appear, dragging
+  it to the bottom left the end of the document unreachable. Autoscroll, hover
+  hit-testing, the overview ruler's lane and three copies of the merge layout
+  were in the same wrong row space.
+- **Double-click and word selection.** A caret sitting at the *end* of a word
+  named nothing, so double-clicking the right half of a word's last glyph
+  selected nothing and `Ctrl+D` after typing an identifier was dead; a
+  double-click on whitespace or an operator selected nothing where VS Code takes
+  the run under the pointer. Both now go through one rule, checked against a
+  port of VS Code's `WordOperations.word` at every caret of 400 random lines —
+  and the single-line fields (command prompt, search box, file finder) share it
+  instead of carrying a second, divergent implementation. Triple-click selects
+  the line terminator too, and a word-granular drag keeps the rule its click used.
+- **Multi-caret edits.** `Tab` now decides per cursor as VS Code does rather than
+  once for the whole set (and shifts a whole-line selection); block-comment
+  toggled one caret's line and ignored the rest, and swallowed the line below a
+  whole-line selection; `Ctrl+L` expanded one caret's line and stranded the rest;
+  a multi-caret line cut deleted lines it never copied; edit sites are ordered by
+  range with the soft tab planned per site; a touching reversed selection at the
+  primary caret was dropped; and undo restored a caret set it never normalised.
+- **A caret that outlives its buffer.** A split pane's carets survived its
+  sibling's edit out of bounds; a column-select gesture outlived edits it did not
+  make, and a click left its box anchored where the caret used to be; a text drag
+  released over a changed buffer moved the wrong text, and a tab switch mid-drag
+  aimed the gesture at the new file; a snippet session left pointing at text that
+  had moved now follows it.
+- **Compare and merge.** Accepting a side told the result pane the accepted text
+  was empty; every edit now re-tracks the conflicts, not the five sites that
+  remembered to; the merge toolbar buttons are painted where the clicks land; a
+  multi-caret set could edit text the compare pane never drew a caret at; and the
+  final-newline phantom row points at its own hunk.
+- **Source-control refusals are visible.** "Discard All" could do nothing at all,
+  silently: the refusal went to a feedback field no surface painted, and the
+  dirty-buffer guard covered the whole project root, so one unsaved buffer
+  anywhere — including a file git does not list as changed — refused the whole
+  operation. The guard now covers the affected paths and names the tab, and git
+  refusals reach the mouse that raised them. `Discard`'s directory gate no longer
+  fails open on a stat error.
+- **Plugin filesystem containment: the dangling-symlink escape.** A leaf that was
+  itself a symlink to a missing file outside the project resolved to nothing,
+  was appended verbatim inside the root, and passed as contained — writing to it
+  followed the link and created the file on the far side. Reachable by a plugin
+  holding only project-scoped write capability. Such a leaf is now resolved
+  explicitly, with a bounded hop budget, and every failure fails closed.
+- Folding: `Right` and `Ctrl+Right` stepped *into* a collapsed fold.
+- Find: `Replace` rewrote the line that inherited a stale match's coordinates,
+  and the incremental refine was unsound for whole-word on its own.
+- Soft wrap: a secondary caret was drawn twice, and another not drawn at all.
+- LSP: a utf-8 position is snapped to a codepoint boundary before it builds an edit.
+- The diagnostics severity setting was case-sensitive, and failed open.
+- The menu-bar overflow popup could not be reached by keyboard.
+- Terminal: a wide glyph is kept inside a screen narrower than it is.
+- Control channel: the client framed request lines the server sheds.
+- Jump-to-matching-bracket did nothing on an empty pair.
+- A scrollbar thumb clamped with inverted bounds on a short track.
+- Twelve system cursors were created and never destroyed.
+
+### Performance
+
+- **Non-ASCII text is blits, not rasterizations.** Every cluster of a CJK or
+  emoji row was shaped and rasterized on every painted frame — 277,520 cluster
+  rasterizations over 160 frames of a 20,000-line CJK file, against 1 for the
+  same sweep over ASCII. A cluster atlas keyed by the cluster's UTF-8 bytes
+  rasterizes each code point once per font. The sweeps that were meant to measure
+  this had stopped scrolling after two iterations and measured nothing.
+- **Multi-caret editing is no longer quadratic.** An undo group merged into the
+  smaller side, making a shaping verb quadratic; the undo-restore clamp was
+  quadratic in caret count; a multi-caret edit copied the whole caret set once
+  per caret; and an already-sorted caret set was re-sorted on every keystroke.
+  `Tab` is allocation-free and the mixed remap is indexed by line.
+- **A width rescan reads 784 entries, not 400k**, via a per-block maximum; and
+  the width memo is kept when an edit makes the widest line wider.
+- **Per-event glue is built once, not per event.** The key-input coordinator, the
+  seven per-event coordinators, the action context and `ActionAvailability` are
+  cached on the shell instead of constructed per keystroke, per dispatch and per
+  menu row; the menu draws one popup loop into a reused row buffer, memoizes its
+  LSP-readiness probe per frame, and resolves a popup row by geometry.
+- Prompt text is no longer rebuilt on every painted frame; the git Sync button's
+  tooltip was built every frame and shown never; per-row git action availability
+  that nothing reads is no longer computed; the compare surface's per-row
+  secondary-caret scan is bounded.
+
 ## [2.11.1] - 2026-09-07
 
 ### Added
