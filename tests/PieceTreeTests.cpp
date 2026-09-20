@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include <cstdint>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -1045,6 +1046,73 @@ void TestPieceTreeLineStartMemoInvalidation() {
   }
 }
 
+// `LineBlob::prepend` used to be `replace_range(0, 0, other)` — a whole new byte
+// buffer and a whole new offset table per call. It is now an in-place front
+// insert, which is the same answer computed differently, so this checks it
+// against the general splice it replaced over a randomized corpus. The two must
+// agree on the line COUNT, every line's bytes, and the resulting byte buffer
+// — the offsets are absolute, so a shift that is off by one produces lines that
+// read as garbage rather than as a different count.
+void TestLineBlobPrependMatchesTheGeneralSplice() {
+  std::mt19937 rng(20260920u);
+  std::uniform_int_distribution<int> line_count(0, 12);
+  std::uniform_int_distribution<int> line_length(0, 40);
+  std::uniform_int_distribution<int> byte(97, 122);
+  const auto make_blob = [&]() {
+    editor::LineBlob blob;
+    const int lines = line_count(rng);
+    for (int i = 0; i < lines; ++i) {
+      std::string line(static_cast<std::size_t>(line_length(rng)), 'x');
+      for (char& c : line) {
+        c = static_cast<char>(byte(rng));
+      }
+      blob.push_back(line);
+    }
+    return blob;
+  };
+  const auto lines_of = [](const editor::LineBlob& blob) {
+    std::vector<std::string> out;
+    out.reserve(blob.size());
+    for (std::size_t i = 0; i < blob.size(); ++i) {
+      out.emplace_back(blob[i]);
+    }
+    return out;
+  };
+
+  for (int trial = 0; trial < 400; ++trial) {
+    const editor::LineBlob base = make_blob();
+    const editor::LineBlob head = make_blob();
+
+    editor::LineBlob actual = base;
+    actual.prepend(head);
+
+    editor::LineBlob expected = base;
+    expected.replace_range(0, 0, head);
+
+    Expect(actual.size() == expected.size(),
+           "prepend must produce the same line count as the splice it replaced");
+    Expect(lines_of(actual) == lines_of(expected),
+           "prepend must produce the same lines, byte for byte, as the splice it replaced");
+    Expect(actual.size() == base.size() + head.size(),
+           "prepend must keep every line of both sides");
+  }
+
+  // The shape the undo group's merge actually produces: one line prepended at a
+  // time, a thousand times, which is what made the old form quadratic. Checked
+  // against the straightforward model so the fast path cannot drift.
+  editor::LineBlob grown;
+  std::vector<std::string> model;
+  for (int i = 0; i < 1000; ++i) {
+    const std::string line = "line " + std::to_string(999 - i);
+    editor::LineBlob one;
+    one.push_back(line);
+    grown.prepend(one);
+    model.insert(model.begin(), line);
+  }
+  Expect(lines_of(grown) == model,
+         "a thousand one-line prepends must build the same blob as a front-inserting model");
+}
+
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/LineStartMemoInvalidation", TestPieceTreeLineStartMemoInvalidation);
   AddTest(tests, "PieceTree/LiveDocumentByteCeiling", TestPieceTreeLiveDocumentByteCeiling);
@@ -1083,6 +1151,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/ExtractIntoBlobSizesItsByteBuffer",
           TestPieceTreeExtractIntoBlobSizesItsByteBuffer);
   AddTest(tests, "PieceTree/SmallBlobIsAllocationFree", TestPieceTreeSmallBlobIsAllocationFree);
+  AddTest(tests, "PieceTree/LineBlobPrependMatchesTheGeneralSplice",
+          TestLineBlobPrependMatchesTheGeneralSplice);
 }
 
 }  // namespace microide::tests

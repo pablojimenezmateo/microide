@@ -171,7 +171,45 @@ class LineBlob {
       starts_.push_back(static_cast<std::uint32_t>(base + start));
     }
   }
-  void prepend(const LineBlob& other) { replace_range(0, 0, other); }
+  // Insert `other`'s lines before this blob's, in place.
+  //
+  // NOT `replace_range(0, 0, other)`, which is what this was: that builds a whole
+  // new byte buffer and a whole new offset table every call. An undo GROUP merges
+  // its children into one running aggregate, and a multi-region shaping verb
+  // applies its regions HIGHEST-FIRST (so each region's line indices stay valid
+  // against the still-unedited buffer below it), which means every child abuts
+  // the aggregate on the LOW side and every merge is a prepend. Rebuilding the
+  // aggregate per merge is O(total bytes) allocations as well as copies: a block
+  // comment toggled at 1,201 cursors allocated 253 MB, 245 MB of it four fresh
+  // ~105 KB buffers per region (TD-2026-09-20-301).
+  //
+  // In place, the byte buffer grows geometrically like any string, so the
+  // allocations collapse from one per merge to O(log n) for the whole group. The
+  // shift itself stays O(n) — `data_` is contiguous and the offsets are absolute,
+  // which is the property every reader here depends on — so this bounds the
+  // allocator traffic, not the memmove.
+  void prepend(const LineBlob& other) {
+    if (other.starts_.empty()) {
+      return;
+    }
+    if (starts_.empty()) {
+      *this = other;
+      return;
+    }
+    const std::size_t shift = other.data_.size();
+    data_.insert(0, other.data_);
+    const std::size_t inserted_lines = other.starts_.size();
+    const std::size_t existing_lines = starts_.size();
+    starts_.resize_uninitialized(existing_lines + inserted_lines);
+    std::uint32_t* const slots = starts_.data();
+    // Backwards, so the move cannot overwrite a slot it has not read yet.
+    for (std::size_t i = existing_lines; i-- > 0;) {
+      slots[i + inserted_lines] = static_cast<std::uint32_t>(slots[i] + shift);
+    }
+    for (std::size_t i = 0; i < inserted_lines; ++i) {
+      slots[i] = other.starts_[i];
+    }
+  }
   // Lines [first, last) become `with`.
   void replace_range(std::size_t first, std::size_t last, const LineBlob& with) {
     const std::size_t line_count = starts_.size();
@@ -223,8 +261,12 @@ class LineBlob {
   // ---- accounting -----------------------------------------------------
   // Content bytes, for the undo history's byte budget. The offset table is
   // bookkeeping, not content, and the budget has always counted content.
+  // It is also what the undo group's merge picks its direction by: merging into
+  // the side that already owns the bigger buffer is what keeps a many-child
+  // group linear.
   std::size_t content_bytes() const { return data_.size(); }
   // Retained heap, by capacity: what this blob keeps hold of, not what it uses.
+
   std::size_t ApproximateResidentBytes() const {
     return data_.capacity() + starts_.capacity() * sizeof(std::uint32_t);
   }

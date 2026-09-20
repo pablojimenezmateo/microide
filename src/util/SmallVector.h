@@ -124,6 +124,20 @@ class SmallVector {
     }
   }
 
+  // Grow (or shrink) to `count` elements without writing the new tail. The
+  // element type is already required to be trivially copyable and trivially
+  // destructible, so there is nothing to construct or destroy — and a caller that
+  // is about to overwrite every new slot (a front-insert shifting the existing
+  // elements up, say) should not pay for zeroing them first. Reading a new slot
+  // before writing it reads an unspecified value, which is the contract the name
+  // states.
+  void resize_uninitialized(size_type count) {
+    if (count > capacity_) {
+      Grow(count);
+    }
+    size_ = count;
+  }
+
   template <typename InputIt>
   void append(InputIt first, InputIt last) {
     for (; first != last; ++first) {

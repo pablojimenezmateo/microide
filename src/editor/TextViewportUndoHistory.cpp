@@ -162,7 +162,40 @@ void TextViewportUndoHistory::CoalesceAdjacentDisjoint(std::vector<Entry>& entri
     const std::size_t prev_after_end = entries[i].start_line + entries[i].after_lines.size();
     if (entries[i + 1].start_line == prev_after_end) {
       if (CanMergeGroupEntry(entries[i], entries[i + 1])) {
-        entries[i] = MergeGroupEntry(std::move(entries[i]), entries[i + 1]);
+        // Merge into whichever side already owns the bigger blob.
+        //
+        // The two directions produce the SAME entry — one appends the high side
+        // onto the low, the other prepends the low side onto the high — but they
+        // cost very differently, and the cheap one is not the one that was here.
+        // A multi-region shaping verb applies its regions HIGH-TO-LOW, because
+        // that is what keeps each region's line indices valid against the
+        // still-unedited buffer below it. Each child therefore arrives BELOW
+        // everything already accumulated, lands at index 0, and the merge
+        // appended the whole accumulated blob onto a one-line child: a fresh
+        // full-size buffer and a full-size copy, per child. Toggling a block
+        // comment at 1,201 cursors appended 244 MB in 2,400 calls, ~102 KB each,
+        // and that is O(regions^2) — at the 10,000-cursor cap it is ~17 GB
+        // (TD-2026-09-20-301).
+        //
+        // Prepending the child onto the accumulated blob instead reuses its
+        // buffer, which grows geometrically like any string.
+        //
+        // The per-child view states are overwritten wholesale by
+        // FinishActiveGroup (`agg.before_state`/`after_state` come from the
+        // frame), so the direction cannot change what the group records — but
+        // this restores the one the unswapped call would have left anyway, so
+        // the change is a cost change and nothing else.
+        const bool high_side_is_bigger =
+            entries[i + 1].before_lines.content_bytes() +
+                entries[i + 1].after_lines.content_bytes() >
+            entries[i].before_lines.content_bytes() + entries[i].after_lines.content_bytes();
+        if (high_side_is_bigger && CanMergeGroupEntry(entries[i + 1], entries[i])) {
+          ViewState after_state = entries[i + 1].after_state;
+          entries[i] = MergeGroupEntry(std::move(entries[i + 1]), entries[i]);
+          entries[i].after_state = std::move(after_state);
+        } else {
+          entries[i] = MergeGroupEntry(std::move(entries[i]), entries[i + 1]);
+        }
         entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i) + 1);
         continue;
       }
