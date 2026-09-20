@@ -1111,6 +1111,16 @@ void TestLineBlobPrependMatchesTheGeneralSplice() {
   }
   Expect(lines_of(grown) == model,
          "a thousand one-line prepends must build the same blob as a front-inserting model");
+
+  // Self-prepend doubles the blob. The general splice made this work by accident
+  // (it built into a fresh buffer and read the old one); doing it in place would
+  // read offsets the same call has already shifted, so the in-place form takes a
+  // copy. Nothing in the tree does this — the test is what keeps the guard from
+  // being deleted as dead.
+  editor::LineBlob self = editor::LineBlob::Of({"a", "bb", "ccc"});
+  self.prepend(self);
+  Expect(lines_of(self) == std::vector<std::string>({"a", "bb", "ccc", "a", "bb", "ccc"}),
+         "prepending a blob to itself must double it, not read shifted offsets");
 }
 
 void RegisterPieceTreeTests(std::vector<TestCase>& tests) {

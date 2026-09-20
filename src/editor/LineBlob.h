@@ -189,6 +189,16 @@ class LineBlob {
   // which is the property every reader here depends on — so this bounds the
   // allocator traffic, not the memmove.
   void prepend(const LineBlob& other) {
+    if (&other == this) {
+      // Self-prepend doubles the blob. `replace_range` used to make this work by
+      // accident — it built into a fresh buffer and read the old one — and doing
+      // it in place would read offsets this call has already shifted. Nothing
+      // does it today; take the copy rather than leave a shape that is correct
+      // only for as long as nobody tries it.
+      const LineBlob copy(other);
+      prepend(copy);
+      return;
+    }
     if (other.starts_.empty()) {
       return;
     }
@@ -266,7 +276,6 @@ class LineBlob {
   // group linear.
   std::size_t content_bytes() const { return data_.size(); }
   // Retained heap, by capacity: what this blob keeps hold of, not what it uses.
-
   std::size_t ApproximateResidentBytes() const {
     return data_.capacity() + starts_.capacity() * sizeof(std::uint32_t);
   }
