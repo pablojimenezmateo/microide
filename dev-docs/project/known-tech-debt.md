@@ -398,7 +398,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn. [First instance RESOLVED 2026-09-20; the other two remain open below.]
+### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn. [RESOLVED 2026-09-20 — all three instances, and the two ambiguous ones went opposite ways.]
 
 The whole producer side of the compare surface's stage/discard hint row is
 live; the consumer side is gone.
@@ -470,6 +470,36 @@ settings overlay — no sidebar hover-tooltip path exists to consume it. So the
 sync button's tooltip text is computed every git view-model build and has
 never been shown. Same choice as above: wiring it is a product decision,
 deleting it discards written intent, and the sweep cannot tell which was meant.
+
+**Resolved 2026-09-20, all three.** The rule below called it: the tell decided
+each one, and the two ambiguous instances went opposite ways.
+
+- *Dead state* (the compare hint line) was deleted, and its tests re-pointed at
+  the gate that actually decides which verbs a compare tab offers — see above.
+- *Lost render* (the overflow popup's active index) was wired. Nothing in the
+  key dispatch chain looked at `overflow_popup_open`, so while the popup was up
+  every key fell through to the surface underneath, Esc included: the only way
+  out was a click. It now takes Up/Down (wrapping), Tab/Shift+Tab, Home/End,
+  Enter/Space/Right to open the highlighted menu under its own row, and Esc.
+  Mouse motion writes the same index, so the render stopped reading the live
+  pointer and the two inputs cannot highlight different rows.
+- *Lost render* (`sync_button_tooltip`) was wired too, but **not** by keeping
+  the field. It moved to `BuildGitSyncButtonTooltip(git_state)`, called by the
+  hover resolver when the pointer is on the button, so the git view-model
+  rebuild stops composing a three-allocation string it never shows. Branch,
+  Stage All and Discard All got tooltips in the same pass: a header where one
+  of four buttons explains itself is worse than either extreme.
+
+Three dedups fell out, each of them the reason the bug was possible.
+`MenuOverflowPopupRowRect`/`MenuOverflowPopupRowAt` replace the row arithmetic
+the render TU spelled inline and the click path re-derived with its own floor
+division. `OpenMenuOverflowPopup`/`CloseMenuOverflowPopup` replace four sites
+that reset two of the popup's three fields by hand and left the third — which
+is exactly how the active index ended up written-once and read-nowhere.
+And the three menu surfaces' key arms in `HandleKeyDown`, which had each
+spelled out the same handle-then-coalesce-a-redraw shape, share one helper;
+that is also what kept the TU under its 900-code-line coordinator cap, which
+the first draft of the fix broke.
 
 The general lesson: a written-never-read field is ambiguous between *dead
 state* and *a render that was lost*, and those want opposite fixes. The tell
