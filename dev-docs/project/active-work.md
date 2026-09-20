@@ -1,8 +1,10 @@
 # MicroIDE Active Work
 
 Reviewed 2026-09-05 (see `known-tech-debt.md` § TD-2026-09-05-288 for that
-pass). Shipped baseline: **v2.11.0** — the n-way editor split grid
-and drag-to-split shipped in it (see `CHANGELOG.md` § 2.11.0).
+pass). Shipped baseline: **v2.12.0** — the multi-caret / soft-wrap / word-selection
+correctness pass shipped in it, with Add Cursor Above/Below, Add Cursors to Line
+Ends, Join Lines, and the non-ASCII glyph cluster atlas (see `CHANGELOG.md`
+§ 2.12.0).
 
 This file answers one question: **what should be worked on next, and what is
 deliberately not being built.**
