@@ -465,6 +465,20 @@ void RunEditorCjkScrollPaint(ScenarioContext& context) {
   }
   context.PumpFrames(8);
 
+  // Start every iteration at the top of the file. The scenario body runs once per
+  // iteration but the SHELL persists across them, so `OpenTab` on the second
+  // iteration re-focuses the tab this one left parked wherever the sweep ended.
+  // 160 page-downs is ~7,200 rows, so the warmup and the first two iterations
+  // walked the fixture's 20,000 lines to its end and every iteration after that
+  // paged against the bottom, painting one unchanging screen: zero composites,
+  // zero texture-cache misses, zero allocations. The gated p50 was that no-op,
+  // which is the collapse case `dev-docs/performance/perf-harness.md` describes —
+  // it read 0 phase allocations and PASSED (TD-2026-09-20-298).
+  editor::TextViewport& viewport = context.ActiveViewport();
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.SetScrollLine(0);
+  context.PumpFrames(1);
+
   // One downward sweep through continuously fresh rows, so string-texture cache
   // misses accumulate the way they do when a user scrolls a large file for real.
   context.Measure("cjk_scroll_paint.page_down_sweep", [&] {
@@ -473,6 +487,14 @@ void RunEditorCjkScrollPaint(ScenarioContext& context) {
       context.PumpFrames(1);
     }
   });
+  // The guard the reset above exists for: a sweep that no longer scrolls has to
+  // fail loudly rather than report a smaller number forever. Half the nominal
+  // distance is slack for a viewport shorter than the one this was written
+  // against, and still an order of magnitude above the no-op it is aimed at.
+  if (context.ActiveViewport().scroll_line() < 3000) {
+    throw std::runtime_error(
+        "editor_cjk_scroll_paint: the page-down sweep did not scroll through fresh rows");
+  }
   context.PumpFrames(2);
 }
 
