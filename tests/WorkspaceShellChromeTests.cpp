@@ -674,6 +674,50 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
          "arriving on git Refresh should repaint its tooltip card");
 }
 
+// The git header's four buttons had one tooltip between them (Refresh). The Sync
+// button's tooltip text WAS composed — on every git view-model rebuild — and no
+// surface ever consumed it, because no hover path asked for it (TD-2026-09-19-296).
+void TestWorkspaceShellGitSidebarHeaderButtonsHaveTooltips() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add git tooltip fixture", "git tooltip fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "git tooltip fixture should expose one changed row");
+
+  const SDL_FRect sync = WorkspaceShellTestAccess::GitSidebarSyncButtonRect(shell);
+  Expect(sync.w > 0.0f, "git tooltip fixture should expose the Sync button");
+  Expect(SendMouseMotion(shell, sync.x + sync.w * 0.5f, sync.y + sync.h * 0.5f, 0),
+         "hovering the git Sync button should be handled");
+  // This fixture has no remote, so the tooltip is the no-upstream branch of
+  // BuildGitSyncButtonTooltip. Either branch is a non-empty sentence; what the
+  // regression is about is that SOMETHING resolves here at all.
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).find("upstream") !=
+             std::string::npos,
+         "hovering Sync with no upstream should say so");
+
+  const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
+  Expect(SendMouseMotion(shell, top_action_rects[0].x + top_action_rects[0].w * 0.5f,
+                         top_action_rects[0].y + top_action_rects[0].h * 0.5f, 0),
+         "hovering the git Stage All button should be handled");
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Stage All Changes",
+         "hovering Stage All should name what it does");
+  Expect(SendMouseMotion(shell, top_action_rects[1].x + top_action_rects[1].w * 0.5f,
+                         top_action_rects[1].y + top_action_rects[1].h * 0.5f, 0),
+         "hovering the git Discard All button should be handled");
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Discard All Changes",
+         "hovering Discard All should name what it does");
+}
+
 void TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3951,6 +3995,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompactMenuOverflowButtonIsInteractive);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowRowsOpenAnchoredMenus",
           TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus);
+  AddTest(tests, "WorkspaceShell/GitSidebarHeaderButtonsHaveTooltips",
+          TestWorkspaceShellGitSidebarHeaderButtonsHaveTooltips);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowIsKeyboardNavigable",
           TestWorkspaceShellCompactMenuOverflowIsKeyboardNavigable);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowEscapeClosesIt",

@@ -94,9 +94,14 @@ struct GitSidebarViewModel {
   // ahead/behind counts so the button says what syncing would actually do.
   std::string branch_button_label;
   std::string sync_button_label;
-  std::string sync_button_tooltip;
   std::vector<GitSidebarSectionViewModel> sections;
 };
+
+// The Sync button's hover tooltip. Composed on demand by the hover-tooltip
+// resolver rather than carried on the view model: it used to be built on every
+// git view-model rebuild — three allocations for a string no surface painted,
+// because no sidebar hover-tooltip path consumed it (TD-2026-09-19-296).
+std::string BuildGitSyncButtonTooltip(const GitSidebarState& git_state);
 
 GitSidebarEntry::Section ClassifyGitSidebarSection(bool conflicted,
                                                    bool staged,

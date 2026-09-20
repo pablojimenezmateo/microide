@@ -411,6 +411,20 @@ std::string BuildGitDiscardPreviewSummary(const GitSidebarEntry& entry,
   return "Discard changes for " + path_label + "?";
 }
 
+std::string BuildGitSyncButtonTooltip(const GitSidebarState& git_state) {
+  if (git_state.upstream_label.empty()) {
+    return "No upstream branch \u2014 publish this branch first";
+  }
+  std::string tooltip = "Pull then push (";
+  tooltip += std::to_string(git_state.behind);
+  tooltip += " behind, ";
+  tooltip += std::to_string(git_state.ahead);
+  tooltip += " ahead of ";
+  tooltip += git_state.upstream_label;
+  tooltip += ')';
+  return tooltip;
+}
+
 GitSidebarViewModel BuildGitSidebarViewModel(
     const GitSidebarState& git_state,
     const std::filesystem::path& repository_root,
@@ -436,11 +450,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
       view_model.sync_button_label += std::to_string(git_state.ahead) + "\u2191";
     }
   }
-  view_model.sync_button_tooltip =
-      git_state.upstream_label.empty()
-          ? std::string("No upstream branch \u2014 publish this branch first")
-          : ("Pull then push (" + std::to_string(git_state.behind) + " behind, " +
-             std::to_string(git_state.ahead) + " ahead of " + git_state.upstream_label + ")");
   view_model.stale_banner = BuildGitStaleBanner(git_state.snapshot_stale, git_state.refreshing);
   view_model.error_banner =
       git_state.error.empty() ? BuildGitRefreshErrorBanner(git_state.refresh_error)

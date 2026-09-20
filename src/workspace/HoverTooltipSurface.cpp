@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <string_view>
 
+#include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/render/RenderViewModelBuilder.h"
@@ -143,8 +144,33 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
                         : "Refresh",
                     refresh);
       }
+      // The Sync button says "Sync 2\u2193 1\u2191"; the tooltip is what spells out
+      // which remote branch that is against. It is composed here, on hover,
+      // rather than on every git view-model rebuild (TD-2026-09-19-296).
+      if (!found) {
+        if (const SDL_FRect sync = git_sidebar_header::SyncButtonRect(layout.sidebar);
+            Contains(sync, x, y)) {
+          found = hit(BuildGitSyncButtonTooltip(context_.current_project_state.sidebar.git), sync);
+        }
+      }
+      if (!found) {
+        if (const SDL_FRect branch = git_sidebar_header::BranchButtonRect(layout.sidebar);
+            Contains(branch, x, y)) {
+          found = hit("Checkout branch", branch);
+        }
+      }
+      if (!found) {
+        if (const SDL_FRect stage_all = git_sidebar_header::StageAllButtonRect(layout.sidebar);
+            Contains(stage_all, x, y)) {
+          found = hit("Stage All Changes", stage_all);
+        } else if (const SDL_FRect discard_all =
+                       git_sidebar_header::DiscardAllButtonRect(layout.sidebar);
+                   Contains(discard_all, x, y)) {
+          found = hit("Discard All Changes", discard_all);
+        }
+      }
       // Per-entry git actions live on the row context menu, so the header
-      // refresh button is the git sidebar's only tooltip.
+      // buttons are the git sidebar's only tooltips.
     }
     if (!found && mode == SidebarMode::Search) {
       const auto& options = context_.current_project_state.overlay.workflow.project_search.options;
