@@ -749,7 +749,8 @@ endif()
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   target_sources(microide PRIVATE
     src/render/SdlTtfTextBackend.cpp
-    src/render/AsciiGlyphAtlas.cpp)
+    src/render/AsciiGlyphAtlas.cpp
+    src/render/GlyphClusterAtlas.cpp)
   target_compile_definitions(microide PRIVATE MICROIDE_HAS_SDL3_TTF=1)
   target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
   if(NOT MICROIDE_FONTCONFIG_TARGET STREQUAL "")
@@ -1186,7 +1187,8 @@ add_executable(microide_tests
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   target_sources(microide_tests PRIVATE
     src/render/SdlTtfTextBackend.cpp
-    src/render/AsciiGlyphAtlas.cpp)
+    src/render/AsciiGlyphAtlas.cpp
+    src/render/GlyphClusterAtlas.cpp)
   target_compile_definitions(microide_tests PRIVATE MICROIDE_HAS_SDL3_TTF=1)
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
   if(NOT MICROIDE_FONTCONFIG_TARGET STREQUAL "")
@@ -1468,7 +1470,8 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
     target_sources(microide_perf PRIVATE
       src/render/SdlTtfTextBackend.cpp
-      src/render/AsciiGlyphAtlas.cpp)
+      src/render/AsciiGlyphAtlas.cpp
+      src/render/GlyphClusterAtlas.cpp)
     target_compile_definitions(microide_perf PRIVATE MICROIDE_HAS_SDL3_TTF=1)
     target_link_libraries(microide_perf PRIVATE ${MICROIDE_SDL3_TTF_TARGET})
     if(NOT MICROIDE_FONTCONFIG_TARGET STREQUAL "")

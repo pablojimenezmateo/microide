@@ -377,6 +377,12 @@ namespace microide::util {
   X(RenderGridCompositeSurfaces, "render.grid_composite_surfaces")                              \
   X(RenderGridCompositeClusterRasterizations,                                                   \
     "render.grid_composite_cluster_rasterizations")                                             \
+  /* The other half of the same cell: a cluster served from the coverage atlas    */           \
+  /* instead of rasterized. Rasterizations + atlas blits is the non-ASCII cell     */           \
+  /* count, so the RATIO is the cache's hit rate and a collapse in it (a font      */           \
+  /* switch thrashing the atlas, a colour-glyph document, the slot cap) shows up   */           \
+  /* here rather than only as wall time.                                           */           \
+  X(RenderGridCompositeClusterAtlasBlits, "render.grid_composite_cluster_atlas_blits")          \
   /* --- project-change fan-out (shell thread; a branch switch is a burst) - */                 \
   X(EditorConfigResolveQueries, "editorconfig.resolve_queries")                                 \
   X(EditorConfigResolveMisses, "editorconfig.resolve_misses")                                   \

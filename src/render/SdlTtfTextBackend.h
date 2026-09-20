@@ -1,6 +1,7 @@
 #pragma once
 
 #include "render/AsciiGlyphAtlas.h"
+#include "render/GlyphClusterAtlas.h"
 #include "render/TextRendererBackend.h"
 
 #if MICROIDE_HAS_SDL3_TTF
@@ -215,6 +216,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void EnsureFallbackFontsLoaded() const;
   bool CanUseFastAscii(std::string_view text) const;
   void EnsureAsciiAtlas();
+  // Build the non-ASCII coverage atlas on the first cluster that needs it, at
+  // the current cell width and font height. Like EnsureAsciiAtlas, a session
+  // that never renders a non-ASCII string never allocates it.
+  void EnsureClusterAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
   // The composite for everything BuildAsciiCompositeSurface does not take: each
   // glyph cluster rendered on its own cell span (util::GridCellWidth cells), so
@@ -296,6 +301,12 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // Colour-independent coverage atlas for ASCII composites. Built lazily on the
   // first ASCII miss and rebuilt (via ClearCache) when the font size changes.
   std::unique_ptr<AsciiGlyphAtlas> ascii_atlas_;
+
+  // Colour-independent coverage atlas for the non-ASCII clusters of a grid
+  // composite, so a repeated code point is rasterized once per font rather
+  // than once per occurrence (TD-2026-09-06-289a). Reset by ClearCache
+  // alongside ascii_atlas_, since coverage is only reusable at one size.
+  std::unique_ptr<GlyphClusterAtlas> cluster_atlas_;
 
   // Atlas draw-path state. `is_gpu_renderer_` is captured at init from the SDL
   // renderer driver and selects between the two atlas paths (batched geometry vs

@@ -409,6 +409,7 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
 
 void SdlTtfTextBackend::ClearCache() {
   ascii_atlas_.reset();
+  cluster_atlas_.reset();
   if (atlas_texture_ != nullptr) {
     SDL_DestroyTexture(atlas_texture_);
     atlas_texture_ = nullptr;
@@ -445,6 +446,21 @@ void SdlTtfTextBackend::EnsureAsciiAtlas() {
     return;
   }
   ascii_atlas_ = AsciiGlyphAtlas::Build(font_, texture_format_);
+}
+
+void SdlTtfTextBackend::EnsureClusterAtlas() {
+  if (cluster_atlas_ != nullptr || font_ == nullptr) {
+    return;
+  }
+  // A slot has to hold the widest cluster the grid composite will ask for. That
+  // is a double-width cell; +2 px of headroom for a fallback glyph that renders
+  // a hair past its advance, matching AsciiGlyphAtlas's reservation. A cluster
+  // that still overruns is clipped to its own cells on the way out, exactly as
+  // the direct render path clips it.
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const int slot_width = static_cast<int>(std::ceil(char_width_ * scale_x * 2.0f)) + 2;
+  cluster_atlas_ = GlyphClusterAtlas::Build(font_, texture_format_, slot_width,
+                                            std::max(1, TTF_GetFontHeight(font_)));
 }
 
 SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
@@ -520,6 +536,7 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
   // per glyph, matching RenderGlyphAtlasGlyphs below. An instrument that costs
   // a locked instruction per glyph would be measuring itself.
   std::uint64_t cluster_rasterizations = 0;
+  std::uint64_t cluster_atlas_blits = 0;
   if (font_ == nullptr || text.empty()) {
     return nullptr;
   }
@@ -527,6 +544,7 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
   const bool atlas_ok = color.a == 255;
   if (atlas_ok) {
     EnsureAsciiAtlas();
+    EnsureClusterAtlas();
   }
 
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
@@ -588,6 +606,13 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
     } else if (ascii_cell && atlas_ok && ascii_atlas_ != nullptr &&
                ascii_atlas_->BlitInto(composite, dst_x, static_cast<char>(base), color)) {
       // Atlas blit, identical pixels to the ASCII composite path.
+    } else if (atlas_ok && cluster_atlas_ != nullptr &&
+               cluster_atlas_->BlitInto(composite, dst_x, span_px, cluster, color)) {
+      // Cluster coverage atlas hit: the same straight tint-copy the ASCII cells
+      // above take. This is the case that matters — the distinct clusters in a
+      // document are bounded by its script, while their occurrences are not, so
+      // past the first screen of a CJK file almost every cell lands here.
+      ++cluster_atlas_blits;
     } else {
       ++cluster_rasterizations;
       SDL_Surface* glyph = TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), color);
@@ -604,6 +629,8 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
   }
   util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeClusterRasterizations,
                               cluster_rasterizations);
+  util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeClusterAtlasBlits,
+                              cluster_atlas_blits);
   return composite;
 }
 

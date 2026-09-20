@@ -17,6 +17,7 @@
 #include <type_traits>
 
 #include "render/AsciiGlyphAtlas.h"
+#include "render/GlyphClusterAtlas.h"
 #include "render/SurfaceTextureCache.h"
 #include "render/GlyphSurfaceFormat.h"
 #include "render/PixelAlign.h"
@@ -60,6 +61,8 @@ static_assert(!std::is_copy_assignable_v<microide::render::SdlTtfTextBackend>,
               "SdlTtfTextBackend must not be copy-assignable either");
 static_assert(!std::is_copy_constructible_v<microide::render::AsciiGlyphAtlas>,
               "AsciiGlyphAtlas owns an SDL_Texture");
+static_assert(!std::is_copy_constructible_v<microide::render::GlyphClusterAtlas>,
+              "GlyphClusterAtlas owns an SDL_Surface and hands out pointers into its slot map");
 static_assert(!std::is_copy_constructible_v<microide::render::SurfaceTextureCache>,
               "SurfaceTextureCache owns SDL_Textures and must stay non-copyable");
 
@@ -753,6 +756,136 @@ void TestAsciiGlyphAtlasCoversPrintableRange() {
   Expect(!atlas->Covers(static_cast<char>(0x7F)),
          "atlas should not claim to cover the delete control code");
 
+  TTF_CloseFont(font);
+}
+
+// The non-ASCII counterpart of the atlas pixel-identity test, and the invariant
+// the cluster coverage cache stands on: a cluster served out of the atlas must be
+// byte-identical to the direct TTF_RenderText_Blended the composite loop used to
+// do per occurrence. If it is not, the cache is a rendering change wearing a
+// performance change's clothes.
+void TestGlyphClusterAtlasMatchesDirectRendering() {
+  EnsureDummySdlVideo();
+  TTF_Font* font = OpenTestMonospaceFont();
+  Expect(font != nullptr, "cluster atlas test should find a usable monospace font");
+
+  const int font_height = std::max(1, TTF_GetFontHeight(font));
+  const int slot_width = 64;
+  auto atlas = microide::render::GlyphClusterAtlas::Build(font, SDL_PIXELFORMAT_RGBA32, slot_width,
+                                                          font_height);
+  Expect(atlas != nullptr, "cluster atlas should build from a usable font");
+
+  // Wide code points, a Latin accent, a Greek letter, and a base + combining mark
+  // cluster — the shapes the grid composite hands this class.
+  const std::vector<std::string> clusters = {
+      "\xE6\x97\xA5",          // U+65E5 CJK, double width
+      "\xE6\x9C\xAC",          // U+672C CJK, double width
+      "\xED\x95\x9C",          // U+D55C Hangul, double width
+      "\xC3\xA9",              // U+00E9 e-acute
+      "\xCE\xBB",              // U+03BB lambda
+      "e\xCC\x81",             // e + U+0301 combining acute: one cluster, two code points
+  };
+  const std::vector<SDL_Color> colors = {
+      SDL_Color{0xff, 0xff, 0xff, 0xff},
+      SDL_Color{0xd6, 0x9c, 0x56, 0xff},
+      SDL_Color{0x20, 0x40, 0x80, 0xff},
+  };
+
+  std::size_t served = 0;
+  for (const SDL_Color color : colors) {
+    for (const std::string& cluster : clusters) {
+      SDL_Surface* reference =
+          TTF_RenderText_Blended(font, cluster.data(), cluster.size(), color);
+      if (reference == nullptr) {
+        continue;  // no font on this box covers it; nothing to compare
+      }
+      const int width = std::min(reference->w, slot_width);
+      const int height = std::min(reference->h, font_height);
+
+      SDL_Surface* expected = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32);
+      SDL_Surface* actual = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA32);
+      Expect(expected != nullptr && actual != nullptr, "cluster comparison surfaces should allocate");
+      Expect(SDL_FillSurfaceRect(expected, nullptr, 0), "expected surface should clear");
+      Expect(SDL_FillSurfaceRect(actual, nullptr, 0), "actual surface should clear");
+
+      // The direct path the composite loop takes when the atlas declines.
+      SDL_SetSurfaceBlendMode(reference, SDL_BLENDMODE_NONE);
+      SDL_Rect src{0, 0, width, height};
+      SDL_Rect dst{0, 0, width, height};
+      Expect(SDL_BlitSurface(reference, &src, expected, &dst), "direct cluster blit should succeed");
+
+      if (atlas->BlitInto(actual, 0, width, cluster, color)) {
+        ++served;
+        Expect(CountPixelDifferences(actual, expected) == 0,
+               "an atlas-served cluster must be pixel-identical to a direct colour render");
+      }
+      SDL_DestroySurface(actual);
+      SDL_DestroySurface(expected);
+      SDL_DestroySurface(reference);
+    }
+  }
+  // Without this the whole loop above is vacuous on a box whose fonts cover
+  // nothing: every BlitInto could decline and every assertion would be skipped.
+  Expect(served >= clusters.size(),
+         "the cluster atlas should have served at least one full colour pass of the sample");
+
+  // Repeated occurrences are the entire point: the second ask for a cluster must
+  // not add a slot.
+  const std::size_t resident = atlas->ResidentClusters();
+  SDL_Surface* scratch = SDL_CreateSurface(slot_width, font_height, SDL_PIXELFORMAT_RGBA32);
+  Expect(scratch != nullptr, "repeat scratch should allocate");
+  for (int i = 0; i < 50; ++i) {
+    Expect(SDL_FillSurfaceRect(scratch, nullptr, 0), "repeat scratch should clear");
+    (void)atlas->BlitInto(scratch, 0, slot_width, clusters.front(), colors.front());
+  }
+  Expect(atlas->ResidentClusters() == resident,
+         "re-blitting a resident cluster must not grow the atlas");
+
+  // Translucency breaks the tint identity, so the atlas declines and the backend
+  // keeps its exact fallback.
+  Expect(!atlas->BlitInto(scratch, 0, slot_width, clusters.front(),
+                          SDL_Color{0xff, 0xff, 0xff, 0x80}),
+         "the cluster atlas must decline translucent colours");
+  SDL_DestroySurface(scratch);
+
+  TTF_CloseFont(font);
+}
+
+// The slot cap is a real bound, and a bound that silently stops working is worse
+// than none: past it the atlas must DECLINE rather than return a wrong slot, so
+// the composite loop falls back to the direct render it always had.
+void TestGlyphClusterAtlasStopsAtItsSlotCap() {
+  EnsureDummySdlVideo();
+  TTF_Font* font = OpenTestMonospaceFont();
+  Expect(font != nullptr, "cluster cap test should find a usable monospace font");
+
+  const int font_height = std::max(1, TTF_GetFontHeight(font));
+  auto atlas =
+      microide::render::GlyphClusterAtlas::Build(font, SDL_PIXELFORMAT_RGBA32, 32, font_height);
+  Expect(atlas != nullptr, "cluster atlas should build from a usable font");
+
+  SDL_Surface* scratch = SDL_CreateSurface(32, font_height, SDL_PIXELFORMAT_RGBA32);
+  Expect(scratch != nullptr, "cap scratch should allocate");
+
+  // Walk a contiguous run of CJK code points — more than the cap — and count what
+  // the atlas admitted. Some may fail to render on a bare box; the assertions
+  // below are about the CAP, and both of them hold either way.
+  const std::size_t capacity = atlas->SlotCapacity();
+  for (std::size_t i = 0; i < capacity + 64; ++i) {
+    const char32_t code = static_cast<char32_t>(0x4E00 + i);
+    std::string cluster;
+    cluster.push_back(static_cast<char>(0xE0 | ((code >> 12) & 0x0F)));
+    cluster.push_back(static_cast<char>(0x80 | ((code >> 6) & 0x3F)));
+    cluster.push_back(static_cast<char>(0x80 | (code & 0x3F)));
+    Expect(SDL_FillSurfaceRect(scratch, nullptr, 0), "cap scratch should clear");
+    (void)atlas->BlitInto(scratch, 0, 16, cluster, SDL_Color{0xff, 0xff, 0xff, 0xff});
+  }
+  Expect(atlas->ResidentClusters() <= capacity,
+         "the cluster atlas must never exceed its declared slot capacity");
+  Expect(atlas->ResidentClusters() > 0,
+         "the cap test should have admitted clusters, or it proves nothing about the cap");
+
+  SDL_DestroySurface(scratch);
   TTF_CloseFont(font);
 }
 
@@ -3184,6 +3317,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "AsciiGlyphAtlas keeps glyph coverage when asked for an alpha-less format",
           TestAsciiGlyphAtlasKeepsCoverageUnderAlphaLessFormat);
+  AddTest(tests,
+          "GlyphClusterAtlas tinted blit matches a direct cluster render",
+          TestGlyphClusterAtlasMatchesDirectRendering);
+  AddTest(tests,
+          "GlyphClusterAtlas declines past its slot capacity",
+          TestGlyphClusterAtlasStopsAtItsSlotCap);
   AddTest(tests,
           "Glyph surface format choice always carries alpha",
           TestGlyphSurfaceFormatChoiceAlwaysCarriesAlpha);
