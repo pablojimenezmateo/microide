@@ -509,7 +509,7 @@ second kind — superseded by `left_absent`/`right_absent`, which is what the
 patch generator actually reads, even though the OLD field's comment claimed
 that consumer.
 
-### TD-2026-09-19-295 — the Tab key decides ONE intent for the whole caret set; VS Code decides per selection.
+### TD-2026-09-19-295 — the Tab key decides ONE intent for the whole caret set; VS Code decides per selection. [RESOLVED 2026-09-20 — and the two machines were never reconciled; one replaced both.]
 
 `editor::ClassifyTabKey` resolves a single `TabKeyIntent` for the whole caret
 set. VS Code's `TypeOperations.tab` builds `commands[i]` **per selection**: a
@@ -549,6 +549,32 @@ Alt+click on top of a block selection, or a Ctrl+D run where one occurrence
 happens to fill a whole line. Rare enough to leave, not rare enough to pretend
 is not there — hence the pinned test, which turns the fix into a one-line
 expectation change.
+
+**Resolved 2026-09-20.** The entry framed the work as making `ReindentRegions`
+and `ApplyMultiCaretEdit` commit together, and that framing was the reason it
+looked expensive. Neither is used: `ApplyMixedTabKey` lowers every cursor's
+share to a (range, text) replacement in PRE-EDIT coordinates — a block cursor
+emits an indent insert at column 0 of each non-empty line it covers, a point
+cursor replaces its own range with the padding that reaches its own next tab
+stop — and applies them highest-first inside one undo group. The undo grouping
+that looked missing was already there; what was missing was noticing that a
+line shift IS a set of inserts and therefore the same kind of edit as the other
+half.
+
+The caret restore needed one rule rather than two: a pre-edit position moves by
+the edits on its own line that end at or before it. That reproduces `shift_col`
+for a block cursor (its own column-0 insert is the only edit at or before it),
+lands a point cursor just past what it inserted (its own edit is the last one
+counted at its range end), and handles the one case that made the order look
+load-bearing — a point caret on a line a block site also covers, which happens
+at the ragged ends of a multi-line selection.
+
+`ClassifyTabKey` classifies per site and reports `kMixed` only when the cursors
+disagree, so an all-block or all-point set still runs the existing whole-set
+appliers unchanged. Two tests moved: the pinned divergence test to the VS Code
+expectation (plus caret/selection assertions and a one-undo round trip), and
+the classifier test's bare-primary-beside-a-multi-line-secondary case from
+`kIndentBlock` to `kMixed`.
 
 ### TD-2026-09-17-294 — "Discard All did nothing": the git sidebar's whole refusal channel was a string nothing paints. [RESOLVED 2026-09-17]
 
