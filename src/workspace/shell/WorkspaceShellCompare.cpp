@@ -246,7 +246,6 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
     layout.divider_width = std::max(1.0f, std::ceil(text_renderer_.CharWidth()));
     layout.left_x = rect.x + 8.0f;
     layout.review_summary_y = rect.y + 4.0f;
-    layout.action_hint_y = layout.review_summary_y + layout.line_height;
     layout.header_y = layout.review_summary_y + layout.line_height;
     layout.rows_y = layout.header_y + layout.line_height + 6.0f;
 

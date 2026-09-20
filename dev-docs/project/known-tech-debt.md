@@ -398,7 +398,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn.
+### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn. [First instance RESOLVED 2026-09-20; the other two remain open below.]
 
 The whole producer side of the compare surface's stage/discard hint row is
 live; the consumer side is gone.
@@ -425,6 +425,25 @@ fills one, and **re-pointing those three tests at whatever actually gates the
 a/A/c/C/d/D keys** in `KeyInputCoordinator::HandleCompareKeyDown`. Deleting
 them outright would drop real coverage; that re-pointing is the work, not the
 deletion.
+
+**Resolved 2026-09-20.** Both fields are gone, along with the `AppendHintSegment`
+block that filled one — `RefreshCompareReviewHeader` runs on every compare model
+rebuild, so that was one `std::string` built and thrown away per rebuild. The
+three tests now ask `PatchApplyService::CanApplyPatchToCompareTab`, which is what
+every stage/unstage/discard entry point actually runs before building a patch; it
+became `static` (it reads nothing but the tab) so a test can call it without a
+service instance.
+
+Re-pointing found the hint had been **wrong**, not merely invisible: it showed the
+stage verbs unless `staging_view == Staged`, while the gate allows stage unless
+Staged **and** unstage unless Unstaged — so in the Combined lens both verbs work
+and the hint named only one. Two tests were added for the lens rules the hint
+never covered (`CombinedWorkingTreeOffersStageAndDiscard`,
+`UnstagedViewRefusesUnstage`), and the commit-review test now asserts the verbs
+*refuse* rather than that a string omits them. Note also that
+`HandleCompareKeyDown` dispatches a/A/c/C/d/D unconditionally — the gate is in
+`PatchApplyService`, which is the other reason a hint line computed from tab state
+was never the authority.
 
 Found by a field-level reachability sweep (written-never-read struct fields),
 which also found `DeferredTabHandle::language_hint` — closed in c195bf54.

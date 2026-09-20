@@ -282,7 +282,6 @@
     float center_x = 0.0f;
     float right_x = 0.0f;
     float review_summary_y = 0.0f;
-    float action_hint_y = 0.0f;
     float header_y = 0.0f;
     float rows_y = 0.0f;
     int visible_rows = 1;

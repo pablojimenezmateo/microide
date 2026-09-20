@@ -281,24 +281,6 @@ void RefreshCompareReviewHeader(CompareTabState& compare_tab) {
     }
   }
   compare_tab.review_header.summary_line = std::move(summary);
-
-  std::string actions;
-  AppendHintSegment(actions, "[ / ] hunks");
-  AppendHintSegment(actions, "Enter open");
-  AppendHintSegment(actions, "o open");
-  if (compare_tab.semantic_file.file_kind == compare::CompareSemanticFileKind::Text &&
-      compare_tab.right_editable && !compare_tab.model.hunks.empty()) {
-    if (compare_tab.staging_view == compare::WorkingTreeStagingView::Staged) {
-      AppendHintSegment(actions, "c unstage hunk");
-      AppendHintSegment(actions, "C unstage lines");
-    } else {
-      AppendHintSegment(actions, "a stage hunk");
-      AppendHintSegment(actions, "A stage lines");
-    }
-    AppendHintSegment(actions, "d discard hunk");
-    AppendHintSegment(actions, "D discard lines");
-  }
-  compare_tab.review_header.action_hint_line = std::move(actions);
 }
 
 std::size_t CompareTabPresentationRowCount(const CompareTabState& compare_tab) {

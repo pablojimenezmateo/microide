@@ -6,6 +6,7 @@
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/git/PatchApplyService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
@@ -30,8 +31,10 @@ using microide::compare::InferCompareReviewMode;
 using microide::compare::InferCompareSemanticFileMetadata;
 using microide::compare::InferWorkingTreeStagingView;
 using microide::compare::WorkingTreeStagingView;
+using microide::project::PatchOperationKind;
 using microide::workspace::CompareCollapsedContextAction;
 using microide::workspace::CompareTabState;
+using microide::workspace::PatchApplyService;
 using microide::workspace::ExpandCompareCollapsedContext;
 using microide::workspace::RefreshCompareReviewHeader;
 
@@ -449,57 +452,75 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                             "inline cache should retain left spans");
                    }});
 
-  tests.push_back({"CompareReview/HeaderShowsWorkingTreeStageHints",
-                   [] {
-                     CompareTabState compare_tab;
-                     compare_tab.review_mode = CompareReviewMode::WorkingTree;
-                     compare_tab.staging_view = WorkingTreeStagingView::Combined;
-                     compare_tab.right_editable = true;
-                     compare_tab.model = BuildCompareModel("old\n", "new\n");
-                     compare_tab.semantic_file = InferCompareSemanticFileMetadata(
-                         CompareSemanticMetadataInput{
-                             .path = "f.txt",
-                             .left_content = "old\n",
-                             .right_content = "new\n",
-                             .git_entry = std::nullopt,
-                             .old_path = {},
-                         });
+  // The three tests below used to assert on `review_header.action_hint_line`,
+  // a string no surface ever painted (TD-2026-09-19-296). The product rule they
+  // encode — which mutation verbs each review mode and staging lens offers — is
+  // real, so they now ask the thing that actually decides it: the gate every
+  // stage/unstage/discard entry point runs before building a patch.
+  const auto working_tree_tab = [](WorkingTreeStagingView staging_view) {
+    CompareTabState compare_tab;
+    compare_tab.review_mode = CompareReviewMode::WorkingTree;
+    compare_tab.right_ref = "WORKTREE";
+    compare_tab.staging_view = staging_view;
+    compare_tab.right_editable = true;
+    compare_tab.model = BuildCompareModel("old\n", "new\n");
+    compare_tab.semantic_file = InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+        .path = "f.txt",
+        .left_content = "old\n",
+        .right_content = "new\n",
+        .git_entry = std::nullopt,
+        .old_path = {},
+    });
+    return compare_tab;
+  };
 
+  tests.push_back({"CompareReview/HeaderShowsWorkingTreeStagingLens",
+                   [working_tree_tab] {
+                     CompareTabState compare_tab =
+                         working_tree_tab(WorkingTreeStagingView::Combined);
                      RefreshCompareReviewHeader(compare_tab);
                      Expect(compare_tab.review_header.summary_line.find("Working tree review") !=
                                 std::string::npos &&
                                 compare_tab.review_header.summary_line.find("combined") !=
                                     std::string::npos,
                             "working-tree header should expose the review mode and staging lens");
-                     Expect(compare_tab.review_header.action_hint_line.find("a stage hunk") !=
-                                std::string::npos &&
-                                compare_tab.review_header.action_hint_line.find("D discard lines") !=
-                                    std::string::npos,
-                            "editable working-tree compares should surface stage and discard hints");
                    }});
 
-  tests.push_back({"CompareReview/HeaderShowsUnstageHintsForStagedView",
-                   [] {
-                     CompareTabState compare_tab;
-                     compare_tab.review_mode = CompareReviewMode::WorkingTree;
-                     compare_tab.staging_view = WorkingTreeStagingView::Staged;
-                     compare_tab.right_editable = true;
-                     compare_tab.model = BuildCompareModel("old\n", "new\n");
-                     compare_tab.semantic_file = InferCompareSemanticFileMetadata(
-                         CompareSemanticMetadataInput{
-                             .path = "f.txt",
-                             .left_content = "old\n",
-                             .right_content = "new\n",
-                             .git_entry = std::nullopt,
-                             .old_path = {},
-                         });
+  tests.push_back({"CompareReview/CombinedWorkingTreeOffersStageAndDiscard",
+                   [working_tree_tab] {
+                     const CompareTabState compare_tab =
+                         working_tree_tab(WorkingTreeStagingView::Combined);
+                     Expect(PatchApplyService::CanApplyPatchToCompareTab(
+                                compare_tab, PatchOperationKind::StageHunk) &&
+                                PatchApplyService::CanApplyPatchToCompareTab(
+                                    compare_tab, PatchOperationKind::DiscardSelectedLines),
+                            "editable working-tree compares should offer stage and discard");
+                   }});
 
-                     RefreshCompareReviewHeader(compare_tab);
-                     Expect(compare_tab.review_header.action_hint_line.find("c unstage hunk") !=
-                                std::string::npos &&
-                                compare_tab.review_header.action_hint_line.find("C unstage lines") !=
-                                    std::string::npos,
-                            "staged working-tree compares should swap stage hints for unstage hints");
+  tests.push_back({"CompareReview/StagedViewSwapsStageForUnstage",
+                   [working_tree_tab] {
+                     const CompareTabState compare_tab =
+                         working_tree_tab(WorkingTreeStagingView::Staged);
+                     Expect(PatchApplyService::CanApplyPatchToCompareTab(
+                                compare_tab, PatchOperationKind::UnstageHunk) &&
+                                PatchApplyService::CanApplyPatchToCompareTab(
+                                    compare_tab, PatchOperationKind::UnstageSelectedLines),
+                            "the staged lens should offer the unstage verbs");
+                     Expect(!PatchApplyService::CanApplyPatchToCompareTab(
+                                compare_tab, PatchOperationKind::StageHunk),
+                            "the staged lens should refuse a stage: there is nothing left to stage");
+                   }});
+
+  tests.push_back({"CompareReview/UnstagedViewRefusesUnstage",
+                   [working_tree_tab] {
+                     const CompareTabState compare_tab =
+                         working_tree_tab(WorkingTreeStagingView::Unstaged);
+                     Expect(PatchApplyService::CanApplyPatchToCompareTab(
+                                compare_tab, PatchOperationKind::StageHunk),
+                            "the unstaged lens should offer a stage");
+                     Expect(!PatchApplyService::CanApplyPatchToCompareTab(
+                                compare_tab, PatchOperationKind::UnstageHunk),
+                            "the unstaged lens should refuse an unstage");
                    }});
 
   tests.push_back({"CompareReview/HeaderHidesMutationHintsForCommitReview",
@@ -521,11 +542,14 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                      Expect(compare_tab.review_header.summary_line.find("Commit review") !=
                                 std::string::npos,
                             "commit compares should identify the review mode in the header");
-                     Expect(compare_tab.review_header.action_hint_line.find("a stage hunk") ==
-                                std::string::npos &&
-                                compare_tab.review_header.action_hint_line.find("c unstage hunk") ==
-                                    std::string::npos,
-                            "non-editable commit compares should omit mutation hints");
+                     Expect(!PatchApplyService::CanApplyPatchToCompareTab(
+                                compare_tab, PatchOperationKind::StageHunk) &&
+                                !PatchApplyService::CanApplyPatchToCompareTab(
+                                    compare_tab, PatchOperationKind::UnstageHunk) &&
+                                !PatchApplyService::CanApplyPatchToCompareTab(
+                                    compare_tab, PatchOperationKind::DiscardHunk),
+                            "a commit review is not a working-tree patch target: every mutation "
+                            "verb must refuse, not just go unmentioned");
                    }});
 
   tests.push_back({"CompareReview/PresentationMapsModelRow",

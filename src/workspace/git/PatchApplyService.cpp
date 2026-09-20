@@ -42,7 +42,7 @@ void PatchApplyService::SetCallbacks(Callbacks callbacks) {
 }
 
 bool PatchApplyService::CanApplyPatchToCompareTab(const CompareTabState& compare_tab,
-                                                  const PatchOperationKind operation) const {
+                                                  const PatchOperationKind operation) {
   if (!IsWorkingTreePatchTarget(compare_tab)) {
     return false;
   }

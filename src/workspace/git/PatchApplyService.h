@@ -44,8 +44,13 @@ class PatchApplyService {
   void DrainCompletions();
   int PendingCompletionCount() const { return completion_mailbox_.PendingCount(); }
 
-  bool CanApplyPatchToCompareTab(const CompareTabState& compare_tab,
-                                 project::PatchOperationKind operation) const;
+  // The authoritative answer to "does this compare tab offer this verb?".
+  // Static because it reads nothing but the tab: every apply entry point goes
+  // through it, and it is what tests should assert against — the review
+  // header used to carry a parallel hint string encoding the same rule, which
+  // nothing painted (TD-2026-09-19-296).
+  static bool CanApplyPatchToCompareTab(const CompareTabState& compare_tab,
+                                        project::PatchOperationKind operation);
 
   bool RequestStageHunk(CompareTabState& compare_tab);
   bool RequestStageSelectedLines(CompareTabState& compare_tab);

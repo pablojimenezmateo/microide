@@ -48,7 +48,6 @@ struct CompareHoverState {
 
 struct CompareReviewHeaderState {
   std::string summary_line;
-  std::string action_hint_line;
 };
 
 struct CompareVisibleLayoutCacheKey {
