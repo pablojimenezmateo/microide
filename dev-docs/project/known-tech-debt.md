@@ -1,5 +1,11 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-09-20 (§ TD-2026-09-20-298 through 301 for the perf-instrumentation
+pass: two scroll sweeps whose gated p50 was a no-op, the per-glyph coverage cache
+that became measurable once one of them started measuring, and the two O(n²)
+shapes in the multi-caret edit path that the scenario written for it found on its
+first run).
+
 Reviewed 2026-09-13 (§ TD-2026-09-13-293 for the per-call glue-objects pass: the
 coordinators and services that were rebuilt at every call, and the three things
 that pass found and left).
@@ -397,6 +403,166 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-09-20-301 — an undo group merged into the SMALLER side, so every multi-region shaping verb was quadratic. [RESOLVED 2026-09-20, same session it was found.]
+
+A multi-region shaping verb applies its regions HIGH-TO-LOW — that is what keeps
+each region's line indices valid against the still-unedited buffer below it.
+Inside an undo group each child therefore arrives BELOW everything already
+accumulated and `InsertSortedDisjoint` lands it at index 0.
+`CoalesceAdjacentDisjoint` then merged the pair in the order they sat, which
+means it APPENDED the whole accumulated blob onto the one-line child: a fresh
+full-size buffer and a full-size copy, per child.
+
+Toggling a block comment at 1,201 cursors appended **244,826,700 bytes in 2,400
+calls** — ~102 KB each — to produce a 105 KB result. That is O(regions²), and at
+the 10,000-cursor cap it is ~17 GB.
+
+The fix is the direction, not the algorithm: merge into whichever side already
+owns the bigger blob. The two orders produce the same entry — append the high
+side onto the low, or prepend the low side onto the high — and the per-child view
+states are overwritten wholesale by `FinishActiveGroup`, so nothing the group
+records depends on which one runs.
+
+That put `LineBlob::prepend` on the hot path, and it was `replace_range(0, 0, other)`
+— a whole new byte buffer and a whole new offset table per call, which would have
+moved the quadratic rather than removed it. It is an in-place front insert now.
+The shift stays O(n) (the byte buffer is contiguous and the offsets are absolute,
+which is what every reader depends on); what changes is the allocator traffic,
+from one full-size allocation per merge to O(log n) for the whole group.
+
+    multi_caret_edit.toggle_block_comment   253.8 MB -> 3.8 MB   (-98.5%)
+                                            18,036 -> 13,284 allocations
+                                            7.87 -> 5.93 ms
+
+**How it was found, because the first two guesses were both wrong.** The phase
+tracer named `LineBlob::append` inside `MergeGroupEntry`, at ~105 KB per call.
+The first reading was "the exact `data_.reserve(base + other.size())` before the
+append defeats geometric growth" — it does not; libstdc++'s `reserve` applies the
+same doubling rule, and removing it changed the measurement by zero bytes. The
+second was "the merge must be prepending" — it was not. What settled it was a
+throwaway probe counting calls and bytes on both blob paths, which reported
+`append ops=2400 bytes=244826700 | rebuild ops=0`: ~102 KB *per append*, so the
+side being COPIED was the accumulated one, which can only happen if the small
+child is the merge target. Two reasoned hypotheses, one two-line probe; the probe
+was the cheap step and should have been first.
+
+**What is left.** The merge is still O(total bytes) in memmove per child, so a
+group of N children is O(N²) in copying even though it is now O(N) in
+allocations. The measured 5.93 ms for 1,201 regions is most of the way there and
+the remaining term is memmove rather than malloc, but at the 10,000-cursor cap
+that is still ~1.7 GB of copying. The structural answer is to keep the children
+disjoint and let `FinishActiveGroup` fold them once — the entry format already
+supports it (`extra_parts`), and `CoalesceAdjacentDisjoint` is what collapses
+them eagerly. Not taken here because the eager coalescing is what keeps the
+common two-child case a single range, and the trade needs its own measurement.
+
+### TD-2026-09-20-300 — a multi-caret edit copied the whole caret set once per caret. [RESOLVED 2026-09-20, same session it was found.]
+
+`ApplyMultiCaretEdit` builds one history entry per site and folds them all into
+ONE aggregate, rebuilding the caret set afterwards from where the sites landed.
+The per-site entries' own before/after view states are therefore written and
+never read — which this codebase already knew, because
+`CaptureViewStateForGroupedEntry` exists precisely to skip the caret vector for
+an entry about to become a group's child.
+
+It only skipped it when `IsGroupActive()`. That loop is not an undo group — it
+pushes the aggregate itself — so every site captured the whole set, twice:
+
+    one Tab over 1,201 cursors   163.9 MB allocated
+    of which                     161 MB, in 2,402 copies of a 1,200-entry vector
+
+O(carets²) in bytes. At the 10,000-cursor cap the same keypress is ~5.6 GB.
+
+Scoping the same suppression over the apply loop takes
+`multi_caret_edit.soft_tab` from 163.9 MB to 2.4 MB (-98.5%), 9,632 to 7,230
+allocations, and 5.54 ms to 2.64 ms.
+
+The guard is released before the aggregate's own state is captured — that one
+must be complete. It is sound because the caret set is rebuilt unconditionally
+afterwards: each entry's now-caret-less `after_state` is restored as it is
+applied, so `secondary_carets_` is empty when the loop ends and
+`SetSecondaryCarets` fills it from the sites.
+
+Worth noting what caught the new member: the architecture lint on TextViewport's
+special members, before the compiler saw anything wrong. A transient flag that a
+move silently carried would have suppressed a capture in a viewport that was not
+in the loop.
+
+### TD-2026-09-20-299 — accepting a merge side told the result pane the accepted text was empty. [RESOLVED 2026-09-20, same session it was found.]
+
+`MergeTabState::max_visual_columns` sizes the merge result pane's horizontal
+scroll extent and decides whether its horizontal scrollbar appears at all, and it
+is a monotonic maximum — nothing recomputes it downward.
+
+`ApplyMergeChoice` moved the replacement lines into `ReplaceLines` and then handed
+the moved-from vector to the width update. On libstdc++ that is an empty vector,
+so every accept raised the maximum by zero. Accept a side wider than anything the
+pane had already measured and the text lands in the buffer but the pane cannot
+scroll far enough right to show it.
+
+The surrounding code shows the shape was seen once and not followed through:
+`replacement_line_count` is captured immediately before the move precisely
+because the vector is about to be gone, and the second reader two statements
+later was missed.
+
+Fixed by reporting the width before the move. The failure path now raises the
+maximum without the edit landing, which is within what the field already is.
+
+Found by a use-after-move sweep over `src/**/*.cpp` — a per-function scan for
+`std::move(name)` followed by a later mention of `name`. Twenty-odd candidates,
+nineteen of them false positives (lambda captures that shadow the moved name, and
+early returns between the move and the use, neither of which a text scan
+models). One real. The sweep is cheap enough to repeat and the false-positive
+classes are stable, so the useful form of it is: read only the hits where the
+later use is in the same basic block as the move.
+
+### TD-2026-09-20-298 — both scroll sweeps stopped scrolling, and their baselines gated the no-op. [RESOLVED 2026-09-20, same session it was found.]
+
+`editor_cjk_scroll_paint` shipped on 2026-09-20 to make TD-2026-09-06-289a's
+deferral condition observable. It was not observable. The scenario body runs once
+per iteration but the SHELL persists across them, so `OpenTab` re-focused the tab
+the previous iteration had left parked wherever its sweep ended. 160 page-downs
+is ~7,200 rows against a 20,000-line fixture, so the warmup and the first two
+iterations walked the file to its end and every iteration after that paged
+against the bottom, painting one unchanging screen: zero composites, zero
+texture-cache misses, zero allocations.
+
+The gated p50 was that no-op —
+
+    phase[cjk_scroll_paint.page_down_sweep].p50_allocations: 0
+
+— and the run reported PASS. `editor_scroll_fresh_content_large`, the ASCII
+scenario the CJK one is supposed to be a controlled A/B against, had exactly the
+same defect: 640 page-downs is ~28,800 rows against a 50k-line fixture.
+
+**Both baselines carried the signature in plain sight**, and it is worth naming
+because it is mechanically checkable across the whole baseline set:
+
+    editor_cjk_scroll_paint           p50_alloc 212  max 13,279   wall_spread 263%
+    editor_scroll_fresh_content_large p50_alloc 168  max  9,370   wall_spread  74%
+
+A 56x-to-60x gap between p50 and max allocations in a scenario whose iterations
+are supposed to be identical is a bimodal series, and `wall_spread_percent` says
+the same thing again. A sweep of every committed baseline for that ratio found
+these two and nothing else; the other high-ratio entries (`cold_startup_*`,
+`typing_small_file`) are warmup-vs-steady-state, which is the shape the harness
+is built around.
+
+Fixed by resetting the viewport to the top of the file before the measured sweep
+and asserting afterwards that it scrolled — the phase-level guard
+`dev-docs/performance/perf-harness.md` asks for whenever a phase's subject is an
+interaction. `editor_scroll_fresh_content_large` also gained the declared phase
+TD-2026-09-06-289a asked for: without one the only number it published was a
+whole-run total including the file open and eight warm frames, so dividing it by
+640 compared a sweep against a sweep-plus-setup.
+
+Re-recorded on perf-runner-v1. The CJK sweep's `wall_spread_percent` went from
+263% to 0.41%, which is the bimodality collapsing, and its timing half is armed
+rather than advisory. Per painted frame the pair is now directly comparable:
+
+    ASCII  640 frames / 698 ms = 1.09 ms
+    CJK    160 frames / 453 ms = 2.83 ms
 
 ### TD-2026-09-20-297 — uncommenting a block rescans the whole document's width table. [RESOLVED 2026-09-20 — both halves; 400,008 entries read per iteration became 784]
 
@@ -1298,7 +1464,7 @@ TD-2026-09-05-286). Every finding is its own commit with a regression test
   (asan/ubsan on the tree before the shared-buffer commits, tsan on the tree
   with the shared-buffer commit; nothing after that touches a thread).
 
-#### TD-2026-09-06-289a — a non-ASCII string's texture is composited one glyph cluster per SDL_ttf call. [OPEN — perf follow-up; MEASURABLE as of 2026-09-20, and the numbers say the cache thrash matters more than the rasterization]
+#### TD-2026-09-06-289a — a non-ASCII string's texture is composited one glyph cluster per SDL_ttf call. [RESOLVED 2026-09-20 — the per-glyph coverage cache this entry proposed, built once the scenario that was supposed to measure it started measuring]
 
 `SdlTtfTextBackend::BuildGridCompositeSurface` renders each cluster of a
 non-ASCII string with its own `TTF_RenderText_Blended` so it can land on its
@@ -1360,6 +1526,43 @@ FAILING on `p95_allocations` (+38.8%). That was the measurement, not the code �
 iterations against a baseline recorded over 10, where p95 lands on the worst
 pass. It passes at 10. The harness warns about short runs for rss and net-heap
 but not for allocation percentiles.
+
+**2026-09-20, later the same day — RESOLVED, and the "cache thrash" reading
+above was wrong.** Evictions tracking misses is not thrash in this scenario; it
+is the correct steady state, because a sweep through fresh content never revisits
+a row, so a row evicted before reuse would have been evicted after reuse too. The
+counter that mattered was the one this entry predicted: `render.grid_composite_cluster_rasterizations`,
+277,520 for 160 painted frames.
+
+`GlyphClusterAtlas` is the per-glyph coverage cache — the non-ASCII counterpart
+of `AsciiGlyphAtlas`, a growable strip of uniform coverage slots keyed by the
+cluster's UTF-8 bytes, so a code point is rasterized once per font instead of
+once per occurrence. It rests on the same identity the ASCII atlas does (a
+glyph's shape is colour-independent, so one white raster modulated by an opaque
+colour reproduces a direct render byte for byte), and the two cases that break
+that identity are DETECTED rather than assumed: a translucent colour, and a
+COLOUR glyph, whose raster is not white where it is opaque. Either one declines
+and the caller takes the direct path it always had, as does the 4,096-slot cap.
+
+Measured on perf-runner-v1, same binary either side of the call-site guard,
+calibration within 1.6%:
+
+    cluster rasterizations   277,520 -> 2,776   (-99.0%)
+    phase p50 wall            559.8 -> 453.0 ms (-19.1%)
+    scenario p50 wall         573.3 -> 465.4 ms (-18.8%)
+    allocations                 12,713 -> 12,713 (unchanged)
+
+Identical allocation counts either side is the tell that this is work removed
+rather than moved — SDL surfaces do not go through `operator new`, so the
+allocation gate could not have seen this fix any more than it could see the cost.
+`render.grid_composite_cluster_atlas_blits` is the other half of the non-ASCII
+cell count, so the RATIO is the hit rate and a collapse in it — a font switch, a
+colour-glyph document, the slot cap — is visible rather than only slower.
+
+And the measurement this entry deferred on could not have been taken when it was
+written OR when it was first re-read: the scenario stopped scrolling after two
+iterations and its gated p50 was a no-op (TD-2026-09-20-298). The 19% above is
+against the fixed scenario.
 
 ### TD-2026-09-05-288 — the second 2026-09-05 pass: thirty-one defects in the subsystems the earlier passes had not read, found mostly by comparing behaviour with VS Code's rule. [RESOLVED same session — open remainder zero.]
 
