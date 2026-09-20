@@ -25,6 +25,105 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-09-20 instrumentation pass: two gates measuring a no-op, and the two O(n²) the scenario written to replace them found immediately
+
+The pass started from the perf gate, which was green: 118 scenarios, 0 FAIL, 0
+SKIP, and `tools/perf-gate-slack.py` reporting 221 of 232 allocation gates within
+10 % of their measurement. Nothing in the suite's own verdict pointed anywhere.
+
+**So the first finding came from asking what the baselines LOOK like rather than
+what they say.** A scenario whose iterations are meant to be identical should
+have `p50_allocations` and `max_allocations` close together. Two did not:
+
+    editor_cjk_scroll_paint           p50 212  max 13,279   wall_spread 263 %
+    editor_scroll_fresh_content_large p50 168  max  9,370   wall_spread  74 %
+
+A 56x-to-60x gap is a bimodal series, and `wall_spread_percent` says it again.
+Both are page-down sweeps, and both had the same defect: the scenario body runs
+once per iteration but the SHELL persists across them, so `OpenTab` re-focused
+the tab the previous iteration had left parked at the end of its sweep. The
+warmup and the first one or two iterations walked the fixture to its end; every
+iteration after that paged against the bottom, repainting one unchanging screen.
+Zero composites, zero texture-cache misses, zero allocations — and that no-op was
+the gated p50. Both PASSED (TD-2026-09-20-298).
+
+That ratio is mechanically checkable over the whole baseline set, and the sweep
+of it found these two and nothing else. The other high-ratio entries
+(`cold_startup_*`, `typing_small_file`) are warmup-versus-steady-state, which is
+the shape the harness is built around.
+
+### The deferral that could not be observed
+
+TD-2026-09-06-289a had deferred a per-glyph coverage cache until "a CJK-heavy
+file measurably pays for it". `editor_cjk_scroll_paint` existed to make that
+observable and, because of the above, did not. With the sweep actually sweeping,
+the counter the entry predicted reads 277,520 cluster rasterizations for 160
+painted frames — ~1,735 shaping + rasterization calls per frame, against 1 for
+the same sweep over ASCII.
+
+`GlyphClusterAtlas` is the non-ASCII counterpart of `AsciiGlyphAtlas`: a growable
+strip of uniform coverage slots keyed by the cluster's UTF-8 bytes. Same identity
+(a glyph's shape is colour-independent, so one white raster modulated by an
+opaque colour reproduces a direct render byte for byte), and the two cases that
+break it — a translucent colour, a COLOUR glyph — are detected rather than
+assumed.
+
+    cluster rasterizations   277,520 -> 2,776   (-99.0 %)
+    phase p50 wall            559.8 -> 453.0 ms (-19.1 %)
+    allocations                12,713 -> 12,713 (unchanged)
+
+Identical allocation counts either side is the tell that this is work removed
+rather than moved. It is also why no allocation gate could ever have seen this:
+SDL surfaces do not go through `operator new`, so the whole per-cluster cost was
+invisible to the suite's sharpest instrument. **A phase that allocates nothing
+and still takes 3.5 ms a frame is the blind spot this suite has**, and the answer
+is a counter in the deferral's own units, not a tighter envelope.
+
+### Then the new scenario found the real defects
+
+The multi-caret verbs that shipped in the 2026-09 work — the per-cursor Tab, the
+per-caret block comment, Join Lines, Add Cursor Below — had no perf coverage at
+all. `editor_multi_caret_edit_burst` gives each a phase over a 1,201-cursor box.
+Its first run separated them immediately:
+
+    toggle_block_comment   18,035 allocations   253.8 MB   7.7 ms
+    soft_tab                9,632                163.9 MB  5.5 ms
+    add_cursor_below            96                  3.7 MB 4.1 ms
+    join_lines                  24                  0.8 MB 0.2 ms
+
+Join Lines folds 1,200 regions in 24 allocations. The other two were each
+O(cursors²) in bytes, for different reasons:
+
+- **The apply loop captured the caret set per caret.** `ApplyMultiCaretEdit`
+  folds its per-site history entries into one aggregate and rebuilds the caret
+  set afterwards, so the per-site view states are written and never read.
+  `CaptureViewStateForGroupedEntry` exists precisely to skip that copy — but only
+  when `IsGroupActive()`, and this loop is not a group. 2,402 copies of a
+  1,200-entry vector, 161 MB, per Tab press (TD-2026-09-20-300).
+- **The undo group merged into the smaller side.** A multi-region shaping verb
+  applies its regions high-to-low, so each child arrives below everything
+  accumulated and lands at index 0 — and the merge appended the whole accumulated
+  blob onto the one-line child. 244,826,700 bytes in 2,400 calls, to produce a
+  105 KB result (TD-2026-09-20-301).
+
+Both are ~98.5 % gone. At the 10,000-cursor cap they were ~5.6 GB and ~17 GB per
+keypress respectively.
+
+### What the method cost, and what it should have been
+
+Finding 301 took three attempts. The phase tracer named `LineBlob::append` inside
+`MergeGroupEntry` at ~105 KB per call, and the first two readings of that — "the
+exact `reserve` before the append defeats geometric growth" (it does not;
+libstdc++'s `reserve` doubles too) and "the merge must be prepending" (it was
+not) — each cost a build and a measurement and moved the number by zero. What
+settled it was a throwaway probe counting calls and bytes on both blob paths,
+which reported `append ops=2400 bytes=244826700` — ~102 KB *per append*, so the
+side being copied was the accumulated one, which can only happen if the small
+child is the target.
+
+**The probe was two lines and one run.** Where a trace names a function but not a
+direction, count the thing directly before theorising about it.
+
 ## 2026-08-17 compare pass: "does this have to happen?" was the wrong question
 
 A follow-on to the interaction pass below, working the three sites it had
