@@ -685,6 +685,40 @@ class TextLayoutCache {
   mutable std::vector<PackedLineWidth> inserted_columns_scratch_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
+
+  // Segmented maxima over `cached_visual_line_columns_`: the widest line of each
+  // run of `kVisualColumnBlockLines`, so the document maximum is a walk of
+  // lines/512 entries rather than of every line.
+  //
+  // It exists for the case nothing else can answer. When an edit narrows the
+  // widest line, its old width is gone and the runner-up is recorded nowhere, so
+  // the maximum had to be found by reading the whole table -- 50,000 deque
+  // entries on a 50k-line file, on the next paint, for every keystroke that
+  // shrinks the longest line. Holding backspace there is as ordinary as typing
+  // there (TD-2026-09-20-297).
+  //
+  // Maintenance is per-block and follows the width table's own two shapes: an
+  // in-place edit (the line count did not change) refreshes only the blocks it
+  // touched, and an edit that inserts or removes lines drops the table for a
+  // lazy rebuild -- which is what the deque splice underneath it already costs.
+  struct VisualColumnBlockMax {
+    std::uint32_t columns = 0;
+    // The line the block's maximum sits on, so the document argmax is available
+    // without a second pass; `max_line_replaced` is keyed on it.
+    std::uint32_t line = 0;
+  };
+  static constexpr std::size_t kVisualColumnBlockLines = 512;
+  mutable std::vector<VisualColumnBlockMax> visual_column_block_max_;
+
+  // O(lines). Only from the full-build path and from a scan that finds the block
+  // table missing or the wrong size.
+  void RebuildVisualColumnBlockMaxima() const;
+  // O(touched lines + block size). `last_line` is inclusive.
+  void RefreshVisualColumnBlocksFor(std::size_t first_line, std::size_t last_line) const;
+  std::size_t VisualColumnBlockCount() const {
+    return (cached_visual_line_columns_.size() + kVisualColumnBlockLines - 1) /
+           kVisualColumnBlockLines;
+  }
 };
 
 }  // namespace microide::editor

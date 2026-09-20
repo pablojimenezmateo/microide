@@ -142,6 +142,11 @@ namespace microide::util {
   /* table_builds is exactly how many of those standalone rescans happened.              */      \
   X(EditorLineWidthMaxScans, "editor.line_width_max_scans")                                      \
   X(EditorLineWidthMaxScanLines, "editor.line_width_max_scan_lines")                             \
+  /* Entries read by a maximum scan that went through the per-block maxima instead of   */      \
+  /* every line. scan_lines is now only the whole-table walks (a cold table, or an edit */      \
+  /* that changed the line count); scan_blocks is the lines/512 walks that replaced the */      \
+  /* rest. If scan_lines starts climbing again, block maintenance has stopped working.  */      \
+  X(EditorLineWidthMaxScanBlocks, "editor.line_width_max_scan_blocks")                           \
   /* The rescans that did NOT happen: an edit replaced the widest line with something   */      \
   /* at least as wide, so the new maximum is the widest inserted line and no other line */      \
   /* has to be read. This is the counter that says the keystroke-on-the-longest-line    */      \

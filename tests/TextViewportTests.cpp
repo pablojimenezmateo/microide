@@ -17,6 +17,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -4025,6 +4027,19 @@ void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
 // The counter is what makes this testable at all. Every one of the callers that
 // used to do this returned the right answer; only the amount of work differed.
 void TestTextViewportTypingInALongLineCopiesNothing() {
+  // MICROIDE_VERIFY_LINE_WIDTH_TABLE turns on an opt-in O(document) checker that
+  // re-measures every line from the buffer on every width-table read -- which
+  // materializes them, which is the exact thing this test counts. The two cannot
+  // both be on, and until this guard existed the verifier could not be soaked
+  // over this suite at all: it failed here, on its own observation effect,
+  // before reaching anything it was meant to check.
+  if (const char* verify = std::getenv("MICROIDE_VERIFY_LINE_WIDTH_TABLE");
+      verify != nullptr && verify[0] != '\0' && verify[0] != '0') {
+    std::fprintf(stderr,
+                 "[long-line] SKIP: MICROIDE_VERIFY_LINE_WIDTH_TABLE reads every line by "
+                 "design, so the copy accounting this test asserts on is not measurable\n");
+    return;
+  }
   constexpr std::size_t kLineBytes = 512u * 1024u;
   microide::editor::TextViewport viewport;
   viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/long-line-copies.txt");

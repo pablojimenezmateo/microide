@@ -398,7 +398,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-09-20-297 — uncommenting a block rescans the whole document's width table. [PARTLY RESOLVED 2026-09-20 — the correlated keystroke case is fixed; the uncomment case is what remains]
+### TD-2026-09-20-297 — uncommenting a block rescans the whole document's width table. [RESOLVED 2026-09-20 — both halves; 400,008 entries read per iteration became 784]
 
 Found by tracing TD-2026-09-06-290a's phase rather than by a failing gate.
 `editor_toggle_comment_large_selection` reports `editor.line_width_max_scans` = 8
@@ -467,6 +467,40 @@ range going in.
 What is left is therefore exactly the segmented-maximum question, now with the
 measurement attached: 8 walks x 50,001 entries per iteration, all of them the
 narrower case. The counters above are the before/after.
+
+**Resolved 2026-09-20 — the segmented maximum shipped, and the counters are the
+before/after they were added to be.** `cached_visual_line_columns_` now carries a
+per-512-line block maximum (`visual_column_block_max_`), so the document maximum
+is a walk of lines/512 entries. The same scenario:
+
+    before   max_scan_lines  400,008     max_scan_blocks  (did not exist)
+    after    max_scan_lines        0     max_scan_blocks      784
+
+The 8 narrower-replacement drops still happen — that case is genuinely
+unknowable — but answering them costs 98 block reads instead of 50,001 line
+reads. Wall moved in the right direction across runs too, but this box's clock
+calibration varies run to run and the trace build is not the baseline's build
+config, so the deterministic counter is the evidence and the wall number is not.
+
+Maintenance follows the width table's own two shapes, which is what keeps it
+cheap: an in-place edit (the line count did not change — every keystroke, and
+every comment toggle) refreshes only the blocks it touched, and an edit that
+inserts or removes lines drops the block table for a lazy rebuild, which costs
+the walk the deque splice underneath already pays. Nothing got slower.
+
+**What made this safe to do is the verifier, and the verifier could not be run.**
+A drifted block makes the reported maximum silently too SMALL while the width
+table itself stays perfectly correct, so every pre-existing assertion still
+passes. `VerifyLineWidthTableIfRequested` now checks each block against the
+entries it summarises — and soaking it found that
+`TextViewport/TypingInALongLineCopiesNothing` fails whenever
+`MICROIDE_VERIFY_LINE_WIDTH_TABLE` is set, on the verifier's own observation
+effect: the verifier re-measures every line from the buffer, which materializes
+them, which is exactly what that test counts. So the verifier had never been
+runnable over its own suite. That test skips under the env var now, and the soak
+(332 tests across TextViewport/TextLayout/EditorEdgeCase/EditorMultiCaret) is
+green — with the block assertion proven non-vacuous by disabling the in-place
+refresh and watching it fire.
 
 ### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn. [RESOLVED 2026-09-20 — all three instances, and the two ambiguous ones went opposite ways.]
 

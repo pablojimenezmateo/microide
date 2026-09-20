@@ -814,8 +814,74 @@ void TextLayoutCache::VerifyLineWidthTableIfRequested(LineSpan lines,
     assert(*cached_max_visual_columns_ == widest &&
            "memoized widest line disagrees with the width table it was derived from");
   }
+  // The block maxima are maintained per-edit and read instead of the table, so a
+  // block that drifts makes the reported maximum silently too small. Nothing
+  // above would catch it: the table itself stays right.
+  if (visual_column_block_max_.size() == VisualColumnBlockCount()) {
+    for (std::size_t block_index = 0; block_index < visual_column_block_max_.size();
+         ++block_index) {
+      const std::size_t block_start = block_index * kVisualColumnBlockLines;
+      const std::size_t block_end =
+          std::min(block_start + kVisualColumnBlockLines, cached_visual_line_columns_.size());
+      std::size_t widest = 0;
+      for (std::size_t index = block_start; index < block_end; ++index) {
+        widest = std::max(widest, cached_visual_line_columns_[index].visual_columns());
+      }
+      assert(visual_column_block_max_[block_index].columns == widest &&
+             "block maximum disagrees with the width-table entries it summarises");
+    }
+  }
 }
 #endif
+
+void TextLayoutCache::RebuildVisualColumnBlockMaxima() const {
+  const std::size_t lines = cached_visual_line_columns_.size();
+  visual_column_block_max_.assign(VisualColumnBlockCount(), VisualColumnBlockMax{});
+  if (lines == 0) {
+    return;
+  }
+  // One pass, block by block, so the deque is walked front to back exactly once.
+  for (std::size_t index = 0; index < lines; ++index) {
+    VisualColumnBlockMax& block = visual_column_block_max_[index / kVisualColumnBlockLines];
+    const std::size_t columns = cached_visual_line_columns_[index].visual_columns();
+    // `>=` so a tie keeps the LAST such line, which is the rule the whole-table
+    // scan this replaces used.
+    if (columns >= block.columns) {
+      block.columns = static_cast<std::uint32_t>(columns);
+      block.line = static_cast<std::uint32_t>(index);
+    }
+  }
+}
+
+void TextLayoutCache::RefreshVisualColumnBlocksFor(std::size_t first_line,
+                                                   std::size_t last_line) const {
+  const std::size_t lines = cached_visual_line_columns_.size();
+  if (lines == 0 || visual_column_block_max_.size() != VisualColumnBlockCount()) {
+    // Missing or stale-sized: leave it for the lazy rebuild rather than patching
+    // a table whose blocks no longer mean what this call assumes.
+    visual_column_block_max_.clear();
+    return;
+  }
+  if (first_line >= lines) {
+    return;
+  }
+  last_line = std::min(last_line, lines - 1);
+  const std::size_t first_block = first_line / kVisualColumnBlockLines;
+  const std::size_t last_block = last_line / kVisualColumnBlockLines;
+  for (std::size_t block_index = first_block; block_index <= last_block; ++block_index) {
+    const std::size_t block_start = block_index * kVisualColumnBlockLines;
+    const std::size_t block_end = std::min(block_start + kVisualColumnBlockLines, lines);
+    VisualColumnBlockMax refreshed;
+    for (std::size_t index = block_start; index < block_end; ++index) {
+      const std::size_t columns = cached_visual_line_columns_[index].visual_columns();
+      if (columns >= refreshed.columns) {
+        refreshed.columns = static_cast<std::uint32_t>(columns);
+        refreshed.line = static_cast<std::uint32_t>(index);
+      }
+    }
+    visual_column_block_max_[block_index] = refreshed;
+  }
+}
 
 std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
                                               std::size_t tab_size,
@@ -867,18 +933,27 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
       cached_visual_line_columns_[index] =
           PackedLineWidth::From(TextLayout::MeasureLineFacts(lines[index], tab_size));
     }
+    RebuildVisualColumnBlockMaxima();
   }
 
   util::PerformanceTrace::Scope sm("TextLayoutCache::ScanVisualLineColumnsMax");
   util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxScans);
-  util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxScanLines,
-                              cached_visual_line_columns_.size());
+  if (visual_column_block_max_.size() != VisualColumnBlockCount()) {
+    // The only whole-table walk left: the block table is missing or an edit
+    // changed the line count and dropped it.
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxScanLines,
+                                cached_visual_line_columns_.size());
+    RebuildVisualColumnBlockMaxima();
+  } else {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxScanBlocks,
+                                visual_column_block_max_.size());
+  }
   std::size_t max_columns = 0;
   std::size_t max_line = 0;
-  for (std::size_t index = 0; index < cached_visual_line_columns_.size(); ++index) {
-    if (cached_visual_line_columns_[index].visual_columns() >= max_columns) {
-      max_columns = cached_visual_line_columns_[index].visual_columns();
-      max_line = index;
+  for (const VisualColumnBlockMax& block : visual_column_block_max_) {
+    if (block.columns >= max_columns) {
+      max_columns = block.columns;
+      max_line = block.line;
     }
   }
   cached_max_visual_columns_ = max_columns;
@@ -950,6 +1025,10 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     for (std::size_t i = 0; i < inserted_columns.size(); ++i) {
       cached_visual_line_columns_[clamped_start + i] = inserted_columns[i];
     }
+    // No line moved, so only the blocks covering the rewritten range changed.
+    if (!inserted_columns.empty()) {
+      RefreshVisualColumnBlocksFor(clamped_start, clamped_start + inserted_columns.size() - 1);
+    }
 #ifndef NDEBUG
     ++visual_column_incremental_inplace_count_;
 #endif
@@ -960,6 +1039,10 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     cached_visual_line_columns_.insert(
         cached_visual_line_columns_.begin() + static_cast<std::ptrdiff_t>(clamped_start),
         inserted_columns.begin(), inserted_columns.end());
+    // Every line after the edit changed index, so every block after it changed
+    // membership. Rebuilding them costs the walk the deque splice above already
+    // paid, so drop the table and let the next scan rebuild it once.
+    visual_column_block_max_.clear();
   }
 
   // Maintain the memoized widest line rather than dropping it. Dropping it costs
@@ -1047,6 +1130,7 @@ void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   cached_max_visual_columns_.reset();
   cached_max_visual_columns_line_index_.reset();
   cached_visual_line_columns_.clear();
+  visual_column_block_max_.clear();
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_content_revision_ = 0;
   // Retire, don't destroy. This runs from UpdateVisualColumnCacheAfterEdit
