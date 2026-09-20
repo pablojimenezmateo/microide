@@ -10866,7 +10866,26 @@ Still open from this sweep:
   applier).
 
 - **TD-2026-07-26-006 — the DAP end-to-end test stops at the handshake; the
-  launch -> breakpoint -> stopped cycle is still only stub-covered. OPEN.**
+  launch -> breakpoint -> stopped cycle is still only stub-covered.
+  [RESOLVED 2026-09-20.]** `DapRealAdapter/GdbLaunchBreakpointStopCycle` drives
+  the whole cycle against the same real gdb: it compiles a debuggee with `-g -O0`
+  at test time, sets a breakpoint BEFORE the program is loaded, launches, runs
+  `configurationDone`, waits for the real `stopped`, and asserts on a real frame,
+  real scopes and real argument values before resuming to `exited`.
+
+  Three things only a real adapter shows, and all three are asserted: a
+  breakpoint set before the module loads comes back `verified:false,
+  reason:"pending"` (a fake returns whatever we told it to); it is re-reported
+  verified through a later `breakpoint` event, which is the signal the
+  pending-breakpoint tint bug hid behind; and gdb does **not** answer `launch`
+  until after `configurationDone`, so anything that waits on the launch response
+  deadlocks — a stub-only suite never sees that.
+
+  Skips on no gdb, gdb < 14, no C compiler, or an inferior that cannot be started
+  (no `CAP_SYS_PTRACE` / restricted `ptrace_scope`) — but only until a `stopped`
+  event arrives; past that every assertion is unconditional. Verified non-vacuous:
+  the real run emits no SKIP line, and inverting the frame-name and
+  argument-value expectations fails the test.
   `DapRealAdapterE2ETests.cpp` drives a real gdb through initialize, capabilities,
   a `threads` round trip and disconnect. Everything past that — launch, breakpoint
   binding, stop events, stepping, variables — is still exercised only by
