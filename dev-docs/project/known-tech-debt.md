@@ -1334,10 +1334,18 @@ Per sweep, CJK (160 page-downs) against ASCII (640):
 **What this says, and it is not what the entry predicted.** The per-cluster cost
 is real and large — 1,722 rasterizations per painted frame, ~40.8 per composited
 string, which is exactly the fixture's wide-code-points-per-line, so the model in
-this entry is confirmed. But the wall cost does not follow it: ~1.02 ms per
-painted frame for CJK against ~0.87 ms for ASCII, about 17% more, for a path
-doing ~1,700 rasterizations the ASCII path does not. The sweep allocates nothing
-either.
+this entry is confirmed. But the wall cost does not follow it. The CJK
+sweep is 153.4 ms of declared phase for 160 painted frames, i.e. ~0.96 ms each,
+and it allocates nothing.
+
+The ASCII side cannot be compared exactly, and the first write-up of this entry
+did so anyway. `editor_scroll_fresh_content_large` declares NO phase, so its
+559 ms is the whole scenario including opening a 50k-line file and eight full
+frames; dividing that by 640 (~0.87 ms) and calling it a per-frame cost compares
+a sweep against a sweep-plus-setup. That flatters ASCII and understates CJK's
+relative cost, so the real gap is wider than the ~17% first recorded here.
+Giving that scenario a declared phase would make the pair exact; until then the
+COUNTERS are the evidence and the wall ratio is an approximation.
 
 The number that does stand out is **evictions ≈ misses** (11,059 vs 11,042): the
 string-texture cache is thrashing on CJK rows and holding comfortably on ASCII

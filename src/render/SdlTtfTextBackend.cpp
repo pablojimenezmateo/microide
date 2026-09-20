@@ -516,6 +516,10 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
 SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
                                                           SDL_Color color) {
   util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeSurfaces);
+  // Accumulated, not bumped per cluster: one atomic per string rather than one
+  // per glyph, matching RenderGlyphAtlasGlyphs below. An instrument that costs
+  // a locked instruction per glyph would be measuring itself.
+  std::uint64_t cluster_rasterizations = 0;
   if (font_ == nullptr || text.empty()) {
     return nullptr;
   }
@@ -585,7 +589,7 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
                ascii_atlas_->BlitInto(composite, dst_x, static_cast<char>(base), color)) {
       // Atlas blit, identical pixels to the ASCII composite path.
     } else {
-      util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeClusterRasterizations);
+      ++cluster_rasterizations;
       SDL_Surface* glyph = TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), color);
       if (glyph != nullptr) {
         SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
@@ -598,6 +602,8 @@ SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
     cell += width;
     offset = end;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::RenderGridCompositeClusterRasterizations,
+                              cluster_rasterizations);
   return composite;
 }
 
