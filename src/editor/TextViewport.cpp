@@ -108,6 +108,10 @@ TextViewport::TextViewport(const TextViewport& other)
   // and the one product that depends on it is the wrapped-row table. Same
   // reasoning as SetFoldingModel, which already refuses to wipe widths.
   layout_cache_.DropWrappedRowLayouts();
+  // Transient, scoped to ApplyMultiCaretEdit's apply loop: a viewport cannot be
+  // copied or moved while the guard holding it is alive, so the copy starts
+  // unsuppressed rather than inheriting a flag that would outlive its scope.
+  suppress_entry_caret_capture_ = false;
 }
 
 TextViewport& TextViewport::operator=(const TextViewport& other) {
@@ -177,6 +181,10 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       last_applied_edit_(std::move(other.last_applied_edit_)),
       last_applied_edit_line_span_(std::move(other.last_applied_edit_line_span_)),
       folding_model_(nullptr) {
+  // Transient, scoped to ApplyMultiCaretEdit's apply loop: a viewport cannot be
+  // copied or moved while the guard holding it is alive, so the new object starts
+  // unsuppressed rather than inheriting a flag that would outlive its scope.
+  suppress_entry_caret_capture_ = false;
   other.folding_model_ = nullptr;
   other.layout_cache_ = TextLayoutCache{};
   // See the copy constructor: the moved-in width table describes the same
@@ -243,6 +251,10 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   last_applied_edit_ = std::move(other.last_applied_edit_);
   last_applied_edit_line_span_ = std::move(other.last_applied_edit_line_span_);
   folding_model_ = nullptr;
+  // Transient, scoped to ApplyMultiCaretEdit's apply loop: a viewport cannot be
+  // copied or moved while the guard holding it is alive, so the new object starts
+  // unsuppressed rather than inheriting a flag that would outlive its scope.
+  suppress_entry_caret_capture_ = false;
   other.folding_model_ = nullptr;
   other.layout_cache_ = TextLayoutCache{};
   // See the copy constructor: the moved-in width table describes the same

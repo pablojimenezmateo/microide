@@ -655,7 +655,9 @@ TextViewport::ViewState TextViewport::CaptureViewState() const {
 }
 
 TextViewport::ViewState TextViewport::CaptureViewStateForGroupedEntry() const {
-  return CaptureViewStateImpl(/*with_secondary_carets=*/!document_->undo_history.IsGroupActive());
+  const bool entry_state_is_discarded =
+      document_->undo_history.IsGroupActive() || suppress_entry_caret_capture_;
+  return CaptureViewStateImpl(/*with_secondary_carets=*/!entry_state_is_discarded);
 }
 
 void TextViewport::RestoreViewState(const ViewState& state) {

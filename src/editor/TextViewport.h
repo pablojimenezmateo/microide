@@ -898,6 +898,35 @@ class TextViewport {
   // vector per key press, every one of them discarded. Outside a group it is
   // exactly CaptureViewState — the state is the entry's own and must be complete.
   ViewState CaptureViewStateForGroupedEntry() const;
+
+  // The other place a per-entry caret vector is dead weight: the apply loop of
+  // ApplyMultiCaretEdit, which folds its N per-site entries into ONE aggregate
+  // and rebuilds the caret set from where the sites landed. It is not an undo
+  // GROUP — it pushes the aggregate itself — so `IsGroupActive()` was false and
+  // every site captured the whole set twice. With a cursor per line of a
+  // box selection that is O(carets^2) bytes: a single Tab over 1,201 cursors
+  // allocated 163.9 MB, of which 161 MB was 2,402 copies of a 1,200-element
+  // caret vector that nothing ever read (TD-2026-09-20-300). At the 10,000-caret
+  // cap it is ~5.6 GB.
+  //
+  // Scoped by SuppressEntryCaretCapture, never set directly: the per-site entries
+  // are applied as they are built, and RestoreViewState writes the (now empty)
+  // set back, so the suppression is only sound while the caller rebuilds the set
+  // afterwards from its own record.
+  class SuppressEntryCaretCapture {
+   public:
+    explicit SuppressEntryCaretCapture(TextViewport& viewport) : viewport_(viewport) {
+      previous_ = viewport_.suppress_entry_caret_capture_;
+      viewport_.suppress_entry_caret_capture_ = true;
+    }
+    SuppressEntryCaretCapture(const SuppressEntryCaretCapture&) = delete;
+    SuppressEntryCaretCapture& operator=(const SuppressEntryCaretCapture&) = delete;
+    ~SuppressEntryCaretCapture() { viewport_.suppress_entry_caret_capture_ = previous_; }
+
+   private:
+    TextViewport& viewport_;
+    bool previous_ = false;
+  };
   ViewState CaptureViewStateImpl(bool with_secondary_carets) const;
   void RestoreViewState(const ViewState& state);
   // Undo and Redo are the same walk in opposite directions: flush any open
@@ -1289,6 +1318,10 @@ class TextViewport {
   std::optional<TextPosition> selection_anchor_;
   std::optional<AppliedEdit> last_applied_edit_;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
+  // Set only by SuppressEntryCaretCapture, above; see its comment. Transient, so
+  // the special members reset it rather than carrying it — a viewport cannot be
+  // copied or moved while a guard holding it is alive.
+  bool suppress_entry_caret_capture_ = false;
   const FoldingModel* folding_model_ = nullptr;
 
 #ifndef NDEBUG

@@ -396,6 +396,24 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   std::vector<detail::MultiCaretRemapSite> sites(carets.size());
   bool changed = false;
   bool collapsed_no_op = false;
+  // Every per-site entry below is folded into ONE aggregate (capture.Build, after
+  // this loop) and the caret set is rebuilt from `sites`, so the per-site
+  // before/after caret vectors are written and never read. Capturing them is the
+  // same dead weight an undo GROUP already suppresses, at the same cost shape and
+  // one order worse: this loop runs once per caret, so the copies are
+  // O(carets^2). One Tab over a 1,201-cursor box allocated 163.9 MB, 161 MB of it
+  // here (TD-2026-09-20-300).
+  //
+  // Sound because the set is rebuilt unconditionally below: ApplyHistoryEntry
+  // restores each entry's (now caret-less) after_state, so `secondary_carets_` is
+  // empty when the loop ends, and SetSecondaryCarets fills it from where the
+  // sites landed. The guard closes before `CaptureViewState()` builds the
+  // aggregate's own state, which must be complete.
+  //
+  // Held in an optional purely so it can be released at the point below where the
+  // aggregate's state is captured, without indenting the whole loop.
+  std::optional<SuppressEntryCaretCapture> suppress_dead_caret_copies;
+  suppress_dead_caret_copies.emplace(*this);
   for (std::size_t i = carets.size(); i-- > 0;) {
     if (footprint_opens_at[i] != kNoFootprint) {
       const Footprint& f = footprints[footprint_opens_at[i]];
@@ -437,6 +455,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
       capture.EndFootprint();
     }
   }
+  suppress_dead_caret_copies.reset();
 
   if (!changed && !collapsed_no_op) {
     return false;
