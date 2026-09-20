@@ -413,6 +413,15 @@ bool GitRepository::Discard(const std::filesystem::path& relative_path,
   // genuine directory node must be refused here.
   const std::filesystem::file_status node_status =
       std::filesystem::symlink_status(root_ / relative_path, dir_error);
+  if (dir_error) {
+    // Fail CLOSED on a stat error. `file_type::none` is not a directory, so an
+    // unconsulted error read as "not a directory" and let the discard proceed --
+    // the gate's whole job is to refuse a target it cannot classify. The
+    // `git clean -f` below (no `-d`) would not have recursed, so this was not
+    // data loss; it was a verb that could neither act nor report, which is the
+    // shape TD-2026-09-17-294 was about. Refusing lets the caller say so.
+    return false;
+  }
   if (std::filesystem::is_directory(node_status)) {
     return false;
   }

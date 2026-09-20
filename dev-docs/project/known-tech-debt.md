@@ -897,7 +897,7 @@ of the opened repository. Each was vacuity-checked by breaking the thing it test
   a typed `../../x`, and the user creating a file inside a symlinked subdirectory of
   their own project is a workflow, not an escape.
 
-#### TD-2026-09-07-292a — two platform `exists()` instances left alone. [OPEN — minor]
+#### TD-2026-09-07-292a — two platform `exists()` instances left alone. [OPEN — one macOS-only instance; the stat-error gate is RESOLVED 2026-09-20]
 
 `Trash.cpp`'s `UniquePathInDirectory` (macOS-only, under `#if defined(__APPLE__)`) picks
 a free trash name with `exists()`, so a dangling link there reads as free. Untestable on
@@ -906,6 +906,15 @@ And `GitRepository::Discard`'s directory-refusal gate fails OPEN on a `symlink_s
 error (`file_type::none` is not a directory), which is backstopped by the `git clean -f`
 without `-d` that follows — a fix wants a test that induces a stat error, which is
 awkward to write without running as a different user.
+
+**Resolved 2026-09-20.** The gate fails closed now, and the test does not need a
+second user: making the target's PARENT unsearchable (`perms::none`) makes
+`symlink_status` on the child fail with EACCES for any non-root process. The test
+skips under `geteuid() == 0` (root ignores the bits, the stat would succeed, and
+the assertion would be testing nothing), asserts the probe really did fail before
+asserting on the behaviour, and restores the permissions before asserting so a
+failure cannot leave an undeletable directory for the temp-dir teardown. Verified
+by reverting the guard and watching it fail.
 
 ### TD-2026-09-07-291 — the 2026-09-07 pass: a use-after-free the whole shell was needed to reach, and the review verbs' per-file git spawns. [RESOLVED same session — open remainder zero.]
 

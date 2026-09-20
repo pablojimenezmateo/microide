@@ -10,9 +10,14 @@
 #include "workspace/git/WorkspaceGitOutgoingBase.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <string_view>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
 
 namespace microide::tests {
 namespace {
@@ -478,6 +483,68 @@ void TestGitUnstageStagedRenameResetsBothSides() {
   }
   Expect(std::filesystem::exists(repo_path / "new.txt"),
          "unstage keeps the renamed file in the working tree");
+}
+
+// `Discard` refuses a directory target so a single-row discard can never recurse
+// into a subtree. It classified the node with `symlink_status` and never consulted
+// the error: `file_type::none` is not a directory, so a stat that FAILED read as
+// "not a directory" and the discard proceeded. It must fail closed instead — the
+// gate's job is to refuse a target it cannot classify (TD-2026-09-07-292a). The
+// `git clean -f` that followed carried no `-d`, so this was never data loss; it
+// was a verb that could neither act nor report.
+//
+// The stat error is induced by making the target's parent unsearchable, which is
+// why this cannot run as root: root ignores the permission bits, the stat would
+// succeed, and the assertion would be testing nothing. It asserts the probe
+// really did fail before asserting on the behaviour.
+void TestGitDiscardRefusesAnUnstattableTarget() {
+#if defined(__unix__) || defined(__APPLE__)
+  if (::geteuid() == 0) {
+    std::fprintf(stderr,
+                 "[git] SKIP: running as root, so an unsearchable directory still stats and "
+                 "the unstattable-target case cannot be induced\n");
+    return;
+  }
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "keep.txt", "base\n");
+  CommitAll(repo_path, "base", "base");
+
+  const auto locked_dir = repo_path / "locked";
+  std::filesystem::create_directories(locked_dir);
+  WriteFile(locked_dir / "untracked.txt", "untracked\n");
+
+  std::error_code permission_error;
+  std::filesystem::permissions(locked_dir, std::filesystem::perms::none,
+                               std::filesystem::perm_options::replace, permission_error);
+  Expect(!permission_error, "the discard fixture should be able to lock its directory");
+
+  // Confirm the stat really fails, so a passing assertion below cannot mean
+  // "the error never happened".
+  std::error_code probe_error;
+  (void)std::filesystem::symlink_status(locked_dir / "untracked.txt", probe_error);
+  const bool induced = static_cast<bool>(probe_error);
+
+  bool discarded = true;
+  if (induced) {
+    GitRepository repo(repo_path);
+    discarded = repo.Discard("locked/untracked.txt");
+  }
+
+  // Restore before asserting, so a failure cannot leave an undeletable directory
+  // behind for the temp-dir teardown.
+  std::error_code restore_error;
+  std::filesystem::permissions(locked_dir, std::filesystem::perms::owner_all,
+                               std::filesystem::perm_options::replace, restore_error);
+
+  Expect(induced,
+         "the fixture should have made the target unstattable; without that this test "
+         "asserts nothing");
+  Expect(!discarded, "a target whose node cannot be classified must be refused, not discarded");
+  Expect(std::filesystem::exists(locked_dir / "untracked.txt"),
+         "the refused discard must leave the file alone");
+#endif
 }
 
 void TestGitRepositoryDirectApi() {
@@ -1285,6 +1352,8 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/StageHonorsLiteralPathspecs", TestGitStageHonorsLiteralPathspecs);
   AddTest(tests, "Git/DiscardStagedRenameRestoresSource", TestGitDiscardStagedRenameRestoresSource);
   AddTest(tests, "Git/UnstageStagedRenameResetsBothSides", TestGitUnstageStagedRenameResetsBothSides);
+  AddTest(tests, "Git/DiscardRefusesAnUnstattableTarget",
+          TestGitDiscardRefusesAnUnstattableTarget);
   AddTest(tests, "Git/RepositoryDirectApi", TestGitRepositoryDirectApi);
   AddTest(tests, "Git/RepositoryHandlesQuotedAndSpacedPaths",
           TestGitRepositoryHandlesQuotedAndSpacedPaths);
