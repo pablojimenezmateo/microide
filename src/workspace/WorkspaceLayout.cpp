@@ -504,6 +504,30 @@ SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_
                   height);
 }
 
+SDL_FRect MenuOverflowPopupRowRect(const SDL_FRect& popup, std::size_t index) {
+  return MakeRect(popup.x + 4.0f,
+                  popup.y + 4.0f + static_cast<float>(index) * kWorkspaceMenuPopupItemHeight,
+                  popup.w - 8.0f, kWorkspaceMenuPopupItemHeight);
+}
+
+std::optional<std::size_t> MenuOverflowPopupRowAt(const SDL_FRect& popup,
+                                                  std::size_t item_count,
+                                                  float x,
+                                                  float y) {
+  if (item_count == 0 || x < popup.x || x > popup.x + popup.w) {
+    return std::nullopt;
+  }
+  const float offset = y - popup.y - 4.0f;
+  if (offset < 0.0f) {
+    return std::nullopt;
+  }
+  const auto row = static_cast<std::size_t>(std::floor(offset / kWorkspaceMenuPopupItemHeight));
+  if (row >= item_count) {
+    return std::nullopt;
+  }
+  return row;
+}
+
 LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs) {
   if (inputs.user_override == LayoutModeInputs::Override::Regular) {
     return LayoutMode::Regular;

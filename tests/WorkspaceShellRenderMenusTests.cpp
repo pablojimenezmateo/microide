@@ -5,6 +5,8 @@
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include "WorkspaceShellEventHelpers.h"
+
 #include <SDL3/SDL.h>
 
 #include <filesystem>
@@ -146,12 +148,14 @@ void TestOverflowPopupPaints() {
       shell, SDL_FRect{static_cast<float>(kWidth) - 40.0f, 2.0f, 28.0f, 24.0f});
   PaintWithAPopup(shell, canvas, "the overflow popup should be open");
 
-  // With the pointer over a row: the overflow rows have no active index, only a
-  // pointer-derived hover, so this is the only way to reach their hovered fill.
+  // With a row highlighted. The overflow rows' hovered fill reads the active
+  // index, which a motion over the popup writes — and so does the keyboard.
   const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
   Expect(popup.has_value(), "an open overflow popup should have a rect");
-  WorkspaceShellTestAccess::SetMousePositionForTest(shell, popup->x + popup->w * 0.5f,
-                                                    popup->y + 10.0f);
+  Expect(SendMouseMotion(shell, popup->x + popup->w * 0.5f, popup->y + 10.0f, 0),
+         "a motion inside the overflow popup should be consumed by it");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == 0,
+         "a motion over the first overflow row should highlight it");
   WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
 }
 

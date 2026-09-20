@@ -44,19 +44,23 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     }
     return handled;
   }
-  if (menu_state_.tree_context_menu.open) {
-    const bool handled = HandleTreeContextMenuKeyDown(event);
+  // The three menu surfaces dispatch identically: hand the key to the surface
+  // that is up, coalesce one chrome redraw when it took it, and answer with what
+  // it decided. Each arm used to spell that out for itself.
+  const auto menu_surface_key = [&](bool handled) {
     if (handled) {
       ensure_redraw([this]() { operations_.request_chrome_redraw(); });
     }
     return handled;
+  };
+  if (menu_state_.tree_context_menu.open) {
+    return menu_surface_key(HandleTreeContextMenuKeyDown(event));
   }
   if (menu_state_.menu_bar_open) {
-    const bool handled = HandleMenuBarKeyDown(event, modifiers);
-    if (handled) {
-      ensure_redraw([this]() { operations_.request_chrome_redraw(); });
-    }
-    return handled;
+    return menu_surface_key(HandleMenuBarKeyDown(event, modifiers));
+  }
+  if (menu_state_.overflow_popup_open) {
+    return menu_surface_key(HandleMenuOverflowPopupKeyDown(event, modifiers));
   }
   // Settings / Help is a modal overlay: while it is visible it owns all keyboard
   // input so keystrokes cannot leak into (and edit) the surface underneath.
@@ -720,6 +724,9 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 return MakeMenuCoordinator().ExecuteTreeContextMenuItem(index);
               },
           .close_menu_bar = [this]() { MakeMenuCoordinator().CloseMenuBar(); },
+          .menu_overflow_item_count = [this]() { return MakeMenuCoordinator().MenuOverflowItemCount(); },
+          .open_menu_overflow_item = [this](std::size_t i) { return MakeMenuCoordinator().OpenMenuOverflowItem(i); },
+          .close_menu_overflow_popup = [this]() { CloseMenuOverflowPopup(context_.menu_state); },
           .switch_menu_bar_menu =
               [this](int delta) { return MakeMenuCoordinator().SwitchMenuBarMenu(delta); },
           .move_active_menu_item =

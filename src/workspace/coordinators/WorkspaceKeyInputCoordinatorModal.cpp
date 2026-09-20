@@ -120,6 +120,64 @@ bool KeyInputCoordinator::HandleMenuBarKeyDown(const SDL_KeyboardEvent& event,
   }
 }
 
+// The menu-bar overflow popup, which holds the menus that did not fit in compact
+// layout. Mirrors HandleMenuBarKeyDown: every key is consumed while the popup is
+// up so nothing leaks into the surface underneath, and Esc is what closes it.
+bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent& event,
+                                                         SDL_Keymod modifiers) {
+  const std::size_t item_count = operations_.menu_overflow_item_count();
+  if (item_count == 0) {
+    operations_.close_menu_overflow_popup();
+    return true;
+  }
+  const int last_index = static_cast<int>(item_count) - 1;
+  // Every row of this popup is an enabled menu, so stepping is plain arithmetic
+  // rather than the enabled-item search the popup menus need. It wraps, as the
+  // popup menus do.
+  const auto step = [&](int delta) {
+    const int current = menu_state_.overflow_popup_active_index;
+    int next = current < 0 ? (delta > 0 ? 0 : last_index) : current + delta;
+    if (next < 0) {
+      next = last_index;
+    } else if (next > last_index) {
+      next = 0;
+    }
+    menu_state_.overflow_popup_active_index = next;
+    return true;
+  };
+
+  switch (event.key) {
+    case SDLK_ESCAPE:
+      operations_.close_menu_overflow_popup();
+      return true;
+    case SDLK_DOWN:
+      return step(1);
+    case SDLK_UP:
+      return step(-1);
+    case SDLK_TAB:
+      return step((modifiers & SDL_KMOD_SHIFT) != 0 ? -1 : 1);
+    case SDLK_HOME:
+      menu_state_.overflow_popup_active_index = 0;
+      return true;
+    case SDLK_END:
+      menu_state_.overflow_popup_active_index = last_index;
+      return true;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+    case SDLK_SPACE:
+    // Right opens the highlighted menu, matching the submenu gesture in the
+    // popup menus: the overflow row IS a menu, so "open what is selected".
+    case SDLK_RIGHT:
+      if (menu_state_.overflow_popup_active_index >= 0) {
+        operations_.open_menu_overflow_item(
+            static_cast<std::size_t>(menu_state_.overflow_popup_active_index));
+      }
+      return true;
+    default:
+      return true;
+  }
+}
+
 bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
   if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
     const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();

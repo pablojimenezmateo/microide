@@ -77,6 +77,24 @@ void MenuCoordinator::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) 
   operations_.request_chrome_redraw();
 }
 
+std::size_t MenuCoordinator::MenuOverflowItemCount() const {
+  return operations_.overflow_menu_bar_items().size();
+}
+
+bool MenuCoordinator::OpenMenuOverflowItem(std::size_t index) {
+  const MenuBarOverflowIds overflow = operations_.overflow_menu_bar_items();
+  if (index >= overflow.size() || !menu_state_.overflow_popup_anchor_rect.has_value()) {
+    return false;
+  }
+  const SDL_FRect row = MenuOverflowPopupRowRect(
+      ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow.size()),
+      index);
+  const MenuId picked = overflow[index];
+  CloseMenuOverflowPopup(menu_state_);
+  OpenAnchoredMenu(picked, row);
+  return true;
+}
+
 void MenuCoordinator::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
   operations_.request_chrome_redraw();
   menu_state_.active_submenu_id = id;
@@ -253,6 +271,12 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
           .menu_items = [this](MenuId id) { return MenuItems(id); },
           .is_menu_item_enabled =
               [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
+          .overflow_menu_bar_items =
+              [this]() -> MenuBarOverflowIds {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value() ? ComputeOverflowMenuBarItems(layout->menu_bar)
+                                          : MenuBarOverflowIds{};
+              },
           .menu_popup_item_rect =
               [this](MenuId id, std::size_t item_index) -> std::optional<SDL_FRect> {
                 const auto layout = CurrentWorkspaceLayout();

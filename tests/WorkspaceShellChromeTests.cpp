@@ -283,6 +283,92 @@ void TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus() {
          "compact File menu should render from its row anchor even though no File bar label is visible");
 }
 
+// The overflow popup was the one popup in the app the keyboard could not reach:
+// nothing in the key dispatch chain looked at `overflow_popup_open`, so while it
+// was up every key fell through to the surface underneath — Esc included, which
+// left no way to dismiss it but a click (TD-2026-09-19-296).
+void TestWorkspaceShellCompactMenuOverflowIsKeyboardNavigable() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "compact keyboard fixture should expose the overflow button");
+  const std::size_t overflow_count = WorkspaceShellTestAccess::MenuBarOverflowItemCount(shell);
+  Expect(overflow_count > 1,
+         "compact keyboard fixture needs at least two overflow rows to step between");
+  Expect(SendMouseDown(shell, chevron->x + chevron->w * 0.5f, chevron->y + chevron->h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "compact keyboard fixture should open the overflow popup");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == -1,
+         "a freshly opened overflow popup should highlight nothing");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+         "Down should be consumed by the open overflow popup");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == 0,
+         "Down from no selection should land on the first overflow row");
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_NONE), "Up should be consumed too");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) ==
+             static_cast<int>(overflow_count) - 1,
+         "Up from the first row should wrap to the last");
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be consumed");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == 0,
+         "Home should jump to the first overflow row");
+
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should be consumed by the open overflow popup");
+  Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell),
+         "opening a row from the keyboard should close the overflow popup");
+  Expect(WorkspaceShellTestAccess::FileMenuOpen(shell),
+         "Enter on the first overflow row should open the File menu, as a click does");
+}
+
+void TestWorkspaceShellCompactMenuOverflowEscapeClosesIt() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "compact escape fixture should expose the overflow button");
+  Expect(SendMouseDown(shell, chevron->x + chevron->w * 0.5f, chevron->y + chevron->h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "compact escape fixture should open the overflow popup");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Esc should be consumed by the open overflow popup");
+  Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell),
+         "Esc should close the overflow popup");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == -1,
+         "closing the overflow popup should clear its highlighted row");
+}
+
+// A motion over the popup writes the same active index the keyboard does, so the
+// pointer and the keyboard can never highlight two different rows.
+void TestWorkspaceShellCompactMenuOverflowMotionTracksHoveredRow() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "compact motion fixture should expose the overflow button");
+  Expect(SendMouseDown(shell, chevron->x + chevron->w * 0.5f, chevron->y + chevron->h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "compact motion fixture should open the overflow popup");
+  const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
+  Expect(popup.has_value(), "compact motion fixture should expose the popup rect");
+
+  const float row_height = microide::workspace::kWorkspaceMenuPopupItemHeight;
+  Expect(SendMouseMotion(shell, popup->x + popup->w * 0.5f, popup->y + 4.0f + row_height * 1.5f, 0),
+         "a motion inside the overflow popup should be consumed by it");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == 1,
+         "a motion over the second overflow row should highlight it");
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "Down should be consumed");
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupActiveIndex(shell) == 2,
+         "the keyboard should step on from wherever the pointer left the highlight");
+}
+
 void TestWorkspaceShellFileCloseAllTabsClosesOpenEditorTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3865,6 +3951,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompactMenuOverflowButtonIsInteractive);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowRowsOpenAnchoredMenus",
           TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus);
+  AddTest(tests, "WorkspaceShell/CompactMenuOverflowIsKeyboardNavigable",
+          TestWorkspaceShellCompactMenuOverflowIsKeyboardNavigable);
+  AddTest(tests, "WorkspaceShell/CompactMenuOverflowEscapeClosesIt",
+          TestWorkspaceShellCompactMenuOverflowEscapeClosesIt);
+  AddTest(tests, "WorkspaceShell/CompactMenuOverflowMotionTracksHoveredRow",
+          TestWorkspaceShellCompactMenuOverflowMotionTracksHoveredRow);
   AddTest(tests, "WorkspaceShell/MenuBarHoverSwitchesActiveMenu",
           TestWorkspaceShellMenuBarHoverSwitchesActiveMenu);
   AddTest(tests, "WorkspaceShell/MenuEventsReturnPartialChromeInvalidation",

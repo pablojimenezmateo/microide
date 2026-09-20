@@ -168,13 +168,10 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       chevron_rect.has_value() &&
       Contains(*chevron_rect, event.button.x, event.button.y)) {
     if (menu_state_.overflow_popup_open) {
-      menu_state_.overflow_popup_open = false;
-      menu_state_.overflow_popup_anchor_rect.reset();
+      CloseMenuOverflowPopup(menu_state_);
     } else {
       operations_.close_menu_bar();
-      menu_state_.overflow_popup_open = true;
-      menu_state_.overflow_popup_anchor_rect = *chevron_rect;
-      menu_state_.overflow_popup_active_index = -1;
+      OpenMenuOverflowPopup(menu_state_, *chevron_rect);
     }
     operations_.request_chrome_redraw();
     return true;
@@ -185,23 +182,18 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     const SDL_FRect popup = ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect,
                                                           overflow_specs.size());
     if (Contains(popup, event.button.x, event.button.y)) {
-      const std::size_t row = static_cast<std::size_t>(
-          std::floor((event.button.y - popup.y - 4.0f) / kWorkspaceMenuPopupItemHeight));
-      if (row < overflow_specs.size()) {
-        const MenuId picked = overflow_specs[row];
-        const SDL_FRect row_rect =
-            MakeRect(popup.x + 4.0f,
-                     popup.y + 4.0f + static_cast<float>(row) * kWorkspaceMenuPopupItemHeight,
-                     popup.w - 8.0f, kWorkspaceMenuPopupItemHeight);
-        menu_state_.overflow_popup_open = false;
-        menu_state_.overflow_popup_anchor_rect.reset();
+      if (const auto row = MenuOverflowPopupRowAt(popup, overflow_specs.size(), event.button.x,
+                                                  event.button.y);
+          row.has_value()) {
+        const MenuId picked = overflow_specs[*row];
+        const SDL_FRect row_rect = MenuOverflowPopupRowRect(popup, *row);
+        CloseMenuOverflowPopup(menu_state_);
         operations_.open_anchored_menu(picked, row_rect);
         operations_.request_chrome_redraw();
       }
       return true;
     }
-    menu_state_.overflow_popup_open = false;
-    menu_state_.overflow_popup_anchor_rect.reset();
+    CloseMenuOverflowPopup(menu_state_);
     operations_.request_chrome_redraw();
   }
 
@@ -281,9 +273,41 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
   return true;
 }
 
+bool ChromeMouseCoordinator::HandleMenuOverflowPopupMotion(const SDL_Event& event,
+                                                          const WorkspaceLayout& layout) {
+  if (!menu_state_.overflow_popup_open || !menu_state_.overflow_popup_anchor_rect.has_value()) {
+    return false;
+  }
+  const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
+  const SDL_FRect popup =
+      ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow_specs.size());
+  const auto row =
+      MenuOverflowPopupRowAt(popup, overflow_specs.size(), event.motion.x, event.motion.y);
+  const int hovered = row.has_value() ? static_cast<int>(*row) : -1;
+  const int previous = menu_state_.overflow_popup_active_index;
+  if (hovered == previous) {
+    // Still inside the popup: consume the motion so the surface underneath does
+    // not hover through an open popup.
+    return row.has_value();
+  }
+  menu_state_.overflow_popup_active_index = hovered;
+  if (previous >= 0) {
+    RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
+                              MenuOverflowPopupRowRect(popup, static_cast<std::size_t>(previous)));
+  }
+  if (hovered >= 0) {
+    RequestMenuHoverRowRedraw(operations_.request_redraw_rect,
+                              MenuOverflowPopupRowRect(popup, static_cast<std::size_t>(hovered)));
+  }
+  return row.has_value();
+}
+
 bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("ChromeMouseCoordinator::HandleMenuMotion");
+  if (HandleMenuOverflowPopupMotion(event, layout)) {
+    return true;
+  }
   if (!menu_state_.menu_bar_open) {
     return false;
   }

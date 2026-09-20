@@ -268,8 +268,9 @@
   static std::size_t MenuBarOverflowItemCount(WorkspaceShell& shell) {
     return shell.ComputeOverflowMenuBarItems(CurrentLayout(shell).menu_bar).size();
   }
-  // The popup row hover is derived from the live pointer, not from an active
-  // index, so a paint test has to place the pointer to reach the hovered fill.
+  // Places the live pointer. The overflow popup's hover now comes from
+  // `overflow_popup_active_index` (which the motion path writes), so a paint test
+  // reaches the hovered fill by sending a motion event rather than by setting this.
   static void SetMousePositionForTest(WorkspaceShell& shell, float x, float y) {
     shell.last_mouse_x_ = x;
     shell.last_mouse_y_ = y;
@@ -277,6 +278,9 @@
   }
   static bool MenuOverflowPopupOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.overflow_popup_open;
+  }
+  static int MenuOverflowPopupActiveIndex(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.overflow_popup_active_index;
   }
   static std::optional<SDL_FRect> MenuOverflowPopupRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

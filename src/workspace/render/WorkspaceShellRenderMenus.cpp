@@ -62,13 +62,14 @@ void WorkspaceShell::RenderMenuPopups(SDL_Renderer* renderer,
       const SDL_FRect popup = ComputeMenuOverflowPopupRect(
           *context_.menu_state.overflow_popup_anchor_rect, overflow.size());
       DrawCardFrame(renderer, theme_, popup, CardStyle::Overlay);
+      // Hover comes from the active index, which the motion path and the keyboard
+      // both write, rather than from the live pointer: this popup used to be the
+      // one in the app the keyboard could not reach (TD-2026-09-19-296).
+      const int active_index = context_.menu_state.overflow_popup_active_index;
       for (std::size_t i = 0; i < overflow.size(); ++i) {
         const MenuSpec* spec = FindMenuSpec(overflow[i]);
-        const SDL_FRect row =
-            MakeRect(popup.x + 4.0f, popup.y + 4.0f + static_cast<float>(i) * kWorkspaceMenuPopupItemHeight,
-                     popup.w - 8.0f, kWorkspaceMenuPopupItemHeight);
-        const bool hovered = last_mouse_position_valid_ &&
-                             Contains(row, last_mouse_x_, last_mouse_y_);
+        const SDL_FRect row = MenuOverflowPopupRowRect(popup, i);
+        const bool hovered = active_index == static_cast<int>(i);
         // DrawMenuRow takes std::string_view; pass directly without materializing a per-row string.
         DrawMenuRow(text_renderer_, renderer, theme_, row,
                     spec ? std::string_view(spec->label) : std::string_view{},

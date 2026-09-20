@@ -39,8 +39,26 @@ struct MenuSurfaceState {
   int hovered_submenu_row_index = -1;
   bool overflow_popup_open = false;
   std::optional<SDL_FRect> overflow_popup_anchor_rect;
+  // Keyboard-selected row in the overflow popup, or -1 for none. The popup's
+  // hover fill reads this and nothing else: the mouse motion path writes it too,
+  // so the pointer and the keyboard can never highlight two different rows.
   int overflow_popup_active_index = -1;
   TreeContextMenuState tree_context_menu;
 };
+
+// The overflow popup's three fields move together. Four call sites used to reset
+// two of them by hand and leave the third, which is how the active index ended up
+// written-once and read-nowhere (TD-2026-09-19-296).
+inline void OpenMenuOverflowPopup(MenuSurfaceState& menu_state, const SDL_FRect& anchor_rect) {
+  menu_state.overflow_popup_open = true;
+  menu_state.overflow_popup_anchor_rect = anchor_rect;
+  menu_state.overflow_popup_active_index = -1;
+}
+
+inline void CloseMenuOverflowPopup(MenuSurfaceState& menu_state) {
+  menu_state.overflow_popup_open = false;
+  menu_state.overflow_popup_anchor_rect.reset();
+  menu_state.overflow_popup_active_index = -1;
+}
 
 }  // namespace microide::workspace

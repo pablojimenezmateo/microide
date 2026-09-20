@@ -427,6 +427,15 @@ SDL_FRect EmptyTabStripPlaceholderRect(const SDL_FRect& tab_strip);
 SDL_FRect WindowControlButtonHitRect(const SDL_FRect& button_rect);
 LayoutMode ResolveLayoutMode(float window_width, const LayoutModeInputs& inputs);
 SDL_FRect ComputeMenuOverflowPopupRect(const SDL_FRect& chevron_rect, std::size_t item_count);
+// One overflow-popup row, and the row a point lands on. Shared so the render,
+// click, motion, and keyboard paths cannot drift apart — the click path used to
+// do its own floor division while the render path re-derived the same rect
+// inline (TD-2026-09-19-296).
+SDL_FRect MenuOverflowPopupRowRect(const SDL_FRect& popup, std::size_t index);
+std::optional<std::size_t> MenuOverflowPopupRowAt(const SDL_FRect& popup,
+                                                  std::size_t item_count,
+                                                  float x,
+                                                  float y);
 SDL_FRect BottomPanelContentRect(const WorkspaceLayout& layout);
 SDL_FRect ComputeDirtyPromptRect(const SDL_FRect& full);
 std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);

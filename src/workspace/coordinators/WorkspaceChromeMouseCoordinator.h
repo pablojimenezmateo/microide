@@ -93,6 +93,10 @@ class ChromeMouseCoordinator {
  private:
   bool HandleMenuButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleMenuMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Tracks the hovered overflow row into `overflow_popup_active_index` so the
+  // render path highlights from state rather than from the live pointer, and
+  // the keyboard and the mouse cannot select two different rows.
+  bool HandleMenuOverflowPopupMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleTreeContextMenuButtonDown(const SDL_Event& event);
   bool HandleTreeContextMenuMotion(const SDL_Event& event);

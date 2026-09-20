@@ -50,6 +50,14 @@ class KeyInputCoordinator {
     std::function<int(int, int)> next_enabled_tree_context_menu_item_index;
     std::function<bool(std::size_t)> execute_tree_context_menu_item;
     std::function<void()> close_menu_bar;
+    // The menu-bar overflow popup (the chevron's list of menus that did not fit
+    // in compact layout). It is the one popup in the app the keyboard could not
+    // reach: nothing in the key dispatch chain looked at `overflow_popup_open`,
+    // so while it was up every key fell through to the surface underneath — Esc
+    // included (TD-2026-09-19-296).
+    std::function<std::size_t()> menu_overflow_item_count;
+    std::function<bool(std::size_t)> open_menu_overflow_item;
+    std::function<void()> close_menu_overflow_popup;
     std::function<bool(int)> switch_menu_bar_menu;
     std::function<bool(int)> move_active_menu_item;
     std::function<bool(MenuId, std::size_t)> execute_menu_item;
@@ -218,6 +226,7 @@ class KeyInputCoordinator {
   bool HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event);
   bool HandleMenuBarKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event);
   bool HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                            SDL_Keymod modifiers,

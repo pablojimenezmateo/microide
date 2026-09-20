@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "workspace/actions/WorkspaceActionTypes.h"
+#include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/state/WorkspaceMenuState.h"
 
 namespace microide::workspace {
@@ -17,6 +18,9 @@ class MenuCoordinator {
     std::function<void()> request_chrome_redraw;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
+    // The menu-bar items that did not fit, in order. Depends on the live
+    // menu-bar rect, which this coordinator does not see.
+    std::function<MenuBarOverflowIds()> overflow_menu_bar_items;
     std::function<std::optional<SDL_FRect>(MenuId, std::size_t)> menu_popup_item_rect;
     std::function<bool(MenuId, std::size_t)> execute_custom_menu_item;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
@@ -30,6 +34,11 @@ class MenuCoordinator {
   int NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const;
   void OpenMenuBarMenu(MenuId id);
   void OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect);
+  // The menu-bar overflow popup: the menus that did not fit in compact layout.
+  // `OpenMenuOverflowItem` anchors the picked menu under its own row and closes
+  // the popup — the same landing the click path produces.
+  std::size_t MenuOverflowItemCount() const;
+  bool OpenMenuOverflowItem(std::size_t index);
   void OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect);
   void CloseSubmenu();
   void CloseMenuBar();
