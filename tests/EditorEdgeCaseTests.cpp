@@ -1297,6 +1297,61 @@ void TestTabKeyOnAMixedCaretSetIndentsPerCursor() {
   Expect(joined() == "aaaa/bbbb/cccc", "one undo should take the whole mixed edit back: " + joined());
 }
 
+// A mixed set at the scale the gesture actually reaches: an
+// add-cursor-at-all-matches run can put hundreds of carets in the set while one
+// of them selects hundreds of lines. Both halves are unbounded on the same
+// gesture, which is why the caret remap indexes the edits by line instead of
+// scanning all of them per caret.
+void TestTabKeyOnALargeMixedCaretSetStaysCorrect() {
+  TextViewport viewport;
+  viewport.SetViewportSize(20, 200);
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(2);
+  std::string content;
+  constexpr std::size_t kLines = 400;
+  for (std::size_t i = 0; i < kLines; ++i) {
+    content += "xxxx\n";
+  }
+  viewport.LoadContent(content, "/tmp/ec-tab-mixed-large.cpp");
+
+  // A block selection over the first half, plus a bare caret mid-line on every
+  // line of the second half.
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(kLines / 2, 0, /*extend_selection=*/true);
+  std::vector<SelectionRange> secondaries;
+  for (std::size_t line = kLines / 2; line < kLines; ++line) {
+    secondaries.push_back(
+        SelectionRange{TextPosition{line, 2}, TextPosition{line, 2}});
+  }
+  viewport.SetSecondaryCaretsWithRanges(secondaries);
+
+  Expect(microide::editor::ClassifyTabKey(viewport, false) ==
+             microide::editor::TabKeyIntent::kMixed,
+         "a block selection plus hundreds of bare carets is a mixed set");
+  Expect(microide::editor::ApplyMixedTabKey(viewport), "the mixed apply should change the buffer");
+
+  // The block half shifted; the point half inserted at its own column.
+  for (std::size_t line = 0; line < kLines / 2; ++line) {
+    Expect(std::string(viewport.lines()[line]) == "  xxxx",
+           "every line of the block selection should gain one indent");
+  }
+  for (std::size_t line = kLines / 2; line < kLines; ++line) {
+    Expect(std::string(viewport.lines()[line]) == "xx  xx",
+           "every bare caret should indent at its own column");
+  }
+  // Every caret survived, and each landed just past what it inserted.
+  Expect(viewport.secondary_caret_range_view().size() == kLines / 2,
+         "no caret should be dropped by the mixed apply");
+  for (const auto& secondary : viewport.secondary_caret_range_view()) {
+    Expect(secondary.position.column == 4,
+           "each bare caret should sit just past the two spaces it inserted");
+  }
+  viewport.Undo();
+  Expect(std::string(viewport.lines()[0]) == "xxxx" &&
+             std::string(viewport.lines()[kLines - 1]) == "xxxx",
+         "one undo should take the whole mixed edit back at scale too");
+}
+
 // The mixed applier must never do what the per-primary check it descends from did:
 // replace a secondary's multi-line selection with an indent unit.
 void TestTabKeyOnAMixedCaretSetNeverEatsASecondarySelection() {
@@ -1368,6 +1423,8 @@ void TestTabKeyOnAMixedCaretSetWithHardTabs() {
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetIndentsPerCursor",
           TestTabKeyOnAMixedCaretSetIndentsPerCursor);
+  AddTest(tests, "EditorEdgeCase/TabKeyOnALargeMixedCaretSetStaysCorrect",
+          TestTabKeyOnALargeMixedCaretSetStaysCorrect);
   AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetNeverEatsASecondarySelection",
           TestTabKeyOnAMixedCaretSetNeverEatsASecondarySelection);
   AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetIndentsASharedLineOnce",

@@ -1256,28 +1256,36 @@ SelectionRange NormalizedCaretRange(TextPosition anchor, TextPosition cursor) {
 }
 
 // The primary first, then every secondary, in the viewport's own order. The
-// primary stays at index 0 so the merged caret set can put it back as the primary.
-std::vector<TabKeySite> CollectTabKeySites(const TextViewport& viewport) {
-  const std::span<const SecondaryCaret> secondaries = viewport.secondary_caret_range_view();
-  std::vector<TabKeySite> sites;
-  sites.reserve(secondaries.size() + 1);
+// primary stays first so the merged caret set can put it back as the primary.
+//
+// A visitor rather than a vector because `ClassifyTabKey` runs on EVERY Tab press
+// and only needs to know whether the sites disagree — materializing them there
+// would put an allocation on a keystroke path that had none.
+template <typename Visit>
+void ForEachTabKeySite(const TextViewport& viewport, Visit&& visit) {
   if (const std::optional<SelectionRange> selection = viewport.selection_range();
       selection.has_value()) {
-    sites.push_back({*selection, SelectionIndentsAsBlock(viewport, *selection)});
+    visit(TabKeySite{*selection, SelectionIndentsAsBlock(viewport, *selection)});
   } else {
     const TextPosition caret{viewport.cursor_line(), viewport.cursor_column()};
-    sites.push_back({SelectionRange{caret, caret}, false});
+    visit(TabKeySite{SelectionRange{caret, caret}, false});
   }
-  for (const SecondaryCaret& secondary : secondaries) {
+  for (const SecondaryCaret& secondary : viewport.secondary_caret_range_view()) {
     if (!secondary.selection_anchor.has_value() ||
         *secondary.selection_anchor == secondary.position) {
-      sites.push_back({SelectionRange{secondary.position, secondary.position}, false});
+      visit(TabKeySite{SelectionRange{secondary.position, secondary.position}, false});
       continue;
     }
     const SelectionRange range =
         NormalizedCaretRange(*secondary.selection_anchor, secondary.position);
-    sites.push_back({range, SelectionIndentsAsBlock(viewport, range)});
+    visit(TabKeySite{range, SelectionIndentsAsBlock(viewport, range)});
   }
+}
+
+std::vector<TabKeySite> CollectTabKeySites(const TextViewport& viewport) {
+  std::vector<TabKeySite> sites;
+  sites.reserve(viewport.secondary_caret_range_view().size() + 1);
+  ForEachTabKeySite(viewport, [&](const TabKeySite& site) { sites.push_back(site); });
   return sites;
 }
 
@@ -1289,9 +1297,9 @@ TabKeyIntent ClassifyTabKey(const TextViewport& viewport, bool shift_held) {
   }
   bool any_block = false;
   bool any_point = false;
-  for (const TabKeySite& site : CollectTabKeySites(viewport)) {
+  ForEachTabKeySite(viewport, [&](const TabKeySite& site) {
     (site.block ? any_block : any_point) = true;
-  }
+  });
   if (any_block && any_point) {
     return TabKeyIntent::kMixed;
   }
@@ -1375,19 +1383,35 @@ bool ApplyMixedTabKey(TextViewport& viewport) {
     return false;
   }
 
+  // Ascending by (line, column) so `remap` can binary-search to a line and walk
+  // only that line's edits. Scanning the whole edit list per caret instead is
+  // sites x edits, and both are unbounded on the same gesture: an
+  // add-cursor-at-all-matches run over a large file can put thousands of carets
+  // in the set while one of them selects thousands of lines.
+  std::sort(edits.begin(), edits.end(), [](const TabKeyEdit& a, const TabKeyEdit& b) {
+    if (a.range.start.line != b.range.start.line) {
+      return a.range.start.line < b.range.start.line;
+    }
+    return a.range.start.column < b.range.start.column;
+  });
+
   // Where a pre-edit position ends up. Only same-line edits that end at or before
   // the position can move it: the edits are disjoint, none inserts a line break,
   // and a block insert at column 0 is exactly the `shift_col` rule the pure-block
   // path already applies to every caret on a shifted line.
   const auto remap = [&](TextPosition position) {
     position = clamp_position(position);
+    const auto first = std::lower_bound(
+        edits.begin(), edits.end(), position.line,
+        [](const TabKeyEdit& edit, std::size_t line) { return edit.range.start.line < line; });
     std::ptrdiff_t delta = 0;
-    for (const TabKeyEdit& edit : edits) {
-      if (edit.range.start.line != position.line || edit.range.end.column > position.column) {
-        continue;
+    for (auto it = first; it != edits.end() && it->range.start.line == position.line; ++it) {
+      if (it->range.end.column > position.column) {
+        // Ascending within the line, so nothing after this one can qualify either.
+        break;
       }
-      delta += static_cast<std::ptrdiff_t>(edit.insert_length) -
-               static_cast<std::ptrdiff_t>(edit.range.end.column - edit.range.start.column);
+      delta += static_cast<std::ptrdiff_t>(it->insert_length) -
+               static_cast<std::ptrdiff_t>(it->range.end.column - it->range.start.column);
     }
     const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(position.column) + delta;
     position.column = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
@@ -1409,13 +1433,9 @@ bool ApplyMixedTabKey(TextViewport& viewport) {
   }
 
   // Highest-first, so every edit still standing is expressed in coordinates the
-  // document has not moved yet.
-  std::sort(edits.begin(), edits.end(), [](const TabKeyEdit& a, const TabKeyEdit& b) {
-    if (a.range.start.line != b.range.start.line) {
-      return a.range.start.line > b.range.start.line;
-    }
-    return a.range.start.column > b.range.start.column;
-  });
+  // document has not moved yet. Already sorted ascending for `remap`, so this is
+  // a reverse rather than a second sort.
+  std::reverse(edits.begin(), edits.end());
 
   viewport.BeginUndoGroup();
   // The secondaries are rebuilt below; leaving them installed would have every
