@@ -486,7 +486,28 @@ Maintenance follows the width table's own two shapes, which is what keeps it
 cheap: an in-place edit (the line count did not change — every keystroke, and
 every comment toggle) refreshes only the blocks it touched, and an edit that
 inserts or removes lines drops the block table for a lazy rebuild, which costs
-the walk the deque splice underneath already pays. Nothing got slower.
+the walk the deque splice underneath already pays.
+
+**"Nothing got slower" was not true as first written, and the same argument that
+fixes it is the one the entry is about.** The first version refreshed a touched
+block by walking all 512 of its entries, unconditionally — so every keystroke
+paid a 512-entry walk where it previously paid none, and `ApplyMixedTabKey`,
+which issues one `ReplaceRange` per caret site, would have paid it per site.
+The block maximum obeys the same rule as the document maximum one level up: a
+line the edit did not touch cannot have changed, so when the widest REWRITTEN
+line reaches the block's recorded maximum it is the new one (grow is free), and
+when the recorded maximum sits on a line the edit did not rewrite it simply
+survives. Only a block whose widest line SHRANK needs a walk, and that walk is
+512 entries rather than the document. Measured, all three scenarios passing:
+
+    typing_large_file             1 splice   -> 0 block walks (grow)
+    editor_typing_minified_line  32 splices  -> 16 walks (exactly the backspace burst)
+    toggle_comment_large_sel     16 toggles  -> 24 walks, down from 48 unconditional
+
+`editor.line_width_block_rescans` is what says so, and is the counter that keeps
+a shrink-heavy workload from quietly paying a 512-entry walk per keystroke with
+nothing to point at — which is precisely how the original whole-document rescan
+stayed hidden.
 
 **What made this safe to do is the verifier, and the verifier could not be run.**
 A drifted block makes the reported maximum silently too SMALL while the width

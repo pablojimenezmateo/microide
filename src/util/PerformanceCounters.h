@@ -147,6 +147,11 @@ namespace microide::util {
   /* that changed the line count); scan_blocks is the lines/512 walks that replaced the */      \
   /* rest. If scan_lines starts climbing again, block maintenance has stopped working.  */      \
   X(EditorLineWidthMaxScanBlocks, "editor.line_width_max_scan_blocks")                           \
+  /* Block walks forced by an EDIT: the block's widest line shrank, so its runner-up is */      \
+  /* gone. Every other edit updates its blocks in O(rewritten lines). Without this a    */      \
+  /* shrink-heavy workload would quietly pay a 512-entry walk per keystroke and the     */      \
+  /* only visible symptom would be latency with nothing to point at.                    */      \
+  X(EditorLineWidthBlockRescans, "editor.line_width_block_rescans")                              \
   /* The rescans that did NOT happen: an edit replaced the widest line with something   */      \
   /* at least as wide, so the new maximum is the widest inserted line and no other line */      \
   /* has to be read. This is the counter that says the keystroke-on-the-longest-line    */      \

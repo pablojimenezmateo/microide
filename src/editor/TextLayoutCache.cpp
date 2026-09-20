@@ -871,6 +871,37 @@ void TextLayoutCache::RefreshVisualColumnBlocksFor(std::size_t first_line,
   for (std::size_t block_index = first_block; block_index <= last_block; ++block_index) {
     const std::size_t block_start = block_index * kVisualColumnBlockLines;
     const std::size_t block_end = std::min(block_start + kVisualColumnBlockLines, lines);
+    // Only the lines this edit actually rewrote; the rest of the block is
+    // untouched and cannot have changed.
+    const std::size_t touched_begin = std::max(block_start, first_line);
+    const std::size_t touched_end = std::min(block_end, last_line + 1);
+    VisualColumnBlockMax& block = visual_column_block_max_[block_index];
+
+    std::size_t widest = 0;
+    std::size_t widest_line = touched_begin;
+    for (std::size_t index = touched_begin; index < touched_end; ++index) {
+      const std::size_t columns = cached_visual_line_columns_[index].visual_columns();
+      if (columns >= widest) {
+        widest = columns;
+        widest_line = index;
+      }
+    }
+
+    // Grow: the same argument as the document-level maximum, one level down. A
+    // line this edit did not touch cannot have changed, so when the widest
+    // rewritten line reaches the block's recorded maximum it IS the new one.
+    if (widest >= block.columns) {
+      block.columns = static_cast<std::uint32_t>(widest);
+      block.line = static_cast<std::uint32_t>(widest_line);
+      continue;
+    }
+    // Survives: the recorded maximum is on a line this edit did not rewrite.
+    if (block.line < touched_begin || block.line >= touched_end) {
+      continue;
+    }
+    // Only here is a block walk unavoidable -- the block's widest line shrank and
+    // its runner-up is recorded nowhere. 512 entries, not the document.
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthBlockRescans);
     VisualColumnBlockMax refreshed;
     for (std::size_t index = block_start; index < block_end; ++index) {
       const std::size_t columns = cached_visual_line_columns_[index].visual_columns();
@@ -879,7 +910,7 @@ void TextLayoutCache::RefreshVisualColumnBlocksFor(std::size_t first_line,
         refreshed.line = static_cast<std::uint32_t>(index);
       }
     }
-    visual_column_block_max_[block_index] = refreshed;
+    block = refreshed;
   }
 }
 
