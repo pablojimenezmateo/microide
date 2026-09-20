@@ -398,6 +398,38 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-20-297 — uncommenting a block rescans the whole document's width table. [OPEN — perf]
+
+Found by tracing TD-2026-09-06-290a's phase rather than by a failing gate.
+`editor_toggle_comment_large_selection` reports `editor.line_width_max_scans` = 8
+and `editor.line_width_max_scan_lines` = 400,008 per iteration: eight full walks
+of a 50,000-entry `deque<PackedLineWidth>` for a phase whose whole p50 is ~7 ms.
+
+It is one scan per *un*comment pass, and it is the case
+`UpdateVisualColumnCacheAfterEdit` already documents as the only one that
+genuinely needs a rescan: the memoized widest line was rewritten, so its old
+width is gone and the runner-up is recorded nowhere. Commenting WIDENS lines, so
+the new maximum is known from `inserted_columns` without reading anything else;
+uncommenting NARROWS them, so it is not, and the next reader of
+`MaxVisualColumns()` (the horizontal scrollbar, once per painted frame) pays a
+whole-document walk.
+
+The asymmetry is the shape: half of a comment-toggle cycle is O(1) and the other
+half is O(document), and the expensive half is the one a user repeats while
+reading code.
+
+**Why it is not just "keep a top-K".** A K-deep list of widest lines only helps
+when the edit does not cover all K of them. Commenting a 1,000-line block of a
+50k-line file usually does not, so a small K (8?) would convert most rescans —
+but a block that happens to contain the K widest lines falls back to the full
+scan, so the fix is a constant-factor win with an unchanged worst case, not a
+bound. Measure before choosing K: the counters above are already in place, so
+the before/after is one perf run, and `editor_toggle_comment_large_selection` is
+the scenario that shows it.
+
+Do not confuse this with 290a's +32 allocations — this costs no allocations at
+all, which is exactly why the allocation gate never saw it.
+
 ### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn. [RESOLVED 2026-09-20 — all three instances, and the two ambiguous ones went opposite ways.]
 
 The whole producer side of the compare surface's stage/discard hint row is
@@ -967,12 +999,42 @@ state explains none of it.
   member missing from `TextViewport`'s hand-written copy/move on the first run —
   that rule earned its keep.
 
-#### TD-2026-09-06-290a — `editor_toggle_comment_large_selection` allocates 32 more than its baseline. [OPEN — non-gating]
+#### TD-2026-09-06-290a — `editor_toggle_comment_large_selection` allocates 32 more than its baseline. [OPEN — non-gating; the phase itself is cleared, see below]
 
 Real deterministic drift (727 -> 759, +4.4%) that passes its +10% gate, so it is
 not blocking. The phase's dominant site is `PieceTree::InsertText` under
 `ReplaceLineRangeFrom`, which is the edit itself; the extra 32 are not attributed
 yet. Worth a look before the gate's slack absorbs them, per TD-2026-08-06-139.
+
+**2026-09-20 — traced, and the drift is NOT in the measured phase.** Re-measured
+at 760, so it reproduces. `tools/trace-perf-phases.py` over the phase ranks:
+
+    #1  2112 allocs  PieceTree::InsertText  <- ReplaceLineRangeFrom   (the edit)
+    #2   782 allocs  deque<PackedLineWidth>::_M_new_elements_at_front (400,384 B)
+    #3   352 allocs  PieceTree::InsertText  <- ReplaceLineRangeFrom
+
+\#2 looks like the finding and is not one: 782 x 512 B is one 50k-entry width
+table built node by node, and it appears ONCE across 14 passes (12 warmup + 2
+measured), so it is the cold file open, not per-iteration work. The counters
+agree and are the better evidence: `editor.line_width_table_builds` never fires,
+and `editor.line_width_full_measures` is exactly 16,000 per iteration — 16
+toggles x 1,000 lines, i.e. the incremental splice, never a rebuild. The phase's
+464 allocations are the edit itself.
+
+So the 32 are in the scenario's setup (project open + tab open + settings),
+outside the measured window — which is why reading the phase could never find
+them, and why the entry stays open pointing somewhere else than it did.
+
+**What the trace did find, which is a speed item and not an allocation one:**
+`editor.line_width_max_scans` is 8 per iteration and
+`editor.line_width_max_scan_lines` is 400,008 — eight full walks of the
+50k-entry width table per iteration, one per *un*comment pass. That is the one
+case `UpdateVisualColumnCacheAfterEdit`'s comment says genuinely needs a rescan
+(the widest line was rewritten, so its old width is gone and the runner-up is
+recorded nowhere). Commenting widens lines, so the new maximum is known from
+`inserted_columns`; uncommenting narrows them, so it is not. On a 50k-line file
+that is ~400k deque reads per iteration against a phase whose whole p50 is ~7 ms.
+Filed as TD-2026-09-20-297.
 
 ### TD-2026-09-06-289 — the 2026-09-06 pass: the editor grid's cell model, three reference-tested primitives, and a headless sweep of the real binary. [RESOLVED same session — open remainder: one perf follow-up, 289a.]
 
