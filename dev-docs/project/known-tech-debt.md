@@ -11029,6 +11029,9 @@ Still open from this sweep:
   event arrives; past that every assertion is unconditional. Verified non-vacuous:
   the real run emits no SKIP line, and inverting the frame-name and
   argument-value expectations fails the test.
+
+  Original entry:
+
   `DapRealAdapterE2ETests.cpp` drives a real gdb through initialize, capabilities,
   a `threads` round trip and disconnect. Everything past that — launch, breakpoint
   binding, stop events, stepping, variables — is still exercised only by
@@ -11054,6 +11057,13 @@ Still open from this sweep:
   gcc + gdb + a debuggee on every CI run would cost more than it pays. Gate it the
   same way the clangd and gdb suites are gated, and prove it fails when the
   behaviour regresses before landing it.
+
+  (That reservation is what the shipped test answers: the gcc gate is
+  `LocateCCompiler`, the timeouts are generous, and every failure mode that is
+  really "this machine cannot run a debugger" skips instead of failing. The
+  recorded sequence above matched what shipped, with one correction — gdb does
+  not answer `launch` before `configurationDone`, so step 3's "-> success" lands
+  after step 4, and a test that waits on the launch response there hangs.)
 
 - **TD-2026-07-26-005 — `WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles` is a
   rare flake. OPEN (observed once; not reproducible on demand).** Seen failing a
