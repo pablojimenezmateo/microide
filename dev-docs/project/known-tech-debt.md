@@ -404,6 +404,33 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-20-302 — the keystroke path allocates ~2 small strings per key, and the site tops seven phases. [OPEN — measured, not yet diagnosed]
+
+The 2026-09-20 regeneration of `dev-docs/performance/perf-phase-allocation-trace.md`
+is the first one whose symbol names can be trusted (it was built on the
+identical-code-folding-off lane), and its cross-phase table says one site is the
+#1 allocator of **seven** unrelated phases:
+
+    13  runtime_syntax::HighlightLineInto()                 (the highlighter; expected)
+     7  render::SdlTtfTextBackend::ResolveEntry()            (string-texture miss; expected)
+     7  KeyInputCoordinator::ActiveKeybindingContext() const (not expected)
+
+`ActiveKeybindingContext` itself is a switch over an enum and allocates nothing,
+so the name is the nearest resolvable symbol to an inlined allocation inside
+`KeyInputCoordinator::HandleKeyDown` — 82 allocations of 24 bytes each over a
+48-keystroke burst, i.e. ~1.7 small strings per key press. It is on the literal
+keystroke path of every editable surface, which is why it reaches seven phases.
+
+Not chased in this pass because the numbers are small and the session's budget
+went to the two O(n²) shapes; recorded because the shape — a per-keystroke string
+on the input path — is the kind that stays once nobody is looking at it, and
+because the trace that found it is now current and names it every time.
+
+Start by reading `HandleKeyDown` and `HandleGlobalKeyDown` for a `std::string`
+built to be compared or looked up (`FileUriForPath` is #2 in the same phase at 48
+allocations / 5,424 bytes, on a path that has the URI already). The 24-byte size
+says short string, above the 15-byte SSO threshold.
+
 ### TD-2026-09-20-301 — an undo group merged into the SMALLER side, so every multi-region shaping verb was quadratic. [RESOLVED 2026-09-20, same session it was found.]
 
 A multi-region shaping verb applies its regions HIGH-TO-LOW — that is what keeps
