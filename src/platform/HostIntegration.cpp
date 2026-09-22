@@ -92,6 +92,10 @@ HostIntegrationResult LaunchDesktopOpener(std::string argument) {
 
 }  // namespace
 
+bool IsOpenableExternalUrl(std::string_view url) {
+  return !url.empty() && url.size() <= kMaxUrlBytes && IsAllowedUrlScheme(url);
+}
+
 HostIntegrationResult OpenUrl(std::string_view url) {
   if (url.empty()) {
     return Failure("No URL was provided");

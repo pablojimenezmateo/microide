@@ -64,6 +64,12 @@ void AppendTrailingCodeRegexViolations(RuleResult& result,
                                        const std::string& text,
                                        const std::regex& pattern,
                                        std::string_view message);
+// True when `pattern` matches somewhere in `text` that BuildCodeMask calls code —
+// i.e. not inside a comment or a string literal. Use it for a rule's own vacuity
+// guard ("the thing I scan for must still exist somewhere"), where an occurrence in
+// prose would satisfy the guard without the construct being present at all.
+bool CodeMaskedPatternAppears(const std::string& text, const std::regex& pattern);
+
 RuleResult CheckShellFileSize(const std::filesystem::path& repo_root,
                               std::string_view relative_path,
                               std::size_t limit);

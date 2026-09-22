@@ -2,7 +2,9 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
@@ -30,6 +32,64 @@ std::string DefaultShellPath() {
 std::string ShellProgramName(const std::string& shell_path) {
   const std::size_t slash = shell_path.find_last_of("/\\");
   return slash == std::string::npos ? shell_path : shell_path.substr(slash + 1);
+}
+
+namespace {
+
+// Programs that take a command the POSIX way: a `-c` flag with the command as one
+// following word. Everything else configured as a `terminal.shell` — `ssh host`,
+// `docker exec -it box`, `toolbox run` — takes it as a trailing argument instead,
+// and would read `-c` as one of its own flags.
+//
+// A list of names is a heuristic, but it is the same one the one-word form already
+// makes implicitly (a lone word is assumed to be a shell, and gets `-i`), and it
+// errs toward the trailing-argument form, which fails loudly when it is wrong
+// rather than running the command somewhere unintended.
+bool TakesPosixCommandFlag(const std::string& program) {
+  const std::string name = ShellProgramName(program);
+  static constexpr std::string_view kPosixShellNames[] = {
+      "sh", "bash", "rbash", "zsh", "dash", "ash", "ksh", "mksh", "fish", "csh", "tcsh",
+  };
+  for (const std::string_view candidate : kPosixShellNames) {
+    if (name == candidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+std::vector<std::string> BuildTerminalArgv(const std::vector<std::string>& shell,
+                                           const std::string& command) {
+  std::vector<std::string> argv = shell.empty() ? std::vector<std::string>{DefaultShellPath()}
+                                                : shell;
+  if (argv.size() == 1) {
+    // A bare shell name or path. argv[0] becomes the base name — the login-shell
+    // convention, so `$0` reads `bash` rather than `/bin/bash` — and with no command
+    // to run it starts interactively. A lone word is a shell by definition here:
+    // that is what the setting has always meant.
+    argv.front() = ShellProgramName(argv.front());
+    if (command.empty()) {
+      argv.push_back("-i");
+    } else {
+      argv.push_back("-lc");
+      argv.push_back(command);
+    }
+    return argv;
+  }
+  // A multi-word value is exec'd exactly as written; the user already said what to
+  // run, so nothing is appended when there is no command.
+  if (command.empty()) {
+    return argv;
+  }
+  if (TakesPosixCommandFlag(argv.front())) {
+    // A shell the user has configured themselves. Add only `-c`, not `-lc`: their
+    // own flags (`--norc`, `--login`) are the ones that decide the rest.
+    argv.push_back("-c");
+  }
+  argv.push_back(command);
+  return argv;
 }
 
 namespace {

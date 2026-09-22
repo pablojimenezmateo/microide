@@ -1611,7 +1611,7 @@
   std::optional<TerminalSelectionBounds> ActiveTerminalSelectionBounds() const;
   std::string SelectedTerminalText() const;
   bool TerminalCellSelected(std::size_t row, std::size_t column) const;
-  bool OpenExternalUrl(std::string_view url) const;
+  bool OpenExternalUrl(std::string_view url);
   void OpenExternalUrlPrompt(std::string url);
   bool RevealPathInFileExplorer(const std::filesystem::path& directory);
   void ResizeTerminalToPanel(const SDL_FRect& panel_rect);

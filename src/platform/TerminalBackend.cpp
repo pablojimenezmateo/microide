@@ -126,23 +126,13 @@ class PosixTerminalBackend final : public TerminalBackend {
     // Resolve the launch argv in the PARENT, for the same reason the environment is
     // built here: everything between fork() and exec() must be async-signal-safe, and
     // building strings is not.
-    std::vector<std::string> argv_storage =
-        request.shell.empty() ? std::vector<std::string>{DefaultShellPath()} : request.shell;
-    const std::string program = argv_storage.front();
+    const std::string program =
+        request.shell.empty() ? DefaultShellPath() : request.shell.front();
     const std::string shell_name = ShellProgramName(program);
-    if (argv_storage.size() == 1) {
-      // A bare shell name or path. argv[0] becomes the base name — the login-shell
-      // convention, so `$0` reads `bash` rather than `/bin/bash` — and with no
-      // command to run it starts interactively.
-      argv_storage.front() = shell_name;
-      if (request.command.empty()) {
-        argv_storage.push_back("-i");
-      }
-    }
-    if (!request.command.empty()) {
-      argv_storage.push_back("-lc");
-      argv_storage.push_back(request.command);
-    }
+    // How the command attaches to the shell is BuildTerminalArgv's call, not this
+    // function's: it is a decision about the setting's meaning, and keeping it here
+    // is what let the `-i` fix land on the interactive path only.
+    std::vector<std::string> argv_storage = BuildTerminalArgv(request.shell, request.command);
     std::vector<char*> argv_pointers;
     argv_pointers.reserve(argv_storage.size() + 1);
     for (std::string& word : argv_storage) {

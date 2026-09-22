@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <system_error>
 #include <vector>
 
@@ -36,11 +37,33 @@ int main() {
   microide::util::DecrementBackgroundTaskCountAndWake();
   // A real (tiny) project scan: the point is that the filesystem half of the kernel
   // runs, not that it is fast, so the tree is one file the probe makes itself.
+  //
+  // The scan root must be THIS process's alone. A fixed name under the temp directory
+  // is shared by every concurrent run — two build trees tested at once, a CI matrix on
+  // one host — and each run begins and ends by removing it, so one probe deletes the
+  // other's tree mid-scan and the loser fails on `scanned.size() == 1` with a message
+  // about kernel entry points. create_directory reports whether IT created the
+  // directory, so claiming one that way is race-free without a pid or a platform call.
   std::error_code ec;
-  const std::filesystem::path scan_root =
-      std::filesystem::temp_directory_path(ec) / "microide-kernel-link-probe";
-  std::filesystem::remove_all(scan_root, ec);
-  std::filesystem::create_directories(scan_root, ec);
+  const std::filesystem::path temp_root = std::filesystem::temp_directory_path(ec);
+  if (ec) {
+    std::fprintf(stderr, "kernel link probe: no temp directory: %s\n", ec.message().c_str());
+    return 1;
+  }
+  std::filesystem::path scan_root;
+  for (int attempt = 0; attempt < 256 && scan_root.empty(); ++attempt) {
+    const std::filesystem::path candidate =
+        temp_root / ("microide-kernel-link-probe-" + std::to_string(attempt));
+    std::error_code claim_error;
+    if (std::filesystem::create_directory(candidate, claim_error) && !claim_error) {
+      scan_root = candidate;
+    }
+  }
+  if (scan_root.empty()) {
+    std::fprintf(stderr, "kernel link probe: could not claim a scan directory under %s\n",
+                 temp_root.string().c_str());
+    return 1;
+  }
   { std::ofstream(scan_root / "one.txt") << "probe\n"; }
   const std::vector<microide::project::ProjectFile> scanned =
       microide::project::FileIndex::ScanFiles(scan_root, false, {});
@@ -51,12 +74,24 @@ int main() {
               session.SnapshotLines().size(), red.r, red.g, red.b,
               wake_delivered ? 1 : 0, scanned.size());
   // Every one of these is a fact about a DIFFERENT kernel area, so a probe reduced to
-  // a bare `return 0` by a later edit fails instead of passing hollow.
-  const bool ok = session.SnapshotLines().size() == 1 && red.r == 0xc3 && !wake_delivered &&
-                  scanned.size() == 1;
-  if (!ok) {
-    std::fprintf(stderr, "kernel link probe: a kernel entry point returned the wrong thing\n");
-    return 1;
+  // a bare `return 0` by a later edit fails instead of passing hollow. Each says which
+  // area it is: one message for all four sends the reader to the wrong subsystem.
+  struct Fact {
+    bool ok;
+    const char* description;
+  };
+  const Fact facts[] = {
+      {session.SnapshotLines().size() == 1, "terminal: a fresh session has one line"},
+      {red.r == 0xc3, "ansi palette: basic color 1 is the expected red"},
+      {!wake_delivered, "waker: a push with no registered channel reports undelivered"},
+      {scanned.size() == 1, "file index: the one-file scan tree scanned as one file"},
+  };
+  bool ok = true;
+  for (const Fact& fact : facts) {
+    if (!fact.ok) {
+      std::fprintf(stderr, "kernel link probe: wrong answer from %s\n", fact.description);
+      ok = false;
+    }
   }
-  return 0;
+  return ok ? 0 : 1;
 }

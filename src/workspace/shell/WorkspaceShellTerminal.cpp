@@ -465,14 +465,27 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
       });
 }
 
-bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {
+bool WorkspaceShell::OpenExternalUrl(std::string_view url) {
   if (url.empty()) {
     return false;
   }
   if (external_url_opener_) {
     return external_url_opener_(url);
   }
-  return platform::OpenUrl(url).ok;
+  // Validate the URL cheaply on the shell thread so a rejected scheme still reports
+  // synchronously, then dispatch the actual xdg-open subprocess to the background
+  // executor — the same treatment the file-manager reveal got in TD-2026-07-17-061,
+  // for the same reason. This used to be SDL_OpenURL, which forked and returned at
+  // once; routing it through the launcher seam made it a captured, waited-on child
+  // with a 10s timeout, so a $BROWSER fallback that does not background its handler
+  // would freeze the editor for ten seconds per clicked link and then report failure
+  // for a browser that opened fine.
+  if (!platform::IsOpenableExternalUrl(url)) {
+    return false;
+  }
+  project_background_executor_.Post(
+      [target = std::string(url)]() { platform::OpenUrl(target); });
+  return true;
 }
 
 bool WorkspaceShell::RevealPathInFileExplorer(const std::filesystem::path& directory) {

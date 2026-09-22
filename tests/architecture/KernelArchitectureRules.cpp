@@ -249,17 +249,22 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
   // would let the language server and the debug adapter, the two whose answers are
   // line numbers in the user's buffer, escape it entirely.
   //
-  // Only two files may name the primitives:
-  //   * ProcessLauncher.cpp, which IS the launcher; and
-  //   * HostIntegration.cpp, whose `xdg-open` must NEVER follow the project —
-  //     opening a file manager on the build server is always wrong — and which says
-  //     so at the call.
+  // Only ProcessLauncher.cpp may name the primitives: it IS the launcher. A spawn
+  // that must never follow the project — `xdg-open` in HostIntegration.cpp, because
+  // opening a file manager on the build server is always wrong — still goes through
+  // a launcher, the explicit `LocalProcessLauncher()`, and so needs no exemption.
   // The primitives' own definitions are excluded by path, not allowlisted.
   static constexpr std::array<const char*, 5> kExemptSuffixes = {
       "src/platform/ProcessLauncher.cpp", "src/platform/ProcessLauncher.h",
       "src/platform/Subprocess.cpp",      "src/platform/Subprocess.h",
       "src/platform/AsyncSubprocess.cpp",
   };
+  // The vacuity guard below watches THIS file alone, and for a CALL. Scoping it to
+  // "any exempt file" is what it used to do, and Subprocess.h is exempt and declares
+  // `SubprocessResult RunSubprocess(...)` — so a declaration satisfied the guard
+  // forever and the rule could go blind while still reporting green, which is the
+  // failure this suite exists to prevent (dev-docs/project/validation-traps.md).
+  static constexpr std::string_view kLauncherSuffix = "src/platform/ProcessLauncher.cpp";
   const std::regex run_subprocess(R"(\bRunSubprocess\s*\()");
   // The asynchronous half is checked per FILE rather than per call. Matching the call
   // shape would mean pinning an argument name or a receiver spelling, and a rule whose
@@ -285,10 +290,10 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
     }
     const std::string text = ReadText(entry.path());
     if (exempt) {
-      // The exempt files are also where the primitives must actually BE. If none of
-      // them names one any more, the rule is scanning for a call form that no longer
-      // exists and would pass forever.
-      if (std::regex_search(text, run_subprocess)) {
+      // The launcher is also where the primitive must actually BE. If it stops
+      // calling one, the rule is scanning for a call form that no longer exists and
+      // would pass forever. A declaration or a mention in a comment does not count.
+      if (generic.ends_with(kLauncherSuffix) && CodeMaskedPatternAppears(text, run_subprocess)) {
         saw_any_primitive = true;
       }
       continue;
@@ -314,8 +319,8 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
     result.missing_targets.push_back(Violation{
         .path = src_dir / "platform" / "ProcessLauncher.cpp",
         .line = 1,
-        .message = "found no RunSubprocess call in the launcher itself; this rule is "
-                   "scanning for a call form the tree no longer uses",
+        .message = "found no RunSubprocess call in ProcessLauncher.cpp itself; this "
+                   "rule is scanning for a call form the tree no longer uses",
     });
   }
   return result;
