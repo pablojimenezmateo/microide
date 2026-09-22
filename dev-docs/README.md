@@ -11,7 +11,7 @@ top-level [`docs/`](../docs/) directory is reserved for the public [GitHub Pages
 | [`performance/`](performance/) | Perf harness, tracing, profiling, findings; [`investigations/`](performance/investigations/) for historical deep dives |
 | [`platform/`](platform/) | Linux build, host bring-up, platform audit, [Wayland stale-cursor bug](platform/wayland-stale-cursor.md) |
 | [`plugins/`](plugins/) | Plugin runtime research |
-| [`design/`](design/) | Active design contracts (e.g. text-surface unification) |
+| [`design/`](design/) | Active design contracts (text-surface unification) and explored-but-unstarted designs ([remote projects over ssh](design/remote-projects.md)) |
 | [`archive/`](archive/) | Shipped plans, superseded notes, out-of-scope decisions |
 
 ## Policy and handbook

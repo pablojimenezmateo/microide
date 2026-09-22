@@ -282,6 +282,33 @@ Not current work unless deliberately promoted into its own phase.
   plugin loading, Micro-plugin compatibility.** Ships `--disable-plugins` /
   `--safe-mode` only.
 - **Cloud and collaboration features.**
+- **Remote projects (opening a tree that lives on another machine).** Designed,
+  not started: `dev-docs/design/remote-projects.md` (last revised 2026-09-22). The
+  design measures what a remote operation costs (4,957 path syscalls to open a
+  project, 162 to open one file), rules out sshfs, and keeps a local mirror equal to
+  the remote tree through a persistent `microide-agent` daemon over ssh, with every
+  process (git, LSP, DAP, terminal) running on the host. The wire is length-prefixed
+  binary frames over a content-addressed object store with `zstd --patch-from`
+  deltas; the terminal model runs on the host and ships screen state, with input as
+  semantic events encoded there; the daemon outlives the connection, so terminals
+  and their scrollback survive a dropped link and reattach. No FUSE mount at any
+  phase. Local and remote project tabs coexist. Phase 1 (link a local checkout to a
+  host) is a development stepping stone behind an experimental flag, not a shipped
+  mode. **Groundwork is ten local-tree changes (~4,200 lines), each of which stands
+  on its own if remote projects are never built**, and together they are the seams
+  the rest plugs into: an SDL-free kernel defined as an explicit CMake source list
+  with a transitive-include lint and its own test binary; a project-owned process
+  launcher covering all eight spawn sites, `RunSubprocess` and `AsyncSubprocess`
+  alike; argv-shaped terminal launch; asynchronous file open with a revision-guarded
+  completion that the asynchronous save pipeline and content hashing reuse; an
+  asynchronous save that runs the formatter from all seven of its entry points
+  instead of one; blake3 content hashes behind a stat prefilter; notifications with
+  keys, actions, progress and lifetime; `ProjectId` for identity while `root` stays
+  the filesystem path; a `.git` metadata source with an explicit unknown state; and
+  one write gate that `TextViewport::Save` takes as its writer. Groundwork carries
+  its own perf gates (design § 9) and coverage (§ 10). Sizing is ~17,600 production
+  lines across five phases. Nothing is started; display forwarding (`xpra`) is the
+  current zero-code answer.
 - **AI/LLM runtime surfaces.** Retired from product scope; the
   authentication-provider and secret-storage surfaces went with them.
 - **Settings overlay follow-ups.** Section subtitles are a static table keyed by
@@ -316,4 +343,5 @@ that disagree are worse than one. This file is the only one now.
 - `dev-docs/performance/startup-tracing.md`, `runtime-profiling.md` — profiling workflows
 - `dev-docs/plugins/plugin-runtime-research.md` — plugin architecture notes
 - `dev-docs/design/text-surface-unification.md` — text-input interaction contract
+- `dev-docs/design/remote-projects.md` — remote-project design exploration (not started)
 - `SECURITY.md` — trust model, safe mode, reporting
