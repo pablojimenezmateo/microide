@@ -234,9 +234,12 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
     return std::nullopt;
   }
   std::filesystem::path git_dir(line);
-  // A `.git` file may hold either an absolute path or one relative to the
-  // worktree root.
-  return git_dir.is_absolute() ? git_dir : (root / git_dir).lexically_normal();
+  // A `.git` file may hold either an absolute path or one relative to the worktree
+  // root. Both are normalized: the absolute case used to be returned verbatim, which
+  // is how this and the change tracker's own copy of this function could return two
+  // different paths for the same repository (`/a/b/../.git` vs `/a/.git`) and compare
+  // unequal.
+  return (git_dir.is_absolute() ? git_dir : root / git_dir).lexically_normal();
 }
 
 std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root) {

@@ -324,6 +324,46 @@ void TestPorcelainV2CapturesSubmoduleField() {
          "a `1` record's <sub> field is read from the same position");
 }
 
+// Two independent implementations of "where is this repository's git directory?"
+// existed — internal::ResolveGitDirectory and a private ResolveGitDir inside the
+// change tracker — and they disagreed: one normalized the `gitdir:` target and one
+// returned an absolute one verbatim, so `/a/b/../.git` and `/a/.git` could name the
+// same repository and compare unequal. There is one now, and this pins its answer for
+// each of the three layouts plus the case the copies differed on.
+void TestResolveGitDirectoryLayouts() {
+  namespace gitutil = microide::project::internal;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path base = temp_dir.path();
+
+  Expect(!gitutil::ResolveGitDirectory(base / "not-a-repo").has_value(),
+         "a directory with no .git marker has no git directory");
+
+  // Ordinary checkout: `.git` is a directory.
+  const std::filesystem::path plain = base / "plain";
+  std::filesystem::create_directories(plain / ".git");
+  Expect(gitutil::ResolveGitDirectory(plain) == plain / ".git",
+         "an ordinary checkout resolves to <root>/.git");
+
+  // Linked worktree / submodule: `.git` is a FILE holding `gitdir: <path>`.
+  const std::filesystem::path linked = base / "linked";
+  std::filesystem::create_directories(linked);
+  std::filesystem::create_directories(base / "store" / "wt");
+  WriteFile(linked / ".git", "gitdir: ../store/wt\n");
+  Expect(gitutil::ResolveGitDirectory(linked) == (base / "store" / "wt").lexically_normal(),
+         "a relative gitdir: target resolves against the worktree root");
+
+  // The divergence: an ABSOLUTE gitdir target with a `..` in it. One copy returned it
+  // verbatim, so the two answers for one repository were not the same path.
+  WriteFile(linked / ".git", "gitdir: " + (base / "store" / "wt" / ".." / "wt").string() + "\n");
+  Expect(gitutil::ResolveGitDirectory(linked) == (base / "store" / "wt").lexically_normal(),
+         "an absolute gitdir: target is normalized too, not returned verbatim");
+
+  // A `.git` file that is not a gitdir pointer is not a repository.
+  WriteFile(linked / ".git", "something else\n");
+  Expect(!gitutil::ResolveGitDirectory(linked).has_value(),
+         "a .git file without a gitdir: prefix names no git directory");
+}
+
 void TestReadPendingMergeHeadId() {
   namespace gitutil = microide::project::internal;
   TemporaryDirectory temp_dir;
@@ -449,6 +489,7 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestRefreshFailureClassification);
   AddTest(tests, "GitRepositoryState/PorcelainV2CapturesSubmoduleField",
           TestPorcelainV2CapturesSubmoduleField);
+  AddTest(tests, "GitRepositoryState/ResolveGitDirectoryLayouts", TestResolveGitDirectoryLayouts);
   AddTest(tests, "GitRepositoryState/ReadPendingMergeHeadId", TestReadPendingMergeHeadId);
   AddTest(tests, "GitRepositoryState/DetectGitOperationState", TestDetectGitOperationState);
 }

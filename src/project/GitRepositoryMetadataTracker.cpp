@@ -4,6 +4,7 @@
 #include <string>
 #include <system_error>
 
+#include "project/GitCommandUtil.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
@@ -51,43 +52,6 @@ bool IsSafeRelativeRefName(const std::string& ref) {
   return true;
 }
 
-// Resolve the real git directory for a project root. For an ordinary checkout
-// `<root>/.git` is a directory. For a linked worktree or a submodule it is a
-// regular *file* containing `gitdir: <path>` (that gitdir holds this
-// worktree's own HEAD and index). Statting `<root>/.git/HEAD` then silently
-// fails and change detection dies. Follow the pointer so commit/stage still
-// triggers an auto-refresh.
-std::optional<std::filesystem::path> ResolveGitDir(const std::filesystem::path& project_root) {
-  const std::filesystem::path git_marker = project_root / ".git";
-  std::error_code error;
-  if (!std::filesystem::exists(git_marker, error)) {
-    return std::nullopt;
-  }
-  if (std::filesystem::is_directory(git_marker, error)) {
-    return git_marker;
-  }
-
-  const std::optional<std::string> line = ReadFirstLineOfRegularFile(git_marker);
-  if (!line.has_value()) {
-    return std::nullopt;
-  }
-  const std::string trimmed = util::TrimAsciiWhitespace(*line);
-  constexpr std::string_view kPrefix = "gitdir:";
-  if (std::string_view(trimmed).substr(0, kPrefix.size()) != kPrefix) {
-    return std::nullopt;
-  }
-  const std::string target =
-      util::TrimAsciiWhitespace(std::string_view(trimmed).substr(kPrefix.size()));
-  if (target.empty()) {
-    return std::nullopt;
-  }
-  std::filesystem::path resolved(target);
-  if (resolved.is_relative()) {
-    resolved = project_root / resolved;
-  }
-  return resolved.lexically_normal();
-}
-
 // For a linked worktree, branch refs live in the COMMON git directory, named by
 // `<gitdir>/commondir`. Absent that file (an ordinary checkout), the gitdir IS the
 // common dir. Returns the resolved common directory. (TD-2026-07-16-63.)
@@ -132,7 +96,7 @@ std::optional<std::string> ReadSymbolicHeadRef(const std::filesystem::path& head
 }  // namespace
 
 std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& project_root) {
-  const std::optional<std::filesystem::path> git_dir = ResolveGitDir(project_root);
+  const std::optional<std::filesystem::path> git_dir = internal::ResolveGitDirectory(project_root);
   if (!git_dir.has_value()) {
     return std::nullopt;
   }
@@ -206,7 +170,7 @@ GitRepositoryMetadataTracker::ReadCurrentTicks() const {
     return std::nullopt;
   }
 
-  const std::optional<std::filesystem::path> git_dir_opt = ResolveGitDir(project_root_);
+  const std::optional<std::filesystem::path> git_dir_opt = internal::ResolveGitDirectory(project_root_);
   if (!git_dir_opt.has_value()) {
     return std::nullopt;
   }
