@@ -1479,6 +1479,7 @@ if(MICROIDE_FUZZ)
     src/platform/ShellProcess.cpp
     src/platform/TerminalBackend.cpp
     src/util/AnsiPalette.cpp
+    src/util/CommandLine.cpp
     src/util/Parse.cpp
     src/util/StringUtil.cpp
     src/util/PerformanceCounters.cpp
