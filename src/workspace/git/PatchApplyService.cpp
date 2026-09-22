@@ -221,7 +221,11 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
       return;
     }
 
-    PatchApplyResult result = project::ApplyPatchRequest(request, patch_text);
+    // Explicitly local, and greppable as such: the project does not own a launcher
+    // yet (TD-2026-09-22-301), and a patch applied on the wrong machine is exactly
+    // the silent wrong answer the launcher exists to prevent.
+    PatchApplyResult result =
+        project::ApplyPatchRequest(platform::LocalProcessLauncher(), request, patch_text);
     const bool patch_applied = result.category == PatchApplyResultCategory::Success;
     if (patch_applied) {
       git_repository_service_.MarkStale();

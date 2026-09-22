@@ -115,7 +115,7 @@ std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepositor
 
 GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
                                            const std::filesystem::path& absolute_path) {
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (absolute_path.empty() || !repo.IsValid()) {
     return {};
   }
@@ -129,7 +129,7 @@ GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
 
 std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path& root,
                                                     std::size_t limit) {
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (limit == 0 || !repo.IsValid()) {
     return {};
   }
@@ -148,7 +148,7 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
 }
 
 std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root) {
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (!repo.IsValid()) {
     return {};
   }
@@ -220,7 +220,7 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
   if (root.empty() || revisions.empty() || absolute_paths.empty()) {
     return;
   }
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (!repo.IsValid()) {
     return;
   }
@@ -291,7 +291,7 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     }
   }
 
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   const auto relative = repo.ToRelative(absolute_path);
   if (!relative.has_value()) {
     return std::nullopt;
@@ -333,7 +333,7 @@ std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem:
   // spawn cost whose thread and call count are the whole story -- the ranking
   // showed the cluster as five separate RunSubprocess rows with no owner.
   util::PerformanceTrace::Scope perf_scope("git::ResolveBaseReference");
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (!repo.IsValid()) {
     return std::nullopt;
   }
@@ -441,7 +441,7 @@ std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view o
 
 std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
                                                               std::string_view base_ref) {
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (base_ref.empty() || !repo.IsValid()) {
     return {};
   }
@@ -463,7 +463,7 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
 
 std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesystem::path& root,
                                                               std::string_view ref) {
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (ref.empty() || !repo.IsValid()) {
     return {};
   }
@@ -482,7 +482,7 @@ std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesy
 
 std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
                                                                 std::string_view commit_hash) {
-  const GitRepository repo(root);
+  const GitRepository repo(root, platform::LocalProcessLauncher());
   if (commit_hash.empty() || !repo.IsValid()) {
     return {};
   }

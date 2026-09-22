@@ -89,7 +89,7 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
     return summary;
   }
 
-  GitRepository repo(repository_state.repository_root);
+  GitRepository repo(repository_state.repository_root, platform::LocalProcessLauncher());
   // `-z`: NUL-delimited, unquoted. Without it a path containing a newline splits
   // into bogus rows and a rename shows up as one mangled "old => new" path.
   const GitRepository::CommandResult numstat =
@@ -186,7 +186,7 @@ std::optional<bool> StagedDiffContainsConflictMarkers(const std::filesystem::pat
   if (repository_root.empty()) {
     return false;
   }
-  GitRepository repo(repository_root);
+  GitRepository repo(repository_root, platform::LocalProcessLauncher());
   const GitRepository::CommandResult diff = repo.Execute({"diff", "--cached"}, true);
   if (!diff.success()) {
     return std::nullopt;  // could not determine (e.g. locked index) — not "clean"

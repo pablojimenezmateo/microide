@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <future>
 
-#include "project/SubprocessHelper.h"
 #include "util/DurableFile.h"
 #include "util/Sha256.h"
 #include "workspace/FileUri.h"

@@ -340,7 +340,7 @@ void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
 
   // %B is the raw commit message (subject + blank line + body). It must contain
   // the subject and the long tail verbatim.
-  microide::project::GitRepository repo(root);
+  microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
   const auto logged = repo.Execute({"log", "-1", "--format=%B"});
   Expect(logged.success(), "git log should read back the message");
   Expect(logged.output.find(subject) != std::string::npos,

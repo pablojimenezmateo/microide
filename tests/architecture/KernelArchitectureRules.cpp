@@ -234,9 +234,97 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
   return result;
 }
 
+RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "every spawn goes through a ProcessLauncher";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!RequireRuleTarget(result, src_dir)) {
+    return result;
+  }
+
+  // Locality is OWNED, not chosen per call: a project holds a launcher and every spawn
+  // that belongs to it goes through that launcher, or a session silently splits across
+  // two machines. Both spawn primitives are covered — scoping this to RunSubprocess
+  // would let the language server and the debug adapter, the two whose answers are
+  // line numbers in the user's buffer, escape it entirely.
+  //
+  // Only two files may name the primitives:
+  //   * ProcessLauncher.cpp, which IS the launcher; and
+  //   * HostIntegration.cpp, whose `xdg-open` must NEVER follow the project —
+  //     opening a file manager on the build server is always wrong — and which says
+  //     so at the call.
+  // The primitives' own definitions are excluded by path, not allowlisted.
+  static constexpr std::array<const char*, 5> kExemptSuffixes = {
+      "src/platform/ProcessLauncher.cpp", "src/platform/ProcessLauncher.h",
+      "src/platform/Subprocess.cpp",      "src/platform/Subprocess.h",
+      "src/platform/AsyncSubprocess.cpp",
+  };
+  const std::regex run_subprocess(R"(\bRunSubprocess\s*\()");
+  // The asynchronous half is checked per FILE rather than per call. Matching the call
+  // shape would mean pinning an argument name or a receiver spelling, and a rule whose
+  // pattern stops matching its own call form is the failure mode this repo keeps
+  // finding (dev-docs/project/validation-traps.md). A file that starts an
+  // AsyncSubprocess must name ResolveArgv; that is what the language-server and the
+  // debug-adapter spawns do, and it is coarse in the safe direction.
+  const std::regex async_start(R"(\.Start\s*\()");
+  const std::regex async_type(R"(\bAsyncSubprocess\b)");
+  const std::regex resolve_argv(R"(\bResolveArgv\s*\()");
+  bool saw_any_primitive = false;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file() || !IsSourceExtension(entry.path())) {
+      continue;
+    }
+    const std::string generic = entry.path().generic_string();
+    bool exempt = false;
+    for (const char* suffix : kExemptSuffixes) {
+      if (generic.ends_with(suffix)) {
+        exempt = true;
+        break;
+      }
+    }
+    const std::string text = ReadText(entry.path());
+    if (exempt) {
+      // The exempt files are also where the primitives must actually BE. If none of
+      // them names one any more, the rule is scanning for a call form that no longer
+      // exists and would pass forever.
+      if (std::regex_search(text, run_subprocess)) {
+        saw_any_primitive = true;
+      }
+      continue;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, run_subprocess,
+        "spawns must go through a platform::ProcessLauncher (LocalProcessLauncher() "
+        "when the spawn must never follow the project, and say why), not "
+        "platform::RunSubprocess directly");
+    if (std::regex_search(text, async_type) && std::regex_search(text, async_start) &&
+        !std::regex_search(text, resolve_argv)) {
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = 1,
+          .message = "starts an AsyncSubprocess without resolving its argv through a "
+                     "platform::ProcessLauncher; a language server or debug adapter "
+                     "started on the wrong machine reports line numbers for a file "
+                     "nobody is looking at",
+      });
+    }
+  }
+  if (!saw_any_primitive) {
+    result.missing_targets.push_back(Violation{
+        .path = src_dir / "platform" / "ProcessLauncher.cpp",
+        .line = 1,
+        .message = "found no RunSubprocess call in the launcher itself; this rule is "
+                   "scanning for a call form the tree no longer uses",
+    });
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
+      {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
   };
   return rules;
 }

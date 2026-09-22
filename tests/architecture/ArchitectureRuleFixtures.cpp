@@ -1045,6 +1045,47 @@ void RunKernelWindowingLibraryRuleFixtures() {
          "kernel rule must report a MICROIDE_KERNEL_SOURCES list it cannot read");
 }
 
+void RunProcessLauncherRuleFixtures() {
+  TemporaryDirectory launcher_dir;
+  const std::filesystem::path& root = launcher_dir.path();
+  std::filesystem::create_directories(root / "src/platform");
+  std::filesystem::create_directories(root / "src/workspace");
+  // The rule reports a missing target unless the launcher itself still calls the
+  // primitive, so the fixture root carries one.
+  WriteFile(root / "src/platform/ProcessLauncher.cpp",
+            "SubprocessResult Run(){ return RunSubprocess(argv, options); }\n");
+
+  WriteFile(root / "src/workspace/BadSync.cpp",
+            "void F(){ platform::RunSubprocess({\"git\"}, {}); }\n");
+  WriteFile(root / "src/workspace/BadAsync.cpp",
+            "platform::AsyncSubprocess proc;\nvoid G(){ proc.Start(command, cwd, sandbox); }\n");
+  const RuleResult flagged = CheckEverySpawnGoesThroughAProcessLauncher(root);
+  Expect(flagged.violations.size() == 2,
+         "spawn rule must flag both a direct RunSubprocess and an AsyncSubprocess start "
+         "with no launcher-resolved argv");
+
+  // Positive control: the same two spawns routed through a launcher.
+  WriteFile(root / "src/workspace/BadSync.cpp",
+            "void F(){ platform::LocalProcessLauncher().Run({\"git\"}, {}); }\n");
+  WriteFile(root / "src/workspace/BadAsync.cpp",
+            "platform::AsyncSubprocess proc;\n"
+            "void G(){ proc.Start(launcher.ResolveArgv(command), cwd, sandbox); }\n");
+  Expect(CheckEverySpawnGoesThroughAProcessLauncher(root).violations.empty(),
+         "spawn rule must accept spawns routed through a ProcessLauncher");
+
+  // A file that merely STORES an AsyncSubprocess without starting one is fine: the
+  // transport holds the process and only writes to it.
+  WriteFile(root / "src/workspace/Holder.h", "struct T { platform::AsyncSubprocess proc; };\n");
+  Expect(CheckEverySpawnGoesThroughAProcessLauncher(root).violations.empty(),
+         "spawn rule must not flag a file that only holds an AsyncSubprocess");
+
+  // Loud-missing-target guard: a launcher that no longer calls the primitive means the
+  // rule is scanning for a call form the tree does not use.
+  WriteFile(root / "src/platform/ProcessLauncher.cpp", "SubprocessResult Run(){ return {}; }\n");
+  Expect(!CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
+         "spawn rule must report that the launcher no longer calls the spawn primitive");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -1065,6 +1106,7 @@ void RunAllRuleFixtures() {
   RunFactoryCaptureRuleFixtures();
   RunHintSeparatorRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();
+  RunProcessLauncherRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

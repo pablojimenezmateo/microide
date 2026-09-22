@@ -449,7 +449,7 @@ void TestGitDiscardStagedRenameRestoresSource() {
   Expect(RunGitCommand(repo_path, {"mv", "old.txt", "new.txt"}) == 0,
          "git mv should stage a rename");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.Discard("new.txt"), "discarding a staged rename should succeed");
 
   // Regression: the destination-only discard previously removed `new` and orphaned
@@ -473,7 +473,7 @@ void TestGitUnstageStagedRenameResetsBothSides() {
   CommitAll(repo_path, "base", "base");
   Expect(RunGitCommand(repo_path, {"mv", "old.txt", "new.txt"}) == 0, "git mv should stage a rename");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.Unstage("new.txt"), "unstaging a staged rename should succeed");
 
   // Unstaging must reset both sides to HEAD: nothing left staged (the source's
@@ -528,7 +528,7 @@ void TestGitDiscardRefusesAnUnstattableTarget() {
 
   bool discarded = true;
   if (induced) {
-    GitRepository repo(repo_path);
+    GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
     discarded = repo.Discard("locked/untracked.txt");
   }
 
@@ -556,7 +556,7 @@ void TestGitRepositoryDirectApi() {
   InitializeGitRepo(repo_path);
   CommitAll(repo_path, "base fixture", "base fixture");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.IsValid(), "git repository wrapper should detect a valid repository");
   Expect(repo.ToRelative(repo_path / "README.md") == std::filesystem::path("README.md"),
          "git repository wrapper should convert absolute paths to repo-relative paths");
@@ -597,7 +597,7 @@ void TestGitRepositoryHandlesQuotedAndSpacedPaths() {
   WriteFile(weird_file, "int value = 1;\n");
   CommitAll(repo_path, "Add weird path", "weird path");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto relative = repo.ToRelative(weird_file);
   Expect(relative.has_value(), "git repository wrapper should relativize quoted paths");
   Expect(*relative == std::filesystem::path("dir with spaces") / "quote's file.cpp",
@@ -975,6 +975,7 @@ void TestGitCommandTimeoutReportsTimedOut() {
   RunGitCommand(repo_path, {"add", "-A"});
 
   const auto result = microide::project::internal::ReadGitCommandOutput(
+      microide::platform::LocalProcessLauncher(),
       repo_path, {"commit", "-m", "blocked"}, /*silence_stderr=*/false, /*timeout_ms=*/300);
   Expect(result.timed_out, "a git commit blocked by a slow hook must report timed_out");
   Expect(!result.success(), "a timed-out git command must not report success");
@@ -1042,7 +1043,7 @@ void TestGitExplicitRevisionArgsUseEndOfOptions() {
 
   // cat-file -e / show <rev>:<path> now also carry `--end-of-options`; existence
   // and content reads at an explicit revision must keep working.
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   Expect(repo.FileExistsAtRevision("added.txt", head_hash),
          "an existing file must be detected at an explicit revision");
   Expect(!repo.FileExistsAtRevision("added.txt", recent[1].hash),
@@ -1166,7 +1167,7 @@ void TestGitBlobLookupMatchesExistenceAndContent() {
   WriteFile(repo_path / "dir" / "nested.txt", "nested\n");
   CommitAll(repo_path, "base", "base");
 
-  const GitRepository repo(repo_path);
+  const GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto check = [&](const std::filesystem::path& relative, bool expect_exists) {
     const auto lookup = repo.LookupBlobAtRevision(relative, "HEAD");
     Expect(lookup.has_value(), "the batch lookup must reach git for a valid repository");
@@ -1258,7 +1259,7 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
   WriteFile(repo_path / "c.txt", "third\n");
   CommitAll(repo_path, "second", "second");
 
-  const GitRepository repo(repo_path);
+  const GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const std::vector<std::string> revisions = {"HEAD", "HEAD~1"};
   const std::vector<std::filesystem::path> relatives = {"a.txt", "b.txt", "c.txt",
                                                         "spaced name.txt", "absent.txt"};

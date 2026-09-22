@@ -310,10 +310,10 @@ void TestPatchStageHunkInRepository() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success, "git apply should succeed");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"diff", "--cached", "--", "tracked.txt"});
   Expect(staged.success(), "staged diff should be readable");
   Expect(staged.output.find("+line2") != std::string::npos,
@@ -348,7 +348,7 @@ void TestPatchGeneratorOneSidedPhantomTrailingLineApplies() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "git apply should accept the appended-blank-line patch");
 }
@@ -386,7 +386,7 @@ void TestPatchGeneratorNonTerminalHunkNoNewlineMarkerApplies() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "git apply should accept the non-terminal hunk without a stray no-newline marker");
 }
@@ -401,7 +401,7 @@ void TestPatchStaleGenerationCategory() {
           .line_selection = std::nullopt,
       },
   };
-  const auto result = ApplyPatchRequest(request, "not a real patch\n");
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, "not a real patch\n");
   Expect(result.category == PatchApplyResultCategory::PatchDidNotApply ||
              result.category == PatchApplyResultCategory::UnsupportedTarget,
          "invalid repository should fail safely");
@@ -605,11 +605,11 @@ void TestPatchStageCrlfFileApplies() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "git apply --cached should accept the CRLF patch");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"show", ":crlf.txt"});
   Expect(staged.success(), "staged blob should be readable");
   Expect(staged.output == "line1\r\nline2\r\nline3\r\n",
@@ -681,7 +681,7 @@ void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
   RequireGitCommandSuccess(repo_path, {"add", "file.txt"}, "stage staged changes");
   WriteFile(file_path, "a\nB2\nc\nd\n");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto head_blob = repo.Execute({"show", "HEAD:file.txt"});
   const auto index_blob = repo.Execute({"show", ":file.txt"});
   Expect(head_blob.success() && index_blob.success(), "HEAD and index blobs should be readable");
@@ -709,7 +709,7 @@ void TestPatchUnstageSelectedLinesWithStagedAndUnstagedChanges() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success, "unstage patch should apply");
 
   const auto staged = repo.Execute({"diff", "--cached", "--", "file.txt"});
@@ -769,11 +769,11 @@ void TestPatchStagePureInsertionWithNoContextApplies() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "the pure-insertion patch must apply cleanly (no corrupt hunk header)");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"diff", "--cached", "--", "file.txt"});
   Expect(staged.success() && staged.output.find("+c") != std::string::npos &&
              staged.output.find("+d") != std::string::npos,
@@ -810,10 +810,10 @@ void TestPatchStageNewFileUsesDevNull() {
               .line_selection = std::nullopt},
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "new-file patch should apply to the index");
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"show", ":created.txt"});
   Expect(staged.success() && staged.output == "alpha\nbeta\n",
          "staged new file must match the worktree content");
@@ -843,10 +843,10 @@ void TestPatchStageDeletedFileUsesDevNull() {
               .line_selection = std::nullopt},
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "deleted-file patch should apply to the index");
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"show", ":doomed.txt"});
   Expect(!staged.success(), "deleted file must be gone from the index");
 }
@@ -877,10 +877,10 @@ void TestPatchStagePreservesMissingFinalNewline() {
               .line_selection = std::nullopt},
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "no-newline patch should apply to the index");
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"show", ":nonl.txt"});
   Expect(staged.success() && staged.output == "a\nb\nC",
          "staged blob must preserve the missing final newline (no added '\\n')");
@@ -957,11 +957,11 @@ void TestPatchStageHunkWithShiftedBlankContextApplies() {
       },
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "staging a hunk with a shifted interior blank line must apply cleanly");
 
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"diff", "--cached", "--", "tracked.txt"});
   Expect(staged.success() && staged.output.find("+target_new") != std::string::npos,
          "staged diff should contain the changed target line");
@@ -993,10 +993,10 @@ void TestPatchStageAppendAfterMissingFinalNewline() {
               .line_selection = std::nullopt},
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "append-after-no-newline patch should apply to the index");
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"show", ":nonl.txt"});
   Expect(staged.success() && staged.output == "line1\nline2\nline3\n",
          "staged blob must be exactly the appended content (line2 and line3 not fused)");
@@ -1027,10 +1027,10 @@ void TestPatchStageDeleteTrailingLeavesMissingFinalNewline() {
               .line_selection = std::nullopt},
       .model = model,
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "delete-trailing patch should apply to the index");
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
   const auto staged = repo.Execute({"show", ":nonl.txt"});
   Expect(staged.success() && staged.output == "line1",
          "staged blob must be exactly 'line1' with no added trailing newline");
@@ -1071,7 +1071,7 @@ void TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies() {
               .hunk = std::nullopt,
               .line_selection = std::nullopt},
   };
-  const auto result = ApplyPatchRequest(request, *patch);
+  const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
   Expect(result.category == PatchApplyResultCategory::Success,
          "copied whole-file patch must be git-apply-able");
 }
@@ -1105,7 +1105,7 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
                 .hunk = std::nullopt,
                 .line_selection = std::nullopt},
     };
-    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+    Expect(ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch).category == PatchApplyResultCategory::Success,
            "copied add patch must apply");
   }
 
@@ -1129,7 +1129,7 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
                 .hunk = std::nullopt,
                 .line_selection = std::nullopt},
     };
-    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+    Expect(ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch).category == PatchApplyResultCategory::Success,
            "copied delete patch must apply");
   }
 
@@ -1153,7 +1153,7 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
                 .hunk = std::nullopt,
                 .line_selection = std::nullopt},
     };
-    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+    Expect(ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch).category == PatchApplyResultCategory::Success,
            "copied spaces-path patch must apply");
   }
 
@@ -1177,7 +1177,7 @@ void TestCopyPatchAppliesForAddDeleteSpacesAndNoNewline() {
                 .hunk = std::nullopt,
                 .line_selection = std::nullopt},
     };
-    Expect(ApplyPatchRequest(request, *patch).category == PatchApplyResultCategory::Success,
+    Expect(ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch).category == PatchApplyResultCategory::Success,
            "copied no-newline patch must apply");
   }
 }
@@ -1349,7 +1349,7 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
   std::filesystem::create_directories(repo_path);
   InitializeGitRepo(repo_path);
   const auto file_path = repo_path / "f.txt";
-  GitRepository repo(repo_path);
+  GitRepository repo(repo_path, microide::platform::LocalProcessLauncher());
 
   static constexpr const char* kVocabulary[] = {"alpha", "beta", "gamma", "", "alpha", "  x",
                                                 "}", "{", "delta", "eps"};
@@ -1430,7 +1430,7 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
                   .line_selection = std::nullopt},
           .model = model,
       };
-      const auto result = ApplyPatchRequest(request, *patch);
+      const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, *patch);
       Expect(result.category == PatchApplyResultCategory::Success,
              ("hunk " + std::to_string(hunk) + " stages alone: " + label + " patch=[" + *patch +
               "] error=[" + result.detail + "]")
@@ -1463,7 +1463,7 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
                       static_cast<std::size_t>(std::max(0, h.end_row))),
                   .working_tree_source = model.right_source},
       };
-      const auto result = ApplyPatchRequest(request, "unused");
+      const auto result = ApplyPatchRequest(microide::platform::LocalProcessLauncher(), request, "unused");
       Expect(result.category == PatchApplyResultCategory::Success,
              ("hunk " + std::to_string(hunk) + " stages after the hunks before it: " + label +
               " error=[" + result.detail + "]")

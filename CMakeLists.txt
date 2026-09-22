@@ -288,13 +288,13 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/PatchApplyTypes.cpp
   src/project/PatchGenerator.cpp
   src/project/PatternCache.cpp
+  src/platform/ProcessLauncher.cpp
   src/project/ProjectBackgroundExecutor.cpp
   src/project/ProjectChangeCoalescer.cpp
   src/project/ProjectChangeNormalizer.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp
   src/project/ProjectTraversalFilter.cpp
-  src/project/SubprocessHelper.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalBase64.cpp
   src/terminal/TerminalCsiParser.cpp
@@ -1150,6 +1150,7 @@ add_executable(microide_tests
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/CommandLineTests.cpp
+  tests/ProcessLauncherTests.cpp
   tests/FileIndexWatcherTests.cpp
   tests/FileIndexWatcherContractTests.cpp
   tests/PatternCacheTests.cpp
@@ -1676,6 +1677,7 @@ add_executable(microide_diff_bench
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp
   src/platform/Filesystem.cpp
+  src/platform/ProcessLauncher.cpp
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp
   src/project/GitPorcelainParser.cpp

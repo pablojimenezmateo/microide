@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "platform/ProcessLauncher.h"
 #include "util/Waker.h"
 
 namespace microide::tests {
@@ -73,6 +74,11 @@ class GitBlameService {
   ~GitBlameService();
 
   void SetWakeChannel(util::WakeChannel channel);
+  // Where `git blame` runs. Held, not passed per call: a blame belongs to the project
+  // whose file it annotates, and the worker that runs it outlives any one request.
+  // The reference must outlive the service (the process-wide local launcher, or the
+  // project's own).
+  void SetLauncher(const platform::ProcessLauncher& launcher);
   void Request(const GitBlameRequest& request);
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const;
   void InvalidatePath(const std::filesystem::path& root,

@@ -19,11 +19,12 @@ namespace {
 
 namespace gitutil = microide::project::internal;
 
-GitPatchApplyOutcome RunGitApply(const std::filesystem::path& repository_root,
+GitPatchApplyOutcome RunGitApply(const platform::ProcessLauncher& launcher,
+                                 const std::filesystem::path& repository_root,
                                  std::string_view patch_text,
                                  const GitPatchApplyOptions& options,
                                  bool check_only) {
-  GitRepository repo(repository_root);
+  GitRepository repo(repository_root, launcher);
   if (!repo.IsValid() || patch_text.empty()) {
     return GitPatchApplyOutcome{
         .ok = false,
@@ -47,7 +48,7 @@ GitPatchApplyOutcome RunGitApply(const std::filesystem::path& repository_root,
   // Applying a large patch can be slow, so use the generous write timeout rather
   // than the short read cap.
   const auto result = gitutil::ReadGitCommandOutputWithStdin(
-      repository_root, std::move(arguments), std::string(patch_text),
+      launcher, repository_root, std::move(arguments), std::string(patch_text),
       /*silence_stderr=*/false, gitutil::kGitWriteTimeoutMs);
   if (result.timed_out) {
     return GitPatchApplyOutcome{
@@ -100,20 +101,23 @@ PatchApplyResultCategory ClassifyGitApplyFailure(std::string_view git_output) {
   return PatchApplyResultCategory::PatchDidNotApply;
 }
 
-GitPatchApplyOutcome PreflightGitPatch(const std::filesystem::path& repository_root,
+GitPatchApplyOutcome PreflightGitPatch(const platform::ProcessLauncher& launcher,
+                                       const std::filesystem::path& repository_root,
                                        std::string_view patch_text,
                                        const GitPatchApplyOptions& options) {
-  return RunGitApply(repository_root, patch_text, options, true);
+  return RunGitApply(launcher, repository_root, patch_text, options, true);
 }
 
-GitPatchApplyOutcome ApplyGitPatch(const std::filesystem::path& repository_root,
+GitPatchApplyOutcome ApplyGitPatch(const platform::ProcessLauncher& launcher,
+                                   const std::filesystem::path& repository_root,
                                    std::string_view patch_text,
                                    const GitPatchApplyOptions& options) {
-  GitPatchApplyOutcome preflight = PreflightGitPatch(repository_root, patch_text, options);
+  GitPatchApplyOutcome preflight =
+      PreflightGitPatch(launcher, repository_root, patch_text, options);
   if (!preflight.ok) {
     return preflight;
   }
-  return RunGitApply(repository_root, patch_text, options, false);
+  return RunGitApply(launcher, repository_root, patch_text, options, false);
 }
 
 namespace {
@@ -121,11 +125,12 @@ namespace {
 // A Combined-view stage or unstage: build the patch against the index as it is
 // now (see PatchChangeSpan). Returns the patch, or the result to report.
 std::variant<std::string, PatchApplyResult> RegenerateStagingPatch(
+    const platform::ProcessLauncher& launcher,
     const PatchApplyRequest& request) {
   const PatchApplyTarget& target = request.target;
   const bool stage = request.operation == PatchOperationKind::StageHunk ||
                      request.operation == PatchOperationKind::StageSelectedLines;
-  const GitRepository repo(target.repository_root);
+  const GitRepository repo(target.repository_root, launcher);
   const auto head_blob = repo.ReadBlobAtRevision(target.relative_path, "HEAD");
   const auto index_blob = repo.ReadBlobAtRevision(target.relative_path, ":0");
   const std::string head = head_blob.has_value() ? head_blob->content : std::string();
@@ -162,7 +167,9 @@ std::variant<std::string, PatchApplyResult> RegenerateStagingPatch(
 
 }  // namespace
 
-PatchApplyResult ApplyPatchRequest(const PatchApplyRequest& request, std::string_view patch_text) {
+PatchApplyResult ApplyPatchRequest(const platform::ProcessLauncher& launcher,
+                                   const PatchApplyRequest& request,
+                                   std::string_view patch_text) {
   // A regenerated patch already goes from the index to the desired state, for a
   // stage and an unstage alike, so it is applied forward either way.
   std::string regenerated;
@@ -170,7 +177,7 @@ PatchApplyResult ApplyPatchRequest(const PatchApplyRequest& request, std::string
   if (request.target.change_span.has_value() &&
       request.operation != PatchOperationKind::DiscardHunk &&
       request.operation != PatchOperationKind::DiscardSelectedLines) {
-    auto outcome = RegenerateStagingPatch(request);
+    auto outcome = RegenerateStagingPatch(launcher, request);
     if (auto* failure = std::get_if<PatchApplyResult>(&outcome)) {
       return std::move(*failure);
     }
@@ -190,7 +197,7 @@ PatchApplyResult ApplyPatchRequest(const PatchApplyRequest& request, std::string
       .reverse = !forward && PatchOperationReversesPatch(request.operation),
   };
   const GitPatchApplyOutcome outcome =
-      ApplyGitPatch(request.target.repository_root, patch_text, git_options);
+      ApplyGitPatch(launcher, request.target.repository_root, patch_text, git_options);
   if (outcome.ok) {
     return PatchApplyResult{
         .category = PatchApplyResultCategory::Success,

@@ -73,7 +73,7 @@ GitOperationReport RunOperation(const std::filesystem::path& repository_root,
   if (repository_root.empty()) {
     return MakeReport(GitOperationOutcome::NotARepo, verb, {});
   }
-  GitRepository repo(repository_root);
+  GitRepository repo(repository_root, platform::LocalProcessLauncher());
   if (!repo.IsValid()) {
     return MakeReport(GitOperationOutcome::NotARepo, verb, {});
   }

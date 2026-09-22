@@ -147,7 +147,8 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
       .refreshing = true,
   };
 
-  const project::GitRepository repo(request.project_root);
+  // Explicitly local (TD-2026-09-22-301: the project does not own a launcher yet).
+  const project::GitRepository repo(request.project_root, platform::LocalProcessLauncher());
   if (!repo.IsValid()) {
     state.repo_available = false;
     state.refresh_error = {

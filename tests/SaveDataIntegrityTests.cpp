@@ -473,7 +473,7 @@ void TestGitDiscardRestoresExactCommittedBytes() {
   WriteFile(root / "f.txt", "CLOBBERED\n");
   Expect(ReadFile(root / "f.txt") == "CLOBBERED\n", "precondition: the working tree is modified");
 
-  microide::project::GitRepository repo(root);
+  microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
   Expect(repo.Discard("f.txt"), "discarding the tracked file should succeed");
   Expect(ReadFile(root / "f.txt") == committed,
          "discard must restore the exact committed bytes, not an approximation");
@@ -493,7 +493,7 @@ void TestGitDiscardAllRestoresEveryFile() {
   WriteFile(root / "a.txt", "A-CLOBBERED\n");
   WriteFile(root / "b.txt", "B-CLOBBERED\n");
 
-  microide::project::GitRepository repo(root);
+  microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
   Expect(repo.DiscardAll(), "discard-all should succeed");
   Expect(ReadFile(root / "a.txt") == a_committed, "discard-all must restore a.txt exactly");
   Expect(ReadFile(root / "b.txt") == b_committed, "discard-all must restore b.txt exactly");

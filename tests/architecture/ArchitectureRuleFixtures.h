@@ -92,6 +92,10 @@ void RunFactoryCaptureRuleFixtures();
 // stop. Both halves are pinned, plus the unresolvable-include guard.
 void RunKernelWindowingLibraryRuleFixtures();
 
+// Negative + positive control for CheckEverySpawnGoesThroughAProcessLauncher, whose
+// asynchronous half is a per-file co-occurrence check rather than a call-shape match.
+void RunProcessLauncherRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

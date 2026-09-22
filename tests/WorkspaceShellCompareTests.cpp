@@ -192,7 +192,7 @@ void TestWorkspaceShellCompareStagesHunksInSequence() {
     WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
   };
   const auto index_content = [&]() {
-    microide::project::GitRepository repo(root);
+    microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
     return repo.Execute({"show", ":f.txt"}).output;
   };
 

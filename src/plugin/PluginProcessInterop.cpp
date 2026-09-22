@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "platform/Subprocess.h"
+#include "platform/ProcessLauncher.h"
 #include "plugin/LuaError.h"
 #include "plugin/LuaRuntime.h"
 #include "plugin/PluginLuaInterop.h"
@@ -265,7 +266,11 @@ const char* CheckProcessCapability(const PluginFsContext& fs, const ProcessRunAr
 // kind that goes unnoticed.
 static platform::SubprocessResult RunPluginSubprocess(const PluginFsContext& fs,
                                                       ProcessRunArgs& parsed) {
-  return platform::RunSubprocess(
+  // Through a launcher, like every other spawn: a plugin tool belongs to the project
+  // whose files it reads. Explicitly local today (TD-2026-09-22-301), and the sandbox
+  // stays attached to the options because it is a property of the CHILD, not of where
+  // the child runs.
+  return platform::LocalProcessLauncher().Run(
       parsed.argv, platform::SubprocessOptions{
                        .cwd = parsed.cwd,
                        .stdin_text = parsed.stdin_text,

@@ -404,6 +404,44 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [OPEN]
+
+`microide_kernel` compiles without SDL, and `microide_kernel_link_probe` proves it
+links and runs with no windowing library. What is still missing is the design's
+`microide_kernel_tests` (`dev-docs/design/remote-projects.md` § 8, G1): the kernel's
+tests still run inside `microide_tests`, which links SDL, so "the kernel's tests run
+without a display" is a claim with nothing behind it. 81 of ~205 test TUs name SDL;
+the rest are the candidates.
+
+The probe also runs only in the default lane. It is not built under the sanitizer
+presets or the clang lane, so a kernel-only ASAN/UBSAN failure would be invisible
+there — which is a smaller gap than it sounds (the same objects are sanitized inside
+`microide_tests`) but is worth closing when the second test binary lands, since that
+is the same CMake work.
+
+### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN]
+
+`platform::ProcessLauncher` is in place and `CheckEverySpawnGoesThroughAProcessLauncher`
+keeps it the only door: git, the formatter, plugin tools, the language server, the
+debug adapter and the terminal all route through a launcher, and `GitRepository` has
+no default one so every construction site states its locality. Today every one of
+those sites states `LocalProcessLauncher()`.
+
+That is the intended intermediate state — an explicit, greppable `LocalProcessLauncher()`
+is strictly better than an invisible default, and the whole point of removing the
+default was that the 25 `GitRepository` sites could not quietly inherit one — but it
+is not finished. The remaining work is that a PROJECT owns a launcher
+(`ProjectWorkspaceState`, per the design's G2) and these sites read it from the
+project they belong to rather than naming the process-wide local one. Grep for
+`LocalProcessLauncher()` to find every site; the two that must NOT change are
+`HostIntegration.cpp` (xdg-open must never follow the project) and, later, the
+design's `Remote: Open Local Terminal`.
+
+Also still local-by-construction: `internal::ResolveHeadId` takes no launcher, because
+it is reached from paths that only know a root. It is where the design's G9
+`GitMetadataSource` lands, and the third "unknown" state that design asks for is what
+makes the remote implementation a drop-in rather than a retrofit.
+
 ### TD-2026-09-20-302 — the keystroke path allocates ~2 small strings per key, and the site tops seven phases. [OPEN — measured, not yet diagnosed]
 
 The 2026-09-20 regeneration of `dev-docs/performance/perf-phase-allocation-trace.md`

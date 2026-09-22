@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "editor/RuntimeSyntaxRegistry.h"
-#include "project/SubprocessHelper.h"
+#include "platform/ProcessLauncher.h"
 #include "util/Parse.h"
 #include "util/StringUtil.h"
 #include "workspace/services/EditorTabService.h"
@@ -288,14 +288,19 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
     // deadline: on expiry the child is killed and the file saves unformatted (warned below).
     // The cap is generous so legitimate slow formatters on large files still complete.
     constexpr int kFormatterTimeoutMs = 5000;
+    // Through the project's launcher: a formatter must run where the file it is
+    // formatting lives, or it reformats against the wrong toolchain's config.
+    // Explicitly local today (TD-2026-09-22-301: the project does not own one yet).
+    const platform::ProcessLauncher& launcher = platform::LocalProcessLauncher();
     platform::SubprocessResult result =
-        project::RunSubprocess(formatter->command,
-                               platform::SubprocessOptions{
-                                   .cwd = context_.current_project_state.root,
-                                   .stdin_text = text,
-                                   .environment_overrides = {},
-                                   .timeout_ms = kFormatterTimeoutMs,
-                               });
+        launcher.Run(formatter->command,
+                     platform::SubprocessOptions{
+                         .cwd = launcher.ResolveWorkingDirectory(
+                             context_.current_project_state.root),
+                         .stdin_text = text,
+                         .environment_overrides = {},
+                         .timeout_ms = kFormatterTimeoutMs,
+                     });
 
     if (!result.success()) {
       if (error_message != nullptr) {

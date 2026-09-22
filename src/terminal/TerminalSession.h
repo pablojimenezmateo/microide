@@ -1,5 +1,6 @@
 #pragma once
 
+#include "platform/ProcessLauncher.h"
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalLineBufferPool.h"
@@ -99,7 +100,13 @@ class TerminalSession {
   TerminalSession& operator=(const TerminalSession&) = delete;
 
   void SetWakeChannel(util::WakeChannel channel);
-  bool Start(const std::filesystem::path& working_directory, std::string_view command = {},
+  // `launcher` decides WHERE the shell runs. A local shell in a remote project is
+  // worse than no terminal — it looks right and runs the wrong `make` — so the
+  // launcher is a parameter rather than an assumption, and the remote terminal is a
+  // different argv rather than a different code path.
+  bool Start(const platform::ProcessLauncher& launcher,
+             const std::filesystem::path& working_directory,
+             std::string_view command = {},
              std::string_view shell = {});
   void Stop();
   // Test seam: brings the session up without spawning a real PTY/child process.

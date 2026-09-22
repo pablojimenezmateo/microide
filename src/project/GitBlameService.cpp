@@ -90,16 +90,19 @@ struct FileCache {
   std::uint64_t validated_clear_generation = 0;
 };
 
-bool FileIsTracked(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
+bool FileIsTracked(const platform::ProcessLauncher& launcher,
+                   const std::filesystem::path& root,
+                   const std::filesystem::path& relative_path) {
   return gitutil::GitCommandSucceeds(
-      root, {"ls-files", "--error-unmatch", "--", relative_path.generic_string()});
+      launcher, root, {"ls-files", "--error-unmatch", "--", relative_path.generic_string()});
 }
 
-bool FileIsWorkingTreeClean(const std::filesystem::path& root,
+bool FileIsWorkingTreeClean(const platform::ProcessLauncher& launcher,
+                            const std::filesystem::path& root,
                             const std::filesystem::path& relative_path) {
   const auto output = gitutil::ReadGitCommandOutput(
-      root, {"status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
-             relative_path.generic_string()});
+      launcher, root, {"status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
+                       relative_path.generic_string()});
   return output.success() && output.output.empty();
 }
 
@@ -370,6 +373,16 @@ GitBlameLine MakeBlameLine(std::size_t line, const GitBlameAttribution& attribut
 struct GitBlameService::Impl {
   ~Impl() { Stop(); }
 
+  void SetLauncher(const platform::ProcessLauncher& new_launcher) {
+    std::lock_guard lock(mutex);
+    launcher = &new_launcher;
+  }
+
+  const platform::ProcessLauncher& Launcher() const {
+    std::lock_guard lock(mutex);
+    return *launcher;
+  }
+
   void SetWakeChannel(util::WakeChannel channel) {
     std::lock_guard lock(mutex);
     wake_channel = channel;
@@ -625,6 +638,9 @@ struct GitBlameService::Impl {
   }
 
   void ProcessRequest(const PendingRequest& request, const util::CancellationToken& token) {
+    // Sampled once per request rather than per git call: a launcher swap mid-request
+    // would otherwise split one blame across two machines.
+    const platform::ProcessLauncher& launcher = Launcher();
     bool changed = false;
     if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;
@@ -653,7 +669,7 @@ struct GitBlameService::Impl {
       return;
     }
     if (!head_id.has_value() || !stamp.has_value() ||
-        !FileIsTracked(request.request.root, request.relative_path)) {
+        !FileIsTracked(launcher, request.request.root, request.relative_path)) {
       changed = UpdateEligibility(request, false, head_id, stamp, {}, {},
                                   /*require_latest_request=*/false);
       if (changed) {
@@ -669,7 +685,7 @@ struct GitBlameService::Impl {
     }
 
     const bool working_tree_clean =
-        FileIsWorkingTreeClean(request.request.root, request.relative_path);
+        FileIsWorkingTreeClean(launcher, request.request.root, request.relative_path);
     if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;
     }
@@ -713,7 +729,7 @@ struct GitBlameService::Impl {
       arguments.emplace_back("--");
       arguments.push_back(request.relative_path.generic_string());
       const auto output =
-          gitutil::ReadGitCommandOutput(request.request.root, std::move(arguments));
+          gitutil::ReadGitCommandOutput(launcher, request.request.root, std::move(arguments));
       // Bank the span even if a newer window superseded this request while the
       // subprocess ran. A span's attributions are a pure function of (file,
       // head_id, stamp, line range) -- the viewport is not an input -- so the
@@ -889,6 +905,7 @@ struct GitBlameService::Impl {
   }
 
   mutable std::mutex mutex;
+  const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
   util::WakeChannel wake_channel = 0;
   std::unordered_set<std::string> pending_request_keys;
   std::unordered_map<std::string, std::string> pending_request_files;
@@ -906,6 +923,13 @@ struct GitBlameService::Impl {
 GitBlameService::~GitBlameService() {
   Stop();
   delete impl_;
+}
+
+void GitBlameService::SetLauncher(const platform::ProcessLauncher& launcher) {
+  if (impl_ == nullptr) {
+    impl_ = new Impl();
+  }
+  impl_->SetLauncher(launcher);
 }
 
 void GitBlameService::SetWakeChannel(util::WakeChannel channel) {

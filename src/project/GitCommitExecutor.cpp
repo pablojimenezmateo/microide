@@ -64,7 +64,7 @@ CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_r
     return result;
   }
 
-  GitRepository repo(repository_root);
+  GitRepository repo(repository_root, platform::LocalProcessLauncher());
   std::vector<std::string> arguments;
   arguments.emplace_back("commit");
   if (operation == CommitOperationKind::Amend) {

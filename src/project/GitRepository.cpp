@@ -27,7 +27,8 @@ std::vector<std::string> OwnArguments(std::initializer_list<std::string_view> ar
 
 }  // namespace
 
-GitRepository::GitRepository(std::filesystem::path root) : root_(std::move(root)) {
+GitRepository::GitRepository(std::filesystem::path root, const platform::ProcessLauncher& launcher)
+    : root_(std::move(root)), launcher_(&launcher) {
   if (!root_.empty()) {
     root_ = root_.lexically_normal();
   }
@@ -59,7 +60,7 @@ GitRepository::CommandResult GitRepository::Execute(
     bool silence_stderr,
     int timeout_ms) const {
   const auto result = gitutil::ReadGitCommandOutput(
-      root_, std::vector<std::string>(arguments), silence_stderr, timeout_ms);
+      *launcher_, root_, std::vector<std::string>(arguments), silence_stderr, timeout_ms);
   return CommandResult{
       .exit_code = result.exit_code,
       .output = result.output,
@@ -74,8 +75,8 @@ GitRepository::CommandResult GitRepository::ExecuteWithStdin(
     bool silence_stderr,
     int timeout_ms) const {
   const auto result = gitutil::ReadGitCommandOutputWithStdin(
-      root_, std::vector<std::string>(arguments), std::move(stdin_text), silence_stderr,
-      timeout_ms);
+      *launcher_, root_, std::vector<std::string>(arguments), std::move(stdin_text),
+      silence_stderr, timeout_ms);
   return CommandResult{
       .exit_code = result.exit_code,
       .output = result.output,

@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "platform/ProcessLauncher.h"
+
 #include "terminal/TerminalSession.h"
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -61,7 +63,7 @@ bool SnapshotContains(TerminalSession& session, std::string_view needle) {
 void TestTerminalStressStopDuringHeavyOutput() {
   TemporaryDirectory temp;
   TerminalSession session;
-  if (!session.Start(temp.path(), kFloodCommand, kShell)) {
+  if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(), kFloodCommand, kShell)) {
     return;  // no PTY available in this environment; nothing to assert
   }
   Expect(WaitForOutputGrowth(session, 50),
@@ -75,7 +77,7 @@ void TestTerminalStressStopDuringHeavyOutput() {
 void TestTerminalStressStopDuringAlternateScreen() {
   TemporaryDirectory temp;
   TerminalSession session;
-  if (!session.Start(temp.path(), "printf '\\033[?1049h'; while :; do sleep 1; done", kShell)) {
+  if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(), "printf '\\033[?1049h'; while :; do sleep 1; done", kShell)) {
     return;
   }
   Expect(WaitUntil([&] { return session.using_alternate_screen(); }, std::chrono::seconds(5),
@@ -93,7 +95,7 @@ void TestTerminalStressStopDuringAlternateScreen() {
 void TestTerminalStressStopAfterChildExit() {
   TemporaryDirectory temp;
   TerminalSession session;
-  if (!session.Start(temp.path(), "printf 'stress-done\\n'; exit 0", kShell)) {
+  if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(), "printf 'stress-done\\n'; exit 0", kShell)) {
     return;
   }
   Expect(WaitUntil([&] { return !session.running(); }, std::chrono::seconds(5),
@@ -113,7 +115,7 @@ void TestTerminalStressOpenCloseLoopRacesChildExit() {
   TemporaryDirectory temp;
   TerminalSession session;
   for (int i = 0; i < 8; ++i) {
-    if (!session.Start(temp.path(), i % 2 == 0 ? std::string_view("true") : kFloodCommand,
+    if (!session.Start(microide::platform::LocalProcessLauncher(), temp.path(), i % 2 == 0 ? std::string_view("true") : kFloodCommand,
                        kShell)) {
       return;
     }
@@ -141,7 +143,7 @@ void TestTerminalStressMultiTerminalShutdown() {
   std::vector<std::unique_ptr<TerminalSession>> sessions;
   for (std::size_t i = 0; i < kSessions; ++i) {
     auto session = std::make_unique<TerminalSession>();
-    if (!session->Start(temp.path(), kFloodCommand, kShell)) {
+    if (!session->Start(microide::platform::LocalProcessLauncher(), temp.path(), kFloodCommand, kShell)) {
       return;  // no PTY: skip (earlier sessions are cleaned up by unique_ptr)
     }
     sessions.push_back(std::move(session));

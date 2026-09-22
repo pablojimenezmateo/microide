@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "project/GitCommandUtil.h"
+#include "platform/ProcessLauncher.h"
 #include "project/GitCompareService.h"
 #include "project/GitStatusService.h"
 
@@ -15,9 +16,16 @@ namespace microide::project {
 
 class GitRepository {
  public:
-  explicit GitRepository(std::filesystem::path root);
+  // The launcher decides where `git` runs. It is a reference into something that
+  // outlives the repository — the process-wide local launcher, or the project's own —
+  // because a repository is a view onto a project, not an owner of one.
+  // No default. A default local launcher is exactly the invisible per-call choice
+  // this type exists to remove: a site that never named its locality is a site that
+  // silently keeps running on the wrong machine once projects can be remote.
+  GitRepository(std::filesystem::path root, const platform::ProcessLauncher& launcher);
 
   const std::filesystem::path& root() const { return root_; }
+  const platform::ProcessLauncher& launcher() const { return *launcher_; }
   bool IsValid() const;
 
   std::optional<std::filesystem::path> ToRelative(const std::filesystem::path& absolute_path) const;
@@ -163,6 +171,7 @@ class GitRepository {
       const std::filesystem::path& dest_relative) const;
 
   std::filesystem::path root_;
+  const platform::ProcessLauncher* launcher_ = nullptr;
 };
 
 }  // namespace microide::project

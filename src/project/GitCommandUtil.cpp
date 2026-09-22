@@ -181,7 +181,11 @@ const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
 }
 
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
-  const auto result = ReadGitCommandOutput(root, {"rev-parse", "--verify", "HEAD"});
+  // ResolveHeadId has no launcher of its own: it is reached from paths that only
+  // know a root. It stays local-only until a remote project gives it one (the git
+  // metadata source in the design's G9 is where that lands).
+  const auto result =
+      ReadGitCommandOutput(platform::LocalProcessLauncher(), root, {"rev-parse", "--verify", "HEAD"});
   if (!result.success() || result.output.empty()) {
     return std::nullopt;
   }
@@ -267,14 +271,17 @@ std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& r
   return std::string(first_line);
 }
 
-CommandResult ReadGitCommandOutput(const std::filesystem::path& root,
+CommandResult ReadGitCommandOutput(const platform::ProcessLauncher& launcher,
+                                   const std::filesystem::path& root,
                                    std::vector<std::string> arguments,
                                    bool silence_stderr,
                                    int timeout_ms) {
-  return ReadGitCommandOutputWithStdin(root, std::move(arguments), {}, silence_stderr, timeout_ms);
+  return ReadGitCommandOutputWithStdin(launcher, root, std::move(arguments), {}, silence_stderr,
+                                       timeout_ms);
 }
 
-CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
+CommandResult ReadGitCommandOutputWithStdin(const platform::ProcessLauncher& launcher,
+                                            const std::filesystem::path& root,
                                             std::vector<std::string> arguments,
                                             std::string stdin_text,
                                             bool silence_stderr,
@@ -321,7 +328,7 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   options.silence_stderr = silence_stderr;
   options.stdin_text = std::move(stdin_text);
   options.timeout_ms = timeout_ms;
-  const platform::SubprocessResult result = platform::RunSubprocess(command, options);
+  const platform::SubprocessResult result = launcher.Run(std::move(command), std::move(options));
   util::AddPerformanceCounter(util::PerfCounterId::GitCommandsRun);
   util::AddPerformanceCounter(util::PerfCounterId::GitCommandOutputBytes,
                               result.stdout_text.size() + result.stderr_text.size());
@@ -343,10 +350,11 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   };
 }
 
-bool GitCommandSucceeds(const std::filesystem::path& root,
+bool GitCommandSucceeds(const platform::ProcessLauncher& launcher,
+                        const std::filesystem::path& root,
                         std::vector<std::string> arguments,
                         bool silence_stderr) {
-  return ReadGitCommandOutput(root, std::move(arguments), silence_stderr).success();
+  return ReadGitCommandOutput(launcher, root, std::move(arguments), silence_stderr).success();
 }
 
 }  // namespace microide::project::internal

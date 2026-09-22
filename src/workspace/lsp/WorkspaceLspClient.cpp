@@ -1,6 +1,7 @@
 #include "workspace/lsp/WorkspaceLspClient.h"
 
 #include <algorithm>
+#include "platform/ProcessLauncher.h"
 
 #include "workspace/FileUri.h"
 #include "workspace/lsp/WorkspaceLspClientInternal.h"
@@ -37,7 +38,12 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
 
   {
     util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
-    if (!impl_->proc.Start(command, cwd, sandbox)) {
+    // Through the project's launcher, like every other spawn: a language server that
+    // indexes a different machine's tree lands diagnostics on lines the buffer does
+    // not have. Explicitly local today (TD-2026-09-22-301).
+    const platform::ProcessLauncher& launcher = platform::LocalProcessLauncher();
+    if (!impl_->proc.Start(launcher.ResolveArgv(command),
+                           launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
       impl_->last_error = "failed to start language server process";
       {
         std::lock_guard lock(impl_->mutex);

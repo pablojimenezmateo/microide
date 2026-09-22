@@ -1,5 +1,7 @@
 #include "workspace/debug/WorkspaceDapClient.h"
 
+#include "platform/ProcessLauncher.h"
+
 #include "workspace/debug/WorkspaceDapClientInternal.h"
 
 namespace microide::workspace {
@@ -25,7 +27,12 @@ bool DapClient::Start(const std::vector<std::string>& command, const std::string
   impl_->last_error.clear();
   impl_->adapter_id = adapter_id;
 
-  if (!impl_->proc.Start(command, cwd, sandbox)) {
+  // Through the project's launcher, like every other spawn: a debug adapter that
+  // runs on a different machine from the binary it is debugging reports line numbers
+  // for a file nobody is looking at. Explicitly local today (TD-2026-09-22-301).
+  const platform::ProcessLauncher& launcher = platform::LocalProcessLauncher();
+  if (!impl_->proc.Start(launcher.ResolveArgv(command),
+                         launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
     impl_->last_error = "failed to start debug adapter process";
     return false;
   }

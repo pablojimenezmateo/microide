@@ -5,6 +5,7 @@
 #include <system_error>
 #include <utility>
 
+#include "platform/ProcessLauncher.h"
 #include "platform/Subprocess.h"
 #include "util/StringUtil.h"
 
@@ -62,21 +63,27 @@ bool IsAllowedUrlScheme(std::string_view url) {
 // for the directory — even though SDL_OpenURL is itself a forked xdg-open on this
 // platform. One path means one timeout policy and one error string, and it is what
 // takes the windowing library out of the kernel.
+//
+// LocalProcessLauncher() explicitly, and this is one of the two places that is right:
+// opening a file manager or a browser on the build server is always wrong, so this
+// spawn must never follow the project (the design's "Remote: Open Local Terminal" is
+// the other). Typed as such rather than left to a convention.
 HostIntegrationResult LaunchDesktopOpener(std::string argument) {
-  const SubprocessResult result = RunSubprocess({"xdg-open", std::move(argument)},
-                                                SubprocessOptions{
-                                                    .cwd = {},
-                                                    .stdin_text = {},
-                                                    .environment_overrides = {},
-                                                    .capture_stdout = false,
-                                                    .capture_stderr = true,
-                                                    .silence_stderr = false,
-                                                    // xdg-open normally forks and returns immediately;
-                                                    // a finite timeout bounds a wedged handler so it
-                                                    // can never hang the calling (UI) thread with the
-                                                    // default 0 = wait-indefinitely.
-                                                    .timeout_ms = 10000,
-                                                });
+  const SubprocessResult result =
+      LocalProcessLauncher().Run({"xdg-open", std::move(argument)},
+                                 SubprocessOptions{
+                                     .cwd = {},
+                                     .stdin_text = {},
+                                     .environment_overrides = {},
+                                     .capture_stdout = false,
+                                     .capture_stderr = true,
+                                     .silence_stderr = false,
+                                     // xdg-open normally forks and returns at once; a
+                                     // finite timeout bounds a wedged handler so it can
+                                     // never hang the calling (UI) thread with the
+                                     // default 0 = wait-indefinitely.
+                                     .timeout_ms = 10000,
+                                 });
   if (!result.success()) {
     return Failure(result.stderr_text.empty() ? "xdg-open failed" : result.stderr_text);
   }

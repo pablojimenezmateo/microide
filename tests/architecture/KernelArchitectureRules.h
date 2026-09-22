@@ -12,6 +12,10 @@ namespace microide::tests::architecture {
 // "kernel" means and why it is a header-graph check rather than a directory rule.
 RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path& repo_root);
 
+// Every spawn goes through a platform::ProcessLauncher, so a project can decide where
+// its processes run. See the rule body for the two sanctioned exceptions.
+RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::path& repo_root);
+
 const std::vector<NamedRule>& KernelArchitectureRuleList();
 
 }  // namespace microide::tests::architecture
