@@ -2,9 +2,11 @@
 
 #include "terminal/TerminalAnsiColors.h"
 #include "terminal/TerminalCsiParser.h"
+#include "util/AnsiPalette.h"
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -12,15 +14,15 @@ namespace microide::terminal {
 
 namespace {
 
-Uint8 ClampColorComponent(int value) {
-  return static_cast<Uint8>(std::clamp(value, 0, 255));
+std::uint8_t ClampColorComponent(int value) {
+  return static_cast<std::uint8_t>(std::clamp(value, 0, 255));
 }
 
 // Decode an extended SGR color (codes 38/48/58) from the parameter groups,
 // supporting both the legacy semicolon form (`38;5;n`, `38;2;r;g;b`) and the
 // ITU T.416 colon form (`38:5:n`, `38:2:r:g:b`, `38:2::r:g:b`). `gi` is advanced
 // past any trailing groups consumed by the legacy form.
-std::optional<SDL_Color> ParseExtendedSgrColor(const std::vector<std::vector<int>>& groups,
+std::optional<util::Rgba8> ParseExtendedSgrColor(const std::vector<std::vector<int>>& groups,
                                                std::size_t& gi) {
   const std::vector<int>& leading = groups[gi];
   std::vector<int> seq;
@@ -45,12 +47,12 @@ std::optional<SDL_Color> ParseExtendedSgrColor(const std::vector<std::vector<int
   }
   const int space = seq.front();
   if (space == 5 && seq.size() >= 2) {
-    return Ansi256Color(seq[1]);
+    return util::Ansi256Color(seq[1]);
   }
   if (space == 2 && seq.size() >= 4) {
     const std::size_t n = seq.size();
-    return MakeTerminalRgbColor(ClampColorComponent(seq[n - 3]), ClampColorComponent(seq[n - 2]),
-                                ClampColorComponent(seq[n - 1]));
+    return util::Rgba8{ClampColorComponent(seq[n - 3]), ClampColorComponent(seq[n - 2]),
+                       ClampColorComponent(seq[n - 1]), 0xff};
   }
   return std::nullopt;
 }
@@ -74,7 +76,7 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         // A basic (30..37) foreground brightens with bold; re-resolve it live so
         // `\e[31m\e[1m` matches `\e[1m\e[31m` (both bright red).
         if (style.has_basic_foreground()) {
-          style.foreground = BasicAnsiColor(style.basic_foreground_index(), true);
+          style.foreground = util::BasicAnsiColor(style.basic_foreground_index(), true);
         }
         break;
       case 2:
@@ -117,7 +119,7 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         style.set(cell_attr::kDim, false);
         // Revert a bold-brightened basic foreground back to its dark shade.
         if (style.has_basic_foreground()) {
-          style.foreground = BasicAnsiColor(style.basic_foreground_index(), false);
+          style.foreground = util::BasicAnsiColor(style.basic_foreground_index(), false);
         }
         break;
       case 23:
@@ -166,15 +168,15 @@ void detail::ApplySgrParameters(TerminalStyle& style, std::string_view body) {
         if (code >= 30 && code <= 37) {
           // Track the palette index so SGR 1/22 can re-resolve brightness later.
           style.set_basic_foreground(code - 30);
-          style.foreground = BasicAnsiColor(code - 30, style.bold());
+          style.foreground = util::BasicAnsiColor(code - 30, style.bold());
         } else if (code >= 40 && code <= 47) {
-          style.background = BasicAnsiColor(code - 40, false);
+          style.background = util::BasicAnsiColor(code - 40, false);
         } else if (code >= 90 && code <= 97) {
           // Explicit bright color: fixed brightness, not bold-tracked.
           style.clear_basic_foreground();
-          style.foreground = BasicAnsiColor(code - 90, true);
+          style.foreground = util::BasicAnsiColor(code - 90, true);
         } else if (code >= 100 && code <= 107) {
-          style.background = BasicAnsiColor(code - 100, true);
+          style.background = util::BasicAnsiColor(code - 100, true);
         }
         // Codes 53/55 (overline) and 59 (default underline color) are accepted
         // and ignored; they do not affect any tracked attribute.

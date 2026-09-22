@@ -1,11 +1,10 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalLineBufferPool.h"
 #include "terminal/TerminalSearch.h"
+#include "util/KeyModifiers.h"
 #include "util/Waker.h"
 
 #include <algorithm>
@@ -198,11 +197,11 @@ class TerminalSession {
                        bool pressed,
                        std::size_t row,
                        std::size_t column,
-                       SDL_Keymod modifiers);
+                       util::KeyModifiers modifiers);
   bool SendMouseMotion(MouseButton button,
                        std::size_t row,
                        std::size_t column,
-                       SDL_Keymod modifiers);
+                       util::KeyModifiers modifiers);
 
  private:
   struct ScreenState {

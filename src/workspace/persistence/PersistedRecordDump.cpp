@@ -1,4 +1,4 @@
-#include "persistence/PersistedRecordDump.h"
+#include "workspace/persistence/PersistedRecordDump.h"
 
 #include "persistence/PersistedRecord.h"
 #include "persistence/PersistedRecordReader.h"

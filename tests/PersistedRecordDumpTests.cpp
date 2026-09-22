@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "persistence/PersistedRecordDump.h"
+#include "workspace/persistence/PersistedRecordDump.h"
 #include "persistence/PersistedRecordWriter.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
 

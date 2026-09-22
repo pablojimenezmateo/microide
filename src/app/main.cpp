@@ -1,6 +1,6 @@
 #include "app/AppStartupOptions.h"
 #include "app/Application.h"
-#include "persistence/PersistedRecordDump.h"
+#include "workspace/persistence/PersistedRecordDump.h"
 #include "platform/HostPlatform.h"
 #include "util/DebugTrace.h"
 #include "util/TraceChannel.h"

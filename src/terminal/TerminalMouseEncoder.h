@@ -1,9 +1,9 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <cstddef>
 #include <string>
+
+#include "util/KeyModifiers.h"
 
 namespace microide::terminal {
 
@@ -33,7 +33,7 @@ struct TerminalMouseEncodeRequest {
   bool motion = false;
   std::size_t row = 0;
   std::size_t column = 0;
-  SDL_Keymod modifiers = SDL_KMOD_NONE;
+  util::KeyModifiers modifiers = util::kKeyModNone;
 };
 
 bool EncodeTerminalMouseEvent(const TerminalMouseEncodeRequest& request, std::string& out_bytes);

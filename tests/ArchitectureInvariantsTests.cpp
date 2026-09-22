@@ -3,6 +3,7 @@
 #include "architecture/ArchitectureFileScanner.h"
 #include "architecture/ArchitectureRuleFixtures.h"
 #include "architecture/ArchitectureRuleHelpers.h"
+#include "architecture/KernelArchitectureRules.h"
 #include "architecture/PluginArchitectureRules.h"
 #include "architecture/TerminalArchitectureRules.h"
 #include "architecture/WorkspaceArchitectureRules.h"
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -618,27 +620,25 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
 }  // namespace
 
 void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests) {
-  // One ctest case per workspace rule so sharding parallelizes the std::regex-
-  // heavy architecture lint (formerly a single ~30s serial "SoftChecks" test).
-  for (const architecture::NamedRule& rule : architecture::WorkspaceArchitectureRuleList()) {
-    const architecture::ArchitectureRuleFn fn = rule.fn;
-    AddTest(tests, "ArchitectureInvariants/Workspace/" + std::string(rule.name),
-            [fn]() { RunWorkspaceRuleTest(fn); });
-  }
-  // Same treatment, and for a sharper reason than speed: as single aggregate
-  // cases, PluginRules took 221 s and TerminalRules ~230 s under TSAN with the
-  // machine otherwise idle, against the runner's own 300 s per-test watchdog.
-  // Both tripped it the moment ctest ran shards in parallel — a test that only
-  // passes on an unloaded machine (TD-2026-08-10-171).
-  for (const architecture::NamedRule& rule : architecture::PluginArchitectureRuleList()) {
-    const architecture::ArchitectureRuleFn fn = rule.fn;
-    AddTest(tests, "ArchitectureInvariants/Plugin/" + std::string(rule.name),
-            [fn]() { RunWorkspaceRuleTest(fn); });
-  }
-  for (const architecture::NamedRule& rule : architecture::TerminalArchitectureRuleList()) {
-    const architecture::ArchitectureRuleFn fn = rule.fn;
-    AddTest(tests, "ArchitectureInvariants/Terminal/" + std::string(rule.name),
-            [fn]() { RunWorkspaceRuleTest(fn); });
+  // One ctest case per rule so sharding parallelizes the std::regex-heavy
+  // architecture lint (formerly a single ~30s serial "SoftChecks" test), and for a
+  // sharper reason than speed: as single aggregate cases, PluginRules took 221 s
+  // and TerminalRules ~230 s under TSAN with the machine otherwise idle, against
+  // the runner's own 300 s per-test watchdog. Both tripped it the moment ctest ran
+  // shards in parallel — a test that only passes on an unloaded machine
+  // (TD-2026-08-10-171).
+  const std::pair<std::string_view, const std::vector<architecture::NamedRule>&> groups[] = {
+      {"Workspace", architecture::WorkspaceArchitectureRuleList()},
+      {"Plugin", architecture::PluginArchitectureRuleList()},
+      {"Terminal", architecture::TerminalArchitectureRuleList()},
+      {"Kernel", architecture::KernelArchitectureRuleList()},
+  };
+  for (const auto& [group, rules] : groups) {
+    for (const architecture::NamedRule& rule : rules) {
+      const architecture::ArchitectureRuleFn fn = rule.fn;
+      AddTest(tests, "ArchitectureInvariants/" + std::string(group) + "/" + std::string(rule.name),
+              [fn]() { RunWorkspaceRuleTest(fn); });
+    }
   }
   AddTest(tests, "ArchitectureInvariants/FileSizes", TestArchitectureFileSizes);
   AddTest(tests, "ArchitectureInvariants/TryCatchStoScanner", TestTryCatchStoScanner);

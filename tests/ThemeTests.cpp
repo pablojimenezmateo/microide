@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "render/AnsiPalette.h"
+#include "util/AnsiPalette.h"
 #include "render/Theme.h"
 #include "render/ThemeFile.h"
 #include "terminal/TerminalAnsiColors.h"
@@ -157,65 +157,34 @@ void ExpectClassicDarkThemeAssetLoads() {
                         4.5f);
 }
 
-void ExpectSharedAnsiPaletteParity() {
-  // The terminal palette delegates to render::AnsiPalette; lock that they agree
-  // across the full 16-colour table and representative 256-colour indices so the
-  // shared module can never silently diverge from a re-introduced copy.
-  const auto same = [](SDL_Color a, SDL_Color b) {
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-  };
-  // Built with `+=` rather than chained `operator+`. GCC 13 mis-analyses the
-  // moved-from temporary that `const char* + std::string&&` produces and reports
-  // a bogus out-of-bounds memcpy on the small-string buffer; nothing here is
-  // hot, so the append form costs nothing and keeps a clean build clean.
-  const auto label = [](std::string_view prefix, int value) {
-    std::string text(prefix);
-    text += std::to_string(value);
-    text += " should match the terminal palette";
-    return text;
-  };
-  for (int i = 0; i < 8; ++i) {
-    Expect(same(render::BasicAnsiColor(i, false), terminal::BasicAnsiColor(i, false)),
-           label("normal ANSI colour ", i));
-    Expect(same(render::BasicAnsiColor(i, true), terminal::BasicAnsiColor(i, true)),
-           label("bright ANSI colour ", i));
-  }
-  for (int index : {0, 7, 15, 16, 100, 231, 232, 255}) {
-    Expect(same(render::Ansi256Color(index), terminal::Ansi256Color(index)),
-           label("256-colour index ", index));
-  }
-}
-
 void ExpectAnsi256ColorClampsOutOfRangeIndices() {
-  const auto same = [](SDL_Color a, SDL_Color b) {
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-  };
-  const SDL_Color fallback = render::Ansi256Color(-1);
+  using microide::util::Ansi256Color;
+  const util::Rgba8 fallback = Ansi256Color(-1);
   // Regression: indices above 255 used to fall through the grayscale ramp with no
   // upper bound and wrap via Uint8 truncation (e.g. 257 -> near-black, 256 ->
   // near-white). They must now resolve to the same out-of-range fallback as < 0.
-  Expect(same(render::Ansi256Color(256), fallback),
+  Expect(Ansi256Color(256) == fallback,
          "index 256 is out of range and must not wrap into the grayscale ramp");
-  Expect(same(render::Ansi256Color(300), fallback),
+  Expect(Ansi256Color(300) == fallback,
          "index 300 is out of range and must clamp to the fallback colour");
-  Expect(same(render::Ansi256Color(1'000'000), fallback),
+  Expect(Ansi256Color(1'000'000) == fallback,
          "a very large index must clamp rather than overflow the ramp math");
   // The last valid grayscale index (255) stays a bright gray, distinct from fallback.
-  const SDL_Color last_gray = render::Ansi256Color(255);
+  const util::Rgba8 last_gray = Ansi256Color(255);
   Expect(last_gray.r == 238 && last_gray.g == 238 && last_gray.b == 238,
          "index 255 remains the top of the grayscale ramp (0xEE)");
 }
 
 void ExpectParseThemeColorRejectsOutOfRangeNumericTokens() {
-  const auto same = [](SDL_Color a, SDL_Color b) {
+  const auto same = [](SDL_Color a, util::Rgba8 b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
   };
   // 0..255 name a real palette entry and parse to that colour.
   const auto zero = render::ParseThemeColor("0");
-  Expect(zero.has_value() && same(*zero, render::Ansi256Color(0)),
+  Expect(zero.has_value() && same(*zero, util::Ansi256Color(0)),
          "numeric token 0 resolves to palette index 0");
   const auto max = render::ParseThemeColor("255");
-  Expect(max.has_value() && same(*max, render::Ansi256Color(255)),
+  Expect(max.has_value() && same(*max, util::Ansi256Color(255)),
          "numeric token 255 resolves to palette index 255");
   // Regression: out-of-range or overflowing numeric tokens used to silently
   // collapse to black inside Ansi256Color. They must now report as unset so the
@@ -435,7 +404,6 @@ void RegisterThemeTests(std::vector<TestCase>& tests) {
           ExpectThemeNameCatalogSeesDirectoryChanges);
   AddTest(tests, "Theme built-in light is selectable and readable",
           ExpectBuiltinLightThemeIsSelectableAndReadable);
-  AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);
   AddTest(tests, "Theme ANSI 256 colour clamps out-of-range indices",
           ExpectAnsi256ColorClampsOutOfRangeIndices);
   AddTest(tests, "Theme numeric colour tokens reject out-of-range values",

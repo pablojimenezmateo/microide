@@ -6,6 +6,7 @@
 #include "architecture/WorkspaceCoordinatorArchitectureRules.h"
 #include "architecture/WorkspaceServiceArchitectureRules.h"
 #include "architecture/WorkspaceShellArchitectureRules.h"
+#include "architecture/KernelArchitectureRules.h"
 #include "architecture/WorkspaceViewModelArchitectureRules.h"
 
 #include <filesystem>
@@ -975,6 +976,46 @@ void RunHintSeparatorRuleFixtures() {
   }
 }
 
+void RunKernelWindowingLibraryRuleFixtures() {
+  TemporaryDirectory kernel_dir;
+  const std::filesystem::path& root = kernel_dir.path();
+  std::filesystem::create_directories(root / "src/util");
+  std::filesystem::create_directories(root / "src/terminal");
+  std::filesystem::create_directories(root / "src/render");
+
+  // Direct: a kernel TU naming an SDL type with no include of its own. This is the
+  // form the precompiled header hid — `Uint32` compiled everywhere because the PCH
+  // had already pulled SDL in, so an include-only rule would never have seen it.
+  WriteFile(root / "src/util/Direct.h", "struct S { Uint32 wake = 0; };\n");
+  // Transitive: clean kernel header -> clean kernel header -> SDL-carrying header.
+  WriteFile(root / "src/render/Paint.h", "#include <SDL3/SDL.h>\nstruct Paint {};\n");
+  WriteFile(root / "src/util/Middle.h", "#include \"render/Paint.h\"\nstruct Middle {};\n");
+  WriteFile(root / "src/terminal/Leaf.cpp", "#include \"util/Middle.h\"\nvoid F(){}\n");
+  const RuleResult flagged = CheckKernelStaysFreeOfTheWindowingLibrary(root);
+  Expect(flagged.violations.size() == 3,
+         "kernel rule must flag the direct SDL token, the intermediate header, and the "
+         "kernel TU that only reaches SDL transitively");
+
+  // Positive control: the same shapes, converted at the boundary. Without this half a
+  // rule that matched everything would still satisfy the negative case.
+  WriteFile(root / "src/util/Direct.h", "#include <cstdint>\nstruct S { std::uint32_t wake = 0; };\n");
+  WriteFile(root / "src/util/Middle.h", "#include \"util/Direct.h\"\nstruct Middle {};\n");
+  Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
+         "kernel rule must accept kernel files that name only plain types and include "
+         "only clean kernel headers");
+
+  // A render TU may of course reach SDL; the rule is scoped to the kernel directories.
+  WriteFile(root / "src/render/Uses.cpp", "#include \"render/Paint.h\"\nvoid G(){}\n");
+  Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
+         "kernel rule must not flag shell-layer files for using the windowing library");
+
+  // An include that resolves to nothing under src/ must be reported, not swallowed:
+  // an unfollowable edge is how a graph rule goes blind.
+  WriteFile(root / "src/terminal/Leaf.cpp", "#include \"util/Typod.h\"\nvoid F(){}\n");
+  Expect(!CheckKernelStaysFreeOfTheWindowingLibrary(root).missing_targets.empty(),
+         "kernel rule must report an include it cannot resolve rather than assume it clean");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -994,6 +1035,7 @@ void RunAllRuleFixtures() {
   RunPerfMeasureWallClockWaitRuleFixtures();
   RunFactoryCaptureRuleFixtures();
   RunHintSeparatorRuleFixtures();
+  RunKernelWindowingLibraryRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

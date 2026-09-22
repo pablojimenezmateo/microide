@@ -6,15 +6,15 @@ namespace microide::terminal {
 
 namespace {
 
-int MouseModifierBits(SDL_Keymod modifiers) {
+int MouseModifierBits(util::KeyModifiers modifiers) {
   int bits = 0;
-  if ((modifiers & SDL_KMOD_SHIFT) != 0) {
+  if ((modifiers & util::kKeyModShift) != 0) {
     bits |= 4;
   }
-  if ((modifiers & SDL_KMOD_ALT) != 0) {
+  if ((modifiers & util::kKeyModAlt) != 0) {
     bits |= 8;
   }
-  if ((modifiers & SDL_KMOD_CTRL) != 0) {
+  if ((modifiers & util::kKeyModCtrl) != 0) {
     bits |= 16;
   }
   return bits;

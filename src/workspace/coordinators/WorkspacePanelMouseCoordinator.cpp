@@ -2,6 +2,7 @@
 
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 
+#include "render/SdlConvert.h"
 #include "util/Parse.h"
 #include "util/StringUtil.h"
 
@@ -416,7 +417,8 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
         }
         operations_.clear_terminal_selection();
         terminal_tab->session.SendMouseMotion(button, viewport_position->row,
-                                              viewport_position->column, SDL_GetModState());
+                                              viewport_position->column,
+                                              render::ToKeyModifiers(SDL_GetModState()));
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }
@@ -489,7 +491,8 @@ bool PanelMouseCoordinator::HandleWheel(const SDL_Event& event,
         operations_.clear_terminal_selection();
         for (int i = 0; i < step_count; ++i) {
           terminal_tab->session.SendMouseButton(button, true, viewport_position->row,
-                                                viewport_position->column, SDL_GetModState());
+                                                viewport_position->column,
+                                                render::ToKeyModifiers(SDL_GetModState()));
         }
         // Scrolling is not focusing — see SidebarMouseCoordinator::HandleWheel.
         return true;
@@ -577,7 +580,8 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
 
   operations_.clear_terminal_selection();
   terminal_tab->session.SendMouseButton(mouse_button, pressed, viewport_position->row,
-                                        viewport_position->column, SDL_GetModState());
+                                        viewport_position->column,
+                                        render::ToKeyModifiers(SDL_GetModState()));
   state_.surface.focus = FocusTarget::Panel;
   return true;
 }

@@ -250,7 +250,7 @@ bool EncodeTerminalSessionMouseEvent(bool mouse_tracking_any,
                                      bool motion,
                                      std::size_t row,
                                      std::size_t column,
-                                     SDL_Keymod modifiers,
+                                     util::KeyModifiers modifiers,
                                      bool can_encode,
                                      std::string& out_bytes) {
   if (!can_encode) {

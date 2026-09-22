@@ -4,7 +4,8 @@
 #include <fstream>
 
 #include "platform/Filesystem.h"
-#include "render/AnsiPalette.h"
+#include "render/SdlConvert.h"
+#include "util/AnsiPalette.h"
 #include "util/Hex.h"
 #include "util/Parse.h"
 #include "util/StringUtil.h"
@@ -41,7 +42,7 @@ std::optional<SDL_Color> ParseThemeColor(std::string_view text) {
     if (!index || *index < 0 || *index > 255) {
       return std::nullopt;
     }
-    return Ansi256Color(*index);
+    return ToSdlColor(util::Ansi256Color(*index));
   }
 
   if (token == "black") {

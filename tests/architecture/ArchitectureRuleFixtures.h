@@ -85,6 +85,13 @@ void RunPerfMeasureWallClockWaitRuleFixtures();
 // and a comment mention must not be flagged (TD-2026-08-10-177).
 void RunFactoryCaptureRuleFixtures();
 
+// Negative + positive control for CheckKernelStaysFreeOfTheWindowingLibrary. The
+// rule's whole value is the TRANSITIVE half — a kernel file that includes a clean
+// kernel header that includes an SDL-carrying one — and a direct-include-only check
+// would pass this repo today while missing exactly the reintroduction it exists to
+// stop. Both halves are pinned, plus the unresolvable-include guard.
+void RunKernelWindowingLibraryRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

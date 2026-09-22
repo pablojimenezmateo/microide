@@ -83,7 +83,7 @@ bool TerminalSession::SendMouseButton(MouseButton button,
                                       bool pressed,
                                       std::size_t row,
                                       std::size_t column,
-                                      SDL_Keymod modifiers) {
+                                      util::KeyModifiers modifiers) {
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);
@@ -105,7 +105,7 @@ bool TerminalSession::SendMouseButton(MouseButton button,
 bool TerminalSession::SendMouseMotion(MouseButton button,
                                       std::size_t row,
                                       std::size_t column,
-                                      SDL_Keymod modifiers) {
+                                      util::KeyModifiers modifiers) {
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);

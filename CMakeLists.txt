@@ -300,7 +300,7 @@ set(MICROIDE_CORE_SOURCES
   src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp
   src/persistence/PersistedRecord.cpp
-  src/persistence/PersistedRecordDump.cpp
+  src/workspace/persistence/PersistedRecordDump.cpp
   src/persistence/PersistedRecordReader.cpp
   src/persistence/PersistedRecordWriter.cpp
   src/persistence/PersistedRecordWriteQueue.cpp
@@ -371,7 +371,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
-  src/render/AnsiPalette.cpp
+  src/util/AnsiPalette.cpp
   src/render/ColorMath.cpp
   src/render/ThemeFile.cpp
   src/render/PluginDisplayList.cpp
@@ -1082,6 +1082,7 @@ add_executable(microide_tests
   tests/architecture/WorkspaceViewModelArchitectureRules.cpp
   tests/architecture/WorkspaceFileSizeArchitectureRules.cpp
   tests/architecture/PluginArchitectureRules.cpp
+  tests/architecture/KernelArchitectureRules.cpp
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/FileIndexWatcherTests.cpp
@@ -1411,7 +1412,7 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalSearch.cpp
     src/platform/ShellProcess.cpp
     src/platform/TerminalBackend.cpp
-    src/render/AnsiPalette.cpp
+    src/util/AnsiPalette.cpp
     src/util/Parse.cpp
     src/util/StringUtil.cpp
     src/util/PerformanceCounters.cpp
@@ -1622,7 +1623,7 @@ add_executable(microide_diff_bench
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
-  src/render/AnsiPalette.cpp
+  src/util/AnsiPalette.cpp
   src/render/ColorMath.cpp
   src/render/ThemeFile.cpp
   src/util/GitConflictMarkers.cpp

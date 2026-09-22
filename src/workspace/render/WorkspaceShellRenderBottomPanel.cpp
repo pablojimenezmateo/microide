@@ -18,6 +18,7 @@
 #include "render/PluginDisplayList.h"
 #include "render/PluginDisplayListRenderer.h"
 #include "render/ScopedRenderClip.h"
+#include "render/SdlConvert.h"
 #include "render/SurfaceTextureCache.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/PluginSurfacePreview.h"
@@ -102,8 +103,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   enum class CellEmphasis : std::uint8_t { None, FindMatch, FindCurrent, Selection };
   const auto resolve_terminal_colors = [&](const terminal::TerminalStyle& style,
                                            CellEmphasis emphasis) {
-    SDL_Color foreground = style.foreground.value_or(theme_.text_primary);
-    SDL_Color background = style.background.value_or(theme_.surface_background);
+    // The terminal model carries util::Rgba8 (it is kernel code and names no SDL
+    // type); this is that boundary.
+    SDL_Color foreground = style.foreground.has_value()
+                               ? render::ToSdlColor(*style.foreground)
+                               : theme_.text_primary;
+    SDL_Color background = style.background.has_value()
+                               ? render::ToSdlColor(*style.background)
+                               : theme_.surface_background;
     if (style.inverse()) {
       std::swap(foreground, background);
     }

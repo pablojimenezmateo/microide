@@ -5,6 +5,7 @@
 #include "terminal/TerminalBase64.h"
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalMouseEncoder.h"
+#include "util/AnsiPalette.h"
 #include "util/PerformanceCounters.h"
 #include "util/Waker.h"
 #include "util/StringUtil.h"
@@ -1325,7 +1326,7 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
       .motion = false,
       .row = 1,
       .column = 2,
-      .modifiers = SDL_KMOD_NONE,
+      .modifiers = microide::util::kKeyModNone,
   };
   std::string bytes;
   Expect(EncodeTerminalMouseEvent(request, bytes),
@@ -1345,7 +1346,7 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
   request.pressed = true;
   request.row = 4;
   request.column = 6;
-  request.modifiers = SDL_KMOD_SHIFT;
+  request.modifiers = microide::util::kKeyModShift;
   Expect(EncodeTerminalMouseEvent(request, bytes), "SGR mouse encoding should emit CSI sequences");
   Expect(bytes == "\x1b[<6;7;5M",
          "SGR mouse encoding should include button code, column, row, and trailing M");
@@ -1359,7 +1360,7 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
   request.motion = false;
   request.row = 4;
   request.column = 6;
-  request.modifiers = SDL_KMOD_NONE;
+  request.modifiers = microide::util::kKeyModNone;
   Expect(EncodeTerminalMouseEvent(request, bytes), "SGR mouse release should encode");
   Expect(bytes == "\x1b[<0;7;5m",
          "SGR mouse release must keep the real button (0) and use trailing m, not code 3");
@@ -1378,7 +1379,7 @@ void TestTerminalMouseEncodingUsesExactByteSequences() {
         .motion = false,
         .row = 5,
         .column = 250,
-        .modifiers = SDL_KMOD_NONE,
+        .modifiers = microide::util::kKeyModNone,
     };
     std::string dropped;
     Expect(!EncodeTerminalMouseEvent(big, dropped),
@@ -1407,7 +1408,7 @@ void TestTerminalSessionMouseEncodingUsesExactByteSequences() {
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1000h");
 
   Expect(session.SendMouseButton(microide::terminal::TerminalSession::MouseButton::Left, true, 1, 2,
-                                 SDL_KMOD_NONE),
+                                 microide::util::kKeyModNone),
          "terminal session should send encoded mouse button events in test mode");
   Expect(TerminalSessionTestAccess::SentBytes(session) == std::string("\x1b[M #\"", 6),
          "terminal session should preserve legacy mouse button byte sequences");
@@ -1781,14 +1782,14 @@ void TestTerminalSessionMouseRoutingRequiresTrackingMode() {
   TerminalSessionTestAccess::SetRunning(session, true);
 
   Expect(!session.SendMouseButton(microide::terminal::TerminalSession::MouseButton::Left, true, 1,
-                                  2, SDL_KMOD_NONE),
+                                  2, microide::util::kKeyModNone),
          "mouse routing should stay disabled until a tracking mode is enabled");
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
          "disabled mouse routing should not emit bytes");
 
   TerminalSessionTestAccess::AppendOutput(session, "\x1b[?1000h");
   Expect(session.SendMouseButton(microide::terminal::TerminalSession::MouseButton::Left, true, 1, 2,
-                                 SDL_KMOD_NONE),
+                                 microide::util::kKeyModNone),
          "mouse routing should encode events once normal tracking is enabled");
 }
 
@@ -2578,7 +2579,8 @@ void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
   const auto lines = session.SnapshotLines();
   Expect(!lines.empty() && lines[0].cells.size() >= 4, "A,B,C,D land on the first row");
   const auto color_of = [&](std::size_t col) { return lines[0].cells[col].style.foreground; };
-  const auto same = [](const std::optional<SDL_Color>& lhs, const std::optional<SDL_Color>& rhs) {
+  const auto same = [](const std::optional<microide::util::Rgba8>& lhs,
+                       const std::optional<microide::util::Rgba8>& rhs) {
     return lhs.has_value() && rhs.has_value() && lhs->r == rhs->r && lhs->g == rhs->g &&
            lhs->b == rhs->b;
   };
@@ -2588,6 +2590,13 @@ void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
   Expect(same(color_of(2), color_of(3)),
          "SGR 22 reverts a bold-brightened basic foreground to the plain (dark) shade");
   Expect(!same(color_of(0), color_of(3)), "bright red must differ from dark red");
+  // The SGR path must resolve through the ONE shared palette, not a table of its
+  // own. This is what the old render-vs-terminal "parity" test meant to check; it
+  // could not, because the terminal entry point was a forwarder to the render one.
+  Expect(color_of(3) == microide::util::BasicAnsiColor(1, false),
+         "a plain SGR 31 foreground is exactly the shared palette's dark red");
+  Expect(color_of(0) == microide::util::BasicAnsiColor(1, true),
+         "a bold SGR 31 foreground is exactly the shared palette's bright red");
 }
 
 // Regression: DECSTBM is honored on the PRIMARY buffer (not just the alt screen).

@@ -1,13 +1,13 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <string_view>
 #include <vector>
+
+#include "util/Rgba8.h"
 
 namespace microide::terminal {
 
@@ -40,8 +40,8 @@ enum Bit : std::uint16_t {
 }  // namespace cell_attr
 
 struct TerminalStyle {
-  std::optional<SDL_Color> foreground;
-  std::optional<SDL_Color> background;
+  std::optional<util::Rgba8> foreground;
+  std::optional<util::Rgba8> background;
   std::uint16_t attrs = 0;
 
   constexpr bool has(std::uint16_t bit) const { return (attrs & bit) != 0; }
