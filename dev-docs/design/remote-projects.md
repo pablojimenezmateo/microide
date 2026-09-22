@@ -1,6 +1,19 @@
 # Remote Projects Over SSH
 
-Last revised 2026-09-22. **Status: designed, not started.**
+Last revised 2026-09-22. **Status: groundwork started (§ 8). No remote code yet.**
+
+Shipped from the groundwork so far, on `main`:
+
+| item | what shipped | what is left |
+| --- | --- | --- |
+| **G1** SDL-free kernel | `microide_kernel` — 99 TUs under util, platform, project, compare, persistence, terminal (plus the two SDL-free editor text models `project/` calls) — compiles with its own SDL-free precompiled header. `util::Waker`, `util::Rgba8`, `util::KeyModifiers`, `util::Log`, `util::AnsiPalette`, with `render/SdlConvert.h` and `app/SdlWaker.h` as the only boundaries. `microide_kernel_link_probe` links and runs every kernel object against libc++ and pcre2 alone: 2.4 MB against the shell's 15.8. Lint: `CheckKernelStaysFreeOfTheWindowingLibrary` (transitive include graph, membership read from the CMake list). | the second test binary `microide_kernel_tests` (TD-2026-09-22-303) |
+| **G2** one process launcher | `platform::ProcessLauncher`; git, the formatter, plugin tools, the language server, the debug adapter and the terminal all route through one. `GitRepository` has no default launcher, so all 25 sites state their locality. Lint: `CheckEverySpawnGoesThroughAProcessLauncher`, covering `RunSubprocess` **and** `AsyncSubprocess::Start`. | a PROJECT owns a launcher; every site currently names the local one (TD-2026-09-22-301) |
+| **G3** argv-shaped terminal | `TerminalStartRequest::shell` is argv, `execvp` replaces `execl`, `util::SplitCommandLine` does the quoting, `terminal.shell` is Project-scoped. Fixed two real bugs: `terminal.shell = "ssh host"` ran `ssh -i`, and `terminal.shell = "bash"` never resolved through PATH. | — |
+| **G9** (part) | one `ResolveGitDirectory` instead of two that disagreed on normalizing an absolute `gitdir:` target | the three-state (repository / not / **unknown**) metadata source |
+
+Not started: **G4** asynchronous file open, **G5** asynchronous save, **G6** blake3
+content hashes, **G7** notification identity/actions/progress/lifetime, **G8**
+`ProjectId`, **G10** the write gate.
 
 When a phase is committed to, it graduates into an `openspec/changes/` proposal.
 

@@ -1,5 +1,10 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-09-22 (§ TD-2026-09-22-301 and 303 for the remote-projects
+groundwork pass: the launcher seam that every spawn now goes through while every
+site still names the local launcher, and the kernel that compiles and links
+without a windowing library but has no test binary of its own).
+
 Reviewed 2026-09-20 (§ TD-2026-09-20-298 through 301 for the perf-instrumentation
 pass: two scroll sweeps whose gated p50 was a no-op, the per-glyph coverage cache
 that became measurable once one of them started measuring, and the two O(n²)

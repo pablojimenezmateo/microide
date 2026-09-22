@@ -1,6 +1,8 @@
 # MicroIDE Active Work
 
-Reviewed 2026-09-05 (see `known-tech-debt.md` § TD-2026-09-05-288 for that
+Reviewed 2026-09-22 (remote-projects groundwork G1, G2, G3 and part of G9; see
+§ 7 and `known-tech-debt.md` § TD-2026-09-22-301, 303). Previously reviewed
+2026-09-05 (see `known-tech-debt.md` § TD-2026-09-05-288 for that
 pass). Shipped baseline: **v2.12.0** — the multi-caret / soft-wrap / word-selection
 correctness pass shipped in it, with Add Cursor Above/Below, Add Cursors to Line
 Ends, Join Lines, and the non-ASCII glyph cluster atlas (see `CHANGELOG.md`
@@ -265,6 +267,51 @@ The emulator covers the full-screen and shell workflows exercised so far.
 - promote disk caching or parallel plugin syntax parsing only if profiling
   shows plugin Lua parsing / regex compilation as material startup cost
 
+### 7. Remote-projects groundwork
+
+`dev-docs/design/remote-projects.md`. **Groundwork started on 2026-09-22; no remote
+code exists.** The design measures what a remote operation costs (4,957 path
+syscalls to open a project, 162 to open one file), rules out sshfs, and keeps a
+local mirror equal to the remote tree through a persistent `microide-agent` daemon
+over ssh, with every process (git, LSP, DAP, terminal) running on the host. The wire
+is length-prefixed binary frames over a content-addressed object store with
+`zstd --patch-from` deltas; the terminal model runs on the host and ships screen
+state, with input as semantic events encoded there; the daemon outlives the
+connection, so terminals and their scrollback survive a dropped link and reattach.
+No FUSE mount at any phase. Local and remote project tabs coexist. Phase 1 (link a
+local checkout to a host) is a development stepping stone behind an experimental
+flag, not a shipped mode.
+
+**Groundwork is ten local-tree changes, each of which stands on its own if remote
+projects are never built.** Four are shipped (the design's own table at the top of
+that file says exactly what, and what each one left):
+
+- **G1 — the SDL-free kernel.** `microide_kernel` compiles util, platform, project,
+  compare, persistence and terminal with a precompiled header that does not include
+  SDL, so a kernel TU naming `Uint32` no longer compiles by accident.
+  `microide_kernel_link_probe` links and runs every kernel object against libc++
+  and pcre2 alone — 2.4 MB against the shell's 15.8. The wake path, the terminal's
+  colour and modifier types, operational logging, the ANSI palette and path
+  resolution all lost their SDL dependency; four separate dedups fell out.
+- **G2 — one process launcher.** Every spawn routes through
+  `platform::ProcessLauncher`, both primitives are linted, and `GitRepository` has
+  no default launcher so all 25 sites state their locality. Git is now testable
+  against a scripted launcher with no `git` binary.
+- **G3 — argv-shaped terminal launch**, which fixed `terminal.shell = "ssh host"`
+  (ran `ssh -i`) and `terminal.shell = "bash"` (never resolved through PATH).
+- **G9 (part)** — one `ResolveGitDirectory` instead of two that disagreed.
+
+Open: **G4** asynchronous file open, **G5** asynchronous save (delete the
+format-on-save synchronous-subprocess lint exception), **G6** blake3 content
+hashes, **G7** notifications with key/actions/progress/lifetime, **G8**
+`ProjectId`, **G10** the write gate. Groundwork carries its own perf gates (design
+§ 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;
+display forwarding (`xpra`) remains the zero-code answer until Phase 2.
+
+Nothing here is remote code, and nothing here depends on remote projects shipping.
+A change that only prepares for remote must not cost anything locally, so each
+carries its own gates and coverage.
+
 ## Deferred Or Out Of Scope
 
 Not current work unless deliberately promoted into its own phase.
@@ -282,33 +329,9 @@ Not current work unless deliberately promoted into its own phase.
   plugin loading, Micro-plugin compatibility.** Ships `--disable-plugins` /
   `--safe-mode` only.
 - **Cloud and collaboration features.**
-- **Remote projects (opening a tree that lives on another machine).** Designed,
-  not started: `dev-docs/design/remote-projects.md` (last revised 2026-09-22). The
-  design measures what a remote operation costs (4,957 path syscalls to open a
-  project, 162 to open one file), rules out sshfs, and keeps a local mirror equal to
-  the remote tree through a persistent `microide-agent` daemon over ssh, with every
-  process (git, LSP, DAP, terminal) running on the host. The wire is length-prefixed
-  binary frames over a content-addressed object store with `zstd --patch-from`
-  deltas; the terminal model runs on the host and ships screen state, with input as
-  semantic events encoded there; the daemon outlives the connection, so terminals
-  and their scrollback survive a dropped link and reattach. No FUSE mount at any
-  phase. Local and remote project tabs coexist. Phase 1 (link a local checkout to a
-  host) is a development stepping stone behind an experimental flag, not a shipped
-  mode. **Groundwork is ten local-tree changes (~4,200 lines), each of which stands
-  on its own if remote projects are never built**, and together they are the seams
-  the rest plugs into: an SDL-free kernel defined as an explicit CMake source list
-  with a transitive-include lint and its own test binary; a project-owned process
-  launcher covering all eight spawn sites, `RunSubprocess` and `AsyncSubprocess`
-  alike; argv-shaped terminal launch; asynchronous file open with a revision-guarded
-  completion that the asynchronous save pipeline and content hashing reuse; an
-  asynchronous save that runs the formatter from all seven of its entry points
-  instead of one; blake3 content hashes behind a stat prefilter; notifications with
-  keys, actions, progress and lifetime; `ProjectId` for identity while `root` stays
-  the filesystem path; a `.git` metadata source with an explicit unknown state; and
-  one write gate that `TextViewport::Save` takes as its writer. Groundwork carries
-  its own perf gates (design § 9) and coverage (§ 10). Sizing is ~17,600 production
-  lines across five phases. Nothing is started; display forwarding (`xpra`) is the
-  current zero-code answer.
+- **Remote projects (opening a tree that lives on another machine).** The FEATURE
+  is out of scope until a phase is committed to; its *groundwork* is active work
+  (§ 7 above), because every one of those ten changes stands on its own.
 - **AI/LLM runtime surfaces.** Retired from product scope; the
   authentication-provider and secret-storage surfaces went with them.
 - **Settings overlay follow-ups.** Section subtitles are a static table keyed by
