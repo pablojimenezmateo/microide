@@ -10,6 +10,8 @@
 #include "architecture/WorkspaceViewModelArchitectureRules.h"
 
 #include <filesystem>
+#include <string>
+#include <string_view>
 
 namespace microide::tests::architecture {
 
@@ -982,6 +984,13 @@ void RunKernelWindowingLibraryRuleFixtures() {
   std::filesystem::create_directories(root / "src/util");
   std::filesystem::create_directories(root / "src/terminal");
   std::filesystem::create_directories(root / "src/render");
+  // The rule reads kernel membership out of the build, so the fixture root needs the
+  // same list the real repo has. Its absence is itself an assertion, at the end.
+  const auto write_cmake = [&](std::string_view sources) {
+    WriteFile(root / "CMakeLists.txt",
+              std::string("set(MICROIDE_KERNEL_SOURCES\n") + std::string(sources) + ")\n");
+  };
+  write_cmake("  src/terminal/Leaf.cpp\n");
 
   // Direct: a kernel TU naming an SDL type with no include of its own. This is the
   // form the precompiled header hid — `Uint32` compiled everywhere because the PCH
@@ -1004,16 +1013,36 @@ void RunKernelWindowingLibraryRuleFixtures() {
          "kernel rule must accept kernel files that name only plain types and include "
          "only clean kernel headers");
 
-  // A render TU may of course reach SDL; the rule is scoped to the kernel directories.
+  // A render TU may of course reach SDL; the rule is scoped to the kernel.
   WriteFile(root / "src/render/Uses.cpp", "#include \"render/Paint.h\"\nvoid G(){}\n");
   Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
          "kernel rule must not flag shell-layer files for using the windowing library");
+
+  // Membership comes from the build list, so a file OUTSIDE the kernel directories
+  // that the build compiles into the kernel is covered — this is the editor/
+  // SingleLineEditor case, and a directory-only rule would miss it entirely.
+  std::filesystem::create_directories(root / "src/editor");
+  WriteFile(root / "src/editor/Plain.cpp", "#include \"render/Paint.h\"\nvoid H(){}\n");
+  Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.empty(),
+         "a file outside the kernel directories is not kernel until the build says so");
+  write_cmake("  src/terminal/Leaf.cpp\n  src/editor/Plain.cpp\n");
+  Expect(CheckKernelStaysFreeOfTheWindowingLibrary(root).violations.size() == 1,
+         "naming a file in MICROIDE_KERNEL_SOURCES brings it under the rule wherever it lives");
+  write_cmake("  src/terminal/Leaf.cpp\n");
 
   // An include that resolves to nothing under src/ must be reported, not swallowed:
   // an unfollowable edge is how a graph rule goes blind.
   WriteFile(root / "src/terminal/Leaf.cpp", "#include \"util/Typod.h\"\nvoid F(){}\n");
   Expect(!CheckKernelStaysFreeOfTheWindowingLibrary(root).missing_targets.empty(),
          "kernel rule must report an include it cannot resolve rather than assume it clean");
+
+  // And a build list it cannot find at all is a missing target, not a quiet fallback
+  // to directories — that fallback is precisely how the rule would stop covering the
+  // kernel files that live outside them.
+  WriteFile(root / "src/terminal/Leaf.cpp", "void F(){}\n");
+  WriteFile(root / "CMakeLists.txt", "set(MICROIDE_SOMETHING_ELSE)\n");
+  Expect(!CheckKernelStaysFreeOfTheWindowingLibrary(root).missing_targets.empty(),
+         "kernel rule must report a MICROIDE_KERNEL_SOURCES list it cannot read");
 }
 
 void RunAllRuleFixtures() {

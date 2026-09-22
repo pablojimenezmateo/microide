@@ -91,9 +91,9 @@ check_tests() {
   run_logged "$log" bash -c '
     set -e
     cmake -S . -B build
-    targets=microide_tests
+    targets="microide_tests microide_kernel_link_probe"
     if grep -q "^MICROIDE_PERF_HARNESS_BUILD:BOOL=ON" build/CMakeCache.txt; then
-      targets="microide_tests microide_perf"
+      targets="$targets microide_perf"
     fi
     cmake --build build --target $targets -j'"$JOBS"'
     ctest --test-dir build --output-on-failure -j'"$CTEST_JOBS"'

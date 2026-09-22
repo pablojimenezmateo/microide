@@ -229,6 +229,11 @@ set(MICROIDE_INSTRUMENTATION_SOURCES
 # enforces rather than a claim a text lint makes. That is what lets these services
 # run in a process that never opened a display.
 set(MICROIDE_KERNEL_SOURCES
+  # In editor/ but SDL-free and pulled in by project/FileFinder: the prompt's
+  # single-line buffer is a text model, not a widget. Its presence here is why the
+  # kernel link probe below links with nothing else.
+  src/editor/SingleLineEditor.cpp
+  src/editor/WordBoundary.cpp
   src/compare/BranchReviewStateService.cpp
   src/compare/BranchReviewStateTypes.cpp
   src/compare/CompareModel.cpp
@@ -357,9 +362,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/ColumnSelection.cpp
   src/editor/ShapingActions.cpp
-  src/editor/SingleLineEditor.cpp
   src/editor/SingleLineKeyHandler.cpp
-  src/editor/WordBoundary.cpp
   src/editor/SnippetEngine.cpp
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
@@ -768,6 +771,23 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(microide_kernel PRIVATE -Werror)
   endif()
 endif()
+
+# Link probe: an almost-empty binary that links EVERY kernel object and nothing but
+# libc++ and pcre2. A kernel TU that calls an SDL function, or a shell-layer one,
+# fails here with an undefined reference — which neither the include lint nor the
+# split PCH can see. It is built by the default build, so the failure is a build
+# failure and not a test nobody runs.
+add_executable(microide_kernel_link_probe
+  tools/kernel/kernel_link_probe.cpp
+  $<TARGET_OBJECTS:microide_kernel>
+)
+target_include_directories(microide_kernel_link_probe PRIVATE src)
+target_link_libraries(microide_kernel_link_probe PRIVATE ${MICROIDE_PCRE2_TARGET})
+# Run it too: linking proves the kernel needs no window, running proves it WORKS
+# without one. The test asserts on each area's return value, so a probe hollowed out
+# to `return 0` fails here rather than passing.
+add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
+
 
 
 add_executable(microide

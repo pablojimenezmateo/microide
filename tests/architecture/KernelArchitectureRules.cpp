@@ -3,6 +3,7 @@
 #include <array>
 #include <functional>
 #include <map>
+#include <set>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -12,29 +13,49 @@ namespace microide::tests::architecture {
 
 namespace {
 
-// The kernel: the directories whose contents are data, I/O and process model, with
-// no window. Everything here must compile and run in a process that never opened a
-// display — that is what makes a headless `microide-agent` a couple of MB rather
-// than thirty, and it is a layering this tree half-had and never stated.
+// The kernel: data, filesystem, process model and the terminal emulator, with no
+// window. Everything here must compile and run in a process that never opened a
+// display — which `microide_kernel_link_probe` demonstrates by doing it.
 //
-// `editor/`, `render/`, `workspace/`, `plugin/` and `app/` are deliberately NOT in
-// the set: `editor/` already includes upward into `workspace/WorkspaceUiText.h`, so
-// directory is not layer there and pretending otherwise would just produce an
-// allowlist. Individual SDL-free editor headers (`SingleLineEditor.h`, the compare
-// value types) are reachable from the kernel and stay reachable: the rule follows
-// the include graph, so a header earns kernel membership by being clean, not by
-// living in a blessed directory.
+// Membership is READ FROM `MICROIDE_KERNEL_SOURCES` in CMakeLists.txt rather than
+// restated here, because the build and the lint disagreeing about what the kernel is
+// would be the one failure neither could report. The directory prefixes below are an
+// additional root set, so a kernel HEADER that no kernel .cpp happens to include is
+// still covered. `editor/` is not among them on purpose: it includes upward into
+// `workspace/`, so directory is not layer there — its two SDL-free members
+// (`SingleLineEditor`, `WordBoundary`) join the kernel by being named in the CMake
+// list, not by living anywhere in particular.
 constexpr std::array<std::string_view, 6> kKernelDirectories = {
     "util/", "platform/", "project/", "compare/", "persistence/", "terminal/",
 };
 
-bool IsKernelPath(std::string_view relative) {
+bool IsKernelDirectory(std::string_view relative) {
   for (const std::string_view dir : kKernelDirectories) {
     if (relative.starts_with(dir)) {
       return true;
     }
   }
   return false;
+}
+
+// Parse `set(MICROIDE_KERNEL_SOURCES ... )` out of CMakeLists.txt, returning
+// src-relative paths. An empty result means the list moved or was renamed, which the
+// caller reports as a missing target rather than scanning a shrunken kernel.
+std::vector<std::string> ReadKernelSourceList(const std::filesystem::path& repo_root) {
+  std::vector<std::string> sources;
+  const std::string text = ReadText(repo_root / "CMakeLists.txt");
+  const std::size_t begin = text.find("set(MICROIDE_KERNEL_SOURCES");
+  if (begin == std::string::npos) {
+    return sources;
+  }
+  const std::size_t end = text.find("\n)", begin);
+  const std::regex source_line(R"(^\s*src/([^\s#)]+\.cpp)\s*$)", std::regex::multiline);
+  const std::string body = text.substr(begin, end == std::string::npos ? std::string::npos
+                                                                      : end - begin);
+  for (std::sregex_iterator it(body.begin(), body.end(), source_line), last; it != last; ++it) {
+    sources.push_back((*it)[1].str());
+  }
+  return sources;
 }
 
 bool IsSourceExtension(const std::filesystem::path& path) {
@@ -142,10 +163,40 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
     return false;
   };
 
-  for (const auto& [key, facts] : files) {
-    if (!IsKernelPath(key)) {
-      continue;
+  // Roots: everything the build compiles into microide_kernel, plus every file in
+  // the kernel directories (so a header no kernel .cpp includes is still covered).
+  std::set<std::string, std::less<>> roots;
+  const std::vector<std::string> cmake_kernel_sources = ReadKernelSourceList(repo_root);
+  if (cmake_kernel_sources.empty()) {
+    result.missing_targets.push_back(Violation{
+        .path = repo_root / "CMakeLists.txt",
+        .line = 1,
+        .message = "could not read set(MICROIDE_KERNEL_SOURCES ...); the kernel layering "
+                   "rule would fall back to directories and silently stop covering the "
+                   "kernel files that live outside them",
+    });
+  }
+  for (const std::string& source : cmake_kernel_sources) {
+    if (files.contains(source)) {
+      roots.insert(source);
+    } else {
+      result.missing_targets.push_back(Violation{
+          .path = repo_root / "CMakeLists.txt",
+          .line = 1,
+          .message = "MICROIDE_KERNEL_SOURCES names src/" + source +
+                     ", which does not exist; the build and this rule disagree about what "
+                     "the kernel is",
+      });
     }
+  }
+  for (const auto& [key, unused_facts] : files) {
+    if (IsKernelDirectory(key)) {
+      roots.insert(key);
+    }
+  }
+
+  for (const std::string& key : roots) {
+    const FileFacts& facts = files.find(key)->second;
     for (const std::string& included : facts.includes) {
       if (!files.contains(included) && included != "stb_image.h") {
         result.missing_targets.push_back(Violation{
