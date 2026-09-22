@@ -176,7 +176,7 @@ check_release() {
   local log="${LOG_DIR}/microide-release.log"
   run_logged "$log" bash -c '
     set -e
-    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    cmake --build '"$build_dir"' --target microide_tests microide_kernel_link_probe -j'"$JOBS"'
     ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
@@ -447,6 +447,10 @@ check_coverage() {
 # the sanitizers are complements, not substitutes. The heavier _GLIBCXX_DEBUG
 # (checked iterators, O(n) invariants) stays a manual deep-audit tool; this one is
 # cheap enough to be routine.
+# Every lane that runs ctest must build every binary ctest invokes. That is not a
+# style point: `microide_kernel_link_probe` is registered as a test, so a lane that
+# builds only `microide_tests` reports it as "Not Run" and FAILS — which is how this
+# comment got written, on the hardened lane, the first time the probe existed.
 check_hardened() {
   local build_dir="build/microide-hardened"
   local log="${LOG_DIR}/microide-hardened.log"
@@ -455,7 +459,7 @@ check_hardened() {
     cmake -S . -B '"$build_dir"' \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CXX_FLAGS="-D_GLIBCXX_ASSERTIONS"
-    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    cmake --build '"$build_dir"' --target microide_tests microide_kernel_link_probe -j'"$JOBS"'
     ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
