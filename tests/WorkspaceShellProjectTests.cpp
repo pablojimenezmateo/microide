@@ -7847,6 +7847,15 @@ void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "injected file-index batch fixture should open the project");
+  // Wait for the project's OWN initial scan to land before injecting anything.
+  // OpenProjectTab starts a real watcher whose initial batch REPLACES the index, so an
+  // injection that arrives first is silently undone by a scan that walked the tree
+  // before the file existed — which is exactly what it looks like from the finder: the
+  // entry is in the index when the batch is applied and gone by the time the query
+  // runs. It only loses the race under parallel load, which is where this test kept
+  // failing.
+  Expect(WaitForFileIndexSize(shell, 1, std::chrono::milliseconds(5000)),
+         "injected file-index batch fixture should finish its initial project scan");
 
   const std::filesystem::path relative_injected = std::filesystem::path("src/injected.cpp");
   const std::filesystem::path absolute_injected = root / relative_injected;
