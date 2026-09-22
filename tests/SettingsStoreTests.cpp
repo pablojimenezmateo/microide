@@ -35,6 +35,28 @@ void TestUserLayerWinsOverProject() {
   Expect(store.Resolve("missing.key") == nullptr, "unknown key resolves to nullptr");
 }
 
+// A setting's declared SettingScope steers only where the Settings overlay WRITES;
+// Resolve is project-over-user for every key regardless. That matters whenever a
+// setting's scope is changed — `terminal.shell` moved User -> Project — because the
+// change must not orphan a value someone already has in their user config. Without
+// this assertion a scope move reads as green while doing nothing observable.
+void TestUserLevelValueStillResolvesForAProjectScopedSetting() {
+  SettingsLayer user;
+  SettingsLayer project;
+  SettingsStore store;
+  store.BindUserLayer(&user);
+  store.BindActiveProject(&project);
+
+  store.SetUser("terminal.shell", "/usr/bin/fish");
+  Expect(ResolveOr(store, "terminal.shell", "?") == "/usr/bin/fish",
+         "a user-config terminal.shell keeps resolving after the setting became "
+         "project-scoped");
+
+  store.SetProject("terminal.shell", "ssh build-host");
+  Expect(ResolveOr(store, "terminal.shell", "?") == "ssh build-host",
+         "a project value still takes precedence over the user one");
+}
+
 void TestResetRestoresUnderlyingLayer() {
   SettingsLayer user;
   SettingsLayer project;
@@ -158,6 +180,8 @@ void RegisterSettingsStoreTests(std::vector<TestCase>& tests) {
           TestRevisionOnlyBumpsOnEffectiveChange);
   AddTest(tests, "SettingsStore/RejectsInvalidSettingIds", TestRejectsInvalidSettingIds);
   AddTest(tests, "SettingsStore/UserLayerWinsOverProject", TestUserLayerWinsOverProject);
+  AddTest(tests, "SettingsStore/UserLevelValueStillResolvesForAProjectScopedSetting",
+          TestUserLevelValueStillResolvesForAProjectScopedSetting);
   AddTest(tests, "SettingsStore/ResetRestoresUnderlyingLayer", TestResetRestoresUnderlyingLayer);
   AddTest(tests, "SettingsStore/RebindActiveProjectAfterMove", TestRebindActiveProjectAfterMove);
   AddTest(tests, "SettingsStore/ReindexAfterInPlaceReload", TestReindexAfterInPlaceReload);

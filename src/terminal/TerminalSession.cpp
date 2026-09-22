@@ -1,5 +1,7 @@
 #include "terminal/TerminalSession.h"
 
+#include "util/CommandLine.h"
+
 #include "terminal/TerminalAnsiColors.h"
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalInternalConstants.h"
@@ -97,13 +99,17 @@ void TerminalSession::SetWakeChannel(util::WakeChannel channel) {
 bool TerminalSession::Start(const std::filesystem::path& working_directory, std::string_view command,
                             std::string_view shell) {
   Stop();
-  const std::string shell_str(shell);
+  // `shell` is a command line, not a program path — that is what the setting has
+  // always said it was. Splitting here (rather than in the backend) keeps the
+  // backend's request argv-shaped and the quoting rules in one place.
+  const std::vector<std::string> shell_argv = util::SplitCommandLine(shell);
   {
     std::scoped_lock lock(mutex_);
-    ReseedForStartLocked(working_directory,
-                         command.empty()
-                             ? ShellProgramName(shell_str.empty() ? DefaultShellPath() : shell_str)
-                             : std::string(command));
+    ReseedForStartLocked(
+        working_directory,
+        command.empty()
+            ? ShellProgramName(shell_argv.empty() ? DefaultShellPath() : shell_argv.front())
+            : std::string(command));
   }
 
   std::shared_ptr<platform::TerminalBackend> backend = platform::CreateTerminalBackend();
@@ -150,7 +156,7 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   const auto result = backend_ptr->Start(platform::TerminalStartRequest{
                                              .working_directory = working_directory,
                                              .command = std::string(command),
-                                             .shell = shell_str,
+                                             .shell = shell_argv,
                                              .rows = rows_,
                                              .columns = columns_,
                                          },

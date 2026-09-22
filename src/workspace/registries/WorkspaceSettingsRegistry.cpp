@@ -348,9 +348,15 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
       SettingSpec{
           .id = "terminal.shell",
           .label = "Terminal Shell",
-          .description = "Shell command used by new terminals (empty for platform default).",
+          // Project scope: which shell to run is a property of the project, not of
+          // the person. SettingsStore::Resolve is project-over-user for every
+          // setting regardless of declared scope, so an existing user-level value
+          // keeps working; the scope only steers where the Settings overlay writes.
+          .description =
+              "Shell command used by new terminals — a full command line, so "
+              "arguments and quoting work (empty for platform default).",
           .type = SettingType::String,
-          .scope = SettingScope::User,
+          .scope = SettingScope::Project,
           .default_bool = false,
           .default_int = 0,
           .default_float = 0.0f,

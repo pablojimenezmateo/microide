@@ -124,6 +124,82 @@ void TestTerminalBackendShellGetsDefaultSigpipe() {
          "the terminal shell's children must see SIGPIPE at its default, got: " + output);
 }
 
+// The `terminal.shell` setting has always been described as a shell COMMAND, and the
+// backend treated it as a program path: it exec'd it with fixed arguments, so a
+// multi-word value ran the first word with `-i` appended (`ssh host` became
+// `ssh -i`, ssh's identity-file flag) and a bare program name never resolved through
+// PATH at all. Both halves are pinned here.
+void TestTerminalBackendShellIsACommandLineNotAProgramPath() {
+  auto backend = CreateTerminalBackend();
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::string output;
+  TerminalBackendCallbacks callbacks;
+  callbacks.on_output = [&](std::string_view bytes) {
+    std::lock_guard<std::mutex> lock(mutex);
+    output.append(bytes);
+    cv.notify_all();
+  };
+
+  // A multi-word shell is exec'd exactly as written — no `-i` appended.
+  const auto result = backend->Start(
+      TerminalStartRequest{.shell = {"/bin/sh", "-c", "echo argv-shell-ran"},
+                           .rows = 24,
+                           .columns = 80},
+      std::move(callbacks));
+  if (!result.started) {
+    return;  // no PTY available in this environment
+  }
+  bool saw_marker = false;
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    saw_marker = cv.wait_for(lock, std::chrono::seconds(5), [&] {
+      return output.find("argv-shell-ran") != std::string::npos;
+    });
+  }
+  backend->Stop();
+  Expect(saw_marker,
+         "a multi-word terminal.shell must be exec'd as written, got: " + output);
+}
+
+void TestTerminalBackendBareShellNameResolvesThroughPath() {
+  auto backend = CreateTerminalBackend();
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::string output;
+  TerminalBackendCallbacks callbacks;
+  callbacks.on_output = [&](std::string_view bytes) {
+    std::lock_guard<std::mutex> lock(mutex);
+    output.append(bytes);
+    cv.notify_all();
+  };
+
+  // `sh`, not `/bin/sh`: the old execl() required an absolute path, so a user who
+  // set terminal.shell to a bare program name got a terminal that exited instantly
+  // with no explanation.
+  const auto result = backend->Start(
+      TerminalStartRequest{.command = "echo path-resolved-shell",
+                           .shell = {"sh"},
+                           .rows = 24,
+                           .columns = 80},
+      std::move(callbacks));
+  if (!result.started) {
+    return;
+  }
+  bool saw_marker = false;
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    saw_marker = cv.wait_for(lock, std::chrono::seconds(5), [&] {
+      return output.find("path-resolved-shell") != std::string::npos;
+    });
+  }
+  backend->Stop();
+  Expect(saw_marker,
+         "a bare terminal.shell program name must resolve through PATH, got: " + output);
+}
+
 #endif  // defined(__unix__) || defined(__APPLE__)
 
 }  // namespace
@@ -136,6 +212,10 @@ void RegisterTerminalBackendTests(std::vector<TestCase>& tests) {
           TestTerminalBackendBufferedWriteReachesDrainingChild);
   AddTest(tests, "TerminalBackend/ShellGetsDefaultSigpipe",
           TestTerminalBackendShellGetsDefaultSigpipe);
+  AddTest(tests, "TerminalBackend/ShellIsACommandLineNotAProgramPath",
+          TestTerminalBackendShellIsACommandLineNotAProgramPath);
+  AddTest(tests, "TerminalBackend/BareShellNameResolvesThroughPath",
+          TestTerminalBackendBareShellNameResolvesThroughPath);
 #else
   (void)tests;
 #endif

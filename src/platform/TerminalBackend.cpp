@@ -123,8 +123,32 @@ class PosixTerminalBackend final : public TerminalBackend {
     // openpty took the initial size as an argument; set it the same way Resize does.
     (void)ioctl(master_fd, TIOCSWINSZ, &window_size);
 
-    const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
-    const std::string shell_name = ShellProgramName(shell_path);
+    // Resolve the launch argv in the PARENT, for the same reason the environment is
+    // built here: everything between fork() and exec() must be async-signal-safe, and
+    // building strings is not.
+    std::vector<std::string> argv_storage =
+        request.shell.empty() ? std::vector<std::string>{DefaultShellPath()} : request.shell;
+    const std::string program = argv_storage.front();
+    const std::string shell_name = ShellProgramName(program);
+    if (argv_storage.size() == 1) {
+      // A bare shell name or path. argv[0] becomes the base name — the login-shell
+      // convention, so `$0` reads `bash` rather than `/bin/bash` — and with no
+      // command to run it starts interactively.
+      argv_storage.front() = shell_name;
+      if (request.command.empty()) {
+        argv_storage.push_back("-i");
+      }
+    }
+    if (!request.command.empty()) {
+      argv_storage.push_back("-lc");
+      argv_storage.push_back(request.command);
+    }
+    std::vector<char*> argv_pointers;
+    argv_pointers.reserve(argv_storage.size() + 1);
+    for (std::string& word : argv_storage) {
+      argv_pointers.push_back(word.data());
+    }
+    argv_pointers.push_back(nullptr);
 
     // Build the child environment in the PARENT: setenv() after fork() is not
     // async-signal-safe (it allocates and takes the environ lock), so a fork racing
@@ -185,11 +209,10 @@ class PosixTerminalBackend final : public TerminalBackend {
       // the parent above.
       environ = env_pointers.data();
       RestoreDefaultSignalsInChild();
-      if (request.command.empty()) {
-        execl(shell_path.c_str(), shell_name.c_str(), "-i", nullptr);
-      } else {
-        execl(shell_path.c_str(), shell_name.c_str(), "-lc", request.command.c_str(), nullptr);
-      }
+      // execvp, not execl: a PATH search is what makes `terminal.shell = "bash"`
+      // (or `"ssh"`) work at all, and the argv already carries whatever the user
+      // wrote. Both the program and the argv strings were built in the parent.
+      execvp(program.c_str(), argv_pointers.data());
       _exit(127);
     }
 
@@ -616,7 +639,8 @@ class WindowsTerminalBackend final : public TerminalBackend {
       return FailureResult(request.command, "failed to attach pseudoconsole attributes.");
     }
 
-    const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
+    const std::string shell_path =
+        request.shell.empty() ? DefaultShellPath() : request.shell.front();
     std::wstring shell = ToWide(shell_path);
     const std::wstring shell_name = ToWide(ShellProgramName(shell_path));
     std::wstring command_line = shell;

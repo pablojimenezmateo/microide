@@ -5,16 +5,28 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 #include <string_view>
 
 namespace microide::platform {
 
 struct TerminalStartRequest {
   std::filesystem::path working_directory;
+  // Run this through the shell (`<shell> -lc <command>`) instead of starting an
+  // interactive one. Empty means an interactive shell.
   std::string command;
-  // Shell program to launch when `command` is empty (the `terminal.shell`
-  // setting). Empty falls back to the platform default ($SHELL / /bin/sh).
-  std::string shell;
+  // The shell to launch, as argv — NOT a program path. `terminal.shell`'s own
+  // description has always said "shell command", and treating it as a path is what
+  // made `terminal.shell = "ssh host"` fail with a usage error from ssh's identity
+  // flag, and `terminal.shell = "bash"` fail outright (a bare name was exec'd
+  // without a PATH search). Empty falls back to the platform default
+  // ($SHELL / /bin/sh).
+  //
+  // A ONE-word shell is launched interactively (`bash -i`), because that is what a
+  // bare shell name means. A multi-word one is exec'd exactly as written, because
+  // the user already said what to run — appending `-i` to `ssh host` is the bug
+  // this field exists to fix.
+  std::vector<std::string> shell;
   std::size_t rows = 24;
   std::size_t columns = 80;
 };

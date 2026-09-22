@@ -312,6 +312,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalSessionSgr.cpp
   src/util/AnsiPalette.cpp
   src/util/BackgroundTaskCounter.cpp
+  src/util/CommandLine.cpp
   src/util/DebugTrace.cpp
   src/util/DurableFile.cpp
   src/util/GitConflictMarkers.cpp
@@ -1148,6 +1149,7 @@ add_executable(microide_tests
   tests/architecture/KernelArchitectureRules.cpp
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
+  tests/CommandLineTests.cpp
   tests/FileIndexWatcherTests.cpp
   tests/FileIndexWatcherContractTests.cpp
   tests/PatternCacheTests.cpp
