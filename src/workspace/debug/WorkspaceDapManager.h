@@ -54,7 +54,7 @@ class DapManager {
   DapManager& operator=(const DapManager&) = delete;
 
   // SDL event type used to wake the main loop when adapter messages arrive.
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
 
   // Register a debug adapter definition for `type`. Idempotent: re-registering
   // the same type with the same command/sandbox is a no-op. Re-registering with

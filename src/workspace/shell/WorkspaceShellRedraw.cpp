@@ -10,11 +10,11 @@
 #include <string>
 #include <vector>
 
-#include "app/BackgroundTaskCounter.h"
+#include "util/BackgroundTaskCounter.h"
 #include "compare/ComparePresentationModel.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
@@ -1003,11 +1003,11 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   }
   // Fallback backstop for one-shot wake producers (git blame, control channel, native
   // dialogs, highlight prefetch, background-task wakes): if any of their SDL_PushEvent
-  // wakes was rejected while its result sat ready in shared state, PushSdlWake latched
+  // wakes was rejected while its result sat ready in shared state, PushWake latched
   // a shared "wake owed" bit. Consume it here to shorten this idle wait so the loop
   // re-checks and drains the ready state instead of blocking until unrelated input.
   // (TD-2026-07-16-54.)
-  if (util::ConsumeOwedSdlWake()) {
+  if (util::ConsumeOwedWake()) {
     constexpr Uint32 kWakeOwedPollMs = 32;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kWakeOwedPollMs) : kWakeOwedPollMs;
   }
@@ -1016,7 +1016,7 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   // steady interval so LSP/DAP/dialog/terminal/etc. results are still consumed rather
   // than stranded until unrelated input. Rare (SDL event-type exhaustion at startup),
   // so the steady poll is acceptable. (TD-2026-07-16-56.)
-  if (util::SdlWakeRegistrationDegraded()) {
+  if (util::WakeRegistrationDegraded()) {
     constexpr Uint32 kDegradedPollMs = 64;
     wait_ms = wait_ms.has_value() ? std::min(*wait_ms, kDegradedPollMs) : kDegradedPollMs;
   }

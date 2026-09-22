@@ -136,7 +136,7 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
   }
 
   DapClient client;
-  client.SetWakeEventType(0);
+  client.SetWakeChannel(0);
 
   // Adapter-pushed events arrive on the main thread via DrainCallbacks. gdb emits
   // `output` events immediately at startup (its version banner), which is exactly
@@ -259,7 +259,7 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
   }
 
   DapClient client;
-  client.SetWakeEventType(0);
+  client.SetWakeChannel(0);
 
   std::mutex event_mutex;
   std::vector<std::string> event_names;

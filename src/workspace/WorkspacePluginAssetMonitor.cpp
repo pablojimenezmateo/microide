@@ -5,7 +5,7 @@
 #include <SDL3/SDL.h>
 
 #include "plugin/PluginInstallRoot.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 
 namespace microide::workspace {
 
@@ -13,7 +13,7 @@ void WorkspacePluginAssetMonitor::SetPollInterval(std::chrono::milliseconds poll
   watcher_.SetPollInterval(poll_interval);
 }
 
-void WorkspacePluginAssetMonitor::SetWakeEventType(Uint32 event_type) {
+void WorkspacePluginAssetMonitor::SetWakeChannel(Uint32 event_type) {
   {
     std::scoped_lock lock(wake_mutex_);
     wake_event_type_ = event_type;
@@ -90,11 +90,11 @@ void WorkspacePluginAssetMonitor::PushWakeEvent() const {
     return;
   }
 
-  // TD-2026-07-17-087: route through util::PushSdlWake so a rejected push latches
+  // TD-2026-07-17-087: route through util::PushWake so a rejected push latches
   // the owed-wake bit the idle-wait poll consumes, instead of stranding a ready
   // plugin-asset change until unrelated input. Clear the local flag on failure so
   // a later producer retries.
-  if (!util::PushSdlWake(event_type)) {
+  if (!util::PushWake(event_type)) {
     std::scoped_lock lock(wake_mutex_);
     wake_event_pending_ = false;
   }

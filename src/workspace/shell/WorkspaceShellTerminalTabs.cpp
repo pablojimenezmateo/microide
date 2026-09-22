@@ -24,7 +24,7 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   const std::filesystem::path working_directory = context_.current_project_state.root;
   auto terminal_tab = std::make_unique<TerminalTabState>();
   if (terminal_event_type_ != 0) {
-    terminal_tab->session.SetWakeEventType(terminal_event_type_);
+    terminal_tab->session.SetWakeChannel(terminal_event_type_);
   }
   terminal_tab->session.SetMaxScrollbackLines(TerminalScrollbackLines());
   const bool started =

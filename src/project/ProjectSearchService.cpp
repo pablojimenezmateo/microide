@@ -12,12 +12,12 @@
 #include <thread>
 #include <vector>
 
-#include "app/BackgroundTaskCounter.h"
+#include "util/BackgroundTaskCounter.h"
 #include "project/GlobMatch.h"
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
@@ -151,9 +151,9 @@ ProjectSearchService::~ProjectSearchService() {
   Stop();
 }
 
-void ProjectSearchService::SetWakeEventType(Uint32 event_type) {
+void ProjectSearchService::SetWakeChannel(util::WakeChannel channel) {
   std::lock_guard lock(mutex_);
-  wake_event_type_ = event_type;
+  wake_channel_ = channel;
 }
 
 std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
@@ -175,7 +175,7 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
   cancel_requested_.store(false, std::memory_order_relaxed);
   worker_finished_.store(false, std::memory_order_release);
 
-  app::IncrementBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
   // Balance the increment via an RAII guard captured in the task rather than a plain
   // decrement in the body: Start() begins with Stop() -> CancelAll(), which clears the
   // pending queue WITHOUT running dropped tasks. A body-only decrement leaks the count
@@ -183,7 +183,7 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
   // deleter, copyable so it fits std::function) fires exactly once when the task's last
   // copy is destroyed — whether it ran to completion or was dropped by CancelAll.
   auto task_guard = std::shared_ptr<void>(
-      nullptr, [](void*) { app::DecrementBackgroundTaskCountAndWake(); });
+      nullptr, [](void*) { util::DecrementBackgroundTaskCountAndWake(); });
   task_executor_.Submit(
       [this, root, query = std::move(query), options, indexed_files = std::move(indexed_files),
        run_id, task_guard = std::move(task_guard)](const util::CancellationToken& token) {
@@ -650,18 +650,18 @@ void ProjectSearchService::PublishProgress(std::uint64_t run_id,
 
 void ProjectSearchService::PushWakeEvent() const {
   std::lock_guard lock(mutex_);
-  if (wake_event_type_ == 0 || wake_pending_) {
+  if (wake_channel_ == 0 || wake_pending_) {
     return;
   }
   wake_pending_ = true;
 
-  // TD-2026-07-17-085: route through util::PushSdlWake instead of a raw
-  // SDL_PushEvent. On a rejected push it latches the process-wide owed-wake bit
+  // TD-2026-07-17-085: route through util::PushWake instead of a raw
+  // wake push. On a rejected push it latches the process-wide owed-wake bit
   // that CurrentIdleWaitState() consumes to schedule a short fallback wait, so a
   // dropped FINAL (PublishFinished) wake self-heals within one poll interval
   // instead of stranding a completed search until unrelated input. We still clear
   // the local coalescing flag on failure so a later producer retries the push.
-  if (!util::PushSdlWake(wake_event_type_)) {
+  if (!util::PushWake(wake_channel_)) {
     wake_pending_ = false;
   }
 }

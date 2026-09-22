@@ -4,12 +4,12 @@
 #include "platform/Filesystem.h"
 #include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
+#include "util/Log.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
-#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <array>
@@ -858,8 +858,7 @@ struct FileIndexWatcher::Impl {
       }
       if (!watches_ok && !warned_fallback) {
         warned_fallback = true;
-        SDL_Log(
-            "FileIndexWatcher: inotify watch limit exhausted; tracking partial tree only");
+        util::Log("FileIndexWatcher: inotify watch limit exhausted; tracking partial tree only");
       }
       // Start the read loop BEFORE dispatching, so events that arrive while the
       // consumer applies the batch are queued rather than dropped. Kernel-queued
@@ -1716,7 +1715,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
     }
     if (!impl_->warned_fallback) {
       impl_->warned_fallback = true;
-      SDL_Log("FileIndexWatcher: native file events unavailable, falling back to poll mode");
+      util::Log("FileIndexWatcher: native file events unavailable, falling back to poll mode");
     }
   }
 #endif

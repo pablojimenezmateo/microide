@@ -15,7 +15,7 @@ namespace microide::workspace {
 // Single Debug Adapter Protocol connection over stdio. Mirrors LspClient: the
 // transport is JSON with `Content-Length` framing, a dedicated I/O thread blocks
 // in poll() over stdout + a self-pipe wake, and results are delivered on the main
-// thread through DrainCallbacks(). Call SetWakeEventType() once before Start() so
+// thread through DrainCallbacks(). Call SetWakeChannel() once before Start() so
 // the I/O thread can wake the main event loop when messages are ready.
 //
 // This class owns only the transport and the initialize handshake. Higher-level
@@ -36,7 +36,7 @@ class DapClient {
 
   // SDL custom event type used to wake the main loop when callbacks are ready.
   // Call before Start().
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
 
   // Install the adapter-event sink. Call before Start().
   void SetEventCallback(EventCallback callback);

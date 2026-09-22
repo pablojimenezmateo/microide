@@ -244,9 +244,9 @@ void ControlChannelService::Configure(WorkspaceContext& context, Operations oper
   operations_ = std::move(operations);
 }
 
-void ControlChannelService::SetWakeEventType(std::uint32_t event_type) {
+void ControlChannelService::SetWakeChannel(std::uint32_t event_type) {
   wake_event_type_ = event_type;
-  server_.SetWakeEventType(event_type);
+  server_.SetWakeChannel(event_type);
 }
 
 bool ControlChannelService::Start(const std::filesystem::path& project_root) {
@@ -266,7 +266,7 @@ bool ControlChannelService::Start(const std::filesystem::path& project_root) {
   if (!server_.Start(socket_path)) {
     return false;
   }
-  server_.SetWakeEventType(wake_event_type_);
+  server_.SetWakeChannel(wake_event_type_);
 
   // Write the discovery descriptor so an external tool can locate this socket by
   // project. One file per process, so no cross-process locking is needed.

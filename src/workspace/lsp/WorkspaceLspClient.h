@@ -140,7 +140,7 @@ struct LspResult {
 // Single LSP server connection with JSON-RPC 2.0.
 // All request methods are asynchronous: they return immediately and deliver
 // results via callbacks dispatched on the main thread through DrainCallbacks().
-// Call SetWakeEventType() once before use so the reader thread can wake the
+// Call SetWakeChannel() once before use so the reader thread can wake the
 // main event loop when responses are ready.
 class LspClient {
  public:
@@ -390,7 +390,7 @@ class LspClient {
 
   // Set the SDL custom event type used to wake the main event loop when
   // responses are ready. Call before Start().
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
 
   // Start the server and begin asynchronous initialization.
   // initialization_options is forwarded verbatim as the LSP `initializationOptions`;

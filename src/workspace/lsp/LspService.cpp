@@ -151,7 +151,7 @@ void LspService::Configure(WorkspaceContext& context, CompletionRegistry& comple
   operations_ = std::move(operations);
 }
 
-void LspService::SetWakeEventType(Uint32 event_type) { wake_event_type_ = event_type; }
+void LspService::SetWakeChannel(Uint32 event_type) { wake_event_type_ = event_type; }
 
 void LspService::SetTheme(const render::Theme* theme) { theme_ = theme; }
 
@@ -515,7 +515,7 @@ LspManager& LspService::EnsureProjectLspManager(ProjectWorkspaceState& state) {
     state.lsp_manager = std::make_unique<LspManager>();
   }
   if (wake_event_type_ != 0) {
-    state.lsp_manager->SetWakeEventType(wake_event_type_);
+    state.lsp_manager->SetWakeChannel(wake_event_type_);
   }
   return *state.lsp_manager;
 }

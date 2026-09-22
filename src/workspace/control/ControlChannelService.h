@@ -50,7 +50,7 @@ std::string ControlListInstancesText();
 // through the shell command chokepoint (via Operations), answers queries by
 // reading WorkspaceContext, and broadcasts debug events to connected clients.
 //
-// Mirrors DebugService: a narrow Operations seam, a SetWakeEventType hook, and a
+// Mirrors DebugService: a narrow Operations seam, a SetWakeChannel hook, and a
 // ConsumeControlCallbacks() drain pumped from the control SDL wake event.
 class ControlChannelService {
  public:
@@ -90,7 +90,7 @@ class ControlChannelService {
   ControlChannelService& operator=(const ControlChannelService&) = delete;
 
   void Configure(WorkspaceContext& context, Operations operations);
-  void SetWakeEventType(std::uint32_t event_type);
+  void SetWakeChannel(std::uint32_t event_type);
 
   // Mirror responses/events to stdout as JSONL (the `--control` stream). When on,
   // debug events surface even with zero socket clients.

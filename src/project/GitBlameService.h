@@ -1,13 +1,13 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "util/Waker.h"
 
 namespace microide::tests {
 struct GitBlameServiceTestAccess;
@@ -72,7 +72,7 @@ class GitBlameService {
  public:
   ~GitBlameService();
 
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(util::WakeChannel channel);
   void Request(const GitBlameRequest& request);
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const;
   void InvalidatePath(const std::filesystem::path& root,

@@ -33,7 +33,7 @@ class WorkspacePluginRuntime {
   void AppendError(std::string text);
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
 
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
   bool ConsumeWakeEvent(Uint32 type);
 
   // Dedicated worker thread that runs plugin Lua off the UI thread. Spawned

@@ -276,7 +276,7 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
 }
 
 void PatchApplyService::SetCompletionWakeEvent(std::uint32_t event_type) {
-  completion_mailbox_.SetWakeEventType(event_type);
+  completion_mailbox_.SetWakeChannel(event_type);
 }
 
 void PatchApplyService::DrainCompletions() { completion_mailbox_.Drain(); }

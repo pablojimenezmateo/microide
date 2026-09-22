@@ -15,10 +15,10 @@ void DebugService::Configure(WorkspaceContext& context, Operations operations) {
   operations_ = std::move(operations);
 }
 
-void DebugService::SetWakeEventType(Uint32 event_type) {
+void DebugService::SetWakeChannel(Uint32 event_type) {
   wake_event_type_ = event_type;
   if (context_ != nullptr) {
-    EnsureProjectDapManager(CurrentProjectState()).SetWakeEventType(event_type);
+    EnsureProjectDapManager(CurrentProjectState()).SetWakeChannel(event_type);
   }
 }
 
@@ -35,7 +35,7 @@ DapManager& DebugService::EnsureProjectDapManager(ProjectWorkspaceState& state) 
     state.dap_manager = std::make_unique<DapManager>();
   }
   if (wake_event_type_ != 0) {
-    state.dap_manager->SetWakeEventType(wake_event_type_);
+    state.dap_manager->SetWakeChannel(wake_event_type_);
   }
   return *state.dap_manager;
 }

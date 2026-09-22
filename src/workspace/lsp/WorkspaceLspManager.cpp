@@ -13,7 +13,7 @@ LspManager::LspManager() = default;
 
 LspManager::~LspManager() { ShutdownAll(); }
 
-void LspManager::SetWakeEventType(Uint32 event_type) {
+void LspManager::SetWakeChannel(Uint32 event_type) {
   wake_event_type_ = event_type;
 }
 
@@ -130,7 +130,7 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
     util::StartupTrace::Scope trace_scope("LspManager::GetServer::InitializeServer");
     entry.last_error.clear();
     entry.client = std::make_unique<LspClient>();
-    entry.client->SetWakeEventType(wake_event_type_);
+    entry.client->SetWakeChannel(wake_event_type_);
     // The label is only used for tracing; use the canonical language id.
     const std::string& label =
         entry.language_ids.empty() ? std::string() : entry.language_ids.front();

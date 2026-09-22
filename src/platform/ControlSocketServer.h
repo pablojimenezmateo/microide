@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "util/Waker.h"
+
 namespace microide::platform {
 
 // One inbound JSONL line tagged with the connection it arrived on, so the host
@@ -44,8 +46,8 @@ ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
 
 // A single-threaded AF_UNIX line server for the control channel. One background
 // I/O thread polls the listen socket plus every client fd; inbound lines are
-// queued for the main thread to drain (TakeInbound) and a host-supplied SDL wake
-// event is pushed so the main loop wakes. Replies (SendLine) and broadcasts
+// queued for the main thread to drain (TakeInbound) and a host-supplied wake is
+// pushed so the main loop wakes. Replies (SendLine) and broadcasts
 // (events) are queued from the main thread and flushed by the I/O thread.
 //
 // Mirrors the DAP client's marshaling discipline: background thread never
@@ -64,8 +66,8 @@ class ControlSocketServer {
   // Idempotent: stops the I/O thread, closes all fds, unlinks the socket file.
   void Stop();
 
-  // SDL event id pushed when inbound lines are ready. 0 disables the push.
-  void SetWakeEventType(std::uint32_t event_type);
+  // Wake channel pushed when inbound lines are ready. 0 disables the push.
+  void SetWakeChannel(util::WakeChannel channel);
 
   // Main thread: take and clear all queued inbound messages.
   std::vector<ControlInboundMessage> TakeInbound();

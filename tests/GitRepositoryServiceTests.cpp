@@ -11,7 +11,7 @@
 #include <type_traits>
 #include <vector>
 
-#include "app/BackgroundTaskCounter.h"
+#include "util/BackgroundTaskCounter.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
@@ -306,7 +306,7 @@ void TestAsyncRefreshCountsGlobalCounterOnce() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
 
-  const int base = microide::app::GetBackgroundTaskCount();
+  const int base = microide::util::GetBackgroundTaskCount();
 
   // Occupy the single serial worker so the git refresh job stays queued (its
   // on_enqueue hook has fired, but it has not run/completed) while we sample.
@@ -318,19 +318,19 @@ void TestAsyncRefreshCountsGlobalCounterOnce() {
   });
   running.get_future().wait();
 
-  const int before = microide::app::GetBackgroundTaskCount();
+  const int before = microide::util::GetBackgroundTaskCount();
   Expect(before == base + 1, "the occupying task should raise the global counter by one");
 
   service.RequestRefresh(repo_path, GitSidebarRefreshScope::StatusOnly, OutgoingBaseChoice{}, false);
   // Both the executor enqueue and — under the old bug — the service's manual
   // increment happen synchronously before this line, so the old code reads
   // before+2 here and fails.
-  Expect(microide::app::GetBackgroundTaskCount() == before + 1,
+  Expect(microide::util::GetBackgroundTaskCount() == before + 1,
          "an async git refresh must raise the global counter by exactly one (no double-count)");
 
   gate.set_value();
   executor.Shutdown();
-  Expect(microide::app::GetBackgroundTaskCount() == base,
+  Expect(microide::util::GetBackgroundTaskCount() == base,
          "the global counter must drain back to its baseline");
 }
 
@@ -346,11 +346,11 @@ void TestSyncRefreshLeavesGlobalCounterUntouched() {
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
 
-  const int base = microide::app::GetBackgroundTaskCount();
+  const int base = microide::util::GetBackgroundTaskCount();
   for (int i = 0; i < 5; ++i) {
     service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
                                               OutgoingBaseChoice{}, false);
-    Expect(microide::app::GetBackgroundTaskCount() == base,
+    Expect(microide::util::GetBackgroundTaskCount() == base,
            "a synchronous refresh must leave the global counter untouched");
   }
 }
@@ -368,7 +368,7 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   // The global background-task counter is owned by the executor's queue hooks and
   // starts at this test's baseline. Every enqueued refresh must eventually drain
   // back to it, even across superseded generations.
-  const int base = microide::app::GetBackgroundTaskCount();
+  const int base = microide::util::GetBackgroundTaskCount();
 
   // Hammer RequestRefresh from several threads. Each in-flight refresh that is
   // superseded by a newer generation (bumped by a concurrent RequestRefresh)
@@ -400,7 +400,7 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   // fails instead of hanging.
   int stable_base = 0;
   for (int i = 0; i < 1000 && stable_base < 4; ++i) {
-    stable_base = (microide::app::GetBackgroundTaskCount() == base) ? stable_base + 1 : 0;
+    stable_base = (microide::util::GetBackgroundTaskCount() == base) ? stable_base + 1 : 0;
     std::this_thread::sleep_for(std::chrono::milliseconds(3));
   }
   Expect(stable_base >= 4,

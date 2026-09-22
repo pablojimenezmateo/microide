@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "app/BackgroundTaskCounter.h"
-#include "util/SdlWake.h"
+#include "util/BackgroundTaskCounter.h"
+#include "util/Waker.h"
 
 #include <SDL3/SDL.h>
 
@@ -17,10 +17,10 @@ void TestIncrementIncreasesCount() {
   static const bool initialized = InitSdlEvents();
   (void)initialized;
 
-  const int before = app::GetBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  const int after = app::GetBackgroundTaskCount();
-  app::DecrementBackgroundTaskCountAndWake();
+  const int before = util::GetBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
+  const int after = util::GetBackgroundTaskCount();
+  util::DecrementBackgroundTaskCountAndWake();
   Expect(after == before + 1, "IncrementBackgroundTaskCount should increase count by 1");
 }
 
@@ -28,10 +28,10 @@ void TestDecrementRestoresCount() {
   static const bool initialized = InitSdlEvents();
   (void)initialized;
 
-  const int before = app::GetBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  app::DecrementBackgroundTaskCountAndWake();
-  Expect(app::GetBackgroundTaskCount() == before,
+  const int before = util::GetBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
+  util::DecrementBackgroundTaskCountAndWake();
+  Expect(util::GetBackgroundTaskCount() == before,
          "matched increment+decrement should restore the original count");
 }
 
@@ -39,16 +39,16 @@ void TestMultipleInFlightTasks() {
   static const bool initialized = InitSdlEvents();
   (void)initialized;
 
-  const int before = app::GetBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  app::IncrementBackgroundTaskCount();
-  Expect(app::GetBackgroundTaskCount() == before + 3,
+  const int before = util::GetBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
+  Expect(util::GetBackgroundTaskCount() == before + 3,
          "three increments should add 3 to the background task count");
-  app::DecrementBackgroundTaskCountAndWake();
-  app::DecrementBackgroundTaskCountAndWake();
-  app::DecrementBackgroundTaskCountAndWake();
-  Expect(app::GetBackgroundTaskCount() == before,
+  util::DecrementBackgroundTaskCountAndWake();
+  util::DecrementBackgroundTaskCountAndWake();
+  util::DecrementBackgroundTaskCountAndWake();
+  Expect(util::GetBackgroundTaskCount() == before,
          "three balanced decrements should restore the original count");
 }
 
@@ -57,16 +57,16 @@ void TestCountRemainsNonNegativeAfterBalancedOps() {
   static const bool initialized = InitSdlEvents();
   (void)initialized;
 
-  const int before = app::GetBackgroundTaskCount();
+  const int before = util::GetBackgroundTaskCount();
   for (int i = 0; i < 5; ++i) {
-    app::IncrementBackgroundTaskCount();
+    util::IncrementBackgroundTaskCount();
   }
   for (int i = 0; i < 5; ++i) {
-    app::DecrementBackgroundTaskCountAndWake();
+    util::DecrementBackgroundTaskCountAndWake();
   }
-  Expect(app::GetBackgroundTaskCount() >= 0,
+  Expect(util::GetBackgroundTaskCount() >= 0,
          "background task count should never be negative");
-  Expect(app::GetBackgroundTaskCount() == before,
+  Expect(util::GetBackgroundTaskCount() == before,
          "count should return to baseline after balanced operations");
 }
 
@@ -87,7 +87,7 @@ void TestWakeUsesRegisteredEventTypeNotUserBase() {
   Expect(wake_type != static_cast<Uint32>(-1), "SDL should allocate a wake event type");
   Expect(wake_type != static_cast<Uint32>(SDL_EVENT_USER),
          "the wake type used for this test must not equal the SDL_EVENT_USER base");
-  app::SetBackgroundTaskWakeEventType(wake_type);
+  util::SetBackgroundTaskWakeChannel(wake_type);
 
   // Drain any pending events so we observe only our wake.
   SDL_PumpEvents();
@@ -95,8 +95,8 @@ void TestWakeUsesRegisteredEventTypeNotUserBase() {
   while (SDL_PollEvent(&drain)) {
   }
 
-  app::IncrementBackgroundTaskCount();
-  app::DecrementBackgroundTaskCountAndWake();
+  util::IncrementBackgroundTaskCount();
+  util::DecrementBackgroundTaskCountAndWake();
 
   bool saw_wake = false;
   bool saw_user_base = false;
@@ -122,41 +122,41 @@ void TestUnmatchedDecrementDoesNotGoNegative() {
   // test's async work). Drain it to the clamp floor first: the saturating decrement
   // can never push below zero, so over-decrementing settles at exactly zero. The
   // loop tolerates concurrent decrements from any still-draining prior work.
-  const int baseline = app::GetBackgroundTaskCount();
-  for (int i = 0; i < baseline + 4 && app::GetBackgroundTaskCount() > 0; ++i) {
-    app::DecrementBackgroundTaskCountAndWake();
+  const int baseline = util::GetBackgroundTaskCount();
+  for (int i = 0; i < baseline + 4 && util::GetBackgroundTaskCount() > 0; ++i) {
+    util::DecrementBackgroundTaskCountAndWake();
   }
   // Now decrement PAST zero: this is the underflow probe. Must stay clamped at zero.
   // EXPECTED SIDE EFFECT: this prints "[background-task-counter] unmatched decrement"
   // to stderr. That line in an otherwise-green suite run is this test, by design —
   // it is the guard reporting itself, not a real accounting bug in SerialWorkQueue.
-  app::DecrementBackgroundTaskCountAndWake();
-  Expect(app::GetBackgroundTaskCount() == 0,
+  util::DecrementBackgroundTaskCountAndWake();
+  Expect(util::GetBackgroundTaskCount() == 0,
          "an unmatched decrement must leave the count at zero, not negative");
 
   // The next legitimate task must be observable as in-flight (would read 0 if the
   // counter had gone to -1 above).
-  app::IncrementBackgroundTaskCount();
-  Expect(app::GetBackgroundTaskCount() == 1,
+  util::IncrementBackgroundTaskCount();
+  Expect(util::GetBackgroundTaskCount() == 1,
          "a real task after an underflow must still register as in-flight");
-  app::DecrementBackgroundTaskCountAndWake();
-  Expect(app::GetBackgroundTaskCount() == 0, "counter should return to zero");
+  util::DecrementBackgroundTaskCountAndWake();
+  Expect(util::GetBackgroundTaskCount() == 0, "counter should return to zero");
 }
 
-// TD-2026-07-16-54: the completion wake routes through util::PushSdlWake, so a
+// TD-2026-07-16-54: the completion wake routes through util::PushWake, so a
 // rejected push latches the shared "wake owed" bit (idle-poll fallback) instead of
 // leaving the shell on a stale full-idle hint. Force a push failure via the seam.
 void TestWakePushFailureLatchesOwedWake() {
   static const bool initialized = InitSdlEvents();
   (void)initialized;
-  microide::util::ConsumeOwedSdlWake();  // clear any prior owed state
-  microide::util::SetSdlEventPusherForTesting([](const SDL_Event&) { return false; });
+  microide::util::ConsumeOwedWake();  // clear any prior owed state
+  microide::util::SetWakePusherForTesting([](microide::util::WakeChannel) { return false; });
 
-  app::IncrementBackgroundTaskCount();
-  app::DecrementBackgroundTaskCountAndWake();  // its wake push will be rejected
+  util::IncrementBackgroundTaskCount();
+  util::DecrementBackgroundTaskCountAndWake();  // its wake push will be rejected
 
-  microide::util::SetSdlEventPusherForTesting(nullptr);  // restore
-  Expect(microide::util::ConsumeOwedSdlWake(),
+  microide::util::SetWakePusherForTesting(nullptr);  // restore
+  Expect(microide::util::ConsumeOwedWake(),
          "a rejected completion-wake push must latch the shared wake-owed bit");
 }
 

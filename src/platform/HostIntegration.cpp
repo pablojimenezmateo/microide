@@ -1,7 +1,5 @@
 #include "platform/HostIntegration.h"
 
-#include <SDL3/SDL.h>
-
 #include <cctype>
 #include <string>
 #include <system_error>
@@ -59,6 +57,32 @@ bool IsAllowedUrlScheme(std::string_view url) {
   return scheme == "http" || scheme == "https" || scheme == "mailto";
 }
 
+// Hand one already-validated argument to the desktop opener. Both entry points below
+// used to do this differently — SDL_OpenURL for the URL, RunSubprocess("xdg-open")
+// for the directory — even though SDL_OpenURL is itself a forked xdg-open on this
+// platform. One path means one timeout policy and one error string, and it is what
+// takes the windowing library out of the kernel.
+HostIntegrationResult LaunchDesktopOpener(std::string argument) {
+  const SubprocessResult result = RunSubprocess({"xdg-open", std::move(argument)},
+                                                SubprocessOptions{
+                                                    .cwd = {},
+                                                    .stdin_text = {},
+                                                    .environment_overrides = {},
+                                                    .capture_stdout = false,
+                                                    .capture_stderr = true,
+                                                    .silence_stderr = false,
+                                                    // xdg-open normally forks and returns immediately;
+                                                    // a finite timeout bounds a wedged handler so it
+                                                    // can never hang the calling (UI) thread with the
+                                                    // default 0 = wait-indefinitely.
+                                                    .timeout_ms = 10000,
+                                                });
+  if (!result.success()) {
+    return Failure(result.stderr_text.empty() ? "xdg-open failed" : result.stderr_text);
+  }
+  return Success();
+}
+
 }  // namespace
 
 HostIntegrationResult OpenUrl(std::string_view url) {
@@ -71,10 +95,7 @@ HostIntegrationResult OpenUrl(std::string_view url) {
   if (!IsAllowedUrlScheme(url)) {
     return Failure("Refusing to open a URL with an unsupported scheme (only http, https, mailto)");
   }
-  if (SDL_OpenURL(std::string(url).c_str())) {
-    return Success();
-  }
-  return Failure(SDL_GetError());
+  return LaunchDesktopOpener(std::string(url));
 }
 
 HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directory) {
@@ -88,24 +109,7 @@ HostIntegrationResult OpenPathInFileManager(const std::filesystem::path& directo
     return Failure("The path does not exist");
   }
 
-  const SubprocessResult result = RunSubprocess({"xdg-open", normalized_directory.string()},
-                                                SubprocessOptions{
-                                                    .cwd = {},
-                                                    .stdin_text = {},
-                                                    .environment_overrides = {},
-                                                    .capture_stdout = false,
-                                                    .capture_stderr = true,
-                                                    .silence_stderr = false,
-                                                    // xdg-open normally forks and returns immediately;
-                                                    // a finite timeout bounds a wedged file manager so
-                                                    // it can never hang the calling (UI) thread with the
-                                                    // default 0 = wait-indefinitely.
-                                                    .timeout_ms = 10000,
-                                                });
-  if (!result.success()) {
-    return Failure(result.stderr_text.empty() ? "xdg-open failed" : result.stderr_text);
-  }
-  return Success();
+  return LaunchDesktopOpener(normalized_directory.string());
 }
 
 }  // namespace microide::platform

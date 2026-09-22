@@ -7,24 +7,8 @@
 
 namespace microide::util {
 
-namespace {
-
-// Process-wide event-push override for tests (default: real SDL_PushEvent). A raw
-// function object guarded by the caller's single-threaded test setup; production
-// leaves it null.
-MainThreadMailbox::EventPusher& TestEventPusher() {
-  static MainThreadMailbox::EventPusher pusher;
-  return pusher;
-}
-
-}  // namespace
-
-void MainThreadMailbox::SetEventPusherForTesting(EventPusher pusher) {
-  TestEventPusher() = std::move(pusher);
-}
-
-void MainThreadMailbox::SetWakeEventType(Uint32 event_type) {
-  wake_event_type_.store(event_type, std::memory_order_release);
+void MainThreadMailbox::SetWakeChannel(WakeChannel channel) {
+  wake_channel_.store(channel, std::memory_order_release);
 }
 
 void MainThreadMailbox::Post(Action action) {
@@ -60,21 +44,14 @@ void MainThreadMailbox::PostLatest(std::string key, Action action) {
   PushWake();
 }
 
-bool MainThreadMailbox::PushWakeEvent(Uint32 wake) const {
-  SDL_Event event{};
-  event.type = wake;
-  if (const EventPusher& pusher = TestEventPusher()) {
-    return pusher(event);
-  }
-  return SDL_PushEvent(&event);
-}
-
 bool MainThreadMailbox::PushWake() const {
-  const Uint32 wake = wake_event_type_.load(std::memory_order_acquire);
+  const WakeChannel wake = wake_channel_.load(std::memory_order_acquire);
   if (wake == 0) {
     return false;
   }
-  if (PushWakeEvent(wake)) {
+  // DeliverWake, not PushWake: the mailbox latches and retries its OWN undelivered
+  // wake below (RetryWakeIfPending), so it does not also need the shared owed bit.
+  if (DeliverWake(wake)) {
     // A delivered wake supersedes any earlier failure: the loop will drain.
     wake_delivery_failed_.store(false, std::memory_order_release);
     return true;

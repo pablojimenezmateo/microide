@@ -8,9 +8,10 @@
 #include <filesystem>
 #include <utility>
 
-#include "app/BackgroundTaskCounter.h"
+#include "app/SdlWaker.h"
+#include "util/BackgroundTaskCounter.h"
 #include "editor/RuntimeSyntaxRegistry.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "util/StartupTrace.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
@@ -153,44 +154,32 @@ void WorkspaceShell::ResetLifecycleStartupState() {
 }
 
 void WorkspaceShell::RegisterLifecycleWakeEvents() {
-  // Wrap SDL_RegisterEvents so a failed allocation (returns -1) is recorded once. When
-  // any channel fails, its worker still runs but has no wake event to drain its ready
-  // state; CurrentIdleWaitState then falls back to a bounded poll so pending work is not
-  // stranded until unrelated input arrives. (TD-2026-07-16-56.)
+  // app::RegisterSdlWakeChannel already maps SDL's (Uint32)-1 exhaustion sentinel onto
+  // channel 0 ("waking disabled"), so every caller here reads one value instead of
+  // repeating the sentinel check. A failed allocation is recorded once: the worker still
+  // runs but has no wake to drain its ready state, and CurrentIdleWaitState then falls
+  // back to a bounded poll so pending work is not stranded until unrelated input
+  // arrives. (TD-2026-07-16-56.)
   bool any_registration_failed = false;
-  const auto register_wake = [&]() -> Uint32 {
-    const Uint32 type = SDL_RegisterEvents(1);
-    if (type == static_cast<Uint32>(-1)) {
+  const auto register_wake = [&]() -> util::WakeChannel {
+    const util::WakeChannel channel = app::RegisterSdlWakeChannel();
+    if (channel == 0) {
       any_registration_failed = true;
     }
-    return type;
+    return channel;
   };
 
-  // Dedicated neutral wake for background-task completion. Without a registered
-  // type the counter falls back to the bare SDL_EVENT_USER base, which aliases
-  // whichever subsystem registered first (project search today) and mis-routes
-  // every task-completion wake into that handler. A registered type is claimed by
-  // no dispatch branch, so it reaches the neutral default.
-  const Uint32 background_task_event_type = register_wake();
-  if (background_task_event_type != static_cast<Uint32>(-1)) {
-    app::SetBackgroundTaskWakeEventType(background_task_event_type);
-  }
+  // Dedicated neutral wake for background-task completion: a registered channel is
+  // claimed by no dispatch branch, so it reaches the neutral default rather than
+  // aliasing whichever subsystem registered first (project search today).
+  util::SetBackgroundTaskWakeChannel(register_wake());
 
-  const Uint32 plugin_asset_event_type = register_wake();
-  plugin_runtime_.SetWakeEventType(
-      plugin_asset_event_type != static_cast<Uint32>(-1) ? plugin_asset_event_type : 0);
+  plugin_runtime_.SetWakeChannel(register_wake());
 
   git_blame_event_type_ = register_wake();
-  if (git_blame_event_type_ != static_cast<Uint32>(-1)) {
-    git_blame_service_.SetWakeEventType(git_blame_event_type_);
-  } else {
-    git_blame_event_type_ = 0;
-  }
+  git_blame_service_.SetWakeChannel(git_blame_event_type_);
 
   git_sidebar_event_type_ = register_wake();
-  if (git_sidebar_event_type_ == static_cast<Uint32>(-1)) {
-    git_sidebar_event_type_ = 0;
-  }
   // Reuse the git-sidebar wake for commit completions: a commit result is
   // marshaled back to the main thread and drained in ConsumeGitSidebarRefresh
   // (a successful commit refreshes the sidebar anyway).
@@ -199,7 +188,7 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   git_operation_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
   // The async compare/ref picker marshals its git result back through the same
   // wake (drained alongside the sidebar refresh in ConsumeGitSidebarRefresh).
-  compare_picker_mailbox_.SetWakeEventType(git_sidebar_event_type_);
+  compare_picker_mailbox_.SetWakeChannel(git_sidebar_event_type_);
   InitializeCommitWorkflowService();
   // The patch apply's post-apply shell work rides the same wake and drain.
   patch_apply_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
@@ -235,90 +224,63 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
 
   git_repository_service_.SetWakeCallbacks(GitRepositoryService::WakeCallbacks{
       .push_refresh_ready_event =
-          [this]() { return util::PushSdlWake(git_sidebar_event_type_); },
+          [this]() { return util::PushWake(git_sidebar_event_type_); },
   });
 
   terminal_event_type_ = register_wake();
-  if (terminal_event_type_ == static_cast<Uint32>(-1)) {
-    terminal_event_type_ = 0;
-  }
 
   project_file_event_type_ = register_wake();
-  if (project_file_event_type_ == static_cast<Uint32>(-1)) {
-    project_file_event_type_ = 0;
-  }
   // Off-thread forced-rescan and project-replace-all results wake and drain on the
   // same project-file path.
-  file_index_refresh_mailbox_.SetWakeEventType(project_file_event_type_);
-  project_replace_mailbox_.SetWakeEventType(project_file_event_type_);
+  file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
+  project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
   project_open_dialog_event_type_ = register_wake();
-  if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
-    project_open_dialog_event_type_ = 0;
-  }
 
   lsp_event_type_ = register_wake();
-  if (lsp_event_type_ != static_cast<Uint32>(-1)) {
-    lsp_service_.SetWakeEventType(lsp_event_type_);
-    EnsureProjectLspManager(context_.current_project_state).SetWakeEventType(lsp_event_type_);
-    for (const auto& entry : context_.project_catalog.entries) {
-      if (entry != nullptr) {
-        EnsureProjectLspManager(*entry).SetWakeEventType(lsp_event_type_);
-      }
+  lsp_service_.SetWakeChannel(lsp_event_type_);
+  EnsureProjectLspManager(context_.current_project_state).SetWakeChannel(lsp_event_type_);
+  for (const auto& entry : context_.project_catalog.entries) {
+    if (entry != nullptr) {
+      EnsureProjectLspManager(*entry).SetWakeChannel(lsp_event_type_);
     }
-  } else {
-    lsp_event_type_ = 0;
   }
 
   dap_event_type_ = register_wake();
-  if (dap_event_type_ != static_cast<Uint32>(-1)) {
-    debug_service_.SetWakeEventType(dap_event_type_);
-    EnsureProjectDapManager(context_.current_project_state).SetWakeEventType(dap_event_type_);
-    for (const auto& entry : context_.project_catalog.entries) {
-      if (entry != nullptr) {
-        EnsureProjectDapManager(*entry).SetWakeEventType(dap_event_type_);
-      }
+  debug_service_.SetWakeChannel(dap_event_type_);
+  EnsureProjectDapManager(context_.current_project_state).SetWakeChannel(dap_event_type_);
+  for (const auto& entry : context_.project_catalog.entries) {
+    if (entry != nullptr) {
+      EnsureProjectDapManager(*entry).SetWakeChannel(dap_event_type_);
     }
-  } else {
-    dap_event_type_ = 0;
   }
 
   plugin_thread_event_type_ = register_wake();
-  if (plugin_thread_event_type_ != static_cast<Uint32>(-1)) {
-    plugin_runtime_.SetPluginThreadEventType(plugin_thread_event_type_);
-  } else {
-    plugin_thread_event_type_ = 0;
-  }
+  plugin_runtime_.SetPluginThreadEventType(plugin_thread_event_type_);
   // Hand the host the worker so every plugin Lua call routes off the UI thread.
   // The worker itself stays unspawned until the first Reload that loads a plugin.
   plugin_runtime_.Host().SetWorker(&plugin_runtime_.Thread());
 
   highlight_prefetch_event_type_ = register_wake();
-  if (highlight_prefetch_event_type_ == static_cast<Uint32>(-1)) {
-    highlight_prefetch_event_type_ = 0;
-  }
   // The worker fires this from its own thread once a result is queued; the wake
   // only nudges the main loop to drain (the event carries no payload).
   highlight_prefetch_service_.SetWakeCallback([event_type = highlight_prefetch_event_type_]() {
     // Checked push: the prefetched highlights are already queued in the service, so a
     // rejected push latches the shared "wake owed" bit for the idle-poll fallback
     // rather than hiding already-computed highlights until unrelated input.
-    util::PushSdlWake(event_type);
+    util::PushWake(event_type);
   });
 
   // Control channel. Always allocate the wake event + bind it so the marshaling
   // path is ready; only the socket listener is gated on `control.enabled`, which
   // is what lets the channel be toggled on at runtime without a restart.
   control_event_type_ = register_wake();
-  if (control_event_type_ == static_cast<Uint32>(-1)) {
-    control_event_type_ = 0;
-  }
-  control_channel_service_.SetWakeEventType(control_event_type_);
+  control_channel_service_.SetWakeChannel(control_event_type_);
   MaybeStartControlChannel();
 
   // Record whether any wake channel failed to register so the idle-wait falls back to a
   // bounded poll (rather than blocking forever) for the affected subsystems' ready
   // state. (TD-2026-07-16-56.)
-  util::SetSdlWakeRegistrationDegraded(any_registration_failed);
+  util::SetWakeRegistrationDegraded(any_registration_failed);
 }
 
 LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {

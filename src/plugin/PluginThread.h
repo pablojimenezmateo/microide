@@ -1,7 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <chrono>
 #include <functional>
 #include <string>
@@ -38,9 +36,9 @@ class PluginThread {
   PluginThread(const PluginThread&) = delete;
   PluginThread& operator=(const PluginThread&) = delete;
 
-  // SDL event pushed to wake the UI loop when a mailbox action is queued. 0
+  // Wake channel pushed to wake the UI loop when a mailbox action is queued. 0
   // disables waking (the drain still runs on the next scheduled wake).
-  void SetWakeEventType(Uint32 event_type) { mailbox_.SetWakeEventType(event_type); }
+  void SetWakeChannel(util::WakeChannel channel) { mailbox_.SetWakeChannel(channel); }
 
   // Spawn the worker if it is not already running. Idempotent; cheap when started.
   void EnsureStarted() { inbound_.EnsureStarted(); }

@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 #include "TestRunnerCli.h"
+#include "app/SdlWaker.h"
 #include "platform/HostPlatform.h"
 #include "terminal/TerminalSession.h"
 #include "util/Parse.h"
@@ -374,6 +375,11 @@ int main(int argc, char** argv) {
   // that shard happened to call IgnoreBrokenPipeSignal() first, so adding a test
   // anywhere could reshuffle the round-robin and move the crash to a new shard.
   microide::platform::IgnoreBrokenPipeSignal();
+
+  // Bind the kernel's wake path to SDL's event queue, exactly as Application does.
+  // Without it every producer's wake push fails and latches the shared owed bit,
+  // which is correct-but-degraded behaviour that several tests assert against.
+  microide::app::InstallSdlWaker();
 
   // Use in-process placeholder terminals for the whole suite instead of spawning
   // real PTY-backed shells. Formerly a compile-time MICROIDE_TESTING fork; now a

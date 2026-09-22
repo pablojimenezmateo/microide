@@ -1,7 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -10,10 +8,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include "util/Waker.h"
+
 namespace microide::util {
 
 // Background-thread -> main-thread closure mailbox, drained once per frame and
-// woken via an SDL custom event. A worker posts a closure (with all of its data
+// woken on a util::WakeChannel. A worker posts a closure (with all of its data
 // already extracted, never a live handle into worker-owned state); the main
 // thread runs every queued closure during its scheduled drain.
 //
@@ -32,9 +32,9 @@ class MainThreadMailbox {
   MainThreadMailbox(const MainThreadMailbox&) = delete;
   MainThreadMailbox& operator=(const MainThreadMailbox&) = delete;
 
-  // SDL event pushed to wake the UI loop when an action is queued. 0 disables
+  // Wake channel pushed to wake the UI loop when an action is queued. 0 disables
   // waking (the drain still runs on the next scheduled wake).
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(WakeChannel channel);
 
   // Enqueue an action and push one wake event.
   void Post(Action action);
@@ -54,8 +54,8 @@ class MainThreadMailbox {
 
   // Wake the UI loop without enqueuing. For nudging the loop to re-poll state
   // that is not delivered as a mailbox action (e.g. a worker-thread exit).
-  // Returns whether the wake event was actually queued: false when the wake type
-  // is unset OR SDL_PushEvent rejected the event (a full event queue). On a
+  // Returns whether the wake was actually delivered: false when the wake channel
+  // is unset OR the loop rejected it (a full event queue). On a
   // rejected push while work is pending, an "undelivered wake" bit is latched so
   // the loop's scheduled poll can retry via RetryWakeIfPending().
   bool PushWake() const;
@@ -82,15 +82,11 @@ class MainThreadMailbox {
   // owes a wake afterwards (caller should keep polling). Cheap no-op otherwise.
   bool RetryWakeIfPending() const;
 
-  // Test seam: override the event-push function process-wide so a test can force
-  // SDL_PushEvent rejection without needing a globally full SDL queue. Passing
-  // nullptr restores the default SDL_PushEvent path.
-  using EventPusher = std::function<bool(const SDL_Event&)>;
-  static void SetEventPusherForTesting(EventPusher pusher);
+  // (No mailbox-local push seam: forcing a rejected wake is util::SetWakePusherForTesting,
+  // which is the same seam every other producer uses. There used to be a second,
+  // byte-identical hook here.)
 
  private:
-  bool PushWakeEvent(Uint32 wake) const;
-
   std::mutex mutex_;
   std::vector<Action> actions_;
   // Coalescing index for PostLatest: key -> position in actions_. Stable until the
@@ -98,7 +94,7 @@ class MainThreadMailbox {
   // mid-stream, so recorded indices never shift). Cleared alongside actions_.
   std::unordered_map<std::string, std::size_t> keyed_index_;
   std::atomic<int> queued_{0};
-  std::atomic<Uint32> wake_event_type_{0};
+  std::atomic<WakeChannel> wake_channel_{0};
   mutable std::atomic<bool> wake_delivery_failed_{false};
 };
 

@@ -1,7 +1,5 @@
 #pragma once
 
-#include <SDL3/SDL.h>
-
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -11,6 +9,7 @@
 
 #include "project/FileIndex.h"
 #include "util/TaskExecutor.h"
+#include "util/Waker.h"
 
 namespace microide::project {
 
@@ -93,7 +92,7 @@ class ProjectSearchService {
  public:
   ~ProjectSearchService();
 
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(util::WakeChannel channel);
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
                       ProjectSearchOptions options = {},
@@ -152,7 +151,7 @@ class ProjectSearchService {
   std::uint64_t active_run_id_ = 0;
   std::uint64_t active_search_id_ = 0;
   std::uint64_t next_search_id_ = 0;
-  Uint32 wake_event_type_ = 0;
+  util::WakeChannel wake_channel_ = 0;
   std::atomic_bool cancel_requested_{false};
   // True when no worker is running (initial state, or the active worker has
   // published `finished`). Set false at Start, true at PublishFinished / Stop.

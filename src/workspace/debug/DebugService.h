@@ -85,7 +85,7 @@ class DebugService {
   DebugService() = default;
 
   void Configure(WorkspaceContext& context, Operations operations);
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
 
   // Per-project adapter manager access and main-thread callback pump.
   DapManager& CurrentDapManager();

@@ -46,7 +46,7 @@ void GitOperationService::SetCallbacks(Callbacks callbacks) {
 }
 
 void GitOperationService::SetCompletionWakeEvent(const std::uint32_t event_type) {
-  completion_mailbox_.SetWakeEventType(event_type);
+  completion_mailbox_.SetWakeChannel(event_type);
 }
 
 void GitOperationService::DrainCompletions() { completion_mailbox_.Drain(); }

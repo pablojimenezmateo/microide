@@ -14,7 +14,7 @@ namespace microide::workspace {
 class WorkspacePluginAssetMonitor {
  public:
   void SetPollInterval(std::chrono::milliseconds poll_interval);
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
   bool ConsumeWakeEvent(Uint32 type);
   void SetProjectRoot(const std::filesystem::path& project_root);
   void Reset();

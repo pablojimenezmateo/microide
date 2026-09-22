@@ -20,7 +20,7 @@ class LspManager {
   LspManager& operator=(const LspManager&) = delete;
 
   // Set SDL event type used to wake the main loop when responses arrive.
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
 
   // Register a server command for one or more languages. Every language id in
   // `language_ids` resolves to the same subprocess (e.g. clangd serving

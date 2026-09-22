@@ -32,7 +32,7 @@ struct TerminalSessionTestAccess {
     session.working_directory_.clear();
     session.default_launch_label_.clear();
     session.launch_label_.clear();
-    session.wake_event_type_ = 0;
+    session.wake_channel_ = 0;
     session.wake_event_pending_ = false;
     session.backend_.reset();
     session.scrollback_trim_total_ = 0;
@@ -145,13 +145,13 @@ struct TerminalSessionTestAccess {
 #endif
   }
 
-  static bool ReserveWakeEvent(const microide::terminal::TerminalSession& session,
-                               Uint32& event_type) {
-    return session.ReserveWakeEvent(event_type);
+  static bool ReserveWakeChannel(const microide::terminal::TerminalSession& session,
+                                 microide::util::WakeChannel& channel) {
+    return session.ReserveWakeChannel(channel);
   }
 
   // TD-2026-07-17-087: drive the private wake producer directly so a test can force
-  // a rejected SDL push (via util::SetSdlEventPusherForTesting) and assert the
+  // a rejected wake push (via util::SetWakePusherForTesting) and assert the
   // owed-wake backstop latches.
   static void PushWakeEvent(const microide::terminal::TerminalSession& session) {
     session.PushWakeEvent();

@@ -1,7 +1,6 @@
 #include "platform/RuntimePaths.h"
 
-#include <SDL3/SDL.h>
-
+#include <cstdlib>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -16,19 +15,28 @@ namespace microide::platform {
 namespace {
 
 std::filesystem::path EnvPath(const char* name) {
-  // SDL_getenv_unsafe bypasses SDL's cached copy so it sees changes made by
-  // setenv() after SDL initialization (e.g. in tests via ScopedEnvVar).
-  const char* value = SDL_getenv_unsafe(name);
+  // Plain getenv, not SDL's wrapper: it reads the live environment, so a setenv()
+  // from a test's ScopedEnvVar is visible (SDL's cached copy was not, which is why
+  // the SDL_getenv_unsafe variant was used here).
+  const char* value = std::getenv(name);
   return value != nullptr && value[0] != '\0' ? std::filesystem::path(value)
                                               : std::filesystem::path{};
 }
 
+// Directory holding the running executable. This is what SDL_GetBasePath returned;
+// reading /proc/self/exe directly keeps the path resolver out of the windowing
+// library, which is what lets a headless build resolve its own assets.
 std::filesystem::path BasePath() {
-  const char* raw_base_path = SDL_GetBasePath();
-  if (raw_base_path == nullptr || raw_base_path[0] == '\0') {
+#if defined(__linux__)
+  std::error_code ec;
+  const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+  if (ec || exe.empty()) {
     return {};
   }
-  return std::filesystem::path(raw_base_path).lexically_normal();
+  return exe.parent_path().lexically_normal();
+#else
+  return {};
+#endif
 }
 
 }  // namespace

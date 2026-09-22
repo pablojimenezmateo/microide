@@ -6,7 +6,7 @@
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalMouseEncoder.h"
 #include "util/PerformanceCounters.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "util/StringUtil.h"
 
 #include <algorithm>
@@ -1198,40 +1198,41 @@ void TestTerminalSessionParsesColonTruecolorAndUnderlineStyles() {
 void TestTerminalSessionCoalescesWakeEventsUntilConsumed() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  session.SetWakeEventType(SDL_EVENT_USER);
+  constexpr microide::util::WakeChannel kChannel = 4242;
+  session.SetWakeChannel(kChannel);
 
-  Uint32 event_type = 0;
-  Expect(TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
+  microide::util::WakeChannel channel = 0;
+  Expect(TerminalSessionTestAccess::ReserveWakeChannel(session, channel),
          "terminal sessions should reserve the first wake event");
-  Expect(event_type == SDL_EVENT_USER,
-         "terminal wake reservations should preserve the configured SDL event type");
-  Expect(!TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
+  Expect(channel == kChannel,
+         "terminal wake reservations should preserve the configured wake channel");
+  Expect(!TerminalSessionTestAccess::ReserveWakeChannel(session, channel),
          "terminal sessions should coalesce repeated wake requests until the UI consumes one");
   Expect(session.ConsumeWakeEvent(),
          "consuming terminal wake events should clear the pending wake marker");
-  Expect(TerminalSessionTestAccess::ReserveWakeEvent(session, event_type),
+  Expect(TerminalSessionTestAccess::ReserveWakeChannel(session, channel),
          "terminal sessions should allow another wake request after the UI consumes the prior one");
 }
 
-// TD-2026-07-17-087: when the terminal's wake push is rejected by SDL, the
+// TD-2026-07-17-087: when the terminal's wake push is rejected by the loop, the
 // producer must latch the process-wide owed-wake bit so the idle-wait poll
 // self-heals, instead of only clearing its local coalescing flag and stranding
 // ready terminal state until unrelated input.
 void TestTerminalSessionRejectedWakeLatchesOwedBit() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
-  session.SetWakeEventType(SDL_EVENT_USER);
+  session.SetWakeChannel(4242);
 
-  // Force every SDL push to fail, and clear any pre-existing owed state.
-  microide::util::SetSdlEventPusherForTesting([](const SDL_Event&) { return false; });
-  (void)microide::util::ConsumeOwedSdlWake();
+  // Force every wake push to fail, and clear any pre-existing owed state.
+  microide::util::SetWakePusherForTesting([](microide::util::WakeChannel) { return false; });
+  (void)microide::util::ConsumeOwedWake();
 
   TerminalSessionTestAccess::PushWakeEvent(session);
 
-  const bool owed = microide::util::HasOwedSdlWake();
+  const bool owed = microide::util::HasOwedWake();
   // Restore the default pusher before asserting so a failure cannot leak the hook.
-  microide::util::SetSdlEventPusherForTesting(nullptr);
-  (void)microide::util::ConsumeOwedSdlWake();
+  microide::util::SetWakePusherForTesting(nullptr);
+  (void)microide::util::ConsumeOwedWake();
 
   Expect(owed, "a rejected terminal wake push must latch the process-wide owed-wake bit");
 }

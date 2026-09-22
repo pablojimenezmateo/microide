@@ -6,6 +6,7 @@
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalLineBufferPool.h"
 #include "terminal/TerminalSearch.h"
+#include "util/Waker.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -98,7 +99,7 @@ class TerminalSession {
   TerminalSession(const TerminalSession&) = delete;
   TerminalSession& operator=(const TerminalSession&) = delete;
 
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(util::WakeChannel channel);
   bool Start(const std::filesystem::path& working_directory, std::string_view command = {},
              std::string_view shell = {});
   void Stop();
@@ -327,7 +328,7 @@ class TerminalSession {
   // previous buffer's rows look current.
   void ReseedForStartLocked(const std::filesystem::path& working_directory,
                             std::string launch_label);
-  bool ReserveWakeEvent(Uint32& event_type) const;
+  bool ReserveWakeChannel(util::WakeChannel& channel) const;
   void PushWakeEvent() const;
 
   mutable std::mutex mutex_;
@@ -351,7 +352,7 @@ class TerminalSession {
   std::string launch_label_;
   TerminalStyle current_style_;
   std::string escape_sequence_buffer_;
-  Uint32 wake_event_type_ = 0;
+  util::WakeChannel wake_channel_ = 0;
   int child_pid_ = -1;
   bool running_ = false;
   bool stop_requested_ = false;

@@ -61,7 +61,7 @@ DebugSession::DebugSession(std::unique_ptr<DapClient> client) : client_(std::mov
 
 DebugSession::~DebugSession() = default;
 
-void DebugSession::SetWakeEventType(Uint32 event_type) { client_->SetWakeEventType(event_type); }
+void DebugSession::SetWakeChannel(Uint32 event_type) { client_->SetWakeChannel(event_type); }
 
 void DebugSession::SetCallbacks(Callbacks callbacks) { callbacks_ = std::move(callbacks); }
 

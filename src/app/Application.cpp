@@ -23,6 +23,7 @@
 #include "app/ApplicationPresentationCache.h"
 #include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
+#include "app/SdlWaker.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "platform/RuntimePaths.h"
 #include "platform/SubprocessSandbox.h"
@@ -343,6 +344,16 @@ bool Application::Initialize() {
       return false;
     }
   }
+
+  // Bind the kernel's wake path to SDL's event queue. Producers (terminal, git
+  // blame, search, control channel, plugin worker, background-task counter) name
+  // only util::WakeChannel, so this is the single place the wake path knows SDL.
+  // Installed right after SDL_Init and before any producer thread starts: until
+  // it is installed every push fails and latches the shared owed bit, which the
+  // idle poll covers, so the ordering is a quality-of-service matter, not a
+  // correctness one.
+  InstallSdlWaker();
+  InstallSdlLogSink();
 
   // Create the window hidden so all chrome setup (borderless, hit test) happens
   // before it is ever mapped, and so the first frame the user sees is the real,

@@ -4,7 +4,7 @@
 
 #include "platform/RuntimePaths.h"
 
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 
 #include <atomic>
 #include <cerrno>
@@ -29,8 +29,6 @@
 
 #include "util/PosixPipe.h"
 #endif
-
-#include <SDL3/SDL.h>
 
 namespace microide::platform {
 
@@ -178,7 +176,7 @@ struct ControlSocketServer::Impl {
   std::atomic<bool> stop{false};
   std::atomic<bool> running{false};
   std::atomic<bool> rebound{false};
-  std::atomic<std::uint32_t> wake_event_type{0};
+  std::atomic<util::WakeChannel> wake_channel{0};
 
   std::mutex conn_mutex;
   std::unordered_map<std::uint64_t, std::shared_ptr<Connection>> connections;
@@ -195,7 +193,7 @@ struct ControlSocketServer::Impl {
     // Checked push: inbound control messages are already queued in shared state, so a
     // rejected push must latch the shared "wake owed" bit (idle poll fallback) rather
     // than leave control-send requests waiting for an unrelated event.
-    util::PushSdlWake(wake_event_type.load(std::memory_order_acquire));
+    util::PushWake(wake_channel.load(std::memory_order_acquire));
   }
 
   void WakeIoThread() {
@@ -623,8 +621,8 @@ void ControlSocketServer::Stop() {
   }
 }
 
-void ControlSocketServer::SetWakeEventType(std::uint32_t event_type) {
-  impl_->wake_event_type.store(event_type, std::memory_order_release);
+void ControlSocketServer::SetWakeChannel(util::WakeChannel channel) {
+  impl_->wake_channel.store(channel, std::memory_order_release);
 }
 
 std::vector<ControlInboundMessage> ControlSocketServer::TakeInbound() {
@@ -710,7 +708,7 @@ ControlSocketServer::~ControlSocketServer() = default;
 bool ControlSocketServer::Start(const std::filesystem::path&) { return false; }
 bool ControlSocketServer::IsRunning() const { return false; }
 void ControlSocketServer::Stop() {}
-void ControlSocketServer::SetWakeEventType(std::uint32_t) {}
+void ControlSocketServer::SetWakeChannel(std::uint32_t) {}
 std::vector<ControlInboundMessage> ControlSocketServer::TakeInbound() { return {}; }
 void ControlSocketServer::SendLine(std::uint64_t, const std::string&) {}
 void ControlSocketServer::Broadcast(const std::string&) {}

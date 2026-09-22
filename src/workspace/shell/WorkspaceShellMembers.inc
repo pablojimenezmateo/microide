@@ -2252,16 +2252,16 @@
   // Above it the operation aborts (surfacing an error) rather than risk OOM. A
   // member (not a local constant) so tests can lower it without a huge fixture.
   std::size_t replace_all_aggregate_cap_bytes_ = 512ull * 1024 * 1024;
-  Uint32 git_blame_event_type_ = 0;
-  Uint32 git_sidebar_event_type_ = 0;
-  Uint32 terminal_event_type_ = 0;
-  Uint32 project_file_event_type_ = 0;
-  Uint32 project_open_dialog_event_type_ = 0;
-  Uint32 lsp_event_type_ = 0;
-  Uint32 dap_event_type_ = 0;
-  Uint32 control_event_type_ = 0;
-  Uint32 plugin_thread_event_type_ = 0;
-  Uint32 highlight_prefetch_event_type_ = 0;
+  util::WakeChannel git_blame_event_type_ = 0;
+  util::WakeChannel git_sidebar_event_type_ = 0;
+  util::WakeChannel terminal_event_type_ = 0;
+  util::WakeChannel project_file_event_type_ = 0;
+  util::WakeChannel project_open_dialog_event_type_ = 0;
+  util::WakeChannel lsp_event_type_ = 0;
+  util::WakeChannel dap_event_type_ = 0;
+  util::WakeChannel control_event_type_ = 0;
+  util::WakeChannel plugin_thread_event_type_ = 0;
+  util::WakeChannel highlight_prefetch_event_type_ = 0;
   Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
   bool pending_tree_git_badge_refresh_after_paint_ = false;
   project::GitBlameService git_blame_service_;

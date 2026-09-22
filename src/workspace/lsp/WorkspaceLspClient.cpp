@@ -14,8 +14,8 @@ LspClient::~LspClient() {
   delete impl_;
 }
 
-void LspClient::SetWakeEventType(Uint32 event_type) {
-  impl_->main_mailbox.SetWakeEventType(event_type);
+void LspClient::SetWakeChannel(Uint32 event_type) {
+  impl_->main_mailbox.SetWakeChannel(event_type);
 }
 
 bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,

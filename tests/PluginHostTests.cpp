@@ -3413,7 +3413,7 @@ return ide.plugin({
   host.SetCallbacks(MakePluginHostCallbacks());
 
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);  // No SDL loop in this test; we drain the mailbox by hand.
+  thread.SetWakeChannel(0);  // No SDL loop in this test; we drain the mailbox by hand.
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "worker routing fixture should load");
@@ -3493,7 +3493,7 @@ return ide.plugin({ id = "syntax" })
 
   workspace::WorkspacePluginRuntime runtime;
   runtime.Host().SetCallbacks(MakePluginHostCallbacks());
-  runtime.Thread().SetWakeEventType(0);  // No SDL loop; we drain the mailbox by hand.
+  runtime.Thread().SetWakeChannel(0);  // No SDL loop; we drain the mailbox by hand.
   runtime.Host().SetWorker(&runtime.Thread());
 
   bool done = false;
@@ -3591,7 +3591,7 @@ return ide.plugin({
   host.SetCallbacks(std::move(callbacks));
 
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);  // No SDL loop in this test; we drain the mailbox by hand.
+  thread.SetWakeChannel(0);  // No SDL loop in this test; we drain the mailbox by hand.
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "edit-guard fixture should load");
@@ -3656,7 +3656,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "async completion fixture should load");
@@ -3727,7 +3727,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "async hover fixture should load");
@@ -3795,7 +3795,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "the provider-less fixture should load");
@@ -3854,7 +3854,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);
+  thread.SetWakeChannel(0);
   host.SetWorker(&thread);
 
   Expect(host.Reload(project_root), "async command fixture should load");
@@ -3918,7 +3918,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);  // No SDL loop; drain the mailbox by hand.
+  thread.SetWakeChannel(0);  // No SDL loop; drain the mailbox by hand.
   host.SetWorker(&thread);
 
   bool completed = false;
@@ -3996,7 +3996,7 @@ return ide.plugin({
   PluginHost host;
   host.SetCallbacks(std::move(callbacks));
   plugin::PluginThread thread;
-  thread.SetWakeEventType(0);  // No SDL loop; drive the worker by hand.
+  thread.SetWakeChannel(0);  // No SDL loop; drive the worker by hand.
   host.SetWorker(&thread);
   Expect(host.Reload(project_root), "save participant plugin should reload through the worker");
 

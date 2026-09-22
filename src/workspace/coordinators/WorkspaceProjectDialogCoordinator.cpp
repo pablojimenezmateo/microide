@@ -1,6 +1,6 @@
 #include "workspace/shell/WorkspaceShell.h"
 
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 
 #include <filesystem>
 #include <iterator>
@@ -43,7 +43,7 @@ void LatchDialogResult(DialogState& state, Pending pending, Uint32 wake_event) {
     std::lock_guard<std::mutex> lock(state.mutex);
     state.pending_result = std::move(pending);
   }
-  util::PushSdlWake(wake_event);
+  util::PushWake(wake_event);
 }
 
 }  // namespace

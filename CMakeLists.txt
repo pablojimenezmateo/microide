@@ -222,7 +222,9 @@ set(MICROIDE_INSTRUMENTATION_SOURCES
 )
 
 set(MICROIDE_CORE_SOURCES
-  src/app/BackgroundTaskCounter.cpp
+  src/app/SdlWaker.cpp
+  src/util/BackgroundTaskCounter.cpp
+  src/util/Log.cpp
   src/editor/BracketScanner.cpp
   src/editor/BreakpointRender.cpp
   src/editor/BreakpointStore.cpp
@@ -1647,7 +1649,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 endif()
 
 add_executable(microide_search_bench
-  src/app/BackgroundTaskCounter.cpp
+  src/util/BackgroundTaskCounter.cpp
+  src/util/Log.cpp
   src/util/PerformanceCounters.cpp
   src/util/StringUtil.cpp
   src/util/DurableFile.cpp

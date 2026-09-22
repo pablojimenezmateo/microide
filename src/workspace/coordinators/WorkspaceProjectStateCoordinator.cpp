@@ -12,10 +12,10 @@
 #include "project/ProjectChangeNormalizer.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "util/StringUtil.h"
 #include "platform/AppDirectories.h"
-#include "app/BackgroundTaskCounter.h"
+#include "util/BackgroundTaskCounter.h"
 #include "util/StartupTrace.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
@@ -109,7 +109,7 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     }
     if (batch.is_initial &&
         file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
-      app::DecrementBackgroundTaskCountAndWake();
+      util::DecrementBackgroundTaskCountAndWake();
     }
     if (project_file_event_type_ != 0 &&
         (batch.is_initial || applied_to_index || batch.tree_structure_changed ||
@@ -117,18 +117,18 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
         !project_file_event_pending_.exchange(true, std::memory_order_acq_rel)) {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::FileIndexWatcherCallback::PushWakeEvent");
-      // TD-2026-07-17-087: route through util::PushSdlWake so a rejected push latches
+      // TD-2026-07-17-087: route through util::PushWake so a rejected push latches
       // the owed-wake bit the idle-wait poll consumes. Otherwise the flag stays set
       // with no event queued, every later batch's exchange sees `true` and skips the
       // push, and the file index is never drained/redrawn until an unrelated event
       // wakes the loop. Clear the local flag on failure so a later producer retries.
-      if (!util::PushSdlWake(project_file_event_type_)) {
+      if (!util::PushWake(project_file_event_type_)) {
         project_file_event_pending_.store(false, std::memory_order_release);
       }
     }
   });
 
-  app::IncrementBackgroundTaskCount();
+  util::IncrementBackgroundTaskCount();
   file_index_initial_build_in_flight_.store(true, std::memory_order_release);
   if (!file_index_watcher_->Watch(context_.current_project_state.root)) {
     file_index_watcher_.reset();
@@ -137,7 +137,7 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     // the in-flight flag, it already decremented, so decrementing again here would
     // underflow the background-task counter.
     if (file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
-      app::DecrementBackgroundTaskCountAndWake();
+      util::DecrementBackgroundTaskCountAndWake();
     }
     return false;
   }
@@ -156,7 +156,7 @@ void WorkspaceShell::StopFileIndexWatcher() {
   const bool had_initial_build = file_index_initial_build_in_flight_.exchange(
       false, std::memory_order_acq_rel);
   if (had_initial_build) {
-    app::DecrementBackgroundTaskCountAndWake();
+    util::DecrementBackgroundTaskCountAndWake();
   }
 }
 

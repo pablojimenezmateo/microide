@@ -113,7 +113,7 @@ class LspService {
 
   void Configure(WorkspaceContext& context, CompletionRegistry& completion_registry,
                  CodeActionRegistry& code_action_registry, Operations operations);
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
   // Live pointer to the host-owned active theme used to bake semantic-token colors
   // (the address is stable; a theme switch mutates it in place). Optional: when
   // null, semantic-token publishing is skipped.

@@ -26,10 +26,10 @@ DapManager::DapManager() = default;
 
 DapManager::~DapManager() { ShutdownAll(); }
 
-void DapManager::SetWakeEventType(Uint32 event_type) {
+void DapManager::SetWakeChannel(Uint32 event_type) {
   wake_event_type_ = event_type;
   for (SessionEntry& entry : sessions_) {
-    entry.session->SetWakeEventType(wake_event_type_);
+    entry.session->SetWakeChannel(wake_event_type_);
   }
 }
 
@@ -97,7 +97,7 @@ int DapManager::StartSession(const LaunchConfig& config,
   session_entry.id = id;
   session_entry.session = std::make_unique<DebugSession>();
   if (wake_event_type_ != 0) {
-    session_entry.session->SetWakeEventType(wake_event_type_);
+    session_entry.session->SetWakeChannel(wake_event_type_);
   }
   session_entry.session->SetCallbacks(make_callbacks ? make_callbacks(id)
                                                      : DebugSession::Callbacks{});

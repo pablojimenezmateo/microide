@@ -348,7 +348,7 @@ void CommitWorkflowService::AbandonOperation(const std::uint64_t generation) {
 }
 
 void CommitWorkflowService::SetCompletionWakeEvent(std::uint32_t event_type) {
-  completion_mailbox_.SetWakeEventType(event_type);
+  completion_mailbox_.SetWakeChannel(event_type);
 }
 
 void CommitWorkflowService::DrainCompletions() { completion_mailbox_.Drain(); }

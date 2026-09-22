@@ -10,7 +10,7 @@
 #include "platform/TerminalBackend.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "util/StringUtil.h"
 
 #include <algorithm>
@@ -86,10 +86,10 @@ TerminalSession::~TerminalSession() {
   Stop();
 }
 
-void TerminalSession::SetWakeEventType(Uint32 event_type) {
+void TerminalSession::SetWakeChannel(util::WakeChannel channel) {
   std::scoped_lock lock(mutex_);
-  wake_event_type_ = event_type;
-  if (event_type == 0) {
+  wake_channel_ = channel;
+  if (channel == 0) {
     wake_event_pending_ = false;
   }
 }
@@ -611,29 +611,29 @@ bool TerminalSession::ConsumeWakeDecisionLocked() {
   return true;
 }
 
-bool TerminalSession::ReserveWakeEvent(Uint32& event_type) const {
+bool TerminalSession::ReserveWakeChannel(util::WakeChannel& channel) const {
   std::scoped_lock lock(mutex_);
-  if (wake_event_type_ == 0 || wake_event_pending_) {
+  if (wake_channel_ == 0 || wake_event_pending_) {
     return false;
   }
 
   wake_event_pending_ = true;
-  event_type = wake_event_type_;
+  channel = wake_channel_;
   return true;
 }
 
 void TerminalSession::PushWakeEvent() const {
-  Uint32 event_type = 0;
-  if (!ReserveWakeEvent(event_type)) {
+  util::WakeChannel channel = 0;
+  if (!ReserveWakeChannel(channel)) {
     return;
   }
 
-  // TD-2026-07-17-087: route through util::PushSdlWake so a rejected push latches
+  // TD-2026-07-17-087: route through util::PushWake so a rejected push latches
   // the process-wide owed-wake bit (consumed by the idle-wait poll). Otherwise a
   // dropped final PTY-output or process-exit-marker wake leaves parsed terminal
   // state undrawn until unrelated input wakes the loop. Clear the local coalescing
   // flag on failure so a later producer retries.
-  if (!util::PushSdlWake(event_type)) {
+  if (!util::PushWake(channel)) {
     std::scoped_lock lock(mutex_);
     wake_event_pending_ = false;
   }

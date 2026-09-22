@@ -26,7 +26,7 @@
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 #include "util/SaturatingMath.h"
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 #include "util/TaskExecutor.h"
 
 namespace microide::project {
@@ -370,9 +370,9 @@ GitBlameLine MakeBlameLine(std::size_t line, const GitBlameAttribution& attribut
 struct GitBlameService::Impl {
   ~Impl() { Stop(); }
 
-  void SetWakeEventType(Uint32 event_type) {
+  void SetWakeChannel(util::WakeChannel channel) {
     std::lock_guard lock(mutex);
-    wake_event_type = event_type;
+    wake_channel = channel;
   }
 
   std::uint64_t CurrentFileGenerationLocked(std::string_view file_key) const {
@@ -885,11 +885,11 @@ struct GitBlameService::Impl {
     // Route through the checked pusher: on a rejected push the ready blame stays in
     // the cache (shared state) and the shared "wake owed" bit is latched so the idle
     // poll schedules a fallback wait instead of stranding the overlay stale.
-    util::PushSdlWake(wake_event_type);
+    util::PushWake(wake_channel);
   }
 
   mutable std::mutex mutex;
-  Uint32 wake_event_type = 0;
+  util::WakeChannel wake_channel = 0;
   std::unordered_set<std::string> pending_request_keys;
   std::unordered_map<std::string, std::string> pending_request_files;
   std::string active_request_key;
@@ -908,11 +908,11 @@ GitBlameService::~GitBlameService() {
   delete impl_;
 }
 
-void GitBlameService::SetWakeEventType(Uint32 event_type) {
+void GitBlameService::SetWakeChannel(util::WakeChannel channel) {
   if (impl_ == nullptr) {
     impl_ = new Impl();
   }
-  impl_->SetWakeEventType(event_type);
+  impl_->SetWakeChannel(channel);
 }
 
 void GitBlameService::Request(const GitBlameRequest& request) {

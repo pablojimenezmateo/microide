@@ -98,7 +98,7 @@ void TestLaunchConfigsAndAdaptersOverSocket() {
                     {"debugpy", {"python3", "-m", "debugpy.adapter"}}, {"lldb", {"lldb-dap"}}};
               },
       });
-  service.SetWakeEventType(0);
+  service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "service should start");
 
   const std::string socket_path =
@@ -173,7 +173,7 @@ void TestQueryAndCommandOverSocket() {
                     .ok = true, .feedback = "ack", .error = {}};
               },
       });
-  service.SetWakeEventType(0);  // no SDL push; the test polls instead.
+  service.SetWakeChannel(0);  // no SDL push; the test polls instead.
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::string socket_path =
@@ -240,7 +240,7 @@ void TestQueryResponseIsBounded() {
 
   microide::workspace::ControlChannelService service;
   service.Configure(context, microide::workspace::ControlChannelService::Operations{});
-  service.SetWakeEventType(0);
+  service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::string socket_path =
@@ -533,7 +533,7 @@ void TestSocketSelfHealsAfterExternalDeletion() {
                          return microide::workspace::ControlChannelService::CommandOutcome{.ok =
                                                                                                true};
                        }});
-  service.SetWakeEventType(0);  // no SDL push; the test polls / drains explicitly.
+  service.SetWakeChannel(0);  // no SDL push; the test polls / drains explicitly.
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::filesystem::path socket_path =
@@ -624,7 +624,7 @@ void TestSocketRebindRehardensTheRuntimeDirectory() {
                          return microide::workspace::ControlChannelService::CommandOutcome{.ok =
                                                                                                true};
                        }});
-  service.SetWakeEventType(0);
+  service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::filesystem::path base = runtime / "microide";
@@ -682,7 +682,7 @@ void TestDebugCommandAutoEnablesDebugger() {
               },
           .ensure_debugger_enabled = [&ensure_calls]() { ++ensure_calls; },
       });
-  service.SetWakeEventType(0);
+  service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "control service should start");
 
   const std::string socket_path =

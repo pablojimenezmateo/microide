@@ -39,8 +39,8 @@ const std::vector<std::string>* WorkspacePluginRuntime::OutputChannelEntries(
   return output_channels_.Entries(id);
 }
 
-void WorkspacePluginRuntime::SetWakeEventType(Uint32 event_type) {
-  asset_monitor_.SetWakeEventType(event_type);
+void WorkspacePluginRuntime::SetWakeChannel(Uint32 event_type) {
+  asset_monitor_.SetWakeChannel(event_type);
 }
 
 bool WorkspacePluginRuntime::ConsumeWakeEvent(Uint32 type) {
@@ -48,7 +48,7 @@ bool WorkspacePluginRuntime::ConsumeWakeEvent(Uint32 type) {
 }
 
 void WorkspacePluginRuntime::SetPluginThreadEventType(Uint32 event_type) {
-  plugin_thread_.SetWakeEventType(event_type);
+  plugin_thread_.SetWakeChannel(event_type);
 }
 
 int WorkspacePluginRuntime::DrainPluginThreadActions() {
@@ -273,7 +273,7 @@ void WorkspacePluginRuntime::Shutdown() {
   // teardown (and any late call) runs inline with exclusive access rather than
   // dead-locking on a post to a stopped worker.
   plugin_host_.SetWorker(nullptr);
-  asset_monitor_.SetWakeEventType(0);
+  asset_monitor_.SetWakeChannel(0);
   asset_monitor_.Reset();
   plugin_host_.Shutdown();
   runtime_syntax_plugin_definition_count_ = 0;

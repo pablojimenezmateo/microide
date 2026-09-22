@@ -135,7 +135,7 @@ class DebugSession {
   DebugSession(const DebugSession&) = delete;
   DebugSession& operator=(const DebugSession&) = delete;
 
-  void SetWakeEventType(Uint32 event_type);
+  void SetWakeChannel(Uint32 event_type);
   void SetCallbacks(Callbacks callbacks);
 
   // Spawn `command` and begin driving the lifecycle for `config`. Returns false

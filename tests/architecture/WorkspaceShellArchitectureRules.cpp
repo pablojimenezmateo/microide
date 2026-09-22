@@ -186,18 +186,20 @@ RuleResult CheckPublicScriptsUseRunChecksForCtest(const std::filesystem::path& r
 RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
     const std::filesystem::path& repo_root) {
   RuleResult result;
-  result.label = "one-shot SDL wake producers route through the checked pusher";
+  result.label = "one-shot wake producers route through the checked pusher";
   result.hard_fail = true;
-  // These producers make a result ready in shared state and then push a neutral SDL
+  // These producers make a result ready in shared state and then push a neutral
   // wake. A bare SDL_PushEvent() is fire-and-forget: a rejected push strands the ready
-  // state until unrelated input. They must route through util::PushSdlWake, which
+  // state until unrelated input. They must route through util::PushWake, which
   // latches the shared "wake owed" bit that CurrentIdleWaitState consumes as a fallback
-  // wait. (TD-2026-07-16-54.) Any bare SDL_PushEvent in these files is a violation.
+  // wait. (TD-2026-07-16-54.) Any bare SDL_PushEvent in these files is a violation —
+  // and in the kernel producers among them it is also a layering violation, which
+  // CheckKernelStaysFreeOfTheWindowingLibrary catches independently.
   static constexpr std::array<const char*, 5> kProducerFiles = {
       "src/project/GitBlameService.cpp",
       "src/platform/ControlSocketServer.cpp",
       "src/workspace/coordinators/WorkspaceProjectDialogCoordinator.cpp",
-      "src/app/BackgroundTaskCounter.cpp",
+      "src/util/BackgroundTaskCounter.cpp",
       "src/workspace/coordinators/WorkspaceLifecycleCoordinator.cpp",
   };
   const std::regex bare_push(R"(\bSDL_PushEvent\s*\()");
@@ -208,7 +210,7 @@ RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
     }
     const std::string text = ReadText(path);
     AppendViolations(result, path, text, bare_push,
-                     "one-shot wake producers must use util::PushSdlWake, not a bare "
+                     "one-shot wake producers must use util::PushWake, not a bare "
                      "SDL_PushEvent (which drops the wake with no backstop on failure)");
   }
   return result;

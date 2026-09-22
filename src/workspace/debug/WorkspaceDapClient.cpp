@@ -11,8 +11,8 @@ DapClient::~DapClient() {
   delete impl_;
 }
 
-void DapClient::SetWakeEventType(Uint32 event_type) {
-  impl_->main_mailbox.SetWakeEventType(event_type);
+void DapClient::SetWakeChannel(Uint32 event_type) {
+  impl_->main_mailbox.SetWakeChannel(event_type);
 }
 
 void DapClient::SetEventCallback(EventCallback callback) {

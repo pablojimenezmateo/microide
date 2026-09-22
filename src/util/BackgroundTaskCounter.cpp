@@ -1,23 +1,21 @@
-#include "app/BackgroundTaskCounter.h"
-
-#include <SDL3/SDL.h>
+#include "util/BackgroundTaskCounter.h"
 
 #include <atomic>
 #include <cstdio>
 
-#include "util/SdlWake.h"
+#include "util/Waker.h"
 
-namespace microide::app {
+namespace microide::util {
 
 namespace {
 
 std::atomic<int> g_background_task_count{0};
-std::atomic<std::uint32_t> g_wake_event_type{0};
+std::atomic<WakeChannel> g_wake_channel{0};
 
 }  // namespace
 
-void SetBackgroundTaskWakeEventType(std::uint32_t event_type) {
-  g_wake_event_type.store(event_type, std::memory_order_release);
+void SetBackgroundTaskWakeChannel(WakeChannel channel) {
+  g_wake_channel.store(channel, std::memory_order_release);
 }
 
 void IncrementBackgroundTaskCount() {
@@ -31,7 +29,7 @@ void DecrementBackgroundTaskCountAndWake() {
   // GetBackgroundTaskCount() == 0 hides genuine in-flight work and the event loop
   // treats it as idle. The CAS loop leaves the count at zero on underflow. An underflow
   // is logged (not asserted): the clamp already HANDLES it gracefully, so a hard
-  // SDL_assert would convert a now-recovered condition into a debug/ASAN abort — and
+  // assert would convert a now-recovered condition into a debug/ASAN abort — and
   // would fire on the legitimate underflow-clamp regression test. Log-and-continue
   // matches SerialWorkQueue's firewall.
   int current = g_background_task_count.load(std::memory_order_acquire);
@@ -53,18 +51,18 @@ void DecrementBackgroundTaskCountAndWake() {
                  "increments); clamped at zero\n");
   }
 
-  // Wake the event loop so it can check the new idle state. Use the dedicated
-  // registered event type when set; the bare SDL_EVENT_USER fallback aliases the
-  // first registered custom event and mis-routes the wake into that subsystem's
-  // handler on every task completion. Route through the checked pusher so a rejected
-  // push latches the shared "wake owed" bit and the idle poll schedules a fallback
-  // wait rather than leaving the shell on the stale full-idle hint.
-  const std::uint32_t wake_type = g_wake_event_type.load(std::memory_order_acquire);
-  util::PushSdlWake(wake_type != 0 ? wake_type : static_cast<std::uint32_t>(SDL_EVENT_USER));
+  // Wake the event loop so it can check the new idle state. Route through the checked
+  // pusher so a rejected push latches the shared "wake owed" bit and the idle poll
+  // schedules a fallback wait rather than leaving the shell on the stale full-idle hint.
+  // An unset channel takes the same route: PushWake(0) is a no-op, and the loop's
+  // scheduled poll is what rechecks. (It used to fall back to the bare SDL_EVENT_USER
+  // base, which aliases the first registered custom event and mis-routes every
+  // completion wake into that subsystem's handler.)
+  PushWake(g_wake_channel.load(std::memory_order_acquire));
 }
 
 int GetBackgroundTaskCount() {
   return g_background_task_count.load(std::memory_order_acquire);
 }
 
-}  // namespace microide::app
+}  // namespace microide::util
