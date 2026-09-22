@@ -12,8 +12,11 @@ namespace microide::platform {
 
 struct TerminalStartRequest {
   std::filesystem::path working_directory;
-  // Run this through the shell (`<shell> -lc <command>`) instead of starting an
-  // interactive one. Empty means an interactive shell.
+  // Run this instead of starting an interactive shell; empty means interactive.
+  // How it attaches to `shell` is BuildTerminalArgv's decision (ShellProcess.h):
+  // `-lc` for a bare shell name, `-c` for a multi-word value that names a shell,
+  // and a trailing argument for one that does not — `ssh build-host` must not be
+  // handed a flag it will read as its own.
   std::string command;
   // The shell to launch, as argv — NOT a program path. `terminal.shell`'s own
   // description has always said "shell command", and treating it as a path is what
@@ -25,7 +28,7 @@ struct TerminalStartRequest {
   // A ONE-word shell is launched interactively (`bash -i`), because that is what a
   // bare shell name means. A multi-word one is exec'd exactly as written, because
   // the user already said what to run — appending `-i` to `ssh host` is the bug
-  // this field exists to fix.
+  // this field exists to fix. `command` follows the same rule: see BuildTerminalArgv.
   std::vector<std::string> shell;
   std::size_t rows = 24;
   std::size_t columns = 80;

@@ -1,6 +1,10 @@
 #include "TestSupport.h"
 
+#include "platform/ShellProcess.h"
 #include "platform/TerminalBackend.h"
+
+#include <string>
+#include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <chrono>
@@ -163,6 +167,46 @@ void TestTerminalBackendShellIsACommandLineNotAProgramPath() {
          "a multi-word terminal.shell must be exec'd as written, got: " + output);
 }
 
+// TD: `-lc` used to be appended to EVERY shell with a command, including a
+// multi-word one. `terminal.shell = "ssh build-host"` plus the `terminal <cmd>`
+// search action produced `ssh build-host -lc <cmd>`, which ssh reads as `-l c`:
+// it logs in as user "c" and runs the command remotely. That is the `-i` bug --
+// the one this field's multi-word form exists to fix -- surviving on the command
+// path, and it SUCCEEDS at the wrong thing rather than failing, so nothing
+// surfaces it. Pinned on the argv builder so it holds with no PTY available.
+void TestTerminalArgvAttachesCommandsWithoutInventingFlags() {
+  using microide::platform::BuildTerminalArgv;
+  const auto expect = [](const std::vector<std::string>& shell, const std::string& command,
+                         const std::vector<std::string>& expected) {
+    const std::vector<std::string> actual = BuildTerminalArgv(shell, command);
+    std::string shown = "[";
+    for (std::size_t i = 0; i < actual.size(); ++i) {
+      shown += (i == 0 ? "\"" : ", \"") + actual[i] + '"';
+    }
+    shown += ']';
+    Expect(actual == expected, "BuildTerminalArgv produced " + shown);
+  };
+
+  // A bare shell name: a shell by definition, so the shell conventions apply.
+  expect({"bash"}, "", {"bash", "-i"});
+  expect({"/bin/bash"}, "", {"bash", "-i"});
+  expect({"bash"}, "make", {"bash", "-lc", "make"});
+  // The regression. A launcher takes the command as a trailing argument; it must
+  // never be handed `-lc`, which is a flag of its own to every one of them.
+  expect({"ssh", "build-host"}, "make", {"ssh", "build-host", "make"});
+  expect({"docker", "exec", "-it", "box"}, "make", {"docker", "exec", "-it", "box", "make"});
+  // ...and with no command, still exactly as written.
+  expect({"ssh", "build-host"}, "", {"ssh", "build-host"});
+  // A multi-word value that IS a shell keeps the `-c` convention, so
+  // `terminal.shell = "bash --norc"` still runs commands. `-c`, not `-lc`: the
+  // user's own flags decide the rest.
+  expect({"bash", "--norc"}, "make", {"bash", "--norc", "-c", "make"});
+  expect({"/usr/bin/zsh", "-f"}, "make", {"/usr/bin/zsh", "-f", "-c", "make"});
+  // argv[0] is rewritten to the base name only in the bare form; a multi-word
+  // value is exec'd exactly as written, path and all.
+  expect({"/bin/sh", "-c", "echo hi"}, "", {"/bin/sh", "-c", "echo hi"});
+}
+
 void TestTerminalBackendBareShellNameResolvesThroughPath() {
   auto backend = CreateTerminalBackend();
 
@@ -216,6 +260,8 @@ void RegisterTerminalBackendTests(std::vector<TestCase>& tests) {
           TestTerminalBackendShellIsACommandLineNotAProgramPath);
   AddTest(tests, "TerminalBackend/BareShellNameResolvesThroughPath",
           TestTerminalBackendBareShellNameResolvesThroughPath);
+  AddTest(tests, "TerminalBackend/ArgvAttachesCommandsWithoutInventingFlags",
+          TestTerminalArgvAttachesCommandsWithoutInventingFlags);
 #else
   (void)tests;
 #endif

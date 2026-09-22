@@ -1648,12 +1648,17 @@ Each phase is independently useful and independently measurable.
      (`TerminalBackend.cpp:189,191`: `-i`, or `-lc <command>`). The setting promises
      something the code refuses, so `terminal.shell = "ssh host"` fails with a usage
      error from ssh's identity-file flag. `TerminalStartRequest::shell` becomes a
-     command vector and `TerminalStartRequest::command` stays a string handed to
-     `<shell> -lc`, which is what every caller means by it. This honours the
-     documented behaviour, makes wrapper scripts work, and is where G2's launcher
-     attaches. `terminal.shell` moves to `SettingScope::Project` at the same time:
-     which shell to run is a property of the project, and the remote case makes that
-     obvious.
+     command vector and `TerminalStartRequest::command` stays a string. How that
+     string attaches is `BuildTerminalArgv`'s decision, not a fixed `-lc`: a bare
+     shell name takes `-lc`, a multi-word value that names a shell takes `-c`, and
+     one that does not — `ssh build-host`, `docker exec -it box` — takes the command
+     as a trailing argument. Appending `-lc` to `ssh build-host` is `ssh -l c`: it
+     logs in as user "c" and runs the command remotely, which is the identity-flag
+     bug one path over and succeeds at the wrong thing instead of failing. This
+     honours the documented behaviour, makes wrapper scripts work, and is where
+     G2's launcher attaches. `terminal.shell` moves to `SettingScope::Project` at
+     the same time: which shell to run is a property of the project, and the remote
+     case makes that obvious.
 
      The scope move changes nothing about resolution. `SettingsStore::Resolve` is
      project-over-user for every setting regardless of its declared scope
