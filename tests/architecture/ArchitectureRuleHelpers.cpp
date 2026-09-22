@@ -47,6 +47,25 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
   }
 }
 
+bool CodeMaskedPatternAppears(const std::string& text, const std::regex& pattern) {
+  const auto is_code = BuildCodeMask(text);
+  for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    const std::size_t start = static_cast<std::size_t>(it->position());
+    const std::size_t len = static_cast<std::size_t>(it->length());
+    bool in_code = true;
+    for (std::size_t i = 0; i < len; ++i) {
+      if (start + i >= is_code.size() || !is_code[start + i]) {
+        in_code = false;
+        break;
+      }
+    }
+    if (in_code) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void AppendTrailingCodeRegexViolations(RuleResult& result,
                                        const std::filesystem::path& path,
                                        const std::string& text,

@@ -1084,6 +1084,31 @@ void RunProcessLauncherRuleFixtures() {
   WriteFile(root / "src/platform/ProcessLauncher.cpp", "SubprocessResult Run(){ return {}; }\n");
   Expect(!CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
          "spawn rule must report that the launcher no longer calls the spawn primitive");
+
+  // ...and the guard must survive the REAL tree's shape. It used to accept any exempt
+  // file naming the primitive, and Subprocess.h is exempt and DECLARES it — so the
+  // declaration satisfied the guard forever and the fixture above passed only because
+  // this synthetic root had no Subprocess.h. Materialize one.
+  WriteFile(root / "src/platform/Subprocess.h",
+            "SubprocessResult RunSubprocess(const std::vector<std::string>& argv,\n"
+            "                              const SubprocessOptions& options = {});\n");
+  Expect(!CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
+         "spawn rule's vacuity guard must not be satisfied by the primitive's "
+         "declaration in an exempt header");
+
+  // A mention in the launcher's own prose is not a call either.
+  WriteFile(root / "src/platform/ProcessLauncher.cpp",
+            "// Run() used to call RunSubprocess(argv, options) directly.\n"
+            "SubprocessResult Run(){ return {}; }\n");
+  Expect(!CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
+         "spawn rule's vacuity guard must not be satisfied by a comment");
+
+  // Positive control for the guard: a real call in the launcher clears it, with the
+  // exempt header still present.
+  WriteFile(root / "src/platform/ProcessLauncher.cpp",
+            "SubprocessResult Run(){ return RunSubprocess(argv, options); }\n");
+  Expect(CheckEverySpawnGoesThroughAProcessLauncher(root).missing_targets.empty(),
+         "spawn rule must accept a launcher that still calls the spawn primitive");
 }
 
 void RunAllRuleFixtures() {
