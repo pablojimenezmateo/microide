@@ -221,10 +221,116 @@ set(MICROIDE_INSTRUMENTATION_SOURCES
   src/util/TraceChannel.cpp
 )
 
+# The kernel: data, filesystem, process model and the terminal emulator, with NO
+# windowing library. It is a source list rather than a set of directories because
+# directory is not layer in this tree -- `editor/` includes upward into
+# `workspace/`. Compiled as its own object library with its own (SDL-free)
+# precompiled header, so "the kernel does not need SDL" is a fact the build
+# enforces rather than a claim a text lint makes. That is what lets these services
+# run in a process that never opened a display.
+set(MICROIDE_KERNEL_SOURCES
+  src/compare/BranchReviewStateService.cpp
+  src/compare/BranchReviewStateTypes.cpp
+  src/compare/CompareModel.cpp
+  src/compare/ComparePresentationModel.cpp
+  src/compare/CompareReviewTypes.cpp
+  src/compare/CompareSemanticMetadata.cpp
+  src/compare/MergeConflictKind.cpp
+  src/compare/MergeModel.cpp
+  src/persistence/PersistedRecord.cpp
+  src/persistence/PersistedRecordReader.cpp
+  src/persistence/PersistedRecordWriteQueue.cpp
+  src/persistence/PersistedRecordWriter.cpp
+  src/platform/AppDirectories.cpp
+  src/platform/AsyncSubprocess.cpp
+  src/platform/ControlSocketClient.cpp
+  src/platform/ControlSocketServer.cpp
+  src/platform/DescriptorRetire.cpp
+  src/platform/FileIndexWatcher.cpp
+  src/platform/FileWatcher.cpp
+  src/platform/Filesystem.cpp
+  src/platform/FsOps.cpp
+  src/platform/HostIntegration.cpp
+  src/platform/HostPlatform.cpp
+  src/platform/RuntimePaths.cpp
+  src/platform/ShellProcess.cpp
+  src/platform/Subprocess.cpp
+  src/platform/SubprocessSandbox.cpp
+  src/platform/TerminalBackend.cpp
+  src/platform/Trash.cpp
+  src/project/CommitWorkflowChecks.cpp
+  src/project/CompileCommandsLocator.cpp
+  src/project/DirectoryTree.cpp
+  src/project/EditorConfig.cpp
+  src/project/FileFinder.cpp
+  src/project/FileIndex.cpp
+  src/project/FileOperationService.cpp
+  src/project/GitBlameParser.cpp
+  src/project/GitBlameService.cpp
+  src/project/GitBranchOperations.cpp
+  src/project/GitCommandUtil.cpp
+  src/project/GitCommitExecutor.cpp
+  src/project/GitCompareService.cpp
+  src/project/GitPatchApply.cpp
+  src/project/GitPorcelainParser.cpp
+  src/project/GitPorcelainV2Parser.cpp
+  src/project/GitRepository.cpp
+  src/project/GitRepositoryMetadataTracker.cpp
+  src/project/GitRepositoryState.cpp
+  src/project/GitStatusService.cpp
+  src/project/GlobMatch.cpp
+  src/project/IgnoreMatcher.cpp
+  src/project/PatchApplyTypes.cpp
+  src/project/PatchGenerator.cpp
+  src/project/PatternCache.cpp
+  src/project/ProjectBackgroundExecutor.cpp
+  src/project/ProjectChangeCoalescer.cpp
+  src/project/ProjectChangeNormalizer.cpp
+  src/project/ProjectFileScanner.cpp
+  src/project/ProjectSearchService.cpp
+  src/project/ProjectTraversalFilter.cpp
+  src/project/SubprocessHelper.cpp
+  src/terminal/TerminalAnsiColors.cpp
+  src/terminal/TerminalBase64.cpp
+  src/terminal/TerminalCsiParser.cpp
+  src/terminal/TerminalMouseEncoder.cpp
+  src/terminal/TerminalOscClipboard.cpp
+  src/terminal/TerminalSearch.cpp
+  src/terminal/TerminalSession.cpp
+  src/terminal/TerminalSessionCsi.cpp
+  src/terminal/TerminalSessionInput.cpp
+  src/terminal/TerminalSessionInputEncoding.cpp
+  src/terminal/TerminalSessionModes.cpp
+  src/terminal/TerminalSessionOsc.cpp
+  src/terminal/TerminalSessionOutput.cpp
+  src/terminal/TerminalSessionScreen.cpp
+  src/terminal/TerminalSessionSgr.cpp
+  src/util/AnsiPalette.cpp
+  src/util/BackgroundTaskCounter.cpp
+  src/util/DebugTrace.cpp
+  src/util/DurableFile.cpp
+  src/util/GitConflictMarkers.cpp
+  src/util/JsonFormat.cpp
+  src/util/JsonValue.cpp
+  src/util/Log.cpp
+  src/util/MainThreadMailbox.cpp
+  src/util/Parse.cpp
+  src/util/PerformanceCounters.cpp
+  src/util/PerformanceTrace.cpp
+  src/util/SerialWorkQueue.cpp
+  src/util/Sha256.cpp
+  src/util/StartupTrace.cpp
+  src/util/StringUtil.cpp
+  src/util/TaskExecutor.cpp
+  src/util/TextFileIO.cpp
+  src/util/TraceChannel.cpp
+  src/util/WindowPresentation.cpp
+)
+
+# The shell: rendering, the workspace, the plugin host and the app. Everything that
+# needs a window, plus the editor and render value types the window paints with.
 set(MICROIDE_CORE_SOURCES
   src/app/SdlWaker.cpp
-  src/util/BackgroundTaskCounter.cpp
-  src/util/Log.cpp
   src/editor/BracketScanner.cpp
   src/editor/BreakpointRender.cpp
   src/editor/BreakpointStore.cpp
@@ -271,40 +377,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportMultiCaret.cpp
   src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
-  src/compare/CompareModel.cpp
-  src/project/PatchApplyTypes.cpp
-  src/project/PatchGenerator.cpp
-  src/project/GitPatchApply.cpp
-  src/compare/ComparePresentationModel.cpp
-  src/compare/CompareReviewTypes.cpp
-  src/compare/BranchReviewStateTypes.cpp
-  src/compare/BranchReviewStateService.cpp
-  src/compare/CompareSemanticMetadata.cpp
-  src/compare/MergeConflictKind.cpp
-  src/compare/MergeModel.cpp
-  src/platform/AppDirectories.cpp
-  src/platform/AsyncSubprocess.cpp
-  src/platform/ControlSocketClient.cpp
-  src/platform/ControlSocketServer.cpp
-  src/platform/DescriptorRetire.cpp
-  src/platform/FileIndexWatcher.cpp
-  src/platform/FileWatcher.cpp
-  src/platform/Filesystem.cpp
-  src/platform/FsOps.cpp
-  src/platform/HostIntegration.cpp
-  src/platform/HostPlatform.cpp
-  src/platform/RuntimePaths.cpp
-  src/platform/Subprocess.cpp
-  src/platform/SubprocessSandbox.cpp
-  src/platform/ShellProcess.cpp
-  src/platform/TerminalBackend.cpp
-  src/platform/Trash.cpp
-  src/persistence/PersistedRecord.cpp
   src/workspace/persistence/PersistedRecordDump.cpp
-  src/persistence/PersistedRecordReader.cpp
-  src/persistence/PersistedRecordWriter.cpp
-  src/persistence/PersistedRecordWriteQueue.cpp
-  src/persistence/PersistedRecordWriteQueue.cpp
   src/plugin/PluginLuaInterop.cpp
   src/plugin/PluginLuaBufferProjectInterop.cpp
   src/plugin/PluginLuaContextInterop.cpp
@@ -338,78 +411,16 @@ set(MICROIDE_CORE_SOURCES
   src/plugin/PluginHostCallbacks.cpp
   src/plugin/PluginHostSnapshot.cpp
   src/plugin/PluginHostSaveParticipants.cpp
-  src/project/DirectoryTree.cpp
-  src/project/FileOperationService.cpp
-  src/project/GitCompareService.cpp
-  src/project/GitCommandUtil.cpp
-  src/project/FileFinder.cpp
-  src/project/EditorConfig.cpp
-  src/project/FileIndex.cpp
-  src/project/GitBlameParser.cpp
-  src/project/GitBlameService.cpp
-  src/project/GitPorcelainParser.cpp
-  src/project/GitPorcelainV2Parser.cpp
-  src/project/GitRepository.cpp
-  src/project/GitRepositoryState.cpp
-  src/project/CommitWorkflowChecks.cpp
-  src/project/GitBranchOperations.cpp
-  src/project/GitCommitExecutor.cpp
-  src/project/GitRepositoryMetadataTracker.cpp
-  src/project/ProjectChangeCoalescer.cpp
-  src/project/ProjectChangeNormalizer.cpp
-  src/project/ProjectFileScanner.cpp
-  src/project/GitStatusService.cpp
-  src/project/GlobMatch.cpp
-  src/project/IgnoreMatcher.cpp
-  src/project/ProjectTraversalFilter.cpp
-  src/project/CompileCommandsLocator.cpp
-  src/project/PatternCache.cpp
-  src/project/ProjectBackgroundExecutor.cpp
-  src/project/SubprocessHelper.cpp
-  src/project/ProjectSearchService.cpp
   src/render/DebugTextBackend.cpp
   src/render/TextRenderer.cpp
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
-  src/util/AnsiPalette.cpp
   src/render/ColorMath.cpp
   src/render/ThemeFile.cpp
   src/render/PluginDisplayList.cpp
   src/render/PluginDisplayListRenderer.cpp
   src/render/RasterDecode.cpp
   src/render/SurfaceTextureCache.cpp
-  src/terminal/TerminalSession.cpp
-  src/terminal/TerminalAnsiColors.cpp
-  src/terminal/TerminalSessionOutput.cpp
-  src/terminal/TerminalSessionCsi.cpp
-  src/terminal/TerminalSessionSgr.cpp
-  src/terminal/TerminalSessionOsc.cpp
-  src/terminal/TerminalSessionModes.cpp
-  src/terminal/TerminalSessionInput.cpp
-  src/terminal/TerminalSessionInputEncoding.cpp
-  src/terminal/TerminalSessionScreen.cpp
-  src/terminal/TerminalBase64.cpp
-  src/terminal/TerminalCsiParser.cpp
-  src/terminal/TerminalMouseEncoder.cpp
-  src/terminal/TerminalOscClipboard.cpp
-  src/terminal/TerminalSearch.cpp
-  src/util/DebugTrace.cpp
-  src/util/DurableFile.cpp
-  src/util/JsonValue.cpp
-  src/util/JsonFormat.cpp
-  src/util/GitConflictMarkers.cpp
-  src/util/MainThreadMailbox.cpp
-  src/util/SerialWorkQueue.cpp
-  src/util/Parse.cpp
-  src/util/PerformanceCounters.cpp
-  src/util/TraceChannel.cpp
-  src/util/PerformanceTrace.cpp
-  src/util/Sha256.cpp
-  src/util/StartupTrace.cpp
-  src/util/StringUtil.cpp
-  src/util/TaskExecutor.cpp
-  src/util/TextFileIO.cpp
-  src/util/WindowPresentation.cpp
   src/workspace/shell/WorkspaceShellCompare.cpp
   src/workspace/shell/WorkspaceShellCompareMerge.cpp
   src/workspace/MergeWrapRows.cpp
@@ -642,7 +653,7 @@ set(MICROIDE_CORE_SOURCES
 # accelerates both clean and incremental builds. Project headers are intentionally
 # excluded: adding them would invalidate the PCH on every edit and erase the
 # incremental-build win.
-set(MICROIDE_PCH_HEADERS
+set(MICROIDE_KERNEL_PCH_HEADERS
   <algorithm>
   <array>
   <cstddef>
@@ -657,6 +668,11 @@ set(MICROIDE_PCH_HEADERS
   <utility>
   <vector>
 )
+# The shell's PCH is the kernel's plus the windowing library. Keeping SDL OUT of the
+# kernel's PCH is the load-bearing half: while every TU got SDL for free from one
+# shared PCH, a kernel file could name Uint32 or SDL_Color and compile, which is
+# exactly how those types reached the terminal's data model in the first place.
+set(MICROIDE_PCH_HEADERS ${MICROIDE_KERNEL_PCH_HEADERS})
 if(NOT MICROIDE_SDL3_TARGET STREQUAL "")
   list(APPEND MICROIDE_PCH_HEADERS <SDL3/SDL.h>)
 endif()
@@ -729,6 +745,31 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   endif()
 endif()
 
+# The kernel half: its own object library, its own SDL-free precompiled header, and
+# no SDL in its link libraries. What that buys, precisely:
+#
+#  * a kernel TU naming `Uint32` or `SDL_Color` without an explicit SDL include now
+#    FAILS TO COMPILE. Under the single shared PCH it compiled fine, which is how
+#    those types reached the terminal's data model unnoticed;
+#  * the kernel objects are a separable link unit, which is what a headless agent
+#    binary links instead of the whole thirty-MB shell.
+#
+# It does NOT catch a kernel TU that writes `#include <SDL3/SDL.h>` itself: SDL's
+# headers sit on the default system include path and the shell links SDL for the
+# final binary anyway. CheckKernelStaysFreeOfTheWindowingLibrary is what catches
+# that, and the two are complementary rather than redundant.
+add_library(microide_kernel OBJECT ${MICROIDE_KERNEL_SOURCES})
+target_include_directories(microide_kernel PRIVATE src)
+target_precompile_headers(microide_kernel PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
+target_link_libraries(microide_kernel PRIVATE ${MICROIDE_PCRE2_TARGET})
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_kernel PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_kernel PRIVATE -Werror)
+  endif()
+endif()
+
+
 add_executable(microide
   src/app/main.cpp
   src/app/AppStartupOptions.cpp
@@ -737,6 +778,7 @@ add_executable(microide
   src/app/RedrawTraceAccumulator.cpp
   src/app/SceneTexturePresenter.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+  $<TARGET_OBJECTS:microide_kernel>
   $<TARGET_OBJECTS:microide_core>
 )
 
@@ -964,6 +1006,7 @@ add_executable(microide_tests
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
+  $<TARGET_OBJECTS:microide_kernel>
   $<TARGET_OBJECTS:microide_core>
   tests/ApplicationTests.cpp
   tests/AppDirectoriesTests.cpp
@@ -1449,7 +1492,8 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   add_executable(microide_perf
     src/app/DirtyRegionPolicy.cpp
     $<TARGET_OBJECTS:microide_runtime_syntax_generated>
-    $<TARGET_OBJECTS:microide_core>
+    $<TARGET_OBJECTS:microide_kernel>
+  $<TARGET_OBJECTS:microide_core>
     tests/perf/AllocationCounter.cpp
     tests/perf/PerfCpuAffinity.cpp
     tests/perf/PerfHarness.cpp
