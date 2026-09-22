@@ -204,7 +204,13 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         continue;
       }
 
-      if (!viewport->Save()) {
+      // Through the tab service, not a bare viewport->Save(). Choosing "Save" in the
+      // dirty prompt is the same save as Ctrl+S and must do the same things: run save
+      // participants and format-on-save, and — the one that could lose work — refuse
+      // to overwrite a file that changed on disk, surfacing the external-change banner
+      // instead of clobbering it silently. The merge branch above already went this
+      // way; the editor branch did not.
+      if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index)) {
         return false;
       }
       saved_any = true;

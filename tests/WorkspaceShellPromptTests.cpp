@@ -75,6 +75,48 @@ void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
          "rename save flow should clear the dirty flag after saving");
 }
 
+// Regression: the dirty prompt's "Save" used to call viewport->Save() directly for an
+// EDITOR tab, while its own compare and merge branches went through the tab service.
+// Two things followed from that one bare call. It ran no save participants and no
+// format-on-save, so "Save" from the prompt did something different from Ctrl+S on the
+// same buffer; and — the one that loses work — it skipped the disk-conflict check, so
+// choosing Save overwrote a file that had changed on disk with no banner and no
+// warning. The external content is what this asserts on: the shape of the bug is data
+// loss, not a missing formatter.
+void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "base text\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+
+  // Someone else writes the file. A DIFFERENT length, so the signature differs whatever
+  // the filesystem's mtime granularity is and the test needs no sleep.
+  const std::string external = "written by something else entirely\n";
+  WriteFile(source, external);
+
+  WorkspaceShellTestAccess::PrepareRenamePrompt(shell, source, "renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "a dirty tab should raise the dirty confirmation");
+
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);  // 0 == Save
+
+  Expect(ReadFile(source) == external,
+         "Save from the dirty prompt must not overwrite a file that changed on disk");
+  Expect(!std::filesystem::exists(root / "renamed.txt"),
+         "a refused save must not let the rename proceed");
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "the refused save must surface the external-change banner, not fail silently");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the buffer keeps its unsaved edit so the user can still choose what to do");
+}
+
 void TestWorkspaceShellGoToLinePromptNavigatesActiveEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1316,6 +1358,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
+  AddTest(tests, "WorkspaceShell/DirtyPromptSaveRefusesToClobberAnExternalChange",
+          TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
   AddTest(tests, "WorkspaceShell/GoToLinePromptNavigatesActiveEditor",

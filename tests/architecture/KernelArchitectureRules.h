@@ -16,6 +16,10 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
 // its processes run. See the rule body for the two sanctioned exceptions.
 RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::path& repo_root);
 
+// A user-initiated save runs the same save participants and format-on-save wherever
+// it was triggered from, and refuses the same disk conflicts. See the rule body.
+RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path& repo_root);
+
 const std::vector<NamedRule>& KernelArchitectureRuleList();
 
 }  // namespace microide::tests::architecture

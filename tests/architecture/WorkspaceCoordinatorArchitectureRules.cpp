@@ -266,23 +266,28 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
   RuleResult result;
   result.label = "synchronous subprocess call in workspace";
   result.hard_fail = true;
-  // Catch BOTH the platform:: entry point and the transparent project:: alias — the
-  // old lint only saw platform::, letting project::RunSubprocess slip the "dispatch
-  // through ProjectBackgroundExecutor" policy. (TD-2026-07-16-15.)
-  const std::regex pattern(R"(\b(platform|project)::RunSubprocess\s*\()");
+  // Catch every door to a synchronous spawn. It was `platform::RunSubprocess` and the
+  // transparent `project::` alias (the old lint saw only the first, which is how the
+  // alias slipped the "dispatch through ProjectBackgroundExecutor" policy —
+  // TD-2026-07-16-15); since the launcher landed it is also `<something
+  // launcher>.Run(`. Adding that spelling is not optional housekeeping: routing the
+  // formatter through the launcher removed the last `RunSubprocess` token from
+  // src/workspace, so a rule matching only that token would have gone green while the
+  // five-second synchronous formatter it exists to bound sat exactly where it was.
+  const std::regex pattern(
+      R"(\b(platform|project)::RunSubprocess\s*\(|[Ll]auncher(\(\))?\s*(\.|->)\s*Run\s*\()");
   // Deliberate, documented exception: format-on-save runs the contributed formatter
   // synchronously because an EXPLICIT save is a user-initiated blocking action that must
   // complete before returning (bounded by a 5 s timeout; autosave — the frequent path —
   // suppresses formatters so background writes never block the UI). This one site is
   // allowlisted; making it async would change the save contract (visible in-progress /
-  // cancellation UX) and is tracked separately. Do NOT add new entries here.
-  const std::array<std::string_view, 2> allowed_files = {
+  // cancellation UX) and is the design's groundwork G5. Do NOT add new entries here.
+  const std::array<std::string_view, 1> allowed_files = {
       "WorkspaceTabCoordinatorShellBridge.cpp",
-      // ToolDownloader runs its sha256 hash subprocess inside a lambda posted to its own
-      // background_executor_ (ComputeSha256Blocking off the shell thread), so it does not
-      // block the UI. Allowlisted as a deliberate off-thread use.
-      "WorkspaceToolDownloader.cpp",
   };
+  // A rule whose allowlist has gone empty of real matches is scanning for a call form
+  // the tree no longer uses. Track whether the exempt file still holds one.
+  bool saw_allowlisted_match = false;
   for (const auto& entry :
        std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
@@ -290,12 +295,25 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
     }
     if (std::find(allowed_files.begin(), allowed_files.end(),
                   entry.path().filename().string()) != allowed_files.end()) {
+      if (std::regex_search(ReadText(entry.path()), pattern)) {
+        saw_allowlisted_match = true;
+      }
       continue;
     }
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(
         result, entry.path(), text, pattern,
         "workspace code must not run synchronous subprocesses; use ProjectBackgroundExecutor");
+  }
+  if (!saw_allowlisted_match) {
+    result.missing_targets.push_back(Violation{
+        .path = repo_root / "src/workspace/coordinators/WorkspaceTabCoordinatorShellBridge.cpp",
+        .line = 1,
+        .message = "the one allowlisted synchronous spawn is gone from this file; either "
+                   "it moved (repoint the allowlist) or G5 landed and the exception should "
+                   "be DELETED — either way this rule is no longer scanning for the call "
+                   "form it exists to bound",
+    });
   }
   return result;
 }

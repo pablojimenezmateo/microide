@@ -265,7 +265,17 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .save_active_merge_tab =
               [this]() {
                 MergeTabState* merge_tab = ActiveMergeTab();
-                return merge_tab != nullptr && merge_tab->result_viewport.Save();
+                if (merge_tab == nullptr) {
+                  return false;
+                }
+                // Same preparation as any other user-initiated save: the merge result
+                // is a real file, and "Save Result" running no formatter while Ctrl+S
+                // on the same buffer ran one is a difference nobody can see coming.
+                if (!PrepareEditorViewportForSave(merge_tab->result_viewport.path(),
+                                                  merge_tab->result_viewport, nullptr)) {
+                  return false;
+                }
+                return merge_tab->result_viewport.Save();
               },
           .stage_merge_result_path =
               [this](const std::filesystem::path& path) {

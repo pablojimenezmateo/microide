@@ -321,10 +321,101 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
   return result;
 }
 
+RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "every user-initiated save runs the same preparation";
+  result.hard_fail = true;
+
+  // `TextViewport::Save()` writes the buffer and nothing else. The save PARTICIPANTS,
+  // format-on-save and the disk-conflict check all live above it, so a call site that
+  // reaches Save() directly is a second save door with different behaviour — and the
+  // difference is invisible until someone notices that "Save" in the dirty prompt did
+  // not run their formatter, or, as it actually happened, that it overwrote a file that
+  // had changed on disk with no banner.
+  //
+  // Enforced per FILE: a file that calls `<something viewport>.Save()` must also name a
+  // preparation. That is coarse in the safe direction and does not depend on a receiver
+  // spelling, which is the pattern-rot this repo keeps finding. Two files are exempt,
+  // and both are PROGRAMMATIC saves rather than user-initiated ones — the same
+  // distinction autosave already makes when it suppresses formatters.
+  static constexpr std::array<const char*, 2> kProgrammaticSaveFiles = {
+      // Applying an LSP workspace edit to buffers that happen to be open. The edit is
+      // the server's, not the user's; running a formatter over it would rewrite a
+      // rename's result behind the user's back.
+      "src/workspace/shell/WorkspaceShellPlugins.cpp",
+      // The same, for files that are NOT open: a scratch viewport used purely as a
+      // read-modify-write of a closed file.
+      "src/workspace/lsp/LspService.cpp",
+  };
+  const std::regex viewport_save(R"([Vv]iewport(_)?\s*(\.|->)\s*Save\s*\(\s*\))");
+  // Only the preparation itself counts. An earlier draft also accepted `SaveGroupTab`
+  // and `EditorTabService`, which appear in most of the workspace, so every file it
+  // scanned passed on a name that had nothing to do with preparing a save.
+  const std::regex prepares(R"(prepare_editor_view_for_save|PrepareEditorViewportForSave)");
+
+  bool saw_any_save = false;
+  for (const char* rel : kProgrammaticSaveFiles) {
+    if (!RequireRuleTarget(result, repo_root / rel)) {
+      continue;
+    }
+  }
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file() || !IsSourceExtension(entry.path())) {
+      continue;
+    }
+    const std::string generic = entry.path().generic_string();
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    bool calls_save = false;
+    for (std::sregex_iterator it(text.begin(), text.end(), viewport_save), end; it != end; ++it) {
+      const std::size_t pos = static_cast<std::size_t>(it->position());
+      if (pos >= is_code.size() || is_code[pos]) {
+        calls_save = true;
+        break;
+      }
+    }
+    if (!calls_save) {
+      continue;
+    }
+    saw_any_save = true;
+    bool programmatic = false;
+    for (const char* rel : kProgrammaticSaveFiles) {
+      if (generic.ends_with(rel)) {
+        programmatic = true;
+        break;
+      }
+    }
+    if (programmatic || std::regex_search(text, prepares)) {
+      continue;
+    }
+    result.violations.push_back(Violation{
+        .path = entry.path(),
+        .line = 1,
+        .message = "calls TextViewport::Save() without naming the shared preparation "
+                   "(prepare_editor_view_for_save / PrepareEditorViewportForSave), and is "
+                   "not one of the documented programmatic saves. A user-initiated save "
+                   "must run the same save participants and "
+                   "format-on-save, and refuse the same disk conflicts, wherever it was "
+                   "triggered from",
+    });
+  }
+  if (!saw_any_save) {
+    result.missing_targets.push_back(Violation{
+        .path = repo_root / "src",
+        .line = 1,
+        .message = "found no TextViewport::Save() call at all; this rule is scanning for a "
+                   "call form the tree no longer uses",
+    });
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
       {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
+      {"CheckEveryUserSaveRunsTheSamePreparation", CheckEveryUserSaveRunsTheSamePreparation},
   };
   return rules;
 }

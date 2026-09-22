@@ -81,6 +81,14 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
       }
       return false;
     }
+    // Same preparation as an editor tab's save: the compare right pane is a real
+    // file and this is the same Ctrl+S. Without it, save participants and
+    // format-on-save applied to a buffer depending on which surface it was open in.
+    if (operations_.prepare_editor_view_for_save &&
+        !operations_.prepare_editor_view_for_save(compare_tab.right_viewport.path(),
+                                                  compare_tab.right_viewport, nullptr)) {
+      return false;
+    }
     if (!compare_tab.right_viewport.Save()) {
       if (operations_.notify_save_failed) {
         operations_.notify_save_failed(compare_tab.right_viewport.path());
@@ -104,6 +112,11 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
         operations_.request_external_change_banner(
             merge_tab.result_viewport.path().lexically_normal());
       }
+      return false;
+    }
+    if (operations_.prepare_editor_view_for_save &&
+        !operations_.prepare_editor_view_for_save(merge_tab.result_viewport.path(),
+                                                  merge_tab.result_viewport, nullptr)) {
       return false;
     }
     if (!merge_tab.result_viewport.Save()) {
