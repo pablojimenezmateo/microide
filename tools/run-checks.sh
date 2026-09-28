@@ -302,16 +302,48 @@ check_clang_build() {
 
   # CMAKE_CXX_SCAN_FOR_MODULES=OFF for the same reason the coverage lane sets it:
   # Ninja otherwise wants clang-scan-deps, which is not in the apt set CI installs.
+  #
+  # The retry is for clang's precompiled header, which records the mtime of every
+  # system header it absorbed and refuses to be used if any of them changed. CMake
+  # does not depend-track /usr/include, so an apt upgrade of libc or the kernel
+  # headers between two runs of this lane fails EVERY translation unit with
+  # "has been modified since the precompiled header" — a green tree reported as a
+  # compile failure, with nothing in the message saying the fix is to drop the PCH.
+  # Detect exactly that string and rebuild the tree once from scratch; anything else
+  # is a real failure and is reported as one.
   run_logged "$log" bash -c '
     set -e
-    cmake -S . -B '"$build_dir"' -G Ninja \
-      -DCMAKE_BUILD_TYPE=Debug \
-      -DCMAKE_C_COMPILER=clang \
-      -DCMAKE_CXX_COMPILER=clang++ \
-      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
-      -DMICROIDE_PERF_HARNESS_BUILD=ON \
-      -DMICROIDE_WARNINGS_AS_ERRORS=ON
-    cmake --build '"$build_dir"' -j'"$JOBS"'
+    # pipefail, and it is load-bearing: the first pass is piped through tee, so
+    # without it the `if` below tests the status of tee, which is always 0. The lane
+    # then reports green on a build that failed — the same pipe-hides-exit-code trap
+    # dev-docs/project/validation-traps.md keeps finding, introduced by the very
+    # retry that is here to make the lane more trustworthy. It was caught by
+    # checking the rebuilt binary mtime rather than the reported exit code.
+    set -o pipefail
+    configure_and_build() {
+      cmake -S . -B '"$build_dir"' -G Ninja \
+        -DCMAKE_BUILD_TYPE=Debug \
+        -DCMAKE_C_COMPILER=clang \
+        -DCMAKE_CXX_COMPILER=clang++ \
+        -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
+        -DMICROIDE_PERF_HARNESS_BUILD=ON \
+        -DMICROIDE_WARNINGS_AS_ERRORS=ON
+      cmake --build '"$build_dir"' -j'"$JOBS"'
+    }
+    stale_pch_marker="has been modified since the precompiled header"
+    first_pass_log=$(mktemp)
+    if configure_and_build 2>&1 | tee "$first_pass_log"; then
+      rm -f "$first_pass_log"
+      exit 0
+    fi
+    if ! grep -qF "$stale_pch_marker" "$first_pass_log"; then
+      rm -f "$first_pass_log"
+      exit 1
+    fi
+    rm -f "$first_pass_log"
+    echo "run-checks: clang PCH predates a system-header change; rebuilding this lane from scratch"
+    rm -rf '"$build_dir"'
+    configure_and_build
   '
   local rc=$?
   echo "run-checks: clang-build finished (exit $rc); log at $log"
