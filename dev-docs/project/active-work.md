@@ -300,11 +300,17 @@ that file says exactly what, and what each one left):
 - **G3 — argv-shaped terminal launch**, which fixed `terminal.shell = "ssh host"`
   (ran `ssh -i`) and `terminal.shell = "bash"` (never resolved through PATH).
 - **G9 (part)** — one `ResolveGitDirectory` instead of two that disagreed.
+- **G5 (part) — the format-on-save subprocess is off the shell thread.**
+  `editor.format_on_save` defaults on and the bundled prettier plugin registers a
+  formatter for every web filetype, so every Ctrl+S in a JS/TS project froze the
+  window for as long as node took to start. An interactive save now defers: it
+  returns without writing and its completion applies the formatter's output,
+  guarded on the buffer's content revision so an edit made during formatting is
+  never silently undone. Saves whose caller acts on completion still block.
 
-Open: **G4** asynchronous file open, **G5** asynchronous save (delete the
-format-on-save synchronous-subprocess lint exception), **G6** blake3 content
-hashes, **G7** notifications with key/actions/progress/lifetime, **G8**
-`ProjectId`, **G10** the write gate. Groundwork carries its own perf gates (design
+Open: **G4** asynchronous file open, **G6** blake3 content hashes, **G7**
+notifications with key/actions/progress/lifetime, **G8** `ProjectId`, **G10** the
+write gate; and the rest of **G5** (TD-2026-09-28-304). Groundwork carries its own perf gates (design
 § 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;
 display forwarding (`xpra`) remains the zero-code answer until Phase 2.
 

@@ -1,5 +1,8 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-09-28 (§ TD-2026-09-28-304 for the asynchronous-save pass: the
+formatter is off the shell thread for the interactive save, and what still waits).
+
 Reviewed 2026-09-22 (§ TD-2026-09-22-301 and 303 for the remote-projects
 groundwork pass: the launcher seam that every spawn now goes through while every
 site still names the local launcher, and the kernel that compiles and links
@@ -408,6 +411,30 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [OPEN]
+
+`SaveFormatterService` took the formatter off the shell thread for the INTERACTIVE
+save, which is the one that used to freeze the window on every Ctrl+S. Three things
+it did not finish, all of them the same shape — a caller that acts on the save's
+completion, and therefore still blocks:
+
+- **the blocking callers.** Closing a tab, renaming, deleting, quitting and the
+  dirty prompt all call `SaveGroupTab` in `SaveMode::Blocking`, which reaches
+  `SaveFormatterService::RunBlocking` and waits. The wait is no worse than it ever
+  was, and it is bounded by the same five-second cap, but it is still a freeze —
+  just a rarer one. Finishing it means what the design's G5 describes: those
+  callers hold a continuation and run it when the save completes, rather than
+  waiting for it. `CheckNoSynchronousSubprocessInWorkspace`'s second half confines
+  `RunBlocking` to the save-pipeline TU so this cannot spread meanwhile.
+- **save participants still run on the shell thread.** They are plugin calls that
+  hand off to the plugin worker and wait, so they are bounded by the plugin
+  runtime's own budget rather than by a subprocess — but they are a wait, and
+  moving them needs the plugin host to be callable from a second thread.
+- **compare and merge saves are still blocking.** Their post-save bookkeeping is
+  per-surface (the merge tab's disk tick and stale flag, the compare pane's
+  re-derive) and a deferred completion would have to find the pane rather than the
+  tab. Deliberately left; the formatter stall on those surfaces is rarer.
 
 ### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [OPEN]
 
