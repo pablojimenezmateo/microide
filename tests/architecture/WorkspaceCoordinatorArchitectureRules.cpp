@@ -270,20 +270,23 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
   // transparent `project::` alias (the old lint saw only the first, which is how the
   // alias slipped the "dispatch through ProjectBackgroundExecutor" policy —
   // TD-2026-07-16-15); since the launcher landed it is also `<something
-  // launcher>.Run(`. Adding that spelling is not optional housekeeping: routing the
+  // launcher>.Run(`. Adding that spelling was not optional housekeeping: routing the
   // formatter through the launcher removed the last `RunSubprocess` token from
-  // src/workspace, so a rule matching only that token would have gone green while the
-  // five-second synchronous formatter it exists to bound sat exactly where it was.
+  // src/workspace, and a rule matching only that token would have gone green while
+  // the five-second synchronous formatter it exists to bound sat exactly where it was.
   const std::regex pattern(
       R"(\b(platform|project)::RunSubprocess\s*\(|[Ll]auncher(\(\))?\s*(\.|->)\s*Run\s*\()");
-  // Deliberate, documented exception: format-on-save runs the contributed formatter
-  // synchronously because an EXPLICIT save is a user-initiated blocking action that must
-  // complete before returning (bounded by a 5 s timeout; autosave — the frequent path —
-  // suppresses formatters so background writes never block the UI). This one site is
-  // allowlisted; making it async would change the save contract (visible in-progress /
-  // cancellation UX) and is the design's groundwork G5. Do NOT add new entries here.
+  // The one file that may spawn: SaveFormatterService, which does it from its own
+  // worker thread. That is the service's whole reason to exist — format-on-save is ON
+  // by default and the bundled prettier plugin registers a formatter for every web
+  // filetype, so this subprocess used to freeze the window on every Ctrl+S.
+  //
+  // It is not a free pass. `RunBlocking` still waits on the shell thread, for the
+  // saves whose caller cannot return before the file is on disk (closing a tab,
+  // renaming, quitting), and the second half of this rule keeps that wait from
+  // spreading past the TU that owns the save pipeline.
   const std::array<std::string_view, 1> allowed_files = {
-      "WorkspaceTabCoordinatorShellBridge.cpp",
+      "SaveFormatterService.cpp",
   };
   // A rule whose allowlist has gone empty of real matches is scanning for a call form
   // the tree no longer uses. Track whether the exempt file still holds one.
@@ -303,16 +306,52 @@ RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& 
     const std::string text = ReadText(entry.path());
     AppendCodeMaskRegexViolations(
         result, entry.path(), text, pattern,
-        "workspace code must not run synchronous subprocesses; use ProjectBackgroundExecutor");
+        "workspace code must not run synchronous subprocesses; post the work to a "
+        "worker (SaveFormatterService, ProjectBackgroundExecutor)");
   }
   if (!saw_allowlisted_match) {
     result.missing_targets.push_back(Violation{
+        .path = repo_root / "src/workspace/services/SaveFormatterService.cpp",
+        .line = 1,
+        .message = "the one allowlisted subprocess spawn is gone from this file; either it "
+                   "moved (repoint the allowlist) or the formatter stopped being a "
+                   "subprocess — either way this rule is no longer scanning for the call "
+                   "form it exists to bound",
+    });
+  }
+
+  // Second half: the shell-thread WAIT. `RunBlocking` is the only remaining way for a
+  // save to park the UI on a formatter, and it exists for the saves whose caller acts
+  // on completion. Confining the call to the TU that owns the save pipeline is what
+  // stops "just wait for it here" from creeping back into the ordinary paths.
+  const std::regex run_blocking(R"(\bRunBlocking\s*\()");
+  bool saw_run_blocking = false;
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string filename = entry.path().filename().string();
+    const std::string text = ReadText(entry.path());
+    if (filename == "SaveFormatterService.cpp" ||
+        filename == "WorkspaceTabCoordinatorShellBridge.cpp") {
+      if (std::regex_search(text, run_blocking)) {
+        saw_run_blocking = true;
+      }
+      continue;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, run_blocking,
+        "only the save pipeline may wait on a formatter from the shell thread; an "
+        "interactive save defers (SaveMode::Deferred) and its completion finishes it");
+  }
+  if (!saw_run_blocking) {
+    result.missing_targets.push_back(Violation{
         .path = repo_root / "src/workspace/coordinators/WorkspaceTabCoordinatorShellBridge.cpp",
         .line = 1,
-        .message = "the one allowlisted synchronous spawn is gone from this file; either "
-                   "it moved (repoint the allowlist) or G5 landed and the exception should "
-                   "be DELETED — either way this rule is no longer scanning for the call "
-                   "form it exists to bound",
+        .message = "no RunBlocking call remains in the save pipeline; if the blocking save "
+                   "path is genuinely gone this half of the rule should be deleted, not "
+                   "left scanning for nothing",
     });
   }
   return result;

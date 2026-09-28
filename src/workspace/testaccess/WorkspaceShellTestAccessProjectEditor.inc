@@ -891,6 +891,20 @@
   static bool HasFormatterForLanguage(WorkspaceShell& shell, std::string_view language_id) {
     return FindFormatter(shell.formatter_registry_, language_id) != nullptr;
   }
+  // Register a formatter without a plugin. The save pipeline's behaviour is a
+  // property of the pipeline, not of Lua, and a test that had to load a plugin to
+  // reach it would be testing the plugin host instead.
+  static void RegisterFormatterForTesting(WorkspaceShell& shell,
+                                          std::string language_id,
+                                          std::vector<std::string> command) {
+    shell.formatter_registry_.Register(FormatterSpec{
+        .id = "test-formatter",
+        .language_id = std::move(language_id),
+        .label = "Test formatter",
+        .command = std::move(command),
+        .plugin_id = "test",
+    });
+  }
   static bool RunSaveParticipantsForTesting(WorkspaceShell& shell,
                                             const std::filesystem::path& path,
                                             std::string* text,
@@ -901,7 +915,23 @@
                                                      const std::filesystem::path& path,
                                                      editor::TextViewport& viewport,
                                                      std::string* error_message) {
-    return shell.PrepareEditorViewportForSave(path, viewport, error_message);
+    return shell.PrepareEditorViewportForSave(path, viewport, error_message).ok();
+  }
+  // Deferred preparation plus the wait that finishes it: what a test wants is the
+  // same end state as a blocking save, reached through the asynchronous path.
+  static bool PrepareEditorViewportForSaveDeferredForTesting(WorkspaceShell& shell,
+                                                             const std::filesystem::path& path,
+                                                             editor::TextViewport& viewport) {
+    const SavePreparation prepared =
+        shell.PrepareEditorViewportForSave(path, viewport, nullptr, SaveMode::Deferred);
+    shell.save_formatter_service_.FlushPendingRuns();
+    return prepared.ok();
+  }
+  static void FlushPendingSaveFormatters(WorkspaceShell& shell) {
+    shell.save_formatter_service_.FlushPendingRuns();
+  }
+  static int PendingSaveFormatterCount(const WorkspaceShell& shell) {
+    return shell.save_formatter_service_.PendingCount();
   }
   static const std::vector<plugin::PluginHost::ContributedAuthProvider>& ContributedAuthProviders(
       const WorkspaceShell& shell) {

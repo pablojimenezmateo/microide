@@ -64,8 +64,9 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .prepare_editor_view_for_save =
               [this](const std::filesystem::path& path,
                      editor::TextViewport& viewport,
-                     std::string* error_message) {
-                return PrepareEditorViewportForSave(path, viewport, error_message);
+                     std::string* error_message,
+                     SaveMode mode) {
+                return PrepareEditorViewportForSave(path, viewport, error_message, mode);
               },
           .apply_editor_preferences =
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
@@ -121,14 +122,73 @@ EditorTabService& WorkspaceShell::MakeEditorTabService() {
   return *glue_->editor_tab_service;
 }
 
-bool WorkspaceShell::SaveTab(std::size_t index) {
+bool WorkspaceShell::SaveTab(std::size_t index, SaveMode mode) {
   std::lock_guard<std::mutex> lock(save_tab_mutex_);
-  return MakeEditorTabService().Save(index);
+  return MakeEditorTabService().Save(index, mode);
 }
 
-bool WorkspaceShell::SaveGroupTab(std::size_t group_index, std::size_t index) {
+bool WorkspaceShell::SaveGroupTab(std::size_t group_index, std::size_t index, SaveMode mode) {
   std::lock_guard<std::mutex> lock(save_tab_mutex_);
-  return MakeEditorTabService().SaveGroupTab(group_index, index);
+  return MakeEditorTabService().SaveGroupTab(group_index, index, mode);
+}
+
+void WorkspaceShell::ReportSaveFormatterFailure(
+    const SaveFormatterService::Completion& completion, std::string* error_message) {
+  const std::string what = completion.timed_out ? "timed out" : "failed";
+  if (error_message != nullptr) {
+    *error_message = "formatter '" + completion.formatter_id + "' " + what;
+  }
+  // The file still saves (unformatted); warn so the silent formatter failure is
+  // visible rather than swallowed.
+  Notify(NotificationService::Tone::Warning,
+         "Formatter '" + completion.formatter_id + "' " + what + "; saved unformatted");
+}
+
+void WorkspaceShell::ApplyDeferredSaveFormat(
+    const SaveFormatterService::Completion& completion) {
+  if (completion.id == 0) {
+    return;
+  }
+  // Find the tab that posted this run. A walk rather than a map: run ids are
+  // process-monotonic so at most one tab carries this one, the tab may have moved
+  // group or index while the formatter ran, and the walk costs one pass over the
+  // open tabs once per save.
+  for (std::size_t group_index = 0;
+       group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
+    EditorGroup& group = context_.current_project_state.editor_groups[group_index];
+    for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
+      TabEntry& tab = group.open_tabs[tab_index];
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          tab.editor_state->pending_format_save_id != completion.id) {
+        continue;
+      }
+      auto& editor_state = *tab.editor_state;
+      const std::uint64_t posted_revision = editor_state.pending_format_save_revision;
+      editor_state.pending_format_save_id = 0;
+      editor_state.pending_format_save_revision = 0;
+      if (!completion.ok) {
+        if (!completion.formatter_id.empty()) {
+          ReportSaveFormatterFailure(completion, nullptr);
+        }
+      } else if (!completion.formatted_text.empty()) {
+        if (editor_state.viewport.content_revision() == posted_revision) {
+          editor_state.viewport.ReloadPreservingViewState(completion.formatted_text);
+          editor_state.viewport.SetDirty(true);
+        } else {
+          // The user typed while the formatter ran. Applying its output now would
+          // silently undo that edit, so the buffer as it stands is what gets written
+          // and the formatter's answer is dropped.
+          Notify(NotificationService::Tone::Info,
+                 "Buffer changed while formatting; saved unformatted");
+        }
+      }
+      // One re-entry, with the formatter suppressed, so this lands exactly one write
+      // and cannot post another run.
+      editor_state.skip_formatter_once = true;
+      SaveGroupTab(group_index, tab_index, SaveMode::Blocking);
+      return;
+    }
+  }
 }
 
 void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
@@ -232,14 +292,15 @@ std::optional<Uint32> WorkspaceShell::NextAutosaveDelayMs() const {
   return static_cast<Uint32>(std::max<Uint64>(1, delay - elapsed));
 }
 
-bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& path,
-                                                  editor::TextViewport& viewport,
-                                                  std::string* error_message) {
+SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& path,
+                                                             editor::TextViewport& viewport,
+                                                             std::string* error_message,
+                                                             SaveMode mode) {
   if (error_message != nullptr) {
     error_message->clear();
   }
   if (path.empty()) {
-    return true;
+    return SavePreparation::Ready();
   }
 
   // Fast-return BEFORE serializing the whole buffer when no save transform can run:
@@ -264,75 +325,76 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
   // Autosave suppresses the formatter so a background write never blocks the UI thread
   // on an external subprocess; explicit saves still format.
   const bool format_on_save = !autosave_suppress_format_on_save_ &&
+                              mode != SaveMode::SkipFormatter &&
                               SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
   const FormatterSpec* formatter =
       (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
                                             : nullptr;
   const bool has_formatter = formatter != nullptr && !formatter->command.empty();
   if (!has_save_participants && !has_formatter) {
-    return true;  // nothing will transform the text; skip preparation serialization
+    return SavePreparation::Ready();  // nothing transforms the text; skip serializing
   }
 
   std::string text = SerializeViewportText(viewport);
   const std::string original_text = text;  // to detect whether a transform changed it
   if (has_save_participants &&
       !plugin_runtime_.Host().RunSaveParticipants(path, &text, error_message)) {
-    return false;
+    return SavePreparation::Failed();
   }
 
   if (has_formatter) {
-    // Save is synchronous from the UI's perspective, so the formatter has to complete before
-    // we return. Running it inline avoids the misleading executor-post-then-wait pattern that
-    // implied background work but still blocked the calling thread. To keep a hung or
-    // pathologically slow formatter from freezing the UI indefinitely, bound the run with a
-    // deadline: on expiry the child is killed and the file saves unformatted (warned below).
-    // The cap is generous so legitimate slow formatters on large files still complete.
+    // The formatter is a subprocess. Bounded by a deadline, yes, but starting node is
+    // a few hundred milliseconds and the cap is five seconds — inline on the shell
+    // thread that is the whole window frozen, on every save. It runs on
+    // SaveFormatterService's worker now.
     constexpr int kFormatterTimeoutMs = 5000;
     // Through the project's launcher: a formatter must run where the file it is
     // formatting lives, or it reformats against the wrong toolchain's config.
     // Explicitly local today (TD-2026-09-22-301: the project does not own one yet).
-    const platform::ProcessLauncher& launcher = platform::LocalProcessLauncher();
-    platform::SubprocessResult result =
-        launcher.Run(formatter->command,
-                     platform::SubprocessOptions{
-                         .cwd = launcher.ResolveWorkingDirectory(
-                             context_.current_project_state.root),
-                         .stdin_text = text,
-                         .environment_overrides = {},
-                         .timeout_ms = kFormatterTimeoutMs,
-                     });
-
-    if (!result.success()) {
-      if (error_message != nullptr) {
-        *error_message = result.timed_out
-                             ? "formatter '" + formatter->id + "' timed out"
-                             : "formatter '" + formatter->id + "' failed";
-        if (!result.stderr_text.empty()) {
-          *error_message += ": " + result.stderr_text;
-        }
+    SaveFormatterService::Request request{
+        .command = formatter->command,
+        .cwd = context_.current_project_state.root,
+        .text = text,
+        .formatter_id = formatter->id,
+        .timeout_ms = kFormatterTimeoutMs,
+    };
+    if (mode == SaveMode::Deferred) {
+      // The participants' output (if any) is in `text` and goes with the run, but it
+      // is NOT applied to the viewport yet: the completion decides, against the
+      // revision, whether the formatter's answer is still about this buffer.
+      const std::uint64_t run_id = save_formatter_service_.Begin(
+          path.generic_string(), std::move(request), platform::LocalProcessLauncher(),
+          [this](SaveFormatterService::Completion completion) {
+            ApplyDeferredSaveFormat(completion);
+          });
+      if (run_id != 0) {
+        return SavePreparation::Deferred(run_id);
       }
-      // The file still saves (unformatted); warn so the silent formatter failure
-      // is visible rather than swallowed.
-      Notify(NotificationService::Tone::Warning,
-             result.timed_out
-                 ? "Formatter '" + formatter->id + "' timed out; saved unformatted"
-                 : "Formatter '" + formatter->id + "' failed; saved unformatted");
-      return true;
-    }
-    if (!result.stdout_text.empty()) {
-      text = result.stdout_text;
+    } else {
+      // A save whose caller acts on completion — closing a tab, renaming, quitting —
+      // still has to have the file on disk when it returns. It pays the same wait the
+      // inline path always did, off the shell thread's own stack.
+      const SaveFormatterService::Completion completion =
+          save_formatter_service_.RunBlocking(std::move(request), platform::LocalProcessLauncher());
+      if (!completion.ok) {
+        ReportSaveFormatterFailure(completion, error_message);
+        return SavePreparation::Ready();
+      }
+      if (!completion.formatted_text.empty()) {
+        text = completion.formatted_text;
+      }
     }
   }
 
   // Compare against the snapshot captured before transforms, not a fresh re-serialize:
   // when no participant/formatter changed the text there is nothing to apply. (TD-16.)
   if (text == original_text) {
-    return true;
+    return SavePreparation::Ready();
   }
 
   viewport.ReloadPreservingViewState(text);
   viewport.SetDirty(true);
-  return true;
+  return SavePreparation::Ready();
 }
 
 bool WorkspaceShell::OpenVirtualDocumentInNewTab(std::string_view uri) {

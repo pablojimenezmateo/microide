@@ -602,6 +602,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceFoldingRefresh.cpp
   src/workspace/registries/WorkspaceSettingsRegistry.cpp
   src/workspace/persistence/SettingsStore.cpp
+  src/workspace/services/SaveFormatterService.cpp
   src/workspace/services/SettingsOverlayService.cpp
   src/workspace/registries/WorkspaceStatusRegistry.cpp
   src/workspace/registries/WorkspaceSidebarRegistry.cpp
@@ -1150,6 +1151,7 @@ add_executable(microide_tests
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/CommandLineTests.cpp
+  tests/SaveFormatterPipelineTests.cpp
   tests/ProcessLauncherTests.cpp
   tests/FileIndexWatcherTests.cpp
   tests/FileIndexWatcherContractTests.cpp

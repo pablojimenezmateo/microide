@@ -684,6 +684,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
           .save_tab = [this](std::size_t index) { return SaveTab(index); },
+          .save_tab_deferred =
+              [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
           .save_tab_as =
               [this](std::size_t index, const std::filesystem::path& path, std::string* error) {
                 std::lock_guard<std::mutex> lock(save_tab_mutex_);

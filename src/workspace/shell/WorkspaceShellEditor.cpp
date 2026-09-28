@@ -519,6 +519,10 @@ void WorkspaceShell::CloseAllTabs() {
 }
 
 void WorkspaceShell::CloseTab(std::size_t index) {
+  // A deferred save writes when its formatter returns. Nothing that moves, closes or
+  // replaces the tab may run before that write lands, or the save the user asked for
+  // is silently dropped. The flush only ever waits when a formatter is mid-run.
+  save_formatter_service_.FlushPendingRuns();
   MakeEditorTabService().Close(index);
 }
 

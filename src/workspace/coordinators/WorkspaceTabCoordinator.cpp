@@ -47,11 +47,11 @@ std::string TabCoordinator::ActiveTitle() const {
   return state_.focused_group().open_tabs[state_.focused_group().active_tab_index].title;
 }
 
-bool TabCoordinator::Save(std::size_t index) {
-  return SaveGroupTab(state_.clamped_focused_group_index(), index);
+bool TabCoordinator::Save(std::size_t index, SaveMode mode) {
+  return SaveGroupTab(state_.clamped_focused_group_index(), index, mode);
 }
 
-bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
+bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, SaveMode mode) {
   if (group_index >= state_.editor_groups.size()) {
     return false;
   }
@@ -84,9 +84,13 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
     // Same preparation as an editor tab's save: the compare right pane is a real
     // file and this is the same Ctrl+S. Without it, save participants and
     // format-on-save applied to a buffer depending on which surface it was open in.
+    // Blocking: the compare surface's post-save bookkeeping is its own, and a
+    // deferred completion would have to re-find the pane rather than the tab.
     if (operations_.prepare_editor_view_for_save &&
         !operations_.prepare_editor_view_for_save(compare_tab.right_viewport.path(),
-                                                  compare_tab.right_viewport, nullptr)) {
+                                                  compare_tab.right_viewport, nullptr,
+                                                  SaveMode::Blocking)
+             .ok()) {
       return false;
     }
     if (!compare_tab.right_viewport.Save()) {
@@ -116,7 +120,9 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
     }
     if (operations_.prepare_editor_view_for_save &&
         !operations_.prepare_editor_view_for_save(merge_tab.result_viewport.path(),
-                                                  merge_tab.result_viewport, nullptr)) {
+                                                  merge_tab.result_viewport, nullptr,
+                                                  SaveMode::Blocking)
+             .ok()) {
       return false;
     }
     if (!merge_tab.result_viewport.Save()) {
@@ -170,10 +176,28 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
     }
     return false;
   }
-  if (operations_.prepare_editor_view_for_save &&
-      !operations_.prepare_editor_view_for_save(candidate->path(), *candidate, nullptr)) {
-    return false;
+  if (operations_.prepare_editor_view_for_save) {
+    // A completion re-enters this save with the formatter suppressed exactly once,
+    // so the flag is consumed here whether or not a formatter would have run.
+    const bool suppress_formatter = editor_state->skip_formatter_once;
+    editor_state->skip_formatter_once = false;
+    const SavePreparation prepared = operations_.prepare_editor_view_for_save(
+        candidate->path(), *candidate, nullptr,
+        suppress_formatter ? SaveMode::SkipFormatter : mode);
+    if (!prepared.ok()) {
+      return false;
+    }
+    if (prepared.deferred()) {
+      // Nothing is written yet, and that is the point: the shell thread is free
+      // while the formatter runs. Record the run so its completion can find this
+      // tab, and the revision so it can tell whether its answer is still about
+      // this buffer.
+      editor_state->pending_format_save_id = prepared.deferred_run_id;
+      editor_state->pending_format_save_revision = candidate->content_revision();
+      return true;
+    }
   }
+  editor_state->pending_format_save_id = 0;
   if (!candidate->Save()) {
     if (operations_.notify_save_failed) {
       operations_.notify_save_failed(candidate->path());

@@ -201,7 +201,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         context_.OpenSaveAsPrompt();
         return DispatchResult::Handled;
       }
-      if (context_.SaveTab(context_.ActiveTabIndex())) {
+      // Deferred: this is the save the user is sitting in front of, and the
+      // formatter behind it is a subprocess. It reports success optimistically —
+      // a write that fails after the formatter returns surfaces as a notification,
+      // the same way a failed formatter already does.
+      if (context_.SaveTabDeferred(context_.ActiveTabIndex())) {
         if (source == ActionSource::Shortcut) {
           context_.ResetCaretBlink();
         }

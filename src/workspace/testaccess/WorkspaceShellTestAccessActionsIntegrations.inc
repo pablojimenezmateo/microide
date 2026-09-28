@@ -351,6 +351,12 @@
   }
   static void OpenCommandPalette(WorkspaceShell& shell) { shell.OpenCommandPalette(); }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
+  static bool SaveTabDeferred(WorkspaceShell& shell, std::size_t index) {
+    return shell.SaveTab(index, SaveMode::Deferred);
+  }
+  static int DrainSaveFormatterCompletions(WorkspaceShell& shell) {
+    return shell.save_formatter_service_.DrainCompletions();
+  }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static void MaybeArmAutosaveTimer(WorkspaceShell& shell) { shell.MaybeArmAutosaveTimer(); }
   static bool AutosaveArmed(const WorkspaceShell& shell) { return shell.autosave_armed_; }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "workspace/SavePreparation.h"
+
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -17,8 +19,9 @@ class EditorTabService {
   explicit EditorTabService(TabCoordinator coordinator);
 
   std::string ActiveTitle() const;
-  bool Save(std::size_t index);
-  bool SaveGroupTab(std::size_t group_index, std::size_t index);
+  bool Save(std::size_t index, SaveMode mode = SaveMode::Blocking);
+  bool SaveGroupTab(std::size_t group_index, std::size_t index,
+                    SaveMode mode = SaveMode::Blocking);
   bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
                       const std::filesystem::path& path, std::string* error);
   bool IsDirty(std::size_t index) const;

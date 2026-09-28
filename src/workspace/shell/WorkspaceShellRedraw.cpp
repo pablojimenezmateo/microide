@@ -1038,6 +1038,7 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   // Apply any completed off-thread forced rescan (TD-2026-07-17-081/082) and
   // project replace-all (TD-2026-07-17-021) first; their wakes reuse this event, and
   // the applies invalidate the finder/search/index below.
+  save_formatter_service_.DrainCompletions();
   file_index_refresh_mailbox_.Drain();
   project_replace_mailbox_.Drain();
   project_file_event_pending_.store(false, std::memory_order_release);

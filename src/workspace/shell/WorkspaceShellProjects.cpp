@@ -137,6 +137,10 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
 
 bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   (void) log_feedback;
+  // A deferred save writes when its formatter returns. Nothing that moves, closes or
+  // replaces the tab may run before that write lands, or the save the user asked for
+  // is silently dropped. The flush only ever waits when a formatter is mid-run.
+  save_formatter_service_.FlushPendingRuns();
   if (index >= context_.project_catalog.entries.size()) {
     return false;
   }
@@ -173,6 +177,10 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
 }
 
 void WorkspaceShell::CloseProject(std::size_t index) {
+  // A deferred save writes when its formatter returns. Nothing that moves, closes or
+  // replaces the tab may run before that write lands, or the save the user asked for
+  // is silently dropped. The flush only ever waits when a formatter is mid-run.
+  save_formatter_service_.FlushPendingRuns();
   MakeProjectCatalogService().Close(index);
   // Closing may drop the open-project count to <= 1, which can re-hide the strip when
   // "chrome.project_tabs.hide_when_single" is on; the coordinator only requests a redraw,

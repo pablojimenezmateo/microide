@@ -272,7 +272,9 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                 // is a real file, and "Save Result" running no formatter while Ctrl+S
                 // on the same buffer ran one is a difference nobody can see coming.
                 if (!PrepareEditorViewportForSave(merge_tab->result_viewport.path(),
-                                                  merge_tab->result_viewport, nullptr)) {
+                                                  merge_tab->result_viewport, nullptr,
+                                                  SaveMode::Blocking)
+                         .ok()) {
                   return false;
                 }
                 return merge_tab->result_viewport.Save();

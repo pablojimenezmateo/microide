@@ -30,8 +30,13 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
       if (!util::SameAsNormalizedPath(viewport.path(), normalized_path) || !viewport.dirty()) {
         continue;
       }
+      // Blocking: "Overwrite" is a modal answer, and this loop writes several tabs
+      // and then refreshes once. A deferred completion would land after that
+      // refresh.
       if (operations_.prepare_editor_view_for_save &&
-          !operations_.prepare_editor_view_for_save(viewport.path(), viewport, nullptr)) {
+          !operations_.prepare_editor_view_for_save(viewport.path(), viewport, nullptr,
+                                                    SaveMode::Blocking)
+               .ok()) {
         continue;
       }
       // Deliberately skip DetectDiskConflict: the user chose to overwrite. Save()

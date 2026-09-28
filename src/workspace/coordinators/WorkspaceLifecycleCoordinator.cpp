@@ -232,6 +232,10 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   project_file_event_type_ = register_wake();
   // Off-thread forced-rescan and project-replace-all results wake and drain on the
   // same project-file path.
+  // The deferred save's formatter completion rides the project-file wake: it ends
+  // in a write, a directory-tree refresh and a git refresh, which is exactly what
+  // that channel already drains.
+  save_formatter_service_.SetWakeChannel(project_file_event_type_);
   file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
   project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
   project_open_dialog_event_type_ = register_wake();
@@ -349,6 +353,10 @@ void WorkspaceShell::Shutdown() {
 }
 
 void WorkspaceShell::RequestQuit() {
+  // A deferred save writes when its formatter returns. Nothing that moves, closes or
+  // replaces the tab may run before that write lands, or the save the user asked for
+  // is silently dropped. The flush only ever waits when a formatter is mid-run.
+  save_formatter_service_.FlushPendingRuns();
   MakeLifecycleCoordinator().RequestQuit();
 }
 

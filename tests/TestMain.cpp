@@ -201,6 +201,7 @@ void RegisterPerfHarnessIsolationTests(std::vector<TestCase>& tests);
 void RegisterScenarioProcessIsolationTests(std::vector<TestCase>& tests);
 void RegisterBackgroundTaskCounterTests(std::vector<TestCase>& tests);
 void RegisterCommandLineTests(std::vector<TestCase>& tests);
+void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests);
 void RegisterProcessLauncherTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherTests(std::vector<TestCase>& tests);
 void RegisterFileIndexWatcherContractTests(std::vector<TestCase>& tests);
@@ -634,6 +635,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPhase5Tests(tests);
   microide::tests::RegisterBackgroundTaskCounterTests(tests);
   microide::tests::RegisterCommandLineTests(tests);
+  microide::tests::RegisterSaveFormatterPipelineTests(tests);
   microide::tests::RegisterProcessLauncherTests(tests);
   microide::tests::RegisterFileIndexWatcherTests(tests);
   microide::tests::RegisterFileIndexWatcherContractTests(tests);

@@ -709,9 +709,18 @@
   std::string PluginRuntimeReloadSummary() const;
   void NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_opens = true,
                                      bool open_lsp_documents = true);
-  bool PrepareEditorViewportForSave(const std::filesystem::path& path,
-                                    editor::TextViewport& viewport,
-                                    std::string* error_message = nullptr);
+  // Runs the save's participants and formatter. `SaveMode::Deferred` hands the
+  // formatter to SaveFormatterService's worker and returns without writing; the
+  // completion (ApplyDeferredSaveFormat) finishes that save.
+  SavePreparation PrepareEditorViewportForSave(const std::filesystem::path& path,
+                                               editor::TextViewport& viewport,
+                                               std::string* error_message = nullptr,
+                                               SaveMode mode = SaveMode::Blocking);
+  // Shell thread, from the SaveFormatterService completion: find the tab that posted
+  // this run and finish its save.
+  void ApplyDeferredSaveFormat(const SaveFormatterService::Completion& completion);
+  void ReportSaveFormatterFailure(const SaveFormatterService::Completion& completion,
+                                  std::string* error_message);
   bool OpenVirtualDocumentInNewTab(std::string_view uri);
   void ReloadVirtualDocumentTabs(std::string_view uri);
   bool IsReadOnlyVirtualDocument(const std::filesystem::path& path) const;
@@ -755,10 +764,11 @@
   void RequestCloseTab(std::size_t index);
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void SyncActiveEditorTab();
-  bool SaveTab(std::size_t index);
+  bool SaveTab(std::size_t index, SaveMode mode = SaveMode::Blocking);
   // Group-aware save wrapper (mirrors SaveTab's save_tab_mutex_ + format-suppress
   // bracket) so autosave / save-on-quit can flush a tab in the non-focused group.
-  bool SaveGroupTab(std::size_t group_index, std::size_t index);
+  bool SaveGroupTab(std::size_t group_index, std::size_t index,
+                    SaveMode mode = SaveMode::Blocking);
   // Autosave dirty, titled editor tabs when editor.autosave selects the matching
   // trigger (on_focus_change vs after_delay). Safe: never prompts, never clobbers.
   void MaybeAutosaveDirtyTabs(bool on_focus_change);
@@ -2198,6 +2208,7 @@
   StatusBarService status_bar_service_;
   StatusBarModelService status_bar_model_service_;
   NotificationService notification_service_;
+  SaveFormatterService save_formatter_service_;
   SettingsOverlayService settings_overlay_service_;
   // Terminal find bar. All of its state, scanning, and match navigation live in
   // the service; what stays here are the two input entry points, which have to

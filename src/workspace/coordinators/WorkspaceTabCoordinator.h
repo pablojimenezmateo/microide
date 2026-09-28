@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/SavePreparation.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -46,7 +47,13 @@ class TabCoordinator {
     // Whole-workspace open-view counts keyed by normalized generic path, built
     // once so closing a multi-tab group is O(views) rather than O(tabs*views).
     std::function<std::unordered_map<std::string, std::size_t>()> open_buffer_view_counts;
-    std::function<bool(const std::filesystem::path&, editor::TextViewport&, std::string*)>
+    // Runs save participants + the formatter. `SaveMode::Deferred` may hand the
+    // formatter to a worker and return `Deferred`, in which case the caller must NOT
+    // write: the completion re-enters the save with the formatter suppressed.
+    std::function<SavePreparation(const std::filesystem::path&,
+                                  editor::TextViewport&,
+                                  std::string*,
+                                  SaveMode)>
         prepare_editor_view_for_save;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
@@ -92,13 +99,14 @@ class TabCoordinator {
                  Operations operations);
 
   std::string ActiveTitle() const;
-  bool Save(std::size_t index);
+  bool Save(std::size_t index, SaveMode mode = SaveMode::Blocking);
   // Group-aware save primitive: saves editor_groups[group_index].open_tabs[index]
   // (Editor/Compare/Merge) with the same disk-conflict guard and plugin-save notify
   // as Save(). Bounds-checks both indices. Save() delegates here with the clamped
   // focused group; the all-groups flush paths (autosave, save-on-quit) call it
   // directly so a buffer dirtied in the non-focused split group is not skipped.
-  bool SaveGroupTab(std::size_t group_index, std::size_t index);
+  bool SaveGroupTab(std::size_t group_index, std::size_t index,
+                    SaveMode mode = SaveMode::Blocking);
   // Save As / naming an untitled buffer: rebinds the editor tab at `index` to
   // `path` (refused when another file already sits there) and saves it. On
   // failure `error` says why.

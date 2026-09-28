@@ -160,6 +160,9 @@ class WorkspaceActionContext {
     std::function<bool(std::size_t)> move_active_tab_to;
     std::function<bool()> reopen_active_tab;
     std::function<bool(std::size_t)> save_tab;
+    // The interactive save. Same tab, same contract, except the formatter runs off
+    // the shell thread and the write lands when it returns.
+    std::function<bool(std::size_t)> save_tab_deferred;
     std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
     std::function<bool(const std::filesystem::path&)> open_new_buffer_in_new_tab;
     std::function<void()> reset_caret_blink;
@@ -450,6 +453,7 @@ class WorkspaceActionContext {
   void MoveActiveTabTo(std::size_t index);
   void ReopenActiveTab();
   bool SaveTab(std::size_t index);
+  bool SaveTabDeferred(std::size_t index);
   // Save As / naming an untitled buffer. `error` says why on failure.
   bool SaveTabAs(std::size_t index, const std::filesystem::path& path, std::string* error);
   // A path that does not exist yet opens as an empty buffer bound to it.

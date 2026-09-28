@@ -833,6 +833,11 @@ bool WorkspaceActionContext::SaveTab(std::size_t index) {
   return operations_.save_tab(index);
 }
 
+bool WorkspaceActionContext::SaveTabDeferred(std::size_t index) {
+  return operations_.save_tab_deferred ? operations_.save_tab_deferred(index)
+                                       : operations_.save_tab(index);
+}
+
 bool WorkspaceActionContext::SaveTabAs(std::size_t index, const std::filesystem::path& path,
                                        std::string* error) {
   if (!operations_.save_tab_as) {
