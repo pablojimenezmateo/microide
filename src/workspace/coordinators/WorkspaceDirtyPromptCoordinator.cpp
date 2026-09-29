@@ -158,20 +158,66 @@ void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
 }
 
 void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
-  // Resolve stored stable ids to CURRENT focused-group indices (dropping tabs that
-  // closed while the prompt was up) so the save/close acts on the intended tabs, not
-  // whatever now occupies the captured indices (TD-2026-07-17-024).
-  const std::vector<std::size_t> dirty_indices =
-      ResolveFocusedTabIndices(prompt.dirty_tab_ids, prompt.dirty_tabs);
-  if (prompt.selected_action == 0 && !SaveDirtyTabs(dirty_indices)) {
-    return;
+  const bool saving = prompt.selected_action == 0;
+  // Every dirty target is saved-then-closed, each closing when its OWN write
+  // lands. Closing several dirty buffers used to run every formatter inline and
+  // wait for all of them, so "Close All" over a handful of JS files froze the
+  // window once per file (TD-2026-09-28-304).
+  //
+  // Per tab rather than all-or-nothing, which is also what VS Code does: a tab
+  // whose save is refused (a participant rejected it, or the file changed on
+  // disk) stays open with its contents while the others close, instead of
+  // cancelling the whole operation after having already written some of them.
+  //
+  // Re-resolved before each one. Indices shift as tabs close, and they close in
+  // whatever order the worker finishes their formatters, so an index captured up
+  // front addresses a different tab by the time it is used (TD-2026-07-17-024 is
+  // the same hazard with the prompt up).
+  //
+  // Deferring REQUIRES the stable ids. Without them the close pass below can only
+  // address tabs by index, and it cannot tell a tab whose write is still in
+  // flight from a clean one — so it would force-close the deferred tab and drop
+  // the write. An id-less prompt therefore keeps the old blocking behaviour,
+  // which is correct and merely slow.
+  const bool can_defer = !prompt.dirty_tab_ids.empty();
+  if (saving) {
+    if (!can_defer) {
+      if (!SaveDirtyTabs(ResolveFocusedTabIndices(prompt.dirty_tab_ids, prompt.dirty_tabs))) {
+        return;
+      }
+    } else {
+      for (const std::uint64_t id : prompt.dirty_tab_ids) {
+        if (const std::optional<std::size_t> index = ResolveFocusedTabIndexById(id)) {
+          editor_tabs_.SaveThenClose(*index);
+        }
+      }
+    }
   }
 
   // See ConfirmCloseTab: restore focus so closing non-active dirty tabs cannot
   // strand keyboard input on the now-hidden overlay handler.
   prompt_surfaces_.DismissDirtyPrompt(true);
-  std::vector<std::size_t> indices =
-      ResolveFocusedTabIndices(prompt.target_tab_ids, prompt.target_tabs);
+
+  // Whatever is left of the target set. On Save that is the CLEAN targets only:
+  // a dirty one is owned by its SaveThenClose above, and force-closing it here
+  // would either double-close (its id is gone, so the index would address a
+  // different tab) or discard the edits of one whose save was refused.
+  const auto is_dirty_target = [&prompt](std::uint64_t id) {
+    return std::find(prompt.dirty_tab_ids.begin(), prompt.dirty_tab_ids.end(), id) !=
+           prompt.dirty_tab_ids.end();
+  };
+  if (!prompt.target_tab_ids.empty()) {
+    for (const std::uint64_t id : prompt.target_tab_ids) {
+      if (saving && can_defer && is_dirty_target(id)) {
+        continue;
+      }
+      if (const std::optional<std::size_t> index = ResolveFocusedTabIndexById(id)) {
+        editor_tabs_.Close(*index);
+      }
+    }
+    return;
+  }
+  std::vector<std::size_t> indices = prompt.target_tabs;
   std::sort(indices.begin(), indices.end());
   indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
   // Close highest-index-first so each close cannot shift a not-yet-closed lower index.

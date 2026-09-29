@@ -207,6 +207,53 @@ void TestADeferredSaveLeavesTheBufferDirtyUntilItWrites() {
          "and only once the write lands is it clean");
 }
 
+// Close All over several dirty buffers. It used to run every formatter inline
+// and wait for all of them, so closing a handful of JS files froze the window
+// once per file (TD-2026-09-28-304). Each tab now closes when its OWN write
+// lands.
+void TestCloseAllDirtyTabsDefersEveryFormatter() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path first = root / "first.txt";
+  const std::filesystem::path second = root / "second.txt";
+  WriteFile(first, "hello one\n");
+  WriteFile(second, "hello two\n");
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, first);
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      UppercasingFormatter());
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("y");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2,
+         "the fixture opens two dirty tabs");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCloseAllTabs(shell), "Close All runs");
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "two dirty buffers raise the unsaved-changes prompt");
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);  // Save
+
+  // Neither write has happened and neither tab has closed: both formatters are
+  // on the worker and the shell thread came back without waiting for either.
+  Expect(ReadFile(first) == "hello one\n" && ReadFile(second) == "hello two\n",
+         "no file is written before its formatter returns");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2,
+         "and no tab closes before its own write lands");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(ReadFile(first) == "xHELLO one\n",
+         "the first file is written formatted, got: " + ReadFile(first));
+  Expect(ReadFile(second) == "yHELLO two\n",
+         "the second file is written formatted, got: " + ReadFile(second));
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 0,
+         "and both tabs are closed once their writes land");
+}
+
 // A blocking save is what every caller that acts on completion still gets: the file
 // is on disk by the time it returns, formatter and all.
 void TestBlockingSaveWritesFormattedBeforeItReturns() {
@@ -227,6 +274,8 @@ void TestBlockingSaveWritesFormattedBeforeItReturns() {
 }  // namespace
 
 void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveFormatterPipeline/CloseAllDirtyTabsDefersEveryFormatter",
+          TestCloseAllDirtyTabsDefersEveryFormatter);
   AddTest(tests, "SaveFormatterPipeline/ADeferredSaveLeavesTheBufferDirtyUntilItWrites",
           TestADeferredSaveLeavesTheBufferDirtyUntilItWrites);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseWaitsForTheWriteWithoutBlocking",
