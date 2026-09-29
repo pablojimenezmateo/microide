@@ -74,8 +74,9 @@ std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
 // If HEAD is symbolic (`ref: refs/heads/<branch>`), return the ref path relative to the
 // common gitdir (e.g. `refs/heads/main`). Returns nullopt for a detached HEAD (raw oid),
 // where the HEAD file tick itself already tracks movement.
-std::optional<std::string> ReadSymbolicHeadRef(const std::filesystem::path& head_path) {
-  const std::optional<std::string> line = ReadFirstLineOfRegularFile(head_path);
+// Split from the file read so a caller that already has HEAD's first line does not
+// open the file a second time to ask what it points at.
+std::optional<std::string> SymbolicRefFromHeadLine(const std::optional<std::string>& line) {
   if (!line.has_value()) {
     return std::nullopt;
   }
@@ -100,7 +101,8 @@ std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& proje
   if (!git_dir.has_value()) {
     return std::nullopt;
   }
-  const std::optional<std::string> ref = ReadSymbolicHeadRef(*git_dir / "HEAD");
+  const std::optional<std::string> ref =
+      SymbolicRefFromHeadLine(ReadFirstLineOfRegularFile(*git_dir / "HEAD"));
   if (!ref.has_value()) {
     return std::nullopt;  // detached HEAD — no branch name to show
   }
@@ -178,14 +180,16 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   const std::filesystem::path& git_dir = *git_dir_opt;
 
   MetadataFingerprint fingerprint;
-  // HEAD by content. It is one line, and this call already had to read it to resolve
-  // the branch ref below — so comparing content costs nothing extra and stops a
-  // rewrite-with-identical-bytes (`git checkout` of the branch already checked out,
-  // a tool that rewrites HEAD) from reporting a change and spawning a `git status`
-  // with nothing to find.
-  if (const std::optional<std::string> head_line =
-          ReadFirstLineOfRegularFile(git_dir / "HEAD");
-      head_line.has_value()) {
+  // HEAD by content: one line, read ONCE and used for both the fingerprint and the
+  // branch-ref resolution below. It replaces a `last_write_time` stat with a read
+  // of a ~30-byte file — not free, but it is what stops a rewrite with identical
+  // bytes (`git checkout` of the branch already checked out, a tool that rewrites
+  // HEAD) from reporting a change and spawning a `git status` with nothing to find,
+  // which costs a process. An earlier version of this comment claimed the read was
+  // already happening and therefore free; it was not — it had added a second open
+  // of the same file.
+  const std::optional<std::string> head_line = ReadFirstLineOfRegularFile(git_dir / "HEAD");
+  if (head_line.has_value()) {
     fingerprint.head_text = util::TrimAsciiWhitespace(*head_line);
   }
   if (const auto index_tick = util::FileModificationTick(git_dir / "index"); index_tick.has_value()) {
@@ -197,7 +201,7 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   // ref lives under the COMMON gitdir for linked worktrees, so resolve `commondir`.
   // By content too: it is a single object id, and that id is exactly the question.
   const std::filesystem::path common_dir = ResolveCommonDir(git_dir);
-  if (const std::optional<std::string> ref = ReadSymbolicHeadRef(git_dir / "HEAD");
+  if (const std::optional<std::string> ref = SymbolicRefFromHeadLine(head_line);
       ref.has_value()) {
     if (const std::optional<std::string> ref_line =
             ReadFirstLineOfRegularFile(common_dir / *ref);
