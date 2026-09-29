@@ -88,7 +88,14 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
         continue;
       }
       matched_any_view = true;
-      if (!signature.SameContentAs(viewport.disk_signature())) {
+      // Not `SameContentAs`: a touch or a byte-identical rewrite moves the mtime
+      // and leaves the file as it was, and reading that as an external change
+      // reloads every open clean view and shows a "reloaded from disk" notice for
+      // a file nobody changed — or, for a dirty view, raises an external-change
+      // banner unprompted. DiskContentUnchanged confirms the mismatch against the
+      // content the view recorded before believing it, and re-baselines so the
+      // next event on this path is one stat again.
+      if (!viewport.DiskContentUnchanged(signature)) {
         return false;
       }
     }

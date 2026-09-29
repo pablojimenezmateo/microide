@@ -78,6 +78,9 @@
     }
     return false;
   }
+  static void ClearEditorBannersForTesting(WorkspaceShell& shell) {
+    shell.context_.current_project_state.editor_banners.clear();
+  }
   static bool HasReloadedNoticeBanner(const WorkspaceShell& shell,
                                       const std::filesystem::path& path) {
     const std::filesystem::path normalized = path.lexically_normal();

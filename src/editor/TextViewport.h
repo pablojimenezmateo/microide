@@ -353,6 +353,12 @@ class TextViewport {
     StatError,  // the stat itself failed; treat conservatively as a conflict
   };
   DiskConflict DetectDiskConflict() const;
+  // True when `current` — a fresh stat of this viewport's path — describes the same
+  // CONTENT as the signature this viewport recorded. A stat mismatch is confirmed
+  // against the recorded content hash rather than trusted, so a touch or a
+  // byte-identical rewrite is not mistaken for someone else's edit. Re-baselines on
+  // a confirmed match, so the next call is one stat again.
+  bool DiskContentUnchanged(const util::FileSignature& current) const;
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;

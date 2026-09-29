@@ -4,6 +4,7 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include "editor/TextBuffer.h"
+#include "platform/FileIndexWatcher.h"
 
 #include <chrono>
 #include <string>
@@ -119,6 +120,93 @@ void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
          "the editor's own save must not raise any banner");
   Expect(ReadFile(file_path) == "mine original\n",
          "the saved file should contain the in-memory edits");
+}
+
+// A synthetic "this file was modified" batch, pushed through the LIVE watcher's
+// dispatch so the shell's own change handling runs. The real watcher may or may not
+// deliver an inotify event inside a test's window, and a test that asserts NOTHING
+// happened cannot tell "the fix worked" from "the event never arrived" — so the
+// event is made certain rather than waited for.
+platform::IndexUpdateBatch BuildModifiedBatch(const std::filesystem::path& root,
+                                              const std::filesystem::path& relative_path) {
+  const std::filesystem::path absolute_path = root / relative_path;
+  std::error_code mtime_error;
+  const auto mtime = std::filesystem::last_write_time(absolute_path, mtime_error);
+  std::error_code size_error;
+  const auto size = std::filesystem::file_size(absolute_path, size_error);
+  platform::IndexUpdateBatch batch;
+  batch.is_initial = false;
+  batch.changes.push_back(platform::IndexUpdateBatch::Change{
+      .kind = platform::IndexUpdateBatch::Kind::CreatedOrModified,
+      .entry = platform::IndexFileEntry{
+          .relative_path = relative_path,
+          .mtime = mtime_error ? std::filesystem::file_time_type{} : mtime,
+          .size = size_error ? 0 : size,
+      },
+  });
+  return batch;
+}
+
+// Regression: the watcher's "is this our own echo?" check compared mtime+size, so a
+// byte-identical rewrite read as an external change. For a CLEAN buffer that reloaded
+// the file and raised a "reloaded from disk" notice for a file nobody had changed;
+// for a dirty one it raised the external-change banner, unprompted. An agent
+// rewriting a file with the same bytes produces exactly this, which is why it is the
+// common case rather than the exotic one.
+void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path relative = "notes.txt";
+  const std::filesystem::path file_path = root / relative;
+  WriteFile(file_path, "same bytes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "identical-rewrite fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  DrainProjectChanges(shell);
+  WorkspaceShellTestAccess::ClearEditorBannersForTesting(shell);
+
+  // Rewrite with the SAME bytes: the mtime moves, the content does not.
+  WriteFile(file_path, "same bytes\n");
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
+             shell, BuildModifiedBatch(root, relative)),
+         "the fixture must actually deliver a watcher batch, or it proves nothing");
+  DrainProjectChanges(shell);
+
+  Expect(!WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
+         "a byte-identical rewrite must not announce a reload of a file that did not change");
+  Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "a byte-identical rewrite must not raise the external-change banner");
+}
+
+// The other half: a real external change must still reach the user. Without it the
+// fix above could pass by suppressing everything.
+void TestWorkspaceShellRealRewriteStillNotifies() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path relative = "notes.txt";
+  const std::filesystem::path file_path = root / relative;
+  WriteFile(file_path, "same bytes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "real-rewrite fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+
+  // Same LENGTH, different bytes — the case a content hash must not wave through.
+  WriteFile(file_path, "SAME BYTES\n");
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
+             shell, BuildModifiedBatch(root, relative)),
+         "the fixture must actually deliver a watcher batch");
+  DrainProjectChanges(shell);
+
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "a real external change to a dirty buffer still raises the banner");
 }
 
 void TestWorkspaceShellSaveTimeConflictGuardBlocksClobber() {
@@ -461,6 +549,10 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSelfWriteDoesNotRaiseBanner);
   AddTest(tests, "ExternalRepoChange/AutosaveFlushRespectsDiskConflict",
           TestWorkspaceShellAutosaveFlushRespectsDiskConflict);
+  AddTest(tests, "ExternalRepoChange/IdenticalRewriteRaisesNoReloadNotice",
+          TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice);
+  AddTest(tests, "ExternalRepoChange/RealRewriteStillNotifies",
+          TestWorkspaceShellRealRewriteStillNotifies);
   AddTest(tests, "ExternalRepoChange/SaveTimeConflictGuardBlocksClobber",
           TestWorkspaceShellSaveTimeConflictGuardBlocksClobber);
   AddTest(tests, "ExternalRepoChange/BannerOverwriteWritesInMemoryEdits",

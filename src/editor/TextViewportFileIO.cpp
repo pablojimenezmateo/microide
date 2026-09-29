@@ -313,34 +313,39 @@ TextViewport::DiskConflict TextViewport::DetectDiskConflict() const {
   if (!current.exists) {
     return DiskConflict::Vanished;
   }
+  return DiskContentUnchanged(current) ? DiskConflict::None : DiskConflict::Changed;
+}
+
+bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) const {
   if (current.SameContentAs(document_->disk_signature)) {
-    return DiskConflict::None;
+    return true;  // one stat answered it
   }
   // The stat differs. That is not the same as "the content changed": a `touch`, a
   // `git checkout` that restored byte-identical content, and an external formatter
   // that produced no change all move the mtime and leave the file exactly as it
-  // was. Refusing the save and raising an external-change banner for one of those
-  // is a false alarm the user cannot act on — and rewriting a file with the same
-  // bytes is precisely what an agent editing alongside you does.
+  // was. Treating one of those as an external change refuses the save and raises a
+  // banner the user cannot act on — and rewriting a file with the same bytes is
+  // precisely what an agent editing alongside you does.
   //
-  // Confirm before refusing, and only when confirming is cheap: the recorded
+  // Confirm before believing it, and only when confirming is cheap: the recorded
   // signature must carry the content hash (it does for any file this viewport read
   // or wrote), the SIZE must match (a different size is a real change, no read
   // needed), and the file must be small enough that reading it is not itself the
-  // stall this check exists inside.
+  // stall this check sits inside.
   constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
-  if (document_->disk_signature.has_content_hash &&
-      current.size == document_->disk_signature.size && current.size <= kMaxConfirmBytes) {
-    if (const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
-        bytes.has_value() &&
-        util::ContentHash(*bytes) == document_->disk_signature.content_hash) {
-      // Re-baseline to the new stat so the next check takes the one-stat fast path
-      // instead of re-reading a file that has already been confirmed unchanged.
-      document_->disk_signature.mtime_ticks = current.mtime_ticks;
-      return DiskConflict::None;
-    }
+  if (!document_->disk_signature.has_content_hash ||
+      current.size != document_->disk_signature.size || current.size > kMaxConfirmBytes) {
+    return false;
   }
-  return DiskConflict::Changed;
+  const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
+  if (!bytes.has_value() ||
+      util::ContentHash(*bytes) != document_->disk_signature.content_hash) {
+    return false;
+  }
+  // Re-baseline to the new stat so the next call takes the one-stat fast path
+  // instead of re-reading a file already confirmed unchanged.
+  document_->disk_signature.mtime_ticks = current.mtime_ticks;
+  return true;
 }
 
 void TextViewport::LoadContent(std::string_view content,
