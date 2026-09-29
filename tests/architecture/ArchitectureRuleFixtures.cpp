@@ -1127,17 +1127,41 @@ void RunWriteGateRuleFixtures() {
             "void F(){ util::WriteTextFileAtomically(path, text); }\n");
   WriteFile(root / "src/editor/Save.cpp",
             "void G(){ util::WriteTextFileAtomically(path, text); }\n");
+  // The other spelling. Matching only the atomic helper left a whole way of
+  // creating file content invisible to a rule whose stated job is "one door".
+  WriteFile(root / "src/plugin/Stream.cpp",
+            "void H(){ std::ofstream out(path); out << text; }\n");
   const RuleResult flagged = CheckProjectWritesGoThroughTheWriteGate(root);
-  Expect(flagged.violations.size() == 2,
-         "the write-gate rule must flag a raw atomic write in workspace and in editor");
+  Expect(flagged.violations.size() == 3,
+         "the write-gate rule must flag a raw atomic write AND a raw ofstream in the "
+         "layers that hold project files open");
 
   // Positive control: the same writes routed through the gate.
   WriteFile(root / "src/workspace/Replace.cpp",
             "void F(){ project::LocalFileWriteGate().WriteText(path, text); }\n");
   WriteFile(root / "src/editor/Save.cpp",
             "void G(){ write_gate_->WriteText(path, text); }\n");
+  WriteFile(root / "src/plugin/Stream.cpp",
+            "void H(){ project::LocalFileWriteGate().WriteText(path, text); }\n");
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
          "the write-gate rule must accept writes routed through the gate");
+
+  // The two named exemptions are exempt, and only those two.
+  std::filesystem::create_directories(root / "src/workspace/lsp");
+  std::filesystem::create_directories(root / "src/workspace/control");
+  WriteFile(root / "src/workspace/lsp/LspService.cpp",
+            "void J(){ std::ofstream created(target); }\n");
+  WriteFile(root / "src/workspace/control/ControlChannelService.cpp",
+            "void K(){ std::ofstream out(temp_path); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
+         "the transactional LSP journal and the control descriptor are named exemptions");
+  WriteFile(root / "src/workspace/lsp/Other.cpp",
+            "void L(){ std::ofstream created(target); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.size() == 1,
+         "the exemption is per FILE, not per directory");
+  // Clear it: the assertions below expect a clean tree, and a fixture that leaks
+  // state into the next one reports the wrong rule as broken.
+  std::filesystem::remove(root / "src/workspace/lsp/Other.cpp");
 
   // Layer scoping, and it is the half worth pinning: platform/ owns the atomic
   // write primitive and its neighbours, and is NOT a layer that holds project files

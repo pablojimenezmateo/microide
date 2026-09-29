@@ -433,16 +433,36 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
   // fixup. `project::FileWriteGate` is that place, and it is the seam a remote
   // project needs (MirrorWriteGate writes into the mirror and enqueues the push).
   //
-  // Scope: the content writers in the layers that hold project files open. NOT the
-  // LSP resource-ops journal or the sidebar's tree operations — those create,
-  // rename and delete paths transactionally with rollback, which is a different
-  // contract the gate does not offer yet (TD-2026-09-29-305). NOT persistence, the
-  // tool-download cache or the control channel's descriptor, none of which write
-  // into a project tree.
+  // Scope, stated precisely because a lint that implies more than it checks is
+  // worse than one that admits its edges (dev-docs/project/validation-traps.md).
+  //
+  // It guards the primitives that REPLACE A FILE'S CONTENTS —
+  // `WriteTextFileAtomically` and a writing `std::ofstream` — in the three layers
+  // that hold project files open. It does NOT guard create/rename/delete: the LSP
+  // resource-ops journal and the sidebar's file operations do those
+  // transactionally with rollback, which is a different contract the gate does not
+  // offer yet (TD-2026-09-29-305), and `LspService.cpp` is allowlisted for exactly
+  // that reason rather than being quietly outside the pattern. It does not reach
+  // persistence, the tool-download cache or the control channel's descriptor, none
+  // of which write into a project tree.
   static constexpr std::array<const char*, 3> kGatedDirectories = {
       "workspace/", "plugin/", "editor/",
   };
-  const std::regex raw_write(R"(\bWriteTextFileAtomically\s*\()");
+  // Files in a gated layer that do not write into a project tree, each named with
+  // the reason rather than lumped together — an allowlist whose entries are not
+  // individually justified is how a rule stops meaning anything.
+  static constexpr std::array<const char*, 2> kWritersOutsideTheGate = {
+      // Creates files with a raw ofstream as part of a transaction it rolls back.
+      // Until the gate speaks tree operations it cannot host that
+      // (TD-2026-09-29-305).
+      "workspace/lsp/LspService.cpp",
+      // Publishes the per-instance control descriptor under $XDG_RUNTIME_DIR. Not
+      // a project file at all, and its temp-then-rename is its own atomicity
+      // contract for a concurrent reader racing startup.
+      "workspace/control/ControlChannelService.cpp",
+  };
+  const std::regex raw_write(
+      R"(\bWriteTextFileAtomically\s*\(|\bstd::ofstream\s+\w+\s*\()");
 
   bool saw_gate_call = false;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
@@ -465,6 +485,16 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
       }
     }
     if (!gated_layer) {
+      continue;
+    }
+    bool outside_the_gate = false;
+    for (const std::string_view exempt : kWritersOutsideTheGate) {
+      if (key == exempt) {
+        outside_the_gate = true;
+        break;
+      }
+    }
+    if (outside_the_gate) {
       continue;
     }
     AppendCodeMaskRegexViolations(
