@@ -18,8 +18,28 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   if (!editor_state.content_pending()) {
     return true;
   }
+  // A read is already in flight, or has already failed. Either way this tab is
+  // not hydrated here: forcing a synchronous read now is exactly the shell-thread
+  // stall the off-thread open exists to avoid, and retrying a failure on every
+  // activation would stall once per click.
+  if (editor_state.content == TabEntry::EditorTabState::Content::Loading) {
+    return true;
+  }
+  if (editor_state.content == TabEntry::EditorTabState::Content::Failed) {
+    return false;
+  }
   if (editor_state.restored_path.empty()) {
     return false;
+  }
+  if (ShouldOpenOffThread(editor_state.restored_path)) {
+    editor::TextViewport loading_view;
+    const std::uint64_t read_id = BeginOffThreadOpen(editor_state.restored_path, loading_view);
+    if (read_id != 0) {
+      editor_state.viewport = std::move(loading_view);
+      editor_state.content = TabEntry::EditorTabState::Content::Loading;
+      editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
+      return true;
+    }
   }
 
   editor::TextViewport loaded_view;
@@ -81,7 +101,27 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
   if (tab.deferred_handle.has_value()) {
     editor::TextViewport loaded_view;
     const std::filesystem::path deferred_path = tab.deferred_handle->path.lexically_normal();
-    if (deferred_path.empty() || !loaded_view.OpenFile(deferred_path)) {
+    if (deferred_path.empty()) {
+      return false;
+    }
+    if (ShouldOpenOffThread(deferred_path)) {
+      editor::TextViewport loading_view;
+      const std::uint64_t read_id = BeginOffThreadOpen(deferred_path, loading_view);
+      if (read_id != 0) {
+        tab.editor_state = operations_.make_editor_tab_state(loading_view);
+        TabEntry::EditorTabState& editor_state = *tab.editor_state;
+        editor_state.content = TabEntry::EditorTabState::Content::Loading;
+        editor_state.restored_path = deferred_path;
+        editor_state.restored_cursor_line = tab.deferred_handle->cursor_line;
+        editor_state.restored_cursor_column = tab.deferred_handle->cursor_column;
+        editor_state.restored_scroll_line = tab.deferred_handle->scroll_line;
+        editor_state.restored_horizontal_scroll = tab.deferred_handle->horizontal_scroll;
+        editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
+        tab.deferred_handle.reset();
+        return true;
+      }
+    }
+    if (!loaded_view.OpenFile(deferred_path)) {
       return false;
     }
     operations_.apply_editor_preferences(loaded_view);
@@ -96,6 +136,19 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
     tab.editor_state = operations_.make_editor_tab_state(loaded_view);
     tab.deferred_handle.reset();
     return true;
+  }
+  const std::filesystem::path tab_path = tab.path.lexically_normal();
+  if (ShouldOpenOffThread(tab_path)) {
+    editor::TextViewport loading_view;
+    const std::uint64_t read_id = BeginOffThreadOpen(tab_path, loading_view);
+    if (read_id != 0) {
+      tab.editor_state = operations_.make_editor_tab_state(loading_view);
+      TabEntry::EditorTabState& editor_state = *tab.editor_state;
+      editor_state.content = TabEntry::EditorTabState::Content::Loading;
+      editor_state.restored_path = tab_path;
+      editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
+      return true;
+    }
   }
   editor::TextViewport loaded_view;
   if (!loaded_view.OpenFile(tab.path)) {

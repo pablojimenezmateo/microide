@@ -1181,6 +1181,7 @@ add_executable(microide_tests
   tests/SelectionGranularityPropertyTests.cpp
   tests/MergeWrapRowsTests.cpp
   tests/AsyncBufferWorkTests.cpp
+  tests/AsyncFileOpenTests.cpp
   tests/FileReadServiceTests.cpp
   tests/DiffWrapLayoutTests.cpp
   tests/ImeCompositionTests.cpp

@@ -1044,6 +1044,7 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   // project replace-all (TD-2026-07-17-021) first; their wakes reuse this event, and
   // the applies invalidate the finder/search/index below.
   save_formatter_service_.DrainCompletions();
+  file_read_service_.DrainCompletions();
   file_index_refresh_mailbox_.Drain();
   project_replace_mailbox_.Drain();
   project_file_event_pending_.store(false, std::memory_order_release);

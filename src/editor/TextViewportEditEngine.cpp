@@ -293,6 +293,9 @@ void TextViewport::DeleteForward() {
 }
 
 bool TextViewport::ApplyHistoryStep(bool redo) {
+  if (read_only_) {
+    return false;
+  }
   SyncCaretsIfDocumentChangedElsewhere();
 
   util::PerformanceTrace::Scope perf_scope(redo ? "TextViewport::Redo" : "TextViewport::Undo");
@@ -1060,6 +1063,9 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   std::string_view replacement,
                                   bool record_undo,
                                   CoalesceHint hint) {
+  if (read_only_) {
+    return false;
+  }
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.PushBackLine("");
@@ -1091,6 +1097,9 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
                                  std::size_t end_line,
                                  LineBlob replacement,
                                  bool record_undo) {
+  if (read_only_) {
+    return false;
+  }
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.PushBackLine("");

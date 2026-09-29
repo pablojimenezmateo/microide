@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -92,6 +93,15 @@ class TabCoordinator {
     // refused-overwrite (which raises request_external_change_banner). The host
     // posts an error toast so the failure is never silently swallowed.
     std::function<void(const std::filesystem::path&)> notify_save_failed;
+    // Post an off-thread read of a file too large to read on the shell thread.
+    // Returns the read's id, which the tab stores in `pending_load`; the host's
+    // completion finds the tab again by matching it. Returning 0 means nothing
+    // was posted and the caller must open synchronously, so a host that does not
+    // bind this keeps the fully synchronous behaviour.
+    std::function<std::uint64_t(const std::filesystem::path&)> begin_async_file_read;
+    // Abandon a posted read whose tab is closing or being retargeted. Its
+    // completion still arrives and finds no tab holding its id.
+    std::function<void(std::uint64_t)> cancel_async_file_read;
   };
 
   TabCoordinator(ProjectCatalogState& project_catalog,
@@ -182,6 +192,21 @@ class TabCoordinator {
   // from disk with the editor preferences and indent detection applied. False
   // when the read fails.
   bool OpenEditorViewForPath(const std::filesystem::path& path, editor::TextViewport& view) const;
+  // Files at or above this open OFF the shell thread. Below it a read is a
+  // fraction of a frame and the handoff would cost more than it saves; above it
+  // the read is unbounded work with the window frozen behind it. A declared cap
+  // rather than a setting: it separates "imperceptible" from "a dropped frame",
+  // which is a property of the frame budget, not a preference.
+  static constexpr std::uintmax_t kAsyncOpenThresholdBytes = 4ull * 1024 * 1024;
+  // Whether opening `path` should go off-thread: it is not already open as a live
+  // buffer (which is shared, not read), it is big enough to matter, and the host
+  // bound a reader.
+  [[nodiscard]] bool ShouldOpenOffThread(const std::filesystem::path& normalized_path) const;
+  // Prepare `view` as the empty, read-only stand-in a tab shows while its bytes
+  // are being read, and post the read. Returns the read's id, or 0 if nothing was
+  // posted (in which case the caller opens synchronously).
+  [[nodiscard]] std::uint64_t BeginOffThreadOpen(const std::filesystem::path& normalized_path,
+                                                 editor::TextViewport& view) const;
   bool OpenFileInNewTab(const std::filesystem::path& path);
   // A path that does not exist yet opens as an empty buffer bound to it, as
   // `code new.txt` does; the file (and its directories) appear on save. An
@@ -281,6 +306,10 @@ class TabCoordinator {
   // its buffer. Uses a live count (correct for sequential closes, where an earlier
   // close in the same batch drops a shared buffer to its last remaining view).
   void MaybeNotifyLspClose(const TabEntry& tab);
+  // Stop an off-thread read whose tab is being erased. Its completion still
+  // arrives and finds no tab holding its id, so this is about not reading a
+  // half-gigabyte file nobody is waiting for any more.
+  void CancelPendingAsyncRead(const TabEntry& tab);
   // Remove the focused (expected-empty) group and collapse back to a single
   // full-area group, resetting split orientation/fraction.
   void CollapseFocusedGroup();

@@ -236,6 +236,9 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // in a write, a directory-tree refresh and a git refresh, which is exactly what
   // that channel already drains.
   save_formatter_service_.SetWakeChannel(project_file_event_type_);
+  // An asynchronous open ends in a hydrated tab, a title/tree refresh and an
+  // LSP didOpen — the same wake this channel already drains for the save.
+  file_read_service_.SetWakeChannel(project_file_event_type_);
   file_index_refresh_mailbox_.SetWakeChannel(project_file_event_type_);
   project_replace_mailbox_.SetWakeChannel(project_file_event_type_);
   project_open_dialog_event_type_ = register_wake();
@@ -349,6 +352,9 @@ bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {
 }
 
 void WorkspaceShell::Shutdown() {
+  // Before the coordinator tears anything down: a read still running would post a
+  // completion into a shell that is dismantling the state it applies to.
+  file_read_service_.CancelAllAndFlush();
   MakeLifecycleCoordinator().Shutdown();
 }
 
@@ -357,6 +363,7 @@ void WorkspaceShell::RequestQuit() {
   // replaces the tab may run before that write lands, or the save the user asked for
   // is silently dropped. The flush only ever waits when a formatter is mid-run.
   save_formatter_service_.FlushPendingRuns();
+  file_read_service_.CancelAllAndFlush();
   MakeLifecycleCoordinator().RequestQuit();
 }
 

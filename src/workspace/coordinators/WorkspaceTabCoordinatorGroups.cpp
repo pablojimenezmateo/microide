@@ -351,6 +351,7 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
   // Same last-view LSP-didClose accounting as Close() (count includes the tab being
   // closed, so ==1 means this is the final view).
   MaybeNotifyLspClose(group.open_tabs[index]);
+  CancelPendingAsyncRead(group.open_tabs[index]);
   const bool closing_active = index == group.active_tab_index;
   group.open_tabs.erase(group.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
   if (group.active_tab_index > index) {

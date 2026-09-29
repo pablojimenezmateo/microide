@@ -116,6 +116,11 @@ class TextViewport {
   TextViewport& operator=(TextViewport&& other) noexcept;
 
   bool OpenFile(const std::filesystem::path& path);
+  // Install `bytes` — a file's contents, exactly as they were on disk — as this
+  // viewport's document. Split out of `OpenFile` so a file read off the shell
+  // thread classifies (encoding, BOM, line endings) and loads through the same
+  // code as a synchronous open, rather than a second copy of it that drifts.
+  bool AdoptFileContent(const std::filesystem::path& path, std::string bytes);
   [[nodiscard]] bool Save();
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
@@ -563,6 +568,20 @@ class TextViewport {
   void ResetCacheStats() const;
   bool dirty() const { return document_->dirty; }
   bool is_placeholder() const { return document_->placeholder; }
+
+  // Read-only view: every content edit is refused and `Save()` writes nothing.
+  //
+  // This is a property of the VIEW, not of the document — a tab whose file is
+  // still being read holds a real, empty buffer at the file's path, and a
+  // keystroke landing in it before the bytes arrive would otherwise become a
+  // buffer that shadows the file and can be saved over it. Refusing at the two
+  // edit choke points is what makes that unrepresentable rather than a rule
+  // every caller has to remember.
+  //
+  // The load paths (ResetState, LoadLines, ReloadPreservingViewState) are
+  // deliberately NOT gated: they are how the content arrives.
+  void SetReadOnly(bool read_only) { read_only_ = read_only; }
+  [[nodiscard]] bool read_only() const { return read_only_; }
   std::vector<TextPosition> secondary_carets() const;
   // Full secondary carets, each carrying its selection anchor (empty for a plain
   // column caret). Shaping actions (move/indent line) use this so a ranged Ctrl-D
@@ -1265,6 +1284,7 @@ class TextViewport {
   mutable std::string language_id_;
   mutable const void* language_id_document_ = nullptr;
   mutable std::filesystem::path language_id_path_;
+  bool read_only_ = false;
   mutable std::uint64_t language_id_content_revision_ = 0;
   mutable std::size_t language_id_registry_revision_ = 0;
   mutable bool language_id_valid_ = false;

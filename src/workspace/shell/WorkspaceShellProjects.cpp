@@ -141,6 +141,9 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   // replaces the tab may run before that write lands, or the save the user asked for
   // is silently dropped. The flush only ever waits when a formatter is mid-run.
   save_formatter_service_.FlushPendingRuns();
+  // A tab still reading its file is about to stop existing, so finishing the read
+  // is pure latency on the way out.
+  file_read_service_.CancelAllAndFlush();
   if (index >= context_.project_catalog.entries.size()) {
     return false;
   }
@@ -181,6 +184,7 @@ void WorkspaceShell::CloseProject(std::size_t index) {
   // replaces the tab may run before that write lands, or the save the user asked for
   // is silently dropped. The flush only ever waits when a formatter is mid-run.
   save_formatter_service_.FlushPendingRuns();
+  file_read_service_.CancelAllAndFlush();
   MakeProjectCatalogService().Close(index);
   // Closing may drop the open-project count to <= 1, which can re-hide the strip when
   // "chrome.project_tabs.hide_when_single" is on; the coordinator only requests a redraw,

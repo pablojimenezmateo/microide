@@ -159,6 +159,7 @@ void RegisterSelectionGranularityTests(std::vector<TestCase>& tests);
 void RegisterSelectionGranularityPropertyTests(std::vector<TestCase>& tests);
 void RegisterMergeWrapRowsTests(std::vector<TestCase>& tests);
 void RegisterAsyncBufferWorkTests(std::vector<TestCase>& tests);
+void RegisterAsyncFileOpenTests(std::vector<TestCase>& tests);
 void RegisterFileReadServiceTests(std::vector<TestCase>& tests);
 void RegisterDiffWrapLayoutTests(std::vector<TestCase>& tests);
 void RegisterImeCompositionTests(std::vector<TestCase>& tests);
@@ -516,6 +517,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterSelectionGranularityPropertyTests(tests);
   microide::tests::RegisterMergeWrapRowsTests(tests);
   microide::tests::RegisterAsyncBufferWorkTests(tests);
+  microide::tests::RegisterAsyncFileOpenTests(tests);
   microide::tests::RegisterFileReadServiceTests(tests);
   microide::tests::RegisterDiffWrapLayoutTests(tests);
   microide::tests::RegisterImeCompositionTests(tests);

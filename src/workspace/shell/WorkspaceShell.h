@@ -78,6 +78,7 @@
 #include "workspace/render/NotificationLayout.h"
 #include "workspace/SavePreparation.h"
 #include "workspace/services/NotificationService.h"
+#include "project/FileReadService.h"
 #include "workspace/services/SaveFormatterService.h"
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/persistence/PersistenceService.h"

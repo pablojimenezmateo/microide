@@ -111,6 +111,14 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                     path.empty() ? std::string("file") : path.filename().string();
                 Notify(NotificationService::Tone::Error, "Failed to save " + name);
               },
+          .begin_async_file_read =
+              [this](const std::filesystem::path& path) {
+                return file_read_service_.Begin(
+                    path, [this](project::FileReadService::Completion completion) {
+                      ApplyAsyncFileRead(std::move(completion));
+                    });
+              },
+          .cancel_async_file_read = [this](std::uint64_t id) { file_read_service_.Cancel(id); },
       });
 }
 
@@ -242,6 +250,76 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       if (close_after_save && saved) {
         MakeEditorTabService().CloseGroupTab(group_index, tab_index);
       }
+      return;
+    }
+  }
+}
+
+void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion completion) {
+  if (completion.id == 0) {
+    return;
+  }
+  // Find the tab that posted this read. A walk, for the same reason the deferred
+  // save's completion walks: read ids are process-monotonic so at most one tab
+  // carries this one, the tab may have moved group or index while the read ran,
+  // and the walk costs one pass over the open tabs once per open.
+  for (std::size_t group_index = 0;
+       group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
+    EditorGroup& group = context_.current_project_state.editor_groups[group_index];
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          !tab.editor_state->pending_load.Holds(completion.id)) {
+        continue;
+      }
+      auto& editor_state = *tab.editor_state;
+      editor_state.pending_load.Resolve(completion.id,
+                                        editor_state.viewport.content_revision());
+      if (editor_state.content != TabEntry::EditorTabState::Content::Loading) {
+        // Something already gave this tab content — a retarget, a reload, a
+        // session restore. Whatever it installed is newer than these bytes.
+        return;
+      }
+      if (completion.status == project::FileReadService::Status::Cancelled) {
+        // The tab is on its way out, or the read was superseded. Leave the state
+        // alone: whoever cancelled owns what happens next.
+        return;
+      }
+      const std::filesystem::path path = completion.path;
+      if (!completion.ok() ||
+          !editor_state.viewport.AdoptFileContent(path, std::move(completion.bytes))) {
+        // The tab stays, showing which file it was. Dropping it would make a
+        // failed open look like a click that did nothing.
+        editor_state.content = TabEntry::EditorTabState::Content::Failed;
+        const std::string name = path.empty() ? std::string("file") : path.filename().string();
+        Notify(NotificationService::Tone::Error,
+               completion.status == project::FileReadService::Status::TooLarge
+                   ? "Cannot open " + name + ": file is too large"
+                   : "Could not read " + name);
+        RequestEditorSurfaceRedraw();
+        return;
+      }
+      // The buffer is real now, so the view stops being read-only and gets the
+      // preferences and indent detection a synchronous open applies.
+      editor_state.viewport.SetReadOnly(false);
+      ApplyEditorPreferences(editor_state.viewport);
+      ApplyDetectedIndentOnOpen(editor_state.viewport);
+      // View state last: preferences re-run EnsureCursorVisible, which would snap
+      // scroll back onto the caret if it ran after the restore.
+      editor_state.viewport.ApplyRestoredViewState(editor_state.restored_cursor_line,
+                                                   editor_state.restored_cursor_column,
+                                                   editor_state.restored_scroll_line,
+                                                   editor_state.restored_horizontal_scroll);
+      editor_state.content = TabEntry::EditorTabState::Content::Ready;
+      editor_state.folding_model->Clear();
+      NotifyPluginBufferOpen(path);
+      const bool is_active = group_index == context_.current_project_state.focused_group_index &&
+                             &tab == &group.open_tabs[group.active_tab_index];
+      if (is_active) {
+        SyncActiveEditorTabMetadata();
+        lsp_service_.ScheduleBufferOpen(path);
+      }
+      RequestEditorSurfaceRedraw();
+      RequestTabStripRedraw();
       return;
     }
   }

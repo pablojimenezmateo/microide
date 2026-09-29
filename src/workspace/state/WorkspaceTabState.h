@@ -397,6 +397,10 @@ struct EditorTabState {
   // and drops the formatter's output if the buffer moved on under it —
   // reformatting a buffer the user has since typed into would undo their edit.
   editor::AsyncBufferWork pending_format_save;
+  // Armed while `content == Loading`: the off-thread read filling this tab. The
+  // completion finds its tab by matching this id, so a tab closed mid-read
+  // simply has no match and the bytes are dropped.
+  editor::AsyncBufferWork pending_load;
   // One-shot, set by that completion: the save it re-enters must not start another
   // formatter run. Without it a deferred save would post a fresh run every time it
   // finished one.

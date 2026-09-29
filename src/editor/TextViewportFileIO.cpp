@@ -147,7 +147,6 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   util::PerformanceTrace::ScopeLabel perf_label("TextViewport::OpenFile");
   perf_label.Field("path", path);
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
-  EnsureDocument();
   std::optional<std::string> content;
   {
     util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ReadTextFile");
@@ -156,10 +155,15 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   if (!content.has_value()) {
     return false;
   }
+  return AdoptFileContent(path, std::move(*content));
+}
+
+bool TextViewport::AdoptFileContent(const std::filesystem::path& path, std::string bytes) {
+  EnsureDocument();
   // The raw bytes, before the BOM strip and the LF canonicalization below: a
   // re-read produces these, so this is what a later conflict check compares
   // against. Captured here because it is the one moment they exist.
-  const std::size_t raw_content_hash = util::ContentHash(*content);
+  const std::size_t raw_content_hash = util::ContentHash(bytes);
 
   // Convert directly to the editor's canonical LF buffer. The old CRLF/CR path
   // decoded into vector<string> and PieceTree immediately joined it back into a
@@ -169,15 +173,15 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   bool utf8_bom = false;
   {
     util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ClassifyContent");
-    encoding = DetectEncoding(*content);
-    utf8_bom = StripUtf8Bom(*content, encoding);
-    metadata = AnalyzeLineEndings(*content);
+    encoding = DetectEncoding(bytes);
+    utf8_bom = StripUtf8Bom(bytes, encoding);
+    metadata = AnalyzeLineEndings(bytes);
   }
   if (encoding == TextEncoding::Bytes) {
     // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending. Split on '\n'
     // only (keeping CR bytes in the line) and label the ending LF so Save joins with a
     // single '\n' -- the only transform is the reversible split, so the bytes survive.
-    ResetState(SplitOnLineFeedOnly(*content), path, LineEnding::LF,
+    ResetState(SplitOnLineFeedOnly(bytes), path, LineEnding::LF,
                /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
     RecordOpenedContentHash(raw_content_hash);
     return true;
@@ -185,7 +189,7 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   std::string canonical;
   {
     util::PerformanceTrace::Scope scope("TextViewport::OpenFile::CanonicalizeLineEndings");
-    canonical = CanonicalizeLineEndingsToLf(std::move(*content), metadata);
+    canonical = CanonicalizeLineEndingsToLf(std::move(bytes), metadata);
   }
   {
     util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ResetStateFromText");
@@ -211,6 +215,12 @@ void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash) {
 bool TextViewport::Save() {
   EnsureDocument();
   if (document_->path.empty()) {
+    return false;
+  }
+  // A read-only view has nothing of the user's to write, and writing an
+  // asynchronously-loading tab's empty buffer would truncate the file it is
+  // still reading.
+  if (read_only_) {
     return false;
   }
 

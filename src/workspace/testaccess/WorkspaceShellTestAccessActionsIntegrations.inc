@@ -360,6 +360,19 @@
   static int DrainSaveFormatterCompletions(WorkspaceShell& shell) {
     return shell.save_formatter_service_.DrainCompletions();
   }
+  // Wait for every outstanding off-thread file read and apply its completion —
+  // the same end state a frame reaches, without depending on frame timing.
+  static void FlushPendingFileReads(WorkspaceShell& shell) {
+    shell.file_read_service_.FlushPendingReads();
+  }
+  static int PendingFileReadCount(const WorkspaceShell& shell) {
+    return shell.file_read_service_.PendingCount();
+  }
+  static TabEntry::EditorTabState::Content ActiveTabContentState(const WorkspaceShell& shell) {
+    const TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
+    return editor_tab != nullptr ? editor_tab->content
+                                 : TabEntry::EditorTabState::Content::Ready;
+  }
   static void ActivateTab(WorkspaceShell& shell, std::size_t index) { shell.ActivateTab(index); }
   static void MaybeArmAutosaveTimer(WorkspaceShell& shell) { shell.MaybeArmAutosaveTimer(); }
   static bool AutosaveArmed(const WorkspaceShell& shell) { return shell.autosave_armed_; }

@@ -719,6 +719,9 @@
   // Shell thread, from the SaveFormatterService completion: find the tab that posted
   // this run and finish its save.
   void ApplyDeferredSaveFormat(const SaveFormatterService::Completion& completion);
+  // Shell thread: hydrate the tab whose off-thread file read has landed, or mark
+  // it Failed. Finds its tab by the read id the tab holds in `pending_load`.
+  void ApplyAsyncFileRead(project::FileReadService::Completion completion);
   void ReportSaveFormatterFailure(const SaveFormatterService::Completion& completion,
                                   std::string* error_message);
   bool OpenVirtualDocumentInNewTab(std::string_view uri);
@@ -2211,6 +2214,7 @@
   StatusBarModelService status_bar_model_service_;
   NotificationService notification_service_;
   SaveFormatterService save_formatter_service_;
+  project::FileReadService file_read_service_;
   SettingsOverlayService settings_overlay_service_;
   // Terminal find bar. All of its state, scanning, and match navigation live in
   // the service; what stays here are the two input entry points, which have to

@@ -153,6 +153,13 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     return false;
   }
 
+  if (editor_state->content_pending()) {
+    // The buffer is not the file yet — it is the empty stand-in a tab shows while
+    // its bytes are read. There is nothing of the user's to write, and writing it
+    // would truncate the file that is still being read. Reported as done, not as
+    // a failure, so Ctrl+S on a loading tab is a no-op rather than an error toast.
+    return true;
+  }
   editor::TextViewport* candidate = &editor_state->viewport;
   if (candidate->path().empty()) {
     // Untitled buffers cannot be saved through this path; refuse if dirty.
@@ -670,6 +677,36 @@ bool TabCoordinator::OpenEditorViewForPath(const std::filesystem::path& path,
   return true;
 }
 
+bool TabCoordinator::ShouldOpenOffThread(const std::filesystem::path& normalized_path) const {
+  if (!operations_.begin_async_file_read) {
+    return false;
+  }
+  // A file already open somewhere shares that buffer instead of being read, so
+  // its size is irrelevant.
+  if (FindOpenEditorViewOfPath(normalized_path) != nullptr) {
+    return false;
+  }
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(normalized_path, error);
+  return !error && size >= kAsyncOpenThresholdBytes;
+}
+
+std::uint64_t TabCoordinator::BeginOffThreadOpen(const std::filesystem::path& normalized_path,
+                                                 editor::TextViewport& view) const {
+  const std::uint64_t read_id = operations_.begin_async_file_read(normalized_path);
+  if (read_id == 0) {
+    return 0;
+  }
+  // An empty buffer bound to the real path, so the tab strip, the breadcrumb and
+  // the status bar all name the file that is arriving. Read-only until it does:
+  // a keystroke landing here would otherwise become a buffer that shadows the
+  // file and can be saved over it.
+  view.LoadContent("", normalized_path);
+  view.SetReadOnly(true);
+  operations_.apply_editor_preferences(view);
+  return read_id;
+}
+
 bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   util::PerformanceTrace::ScopeLabel perf_label("TabCoordinator::OpenFileInNewTab");
   perf_label.Field("path", path);
@@ -712,9 +749,13 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   }
 
   editor::TextViewport opened_view;
+  std::uint64_t read_id = 0;
   {
     util::PerformanceTrace::Scope open_scope("TabCoordinator::OpenFileInNewTab::OpenFile");
-    if (!OpenEditorViewForPath(normalized_path, opened_view)) {
+    if (ShouldOpenOffThread(normalized_path)) {
+      read_id = BeginOffThreadOpen(normalized_path, opened_view);
+    }
+    if (read_id == 0 && !OpenEditorViewForPath(normalized_path, opened_view)) {
       return false;
     }
   }
@@ -728,11 +769,23 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
       .compare = std::nullopt,
       .merge = std::nullopt,
   });
+  if (read_id != 0) {
+    TabEntry::EditorTabState& editor_state =
+        *state_.focused_group().open_tabs.back().editor_state;
+    editor_state.content = EditorTabState::Content::Loading;
+    editor_state.restored_path = normalized_path;
+    editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
+  }
   state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size() - 1;
   operations_.ensure_active_tab_visible();
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
-  operations_.notify_plugin_buffer_open(normalized_path);
+  // The plugin-visible open is the moment the buffer exists. For an off-thread
+  // read that is the completion, not now, or a plugin reads an empty document
+  // and caches it as the file.
+  if (read_id == 0) {
+    operations_.notify_plugin_buffer_open(normalized_path);
+  }
   operations_.request_active_tab_redraw(true);
   return true;
 }
@@ -881,6 +934,17 @@ std::filesystem::path TabCoordinator::LspCloseCandidatePath(const TabEntry& tab)
   return {};
 }
 
+void TabCoordinator::CancelPendingAsyncRead(const TabEntry& tab) {
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+      !operations_.cancel_async_file_read) {
+    return;
+  }
+  const std::uint64_t read_id = tab.editor_state->pending_load.id();
+  if (read_id != 0) {
+    operations_.cancel_async_file_read(read_id);
+  }
+}
+
 void TabCoordinator::MaybeNotifyLspClose(const TabEntry& tab) {
   const std::filesystem::path path = LspCloseCandidatePath(tab);
   if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
@@ -921,6 +985,7 @@ void TabCoordinator::Close(std::size_t index) {
   // viewport now would be redundant work — costly in bulk closes via the tree
   // traversals in SyncActiveEditorTabMetadata.
   MaybeNotifyLspClose(closing_tab);
+  CancelPendingAsyncRead(closing_tab);
 
   state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
 
