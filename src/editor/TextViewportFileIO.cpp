@@ -257,7 +257,8 @@ bool TextViewport::Save() {
     // the file keeps it.
     text.insert(0, util::kUtf8Bom);
   }
-  const project::FileWriteGate::Result written = write_gate_->WriteText(document_->path, text);
+  const project::FileWriteGate::Result written = write_gate_->WriteText(
+      document_->path, text, project::FileWriteGate::Signature::Capture);
   if (!written.ok) {
     return false;
   }

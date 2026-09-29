@@ -17,7 +17,8 @@ void TestLocalGateWritesAndReportsTheSignature() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "note.txt";
 
-  const FileWriteGate::Result created = LocalFileWriteGate().WriteText(file, "one\n");
+  const FileWriteGate::Result created =
+      LocalFileWriteGate().WriteText(file, "one\n", FileWriteGate::Signature::Capture);
   Expect(created.ok, "the gate writes a file that did not exist");
   Expect(ReadFile(file) == "one\n", "the gate writes the text it was given");
   // The signature is the whole reason the gate returns anything: it is what the
@@ -27,7 +28,8 @@ void TestLocalGateWritesAndReportsTheSignature() {
   Expect(created.signature.SameContentAs(util::StatFileSignature(file)),
          "the gate's signature matches the file it just wrote");
 
-  const FileWriteGate::Result replaced = LocalFileWriteGate().WriteText(file, "two two\n");
+  const FileWriteGate::Result replaced =
+      LocalFileWriteGate().WriteText(file, "two two\n", FileWriteGate::Signature::Capture);
   Expect(replaced.ok && ReadFile(file) == "two two\n", "the gate replaces existing contents");
   Expect(!replaced.signature.SameContentAs(created.signature),
          "a write that changed the file reports a different signature");
@@ -41,7 +43,8 @@ void TestLocalGateReportsFailureWithoutTouchingTheFile() {
   const std::filesystem::path directory = temp_dir.path() / "not-a-file";
   std::filesystem::create_directories(directory);
 
-  const FileWriteGate::Result result = LocalFileWriteGate().WriteText(directory, "x\n");
+  const FileWriteGate::Result result =
+      LocalFileWriteGate().WriteText(directory, "x\n", FileWriteGate::Signature::Capture);
   Expect(!result.ok, "writing over a directory must fail");
   Expect(!result.signature.exists,
          "a failed write reports no signature: the caller's existing one still describes "
@@ -140,6 +143,19 @@ void TestSaveRecordsContentSoTheNextCheckIsClean() {
          "the hash recorded by the save answers the next identical rewrite too");
 }
 
+// The default is Signature::Skip, and that is load-bearing: replace-in-project
+// writes N files and reads only `ok`, so capturing a signature it discards is N
+// stats of files nobody asked about.
+void TestGateSkipsTheSignatureStatByDefault() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path file = temp_dir.path() / "bulk.txt";
+
+  const FileWriteGate::Result written = LocalFileWriteGate().WriteText(file, "bulk\n");
+  Expect(written.ok && ReadFile(file) == "bulk\n", "the write still happens");
+  Expect(!written.signature.exists,
+         "a caller that did not ask for the signature does not pay for the stat");
+}
+
 }  // namespace
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
@@ -155,6 +171,8 @@ void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
           TestRealEditIsStillADiskConflict);
   AddTest(tests, "FileWriteGate/SaveRecordsContentSoTheNextCheckIsClean",
           TestSaveRecordsContentSoTheNextCheckIsClean);
+  AddTest(tests, "FileWriteGate/GateSkipsTheSignatureStatByDefault",
+          TestGateSkipsTheSignatureStatByDefault);
 }
 
 }  // namespace microide::tests

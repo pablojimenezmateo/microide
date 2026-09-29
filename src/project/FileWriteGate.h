@@ -33,11 +33,20 @@ class FileWriteGate {
     util::FileSignature signature;
   };
 
+  // Whether the caller wants the written file's signature back. Only the editor's
+  // save does — it records it as the baseline for the next conflict check. The
+  // others (replace-in-project across N files, the plugin file API, the merge
+  // rollback) read only `ok`, and statting the file for them turned the editor
+  // save's "one fewer stat" into one extra stat per written file everywhere else.
+  enum class Signature { Skip, Capture };
+
   virtual ~FileWriteGate() = default;
 
   // Replace `path`'s contents with `text`. Atomic: a failed write leaves the
   // original intact.
-  virtual Result WriteText(const std::filesystem::path& path, std::string_view text) = 0;
+  virtual Result WriteText(const std::filesystem::path& path,
+                           std::string_view text,
+                           Signature signature = Signature::Skip) = 0;
 };
 
 // The local gate: an atomic temp-file + rename, then one stat. Every write in a
