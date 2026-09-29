@@ -314,10 +314,18 @@ that file says exactly what, and what each one left):
   fixup. `project::FileWriteGate` is that place, it is where `MirrorWriteGate`
   plugs in, and the editor's save no longer stats a path it just wrote.
 
-Open: **G4** asynchronous file open, **G6** blake3 content hashes, **G7**
-notifications with key/actions/progress/lifetime, **G8** `ProjectId`; the tree
-operations the write gate does not cover (TD-2026-09-29-305); and the rest of
-**G5** (TD-2026-09-28-304). Groundwork carries its own perf gates (design
+- **G6 (part) — a touch is not an edit.** `FileSignature` carries a hash of the
+  bytes it was recorded from, and a stat mismatch is confirmed against it before
+  being believed. One method serves the save path and the watcher's echo check.
+  This fixed a real, common false alarm: a `touch`, a `git checkout` that restored
+  byte-identical content, or an agent rewriting a file with the same bytes all
+  refused the save and announced a reload of a file nobody had changed.
+
+Open: **G4** asynchronous file open, **G7** notifications with
+key/actions/progress/lifetime, **G8** `ProjectId`; the persisted cross-machine
+digest the manifest needs (blake3, the rest of **G6**); the tree operations the
+write gate does not cover (TD-2026-09-29-305); and the rest of **G5**
+(TD-2026-09-28-304). Groundwork carries its own perf gates (design
 § 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;
 display forwarding (`xpra`) remains the zero-code answer until Phase 2.
 
