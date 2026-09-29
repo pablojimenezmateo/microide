@@ -543,11 +543,24 @@ Two separate things, both cosmetic and both pre-existing:
   segment, NOT a change to the id: `language_id()` keys syntax, the LSP and the
   language-contract cache, so renaming the id would be a much larger and riskier
   change than the wart justifies.
-- **Language, Indent and Encoding are shown with no document open.**
-  `StatusBarModelService` clears those three when the active viewport is null, so
-  the Welcome tab evidently presents a non-null viewport. VSCode shows none of
-  them with no editor open. Worth establishing which is true — a Welcome tab that
-  owns a viewport may be surfacing other editor state too.
+- **Language, Indent, Encoding and Ln/Col are shown with no document open.**
+  VSCode shows none of them with no editor open. The mechanism is NOT yet known,
+  and an earlier version of this entry guessed wrong, so here is only what is
+  established:
+
+  - "Welcome" is a PLACEHOLDER tab — `WorkspaceLayout.h:424`, "painted (and
+    hit-tested) when no tabs are open". It is not a `TabEntry`; the only kinds
+    are Editor, Compare and Merge. So it does not own a viewport.
+  - `StatusBarModelService` clears all four of those segments in its
+    `else` branch when `StatusBarSourceViewport()` is null, and that resolves
+    through `ActiveNavigableViewport()` to `ActiveEditorViewport()`.
+
+  So the capture should have shown none of them, and it showed all four
+  (including `Ln 1, Col 1`). Either an editor tab existed that the placeholder
+  strip did not represent, or the clear branch did not run. **The cheap next
+  step is a test**: open a project, open no file, and assert those four segments
+  are not visible. It either passes — and the capture was misread — or it fails
+  and names the bug.
 
 Not fixed here because it is user-visible text and may be deliberate: the
 internal-token spelling is at least honest about what the detector decided.
