@@ -1,5 +1,8 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-09-29 (§ TD-2026-09-29-305 for the write-gate pass: the gate covers
+content writes, and the two tree-operation writers it deliberately does not).
+
 Reviewed 2026-09-28 (§ TD-2026-09-28-304 for the asynchronous-save pass: the
 formatter is off the shell thread for the interactive save, and what still waits).
 
@@ -411,6 +414,30 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-09-29-305 — the write gate covers content writes, not tree operations. [OPEN]
+
+`project::FileWriteGate` is the one door for writes that replace a file's
+contents, and `CheckProjectWritesGoThroughTheWriteGate` keeps it that way for
+workspace, plugin and editor. Two writers into a project tree are deliberately
+outside it:
+
+- **the LSP resource-ops journal** (`LspService.cpp`), which creates, renames and
+  deletes paths transactionally and rolls the whole set back on failure — staging
+  a victim under a generated name, journalling the topmost directory it created,
+  and unwinding in reverse. The gate offers a single content write and no
+  rollback, so routing this through it today would mean either losing the
+  transaction or moving the journal into the gate.
+- **the sidebar's file operations** (`WorkspaceSidebarCoordinatorActions.cpp` over
+  `project/FileOperationService`, `platform/FsOps` and `platform/Trash`), which
+  are create/rename/delete rather than content replacement.
+
+Finishing this means the gate grows a tree-operation vocabulary — the design's
+`§ 6.3` describes it taking "the path, the new content OR THE TREE OPERATION, and
+the base the write was computed against". That is also what a remote project
+needs, because an `fs/op` is how a rename reaches the host. Until then the lint
+is scoped to content writes and says so, rather than carrying an allowlist that
+reads as "these are exceptions" when they are actually a different contract.
 
 ### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [OPEN]
 

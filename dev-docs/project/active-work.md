@@ -308,9 +308,16 @@ that file says exactly what, and what each one left):
   guarded on the buffer's content revision so an edit made during formatting is
   never silently undone. Saves whose caller acts on completion still block.
 
+- **G10 (part) — one gate for every content write into a project tree.** Six
+  subsystems knew how to replace a file under the project root and shared the
+  atomic-write primitive and nothing above it, so each grew its own post-write
+  fixup. `project::FileWriteGate` is that place, it is where `MirrorWriteGate`
+  plugs in, and the editor's save no longer stats a path it just wrote.
+
 Open: **G4** asynchronous file open, **G6** blake3 content hashes, **G7**
-notifications with key/actions/progress/lifetime, **G8** `ProjectId`, **G10** the
-write gate; and the rest of **G5** (TD-2026-09-28-304). Groundwork carries its own perf gates (design
+notifications with key/actions/progress/lifetime, **G8** `ProjectId`; the tree
+operations the write gate does not cover (TD-2026-09-29-305); and the rest of
+**G5** (TD-2026-09-28-304). Groundwork carries its own perf gates (design
 § 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;
 display forwarding (`xpra`) remains the zero-code answer until Phase 2.
 

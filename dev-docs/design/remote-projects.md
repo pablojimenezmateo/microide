@@ -10,11 +10,11 @@ Shipped from the groundwork so far, on `main`:
 | **G2** one process launcher | `platform::ProcessLauncher`; git, the formatter, plugin tools, the language server, the debug adapter and the terminal all route through one. `GitRepository` has no default launcher, so all 25 sites state their locality. Lint: `CheckEverySpawnGoesThroughAProcessLauncher`, covering `RunSubprocess` **and** `AsyncSubprocess::Start`. | a PROJECT owns a launcher; every site currently names the local one (TD-2026-09-22-301) |
 | **G3** argv-shaped terminal | `TerminalStartRequest::shell` is argv, `execvp` replaces `execl`, `util::SplitCommandLine` does the quoting, `terminal.shell` is Project-scoped. Fixed two real bugs: `terminal.shell = "ssh host"` ran `ssh -i`, and `terminal.shell = "bash"` never resolved through PATH. | — |
 | **G9** (part) | one `ResolveGitDirectory` instead of two that disagreed on normalizing an absolute `gitdir:` target | the three-state (repository / not / **unknown**) metadata source |
+| **G10** (part) | `project::FileWriteGate` is the one door for writes that replace a file's contents — the editor save, the plugin file API, replace-in-project and the merge rollback writer — with `CheckProjectWritesGoThroughTheWriteGate` keeping the primitive out of workspace, plugin and editor. `TextViewport` holds its gate as a pointer, which is where `MirrorWriteGate` plugs in. | tree operations (create/rename/delete): the LSP resource-ops journal and the sidebar's file ops (TD-2026-09-29-305) |
 | **G5** (part) | `SaveFormatterService` runs the formatter on a worker. An interactive save DEFERS — it returns without writing and its completion applies the formatter's output, guarded on the buffer's content revision — while a save whose caller acts on completion blocks. Flushes at tab close, project switch/close and quit keep an in-flight save from being dropped. The lint's spawn allowlist is now the service alone, plus a second half confining the one remaining shell-thread wait. | the blocking callers still wait (TD-2026-09-28-304); participants are still on the shell thread; compare/merge saves are still blocking |
 
 Not started: **G4** asynchronous file open, **G6** blake3 content hashes, **G7**
-notification identity/actions/progress/lifetime, **G8** `ProjectId`, **G10** the
-write gate.
+notification identity/actions/progress/lifetime, **G8** `ProjectId`.
 
 One measurement worth carrying: opening a 1 MB file to first paint is 1.48 ms
 (`tests/perf/baselines/large_file_open_first_paint.json`). G4's local case is
