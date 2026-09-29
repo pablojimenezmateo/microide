@@ -473,6 +473,32 @@ Until then the bound is the mitigation, and the bound is load-bearing: the size
 prefilter and the 8 MiB cap are what keep a `git checkout` of a large binary from
 stalling the window.
 
+### TD-2026-09-29-310 — the status bar shows editor segments for a Welcome tab. [OPEN]
+
+Seen in a headless capture of a freshly-opened project (no file open, Welcome tab
+active). The status bar reads:
+
+    master [clean]   unknown   Tabs: 4   UTF-8 · LF
+
+Two separate things, both cosmetic and both pre-existing:
+
+- **`unknown` is an internal token on screen.** The Language segment renders
+  `TextViewport::language_id()` verbatim, and `"unknown"` is a real filetype id in
+  the syntax registry — the fallback definition. It reads like an error rather
+  than a state. VSCode shows `Plain Text`. The fix is a display mapping at the
+  segment, NOT a change to the id: `language_id()` keys syntax, the LSP and the
+  language-contract cache, so renaming the id would be a much larger and riskier
+  change than the wart justifies.
+- **Language, Indent and Encoding are shown with no document open.**
+  `StatusBarModelService` clears those three when the active viewport is null, so
+  the Welcome tab evidently presents a non-null viewport. VSCode shows none of
+  them with no editor open. Worth establishing which is true — a Welcome tab that
+  owns a viewport may be surfacing other editor state too.
+
+Not fixed here because it is user-visible text and may be deliberate: the
+internal-token spelling is at least honest about what the detector decided.
+Decide the intent before changing it.
+
 ### TD-2026-09-29-308 — a per-viewport write gate needs three paths, not one setter. [OPEN]
 
 `TextViewport` holds a `FileWriteGate*` so `Save()` goes through the gate rather
