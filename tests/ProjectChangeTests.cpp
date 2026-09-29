@@ -141,6 +141,44 @@ void TestGitRepositoryMetadataTrackerDetectsHeadChanges() {
 // `<root>/.git/HEAD` as if `.git` were a directory, silently producing a
 // {head:0, index:0} tick that never changes — so commits/stages in a worktree
 // never triggered an auto-refresh. The tracker now follows the pointer.
+// Regression: HEAD and the branch ref were compared by modification tick, so
+// rewriting either with identical bytes reported a repository change and spawned a
+// `git status` with nothing to find. `git checkout <the branch already checked
+// out>` does exactly that. Not user-visible — which is why it survived the pass
+// that fixed the three visible instances — but it is a subprocess per event, and
+// for a remote project it would be a round trip. (TD-2026-09-29-306.)
+void TestGitRepositoryMetadataTrackerIgnoresIdenticalHeadRewrite() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git/refs/heads");
+  WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / ".git/refs/heads/main", "1111111111111111111111111111111111111111\n");
+  WriteFile(root / ".git/index", "index\n");
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);
+  Expect(tracker.SampleChanges().empty(), "the first sample only establishes the baseline");
+
+  // Rewrite BOTH with the same bytes. Their modification ticks move; the
+  // repository did not.
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / ".git/refs/heads/main", "1111111111111111111111111111111111111111\n");
+  Expect(tracker.SampleChanges().empty(),
+         "rewriting HEAD and the branch ref with identical bytes is not a repository change");
+
+  // A real commit — the branch ref advances — must still be reported, or the fix
+  // above would just be a way of never noticing anything.
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  WriteFile(root / ".git/refs/heads/main", "2222222222222222222222222222222222222222\n");
+  const std::vector<project::RepositoryChange> advanced = tracker.SampleChanges();
+  Expect(std::any_of(advanced.begin(), advanced.end(),
+                     [](const project::RepositoryChange& change) {
+                       return change.kind == project::RepositoryChangeKind::HeadChanged;
+                     }),
+         "an advancing branch ref is still a HEAD change");
+}
+
 void TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "worktree";
@@ -373,6 +411,8 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
           TestProjectChangeCoalescerCollapsesFloodToRescan);
   AddTest(tests, "ProjectChange/CoalescerGeneration", TestProjectChangeCoalescerSuppressesStaleGeneration);
   AddTest(tests, "ProjectChange/GitMetadataHeadChange", TestGitRepositoryMetadataTrackerDetectsHeadChanges);
+  AddTest(tests, "ProjectChange/GitMetadataIgnoresIdenticalHeadRewrite",
+          TestGitRepositoryMetadataTrackerIgnoresIdenticalHeadRewrite);
   AddTest(tests, "ProjectChange/GitMetadataWorktreeGitFile",
           TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile);
   AddTest(tests, "ProjectChange/GitMetadataRepositoryAppearsAndDisappears",
