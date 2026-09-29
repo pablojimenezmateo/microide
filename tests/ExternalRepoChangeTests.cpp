@@ -198,6 +198,12 @@ void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "identical-rewrite fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  // Only the synthetic batches below may drive this test: the live inotify
+  // watcher reacting to the fixture's own writes is a second, uncontrolled
+  // source of batches (TD-2026-09-29-311). Unwatch also joins its threads, so
+  // anything in flight has landed before the assertions run.
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "the fixture must have a live watcher to quiesce");
   DrainProjectChanges(shell);
   WorkspaceShellTestAccess::ClearEditorBannersForTesting(shell);
 
@@ -233,6 +239,12 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "split-view fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  // Only the synthetic batches below may drive this test: the live inotify
+  // watcher reacting to the fixture's own writes is a second, uncontrolled
+  // source of batches (TD-2026-09-29-311). Unwatch also joins its threads, so
+  // anything in flight has landed before the assertions run.
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "the fixture must have a live watcher to quiesce");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, workspace::EditorSplitOrientation::Vertical),
          "the fixture must actually split, or this is the single-view test again");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2 &&
@@ -282,6 +294,12 @@ void TestWorkspaceShellRealRewriteStillNotifies() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "real-rewrite fixture should open the project");
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  // Only the synthetic batches below may drive this test: the live inotify
+  // watcher reacting to the fixture's own writes is a second, uncontrolled
+  // source of batches (TD-2026-09-29-311). Unwatch also joins its threads, so
+  // anything in flight has landed before the assertions run.
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "the fixture must have a live watcher to quiesce");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   DrainProjectChanges(shell);
 

@@ -480,12 +480,19 @@ What was ruled out, each by inspection:
   mutex, and the real watcher's callback runs on its worker thread, so the
   synthetic and real batches serialize.
 
-The live inotify watcher IS a second, uncontrolled source of batches in these
-tests, which is the leading suspect: they dispatch a synthetic batch and assert
-the outcome while the real watcher may deliver its own for the same write.
-Making the assertion depend on only the synthetic batch would remove the class,
-but doing that needs a way to quiesce the native watcher without destroying the
-object the dispatch helper requires.
+**Addressed 2026-09-29, though not proven**: the three tests that dispatch a
+synthetic batch now call `QuiesceFileIndexWatcherForTesting` first, which is
+`FileIndexWatcher::Unwatch()` — it stops the native and poll threads while
+keeping the object and its callback, so the dispatch helper still delivers and
+the real watcher no longer reacts to the fixture's own writes. `Unwatch()` joins
+those threads, so anything in flight has landed before the assertions run.
+
+This removes the uncontrolled second source, which was the leading suspect. It
+is NOT a proven fix: the failure was never reproduced on demand, so this cannot
+be verified by making it stop. 8 further `ctest -j12` runs under ten CPU hogs
+are green, which was also true before the change. The entry stays open until
+the tests have run clean for long enough to mean something, and the diagnostics
+below stay in place for the next occurrence.
 
 Both assertions now render the deciding state on failure — the recorded
 signature, the stat on disk, and the buffer's first line — so the next

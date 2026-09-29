@@ -972,6 +972,24 @@
   // batch callback runs — index apply, coalescer ingest, truncation notice, wake —
   // rather than only the index apply that ApplyFileIndexBatchForTesting covers.
   // Returns false when no watcher is running (the project has no root).
+  // Stop the live watcher's native/poll threads while KEEPING the watcher and its
+  // callback, so DispatchFileIndexWatcherBatchForTesting still delivers.
+  //
+  // A test that dispatches a synthetic batch and asserts on the result otherwise
+  // has two sources of batches: its own, and the real inotify watcher reacting to
+  // the same writes the fixture just made. The second one is uncontrolled — it may
+  // arrive before, during or after the synthetic batch, or not at all within the
+  // test's window — and that is the leading suspect for TD-2026-09-29-311, where
+  // a real external change was twice reported as our own echo under load.
+  // `Unwatch()` also JOINS those threads, so any in-flight batch has landed by the
+  // time this returns rather than racing the assertions.
+  static bool QuiesceFileIndexWatcherForTesting(WorkspaceShell& shell) {
+    if (shell.file_index_watcher_ == nullptr) {
+      return false;
+    }
+    shell.file_index_watcher_->Unwatch();
+    return true;
+  }
   static bool DispatchFileIndexWatcherBatchForTesting(WorkspaceShell& shell,
                                                       platform::IndexUpdateBatch batch) {
     if (shell.file_index_watcher_ == nullptr) {
