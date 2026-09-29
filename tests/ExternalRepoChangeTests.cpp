@@ -127,6 +127,18 @@ void TestWorkspaceShellSelfWriteDoesNotRaiseBanner() {
 // deliver an inotify event inside a test's window, and a test that asserts NOTHING
 // happened cannot tell "the fix worked" from "the event never arrived" — so the
 // event is made certain rather than waited for.
+// Move `path`'s modification time somewhere unmistakably different. Both tests
+// below depend on the STAT differing — that is the whole precondition for the
+// content confirmation they exercise — and a rewrite that lands inside the same
+// filesystem mtime tick as the previous one does not move it. Leaving that to
+// timing made one of these pass or fail with machine load, which is the opposite
+// of what a test for a content check should depend on.
+void ForceDistinctModificationTime(const std::filesystem::path& path) {
+  std::error_code error;
+  std::filesystem::last_write_time(
+      path, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), error);
+}
+
 platform::IndexUpdateBatch BuildModifiedBatch(const std::filesystem::path& root,
                                               const std::filesystem::path& relative_path) {
   const std::filesystem::path absolute_path = root / relative_path;
@@ -170,6 +182,7 @@ void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
 
   // Rewrite with the SAME bytes: the mtime moves, the content does not.
   WriteFile(file_path, "same bytes\n");
+  ForceDistinctModificationTime(file_path);
   Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
              shell, BuildModifiedBatch(root, relative)),
          "the fixture must actually deliver a watcher batch, or it proves nothing");
@@ -200,6 +213,7 @@ void TestWorkspaceShellRealRewriteStillNotifies() {
 
   // Same LENGTH, different bytes — the case a content hash must not wave through.
   WriteFile(file_path, "SAME BYTES\n");
+  ForceDistinctModificationTime(file_path);
   Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
              shell, BuildModifiedBatch(root, relative)),
          "the fixture must actually deliver a watcher batch");
