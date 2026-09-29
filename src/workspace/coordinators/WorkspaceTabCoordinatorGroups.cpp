@@ -191,7 +191,17 @@ TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
     editor_state.restored_cursor_column = tab.editor_state->restored_cursor_column;
     editor_state.restored_scroll_line = tab.editor_state->restored_scroll_line;
     editor_state.restored_horizontal_scroll = tab.editor_state->restored_horizontal_scroll;
-    editor_state.content = tab.editor_state->content;
+    // The clone gets no read of its own — `pending_load` names ONE tab, and the
+    // completion hydrates the tab that holds the id. Copying `Loading` across
+    // would leave the clone waiting for a completion that can never find it:
+    // stuck read-only forever, because `RestoreEditorTab` treats Loading as
+    // "already on its way" and never retries. `Deferred` is the honest state for
+    // a tab with no content and no read, and activation resolves it — sharing
+    // the original's buffer if it has landed by then, or posting its own read if
+    // it has not.
+    editor_state.content = tab.editor_state->content == TabEntry::EditorTabState::Content::Ready
+                               ? TabEntry::EditorTabState::Content::Ready
+                               : TabEntry::EditorTabState::Content::Deferred;
     editor_state.snippet_session = tab.editor_state->snippet_session;
     clone.editor_state = std::move(editor_state);
   } else if (tab.deferred_handle.has_value()) {

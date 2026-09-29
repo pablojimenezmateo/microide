@@ -368,6 +368,21 @@
   static int PendingFileReadCount(const WorkspaceShell& shell) {
     return shell.file_read_service_.PendingCount();
   }
+  // Content state of a specific tab in a specific group, for asserting what a
+  // split clone inherited.
+  static TabEntry::EditorTabState::Content GroupTabContentState(const WorkspaceShell& shell,
+                                                                std::size_t group_index,
+                                                                std::size_t tab_index) {
+    const auto& groups = shell.context_.current_project_state.editor_groups;
+    if (group_index >= groups.size() || tab_index >= groups[group_index].open_tabs.size()) {
+      throw std::runtime_error("no such tab");
+    }
+    const TabEntry& tab = groups[group_index].open_tabs[tab_index];
+    if (!tab.editor_state.has_value()) {
+      throw std::runtime_error("tab has no editor state");
+    }
+    return tab.editor_state->content;
+  }
   static TabEntry::EditorTabState::Content ActiveTabContentState(const WorkspaceShell& shell) {
     const TabEntry::EditorTabState* editor_tab = shell.ActiveEditorTab();
     return editor_tab != nullptr ? editor_tab->content

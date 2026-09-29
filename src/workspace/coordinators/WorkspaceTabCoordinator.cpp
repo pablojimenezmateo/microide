@@ -308,12 +308,17 @@ void TabCoordinator::Activate(std::size_t index) {
 
   if (state_.focused_group().active_tab_index == index) {
     auto& active_tab = state_.focused_group().open_tabs[index];
-    // Re-activating the already-active tab normally needs no load, but a tab left
-    // deferred (editor_state unset yet a deferred handle present) must still be
-    // hydrated here or its pane renders empty. Guarded on the un-hydrated state so
-    // the common re-click stays a no-op and never re-snaps scroll onto the caret.
-    if (active_tab.kind == TabEntry::Kind::Editor && !active_tab.editor_state.has_value() &&
-        active_tab.deferred_handle.has_value()) {
+    // Re-activating the already-active tab normally needs no load, but a tab whose
+    // content is not here yet must still be hydrated or its pane renders empty.
+    // BOTH un-hydrated forms qualify: no `editor_state` with a deferred handle,
+    // and an `editor_state` whose `content` is not Ready — a split clone of a tab
+    // that was still loading is the second, and checking only the first left it
+    // empty and read-only for the life of the pane. Guarded on the un-hydrated
+    // state so the common re-click stays a no-op and never re-snaps scroll onto
+    // the caret.
+    if (active_tab.kind == TabEntry::Kind::Editor &&
+        (active_tab.editor_state.has_value() ? active_tab.editor_state->content_pending()
+                                             : active_tab.deferred_handle.has_value())) {
       (void)LoadEditorTabForActivation(active_tab);
     }
     SyncActiveEditorTabMetadata();

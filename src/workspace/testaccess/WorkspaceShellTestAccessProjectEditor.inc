@@ -733,6 +733,13 @@
   static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group_index;
   }
+  // Focus a pane by index, for tests that walk every pane rather than navigating.
+  static void FocusEditorGroup(WorkspaceShell& shell, std::size_t group_index) {
+    if (group_index >= shell.context_.current_project_state.editor_groups.size()) {
+      throw std::runtime_error("no such editor group");
+    }
+    shell.context_.current_project_state.focused_group_index = group_index;
+  }
   // Orientation of the editor area's OUTERMOST split (None when there is one
   // pane). The split model is a tree now, so this is a summary, not the whole
   // layout — reach for `EditorSplit` when a test cares about the shape.
