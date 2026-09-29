@@ -66,28 +66,21 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
   return MergeResultState::Saved;
 }
 
-namespace {
-
-// True when the merge output on disk is byte-for-byte the text we last wrote there.
-//
-// The staleness check above compares only the modification tick, and a moved tick
-// is not a changed file: a `touch`, a tool that rewrote the output with identical
-// bytes, or a `git checkout` restoring it all move it. Treating one of those as an
-// external modification BLOCKS "Mark Resolved" and tells the user to refresh the
-// resolver — throwing away a resolution over a file that never changed.
-//
-// No hash and no heuristic: the merge tab already holds `persisted_output_baseline`,
-// the exact text it last wrote, so this is an exact comparison. It only runs when
-// the tick already says something moved, which is rare.
-bool MergeResultMatchesPersistedBaseline(const MergeTabState& merge_tab) {
+bool MergeResultChangedOnDisk(const MergeTabState& merge_tab) {
+  if (merge_tab.output_path.empty()) {
+    return false;
+  }
+  const std::optional<std::uint64_t> disk_tick = util::FileModificationTick(merge_tab.output_path);
+  if (!disk_tick.has_value() || !merge_tab.disk_result_tick.has_value() ||
+      *disk_tick == *merge_tab.disk_result_tick) {
+    return false;  // the cheap test answered it
+  }
   if (!merge_tab.persisted_output_baseline.has_value()) {
-    return false;  // nothing recorded to compare against; fail closed
+    return true;  // nothing recorded to compare against; fail closed
   }
   const std::optional<std::string> on_disk = util::ReadTextFile(merge_tab.output_path);
-  return on_disk.has_value() && *on_disk == *merge_tab.persisted_output_baseline;
+  return !on_disk.has_value() || *on_disk != *merge_tab.persisted_output_baseline;
 }
-
-}  // namespace
 
 MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request) {
   const MergeTabState& merge_tab = request.merge_tab;
@@ -158,18 +151,13 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
     }
   }
 
-  if (!merge_tab.output_path.empty()) {
-    if (const auto disk_tick = util::FileModificationTick(merge_tab.output_path);
-        disk_tick.has_value() && merge_tab.disk_result_tick.has_value() &&
-        *disk_tick != *merge_tab.disk_result_tick &&
-        !MergeResultMatchesPersistedBaseline(merge_tab)) {
-      return MergeValidationResult{
-          .ok = false,
-          .issue = MergeValidationIssue::ExternalModification,
-          .message = "The merge result changed on disk; refresh the resolver before marking resolved.",
-          .marker_line = std::nullopt,
-      };
-    }
+  if (MergeResultChangedOnDisk(merge_tab)) {
+    return MergeValidationResult{
+        .ok = false,
+        .issue = MergeValidationIssue::ExternalModification,
+        .message = "The merge result changed on disk; refresh the resolver before marking resolved.",
+        .marker_line = std::nullopt,
+    };
   }
 
   return MergeValidationResult{

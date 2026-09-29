@@ -103,6 +103,99 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveMergeBlameOverl
 //
 // Multi-hunk on purpose: a one-hunk fixture cannot tell first from last, which
 // is exactly how the perf scenario that found this stayed green for so long.
+// Regression, and the one the first attempt at this fix missed entirely. The
+// confirmation originally lived only inside ValidateMergeResult, while the two
+// watcher paths that actually SET `external_result_stale` kept their own tick
+// compares — and ValidateMergeResult returns on that flag long before reaching the
+// guard. So a touch of the merge output still un-marked a completed resolution,
+// and the unit tests passed because they built a MergeTabState by hand with the
+// flag already false: a shape the running app does not produce.
+//
+// This one goes through the product path: open a real merge editor, rewrite the
+// output with identical bytes, and drive the watcher-side invalidation.
+void TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(source, "line 1\ncurrent line\nline 3\n");
+  WriteFile(base, "line 1\nbase line\nline 3\n");
+  WriteFile(incoming, "line 1\nincoming line\nline 3\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add merge staleness fixture", "merge staleness fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, source, source),
+         "merge editor should open");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  // Stand in for a completed resolution: the resolver has written the output and
+  // recorded both what it wrote and the tick it wrote at.
+  const std::string resolved = "line 1\nresolved line\nline 3\n";
+  WriteFile(merge.output_path, resolved);
+  merge.persisted_output_baseline = resolved;
+  merge.disk_result_tick = microide::util::FileModificationTick(merge.output_path);
+  merge.external_result_stale = false;
+  merge.marked_resolved = true;
+
+  // Something rewrites the output with the SAME bytes and moves its tick.
+  WriteFile(merge.output_path, resolved);
+  std::error_code mtime_error;
+  std::filesystem::last_write_time(
+      merge.output_path,
+      std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), mtime_error);
+  WorkspaceShellTestAccess::InvalidateMergeTabsForPath(shell, merge.output_path);
+
+  const auto& after = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(!after.external_result_stale,
+         "a byte-identical rewrite of the merge output must not mark the result stale");
+  Expect(after.marked_resolved,
+         "a byte-identical rewrite must not un-mark a completed resolution");
+}
+
+// The other half, through the same product path: a real edit to the output must
+// still un-mark the resolution.
+void TestWorkspaceShellRealMergeOutputEditDropsResolution() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::filesystem::path base = temp_dir.path() / "base.cpp";
+  const std::filesystem::path incoming = temp_dir.path() / "incoming.cpp";
+  WriteFile(source, "line 1\ncurrent line\nline 3\n");
+  WriteFile(base, "line 1\nbase line\nline 3\n");
+  WriteFile(incoming, "line 1\nincoming line\nline 3\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add merge staleness fixture", "merge staleness fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, source, source),
+         "merge editor should open");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const std::string resolved = "line 1\nresolved line\nline 3\n";
+  WriteFile(merge.output_path, resolved);
+  merge.persisted_output_baseline = resolved;
+  merge.disk_result_tick = microide::util::FileModificationTick(merge.output_path);
+  merge.external_result_stale = false;
+  merge.marked_resolved = true;
+
+  WriteFile(merge.output_path, "line 1\nsomeone else edited this\nline 3\n");
+  std::error_code mtime_error;
+  std::filesystem::last_write_time(
+      merge.output_path,
+      std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), mtime_error);
+  WorkspaceShellTestAccess::InvalidateMergeTabsForPath(shell, merge.output_path);
+
+  const auto& after = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(after.external_result_stale, "a real external edit still marks the result stale");
+  Expect(!after.marked_resolved, "a real external edit un-marks the resolution");
+}
+
 void TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3015,6 +3108,10 @@ void TestWorkspaceShellCompareMultiCaretIsPainted() {
 }
 
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/IdenticalMergeOutputRewriteKeepsResolution",
+          TestWorkspaceShellIdenticalMergeOutputRewriteKeepsResolution);
+  AddTest(tests, "WorkspaceShell/RealMergeOutputEditDropsResolution",
+          TestWorkspaceShellRealMergeOutputEditDropsResolution);
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
   AddTest(tests, "WorkspaceShell/CompareDragAutoscrollsAndKeepsGranularity",

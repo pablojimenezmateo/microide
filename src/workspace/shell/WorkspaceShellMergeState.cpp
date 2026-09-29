@@ -1,3 +1,4 @@
+#include "workspace/git/MergeResultValidation.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -758,16 +759,11 @@ void WorkspaceShell::InvalidateStaleMergeTabs() {
       merge_tab.index_stale = true;
       merge_tab.marked_resolved = false;
     }
-    std::error_code merge_exists_error;
-    if (!merge_tab.output_path.empty() &&
-        std::filesystem::exists(merge_tab.output_path, merge_exists_error) && !merge_exists_error) {
-      std::error_code error;
-      const auto tick = std::filesystem::last_write_time(merge_tab.output_path, error);
-      if (!error && merge_tab.disk_result_tick.has_value() &&
-          static_cast<std::uint64_t>(tick.time_since_epoch().count()) != *merge_tab.disk_result_tick) {
-        merge_tab.external_result_stale = true;
-        merge_tab.marked_resolved = false;
-      }
+    // Same shared confirmation as the watcher path: the tick is the prefilter, the
+    // recorded baseline is the answer. (TD-2026-09-29-306.)
+    if (MergeResultChangedOnDisk(merge_tab)) {
+      merge_tab.external_result_stale = true;
+      merge_tab.marked_resolved = false;
     }
     merge_tab.remaining_conflicted_files = repository.conflicted_entry_count;
   }

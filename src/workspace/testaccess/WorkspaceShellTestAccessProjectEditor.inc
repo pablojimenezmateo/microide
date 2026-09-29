@@ -217,6 +217,13 @@
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge.value();
   }
   // Null when the front tab is not a merge tab (or there is none).
+  // Drives the watcher-side staleness decision directly: the path a real file
+  // change takes to un-mark a resolution. A test that sets external_result_stale by
+  // hand exercises a shape the product never produces.
+  static void InvalidateMergeTabsForPath(WorkspaceShell& shell,
+                                         const std::filesystem::path& path) {
+    shell.InvalidateMergeTabsForPath(path);
+  }
   static WorkspaceShell::MergeTabState* ActiveMergeOrNull(WorkspaceShell& shell) {
     auto& group = shell.context_.current_project_state.focused_group();
     if (group.active_tab_index >= group.open_tabs.size()) {

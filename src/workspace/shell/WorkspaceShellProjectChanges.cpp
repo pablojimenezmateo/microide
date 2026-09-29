@@ -1,3 +1,4 @@
+#include "workspace/git/MergeResultValidation.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <set>
@@ -213,10 +214,11 @@ void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& pat
     if (!std::filesystem::exists(normalized_path, exists_error) || exists_error) {
       continue;
     }
-    std::error_code error;
-    const auto tick = std::filesystem::last_write_time(normalized_path, error);
-    if (!error && tab.merge->disk_result_tick.has_value() &&
-        static_cast<std::uint64_t>(tick.time_since_epoch().count()) != *tab.merge->disk_result_tick) {
+    // Through the shared confirmation, not a tick compare of its own: a touch or a
+    // byte-identical rewrite moves the tick and changes nothing, and un-marking a
+    // completed resolution over that is the worst of the three ways this mistake
+    // showed up. (TD-2026-09-29-306.)
+    if (MergeResultChangedOnDisk(*tab.merge)) {
       tab.merge->external_result_stale = true;
       tab.merge->marked_resolved = false;
     }

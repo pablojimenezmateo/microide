@@ -12,6 +12,22 @@
 
 namespace microide::workspace {
 
+// True when the merge output on disk differs from the text the resolver last wrote
+// there.
+//
+// The modification tick is the cheap first test and NOT the last word: a `touch`, a
+// tool that rewrote the output with identical bytes, and a `git checkout` restoring
+// it all move the tick and change nothing. Confirming against
+// `persisted_output_baseline` — the exact text the resolver wrote — is a byte
+// comparison, and it only runs when the tick already says something moved.
+//
+// Every site that decides the result went stale calls THIS, rather than comparing
+// ticks itself. That is the whole point: the confirmation first lived only inside
+// ValidateMergeResult, while the two watcher paths that actually SET
+// `external_result_stale` kept their own tick compares — so a touch still un-marked
+// a completed resolution and the guard never ran. (TD-2026-09-29-306.)
+bool MergeResultChangedOnDisk(const MergeTabState& merge_tab);
+
 enum class MergeResultState {
   Dirty,
   Saved,
