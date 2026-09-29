@@ -903,7 +903,43 @@ there — which is a smaller gap than it sounds (the same objects are sanitized 
 `microide_tests`) but is worth closing when the second test binary lands, since that
 is the same CMake work.
 
-### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN]
+### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — first slice done 2026-09-29]
+
+**Slice 1 (2026-09-29): a project owns a launcher, and git status routes through
+it.** `ProjectWorkspaceState::launcher()` is that launcher — a pointer so the
+state stays copyable across project switches, defaulting to the process-wide
+local one. `project/GitStatusService` takes it explicitly at every entry point
+with NO default parameter, because a default is what G2 removed from
+`GitRepository` and for the same reason. Six internal `LocalProcessLauncher()`
+constructions became one decision made by the caller that knows the project; the
+sidebar's stage/unstage/discard, the merge surface's stage and the conflict
+review all pass `state_.launcher()` now.
+
+The property worth pinning was pinned: a test asserts the service runs git
+through the launcher it was HANDED, so a reintroduced internal
+`LocalProcessLauncher()` leaves the scripted launcher with no recorded runs and
+fails.
+
+**Remaining slices, measured rather than estimated** (`LocalProcessLauncher()`
+constructions / call sites that would need the launcher threaded):
+
+| unit | internal sites | call sites |
+| --- | --- | --- |
+| `GitCompareService` | 9 | ~70 |
+| `CommitWorkflowChecks` | 2 | — |
+| `GitBlameService`, `GitBranchOperations`, `GitCommitExecutor`, `GitCommandUtil` | 1 each | — |
+| `GitRepositoryService`, `PatchApplyService` | 1 each | — |
+
+`GitCompareService` is the one that dominates, and its ~70 call sites are why it
+was not folded into slice 1: it is a mechanical change, but a mechanical change
+of that size landed alongside other work is one nobody can review, and it should
+start a session rather than end one.
+
+A lint belongs with the last slice, not before it: while most sites still
+construct their own local launcher, a rule saying "take the launcher as a
+parameter" would have to carry an allowlist of everything not yet converted,
+which reads as "these are exceptions" when they are just unfinished.
+
 
 `platform::ProcessLauncher` is in place and `CheckEverySpawnGoesThroughAProcessLauncher`
 keeps it the only door: git, the formatter, plugin tools, the language server, the

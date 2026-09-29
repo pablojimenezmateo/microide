@@ -756,6 +756,11 @@ struct ProjectWorkspaceState {
   // defaults to the process-wide local launcher, which is what every project is
   // until remote projects exist.
   //
+  // LIFETIME: whatever this points at must outlive the project state. That is
+  // free for the local launcher (a function-local static) and is a real
+  // constraint for a remote one — it belongs to the host session, not to the
+  // project state, which is destroyed and rebuilt on every switch.
+  //
   // Spawns that must NEVER follow the project — `xdg-open`, "Open Local
   // Terminal" — keep naming `platform::LocalProcessLauncher()` explicitly and say
   // why, rather than reading this. (TD-2026-09-22-301.)
