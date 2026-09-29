@@ -149,6 +149,13 @@ void TestUnmatchedDecrementDoesNotGoNegative() {
 void TestWakePushFailureLatchesOwedWake() {
   static const bool initialized = InitSdlEvents();
   (void)initialized;
+  // Set the channel HERE rather than relying on a sibling test having set it. With
+  // no channel the completion wake is `PushWake(0)`, which is a deliberate no-op
+  // that latches nothing — so this test used to pass only when the round-robin
+  // happened to run WakeUsesRegisteredEventType before it in the same shard, and
+  // adding an unrelated test anywhere could move it and break this one. That is the
+  // reshuffle hazard TestMain's own comment describes.
+  util::SetBackgroundTaskWakeChannel(4243);
   microide::util::ConsumeOwedWake();  // clear any prior owed state
   microide::util::SetWakePusherForTesting([](microide::util::WakeChannel) { return false; });
 
