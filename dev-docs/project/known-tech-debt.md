@@ -527,10 +527,10 @@ Until then the bound is the mitigation, and the bound is load-bearing: the size
 prefilter and the 8 MiB cap are what keep a `git checkout` of a large binary from
 stalling the window.
 
-### TD-2026-09-29-310 — the status bar shows editor segments for a Welcome tab. [OPEN]
+### TD-2026-09-29-310 — the status bar describes the welcome surface. [OPEN]
 
-Seen in a headless capture of a freshly-opened project (no file open, Welcome tab
-active). The status bar reads:
+Seen in a headless capture of a freshly-opened project (no file open, the welcome
+placeholder showing). The status bar reads:
 
     master [clean]   unknown   Tabs: 4   UTF-8 · LF
 
@@ -544,27 +544,43 @@ Two separate things, both cosmetic and both pre-existing:
   language-contract cache, so renaming the id would be a much larger and riskier
   change than the wart justifies.
 - **Language, Indent, Encoding and Ln/Col are shown with no document open.**
-  VSCode shows none of them with no editor open. The mechanism is NOT yet known,
-  and an earlier version of this entry guessed wrong, so here is only what is
-  established:
+  VSCode shows none of them with no editor open. The mechanism IS known
+  (established 2026-09-29, after two wrong guesses recorded here so the next
+  reader does not repeat them):
 
-  - "Welcome" is a PLACEHOLDER tab — `WorkspaceLayout.h:424`, "painted (and
-    hit-tested) when no tabs are open". It is not a `TabEntry`; the only kinds
-    are Editor, Compare and Merge. So it does not own a viewport.
-  - `StatusBarModelService` clears all four of those segments in its
-    `else` branch when `StatusBarSourceViewport()` is null, and that resolves
-    through `ActiveNavigableViewport()` to `ActiveEditorViewport()`.
+  - Wrong guess 1: "the Welcome tab owns a viewport". It is not a tab at all —
+    `WorkspaceLayout.h:424`, a placeholder rect "painted (and hit-tested) when no
+    tabs are open", and the only `TabEntry` kinds are Editor/Compare/Merge.
+  - Wrong guess 2: "so nothing owns a viewport and the clear branch must be
+    broken". `StatusBarModelService` does clear all four segments when the source
+    viewport is null, and that branch is fine.
+  - **Actual cause**: `TabCoordinator::ActiveEditorViewport()`
+    (`WorkspaceTabCoordinator.cpp:274`) returns
+    `&state_.focused_group().welcome_surface.viewport` when there is no editor
+    tab. `WelcomeSurfaceState` holds a real `editor::TextViewport`
+    (`WorkspaceProjectState.h:543`), so the source viewport is never null and the
+    bar faithfully describes the built-in placeholder buffer: its language
+    ("unknown"), its default indent, its encoding, and its caret.
 
-  So the capture should have shown none of them, and it showed all four
-  (including `Ln 1, Col 1`). Either an editor tab existed that the placeholder
-  strip did not represent, or the clear branch did not run. **The cheap next
-  step is a test**: open a project, open no file, and assert those four segments
-  are not visible. It either passes — and the capture was misread — or it fails
-  and names the bug.
+  **The fix is one predicate**, in `WorkspaceShell::StatusBarSourceViewport()`:
+  return nullptr when the resolved viewport `is_placeholder()`. That is the exact
+  question and not a proxy — `TextViewport`'s constructor sets the flag for the
+  placeholder text and every real-content path clears it, **including
+  `SetUntitledBuffer`**, so a new untitled buffer keeps its segments as it
+  should. Verified before proposing it, because blanking the bar for Ctrl+N would
+  be a worse bug than this one. Needs a test in both directions: no file open →
+  those four segments hidden; a file open → visible.
 
-Not fixed here because it is user-visible text and may be deliberate: the
-internal-token spelling is at least honest about what the detector decided.
-Decide the intent before changing it.
+  Worth noting while here: this group-level viewport fallback is close to the
+  `AGENTS.md` invariant against a "shell-level or project-level viewport fallback
+  under any name". It predates that rule's current wording and is not
+  lint-covered.
+
+Neither is fixed here. The `unknown` label is user-visible text that may be
+deliberate — the internal-token spelling is at least honest about what the
+detector decided — so decide the intent before changing it. The welcome-surface
+half is a real defect with a known one-line fix, left only because it wants its
+two tests alongside it.
 
 ### TD-2026-09-29-308 — a per-viewport write gate needs three paths, not one setter. [OPEN]
 
