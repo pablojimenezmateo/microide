@@ -7312,6 +7312,26 @@ void TestWorkspaceShellTruncatedIndexBatchNotifiesOnce() {
   // Draining again must not re-raise it: the flag is consumed, not sampled.
   WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
   Expect(truncation_notices() == 1, "the truncation notice should not repeat per drain");
+
+  // It reports a STATE — the index is a prefix of this project for as long as the
+  // project is open — so it must outlive the four-second toast timer. As a
+  // transient it told whoever was looking at the corner at that second, and after
+  // that nothing explained why search results were incomplete.
+  const auto& rows = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(rows.size() == 1 && rows.front().sticky, "the truncation notice is sticky");
+  WorkspaceShellTestAccess::ExpireNotificationsAt(shell,
+                                                  workspace::NotificationService::DurationMs() * 100);
+  Expect(truncation_notices() == 1, "a sticky state notice does not expire on the timer");
+
+  // And it clears with the state: opening another project restarts the watcher
+  // on a different tree, so the row must not survive to claim THAT index is
+  // truncated. A sticky row that outlives its subject is worse than no row.
+  const std::filesystem::path other_root = temp_dir.path() / "other-project";
+  WriteFile(other_root / "README.md", "other\n");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other_root, false, false),
+         "the fixture should open a second project");
+  Expect(truncation_notices() == 0,
+         "restarting the index watcher clears the notice about the old index");
 }
 
 void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {

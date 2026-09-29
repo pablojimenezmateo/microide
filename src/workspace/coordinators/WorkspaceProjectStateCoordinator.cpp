@@ -66,6 +66,10 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
       file_index_watcher_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
 
   project_index_truncated_notice_pending_.store(false, std::memory_order_relaxed);
+  // The sticky "too large to index" row reports the state of the index this
+  // watcher is about to rebuild, so it goes with it. Left behind, it would claim
+  // the NEXT project is truncated.
+  notification_service_.DismissKey(kProjectIndexTruncatedNotificationKey);
   file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
   file_index_watcher_->SetExcludeGlobs(
       ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string())));
@@ -153,6 +157,7 @@ void WorkspaceShell::StopFileIndexWatcher() {
   file_index_has_pending_changes_.store(false, std::memory_order_relaxed);
   project_file_event_pending_.store(false, std::memory_order_relaxed);
   project_index_truncated_notice_pending_.store(false, std::memory_order_relaxed);
+  notification_service_.DismissKey(kProjectIndexTruncatedNotificationKey);
   const bool had_initial_build = file_index_initial_build_in_flight_.exchange(
       false, std::memory_order_acq_rel);
   if (had_initial_build) {

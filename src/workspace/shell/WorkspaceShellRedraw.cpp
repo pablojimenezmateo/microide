@@ -195,6 +195,11 @@ void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message)
   RequestFullRedraw();
 }
 
+void WorkspaceShell::Notify(NotificationService::Request request) {
+  notification_service_.Show(std::move(request), SDL_GetTicks());
+  RequestFullRedraw();
+}
+
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   if (pending_render_invalidation_.full || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
@@ -1062,8 +1067,19 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   // Surface a notice when the project is too large to index completely. Done before
   // the early returns below so it fires even when there is no change batch to apply.
   if (project_index_truncated_notice_pending_.exchange(false, std::memory_order_acq_rel)) {
-    Notify(NotificationService::Tone::Warning,
-           "Project too large to index fully — search and Go to File cover part of it");
+    // Sticky, because this reports a STATE and not an event: the index IS a
+    // prefix of the project for as long as this project is open, and search and
+    // Go to File keep covering part of it. As a four-second toast it told whoever
+    // happened to be looking at the bottom-right corner at that moment, and then
+    // the only explanation for incomplete results was gone. It clears where the
+    // state does — whenever the watcher restarts (a rescan, another project), in
+    // Start/StopFileIndexWatcher.
+    Notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Warning,
+        .key = std::string(kProjectIndexTruncatedNotificationKey),
+        .message = "Project too large to index fully — search and Go to File cover part of it",
+        .sticky = true,
+    });
   }
 
   if (!supplemental.repository_changes.empty() || !supplemental.file_changes.empty() ||

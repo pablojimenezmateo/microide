@@ -122,6 +122,16 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
                           theme_.overlay_background,
                           text_renderer_.TruncateToWidthEphemeralView(message, toast.text.w));
     }
+
+    if (it->progress.has_value()) {
+      // Track then fill, in the row's own tone: a progress row reports work that
+      // is still running, so it is sticky and this is the only thing on the card
+      // that changes between frames.
+      DrawFilledRect(renderer, toast.progress_track, theme_.overlay_background);
+      SDL_FRect fill = toast.progress_track;
+      fill.w = toast.progress_track.w * *it->progress;
+      DrawFilledRect(renderer, fill, accent);
+    }
   }
 }
 

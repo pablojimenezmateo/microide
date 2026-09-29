@@ -1886,6 +1886,8 @@
   // Post a transient notification toast and schedule a full redraw so it paints.
   // The single host-owned entry point for toasts (plugins + built-in callers).
   void Notify(NotificationService::Tone tone, std::string message);
+  // The keyed/sticky/progress form. See NotificationService::Request.
+  void Notify(NotificationService::Request request);
   void RequestRedrawRect(const SDL_FRect& rect);
   void RequestWindowRedraw();
   // Request the smallest present that still re-latches the hardware cursor plane

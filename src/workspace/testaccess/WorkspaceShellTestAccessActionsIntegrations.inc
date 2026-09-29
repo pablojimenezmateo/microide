@@ -491,6 +491,11 @@
       const WorkspaceShell& shell) {
     return shell.notification_service_.Active();
   }
+  // Run the expiry sweep at an arbitrary clock reading, so a test can ask what
+  // survives four seconds without waiting four seconds.
+  static bool ExpireNotificationsAt(WorkspaceShell& shell, std::uint64_t now_ms) {
+    return shell.notification_service_.ExpireDue(now_ms);
+  }
   static void ShowNotification(WorkspaceShell& shell,
                                NotificationService::Tone tone,
                                std::string message) {

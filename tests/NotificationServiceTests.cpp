@@ -62,6 +62,11 @@ void TestNotificationServiceExpirySaturatesNearMax() {
   Expect(service.Active().size() == 1, "notification shown near clock max stays active");
   Expect(service.Active().front().expiry_ms == std::numeric_limits<std::uint64_t>::max(),
          "expiry should saturate at UINT64_MAX rather than wrap");
+  // Stickiness is a FIELD, not this saturated value: an earlier draft made
+  // UINT64_MAX mean "never expires", which would have turned exactly this
+  // four-second toast into a permanent one.
+  Expect(!service.Active().front().sticky,
+         "a row posted without a key or progress is never sticky");
   Expect(!service.ExpireDue(near_max),
          "the saturated notification must not be treated as already expired");
 }
@@ -169,6 +174,110 @@ void TestNotificationToastWidthScalesWithWindow() {
   }
 }
 
+
+// A keyed row REPLACES the one on screen in place. Both halves matter: "41 files
+// changed" becoming "58 files changed" must be one row, and it must not jump to
+// the top of the stack while the pointer is over it.
+void TestNotificationServiceKeyedRowUpdatesInPlace() {
+  NotificationService service;
+  service.Show(NotificationService::Tone::Info, "first", 0);
+  service.Show(NotificationService::Request{.key = "sync", .message = "41 files changed"}, 0);
+  service.Show(NotificationService::Tone::Info, "last", 0);
+  Expect(service.Active().size() == 3, "three distinct rows");
+
+  service.Show(NotificationService::Request{.key = "sync", .message = "58 files changed"}, 10);
+  Expect(service.Active().size() == 3, "an update replaces rather than stacks");
+  Expect(service.Active()[1].message == "58 files changed",
+         "the keyed row updates IN PLACE — same stack position, new text");
+  Expect(service.Active()[2].message == "last",
+         "and the rows around it do not move");
+
+  // A different key is a different row.
+  service.Show(NotificationService::Request{.key = "build", .message = "building"}, 10);
+  Expect(service.Active().size() == 4, "a different key is a different row");
+}
+
+// A row that reports a STATE must outlive DurationMs. Before this every row
+// expired at four seconds, so "offline" disappeared four seconds after going
+// offline and the state was then invisible.
+void TestNotificationServiceStickyRowOutlivesTheTimer() {
+  NotificationService service;
+  service.Show(NotificationService::Request{
+                   .key = "conn", .message = "Disconnected from build-box", .sticky = true},
+               0);
+  Expect(service.Active().size() == 1 && service.Active().front().sticky,
+         "a keyed sticky row is posted sticky");
+  Expect(!service.ExpireDue(NotificationService::DurationMs() * 100),
+         "a sticky row does not expire on the timer");
+  Expect(service.Active().size() == 1, "and is still on screen");
+  Expect(!service.NextExpiryDelayMs(0).has_value(),
+         "a stack of only sticky rows schedules no wake — there is nothing to expire");
+
+  Expect(service.DismissKey("conn"), "its owner ends it by key");
+  Expect(service.Empty(), "and it is gone");
+  Expect(!service.DismissKey("conn"), "dismissing it twice is not an error");
+}
+
+// A sticky row with no key could never be dismissed by anyone. Posting it
+// transient is the lesser failure: a permanent toast nothing can remove would sit
+// over the status bar for the rest of the session.
+void TestNotificationServiceKeylessStickyIsRefused() {
+  NotificationService service;
+  service.Show(NotificationService::Request{.message = "no key", .sticky = true}, 0);
+  Expect(service.Active().size() == 1, "the message is still shown");
+  Expect(!service.Active().front().sticky, "but not as a row nothing can dismiss");
+  Expect(service.ExpireDue(NotificationService::DurationMs() + 1), "it expires normally");
+}
+
+// Progress implies sticky (a bar that vanishes mid-progress is a bug), and sticky
+// rows do not count against the transient cap — dropping the "syncing" row because
+// four warnings arrived would hide the state rather than the warnings.
+void TestNotificationServiceProgressIsStickyAndOutsideTheVisibleCap() {
+  NotificationService service;
+  service.Show(NotificationService::Request{
+                   .key = "sync", .message = "Syncing", .progress = 0.25f},
+               0);
+  Expect(service.Active().front().sticky, "a progress row is sticky by construction");
+  Expect(service.Active().front().progress.has_value() &&
+             service.Active().front().progress.value() == 0.25f,
+         "and carries its fraction");
+
+  for (std::size_t i = 0; i < NotificationService::MaxVisible() + 2; ++i) {
+    service.Show(NotificationService::Tone::Warning, "warning " + std::to_string(i), 0);
+  }
+  std::size_t transient = 0;
+  bool kept_progress = false;
+  for (const auto& row : service.Active()) {
+    transient += row.sticky ? 0 : 1;
+    kept_progress = kept_progress || row.key == "sync";
+  }
+  Expect(transient == NotificationService::MaxVisible(),
+         "transient rows are still capped at MaxVisible");
+  Expect(kept_progress, "the sticky progress row survives a burst of warnings");
+
+  service.Show(NotificationService::Request{
+                   .key = "sync", .message = "Syncing", .progress = 0.9f},
+               0);
+  Expect(service.Active().front().progress.value() == 0.9f,
+         "and updates its fraction in place");
+}
+
+// Sticky rows are not unbounded either: the stack lays out upward from the status
+// bar, so enough of them walk off the top of the window where nobody can dismiss
+// them.
+void TestNotificationServiceStickyStackIsBounded() {
+  NotificationService service;
+  for (std::size_t i = 0; i < NotificationService::MaxSticky() + 3; ++i) {
+    service.Show(NotificationService::Request{.key = "k" + std::to_string(i),
+                                              .message = "state " + std::to_string(i),
+                                              .sticky = true},
+                 0);
+  }
+  Expect(service.Active().size() == NotificationService::MaxSticky(),
+         "sticky rows past the cap are refused rather than stacked off screen");
+  Expect(service.Active().front().key == "k0", "and the ones already there are kept");
+}
+
 }  // namespace
 
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
@@ -186,6 +295,16 @@ void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
           TestNotificationServiceCollapsesRepeatedMessage);
   AddTest(tests, "NotificationService/ToneAndEmptyHandling",
           TestNotificationServiceToneAndEmptyHandling);
+  AddTest(tests, "NotificationService/KeyedRowUpdatesInPlace",
+          TestNotificationServiceKeyedRowUpdatesInPlace);
+  AddTest(tests, "NotificationService/StickyRowOutlivesTheTimer",
+          TestNotificationServiceStickyRowOutlivesTheTimer);
+  AddTest(tests, "NotificationService/KeylessStickyIsRefused",
+          TestNotificationServiceKeylessStickyIsRefused);
+  AddTest(tests, "NotificationService/ProgressIsStickyAndOutsideTheVisibleCap",
+          TestNotificationServiceProgressIsStickyAndOutsideTheVisibleCap);
+  AddTest(tests, "NotificationService/StickyStackIsBounded",
+          TestNotificationServiceStickyStackIsBounded);
   AddTest(tests, "NotificationService/ToastWidthScalesWithWindow",
           TestNotificationToastWidthScalesWithWindow);
 }

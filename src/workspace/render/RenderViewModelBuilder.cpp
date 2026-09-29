@@ -1688,6 +1688,9 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
     vm.entries.push_back(NotificationEntryViewModel{
         .tone = notification.tone,
         .message = notification.message,
+        .progress = notification.progress.has_value()
+                        ? std::optional<float>(std::clamp(*notification.progress, 0.0f, 1.0f))
+                        : std::nullopt,
     });
   }
   return vm;

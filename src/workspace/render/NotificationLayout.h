@@ -20,11 +20,17 @@ inline constexpr float kNotificationToastGap = 8.0f;
 inline constexpr float kNotificationToastAccentWidth = 3.0f;
 inline constexpr float kNotificationToastMinTextWidth = 240.0f;
 inline constexpr float kNotificationToastMaxTextWidth = 640.0f;
+// A progress row's bar, along the bottom edge INSIDE the card. Inside rather than
+// below so the card a click has to hit is the same rect whether or not the row
+// reports progress — the hit-test and the painter share one geometry here
+// precisely so chrome cannot end up painted and unclickable.
+inline constexpr float kNotificationToastProgressHeight = 3.0f;
 
 struct NotificationToastLayout {
   SDL_FRect rect{};
   SDL_FRect accent{};
   SDL_FRect text{};
+  SDL_FRect progress_track{};  // only drawn for a row that reports progress
 };
 
 // How much message a toast may show on a window this wide. A flat cap made every
@@ -61,6 +67,10 @@ inline NotificationToastLayout NotificationToastLayoutAt(const SDL_FRect& status
       .text = SDL_FRect{rect.x + kNotificationToastAccentWidth + kNotificationToastPadding, rect.y,
                         width - kNotificationToastAccentWidth - kNotificationToastPadding * 2.0f,
                         rect.h},
+      .progress_track =
+          SDL_FRect{rect.x + kNotificationToastAccentWidth,
+                    rect.y + rect.h - kNotificationToastProgressHeight,
+                    rect.w - kNotificationToastAccentWidth, kNotificationToastProgressHeight},
   };
 }
 

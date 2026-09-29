@@ -56,6 +56,9 @@ struct EditorBannerViewModel {
 struct NotificationEntryViewModel {
   NotificationService::Tone tone = NotificationService::Tone::Info;
   std::string message;  // prebuilt here so render TUs never materialize strings
+  // 0..1 when the row reports progress, already clamped here so the painter does
+  // arithmetic on a fraction it can trust.
+  std::optional<float> progress;
 };
 
 struct NotificationsViewModel {
