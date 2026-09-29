@@ -415,6 +415,38 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-29-306 — "a moved mtime is a changed file" is a pattern, not one bug. [PARTLY RESOLVED 2026-09-29]
+
+Three places assumed a moved modification time meant changed content, and all three
+were user-visible. A `touch`, a tool that rewrote a file with identical bytes, or a
+`git checkout` restoring it triggered every one of them — and rewriting a file with
+the same content is exactly what an agent editing alongside you does, so this was
+the common case, not the exotic one:
+
+- **the save path** refused the save and raised an external-change banner
+  (`TextViewport::DetectDiskConflict`) — RESOLVED;
+- **the watcher's echo check** reloaded every open clean view and announced
+  "reloaded from disk" for a file nobody changed, or raised the banner unprompted
+  on a dirty one (`TabCoordinator::DiskSignatureMatchesOpenView`) — RESOLVED, and
+  it shares the save path's confirmation method rather than repeating it;
+- **the merge resolver** blocked Mark Resolved with "refresh the resolver before
+  marking resolved" (`ValidateMergeResult`) — RESOLVED, against the exact text the
+  merge tab already recorded.
+
+Still open, and recorded because the pattern is what matters rather than the three
+instances:
+
+- `GitRepositoryMetadataTracker` samples the modification ticks of `.git/HEAD`,
+  the index, the branch ref and `packed-refs` to decide whether to re-run
+  `git status`. A touch of any of them spawns a redundant refresh. Not visible,
+  just wasted work on a background executor — which is why it was left — but it is
+  the same assumption, and a remote project pays a round trip for it rather than a
+  stat.
+- Anything new that reaches for `util::FileModificationTick` or
+  `FileSignature::SameContentAs` inherits it. There is no lint for this: the check
+  is legitimate as a PREFILTER and only wrong as the last word, and no pattern
+  distinguishes the two. Reviewers are the guard, and this entry is the note.
+
 ### TD-2026-09-29-305 — the write gate covers content writes, not tree operations. [OPEN]
 
 `project::FileWriteGate` is the one door for writes that replace a file's
