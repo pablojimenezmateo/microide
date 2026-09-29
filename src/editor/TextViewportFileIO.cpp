@@ -333,27 +333,33 @@ bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) cons
   // or wrote), the SIZE must match (a different size is a real change, no read
   // needed), and the file must be small enough that reading it is not itself the
   // stall this check sits inside.
-  constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
-  if (!document_->disk_signature.has_content_hash ||
-      current.size != document_->disk_signature.size || current.size > kMaxConfirmBytes) {
+  if (!CouldConfirmDiskContent(current)) {
     return false;
   }
-  // Compared against the RECORDED digest of what was last on disk, not against the
-  // buffer. That distinction is the whole design: this runs while saving a dirty
-  // buffer, where the buffer differs from the file by construction, so "do the
-  // file's bytes match the buffer" is the wrong question and answering it would
-  // report a conflict every time.
-  //
+  const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
+  if (!bytes.has_value()) {
+    return false;
+  }
+  return ConfirmDiskContentUnchanged(current, util::ContentHash(*bytes));
+}
+
+bool TextViewport::CouldConfirmDiskContent(const util::FileSignature& current) const {
+  // The file must be small enough that reading it is not itself the stall this
+  // check sits inside.
+  constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
+  return document_->disk_signature.has_content_hash &&
+         current.size == document_->disk_signature.size && current.size <= kMaxConfirmBytes;
+}
+
+bool TextViewport::ConfirmDiskContentUnchanged(const util::FileSignature& current,
+                                               std::uint64_t disk_content_hash) const {
   // The residual risk is a 64-bit collision between two files of the SAME size, at
   // which point a real external edit would be overwritten silently. That is 2^-64
   // per check, and it replaces a heuristic that was wrong roughly whenever anyone
-  // touched the file — so the change strictly reduces the chance of acting on a
-  // wrong answer. Keeping the last-synced bytes instead would make it exact at the
-  // cost of a second copy of every open file, which is not a trade this editor
-  // should make for 2^-64.
-  const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
-  if (!bytes.has_value() ||
-      util::ContentHash(*bytes) != document_->disk_signature.content_hash) {
+  // touched the file — so it strictly reduces the chance of acting on a wrong
+  // answer. Keeping the last-synced bytes instead would make it exact at the cost
+  // of a second copy of every open file, which is not a trade for 2^-64.
+  if (disk_content_hash != document_->disk_signature.content_hash) {
     return false;
   }
   // Re-baseline to the new stat so the next call takes the one-stat fast path

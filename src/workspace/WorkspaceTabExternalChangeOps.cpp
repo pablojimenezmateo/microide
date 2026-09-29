@@ -6,7 +6,12 @@
 
 #include <filesystem>
 
+#include <cstdint>
+#include <optional>
+#include <string>
+
 #include "util/PathMatch.h"
+#include "util/TextFileIO.h"
 
 namespace microide::workspace {
 
@@ -71,6 +76,13 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
           ? (normalized_storage = path.lexically_normal())
           : path;
   bool matched_any_view = false;
+  // ONE read for the whole sweep. Every view of this path asks the same question
+  // of the same file, and the per-view form re-read it each time: a file open in
+  // two panes cost two full reads (up to 8 MiB each) for a single watcher event,
+  // and nothing shared the answer. Read lazily — the overwhelmingly common case
+  // is that the first stat compare settles it and no read happens at all.
+  std::optional<std::uint64_t> disk_content_hash;
+  bool disk_read_failed = false;
   // Check views in every group: the self-write echo must only be suppressed if EVERY
   // open view of this path (including a non-focused split view) already saw our write,
   // otherwise a stale split view would be denied its reload.
@@ -95,7 +107,22 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
       // banner unprompted. DiskContentUnchanged confirms the mismatch against the
       // content the view recorded before believing it, and re-baselines so the
       // next event on this path is one stat again.
-      if (!viewport.DiskContentUnchanged(signature)) {
+      if (signature.SameContentAs(viewport.disk_signature())) {
+        continue;  // one stat answered it for this view
+      }
+      if (!viewport.CouldConfirmDiskContent(signature)) {
+        return false;  // a size change is a real change; no read needed
+      }
+      if (!disk_content_hash.has_value() && !disk_read_failed) {
+        if (const std::optional<std::string> bytes = util::ReadTextFile(normalized_path);
+            bytes.has_value()) {
+          disk_content_hash = util::ContentHash(*bytes);
+        } else {
+          disk_read_failed = true;
+        }
+      }
+      if (!disk_content_hash.has_value() ||
+          !viewport.ConfirmDiskContentUnchanged(signature, *disk_content_hash)) {
         return false;
       }
     }

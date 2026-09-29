@@ -194,6 +194,56 @@ void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
          "a byte-identical rewrite must not raise the external-change banner");
 }
 
+// The split-pane shape, which the single-view tests could not distinguish: the
+// echo check walks EVERY view of the path, and each view used to re-read the file
+// to confirm the mismatch. Two panes on one file therefore meant two full reads
+// for one watcher event, and the answer was never shared. The read is now hoisted
+// out of the loop, which only stays correct if every view still gets its own
+// verdict and its own re-baseline — so assert the behaviour with two views open.
+void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path relative = "notes.txt";
+  const std::filesystem::path file_path = root / relative;
+  WriteFile(file_path, "same bytes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "split-view fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, workspace::EditorSplitOrientation::Vertical),
+         "the fixture must actually split, or this is the single-view test again");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2 &&
+             WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1,
+         "the split must leave TWO groups each holding a view of the file; one group "
+         "would make this the single-view test under a different name");
+  DrainProjectChanges(shell);
+  WorkspaceShellTestAccess::ClearEditorBannersForTesting(shell);
+
+  WriteFile(file_path, "same bytes\n");
+  ForceDistinctModificationTime(file_path);
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
+             shell, BuildModifiedBatch(root, relative)),
+         "the fixture must actually deliver a watcher batch");
+  DrainProjectChanges(shell);
+
+  Expect(!WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
+         "neither view announces a reload of a file that did not change");
+  Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "neither view raises the external-change banner");
+
+  // And a real change still reaches both views after the hoist.
+  WriteFile(file_path, "SAME BYTES\n");
+  ForceDistinctModificationTime(file_path);
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
+             shell, BuildModifiedBatch(root, relative)),
+         "the fixture must actually deliver the second watcher batch");
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
+         "a real external change still reaches a split view");
+}
+
 // The other half: a real external change must still reach the user. Without it the
 // fix above could pass by suppressing everything.
 void TestWorkspaceShellRealRewriteStillNotifies() {
@@ -565,6 +615,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAutosaveFlushRespectsDiskConflict);
   AddTest(tests, "ExternalRepoChange/IdenticalRewriteRaisesNoReloadNotice",
           TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice);
+  AddTest(tests, "ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce",
+          TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce);
   AddTest(tests, "ExternalRepoChange/RealRewriteStillNotifies",
           TestWorkspaceShellRealRewriteStillNotifies);
   AddTest(tests, "ExternalRepoChange/SaveTimeConflictGuardBlocksClobber",
