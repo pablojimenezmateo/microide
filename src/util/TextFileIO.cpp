@@ -13,13 +13,6 @@
 
 namespace microide::util {
 
-namespace {
-
-// Non-throwing check that `path` resolves (following symlinks) to a regular file.
-// Opening a FIFO, device node, or procfs/sysfs entry with std::ifstream can block
-// on open or seek in implementation-specific ways *before* any later size guard
-// runs, so every text-read entry point rejects non-regular paths up front. A
-// directory, socket, dangling symlink, or stat error all report false here.
 bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path) {
   std::error_code error;
   const std::filesystem::file_status status = std::filesystem::status(path, error);
@@ -28,8 +21,6 @@ bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path) {
   }
   return std::filesystem::is_regular_file(status);
 }
-
-}  // namespace
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path) {
   // Prove the target is a regular file before opening: a special file (FIFO,

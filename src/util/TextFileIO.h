@@ -25,6 +25,13 @@ inline constexpr std::uintmax_t kMaxTextFileBytes = 512ull * 1024 * 1024;
 // file; files above it are simply skipped by the searcher.
 inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
 
+// Non-throwing check that `path` resolves (following symlinks) to a regular file.
+// Opening a FIFO, device node, or procfs/sysfs entry with std::ifstream can block
+// on open or seek in implementation-specific ways *before* any later size guard
+// runs, so every text-read entry point rejects non-regular paths up front. A
+// directory, socket, dangling symlink, or stat error all report false here.
+bool IsRegularFileFollowingSymlinks(const std::filesystem::path& path);
+
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
 [[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 

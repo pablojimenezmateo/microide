@@ -270,6 +270,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
   src/project/FileOperationService.cpp
+  src/project/FileReadService.cpp
   src/project/FileWriteGate.cpp
   src/project/GitBlameParser.cpp
   src/project/GitBlameService.cpp
@@ -1180,6 +1181,7 @@ add_executable(microide_tests
   tests/SelectionGranularityPropertyTests.cpp
   tests/MergeWrapRowsTests.cpp
   tests/AsyncBufferWorkTests.cpp
+  tests/FileReadServiceTests.cpp
   tests/DiffWrapLayoutTests.cpp
   tests/ImeCompositionTests.cpp
   tests/EditorGroupStateTests.cpp
