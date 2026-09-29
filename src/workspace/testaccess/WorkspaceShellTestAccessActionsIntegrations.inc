@@ -354,6 +354,9 @@
   static bool SaveTabDeferred(WorkspaceShell& shell, std::size_t index) {
     return shell.SaveTab(index, SaveMode::Deferred);
   }
+  static bool SaveThenCloseTab(WorkspaceShell& shell, std::size_t index) {
+    return shell.MakeEditorTabService().SaveThenClose(index);
+  }
   static int DrainSaveFormatterCompletions(WorkspaceShell& shell) {
     return shell.save_formatter_service_.DrainCompletions();
   }

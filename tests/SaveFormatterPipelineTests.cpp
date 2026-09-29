@@ -124,6 +124,57 @@ void TestClosingATabFlushesItsDeferredSave() {
          "closing the tab must let the in-flight save finish first, got: " + ReadFile(file));
 }
 
+// The close prompt's Save. It used to save in SaveMode::Blocking and WAIT, so
+// choosing Save on one dirty JS file froze the window for as long as node took to
+// start (TD-2026-09-28-304). It defers now — but the CLOSE has to wait for the
+// write even though the shell thread does not, because closing before the write
+// lands would discard exactly the edits the user just asked to keep.
+void TestSaveThenCloseWaitsForTheWriteWithoutBlocking() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path file = OpenOneFileProject(shell, temp_dir, "hello world\n");
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      UppercasingFormatter());
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  const std::size_t tabs_before = WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell);
+  Expect(tabs_before == 1, "the fixture opens exactly one tab");
+
+  Expect(WorkspaceShellTestAccess::SaveThenCloseTab(shell, 0),
+         "save-then-close reports that it started");
+  // Both halves of the point, and both must be asserted: the shell thread came
+  // back (we are here) with nothing written, AND the tab is still open, because
+  // closing it now would drop the edits.
+  Expect(ReadFile(file) == "hello world\n",
+         "save-then-close must not have written before the formatter returned");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 1,
+         "the tab stays open until its write lands — closing early discards the edits");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(ReadFile(file) == "xHELLO world\n",
+         "the completion writes the formatted buffer, got: " + ReadFile(file));
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 0,
+         "and only then does the tab close");
+}
+
+// With no formatter there is nothing to defer, so save-then-close is the same
+// immediate close it always was — no lingering tab waiting for a completion that
+// will never come.
+void TestSaveThenCloseIsImmediateWithoutAFormatter() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path file = OpenOneFileProject(shell, temp_dir, "hello world\n");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+
+  Expect(WorkspaceShellTestAccess::SaveThenCloseTab(shell, 0), "save-then-close succeeds");
+  Expect(ReadFile(file) == "xhello world\n",
+         "the file is written before it returns, got: " + ReadFile(file));
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 0,
+         "and the tab is already closed");
+}
+
 // A blocking save is what every caller that acts on completion still gets: the file
 // is on disk by the time it returns, formatter and all.
 void TestBlockingSaveWritesFormattedBeforeItReturns() {
@@ -144,6 +195,10 @@ void TestBlockingSaveWritesFormattedBeforeItReturns() {
 }  // namespace
 
 void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveFormatterPipeline/SaveThenCloseWaitsForTheWriteWithoutBlocking",
+          TestSaveThenCloseWaitsForTheWriteWithoutBlocking);
+  AddTest(tests, "SaveFormatterPipeline/SaveThenCloseIsImmediateWithoutAFormatter",
+          TestSaveThenCloseIsImmediateWithoutAFormatter);
   AddTest(tests, "SaveFormatterPipeline/DeferredSaveAppliesTheFormatterWhenItReturns",
           TestDeferredSaveAppliesTheFormatterWhenItReturns);
   AddTest(tests, "SaveFormatterPipeline/DeferredSaveDropsTheFormatterWhenTheBufferChanged",

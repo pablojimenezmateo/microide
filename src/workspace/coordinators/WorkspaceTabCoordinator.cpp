@@ -888,6 +888,26 @@ void TabCoordinator::MaybeNotifyLspClose(const TabEntry& tab) {
   }
 }
 
+bool TabCoordinator::SaveThenClose(std::size_t index) {
+  const std::size_t group_index = state_.clamped_focused_group_index();
+  // Deferred, not Blocking: the whole point is that the shell thread is free
+  // while the formatter runs. What the close path cannot do is close BEFORE the
+  // write lands, so the tab is marked and the completion closes it.
+  if (!SaveGroupTab(group_index, index, SaveMode::Deferred)) {
+    return false;
+  }
+  EditorGroup& group = state_.editor_groups[group_index];
+  if (index < group.open_tabs.size() && group.open_tabs[index].editor_state.has_value() &&
+      group.open_tabs[index].editor_state->pending_format_save_id != 0) {
+    group.open_tabs[index].editor_state->close_after_save = true;
+    return true;  // ApplyDeferredSaveFormat closes it once the write lands
+  }
+  // Nothing was deferred — no formatter, or a clean buffer — so the file is
+  // already written and the close is the same immediate one it always was.
+  Close(index);
+  return true;
+}
+
 void TabCoordinator::Close(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;

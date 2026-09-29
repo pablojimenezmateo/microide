@@ -381,6 +381,16 @@ struct EditorTabState {
   // formatter run. Without it a deferred save would post a fresh run every time it
   // finished one.
   bool skip_formatter_once = false;
+  // Set when this tab was closed with unsaved edits and the user chose Save: the
+  // save is deferred (the formatter runs on the worker), so the CLOSE has to wait
+  // for it too. Closing before the write lands would discard the edits the user
+  // just asked to keep. The completion clears it and closes the tab.
+  //
+  // Per-tab rather than one pending-close on the shell, because two tabs can be
+  // closing at once — "Close Others" over a group with several dirty buffers
+  // posts one formatter run each, and they complete in whatever order the worker
+  // finishes them.
+  bool close_after_save = false;
   // Per-tab fold-region model. Lazily computed by the renderer / fold action
   // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
   // close; rekeyed implicitly through its `(layout_revision, tab_size,

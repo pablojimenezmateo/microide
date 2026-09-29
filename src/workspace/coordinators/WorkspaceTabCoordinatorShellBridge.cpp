@@ -184,8 +184,17 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       }
       // One re-entry, with the formatter suppressed, so this lands exactly one write
       // and cannot post another run.
+      const bool close_after_save = editor_state.close_after_save;
+      editor_state.close_after_save = false;
       editor_state.skip_formatter_once = true;
-      SaveGroupTab(group_index, tab_index, SaveMode::Blocking);
+      const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::Blocking);
+      // The tab was closed with unsaved edits and the user chose Save, so the
+      // close was waiting on this write. Only now — closing on a FAILED write
+      // would discard exactly the edits they asked to keep, so a refused save
+      // leaves the tab open with its contents intact.
+      if (close_after_save && saved) {
+        MakeEditorTabService().CloseGroupTab(group_index, tab_index);
+      }
       return;
     }
   }

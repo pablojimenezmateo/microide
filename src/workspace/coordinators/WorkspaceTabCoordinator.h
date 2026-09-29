@@ -193,6 +193,14 @@ class TabCoordinator {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
+  // Save `index` and then close it — closing when the WRITE lands, which for a
+  // buffer with a contributed formatter is after a subprocess run on the worker
+  // thread. The close path used to save in SaveMode::Blocking and wait, so
+  // closing one dirty JS file froze the window for as long as node took to start
+  // (TD-2026-09-28-304). Returns false if the save was refused (a save
+  // participant rejected it, or the file changed on disk) — the tab stays open,
+  // as it did before.
+  bool SaveThenClose(std::size_t index);
   // Group-aware close: closes editor_groups[group_index].open_tabs[index] with the same
   // LSP-didClose accounting as Close(); delegates to Close() for the focused group, and
   // for a background group erases the tab, clamps its active index, and collapses the

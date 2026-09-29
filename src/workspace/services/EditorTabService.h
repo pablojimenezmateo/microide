@@ -54,6 +54,9 @@ class EditorTabService {
                                  std::string_view content);
   void Close(std::size_t index);
   void CloseGroupTab(std::size_t group_index, std::size_t index);
+  // Save then close, closing when the write lands rather than blocking the shell
+  // thread on the formatter. See TabCoordinator::SaveThenClose.
+  bool SaveThenClose(std::size_t index);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
   bool FocusEditorGroupInDirection(EditorGroupDirection direction);

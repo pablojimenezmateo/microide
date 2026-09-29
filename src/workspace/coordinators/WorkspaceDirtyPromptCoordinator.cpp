@@ -136,14 +136,23 @@ void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
     prompt_surfaces_.DismissDirtyPrompt(true);
     return;
   }
-  if (prompt.selected_action == 0 && !editor_tabs_.Save(*resolved)) {
-    return;
-  }
   // Restore the pre-prompt focus (matching ConfirmCloseProject). TabCoordinator::
   // Close only resets focus off the overlay on the active-tab / last-tab paths;
   // closing a *non-active* dirty tab leaves focus == Overlay, so with the overlay
   // now hidden every keystroke would route to the dead overlay handler and be
   // swallowed until the user clicked back into a surface. restore_focus fixes it.
+  if (prompt.selected_action == 0) {
+    // Save-then-close, which closes when the WRITE lands. It used to save in
+    // SaveMode::Blocking and wait, so closing one dirty JS file froze the window
+    // for as long as node took to start (TD-2026-09-28-304). The prompt is
+    // dismissed either way — the decision has been made — but the tab survives a
+    // refused save, as it did before.
+    if (!editor_tabs_.SaveThenClose(*resolved)) {
+      return;
+    }
+    prompt_surfaces_.DismissDirtyPrompt(true);
+    return;
+  }
   prompt_surfaces_.DismissDirtyPrompt(true);
   editor_tabs_.Close(*resolved);
 }
