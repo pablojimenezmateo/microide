@@ -165,6 +165,27 @@ platform::IndexUpdateBatch BuildModifiedBatch(const std::filesystem::path& root,
 // for a dirty one it raised the external-change banner, unprompted. An agent
 // rewriting a file with the same bytes produces exactly this, which is why it is the
 // common case rather than the exotic one.
+// State that decides the banner assertions below, rendered only when one fails.
+// These two tests have been seen to fail under heavy machine load — a real
+// external change reported as our own echo — at roughly one run in five, and
+// never reproducibly (TD-2026-09-29-311). Whatever the cause, the next
+// occurrence should say which input it saw rather than only which banner was
+// missing, because that is the difference between a fixture problem and a real
+// suppression bug.
+std::string ExternalChangeDiagnostics(WorkspaceShell& shell,
+                                      const std::filesystem::path& file_path) {
+  const auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const util::FileSignature current = util::StatFileSignature(file_path);
+  return std::string(" [recorded mtime=") +
+         std::to_string(viewport.disk_signature().mtime_ticks) +
+         " size=" + std::to_string(viewport.disk_signature().size) +
+         " hash=" + (viewport.disk_signature().has_content_hash ? "yes" : "no") +
+         "; on disk mtime=" + std::to_string(current.mtime_ticks) +
+         " size=" + std::to_string(current.size) +
+         "; buffer first line='" + std::string(viewport.lines().LineView(0)) +
+         "' dirty=" + (viewport.dirty() ? "yes" : "no") + "]";
+}
+
 void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -241,7 +262,10 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
          "the fixture must actually deliver the second watcher batch");
   DrainProjectChanges(shell);
   Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
-         "a real external change still reaches a split view");
+         WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path)
+             ? std::string()
+             : "a real external change still reaches a split view" +
+                   ExternalChangeDiagnostics(shell, file_path));
 }
 
 // The other half: a real external change must still reach the user. Without it the
@@ -270,7 +294,10 @@ void TestWorkspaceShellRealRewriteStillNotifies() {
   DrainProjectChanges(shell);
 
   Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
-         "a real external change to a dirty buffer still raises the banner");
+         WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path)
+             ? std::string()
+             : "a real external change to a dirty buffer still raises the banner" +
+                   ExternalChangeDiagnostics(shell, file_path));
 }
 
 void TestWorkspaceShellSaveTimeConflictGuardBlocksClobber() {

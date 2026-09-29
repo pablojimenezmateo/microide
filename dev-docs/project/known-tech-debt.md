@@ -447,6 +447,53 @@ What remains is the standing hazard rather than an instance:
   is legitimate as a PREFILTER and only wrong as the last word, and no pattern
   distinguishes the two. Reviewers are the guard, and this entry is the note.
 
+### TD-2026-09-29-311 — two external-change tests flake under heavy load. [OPEN]
+
+`ExternalRepoChange/RealRewriteStillNotifies` and
+`ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce` have each been seen
+to fail once, both on the same shape of assertion: **a real external change that
+raised no banner** — i.e. the change was treated as our own write and suppressed.
+
+What is known:
+
+- Both failures happened during `ctest -j12` while six validation lanes were
+  building and running in the background (heavy CPU, disk and memory).
+- Neither reproduces on demand. After the observations: 17 further `ctest -j12`
+  runs, 6 of them under ten spinning CPU hogs, all green; 12 grouped runs of the
+  `ExternalRepoChange` filter under load, green; 8 runs of the containing shard
+  alone, green.
+- The same 6 loaded runs against the tree BEFORE the 2026-09-29 echo-suppression
+  change (`a86ee507`, the hoisted content read) were also green, so those runs do
+  not attribute it either way. Attribution is genuinely unresolved.
+
+What was ruled out, each by inspection:
+
+- **Temp-directory collision between concurrent shard processes.**
+  `TemporaryDirectory` keys on `steady_clock` (identical across processes on
+  Linux) plus a per-process counter, so a collision is possible — but
+  `create_directories` reports it and the loop retries, so no two live dirs can
+  share a path.
+- **The synthetic batch being dropped when inotify is exhausted.**
+  `DispatchBatchForTesting` invokes the callback directly and does not depend on
+  the native watcher running; the limit is 128 instances against 45 in use.
+- **A lost change in the coalescer.** `ProjectChangeCoalescer::Ingest` holds a
+  mutex, and the real watcher's callback runs on its worker thread, so the
+  synthetic and real batches serialize.
+
+The live inotify watcher IS a second, uncontrolled source of batches in these
+tests, which is the leading suspect: they dispatch a synthetic batch and assert
+the outcome while the real watcher may deliver its own for the same write.
+Making the assertion depend on only the synthetic batch would remove the class,
+but doing that needs a way to quiesce the native watcher without destroying the
+object the dispatch helper requires.
+
+Both assertions now render the deciding state on failure — the recorded
+signature, the stat on disk, and the buffer's first line — so the next
+occurrence distinguishes a fixture problem from a real suppression bug instead
+of only reporting a missing banner. Do not "fix" this by relaxing the
+assertions: suppressing a real external change is exactly the defect the
+2026-09-29 work was about.
+
 ### TD-2026-09-29-309 — the content-confirm read is still on the shell thread. [OPEN]
 
 `TextViewport::DiskContentUnchanged` confirms a stat mismatch by reading the file

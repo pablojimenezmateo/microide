@@ -175,6 +175,38 @@ void TestSaveThenCloseIsImmediateWithoutAFormatter() {
          "and the tab is already closed");
 }
 
+// The invariant every exit path quietly depends on. A deferred save has not
+// written yet, so the buffer MUST still report dirty until it does — that is what
+// makes quit, close-project and switch-project prompt over it instead of walking
+// past a buffer whose write is still in flight. Nothing states this at the sites
+// that rely on it, so it is pinned here: a deferral that cleared the dirty flag
+// early would turn every one of those prompts into silent data loss.
+void TestADeferredSaveLeavesTheBufferDirtyUntilItWrites() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path file = OpenOneFileProject(shell, temp_dir, "hello world\n");
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      UppercasingFormatter());
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, 0), "the deferred save started");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "a deferred save has not written, so the buffer is still dirty and every "
+         "exit path still prompts over it");
+  // The property that actually matters, end to end: asking to quit while the
+  // write is in flight still raises the unsaved-changes prompt rather than
+  // walking past a buffer whose save has not landed.
+  WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "quitting mid-deferral must still prompt over the unwritten buffer");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "and only once the write lands is it clean");
+}
+
 // A blocking save is what every caller that acts on completion still gets: the file
 // is on disk by the time it returns, formatter and all.
 void TestBlockingSaveWritesFormattedBeforeItReturns() {
@@ -195,6 +227,8 @@ void TestBlockingSaveWritesFormattedBeforeItReturns() {
 }  // namespace
 
 void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SaveFormatterPipeline/ADeferredSaveLeavesTheBufferDirtyUntilItWrites",
+          TestADeferredSaveLeavesTheBufferDirtyUntilItWrites);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseWaitsForTheWriteWithoutBlocking",
           TestSaveThenCloseWaitsForTheWriteWithoutBlocking);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseIsImmediateWithoutAFormatter",
