@@ -869,6 +869,58 @@ void RunPerfMeasureWallClockWaitRuleFixtures() {
          "perf-wait rule must fail loudly when it finds no Measure body to scan");
 }
 
+void RunShellGlueBindingRuleFixtures() {
+  TemporaryDirectory workspace_dir;
+  const std::filesystem::path& root = workspace_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  const auto source = root / "src/workspace/ExampleGlue.cpp";
+
+  // Negative control: the shipped defect — a cached, reference-returning factory
+  // bound to a VALUE, which copies the whole coordinator per call.
+  WriteFile(source,
+            "void Shell::Sweep() {\n"
+            "  EditorTabService editor_tabs = MakeEditorTabService();\n"
+            "  editor_tabs.Save(0);\n"
+            "}\n");
+  Expect(CheckShellGlueIsBoundByReference(root).violations.size() == 1,
+         "the glue-binding rule must flag a value binding of a cached factory");
+
+  // ...including the `auto` spelling, which is the one that hides it best.
+  WriteFile(source,
+            "void Shell::Sweep() {\n"
+            "  auto persistence = MakePersistenceCoordinator();\n"
+            "  persistence.Flush();\n"
+            "}\n");
+  Expect(CheckShellGlueIsBoundByReference(root).violations.size() == 1,
+         "`auto` without `&` is the same copy and must be flagged too");
+
+  // Positive control: the required spelling.
+  WriteFile(source,
+            "void Shell::Sweep() {\n"
+            "  auto& editor_tabs = MakeEditorTabService();\n"
+            "  EditorTabService& again = MakeEditorTabService();\n"
+            "  editor_tabs.Save(0);\n"
+            "  again.Save(1);\n"
+            "}\n");
+  Expect(CheckShellGlueIsBoundByReference(root).violations.empty(),
+         "binding by reference is the fix and must pass");
+
+  // A temporary used and discarded in one expression binds nothing.
+  WriteFile(source,
+            "void Shell::Sweep() {\n"
+            "  MakeEditorTabService().Save(0);\n"
+            "  const bool ok = MakeSidebarMouseCoordinator().HandleDrag(e, l);\n"
+            "}\n");
+  Expect(CheckShellGlueIsBoundByReference(root).violations.empty(),
+         "a discarded temporary is not a binding and must not be flagged");
+
+  // And the rule must say so loudly when it is scanning nothing at all, rather
+  // than reporting green — the failure mode that took the sibling rule blind.
+  WriteFile(source, "void Shell::Sweep() {}\n");
+  Expect(!CheckShellGlueIsBoundByReference(root).missing_targets.empty(),
+         "a tree with no factory calls must report a missing target, not pass");
+}
+
 void RunFactoryCaptureRuleFixtures() {
   TemporaryDirectory workspace_dir;
   const std::filesystem::path& root = workspace_dir.path();
@@ -902,6 +954,36 @@ void RunFactoryCaptureRuleFixtures() {
             "}\n");
   Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
          "factory-capture rule must accept constructing the service inside the body");
+
+  // Negative control for the spelling the sweep to `auto&` introduced. Binding by
+  // reference is required now, and it does NOT make `[terminal_panel]` free:
+  // capturing a reference by value copies the referent, which is the same
+  // per-hook heap copy. Matching only `auto x = ...` left the rule scanning
+  // nothing once every site became `auto& x = ...`.
+  WriteFile(source,
+            "Coord Shell::MakeCoord() {\n"
+            "  auto& terminal_panel = MakeTerminalPanelService();\n"
+            "  return Coord(Ops{\n"
+            "      .open_terminal = [terminal_panel](std::string c) mutable {\n"
+            "        terminal_panel.OpenTerminal(std::move(c));\n"
+            "      },\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.size() == 1,
+         "a reference-bound factory local captured BY VALUE is still a per-hook copy");
+
+  // And the reference capture of a reference-bound local stays free.
+  WriteFile(source,
+            "Coord Shell::MakeCoord() {\n"
+            "  auto& terminal_panel = MakeTerminalPanelService();\n"
+            "  return Coord(Ops{\n"
+            "      .open_terminal = [&terminal_panel](std::string c) {\n"
+            "        terminal_panel.OpenTerminal(std::move(c));\n"
+            "      },\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
+         "a reference capture of a reference-bound factory local is free");
 
   // Positive control: a REFERENCE capture is free and must not be flagged, and
   // neither must the name appearing in a comment.
@@ -1196,6 +1278,7 @@ void RunAllRuleFixtures() {
   RunPerfHarnessIsolationOrderRuleFixtures();
   RunPerfMeasureBodyRuleFixtures();
   RunPerfMeasureWallClockWaitRuleFixtures();
+  RunShellGlueBindingRuleFixtures();
   RunFactoryCaptureRuleFixtures();
   RunHintSeparatorRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();

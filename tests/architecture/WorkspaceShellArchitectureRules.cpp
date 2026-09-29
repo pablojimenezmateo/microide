@@ -324,6 +324,64 @@ RuleResult CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(
   return result;
 }
 
+RuleResult CheckShellGlueIsBoundByReference(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "Make*Service()/Make*Coordinator() results must be bound by reference";
+  result.hard_fail = true;
+  // These factories return a REFERENCE into the shell-owned ShellGlueCache: the
+  // instance is built once and reused, which was the whole point of caching them
+  // (2026-09-13). Binding the result to a value silently undoes that —
+  // `EditorTabService x = MakeEditorTabService();` copies the entire
+  // TabCoordinator, two references and seventeen std::functions, on every call.
+  // Twenty-two sites had drifted back to the value spelling, including the
+  // watcher's change sweep, which runs once per changed file: a branch switch
+  // paid a few thousand of those copies on the shell thread.
+  //
+  // It needs a lint rather than review for the same reason TD-2026-08-10-177 did:
+  // the two spellings read identically and only the declaration's `&` tells them
+  // apart. A temporary used and discarded in one expression (`MakeX().Handle(…)`)
+  // binds nothing and is not matched.
+  const std::filesystem::path workspace_dir = repo_root / "src/workspace";
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(workspace_dir, dir_ec) || dir_ec) {
+    return result;
+  }
+  // A declaration whose type is `auto` or a CapitalisedType, with no `&`, taking a
+  // Make*Service()/Make*Coordinator() call. `\s+` after the type (not `\s*&?\s*`)
+  // is what excludes the reference spelling.
+  const std::regex bound_by_value(
+      R"((?:^|[;{}])\s*(?:const\s+)?(?:auto|[A-Z][A-Za-z_0-9]*)\s+[a-z_][A-Za-z_0-9]*\s*=\s*Make[A-Za-z_0-9]*(?:Service|Coordinator)\s*\(\s*\)\s*;)");
+  std::size_t factory_calls_seen = 0;
+  const std::regex any_factory_call(R"(\bMake[A-Za-z_0-9]*(?:Service|Coordinator)\s*\(\s*\))");
+  for (const std::filesystem::path& path : SourceFilesUnder(workspace_dir)) {
+    const std::string text = ReadText(path);
+    const std::vector<bool> code_mask = BuildCodeMask(text);
+    for (auto it = std::sregex_iterator(text.begin(), text.end(), any_factory_call);
+         it != std::sregex_iterator(); ++it) {
+      const auto offset = static_cast<std::size_t>(it->position());
+      if (offset < code_mask.size() && code_mask[offset]) {
+        ++factory_calls_seen;
+      }
+    }
+    AppendCodeMaskRegexViolations(
+        result, path, text, bound_by_value,
+        "bind a Make*Service()/Make*Coordinator() result with `auto&` (or `Type&`): it is a "
+        "reference into the shell's glue cache, and a value binding copies the whole "
+        "coordinator -- seventeen std::functions -- on every call");
+  }
+  // Loud rather than vacuous: a rule that finds no call sites has stopped looking
+  // at the thing it guards. TD-2026-08-10-177's rule went blind exactly this way.
+  if (factory_calls_seen == 0) {
+    result.missing_targets.push_back(Violation{
+        .path = workspace_dir,
+        .line = 1,
+        .message = "found no Make*Service()/Make*Coordinator() call sites under src/workspace; "
+                   "this rule now scans nothing and cannot fail",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckFactoryResultsAreNotCapturedByValue(
     const std::filesystem::path& repo_root) {
   RuleResult result;
@@ -345,13 +403,21 @@ RuleResult CheckFactoryResultsAreNotCapturedByValue(
   //
   // Shape: a local initialised from a Make*Service()/Make*Coordinator() factory,
   // then named inside a lambda capture list in the same file.
+  //
+  // The local may be bound by reference (`auto& s = MakeX();`, which is now the
+  // required spelling — see CheckShellGlueIsBoundByReference) or by value. BOTH
+  // matter here, and matching only the value spelling is how this rule went blind:
+  // the sweep that converted every site to `auto&` left the regex matching nothing
+  // at all, and only the loud-missing-target guard below said so. A reference
+  // binding does not make `[s]` free — capturing a reference by value copies the
+  // referent, which is the same heap copy per hook that the rule exists for.
   const std::filesystem::path workspace_dir = repo_root / "src/workspace";
   std::error_code dir_ec;
   if (!std::filesystem::is_directory(workspace_dir, dir_ec) || dir_ec) {
     return result;
   }
   const std::regex factory_local(
-      R"(\bauto\s+([A-Za-z_][A-Za-z_0-9]*)\s*=\s*Make[A-Za-z_0-9]*(Service|Coordinator)\s*\(\s*\)\s*;)");
+      R"(\b(?:auto|[A-Z][A-Za-z_0-9]*)\s*&?\s*([a-z_][A-Za-z_0-9]*)\s*=\s*Make[A-Za-z_0-9]*(Service|Coordinator)\s*\(\s*\)\s*;)");
   std::size_t factory_locals_seen = 0;
   for (const std::filesystem::path& path : SourceFilesUnder(workspace_dir)) {
     const std::string text = ReadText(path);
