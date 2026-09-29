@@ -610,21 +610,29 @@ save, which is the one that used to freeze the window on every Ctrl+S. Three thi
 it did not finish, all of them the same shape — a caller that acts on the save's
 completion, and therefore still blocks:
 
-- **the blocking callers.** Renaming, deleting, quitting, closing a PROJECT and
-  the multi-tab close all call `SaveGroupTab` in `SaveMode::Blocking`, which
-  reaches `SaveFormatterService::RunBlocking` and waits. The wait is bounded by
+- **the blocking callers.** Renaming, deleting, quitting and closing a PROJECT
+  still call `SaveGroupTab` in `SaveMode::Blocking`, which reaches
+  `SaveFormatterService::RunBlocking` and waits. The wait is bounded by
   the same five-second cap, but it is still a freeze.
   `CheckNoSynchronousSubprocessInWorkspace`'s second half confines `RunBlocking`
   to the save-pipeline TU so this cannot spread meanwhile.
 
-  **Closing a single dirty tab is done (2026-09-29)** and is the pattern for the
-  rest: `TabCoordinator::SaveThenClose` defers the save and marks the tab
+  **Closing tabs is done (2026-09-29)**, single and multi, and is the pattern for
+  the rest: `TabCoordinator::SaveThenClose` defers the save and marks the tab
   `close_after_save`, and the formatter completion performs the close once the
   write lands. The shell thread returns immediately; the close waits, because
   closing before the write would discard the edits the user asked to keep. The
-  remaining callers are harder for one reason each — quit must not exit until
-  every save lands, close-project and multi-tab close have N in flight at once,
-  and rename/delete have to sequence the path mutation AFTER the write.
+  multi-tab case resolves each tab by stable id before acting, since tabs close
+  in worker-completion order and every close shifts the indices after it — and
+  an id-less prompt keeps the blocking path, because the close pass cannot then
+  tell a tab whose write is in flight from a clean one.
+
+  The remaining callers are each harder for one specific reason: **quit** must
+  not exit until every save lands (there is no continuation to run afterwards —
+  the process is gone); **close-project** tears down the state the completion
+  would come back to; and **rename/delete** must sequence the path mutation
+  AFTER the write, so the continuation has to carry the mutation rather than
+  just a close.
 - **save participants still run on the shell thread.** They are plugin calls that
   hand off to the plugin worker and wait, so they are bounded by the plugin
   runtime's own budget rather than by a subprocess — but they are a wait, and
