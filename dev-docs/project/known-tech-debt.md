@@ -545,7 +545,41 @@ of only reporting a missing banner. Do not "fix" this by relaxing the
 assertions: suppressing a real external change is exactly the defect the
 2026-09-29 work was about.
 
-### TD-2026-09-29-309 — the content-confirm read is still on the shell thread. [OPEN]
+### TD-2026-09-29-309 — the content-confirm read is still on the shell thread. [RESOLVED 2026-09-29]
+
+**The watcher sweep's read is off the shell thread.** The echo check is
+three-valued now — `OwnEcho` and `Changed` are settled by the stat alone and cost
+nothing; `NeedsContentConfirm` is the one case a digest decides — and the sweep
+leaves that path UNDECIDED, posts the read through `project::FileReadService` and
+acts when the digest lands. Nothing is shown in between, so an undecided path
+looks like no event rather than a wrong one; that is what made the deferral
+possible, since the predicate used to be consumed in the same breath as the
+decision it gated.
+
+The bytes stop on the worker (`on_worker` hashes and frees the buffer), so eight
+bytes cross the thread boundary rather than eight megabytes. One confirm is in
+flight per path. A read that fails does not excuse the mismatch: the change
+stands, because announcing an echo costs a dismissable banner and suppressing a
+real change costs the user their edits.
+
+Two further things fell out:
+
+- the sweep's reload was re-asking the echo question for itself, so an external
+  change to a clean open buffer read the file THREE times on the shell thread
+  (sweep check, reload guard, the reload's own `OpenFile`). The reload takes an
+  `EditorReloadEchoGuard` now, and the sweep passes `AlreadyResolved`. The guard
+  stays for the caller that needs it: opening a file that is already open, where
+  it is what avoids a full re-read plus a width rebuild (TD-2026-08-06-159).
+- `external_change.confirm_inline_reads` and `confirm_posted_reads` count the two
+  kinds, so "no read ran on the shell thread" is checkable rather than asserted.
+
+**Still inline, deliberately:** the SAVE path's `DetectDiskConflict`. A save must
+decide before it writes, and a deferred verdict there means deferring the write —
+which is a different change, on the same continuation machinery G5 uses. It is
+one bounded read per explicit save, not one per changed path per watcher event,
+so it is not the stall this entry was about.
+
+### TD-2026-09-29-309 (original entry, kept for what it established)
 
 `TextViewport::DiskContentUnchanged` confirms a stat mismatch by reading the file
 and comparing its digest against the one recorded for the last known on-disk

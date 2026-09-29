@@ -324,7 +324,17 @@ that file says exactly what, and what each one left):
   fixup. `project::FileWriteGate` is that place, it is where `MirrorWriteGate`
   plugs in, and the editor's save no longer stats a path it just wrote.
 
-- **G6 (part) — a touch is not an edit.** `FileSignature` carries a hash of the
+- **G6 (part, extended 2026-09-29) — a touch is not an edit, and confirming it
+  is not a stall.** The watcher's echo check reads the file to tell a `touch`
+  from a real edit, and that read ran inline: up to 8 MiB on the shell thread,
+  per changed path, per watcher event — a `git checkout` that moves the mtime of
+  every open file paid it for each of them with the window frozen. The check is
+  three-valued now, the one case a digest decides is posted to G4's reader, and
+  the sweep leaves that path undecided until it lands. The bytes stop on the
+  worker; eight bytes cross the thread boundary, not eight megabytes. It also
+  found that an external change to a clean buffer was reading the file three
+  times on the shell thread — the sweep's check, the reload's own guard, and the
+  reload itself — and removed the middle one. `FileSignature` carries a hash of the
   bytes it was recorded from, and a stat mismatch is confirmed against it before
   being believed. One method serves the save path and the watcher's echo check.
   This fixed a real, common false alarm: a `touch`, a `git checkout` that restored
