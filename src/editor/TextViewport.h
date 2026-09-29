@@ -115,12 +115,38 @@ class TextViewport {
   TextViewport(TextViewport&& other) noexcept;
   TextViewport& operator=(TextViewport&& other) noexcept;
 
+  // The pure, byte-shaped half of loading a file: everything that can be
+  // computed from the bytes alone, with no document to mutate and no shared
+  // state to touch. It is therefore safe to compute on a worker thread, which is
+  // the point — for a large file it is several full passes over the buffer (the
+  // content hash, the encoding sniff, the line-ending scan, and possibly a CRLF
+  // rewrite), and doing them on the shell thread is a visibly dropped frame.
+  struct ClassifiedContent {
+    // Canonical LF text ready for the buffer — or, for opaque/binary content,
+    // the raw bytes, which `AdoptClassifiedContent` splits on '\n' only so the
+    // round trip is exact.
+    std::string text;
+    TextEncoding encoding = TextEncoding::UTF8;
+    LineEnding line_ending = LineEnding::LF;
+    bool mixed_line_endings = false;
+    bool utf8_bom = false;
+    // Hash of the bytes as they were on disk, before the BOM strip and the LF
+    // canonicalization. This is the one moment they exist, so it is where a
+    // later conflict check's comparison value comes from.
+    std::size_t raw_content_hash = 0;
+  };
+
   bool OpenFile(const std::filesystem::path& path);
-  // Install `bytes` — a file's contents, exactly as they were on disk — as this
-  // viewport's document. Split out of `OpenFile` so a file read off the shell
-  // thread classifies (encoding, BOM, line endings) and loads through the same
-  // code as a synchronous open, rather than a second copy of it that drifts.
-  bool AdoptFileContent(const std::filesystem::path& path, std::string bytes);
+  // Classify a file's bytes. Static and pure: no document, no viewport, no
+  // globals — call it from whichever thread has the bytes.
+  static ClassifiedContent ClassifyContent(std::string bytes);
+  // Install classified content as this viewport's document. Shell thread only;
+  // it mutates the document.
+  bool AdoptClassifiedContent(const std::filesystem::path& path, ClassifiedContent content);
+  // Classify then install, for a caller that read the bytes synchronously.
+  bool AdoptFileContent(const std::filesystem::path& path, std::string bytes) {
+    return AdoptClassifiedContent(path, ClassifyContent(std::move(bytes)));
+  }
   [[nodiscard]] bool Save();
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is

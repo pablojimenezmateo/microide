@@ -43,7 +43,7 @@ void TestAReadReturnsTheBytes() {
 
   FileReadService service;
   Collector collector;
-  const std::uint64_t id = service.Begin(file, collector.Sink());
+  const std::uint64_t id = service.Begin({.path = file, .on_complete = collector.Sink()});
   Expect(id != 0, "a posted read has a non-zero id");
   service.FlushPendingReads();
 
@@ -64,7 +64,7 @@ void TestAnEmptyFileReadsAsEmptyAndSucceeds() {
 
   FileReadService service;
   Collector collector;
-  service.Begin(file, collector.Sink());
+  service.Begin({.path = file, .on_complete = collector.Sink()});
   service.FlushPendingReads();
 
   Expect(collector.completions.size() == 1, "one completion");
@@ -85,9 +85,9 @@ void TestUnreadableAndOversizedAreDistinctFromOk() {
 
   FileReadService service;
   Collector collector;
-  service.Begin(missing, collector.Sink());
-  service.Begin(directory, collector.Sink());
-  service.Begin(small, collector.Sink(), /*max_bytes=*/4);
+  service.Begin({.path = missing, .on_complete = collector.Sink()});
+  service.Begin({.path = directory, .on_complete = collector.Sink()});
+  service.Begin({.path = small, .on_complete = collector.Sink(), .max_bytes = 4});
   service.FlushPendingReads();
 
   Expect(collector.completions.size() == 3, "three posted reads, three completions");
@@ -116,7 +116,7 @@ void TestEveryPostedReadIsReportedExactlyOnce() {
   Collector collector;
   std::vector<std::uint64_t> ids;
   for (const std::filesystem::path& file : files) {
-    ids.push_back(service.Begin(file, collector.Sink()));
+    ids.push_back(service.Begin({.path = file, .on_complete = collector.Sink()}));
   }
   // Cancel half of them by id, then cancel the rest wholesale on flush.
   for (std::size_t i = 0; i < ids.size(); i += 2) {
@@ -151,7 +151,7 @@ void TestCancellingAnUnknownIdIsHarmless() {
   Collector collector;
   service.Cancel(0);
   service.Cancel(999999);
-  const std::uint64_t id = service.Begin(file, collector.Sink());
+  const std::uint64_t id = service.Begin({.path = file, .on_complete = collector.Sink()});
   service.FlushPendingReads();
   service.Cancel(id);  // already finished
 

@@ -60,17 +60,29 @@ class FileReadService {
 
   void SetWakeChannel(util::WakeChannel channel) { mailbox_.SetWakeChannel(channel); }
 
+  struct Request {
+    std::filesystem::path path;
+    // Runs ON THE WORKER with the bytes just read, before the completion is
+    // posted — and only when the read succeeded. The byte-shaped half of loading
+    // a file (a content hash, an encoding sniff, a line-ending scan, a CRLF
+    // rewrite) is several full passes over the buffer, and it belongs on this
+    // side of the handoff rather than on the shell thread with a frame waiting.
+    // It may move the bytes out. It must touch nothing but what it is given and
+    // what it owns; anything shell-owned read here is a data race.
+    std::function<void(std::string&)> on_worker;
+    // Runs on the SHELL thread, from `DrainCompletions` or `FlushPendingReads`,
+    // exactly once per posted read whatever became of it.
+    //
+    // It travels with the request rather than being bound once, for the same
+    // reason `SaveFormatterService` does it: a callback installed during
+    // initialization is a callback a path that skipped initialization does not
+    // have, and a dropped completion here leaves a tab loading forever.
+    std::function<void(Completion)> on_complete;
+    std::uintmax_t max_bytes = util::kMaxTextFileBytes;
+  };
+
   // Post one read. Returns the id its completion will carry; never 0.
-  //
-  // `on_complete` travels with the request rather than being bound once, for the
-  // same reason `SaveFormatterService` does it: a callback installed during
-  // initialization is a callback a path that skipped initialization does not
-  // have, and a dropped completion here leaves a tab loading forever. It runs on
-  // the SHELL thread, from `DrainCompletions` or `FlushPendingReads`, exactly
-  // once per posted read.
-  std::uint64_t Begin(std::filesystem::path path,
-                      std::function<void(Completion)> on_complete,
-                      std::uintmax_t max_bytes = util::kMaxTextFileBytes);
+  std::uint64_t Begin(Request request);
 
   // Stop a read whose result is no longer wanted. Its completion still arrives,
   // with `Cancelled`. Unknown or already-finished ids are ignored.
@@ -93,7 +105,7 @@ class FileReadService {
   [[nodiscard]] int PendingCount() const { return pending_.load(std::memory_order_acquire); }
 
  private:
-  struct Request {
+  struct InFlightRead {
     std::uint64_t id = 0;
     std::shared_ptr<std::atomic<bool>> cancelled;
   };
@@ -108,7 +120,7 @@ class FileReadService {
   std::atomic<int> pending_{0};
   std::atomic<std::uint64_t> next_id_{0};
   mutable std::mutex requests_mutex_;
-  std::vector<Request> requests_;
+  std::vector<InFlightRead> requests_;
 };
 
 }  // namespace microide::project

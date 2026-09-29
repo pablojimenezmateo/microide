@@ -158,46 +158,60 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   return AdoptFileContent(path, std::move(*content));
 }
 
-bool TextViewport::AdoptFileContent(const std::filesystem::path& path, std::string bytes) {
-  EnsureDocument();
-  // The raw bytes, before the BOM strip and the LF canonicalization below: a
-  // re-read produces these, so this is what a later conflict check compares
-  // against. Captured here because it is the one moment they exist.
-  const std::size_t raw_content_hash = util::ContentHash(bytes);
+TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes) {
+  ClassifiedContent classified;
+  // Captured before the BOM strip and the LF canonicalization below: a re-read
+  // produces these bytes, so this is what a later conflict check compares
+  // against, and this is the one moment they exist.
+  classified.raw_content_hash = util::ContentHash(bytes);
 
-  // Convert directly to the editor's canonical LF buffer. The old CRLF/CR path
-  // decoded into vector<string> and PieceTree immediately joined it back into a
-  // string, so a dense CRLF file could force one allocation per line on open.
   LineEndingMetadata metadata;
-  TextEncoding encoding = TextEncoding::UTF8;
-  bool utf8_bom = false;
   {
-    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ClassifyContent");
-    encoding = DetectEncoding(bytes);
-    utf8_bom = StripUtf8Bom(bytes, encoding);
+    util::PerformanceTrace::Scope scope("TextViewport::ClassifyContent::Classify");
+    classified.encoding = DetectEncoding(bytes);
+    classified.utf8_bom = StripUtf8Bom(bytes, classified.encoding);
     metadata = AnalyzeLineEndings(bytes);
   }
-  if (encoding == TextEncoding::Bytes) {
-    // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending. Split on '\n'
-    // only (keeping CR bytes in the line) and label the ending LF so Save joins with a
-    // single '\n' -- the only transform is the reversible split, so the bytes survive.
-    ResetState(SplitOnLineFeedOnly(bytes), path, LineEnding::LF,
-               /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
-    RecordOpenedContentHash(raw_content_hash);
+  classified.line_ending = metadata.line_ending;
+  classified.mixed_line_endings = metadata.mixed_line_endings;
+  if (classified.encoding == TextEncoding::Bytes) {
+    // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending, so the
+    // bytes travel untouched and the split happens at install time.
+    classified.text = std::move(bytes);
+    classified.line_ending = LineEnding::LF;
+    classified.mixed_line_endings = false;
+    return classified;
+  }
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::ClassifyContent::CanonicalizeLineEndings");
+    // Directly to the editor's canonical LF buffer. The old CRLF/CR path decoded
+    // into vector<string> and PieceTree immediately joined it back into a string,
+    // so a dense CRLF file could force one allocation per line on open.
+    classified.text = CanonicalizeLineEndingsToLf(std::move(bytes), metadata);
+  }
+  return classified;
+}
+
+bool TextViewport::AdoptClassifiedContent(const std::filesystem::path& path,
+                                          ClassifiedContent content) {
+  EnsureDocument();
+  if (content.encoding == TextEncoding::Bytes) {
+    // Split on '\n' only (keeping CR bytes in the line) and label the ending LF so
+    // Save joins with a single '\n' -- the only transform is the reversible split,
+    // so the bytes survive.
+    ResetState(SplitOnLineFeedOnly(content.text), path, LineEnding::LF,
+               /*mixed_line_endings=*/false, content.encoding, /*placeholder=*/false,
+               /*dirty=*/false);
+    RecordOpenedContentHash(content.raw_content_hash);
     return true;
   }
-  std::string canonical;
   {
-    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::CanonicalizeLineEndings");
-    canonical = CanonicalizeLineEndingsToLf(std::move(bytes), metadata);
+    util::PerformanceTrace::Scope scope("TextViewport::AdoptClassifiedContent::ResetStateFromText");
+    ResetStateFromText(std::move(content.text), path, content.line_ending,
+                       content.mixed_line_endings, content.encoding, false, false);
   }
-  {
-    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ResetStateFromText");
-    ResetStateFromText(std::move(canonical), path, metadata.line_ending,
-                       metadata.mixed_line_endings, encoding, false, false);
-  }
-  document_->utf8_bom = utf8_bom;
-  RecordOpenedContentHash(raw_content_hash);
+  document_->utf8_bom = content.utf8_bom;
+  RecordOpenedContentHash(content.raw_content_hash);
   return true;
 }
 

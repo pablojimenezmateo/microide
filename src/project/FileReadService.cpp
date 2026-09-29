@@ -20,23 +20,21 @@ constexpr std::size_t kReadChunkBytes = 1u << 20;  // 1 MiB
 std::shared_ptr<std::atomic<bool>> FileReadService::TrackRequest(std::uint64_t id) {
   auto cancelled = std::make_shared<std::atomic<bool>>(false);
   const std::lock_guard<std::mutex> lock(requests_mutex_);
-  requests_.push_back(Request{id, cancelled});
+  requests_.push_back(InFlightRead{id, cancelled});
   return cancelled;
 }
 
 void FileReadService::ForgetRequest(std::uint64_t id) {
   const std::lock_guard<std::mutex> lock(requests_mutex_);
   const auto it = std::find_if(requests_.begin(), requests_.end(),
-                               [id](const Request& request) { return request.id == id; });
+                               [id](const InFlightRead& read) { return read.id == id; });
   if (it != requests_.end()) {
     *it = std::move(requests_.back());
     requests_.pop_back();
   }
 }
 
-std::uint64_t FileReadService::Begin(std::filesystem::path path,
-                                     std::function<void(Completion)> on_complete,
-                                     std::uintmax_t max_bytes) {
+std::uint64_t FileReadService::Begin(Request request) {
   const std::uint64_t id = next_id_.fetch_add(1, std::memory_order_acq_rel) + 1;
   std::shared_ptr<std::atomic<bool>> cancelled = TrackRequest(id);
   pending_.fetch_add(1, std::memory_order_acq_rel);
@@ -44,8 +42,10 @@ std::uint64_t FileReadService::Begin(std::filesystem::path path,
   // Everything the worker touches is copied into the task: the path, the cap and
   // the cancel flag. It reads no shell state and no viewport, which is what makes
   // running it off-thread safe at all.
-  executor_.Submit([this, id, path = std::move(path), max_bytes, cancelled = std::move(cancelled),
-                    on_complete = std::move(on_complete)](const util::CancellationToken&) mutable {
+  executor_.Submit([this, id, path = std::move(request.path), max_bytes = request.max_bytes,
+                    cancelled = std::move(cancelled), on_worker = std::move(request.on_worker),
+                    on_complete = std::move(request.on_complete)](
+                       const util::CancellationToken&) mutable {
     util::PerformanceTrace::Scope perf_scope("FileReadService::Read");
     Completion completion;
     completion.id = id;
@@ -107,6 +107,9 @@ std::uint64_t FileReadService::Begin(std::filesystem::path path,
     if (completion.status != Status::Ok) {
       completion.bytes.clear();
       completion.bytes.shrink_to_fit();
+    } else if (on_worker) {
+      util::PerformanceTrace::Scope worker_scope("FileReadService::OnWorker");
+      on_worker(completion.bytes);
     }
 
     ForgetRequest(id);
@@ -130,7 +133,7 @@ void FileReadService::Cancel(std::uint64_t id) {
   }
   const std::lock_guard<std::mutex> lock(requests_mutex_);
   const auto it = std::find_if(requests_.begin(), requests_.end(),
-                               [id](const Request& request) { return request.id == id; });
+                               [id](const InFlightRead& read) { return read.id == id; });
   if (it != requests_.end()) {
     it->cancelled->store(true, std::memory_order_release);
   }
@@ -151,8 +154,8 @@ void FileReadService::FlushPendingReads() {
 void FileReadService::CancelAllAndFlush() {
   {
     const std::lock_guard<std::mutex> lock(requests_mutex_);
-    for (Request& request : requests_) {
-      request.cancelled->store(true, std::memory_order_release);
+    for (InFlightRead& read : requests_) {
+      read.cancelled->store(true, std::memory_order_release);
     }
   }
   if (PendingCount() == 0 && mailbox_.PendingCount() == 0) {

@@ -721,7 +721,8 @@
   void ApplyDeferredSaveFormat(const SaveFormatterService::Completion& completion);
   // Shell thread: hydrate the tab whose off-thread file read has landed, or mark
   // it Failed. Finds its tab by the read id the tab holds in `pending_load`.
-  void ApplyAsyncFileRead(project::FileReadService::Completion completion);
+  void ApplyAsyncFileRead(project::FileReadService::Completion completion,
+                          editor::TextViewport::ClassifiedContent classified);
   void ReportSaveFormatterFailure(const SaveFormatterService::Completion& completion,
                                   std::string* error_message);
   bool OpenVirtualDocumentInNewTab(std::string_view uri);

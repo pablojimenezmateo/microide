@@ -113,10 +113,24 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               },
           .begin_async_file_read =
               [this](const std::filesystem::path& path) {
-                return file_read_service_.Begin(
-                    path, [this](project::FileReadService::Completion completion) {
-                      ApplyAsyncFileRead(std::move(completion));
-                    });
+                // The classification — content hash, encoding sniff, line-ending
+                // scan, CRLF rewrite — is several full passes over the buffer, so
+                // it runs on the reader's thread with the bytes rather than on the
+                // shell thread once they arrive. The shared slot is written by the
+                // worker before it posts and read by the completion after the
+                // post, which is what orders the two.
+                auto classified = std::make_shared<editor::TextViewport::ClassifiedContent>();
+                return file_read_service_.Begin({
+                    .path = path,
+                    .on_worker =
+                        [classified](std::string& bytes) {
+                          *classified = editor::TextViewport::ClassifyContent(std::move(bytes));
+                        },
+                    .on_complete =
+                        [this, classified](project::FileReadService::Completion completion) {
+                          ApplyAsyncFileRead(std::move(completion), std::move(*classified));
+                        },
+                });
               },
           .cancel_async_file_read = [this](std::uint64_t id) { file_read_service_.Cancel(id); },
       });
@@ -255,7 +269,8 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
   }
 }
 
-void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion completion) {
+void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion completion,
+                                       editor::TextViewport::ClassifiedContent classified) {
   if (completion.id == 0) {
     return;
   }
@@ -286,7 +301,7 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
       }
       const std::filesystem::path path = completion.path;
       if (!completion.ok() ||
-          !editor_state.viewport.AdoptFileContent(path, std::move(completion.bytes))) {
+          !editor_state.viewport.AdoptClassifiedContent(path, std::move(classified))) {
         // The tab stays, showing which file it was. Dropping it would make a
         // failed open look like a click that did nothing.
         editor_state.content = TabEntry::EditorTabState::Content::Failed;
