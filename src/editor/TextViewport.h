@@ -117,13 +117,6 @@ class TextViewport {
 
   bool OpenFile(const std::filesystem::path& path);
   bool Save();
-  // Where this viewport's saves are written. Local by default; a remote project
-  // hands its viewports the mirror's gate so a save lands in the mirror and is
-  // pushed, rather than writing a local path that only looks like the file.
-  // A reference into something that outlives the viewport (the process-wide local
-  // gate, or the project's own).
-  void SetWriteGate(project::FileWriteGate& gate) { write_gate_ = &gate; }
-
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
   // serialized. Defaults are off; callers should configure them from
@@ -335,7 +328,6 @@ class TextViewport {
   // is false for untitled buffers and files that were absent when last sampled.
   const util::FileSignature& disk_signature() const { return document_->disk_signature; }
   bool HasDiskSignature() const { return document_->disk_signature.exists; }
-  const project::FileWriteGate& write_gate() const { return *write_gate_; }
   // True when `other` is another view of this viewport's document (a split
   // clone, a second tab on the same file). Views of one document share its
   // content, dirty state, undo history and disk signature; closing one of them
@@ -359,6 +351,23 @@ class TextViewport {
   // byte-identical rewrite is not mistaken for someone else's edit. Re-baselines on
   // a confirmed match, so the next call is one stat again.
   bool DiskContentUnchanged(const util::FileSignature& current) const;
+  // The same question in two halves, for a caller holding SEVERAL views of one
+  // file: ask each view whether a read could settle it (cheap, no I/O), read the
+  // file at most once, then hand every view the same digest. The one-call form
+  // above re-read the file per view, so a split pane cost one full read each for
+  // a single watcher event.
+  //
+  // `Could` is true when the recorded signature carries a content hash, the size
+  // is unchanged (a different size is a real change, no read needed), and the
+  // file is small enough that reading it is not itself the stall this check sits
+  // inside. `Confirm` compares against the RECORDED digest of what was last on
+  // disk — never against the buffer, which is dirty by construction here — and
+  // re-baselines the stat so the next event on this path is one stat again. That
+  // re-baseline is why a const method writes: it memoizes a fact about the file,
+  // and nothing a caller can observe changes.
+  bool CouldConfirmDiskContent(const util::FileSignature& current) const;
+  bool ConfirmDiskContentUnchanged(const util::FileSignature& current,
+                                   std::uint64_t disk_content_hash) const;
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;
@@ -1209,10 +1218,14 @@ class TextViewport {
   void RecordOpenedContentHash(std::size_t raw_content_hash);
 
   std::shared_ptr<DocumentState> document_;
-  // Not owned, and deliberately per-VIEWPORT rather than per-document: two
-  // viewports can share one buffer (the same file in two panes), and both belong to
-  // the same project, so they resolve to the same gate anyway — but a viewport is
-  // what a project hands its settings to.
+  // Not owned. There is deliberately NO setter: every path that replaces a
+  // viewport wholesale (the reload in WorkspaceTabCoordinator, the LSP's scratch
+  // view) would drop a per-viewport override without a word, so an override
+  // installed today would work until the file was reloaded and then silently
+  // write the wrong place. The pointer stays because it is what makes `Save()`
+  // go through the gate interface rather than the raw primitive; pointing it at
+  // a MirrorWriteGate is a one-line change once those two paths propagate it
+  // (TD-2026-09-29-308).
   project::FileWriteGate* write_gate_ = &project::LocalFileWriteGate();
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
