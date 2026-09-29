@@ -299,7 +299,14 @@ that file says exactly what, and what each one left):
   against a scripted launcher with no `git` binary.
 - **G3 — argv-shaped terminal launch**, which fixed `terminal.shell = "ssh host"`
   (ran `ssh -i`) and `terminal.shell = "bash"` (never resolved through PATH).
-- **G9 (part)** — one `ResolveGitDirectory` instead of two that disagreed.
+- **G9 (part)** — one `ResolveGitDirectory` instead of two that disagreed, then
+  one `ReadFirstLineOfGitFile` instead of three readers of `.git` metadata files
+  (each had a hole the others did not: two read the whole file to see its first
+  line, the third read one line with no size cap). And git availability is now
+  three answers — `Repository`, `NotARepository`, `Unknown` — with the status bar
+  rendering a pending answer as `scm-unknown` rather than claiming `no-scm`. The
+  local source never returns `Unknown`; the remote one is unknown until the first
+  `git/metadata` lands, and that is the state a bool made structurally invisible.
 - **G5 (part) — the format-on-save subprocess is off the shell thread.**
   `editor.format_on_save` defaults on and the bundled prettier plugin registers a
   formatter for every web filetype, so every Ctrl+S in a JS/TS project froze the
@@ -334,7 +341,8 @@ that file says exactly what, and what each one left):
   action dispatch in the toast.
 
 Open: **G4** asynchronous file open, the **actions** half of **G7**, **G8**
-`ProjectId`; the persisted cross-machine
+`ProjectId`; the rest of **G9** (the four readers now share their primitives and
+the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); the tree operations the
 write gate does not cover (TD-2026-09-29-305); and the rest of **G5**
 (TD-2026-09-28-304). Groundwork carries its own perf gates (design
