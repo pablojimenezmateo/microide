@@ -199,6 +199,23 @@ The 2026-05-06 `codebase-cleanup-perf-and-debt` adds four further hard invariant
   lint set, so do not rename them back to `*CompareRender`/`*MergeRender`. They reuse scratch
   `DecoratedTextRow` members instead of a fresh per-row row and truncate hot labels through
   `TruncateLabelView` (`CheckCompareMergeRenderUsesScratchRows`).
+- A `Make*Service()` / `Make*Coordinator()` result must be bound by REFERENCE (`auto&`, or
+  `Type&`), never copied. These factories return a reference into the shell-owned
+  `ShellGlueCache`; a value binding copies the whole coordinator — two references and
+  seventeen `std::function`s — on every call, which silently undoes the caching. Twenty-two
+  sites had drifted back to the value spelling by 2026-09-29, one of them inside the
+  watcher's per-changed-file loop. Enforced by `CheckShellGlueIsBoundByReference`, which is
+  loud rather than vacuous when it finds no factory calls at all.
+- Capturing one of those locals BY VALUE into a lambda is the same copy per hook, and a
+  reference binding does not make it free — `[svc]` on a reference copies the referent.
+  Enforced by `CheckFactoryResultsAreNotCapturedByValue` (TD-2026-08-10-177), which matches
+  BOTH the value and reference spellings: it once matched only `auto x = Make…()`, so the
+  sweep to `auto&` left it scanning nothing and only its missing-target guard said so.
+- Write and start APIs whose dropped result is a silent failure are `[[nodiscard]]`:
+  `util::WriteTextFileAtomically`, `TextViewport::Save`, `FileWriteGate::WriteText`,
+  `ControlSocketServer::Start`, `ControlChannelService::Start`. Deliberate discards use
+  `(void)` WITH the reason — an ignored `Start()` was once a control channel that did not
+  exist with nothing anywhere explaining why. Add the attribute to new APIs of this shape.
 - `TextViewport` non-const mutation paths must not copy `document_->lines` wholesale; undo and
   edit flows should capture only the affected ranges to avoid large-buffer copy regressions.
 
@@ -217,6 +234,7 @@ durable invariant moves.
 - TSAN needs ASLR entropy below the kernel default or it aborts at startup with `unexpected memory mapping`. `run-checks.sh tsan` handles this itself by running ctest under `setarch -R`, which clears ASLR for that process tree via `personality(ADDR_NO_RANDOMIZE)` — no root, and nothing changed machine-wide. Driving ctest by hand needs the same prefix. `sudo sysctl vm.mmap_rnd_bits=28` remains the fallback for sandboxes that block that personality bit; the wrapper prints which path it took.
 - If a genuinely environmental (non-microide) race or leak appears, add a documented suppression to `tests/tsan.supp` (mirroring the existing `deadlock:libdbus-1` / `race:libgallium` entries) rather than leaving a flake in the matrix.
 - Extend and run relevant fuzz targets in `tests/fuzz/` when changing persistence, parser, regex, or blame decode paths.
+- A test that dispatches a SYNTHETIC file-watcher batch (`DispatchFileIndexWatcherBatchForTesting`) and asserts on the result must first call `WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting`, which is `FileIndexWatcher::Unwatch()` — it stops the native/poll threads while keeping the watcher and its callback, and joins them so nothing is in flight during the assertions. Otherwise the live inotify watcher reacting to the fixture's own writes is a second, uncontrolled source of batches, arriving before, during, after, or not at all inside the test's window (TD-2026-09-29-311). Tests that deliberately wait on a REAL watcher event keep the watcher alive and must not call it.
 - Redraw comparison tests under SDL dummy video should run serially.
 - Use focused fixtures for git, search, compare, merge, and plugin-adjacent workflows.
 - If a change is hard to test, treat that as a design smell and improve the seam.
