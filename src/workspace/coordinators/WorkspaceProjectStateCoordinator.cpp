@@ -339,7 +339,7 @@ void WorkspaceShell::SetWelcomePlaceholder() {
 }
 
 void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
-  auto persistence = MakePersistenceCoordinator();
+  auto& persistence = MakePersistenceCoordinator();
   StopProjectSearch();
   project_background_executor_.Cancel();
   git_repository_service_.Reset();
@@ -373,7 +373,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
                                               bool log_feedback,
                                               bool activate_restored_tab) {
   (void) log_feedback;
-  auto persistence = MakePersistenceCoordinator();
+  auto& persistence = MakePersistenceCoordinator();
   util::StartupTrace::Scope trace_scope("WorkspaceShell::InitializeCurrentProject");
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::InitializeCurrentProject");
   {

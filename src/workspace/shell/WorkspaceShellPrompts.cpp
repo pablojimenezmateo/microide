@@ -81,8 +81,8 @@ void WorkspaceShell::DismissDirtyPrompt(bool restore_focus) {
 }
 
 void WorkspaceShell::ConfirmDirtyPrompt() {
-  EditorTabService editor_tabs = MakeEditorTabService();
-  PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+  EditorTabService& editor_tabs = MakeEditorTabService();
+  PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
   MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).Confirm();
 }
 
@@ -392,8 +392,8 @@ bool WorkspaceShell::HasDirtyEditorTabsForPath(const std::filesystem::path& path
 }
 
 void WorkspaceShell::CloseOpenTabsForPath(const std::filesystem::path& path) {
-  EditorTabService editor_tabs = MakeEditorTabService();
-  PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+  EditorTabService& editor_tabs = MakeEditorTabService();
+  PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
   MakePathMutationCoordinator(editor_tabs, prompt_surfaces).CloseOpenTabsForPath(path);
 }
 
@@ -539,8 +539,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     }
     return;
   }
-  EditorTabService editor_tabs = MakeEditorTabService();
-  PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+  EditorTabService& editor_tabs = MakeEditorTabService();
+  PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
   MakePathMutationCoordinator(editor_tabs, prompt_surfaces).ConfirmPromptSurface(resolution);
 }
 

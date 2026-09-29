@@ -236,22 +236,22 @@ WorkspaceShell::WorkspaceShell() {
           .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
           .reconcile_tabs_after_resource_rename =
               [this](const std::filesystem::path& old_path, const std::filesystem::path& new_path) {
-                EditorTabService editor_tabs = MakeEditorTabService();
-                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
                 MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
                     .ReconcileAfterExternalRename(old_path, new_path);
               },
           .reconcile_tabs_after_resource_delete =
               [this](const std::filesystem::path& path) {
-                EditorTabService editor_tabs = MakeEditorTabService();
-                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
                 MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
                     .ReconcileAfterExternalDelete(path);
               },
           .refresh_views_after_resource_ops =
               [this](const std::filesystem::path& preferred_tree_path) {
-                EditorTabService editor_tabs = MakeEditorTabService();
-                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
                 MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
                     .RefreshViewsAfterExternalMutation(preferred_tree_path);
               },
@@ -799,7 +799,7 @@ void WorkspaceShell::RebuildPresentationRegistries() {
   theme_registry_.Rebuild(host);
   file_icon_registry_.Rebuild(host);
   // Keep the colorscheme picker in sync with newly (un)contributed plugin themes.
-  auto coordinator = MakePersistenceCoordinator();
+  auto& coordinator = MakePersistenceCoordinator();
   coordinator.RefreshAvailableColorschemeNames();
   // If the active colorscheme is a plugin theme, re-apply it so its (possibly
   // changed) colours take effect after the reload. Built-in/filesystem schemes

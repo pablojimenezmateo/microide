@@ -73,7 +73,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         break;
       case project::ProjectFileChangeKind::Created:
       case project::ProjectFileChangeKind::Modified: {
-        EditorTabService editor_tabs = MakeEditorTabService();
+        EditorTabService& editor_tabs = MakeEditorTabService();
         // Suppress the watcher's echo of our own save: if every open view on this
         // path already records the current on-disk signature, nothing changed
         // underneath us and the save path already refreshed blame/compare.
@@ -84,7 +84,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         InvalidateEditorBlamePath(normalized_path);
         InvalidateMergeTabsForPath(normalized_path);
         refresh_compare_paths.insert(normalized_path);
-        PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+        PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
         if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
                 .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
           dirty_external_paths.insert(normalized_path);

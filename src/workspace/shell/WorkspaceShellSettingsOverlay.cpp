@@ -552,7 +552,7 @@ void WorkspaceShell::ApplyCanonicalPreferenceSideEffects(std::string_view id) {
   if (!IsCanonicalPreferenceId(id)) {
     return;
   }
-  auto coordinator = MakePersistenceCoordinator();
+  auto& coordinator = MakePersistenceCoordinator();
   // Keep the editor-preferences cache aligned with the resolved (project →
   // user-default → spec) value.
   coordinator.MaterializeCanonicalPreferences();

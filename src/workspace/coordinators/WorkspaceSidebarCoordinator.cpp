@@ -329,8 +329,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               },
           .has_dirty_editor_tabs_for_path =
               [this](const std::filesystem::path& path, std::string* blocking_label) {
-                EditorTabService editor_tabs = MakeEditorTabService();
-                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
                 return MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
                     .HasDirtyEditorTabsForPath(path, blocking_label);
               },
@@ -340,8 +340,8 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
               [this](const std::filesystem::path& path) { ReloadCleanEditorTabsForPath(path); },
           .close_open_tabs_for_path =
               [this](const std::filesystem::path& path) {
-                EditorTabService editor_tabs = MakeEditorTabService();
-                PromptSurfaceService prompt_surfaces = MakePromptSurfaceService();
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
                 MakePathMutationCoordinator(editor_tabs, prompt_surfaces).CloseOpenTabsForPath(path);
               },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
