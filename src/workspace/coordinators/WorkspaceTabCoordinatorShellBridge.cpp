@@ -125,13 +125,18 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
               },
           .begin_async_file_read =
               [this](const std::filesystem::path& path) {
-                // The classification — content hash, encoding sniff, line-ending
-                // scan, CRLF rewrite — is several full passes over the buffer, so
-                // it runs on the reader's thread with the bytes rather than on the
-                // shell thread once they arrive. The shared slot is written by the
+                // The whole load runs on the reader's thread: the classification
+                // (content hash, encoding sniff, line-ending scan, CRLF rewrite)
+                // AND the buffer build, which `PieceTree::RebuildFromOriginal`
+                // itself calls the dominant cost of opening a file — a newline
+                // index over every byte, plus its reservation. A `TextViewport`
+                // owns its document and touches no process-wide mutable state
+                // while being built (the perf counters it bumps are atomic, the
+                // trace channel is thread-aware, and nothing on this path consults
+                // the syntax registry), so it is constructed here and MOVED into
+                // the tab by the completion. The shared slot is written by the
                 // worker before it posts and read by the completion after the
                 // post, which is what orders the two.
-                auto classified = std::make_shared<editor::TextViewport::ClassifiedContent>();
                 // A file this big takes long enough that an empty editor with no
                 // explanation reads as a bug. Sticky, because it reports a state
                 // that ends when the read does — and posted only above a size
@@ -145,14 +150,15 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                       .sticky = true,
                   });
                 }
+                auto loaded = std::make_shared<editor::TextViewport>();
                 return file_read_service_.Begin({
                     .path = path,
                     .on_worker =
-                        [classified](std::string& bytes) {
-                          *classified = editor::TextViewport::ClassifyContent(std::move(bytes));
+                        [loaded, path](std::string& bytes) {
+                          (void)loaded->AdoptFileContent(path, std::move(bytes));
                         },
                     .on_complete =
-                        [this, classified](project::FileReadService::Completion completion) {
+                        [this, loaded](project::FileReadService::Completion completion) {
                           // Dismissed here rather than in ApplyAsyncFileRead: a
                           // completion whose tab is gone never reaches that, and a
                           // sticky row nothing dismisses stays on screen forever.
@@ -160,7 +166,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                                   kFileOpenInProgressNotificationKey)) {
                             RequestFullRedraw();
                           }
-                          ApplyAsyncFileRead(std::move(completion), std::move(*classified));
+                          ApplyAsyncFileRead(std::move(completion), std::move(*loaded));
                         },
                 });
               },
@@ -302,7 +308,7 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
 }
 
 void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion completion,
-                                       editor::TextViewport::ClassifiedContent classified) {
+                                       editor::TextViewport loaded) {
   if (completion.id == 0) {
     return;
   }
@@ -332,8 +338,7 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         return;
       }
       const std::filesystem::path path = completion.path;
-      if (!completion.ok() ||
-          !editor_state.viewport.AdoptClassifiedContent(path, std::move(classified))) {
+      if (!completion.ok()) {
         // The tab stays, showing which file it was. Dropping it would make a
         // failed open look like a click that did nothing.
         editor_state.content = TabEntry::EditorTabState::Content::Failed;
@@ -345,9 +350,11 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         RequestEditorSurfaceRedraw();
         return;
       }
-      // The buffer is real now, so the view stops being read-only and gets the
-      // preferences and indent detection a synchronous open applies.
-      editor_state.viewport.SetReadOnly(false);
+      // The loaded view replaces the empty read-only stand-in wholesale, and then
+      // gets the preferences and indent detection a synchronous open applies.
+      // (Every other tab waiting on this path is handed a copy below, so a pane
+      // that was sharing the stand-in's document does not keep pointing at it.)
+      editor_state.viewport = std::move(loaded);
       ApplyEditorPreferences(editor_state.viewport);
       ApplyDetectedIndentOnOpen(editor_state.viewport);
       // View state last: preferences re-run EnsureCursorVisible, which would snap

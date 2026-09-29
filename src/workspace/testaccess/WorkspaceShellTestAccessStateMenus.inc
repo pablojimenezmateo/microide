@@ -78,6 +78,21 @@
     }
     return false;
   }
+  // Every banner, kind and path, for a failure message. "No banner was raised"
+  // and "a banner was raised for a path spelled differently" look identical
+  // through the two path-keyed predicates above, and they are different bugs.
+  static std::string DescribeEditorBanners(const WorkspaceShell& shell) {
+    std::string description;
+    for (const EditorBannerState& banner : shell.context_.current_project_state.editor_banners) {
+      if (!description.empty()) {
+        description += ", ";
+      }
+      description += banner.kind == EditorBannerState::Kind::ExternalChange ? "external:"
+                                                                            : "reloaded:";
+      description += banner.path.string();
+    }
+    return description.empty() ? std::string("none") : description;
+  }
   static void ClearEditorBannersForTesting(WorkspaceShell& shell) {
     shell.context_.current_project_state.editor_banners.clear();
   }

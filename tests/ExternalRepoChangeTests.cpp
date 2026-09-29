@@ -57,6 +57,27 @@ void DrainProjectChanges(WorkspaceShell& shell) {
   }
 }
 
+// Dispatch a synthetic watcher batch and let the shell apply it — then CHECK that
+// it applied. A batch that is delivered but never acted on leaves every "no banner
+// was raised" assertion below passing for the wrong reason, which is exactly how
+// TD-2026-09-29-311 hid: under load the initial scan had not finished when the
+// fixture stopped the watcher, so the dispatch wrapper buffered every synthetic
+// batch waiting for a baseline that was never coming, and reported success.
+void DispatchAndApply(WorkspaceShell& shell,
+                      platform::IndexUpdateBatch batch,
+                      const char* what) {
+  const std::uint64_t before =
+      WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(shell);
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell,
+                                                                           std::move(batch)),
+         std::string("the fixture must actually deliver a watcher batch (") + what + ")");
+  DrainProjectChanges(shell);
+  Expect(WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(shell) > before,
+         std::string("the dispatched batch must actually be APPLIED, or every assertion "
+                     "after it is about a sweep that never ran (") +
+             what + ")");
+}
+
 bool WaitForExternalChangeBanner(WorkspaceShell& shell,
                                  const std::filesystem::path& path,
                                  std::chrono::milliseconds timeout) {
@@ -183,7 +204,19 @@ std::string ExternalChangeDiagnostics(WorkspaceShell& shell,
          "; on disk mtime=" + std::to_string(current.mtime_ticks) +
          " size=" + std::to_string(current.size) +
          "; buffer first line='" + std::string(viewport.lines().LineView(0)) +
-         "' dirty=" + (viewport.dirty() ? "yes" : "no") + "]";
+         "' dirty=" + (viewport.dirty() ? "yes" : "no") +
+         // Which of the two ways "no banner" happens: the sweep found no open view
+         // of this path at all (so it had nothing to reload and nothing to warn
+         // about), or it found them and decided the change was our own echo.
+         "; open views=" + std::to_string(WorkspaceShellTestAccess::CountOpenBufferViews(
+                               shell, file_path)) +
+         "; echo-suppressed=" +
+         (WorkspaceShellTestAccess::DiskSignatureMatchesOpenView(shell, file_path) ? "yes" : "no") +
+         "; banners=" + WorkspaceShellTestAccess::DescribeEditorBanners(shell) +
+         "; applied generation=" +
+         std::to_string(WorkspaceShellTestAccess::LastAppliedProjectChangeGeneration(shell)) +
+         "; index version=" +
+         std::to_string(WorkspaceShellTestAccess::ProjectFileIndexVersion(shell)) + "]";
 }
 
 void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
@@ -210,10 +243,7 @@ void TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice() {
   // Rewrite with the SAME bytes: the mtime moves, the content does not.
   WriteFile(file_path, "same bytes\n");
   ForceDistinctModificationTime(file_path);
-  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
-             shell, BuildModifiedBatch(root, relative)),
-         "the fixture must actually deliver a watcher batch, or it proves nothing");
-  DrainProjectChanges(shell);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the identical-rewrite batch");
 
   Expect(!WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
          "a byte-identical rewrite must not announce a reload of a file that did not change");
@@ -256,10 +286,7 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
 
   WriteFile(file_path, "same bytes\n");
   ForceDistinctModificationTime(file_path);
-  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
-             shell, BuildModifiedBatch(root, relative)),
-         "the fixture must actually deliver a watcher batch");
-  DrainProjectChanges(shell);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the identical-rewrite batch");
 
   Expect(!WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
          "neither view announces a reload of a file that did not change");
@@ -269,10 +296,7 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
   // And a real change still reaches both views after the hoist.
   WriteFile(file_path, "SAME BYTES\n");
   ForceDistinctModificationTime(file_path);
-  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
-             shell, BuildModifiedBatch(root, relative)),
-         "the fixture must actually deliver the second watcher batch");
-  DrainProjectChanges(shell);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the real-rewrite batch");
   Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
          WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path)
              ? std::string()
@@ -306,10 +330,8 @@ void TestWorkspaceShellRealRewriteStillNotifies() {
   // Same LENGTH, different bytes — the case a content hash must not wave through.
   WriteFile(file_path, "SAME BYTES\n");
   ForceDistinctModificationTime(file_path);
-  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(
-             shell, BuildModifiedBatch(root, relative)),
-         "the fixture must actually deliver a watcher batch");
-  DrainProjectChanges(shell);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative),
+                   "the real-rewrite batch");
 
   Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
          WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path)

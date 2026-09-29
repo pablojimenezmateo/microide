@@ -1750,6 +1750,29 @@ void FileIndexWatcher::Unwatch() {
 #endif
   impl_->is_native.store(false, std::memory_order_release);
   impl_->root.clear();
+  // The workers are joined, so no initial scan is in flight — and a cancelled
+  // one never delivers its batch (`stop_initial_scan` suppresses it). Anything
+  // buffered waiting for that baseline is therefore waiting for a batch that is
+  // not coming: it would be retained (up to 200k changes) until the next Watch()
+  // and, worse, ANY batch arriving while unwatched would be swallowed into the
+  // same buffer while the dispatch call reported that it had delivered.
+  //
+  // That is not hypothetical: it is what made TD-2026-09-29-311 flake. A test
+  // that stops the watcher to keep the real one from reacting to its own writes,
+  // then drives `DispatchBatchForTesting`, had every synthetic batch buffered
+  // forever whenever the initial scan had not finished before the stop — which
+  // under load is most of the time. The assertions then passed or failed on a
+  // sweep that never ran.
+  //
+  // Watch() re-arms the wait, so the invariant is simply: buffer only while an
+  // initial scan is actually in flight.
+  if (dispatch_state_) {
+    std::lock_guard<std::mutex> lock(dispatch_state_->mutex);
+    dispatch_state_->initial_applied = true;
+    dispatch_state_->pending.clear();
+    dispatch_state_->pending_change_count = 0;
+    dispatch_state_->pending_overflow = false;
+  }
 }
 
 bool FileIndexWatcher::IsNative() const {

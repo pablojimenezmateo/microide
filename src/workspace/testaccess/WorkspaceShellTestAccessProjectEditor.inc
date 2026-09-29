@@ -727,6 +727,12 @@
                                           const std::filesystem::path& path) {
     return shell.CountOpenBufferViews(path);
   }
+  // The watcher's "is this our own write coming back?" verdict, for a failure
+  // message that has to distinguish a suppressed change from one nobody looked at.
+  static bool DiskSignatureMatchesOpenView(WorkspaceShell& shell,
+                                           const std::filesystem::path& path) {
+    return shell.MakeEditorTabService().DiskSignatureMatchesOpenView(path);
+  }
   static std::unordered_map<std::string, std::size_t> OpenBufferViewCounts(WorkspaceShell& shell) {
     return shell.OpenBufferViewCounts();
   }
@@ -1004,6 +1010,13 @@
     }
     shell.file_index_watcher_->DispatchBatchForTesting(std::move(batch));
     return true;
+  }
+  // Generation of the last project-change batch the shell actually APPLIED.
+  // `ApplyProjectChangeBatch` drops a batch whose generation it has already seen,
+  // so "the batch was delivered" and "the batch was acted on" are different
+  // questions and a fixture that only checks the first can pass while nothing ran.
+  static std::uint64_t LastAppliedProjectChangeGeneration(const WorkspaceShell& shell) {
+    return shell.last_applied_project_change_generation_;
   }
   static std::uint64_t ProjectFileIndexVersion(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.file_index.version();

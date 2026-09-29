@@ -447,7 +447,51 @@ What remains is the standing hazard rather than an instance:
   is legitimate as a PREFILTER and only wrong as the last word, and no pattern
   distinguishes the two. Reviewers are the guard, and this entry is the note.
 
-### TD-2026-09-29-311 — two external-change tests flake under heavy load. [OPEN]
+### TD-2026-09-29-311 — two external-change tests flake under heavy load. [RESOLVED 2026-09-29]
+
+**Found, fixed and proven.** The cause was the mitigation added for this entry.
+
+`FileIndexWatcher::SetCallback` wraps the client callback in an ordering guard:
+an incremental batch that arrives before the initial (wholesale-replace) scan is
+BUFFERED and replayed once that scan lands, so a file created during the scan is
+not lost to the replace. A cancelled initial scan never delivers its batch
+(`stop_initial_scan` suppresses it), so after `Unwatch()` the buffer is waiting
+for a baseline that is not coming.
+
+`QuiesceFileIndexWatcherForTesting` — added 2026-09-29 to stop the real watcher
+reacting to the fixture's own writes — is `Unwatch()`. Under load the initial
+scan had not finished by then, so every synthetic batch the fixture dispatched
+afterwards was buffered forever. `DispatchBatchForTesting` reported that it had
+delivered, the sweep never ran, and the assertions were about nothing: the
+"no banner was raised" ones passed for the wrong reason and the "a banner IS
+raised" ones failed. That is why it only failed under load, why it never
+reproduced on demand, and why the earlier diagnostics (which described a real
+change that looked suppressed) pointed away from it — the echo check was never
+consulted at all.
+
+The fix is one invariant in `Unwatch()`: buffer only while an initial scan is
+actually in flight. It drops the pending buffer (up to 200k changes retained
+until the next `Watch()`, a real hold) and stops withholding batches that arrive
+while unwatched. `Watch()` re-arms the wait.
+
+Proven rather than hoped, which is what this entry previously could not do:
+
+- reproduction first — 35 failures in 40 runs of the `ExternalRepoChange` filter
+  with twelve CPU hogs running, against a tree that had 1 in 50 idle;
+- 0 in 40 under the same load after the fix, and 0 in 30 on a re-check;
+- the pre-session tree (`f58a4b1c`) reproduces it too, so it is not a regression
+  from the asynchronous-open work that was in flight while this was found.
+
+The fixture now also FAILS LOUDLY on a swallowed batch instead of passing:
+`DispatchAndApply` asserts that the shell's applied-batch generation advanced,
+so "delivered" and "acted on" are different questions. Reverting the `Unwatch()`
+fix makes that assertion — not a downstream banner one — the failure, in
+`IdenticalRewriteRaisesNoReloadNotice` as well, a third test whose all-negative
+assertions had been passing vacuously.
+
+The diagnostics below stay: they are what narrowed this down.
+
+### TD-2026-09-29-311 (original entry, kept for the investigation record)
 
 `ExternalRepoChange/RealRewriteStillNotifies` and
 `ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce` have each been seen
@@ -532,7 +576,18 @@ Until then the bound is the mitigation, and the bound is load-bearing: the size
 prefilter and the 8 MiB cap are what keep a `git checkout` of a large binary from
 stalling the window.
 
-### TD-2026-09-29-316 — a shard failed once during the asynchronous-open work and the output was not captured. [OPEN]
+### TD-2026-09-29-316 — a shard failed once during the asynchronous-open work and the output was not captured. [RESOLVED 2026-09-29]
+
+It was [311](#td-2026-09-29-311), found and fixed the same day: the watcher's
+pre-initial dispatch buffer swallowing a synthetic batch after the fixture
+stopped the watcher. The shard it failed in did not contain `ExternalRepoChange`,
+which is what made it look like a different failure — the buffered-batch bug is
+not specific to those tests, it is specific to any fixture that quiesces the
+watcher and then dispatches.
+
+The process lesson below stands on its own and is why the next occurrence was
+caught with its output.
+
 
 `microide_tests_shard_19` failed once, on the first `ctest -j$(nproc)` run after
 the asynchronous-open wiring was built. The failing assertion was **not
