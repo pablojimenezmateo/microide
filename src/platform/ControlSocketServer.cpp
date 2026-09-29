@@ -139,6 +139,15 @@ void SetNonBlocking(int fd) {
 }  // namespace
 
 struct ControlSocketServer::Impl {
+  // The last socket path Start() refused as too long. Start() is called again on
+  // every live settings change, and the refusal is deterministic for a given
+  // path — so without this, one over-long $XDG_RUNTIME_DIR printed the same
+  // paragraph once per setting applied. A capture run wrote it eighteen times,
+  // which buries the real first occurrence rather than emphasising it. Keyed by
+  // path rather than latched, so a later project with a different (also too
+  // long) path still says so once.
+  std::string last_refused_long_path;
+
   struct Connection {
     int fd = -1;
     std::uint64_t id = 0;
@@ -543,10 +552,13 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
     // explain why — which is what a long $XDG_RUNTIME_DIR produces, and what cost
     // a real debugging session. The limit is the address family's, not ours, so
     // the message names it and the actual length rather than saying "failed".
-    util::Log("control channel: socket path is " + std::to_string(path_string.size()) +
-              " bytes, over the " + std::to_string(sizeof(sockaddr_un::sun_path) - 1) +
-              "-byte AF_UNIX limit; the channel will not start. Shorten "
-              "$XDG_RUNTIME_DIR or the project path: " + path_string);
+    if (impl_->last_refused_long_path != path_string) {
+      impl_->last_refused_long_path = path_string;
+      util::Log("control channel: socket path is " + std::to_string(path_string.size()) +
+                " bytes, over the " + std::to_string(sizeof(sockaddr_un::sun_path) - 1) +
+                "-byte AF_UNIX limit; the channel will not start. Shorten "
+                "$XDG_RUNTIME_DIR or the project path: " + path_string);
+    }
     return false;
   }
 
