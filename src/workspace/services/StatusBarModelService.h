@@ -8,6 +8,7 @@
 #include <string>
 
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "project/GitCommandUtil.h"
 #include "editor/TextViewport.h"
 #include "workspace/services/LayoutModeService.h"
 #include "workspace/services/StatusBarService.h"
@@ -18,7 +19,7 @@ namespace microide::workspace {
 class StatusBarModelService {
  public:
   struct Operations {
-    std::function<bool(const std::filesystem::path&)> is_git_repo_valid;
+    std::function<project::GitAvailability(const std::filesystem::path&)> git_availability;
     // Branch name straight out of `<gitdir>/HEAD` (no subprocess), used only while
     // no `git status` snapshot has arrived yet. Result is cached per project root.
     std::function<std::optional<std::string>(const std::filesystem::path&)> read_head_branch;
@@ -66,7 +67,7 @@ class StatusBarModelService {
   struct MarkerProbeCache {
     std::filesystem::path project_root;
     std::uint64_t marker_generation = 0;
-    bool present = false;
+    project::GitAvailability availability = project::GitAvailability::Unknown;
     bool valid = false;
   };
 

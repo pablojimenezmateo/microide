@@ -241,9 +241,14 @@ void WorkspaceShell::RefreshStatusBar() {
   status_bar_model_service_.Refresh(
       status_bar_service_,
       StatusBarModelService::Operations{
-          .is_git_repo_valid =
+          .git_availability =
               [](const std::filesystem::path& project_root) {
-                return GitRepositoryService::IsGitRepoValid(project_root);
+                // The LOCAL source is never Unknown: `.git` is either there or it
+                // is not, and the probe is a stat. A remote project's source is
+                // unknown until the host's first git/metadata lands.
+                return GitRepositoryService::IsGitRepoValid(project_root)
+                           ? project::GitAvailability::Repository
+                           : project::GitAvailability::NotARepository;
               },
           .read_head_branch =
               [](const std::filesystem::path& project_root) {

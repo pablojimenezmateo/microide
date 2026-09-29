@@ -50,6 +50,11 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
         !has_git_snapshot && project_state.directory_tree.has_dirty_files();
     const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
     bool repo_available = git_state.repo_available;
+    // A git snapshot that says "repository" has already answered the question;
+    // the probe below is only for the window before one exists.
+    project::GitAvailability availability = repo_available
+                                                ? project::GitAvailability::Repository
+                                                : project::GitAvailability::Unknown;
     if (!repo_available) {
       // is_git_repo_valid is a `.git` stat (not a subprocess), but this refresh
       // runs from PrepareFrameOnce, so "cheap" was still one syscall per painted
@@ -65,13 +70,22 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
           marker_probe_cache_.marker_generation != git_state.repository_marker_generation) {
         marker_probe_cache_.project_root = project_root;
         marker_probe_cache_.marker_generation = git_state.repository_marker_generation;
-        marker_probe_cache_.present = operations.is_git_repo_valid(project_root);
+        marker_probe_cache_.availability = operations.git_availability
+                                               ? operations.git_availability(project_root)
+                                               : project::GitAvailability::Unknown;
         marker_probe_cache_.valid = true;
       }
-      repo_available = marker_probe_cache_.present;
+      availability = marker_probe_cache_.availability;
+      repo_available = availability == project::GitAvailability::Repository;
     }
+    // Three answers, three labels. "no-scm" is a CLAIM — it says this directory
+    // has no source control — and making it the answer while the question is
+    // still open is how a remote project would spend its first round trip
+    // telling the user their repository is not one. Unknown says so instead.
     const std::string_view cleanliness =
-        repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm";
+        availability == project::GitAvailability::Unknown
+            ? "scm-unknown"
+            : (repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm");
     std::string_view branch_label = project_state.sidebar.git.branch_label;
     if (branch_label.empty() && repo_available) {
       branch_label = git_state.base_label;
@@ -97,8 +111,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     }
     if (branch_label.empty()) {
       // A detached HEAD in a real repository still is not "no source control";
-      // say what it actually is.
-      branch_label = repo_available ? "detached" : "no-scm";
+      // say what it actually is. And a pending answer is neither.
+      branch_label = repo_available ? "detached"
+                     : availability == project::GitAvailability::Unknown ? "scm-unknown"
+                                                                         : "no-scm";
     }
 
     const bool cache_hit = project_segment_cache_.valid &&
@@ -107,8 +123,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     if (!cache_hit) {
       project_segment_cache_.branch_label.assign(branch_label);
       project_segment_cache_.cleanliness.assign(cleanliness);
-      if (branch_label == "no-scm" && cleanliness == "no-scm") {
-        project_segment_cache_.text = "no-scm";
+      if (branch_label == cleanliness) {
+        // Both halves say the same thing (no-scm/no-scm, scm-unknown/scm-unknown);
+        // "no-scm [no-scm]" reads as a fault rather than a state.
+        project_segment_cache_.text.assign(branch_label);
       } else {
         project_segment_cache_.text.clear();
         project_segment_cache_.text.reserve(branch_label.size() + cleanliness.size() + 3);

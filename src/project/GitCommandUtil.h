@@ -7,6 +7,24 @@
 
 #include "platform/ProcessLauncher.h"
 
+namespace microide::project {
+
+// Whether a path is a git repository — with THREE answers, not two.
+//
+// `Unknown` is what a source that has not answered yet reports. The local
+// implementation never returns it: `.git` is either there or it is not, and the
+// probe is a stat. A remote project is unknown from the moment it opens until
+// the host's first `git/metadata` arrives a round trip later, and rendering that
+// as `NotARepository` would tell the user their repository is not one, for as
+// long as the link takes.
+//
+// It is designed in now rather than retrofitted because every consumer has to
+// decide what it shows while the answer is pending, and that decision is
+// invisible in a two-state world — the code simply takes the "no" branch.
+enum class GitAvailability { Unknown, Repository, NotARepository };
+
+}  // namespace microide::project
+
 namespace microide::project::internal {
 
 struct CommandResult {

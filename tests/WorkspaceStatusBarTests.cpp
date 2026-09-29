@@ -161,7 +161,9 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
 
   microide::workspace::StatusBarModelService model;
   microide::workspace::StatusBarModelService::Operations ops;
-  ops.is_git_repo_valid = [](const std::filesystem::path&) { return false; };
+  ops.git_availability = [](const std::filesystem::path&) {
+    return microide::project::GitAvailability::NotARepository;
+  };
   ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
                                      StatusBarSegmentTone& tone) {
     text = "LSP: clangd Not Ready";  // contains "Ready" as a substring
@@ -192,7 +194,9 @@ void TestStatusBarSteadyRefreshDoesNotAllocate() {
 
   microide::workspace::StatusBarModelService model;
   microide::workspace::StatusBarModelService::Operations ops;
-  ops.is_git_repo_valid = [](const std::filesystem::path&) { return false; };
+  ops.git_availability = [](const std::filesystem::path&) {
+    return microide::project::GitAvailability::NotARepository;
+  };
   // Long enough to be past std::string's small-string buffer, which is the whole
   // point: an SSO-sized label would pass this test on the old code too.
   ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
@@ -238,9 +242,10 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
   microide::workspace::StatusBarModelService::Operations ops;
   bool repo_valid = false;
   std::size_t probes = 0;
-  ops.is_git_repo_valid = [&](const std::filesystem::path&) {
+  ops.git_availability = [&](const std::filesystem::path&) {
     ++probes;
-    return repo_valid;
+    return repo_valid ? microide::project::GitAvailability::Repository
+                      : microide::project::GitAvailability::NotARepository;
   };
   ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
 
@@ -277,6 +282,42 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
 // is clean. That is the state for the first seconds after opening a project, and
 // it persists indefinitely if the user never opens the Source Control view. The
 // branch now comes from `<gitdir>/HEAD` (one file read, no subprocess) until a
+// The third answer. A source that has not answered yet must not be rendered as
+// "this directory has no source control" — that is a claim, and it is the one a
+// remote project would make about a real repository for as long as the first
+// git/metadata round trip takes. The LOCAL source never returns Unknown, so this
+// drives it through the hook, which is exactly how the remote one will arrive.
+void TestStatusBarRendersUnknownGitAvailabilityAsUnknown() {
+  WorkspaceContext context;
+  context.current_project_state.root = "/tmp/statusbar-git-unknown";
+  StatusBarService service;
+
+  microide::workspace::StatusBarModelService model;
+  microide::workspace::StatusBarModelService::Operations ops;
+  ops.git_availability = [](const std::filesystem::path&) {
+    return microide::project::GitAvailability::Unknown;
+  };
+  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
+
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  const auto& segment = service.Segment(StatusBarSegmentId::Project);
+  Expect(segment.visible, "the project segment stays visible while the answer is pending");
+  Expect(segment.text == "scm-unknown",
+         "a pending answer must not be rendered as 'no source control'");
+  Expect(segment.text.find("no-scm") == std::string::npos,
+         "and must not claim no-scm anywhere in the label");
+
+  // The two settled answers still read as they did.
+  microide::workspace::StatusBarModelService not_a_repo_model;
+  StatusBarService not_a_repo_service;
+  ops.git_availability = [](const std::filesystem::path&) {
+    return microide::project::GitAvailability::NotARepository;
+  };
+  not_a_repo_model.Refresh(not_a_repo_service, ops, context.current_project_state, nullptr);
+  Expect(not_a_repo_service.Segment(StatusBarSegmentId::Project).text == "no-scm",
+         "a settled 'not a repository' still says so");
+}
+
 // real snapshot supersedes it.
 void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   WorkspaceContext context;
@@ -285,7 +326,9 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
 
   microide::workspace::StatusBarModelService model;
   microide::workspace::StatusBarModelService::Operations ops;
-  ops.is_git_repo_valid = [](const std::filesystem::path&) { return true; };
+  ops.git_availability = [](const std::filesystem::path&) {
+    return microide::project::GitAvailability::Repository;
+  };
   ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
   std::size_t head_reads = 0;
   ops.read_head_branch = [&](const std::filesystem::path&) -> std::optional<std::string> {
@@ -333,7 +376,9 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   bare.current_project_state.root = "/tmp/statusbar-head-none";
   StatusBarService bare_service;
   microide::workspace::StatusBarModelService bare_model;
-  ops.is_git_repo_valid = [](const std::filesystem::path&) { return false; };
+  ops.git_availability = [](const std::filesystem::path&) {
+    return microide::project::GitAvailability::NotARepository;
+  };
   bare_model.Refresh(bare_service, ops, bare.current_project_state, nullptr);
   Expect(bare_service.Segment(StatusBarSegmentId::Project).text == "no-scm",
          "a project outside any repository still reports no-scm");
@@ -342,6 +387,8 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
 }  // namespace
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceStatusBar/RendersUnknownGitAvailabilityAsUnknown",
+          TestStatusBarRendersUnknownGitAvailabilityAsUnknown);
   AddTest(tests, "WorkspaceStatusBar/NamesBranchFromHeadBeforeFirstGitSnapshot",
           TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot);
   AddTest(tests, "WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit",
