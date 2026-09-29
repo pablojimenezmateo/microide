@@ -11,15 +11,18 @@
 
 namespace microide::project {
 
-std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root) {
+std::optional<std::vector<GitWorkingTreeEntry>> CollectGitWorkingTreeEntries(
+    const std::filesystem::path& root) {
   util::PerformanceTrace::Scope perf_scope("git::CollectGitWorkingTreeEntries");
   util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
   const GitRepository repo(root, platform::LocalProcessLauncher());
   if (!repo.IsValid()) {
-    return {};
+    return std::nullopt;  // not a repository is not the same as a clean one
   }
-  std::vector<GitWorkingTreeEntry> entries = repo.GetWorkingTreeEntries();
-  util::AddPerformanceCounter(util::PerfCounterId::GitStatusEntriesParsed, entries.size());
+  std::optional<std::vector<GitWorkingTreeEntry>> entries = repo.GetWorkingTreeEntries();
+  if (entries.has_value()) {
+    util::AddPerformanceCounter(util::PerfCounterId::GitStatusEntriesParsed, entries->size());
+  }
   return entries;
 }
 

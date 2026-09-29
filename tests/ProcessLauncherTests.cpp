@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "ScriptedProcessLauncher.h"
+
 #include "platform/ProcessLauncher.h"
 #include "project/GitRepository.h"
 
@@ -9,37 +11,10 @@
 namespace microide::tests {
 namespace {
 
-using microide::platform::ProcessLauncher;
-using microide::platform::SubprocessOptions;
-using microide::platform::SubprocessResult;
-
-// The point of the launcher seam, demonstrated: a git-backed code path can be driven
-// without a `git` binary at all. Before it, every git test needed whatever git the
-// test machine happened to have, with whatever config and version — the exact
-// dependence dev-docs/project/validation-traps.md keeps finding.
-class ScriptedLauncher final : public ProcessLauncher {
- public:
-  mutable std::vector<std::vector<std::string>> runs;
-  std::string stdout_text;
-  int exit_code = 0;
-
-  std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override {
-    return argv;
-  }
-  std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override {
-    return cwd;
-  }
-  SubprocessResult Run(std::vector<std::string> argv, SubprocessOptions) const override {
-    runs.push_back(argv);
-    return SubprocessResult{.exit_code = exit_code, .stdout_text = stdout_text};
-  }
-  bool is_local() const override { return true; }
-  std::string_view description() const override { return "scripted"; }
-};
 
 void TestScriptedLauncherDrivesGitWithoutAGitBinary() {
-  ScriptedLauncher launcher;
-  launcher.stdout_text = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
+  ScriptedProcessLauncher launcher;
+  launcher.standing_response.stdout_text = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
   const project::GitRepository repo("/nonexistent/project", launcher);
 
   const auto result = repo.Execute({"rev-parse", "--verify", "HEAD"});
@@ -71,13 +46,57 @@ void TestScriptedLauncherDrivesGitWithoutAGitBinary() {
 }
 
 void TestScriptedLauncherReportsFailureThrough() {
-  ScriptedLauncher launcher;
-  launcher.exit_code = 128;
-  launcher.stdout_text = "fatal: not a git repository";
+  ScriptedProcessLauncher launcher;
+  launcher.standing_response.exit_code = 128;
+  launcher.standing_response.stdout_text = "fatal: not a git repository";
   const project::GitRepository repo("/nonexistent/project", launcher);
 
   Expect(!repo.ExecuteSucceeds({"status"}),
          "a non-zero scripted exit code must surface as failure");
+}
+
+
+// The cases REAL git cannot be made to produce on demand, which is the whole
+// reason the seam is worth having. Each one used to be indistinguishable from a
+// clean working tree.
+void TestGitNotInstalledIsNotACleanWorkingTree() {
+  // `execvp` reports ENOENT as exit 127, so this is every git call on a machine
+  // with no git installed.
+  const ScriptedProcessLauncher launcher = ScriptedProcessLauncher::MissingProgram();
+  const project::GitRepository repo("/nonexistent/project", launcher);
+
+  const auto entries = repo.GetWorkingTreeEntries();
+  Expect(!entries.has_value(),
+         "git failing to run is NO ANSWER, not an answer of 'nothing changed' — the "
+         "conflict review reported 'no conflicts' for exactly this");
+}
+
+void TestCleanWorkingTreeIsAnAnswer() {
+  // git ran and said nothing, which is what a clean tree looks like. The empty
+  // case has to stay distinguishable from the failure above, or the fix traded
+  // one wrong answer for another.
+  ScriptedProcessLauncher launcher;
+  launcher.standing_response.exit_code = 0;
+  launcher.standing_response.stdout_text = "";
+  const project::GitRepository repo("/nonexistent/project", launcher);
+
+  const auto entries = repo.GetWorkingTreeEntries();
+  Expect(entries.has_value(), "a successful status is an answer");
+  Expect(entries->empty(), "and the answer is that the tree is clean");
+}
+
+void TestTruncatedStatusIsNotACompleteChangeList() {
+  // Output that hit the capture ceiling carries REAL entries — just not all of
+  // them. Reporting a prefix as the whole list is the dangerous direction: the
+  // user resolves what they are shown and believes they are finished.
+  ScriptedProcessLauncher launcher;
+  launcher.standing_response.exit_code = 0;
+  launcher.standing_response.stdout_text = std::string("UU conflicted.txt") + '\0';
+  launcher.standing_response.truncated = true;
+  const project::GitRepository repo("/nonexistent/project", launcher);
+
+  Expect(!repo.GetWorkingTreeEntries().has_value(),
+         "a truncated status cannot be presented as the complete set of changes");
 }
 
 }  // namespace
@@ -87,6 +106,11 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestScriptedLauncherDrivesGitWithoutAGitBinary);
   AddTest(tests, "ProcessLauncher/ScriptedLauncherReportsFailureThrough",
           TestScriptedLauncherReportsFailureThrough);
+  AddTest(tests, "ProcessLauncher/GitNotInstalledIsNotACleanWorkingTree",
+          TestGitNotInstalledIsNotACleanWorkingTree);
+  AddTest(tests, "ProcessLauncher/CleanWorkingTreeIsAnAnswer", TestCleanWorkingTreeIsAnAnswer);
+  AddTest(tests, "ProcessLauncher/TruncatedStatusIsNotACompleteChangeList",
+          TestTruncatedStatusIsNotACompleteChangeList);
 }
 
 }  // namespace microide::tests

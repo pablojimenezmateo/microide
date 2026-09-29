@@ -95,10 +95,13 @@ bool GitRepository::ExecuteSucceeds(const std::vector<std::string>& arguments,
   return Execute(arguments, silence_stderr).success();
 }
 
-std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
+std::optional<std::vector<GitWorkingTreeEntry>> GitRepository::GetWorkingTreeEntries() const {
   const auto result = Execute({"status", "--porcelain=v1", "-z", "--untracked-files=all"});
-  if (!result.success() || result.output.empty()) {
-    return {};
+  if (!result.success() || result.truncated) {
+    return std::nullopt;  // no answer, as opposed to an answer of "nothing"
+  }
+  if (result.output.empty()) {
+    return std::vector<GitWorkingTreeEntry>{};  // git answered: the tree is clean
   }
   return GitPorcelainParser::ParseWorkingTreeEntries(result.output);
 }

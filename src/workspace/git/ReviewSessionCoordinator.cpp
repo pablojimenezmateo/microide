@@ -143,8 +143,21 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
 ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
   const std::filesystem::path root = state_.root;
 
+  const std::optional<std::vector<project::GitWorkingTreeEntry>> entries =
+      project::CollectGitWorkingTreeEntries(root);
+  if (!entries.has_value()) {
+    // git could not be asked — it is not installed, it failed, or its output was
+    // truncated. Saying "no conflicts to review" here would be a claim about the
+    // user's repository that nothing established, and the one they would act on
+    // by considering the merge finished.
+    return ReviewOpenOutcome{
+        .ok = false,
+        .message = "Could not read the working tree from git",
+    };
+  }
+
   std::vector<std::filesystem::path> targets;
-  for (const project::GitWorkingTreeEntry& entry : project::CollectGitWorkingTreeEntries(root)) {
+  for (const project::GitWorkingTreeEntry& entry : *entries) {
     if (!entry.conflicted) {
       continue;
     }

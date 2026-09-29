@@ -60,7 +60,19 @@ class GitRepository {
   bool ExecuteSucceeds(const std::vector<std::string>& arguments,
                        bool silence_stderr = true) const;
 
-  std::vector<GitWorkingTreeEntry> GetWorkingTreeEntries() const;
+  // The working tree's changed paths, or `nullopt` when git could not be asked.
+  //
+  // An EMPTY vector and a failure are different answers and used to be the same
+  // one: a clean tree and "git is not installed" both returned `{}`, so a caller
+  // reported "no changes" for a question it had never got an answer to. The
+  // conflict review is the worked example — it told the user there were no
+  // conflicts to resolve whenever git failed to run.
+  //
+  // A TRUNCATED result is also `nullopt`, deliberately. It carries real entries,
+  // but only a prefix of them, and a partial list of conflicts presented as the
+  // whole list is more dangerous than no list: the user resolves what they are
+  // shown and believes they are finished.
+  std::optional<std::vector<GitWorkingTreeEntry>> GetWorkingTreeEntries() const;
   GitFileHistoryResult GetFileHistory(const std::filesystem::path& relative_path) const;
   bool FileExistsAtRevision(const std::filesystem::path& relative_path,
                             std::string_view revision = "HEAD") const;

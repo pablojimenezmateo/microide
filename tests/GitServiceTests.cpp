@@ -30,6 +30,20 @@ using microide::project::CollectGitBranchOutgoingFiles;
 using microide::project::CollectGitFileHistory;
 using microide::project::CollectGitRecentCommits;
 using microide::project::CollectGitWorkingTreeEntries;
+
+namespace {
+// `CollectGitWorkingTreeEntries` answers `nullopt` when git could not be asked,
+// which is exactly the case these fixtures must never silently hit: an empty tree
+// and an unanswered question used to be the same value, and a test asserting
+// "no entries" would have passed for either.
+std::vector<microide::project::GitWorkingTreeEntry> RequireWorkingTreeEntries(
+    const std::filesystem::path& root) {
+  std::optional<std::vector<microide::project::GitWorkingTreeEntry>> entries =
+      CollectGitWorkingTreeEntries(root);
+  Expect(entries.has_value(), "git must have answered the working-tree query");
+  return std::move(*entries);
+}
+}  // namespace
 using microide::project::GitDiscardAll;
 using microide::project::GitDiscardPath;
 using microide::project::GitFileStatus;
@@ -107,7 +121,7 @@ void TestGitWorkingTreeStatusAndActions() {
   std::filesystem::remove(deleted_file);
   WriteFile(untracked_file, "untracked content\n");
 
-  auto entries = CollectGitWorkingTreeEntries(repo_path);
+  auto entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.size() == 3, "working tree fixture should report three changed files");
 
   bool saw_deleted = false;
@@ -135,7 +149,7 @@ void TestGitWorkingTreeStatusAndActions() {
          "working tree fixture should include modified, deleted, and untracked files");
 
   Expect(GitStagePath(repo_path, modified_file), "git stage should succeed for modified file");
-  entries = CollectGitWorkingTreeEntries(repo_path);
+  entries = RequireWorkingTreeEntries(repo_path);
   const auto staged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
     return entry.relative_path == std::filesystem::path("README.md");
   });
@@ -144,7 +158,7 @@ void TestGitWorkingTreeStatusAndActions() {
   Expect(staged_it->staged, "modified file should report staged after git add");
 
   Expect(GitUnstagePath(repo_path, modified_file), "git unstage should succeed for modified file");
-  entries = CollectGitWorkingTreeEntries(repo_path);
+  entries = RequireWorkingTreeEntries(repo_path);
   const auto unstaged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
     return entry.relative_path == std::filesystem::path("README.md");
   });
@@ -391,14 +405,14 @@ void TestGitBulkStageAndDiscard() {
   WriteFile(untracked_file, "temporary notes\n");
 
   Expect(GitStageAll(repo_path), "git stage all should succeed");
-  auto entries = CollectGitWorkingTreeEntries(repo_path);
+  auto entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.size() == 4, "bulk stage fixture should still report four changes");
   for (const auto& entry : entries) {
     Expect(entry.staged, "git stage all should stage every working-tree entry");
   }
 
   Expect(GitDiscardAll(repo_path), "git discard all should succeed");
-  entries = CollectGitWorkingTreeEntries(repo_path);
+  entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.empty(), "git discard all should leave a clean working tree");
   Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
          "git discard all should restore tracked modifications");
@@ -427,7 +441,7 @@ void TestGitStageHonorsLiteralPathspecs() {
   Expect(GitStagePath(repo_path, repo_path / magic_rel),
          "staging a pathspec-magic-named file should succeed");
 
-  const auto entries = CollectGitWorkingTreeEntries(repo_path);
+  const auto entries = RequireWorkingTreeEntries(repo_path);
   bool found_staged = false;
   for (const auto& entry : entries) {
     if (entry.relative_path == magic_rel && entry.staged) {
@@ -461,7 +475,7 @@ void TestGitDiscardStagedRenameRestoresSource() {
          "the restored source must retain its original content");
   Expect(!std::filesystem::exists(repo_path / "new.txt"),
          "discarding a staged rename must remove the destination");
-  Expect(CollectGitWorkingTreeEntries(repo_path).empty(),
+  Expect(RequireWorkingTreeEntries(repo_path).empty(),
          "discarding a staged rename must leave a clean working tree");
 }
 
@@ -478,7 +492,7 @@ void TestGitUnstageStagedRenameResetsBothSides() {
 
   // Unstaging must reset both sides to HEAD: nothing left staged (the source's
   // staged deletion is no longer orphaned), and the renamed file stays in the tree.
-  for (const auto& entry : CollectGitWorkingTreeEntries(repo_path)) {
+  for (const auto& entry : RequireWorkingTreeEntries(repo_path)) {
     Expect(!entry.staged, "unstaging a rename must leave nothing staged");
   }
   Expect(std::filesystem::exists(repo_path / "new.txt"),
@@ -579,7 +593,9 @@ void TestGitRepositoryDirectApi() {
   WriteFile(repo_path / "README.md", ReadFile(base_dir / "README.md") + "\nwrapper change\n");
   WriteFile(repo_path / "notes.txt", "wrapper note\n");
   std::unordered_map<std::string, GitFileStatus> statuses;
-  for (const auto& entry : repo.GetWorkingTreeEntries()) {
+  const auto repo_entries = repo.GetWorkingTreeEntries();
+  Expect(repo_entries.has_value(), "git must have answered the working-tree query");
+  for (const auto& entry : *repo_entries) {
     statuses[entry.relative_path.generic_string()] = entry.status;
   }
   Expect(statuses.at("README.md") == GitFileStatus::Modified,

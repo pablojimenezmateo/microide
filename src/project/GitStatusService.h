@@ -23,7 +23,11 @@ struct GitWorkingTreeEntry {
 // refreshes in the background. This is the one remaining synchronous caller
 // (ReviewSessionCoordinator::OpenConflictReview, which needs the conflict set at
 // the moment the action is invoked).
-std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root);
+// `nullopt` when git could not be asked — see GitRepository::GetWorkingTreeEntries.
+// A caller that treats it as an empty tree reports "no changes" for a question it
+// never got an answer to.
+std::optional<std::vector<GitWorkingTreeEntry>> CollectGitWorkingTreeEntries(
+    const std::filesystem::path& root);
 bool GitStageAll(const std::filesystem::path& root);
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
 bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path,
