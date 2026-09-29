@@ -282,6 +282,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/GitPorcelainParser.cpp
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
+  src/project/GitStatusRefresh.cpp
   src/project/GitRepositoryMetadataTracker.cpp
   src/project/GitRepositoryState.cpp
   src/project/GitStatusService.cpp
@@ -1693,6 +1694,7 @@ add_executable(microide_diff_bench
   src/project/GitPorcelainParser.cpp
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp
+  src/project/GitStatusRefresh.cpp
   src/project/GitRepositoryState.cpp
   src/project/CommitWorkflowChecks.cpp
   src/project/GitBranchOperations.cpp

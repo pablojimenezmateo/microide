@@ -4,6 +4,7 @@
 
 #include "platform/ProcessLauncher.h"
 #include "project/GitRepository.h"
+#include "project/GitStatusRefresh.h"
 
 #include <string>
 #include <vector>
@@ -99,6 +100,69 @@ void TestTruncatedStatusIsNotACompleteChangeList() {
          "a truncated status cannot be presented as the complete set of changes");
 }
 
+
+// The sidebar's status refresh, driven through a scripted git. Before
+// `BuildGitRepositoryStateFromStatus` was split out of `GitRepositoryService`,
+// none of these branches was reachable from a test: the service's own seam
+// substitutes the whole step and returns a finished state, so it could exercise
+// what the sidebar does WITH a state and never how git's output becomes one.
+const ScriptedProcessLauncher& clean_launcher_probe() {
+  static const ScriptedProcessLauncher launcher;
+  return launcher;
+}
+
+void TestStatusRefreshDistinguishesItsFailures() {
+  // `IsValid()` is a stat for the `.git` marker, so the fixture needs a marker and
+  // nothing else — no `git init`, and therefore no git binary.
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+  const auto build = [&root](const ScriptedProcessLauncher& launcher) {
+    const project::GitRepository repo(root, launcher);
+    return project::BuildGitRepositoryStateFromStatus(repo, root, /*generation=*/7,
+                                                      /*refreshed_at_ms=*/1234);
+  };
+
+  // And the marker's absence is its own answer, distinct from every failure below.
+  {
+    const project::GitRepository not_a_repo(temp_dir.path() / "plain", clean_launcher_probe());
+    const project::GitRepositoryState state = project::BuildGitRepositoryStateFromStatus(
+        not_a_repo, temp_dir.path() / "plain", 7, 1234);
+    Expect(state.refresh_error.category == project::GitRefreshErrorCategory::NotARepo,
+           "a directory with no .git marker is reported as not a repository");
+    Expect(!state.repo_available, "and as having no repository available");
+  }
+
+  // git ran and reported nothing: a clean repository, and NOT an error.
+  ScriptedProcessLauncher clean;
+  clean.standing_response.exit_code = 0;
+  const project::GitRepositoryState clean_state = build(clean);
+  Expect(clean_state.refresh_error.category == project::GitRefreshErrorCategory::None,
+         "a clean status is not an error");
+  Expect(!clean_state.stale, "and is not stale");
+  Expect(clean_state.generation == 7 && clean_state.refreshed_at_ms == 1234,
+         "the caller's generation and clock reading are stamped through");
+
+  // git could not run at all. The change list must not read as empty-and-current.
+  const project::GitRepositoryState missing = build(ScriptedProcessLauncher::MissingProgram());
+  Expect(missing.refresh_error.category != project::GitRefreshErrorCategory::None,
+         "git failing to run is reported as a refresh error");
+  Expect(missing.stale, "and leaves the state marked stale");
+
+  // git exited 0 but its output was cut at the capture ceiling. This is the
+  // dangerous one: the entries that came back are REAL, so a parse succeeds and
+  // the result looks like an ordinary, complete change list.
+  ScriptedProcessLauncher truncated;
+  truncated.standing_response.exit_code = 0;
+  truncated.standing_response.stdout_text = std::string("1 .M N... 100644 100644 100644 ") +
+                                            "0000000 0000000 changed.txt" + '\0';
+  truncated.standing_response.truncated = true;
+  const project::GitRepositoryState partial = build(truncated);
+  Expect(partial.stale, "a truncated status is stale, not a complete change list");
+  Expect(partial.refresh_error.category != project::GitRefreshErrorCategory::None,
+         "and says why, rather than showing a prefix as the whole truth");
+}
+
 }  // namespace
 
 void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
@@ -111,6 +175,8 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProcessLauncher/CleanWorkingTreeIsAnAnswer", TestCleanWorkingTreeIsAnAnswer);
   AddTest(tests, "ProcessLauncher/TruncatedStatusIsNotACompleteChangeList",
           TestTruncatedStatusIsNotACompleteChangeList);
+  AddTest(tests, "ProcessLauncher/StatusRefreshDistinguishesItsFailures",
+          TestStatusRefreshDistinguishesItsFailures);
 }
 
 }  // namespace microide::tests
