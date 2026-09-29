@@ -642,6 +642,30 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
+### TD-2026-09-29-317 — the asynchronous open has no perf gate, and it changed what three existing ones measure. [OPEN]
+
+The design names the gate (§ 9): *"open a 100 MB local file (G4) — shell-thread
+frame never > 16 ms; the tab is `Loading` until the read lands; closing the tab
+mid-read applies nothing."* None of those three claims is gated. The behaviour
+has functional coverage (`tests/AsyncFileOpenTests.cpp`), but the whole point of
+the change is a latency one, and latency is the half with nothing holding it.
+
+Writing it needs a fixture larger than any in the tree (the biggest is 8.19 MB)
+and a scenario shape the suite does not have: the interesting measurement is the
+frame time *while a read is outstanding*, so the scenario has to pump frames
+between posting the read and draining it, rather than measuring a call that
+returns when the work is done.
+
+**It also changed what existing scenarios measure, which is the part to check
+before rebaselining anything.** `editor_essentials_50k_cpp` is 8.19 MB, over the
+4 MiB threshold, so every scenario opening it now exercises the ASYNCHRONOUS
+path against a baseline recorded on the synchronous one. The smoke lane passes,
+so no gate tripped — but "passes" and "measures the same thing" are different
+statements, and the second one is currently untested. `editor_fold_recompute` is
+the worked example of why this matters: it did not merely measure something
+different, it stopped working entirely, because the harness renders without an
+event loop and nothing drained the completion (fixed in 39f309f2).
+
 ### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN]
 
 **The editor half is done (2026-09-29).** The whole load now runs on the reader's
