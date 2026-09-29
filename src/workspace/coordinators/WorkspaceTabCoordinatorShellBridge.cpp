@@ -29,6 +29,18 @@ std::string SerializeViewportText(const editor::TextViewport& viewport) {
   return util::SerializeLinesStreaming(editor::LineSpan(viewport.lines()), viewport.line_ending());
 }
 
+// Above this a read takes long enough that an editor sitting empty with no
+// explanation reads as a bug rather than as work in progress. Well above the
+// threshold that sends the read off-thread at all (4 MiB, where the wait is a
+// frame or two and a toast would only flash).
+constexpr std::uintmax_t kAnnounceReadAboveBytes = 48ull * 1024 * 1024;
+
+bool FileIsBigEnoughToAnnounceTheRead(const std::filesystem::path& path) {
+  std::error_code error;
+  const std::uintmax_t size = std::filesystem::file_size(path, error);
+  return !error && size >= kAnnounceReadAboveBytes;
+}
+
 }  // namespace
 
 TabCoordinator WorkspaceShell::MakeTabCoordinator() {
@@ -120,6 +132,19 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                 // worker before it posts and read by the completion after the
                 // post, which is what orders the two.
                 auto classified = std::make_shared<editor::TextViewport::ClassifiedContent>();
+                // A file this big takes long enough that an empty editor with no
+                // explanation reads as a bug. Sticky, because it reports a state
+                // that ends when the read does — and posted only above a size
+                // where the wait is actually perceptible, so an ordinary open
+                // does not flash a toast for two frames.
+                if (FileIsBigEnoughToAnnounceTheRead(path)) {
+                  Notify(NotificationService::Request{
+                      .tone = NotificationService::Tone::Info,
+                      .key = std::string(kFileOpenInProgressNotificationKey),
+                      .message = "Opening " + path.filename().string() + "…",
+                      .sticky = true,
+                  });
+                }
                 return file_read_service_.Begin({
                     .path = path,
                     .on_worker =
@@ -128,6 +153,13 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                         },
                     .on_complete =
                         [this, classified](project::FileReadService::Completion completion) {
+                          // Dismissed here rather than in ApplyAsyncFileRead: a
+                          // completion whose tab is gone never reaches that, and a
+                          // sticky row nothing dismisses stays on screen forever.
+                          if (notification_service_.DismissKey(
+                                  kFileOpenInProgressNotificationKey)) {
+                            RequestFullRedraw();
+                          }
                           ApplyAsyncFileRead(std::move(completion), std::move(*classified));
                         },
                 });

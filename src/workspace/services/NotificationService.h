@@ -18,6 +18,13 @@ namespace microide::workspace {
 inline constexpr std::string_view kProjectIndexTruncatedNotificationKey =
     "project.index.truncated";
 
+// The sticky row reporting that a file is still being read. One key for all of
+// them: a second slow open replaces the row rather than stacking, and the row is
+// dismissed by the same key wherever a read ends. Named here for the same reason
+// as the one above — the posting and dismissing sites are different translation
+// units.
+inline constexpr std::string_view kFileOpenInProgressNotificationKey = "editor.open.reading";
+
 // Host-owned notifications ("toasts"). Callers post a short message; the service
 // holds no timer of its own (callers pass the current time in SDL_GetTicks ms), so
 // it stays deterministic and unit-testable, and the shell schedules a single wake
