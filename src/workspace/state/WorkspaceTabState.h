@@ -16,6 +16,7 @@
 #include "compare/CompareSemanticMetadata.h"
 #include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
+#include "editor/AsyncBufferWork.h"
 #include "editor/FoldingModel.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SnippetEngine.h"
@@ -369,14 +370,11 @@ struct EditorTabState {
   bool needs_restore = false;
 
   // Format-on-save runs off the shell thread, so a save can be in flight for this
-  // tab with nothing written yet. Non-zero while that is true; it is the
-  // SaveFormatterService run id, and the completion finds its tab by matching it.
-  std::uint64_t pending_format_save_id = 0;
-  // The buffer's content revision when that run was posted. A completion whose
-  // revision no longer matches drops the formatter's output and writes the buffer as
-  // it is now — reformatting a buffer the user has since typed into would undo
-  // their edit.
-  std::uint64_t pending_format_save_revision = 0;
+  // tab with nothing written yet. Armed while that is true, with the
+  // SaveFormatterService run id, so the completion finds its tab by matching it
+  // and drops the formatter's output if the buffer moved on under it —
+  // reformatting a buffer the user has since typed into would undo their edit.
+  editor::AsyncBufferWork pending_format_save;
   // One-shot, set by that completion: the save it re-enters must not start another
   // formatter run. Without it a deferred save would post a fresh run every time it
   // finished one.

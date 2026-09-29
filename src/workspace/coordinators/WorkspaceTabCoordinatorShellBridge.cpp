@@ -207,19 +207,18 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
       TabEntry& tab = group.open_tabs[tab_index];
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->pending_format_save_id != completion.id) {
+          !tab.editor_state->pending_format_save.Holds(completion.id)) {
         continue;
       }
       auto& editor_state = *tab.editor_state;
-      const std::uint64_t posted_revision = editor_state.pending_format_save_revision;
-      editor_state.pending_format_save_id = 0;
-      editor_state.pending_format_save_revision = 0;
+      const editor::AsyncBufferWork::Claim claim = editor_state.pending_format_save.Resolve(
+          completion.id, editor_state.viewport.content_revision());
       if (!completion.ok) {
         if (!completion.formatter_id.empty()) {
           ReportSaveFormatterFailure(completion, nullptr);
         }
       } else if (!completion.formatted_text.empty()) {
-        if (editor_state.viewport.content_revision() == posted_revision) {
+        if (claim == editor::AsyncBufferWork::Claim::Current) {
           editor_state.viewport.ReloadPreservingViewState(completion.formatted_text);
           editor_state.viewport.SetDirty(true);
         } else {

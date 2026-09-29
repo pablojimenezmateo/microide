@@ -192,12 +192,12 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
       // while the formatter runs. Record the run so its completion can find this
       // tab, and the revision so it can tell whether its answer is still about
       // this buffer.
-      editor_state->pending_format_save_id = prepared.deferred_run_id;
-      editor_state->pending_format_save_revision = candidate->content_revision();
+      editor_state->pending_format_save.Arm(prepared.deferred_run_id,
+                                            candidate->content_revision());
       return true;
     }
   }
-  editor_state->pending_format_save_id = 0;
+  editor_state->pending_format_save.Disarm();
   if (!candidate->Save()) {
     if (operations_.notify_save_failed) {
       operations_.notify_save_failed(candidate->path());
@@ -898,7 +898,7 @@ bool TabCoordinator::SaveThenClose(std::size_t index) {
   }
   EditorGroup& group = state_.editor_groups[group_index];
   if (index < group.open_tabs.size() && group.open_tabs[index].editor_state.has_value() &&
-      group.open_tabs[index].editor_state->pending_format_save_id != 0) {
+      group.open_tabs[index].editor_state->pending_format_save.armed()) {
     group.open_tabs[index].editor_state->close_after_save = true;
     return true;  // ApplyDeferredSaveFormat closes it once the write lands
   }
