@@ -1,5 +1,7 @@
 #include "util/TextFileIO.h"
 
+#include <functional>
+
 #include "util/StringUtil.h"
 
 #include <cstddef>
@@ -263,6 +265,20 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
     }
   }
   return true;
+}
+
+std::size_t ContentHash(std::string_view bytes) {
+  return std::hash<std::string_view>{}(bytes);
+}
+
+FileSignature SignatureForKnownContent(const std::filesystem::path& path,
+                                       std::string_view bytes) {
+  FileSignature signature = StatFileSignature(path);
+  if (signature.exists && !signature.error) {
+    signature.has_content_hash = true;
+    signature.content_hash = ContentHash(bytes);
+  }
+  return signature;
 }
 
 FileSignature StatFileSignature(const std::filesystem::path& path) {

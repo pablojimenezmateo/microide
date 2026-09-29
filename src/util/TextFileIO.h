@@ -89,24 +89,50 @@ TextFileReadResult ReadTextFileClassified(const std::filesystem::path& path);
 // `exists == false, error == false` means the file is absent; `error == true`
 // means the stat itself failed (treat conservatively as "unknown / changed").
 //
-// mtime+size is deliberately chosen over a content hash for speed/low-CPU: any
-// normal external writer bumps the mtime. The only blind spot is a rewrite that
-// preserves byte length AND lands within the same filesystem mtime tick, which is
-// acceptable given the project's speed-first priority.
+// mtime+size is deliberately the FIRST test, for speed/low-CPU: any normal external
+// writer bumps the mtime, and one stat answers for the overwhelming majority of
+// checks. It is not the last word, though — see `content_hash` below and
+// TextViewport::DetectDiskConflict.
 struct FileSignature {
   bool exists = false;
   bool error = false;
   std::uint64_t mtime_ticks = 0;
   std::uintmax_t size = 0;
 
+  // Hash of the bytes this signature was recorded FROM, set only when those bytes
+  // were already in hand — a read, or a write. A bare stat cannot produce one and
+  // leaves it unset.
+  //
+  // Process-local and ephemeral BY DESIGN. It is never persisted and never compared
+  // across machines, so std::hash is exactly the right tool: fast, free of a new
+  // dependency, and its lack of a stable value across builds cannot matter to
+  // something that only ever compares two values recorded by the same process. The
+  // remote manifest needs the opposite properties and gets a different hash (blake3,
+  // per dev-docs/design/remote-projects.md § 6.2).
+  bool has_content_hash = false;
+  std::size_t content_hash = 0;
+
   // Two existing files with identical mtime+size are treated as the same content.
+  // This is the cheap test; a caller that can afford to read the file confirms a
+  // MISMATCH against the content hash rather than trusting it (a touch and a
+  // byte-identical rewrite both fail this one).
   bool SameContentAs(const FileSignature& other) const {
     return exists && other.exists && !error && !other.error &&
            mtime_ticks == other.mtime_ticks && size == other.size;
   }
 };
 
+// Hash of `bytes` for FileSignature::content_hash. See the field's comment for why
+// std::hash is the right choice here and blake3 is the right one for the manifest.
+std::size_t ContentHash(std::string_view bytes);
+
 FileSignature StatFileSignature(const std::filesystem::path& path);
+
+// Stat `path` and record `bytes` as the content it holds. For the two moments the
+// bytes are already in hand and the hash is therefore nearly free: just after
+// reading a file, and just after writing one.
+FileSignature SignatureForKnownContent(const std::filesystem::path& path,
+                                       std::string_view bytes);
 
 // Modification time alone, as raw filesystem ticks. nullopt for an absent path or
 // a failed stat. One stat call — callers polling for "did this file change on

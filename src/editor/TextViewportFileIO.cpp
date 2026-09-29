@@ -156,6 +156,10 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   if (!content.has_value()) {
     return false;
   }
+  // The raw bytes, before the BOM strip and the LF canonicalization below: a
+  // re-read produces these, so this is what a later conflict check compares
+  // against. Captured here because it is the one moment they exist.
+  const std::size_t raw_content_hash = util::ContentHash(*content);
 
   // Convert directly to the editor's canonical LF buffer. The old CRLF/CR path
   // decoded into vector<string> and PieceTree immediately joined it back into a
@@ -175,6 +179,7 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
     // single '\n' -- the only transform is the reversible split, so the bytes survive.
     ResetState(SplitOnLineFeedOnly(*content), path, LineEnding::LF,
                /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
+    RecordOpenedContentHash(raw_content_hash);
     return true;
   }
   std::string canonical;
@@ -188,7 +193,19 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
                        metadata.mixed_line_endings, encoding, false, false);
   }
   document_->utf8_bom = utf8_bom;
+  RecordOpenedContentHash(raw_content_hash);
   return true;
+}
+
+// ResetState records the signature from a bare stat, which cannot know the bytes.
+// OpenFile does know them, so it attaches their hash to the signature ResetState
+// just recorded.
+void TextViewport::RecordOpenedContentHash(std::size_t raw_content_hash) {
+  if (!document_->disk_signature.exists || document_->disk_signature.error) {
+    return;
+  }
+  document_->disk_signature.has_content_hash = true;
+  document_->disk_signature.content_hash = raw_content_hash;
 }
 
 bool TextViewport::Save() {
@@ -296,8 +313,34 @@ TextViewport::DiskConflict TextViewport::DetectDiskConflict() const {
   if (!current.exists) {
     return DiskConflict::Vanished;
   }
-  return current.SameContentAs(document_->disk_signature) ? DiskConflict::None
-                                                          : DiskConflict::Changed;
+  if (current.SameContentAs(document_->disk_signature)) {
+    return DiskConflict::None;
+  }
+  // The stat differs. That is not the same as "the content changed": a `touch`, a
+  // `git checkout` that restored byte-identical content, and an external formatter
+  // that produced no change all move the mtime and leave the file exactly as it
+  // was. Refusing the save and raising an external-change banner for one of those
+  // is a false alarm the user cannot act on — and rewriting a file with the same
+  // bytes is precisely what an agent editing alongside you does.
+  //
+  // Confirm before refusing, and only when confirming is cheap: the recorded
+  // signature must carry the content hash (it does for any file this viewport read
+  // or wrote), the SIZE must match (a different size is a real change, no read
+  // needed), and the file must be small enough that reading it is not itself the
+  // stall this check exists inside.
+  constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
+  if (document_->disk_signature.has_content_hash &&
+      current.size == document_->disk_signature.size && current.size <= kMaxConfirmBytes) {
+    if (const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
+        bytes.has_value() &&
+        util::ContentHash(*bytes) == document_->disk_signature.content_hash) {
+      // Re-baseline to the new stat so the next check takes the one-stat fast path
+      // instead of re-reading a file that has already been confirmed unchanged.
+      document_->disk_signature.mtime_ticks = current.mtime_ticks;
+      return DiskConflict::None;
+    }
+  }
+  return DiskConflict::Changed;
 }
 
 void TextViewport::LoadContent(std::string_view content,

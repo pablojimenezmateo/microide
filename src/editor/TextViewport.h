@@ -1198,6 +1198,10 @@ class TextViewport {
   // Lines that have changed since the folding model last resynced. Consumed (and
   // reset) by `ConsumeFoldEditSpan`.
   LineEditSpan fold_edit_span_;
+  // OpenFile knows the raw bytes it read; ResetState, which records the signature,
+  // does not. This attaches their hash to the signature ResetState just wrote.
+  void RecordOpenedContentHash(std::size_t raw_content_hash);
+
   std::shared_ptr<DocumentState> document_;
   // Not owned, and deliberately per-VIEWPORT rather than per-document: two
   // viewports can share one buffer (the same file in two panes), and both belong to

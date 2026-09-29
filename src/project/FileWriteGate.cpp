@@ -11,8 +11,10 @@ class LocalGate final : public FileWriteGate {
     result.ok = util::WriteTextFileAtomically(path, text);
     if (result.ok) {
       // Stat only on success: a failed write left the original in place, and its
-      // signature is whatever the caller already had.
-      result.signature = util::StatFileSignature(path);
+      // signature is whatever the caller already had. The bytes are right here, so
+      // the signature carries their hash too — which is what lets a later check
+      // tell a real external edit from a touch or a byte-identical rewrite.
+      result.signature = util::SignatureForKnownContent(path, text);
     }
     return result;
   }
