@@ -104,7 +104,7 @@ class ControlChannelService {
   // Start/stop the listener for `project_root`. Start binds the socket and
   // writes the per-instance descriptor; Stop removes the descriptor. Idempotent.
   // On a fresh bind a `{"event":"ready",...}` line is mirrored to stdout.
-  bool Start(const std::filesystem::path& project_root);
+  [[nodiscard]] bool Start(const std::filesystem::path& project_root);
   void Stop();
   bool IsRunning() const;
 

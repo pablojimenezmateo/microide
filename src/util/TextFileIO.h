@@ -26,7 +26,7 @@ inline constexpr std::uintmax_t kMaxTextFileBytes = 512ull * 1024 * 1024;
 inline constexpr std::uintmax_t kMaxSearchFileBytes = 32ull * 1024 * 1024;
 
 std::optional<std::string> ReadTextFile(const std::filesystem::path& path);
-bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
+[[nodiscard]] bool WriteTextFileAtomically(const std::filesystem::path& path, std::string_view text);
 
 // Resolve a symlink chain to the real file an atomic temp+rename should target, so a
 // write preserves the link instead of replacing it with a fresh regular file. Follows

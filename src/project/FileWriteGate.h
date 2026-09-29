@@ -44,7 +44,7 @@ class FileWriteGate {
 
   // Replace `path`'s contents with `text`. Atomic: a failed write leaves the
   // original intact.
-  virtual Result WriteText(const std::filesystem::path& path,
+  [[nodiscard]] virtual Result WriteText(const std::filesystem::path& path,
                            std::string_view text,
                            Signature signature = Signature::Skip) = 0;
 };

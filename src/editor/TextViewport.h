@@ -116,7 +116,7 @@ class TextViewport {
   TextViewport& operator=(TextViewport&& other) noexcept;
 
   bool OpenFile(const std::filesystem::path& path);
-  bool Save();
+  [[nodiscard]] bool Save();
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
   // serialized. Defaults are off; callers should configure them from

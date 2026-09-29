@@ -61,7 +61,7 @@ class ControlSocketServer {
 
   // Bind + listen on `socket_path` (created 0600). Removes a stale socket file
   // first. Returns false on failure (already running counts as failure).
-  bool Start(const std::filesystem::path& socket_path);
+  [[nodiscard]] bool Start(const std::filesystem::path& socket_path);
   bool IsRunning() const;
   // Idempotent: stops the I/O thread, closes all fds, unlinks the socket file.
   void Stop();

@@ -381,7 +381,11 @@ void WorkspaceShell::ForceStartControlChannel() {
   // Bypass the `control.enabled` gate: turn on the stdout JSONL mirror and bind
   // the socket directly. Start() emits the `ready` handshake line.
   control_channel_service_.SetStdoutMirror(true);
-  control_channel_service_.Start(context_.current_project_state.root);
+  // Discarded, but not ignored: a refusal here means the user asked for headless
+  // control and has none, so the run is useless — and there is no recovery worth
+  // taking in this function. Start() logs the reason, and a driver notices the
+  // absent `ready` line (capture-media reports "control channel never came up").
+  (void)control_channel_service_.Start(context_.current_project_state.root);
 }
 
 void WorkspaceShell::MaybeStartControlChannel() {
@@ -394,7 +398,13 @@ void WorkspaceShell::MaybeStartControlChannel() {
     return;
   }
   if (SettingFlagEnabled(GetSettingValue("control.enabled"))) {
-    control_channel_service_.Start(context_.current_project_state.root);
+    // Discarded deliberately: there is nothing useful to do here with a refusal,
+    // and Start() now says WHY on its own (an over-long socket path, a bind or
+    // listen errno). It did not always — the bool was dropped here and nothing
+    // anywhere explained a channel that simply did not exist, which cost a real
+    // debugging session. The `(void)` is the record of that decision, so the
+    // next reader does not have to guess whether it was considered.
+    (void)control_channel_service_.Start(context_.current_project_state.root);
   } else {
     control_channel_service_.Stop();
   }
