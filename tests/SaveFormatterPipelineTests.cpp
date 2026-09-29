@@ -106,6 +106,53 @@ void TestDeferredSaveStillWritesWhenTheFormatterFails() {
          "a failed formatter must not leave the tab dirty");
 }
 
+// What the formatter actually said. The subprocess layer captured stderr all
+// along and the save pipeline dropped it, so a failing formatter produced
+// "Formatter 'x' failed; saved unformatted" and nothing else — no exit status,
+// no parse error, no line number. For a formatter that fails on ONE file and not
+// the others, that text is the only thing that answers why.
+void TestAFailingFormatterReportsWhatItSaid() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path file = OpenOneFileProject(shell, temp_dir, "hello world\n");
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      {"sh", "-c", "echo 'SyntaxError: unexpected token on line 3' >&2; exit 2"});
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, 0), "the deferred save started");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  // Still saved, unformatted — the existing contract, unchanged.
+  Expect(ReadFile(file) == "xhello world\n",
+         "a failed formatter still saves the buffer, got: " + ReadFile(file));
+
+  // The toast carries the first line, because a toast that says only "failed"
+  // sends the user looking for a panel they have no reason to know exists.
+  bool toast_names_the_error = false;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    if (row.message.find("SyntaxError: unexpected token on line 3") != std::string::npos) {
+      toast_names_the_error = true;
+    }
+  }
+  Expect(toast_names_the_error,
+         "the warning must say what the formatter said, not just that it failed");
+
+  // And the whole of it is in a channel the user can scroll.
+  const std::vector<std::string>* entries =
+      WorkspaceShellTestAccess::OutputChannelEntries(shell, "formatter");
+  Expect(entries != nullptr && !entries->empty(),
+         "a failing formatter opens an output channel with its output");
+  bool channel_has_the_error = false;
+  for (const std::string& line : *entries) {
+    if (line.find("SyntaxError: unexpected token on line 3") != std::string::npos) {
+      channel_has_the_error = true;
+    }
+  }
+  Expect(channel_has_the_error, "the channel holds the formatter's stderr");
+}
+
 // Closing a tab must not drop a save that is still formatting. The flush is what
 // makes that true, and without it the write never happens at all.
 void TestClosingATabFlushesItsDeferredSave() {
@@ -288,6 +335,8 @@ void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
           TestDeferredSaveDropsTheFormatterWhenTheBufferChanged);
   AddTest(tests, "SaveFormatterPipeline/DeferredSaveStillWritesWhenTheFormatterFails",
           TestDeferredSaveStillWritesWhenTheFormatterFails);
+  AddTest(tests, "SaveFormatterPipeline/AFailingFormatterReportsWhatItSaid",
+          TestAFailingFormatterReportsWhatItSaid);
   AddTest(tests, "SaveFormatterPipeline/ClosingATabFlushesItsDeferredSave",
           TestClosingATabFlushesItsDeferredSave);
   AddTest(tests, "SaveFormatterPipeline/BlockingSaveWritesFormattedBeforeItReturns",

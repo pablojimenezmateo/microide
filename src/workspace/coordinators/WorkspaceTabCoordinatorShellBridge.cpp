@@ -138,10 +138,58 @@ void WorkspaceShell::ReportSaveFormatterFailure(
   if (error_message != nullptr) {
     *error_message = "formatter '" + completion.formatter_id + "' " + what;
   }
+
+  // Everything the formatter said, in a channel the user can scroll. The warning
+  // below used to be the whole of it — no exit status, no parse error, no line
+  // number — which for a formatter that fails on ONE file and not the others is
+  // the only question worth answering. The subprocess layer captured stderr all
+  // along and this path dropped it.
+  static constexpr std::string_view kFormatterChannelId = "formatter";
+  static constexpr std::string_view kFormatterChannelLabel = "Formatter";
+  // Bounded: a formatter that fails per line could otherwise put its whole
+  // opinion of the file in the panel, and the channel store keeps every line.
+  constexpr std::size_t kMaxReportedLines = 50;
+  std::string first_line;
+  if (!completion.error_text.empty()) {
+    output_channels_.AppendLine(kFormatterChannelId, kFormatterChannelLabel,
+                                "[" + completion.formatter_id + "] " + what);
+    std::size_t start = 0;
+    std::size_t emitted = 0;
+    while (start < completion.error_text.size() && emitted < kMaxReportedLines) {
+      std::size_t end = completion.error_text.find('\n', start);
+      if (end == std::string::npos) {
+        end = completion.error_text.size();
+      }
+      std::string_view line(completion.error_text.data() + start, end - start);
+      while (!line.empty() && line.back() == '\r') {
+        line.remove_suffix(1);
+      }
+      if (!line.empty()) {
+        if (first_line.empty()) {
+          first_line.assign(line);
+        }
+        output_channels_.AppendLine(kFormatterChannelId, kFormatterChannelLabel,
+                                    std::string(line));
+        ++emitted;
+      }
+      start = end + 1;
+    }
+    if (emitted == kMaxReportedLines && start < completion.error_text.size()) {
+      output_channels_.AppendLine(kFormatterChannelId, kFormatterChannelLabel,
+                                  "… output truncated");
+    }
+  }
+
   // The file still saves (unformatted); warn so the silent formatter failure is
-  // visible rather than swallowed.
-  Notify(NotificationService::Tone::Warning,
-         "Formatter '" + completion.formatter_id + "' " + what + "; saved unformatted");
+  // visible rather than swallowed. The first line of stderr rides along, because
+  // a toast saying only "failed" sends the user looking for a panel they have no
+  // reason to know exists. NotificationService byte-caps the result.
+  std::string message =
+      "Formatter '" + completion.formatter_id + "' " + what + "; saved unformatted";
+  if (!first_line.empty()) {
+    message += " — " + first_line;
+  }
+  Notify(NotificationService::Tone::Warning, std::move(message));
 }
 
 void WorkspaceShell::ApplyDeferredSaveFormat(

@@ -41,7 +41,10 @@ std::uint64_t SaveFormatterService::Begin(std::string coalesce_key,
                        return;
                      }
                      util::PerformanceTrace::Scope perf_scope("SaveFormatterService::Run");
-                     const platform::SubprocessResult result = launcher.Run(
+                     // Non-const: the failure path MOVES stderr out of it. Left
+                     // const, the move would bind to a const lvalue and silently
+                     // copy the whole captured stream.
+                     platform::SubprocessResult result = launcher.Run(
                          request.command, platform::SubprocessOptions{
                                               .cwd = launcher.ResolveWorkingDirectory(request.cwd),
                                               .stdin_text = std::move(request.text),
@@ -52,6 +55,8 @@ std::uint64_t SaveFormatterService::Begin(std::string coalesce_key,
                      completion.timed_out = result.timed_out;
                      if (completion.ok) {
                        completion.formatted_text = result.stdout_text;
+                     } else {
+                       completion.error_text = std::move(result.stderr_text);
                      }
                      // Decrement BEFORE posting: FlushPendingRuns waits on the
                      // executor and then drains, so a completion must never be
@@ -78,7 +83,8 @@ SaveFormatterService::Completion SaveFormatterService::RunBlocking(
   util::PerformanceTrace::Scope perf_scope("SaveFormatterService::RunBlocking");
   // No coalesce key: this run is awaited, so superseding it would strand the waiter.
   executor_.Submit([&completion, &request, &launcher](const util::CancellationToken&) {
-    const platform::SubprocessResult result =
+    // Non-const for the same reason as the deferred path above: stderr is moved.
+    platform::SubprocessResult result =
         launcher.Run(request.command, platform::SubprocessOptions{
                                           .cwd = launcher.ResolveWorkingDirectory(request.cwd),
                                           .stdin_text = request.text,
@@ -89,6 +95,8 @@ SaveFormatterService::Completion SaveFormatterService::RunBlocking(
     completion.timed_out = result.timed_out;
     if (completion.ok) {
       completion.formatted_text = result.stdout_text;
+    } else {
+      completion.error_text = std::move(result.stderr_text);
     }
   });
   // Waits for THIS task, and for any deferred run already queued ahead of it. Both

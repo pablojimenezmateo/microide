@@ -45,6 +45,13 @@ class SaveFormatterService {
     // The formatter's stdout. Empty means it produced nothing and the input text
     // stands, which is the same rule the inline path used.
     std::string formatted_text;
+    // The formatter's stderr, kept only when the run FAILED. The subprocess layer
+    // already captured it and this service used to drop it, so "Formatter
+    // 'prettier' failed; saved unformatted" was the whole of what the user got —
+    // no exit code, no parse error, no line number, and nothing to look at. A
+    // formatter that fails on one file and not the others is exactly when that
+    // text is the answer. Already bounded by the subprocess capture ceiling.
+    std::string error_text;
   };
 
   SaveFormatterService() = default;
