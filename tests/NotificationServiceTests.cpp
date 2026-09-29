@@ -171,7 +171,30 @@ void TestNotificationToastWidthScalesWithWindow() {
            "a toast card must stay inside the window margin");
     Expect(toast.text.w > 0.0f && toast.text.x + toast.text.w <= toast.rect.x + toast.rect.w,
            "the toast text box must stay inside its card");
+
+    // The progress track lives INSIDE the card, along its bottom edge. That is the
+    // load-bearing part: the geometry a click resolves against must be the same
+    // rect whether or not the row reports progress, or a progress row's card
+    // would be painted somewhere the hit-test does not look.
+    Expect(toast.progress_track.x >= toast.rect.x &&
+               toast.progress_track.x + toast.progress_track.w <=
+                   toast.rect.x + toast.rect.w + 0.01f,
+           "the progress track must stay within the card horizontally");
+    Expect(toast.progress_track.y >= toast.rect.y &&
+               toast.progress_track.y + toast.progress_track.h <=
+                   toast.rect.y + toast.rect.h + 0.01f,
+           "the progress track must sit inside the card, not below it");
+    Expect(toast.progress_track.h > 0.0f, "the progress track must be drawable");
   }
+
+  // Two rows of the same measured width occupy the same card whether or not one
+  // of them carries progress: the layout takes no progress argument, which is how
+  // that stays true by construction rather than by two call sites agreeing.
+  const SDL_FRect status_bar{0.0f, 700.0f, 1280.0f, 20.0f};
+  const auto plain = NotificationToastLayoutAt(status_bar, 16.0f, 0, 300.0f);
+  const auto second = NotificationToastLayoutAt(status_bar, 16.0f, 1, 300.0f);
+  Expect(second.rect.y < plain.rect.y, "older toasts stack upward from the status bar");
+  Expect(second.rect.h == plain.rect.h, "a progress row does not get a taller card");
 }
 
 
