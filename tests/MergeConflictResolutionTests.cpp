@@ -503,6 +503,63 @@ void TestLineEndingHeavyRequiresBothSidesToBeEndingOnly() {
 // Regression: the resolver must refresh disk_result_tick to the saved file's mtime
 // so its own write is not flagged as an external modification, which previously
 // rejected every Mark Resolved and never staged the file.
+// Regression: the staleness check compared only the modification tick, and a moved
+// tick is not a changed file. A `touch`, a tool that rewrote the output with
+// identical bytes, or a `git checkout` restoring it all move it — and every one of
+// those BLOCKED Mark Resolved with "refresh the resolver before marking resolved",
+// which throws away a resolution over a file that never changed. The merge tab
+// already holds the exact text it last wrote, so the confirmation is an exact
+// comparison rather than a heuristic.
+void TestIdenticalRewriteDoesNotBlockMarkResolved() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
+  const std::string resolved = "clean resolved content\nno markers here\n";
+  WriteFile(result_path, resolved);
+
+  MergeTabState merge_tab;
+  merge_tab.result_viewport.LoadContent(resolved, {}, merge_tab.result_line_ending);
+  merge_tab.result_viewport.SetDirty(false);
+  merge_tab.output_path = result_path;
+  merge_tab.persisted_output_baseline = resolved;
+  // A tick that disagrees with the file, as a touch or an identical rewrite leaves it.
+  merge_tab.disk_result_tick = 1;
+
+  const MergeValidationResult result = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab,
+      .project_root = {},
+      .result_should_exist = true,
+  });
+  Expect(result.ok,
+         "a moved tick over byte-identical content must not block Mark Resolved");
+}
+
+// The other half: a real external edit must still block. Without it the fix above
+// could pass by never flagging anything.
+void TestRealExternalEditStillBlocksMarkResolved() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
+  const std::string resolved = "clean resolved content\nno markers here\n";
+  WriteFile(result_path, resolved);
+
+  MergeTabState merge_tab;
+  merge_tab.result_viewport.LoadContent(resolved, {}, merge_tab.result_line_ending);
+  merge_tab.result_viewport.SetDirty(false);
+  merge_tab.output_path = result_path;
+  merge_tab.persisted_output_baseline = resolved;
+  merge_tab.disk_result_tick = 1;
+
+  // Someone else really did change it.
+  WriteFile(result_path, "clean resolved content\nedited by something else\n");
+
+  const MergeValidationResult result = ValidateMergeResult(MergeValidationRequest{
+      .merge_tab = merge_tab,
+      .project_root = {},
+      .result_should_exist = true,
+  });
+  Expect(!result.ok && result.issue == MergeValidationIssue::ExternalModification,
+         "a real external edit still blocks Mark Resolved");
+}
+
 void TestMarkResolvedRefreshesDiskTick() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path result_path = temp_dir.path() / "resolved.txt";
@@ -691,6 +748,10 @@ void TestAcceptingASideReportsTheAcceptedLines() {
 }
 
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MergeConflict/IdenticalRewriteDoesNotBlockMarkResolved",
+          TestIdenticalRewriteDoesNotBlockMarkResolved);
+  AddTest(tests, "MergeConflict/RealExternalEditStillBlocksMarkResolved",
+          TestRealExternalEditStillBlocksMarkResolved);
   AddTest(tests, "MergeConflict/FileDirectoryConflictClassification",
           TestFileDirectoryConflictClassification);
   AddTest(tests, "MergeConflict/SubmoduleConflictClassification",
