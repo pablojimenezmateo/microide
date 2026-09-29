@@ -13,6 +13,17 @@ namespace {
 using microide::project::FileWriteGate;
 using microide::project::LocalFileWriteGate;
 
+// Move `path`'s modification time somewhere unmistakably different. These tests all
+// need the STAT to differ — that is the precondition for the content confirmation —
+// and two back-to-back writes can land inside the same filesystem mtime tick. The
+// watcher tests learned this the hard way under `ctest -j`; these had the same
+// dependence and had not been fixed with them.
+void ForceDistinctModificationTime(const std::filesystem::path& path) {
+  std::error_code error;
+  std::filesystem::last_write_time(
+      path, std::filesystem::file_time_type::clock::now() + std::chrono::seconds(2), error);
+}
+
 void TestLocalGateWritesAndReportsTheSignature() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path file = temp_dir.path() / "note.txt";
@@ -92,6 +103,7 @@ void TestIdenticalRewriteIsNotADiskConflict() {
 
   // Rewrite with IDENTICAL content. The mtime moves; the bytes do not.
   WriteFile(file, "same bytes\n");
+  ForceDistinctModificationTime(file);
   Expect(!util::StatFileSignature(file).SameContentAs(viewport.disk_signature()),
          "the fixture must actually move the stat, or this test proves nothing");
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
@@ -114,6 +126,7 @@ void TestRealEditIsStillADiskConflict() {
   editor::TextViewport viewport;
   Expect(viewport.OpenFile(file), "the fixture file opens");
   WriteFile(file, "SAME BYTES\n");  // identical length, different content
+  ForceDistinctModificationTime(file);
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
          "a same-length content change is still a conflict");
 
@@ -139,8 +152,37 @@ void TestSaveRecordsContentSoTheNextCheckIsClean() {
 
   // An identical external rewrite after the save is still recognised as no change.
   WriteFile(file, ReadFile(file));
+  ForceDistinctModificationTime(file);
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
          "the hash recorded by the save answers the next identical rewrite too");
+}
+
+// The case the rest of this file missed: DetectDiskConflict exists to guard a save,
+// so the buffer it guards is DIRTY — it differs from the file by construction. The
+// confirmation therefore has to compare the file against what was last ON DISK, not
+// against the buffer. A version that compared against the buffer passed every other
+// test here and would have reported a conflict on every real save.
+void TestIdenticalRewriteIsNotAConflictForADirtyBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path file = temp_dir.path() / "dirty.txt";
+  WriteFile(file, "same bytes\n");
+
+  editor::TextViewport viewport;
+  Expect(viewport.OpenFile(file), "the fixture file opens");
+  viewport.InsertText("unsaved edit ");
+  Expect(viewport.dirty(), "the buffer differs from the file, which is the point");
+
+  WriteFile(file, "same bytes\n");
+  ForceDistinctModificationTime(file);
+  Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
+         "a byte-identical rewrite is not a conflict even though the dirty buffer "
+         "differs from the file");
+
+  // And a real external edit under a dirty buffer must still be refused.
+  WriteFile(file, "SAME BYTES\n");
+  ForceDistinctModificationTime(file);
+  Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
+         "a real external edit still conflicts with a dirty buffer");
 }
 
 // The default is Signature::Skip, and that is load-bearing: replace-in-project
@@ -171,6 +213,8 @@ void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
           TestRealEditIsStillADiskConflict);
   AddTest(tests, "FileWriteGate/SaveRecordsContentSoTheNextCheckIsClean",
           TestSaveRecordsContentSoTheNextCheckIsClean);
+  AddTest(tests, "FileWriteGate/IdenticalRewriteIsNotAConflictForADirtyBuffer",
+          TestIdenticalRewriteIsNotAConflictForADirtyBuffer);
   AddTest(tests, "FileWriteGate/GateSkipsTheSignatureStatByDefault",
           TestGateSkipsTheSignatureStatByDefault);
 }

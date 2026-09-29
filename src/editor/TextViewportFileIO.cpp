@@ -338,6 +338,19 @@ bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) cons
       current.size != document_->disk_signature.size || current.size > kMaxConfirmBytes) {
     return false;
   }
+  // Compared against the RECORDED digest of what was last on disk, not against the
+  // buffer. That distinction is the whole design: this runs while saving a dirty
+  // buffer, where the buffer differs from the file by construction, so "do the
+  // file's bytes match the buffer" is the wrong question and answering it would
+  // report a conflict every time.
+  //
+  // The residual risk is a 64-bit collision between two files of the SAME size, at
+  // which point a real external edit would be overwritten silently. That is 2^-64
+  // per check, and it replaces a heuristic that was wrong roughly whenever anyone
+  // touched the file — so the change strictly reduces the chance of acting on a
+  // wrong answer. Keeping the last-synced bytes instead would make it exact at the
+  // cost of a second copy of every open file, which is not a trade this editor
+  // should make for 2^-64.
   const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
   if (!bytes.has_value() ||
       util::ContentHash(*bytes) != document_->disk_signature.content_hash) {
