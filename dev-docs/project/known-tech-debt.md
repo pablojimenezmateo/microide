@@ -415,7 +415,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-09-29-306 — "a moved mtime is a changed file" is a pattern, not one bug. [PARTLY RESOLVED 2026-09-29]
+### TD-2026-09-29-306 — "a moved mtime is a changed file" is a pattern, not one bug. [RESOLVED 2026-09-29]
 
 Three places assumed a moved modification time meant changed content, and all three
 were user-visible. A `touch`, a tool that rewrote a file with identical bytes, or a
@@ -433,15 +433,15 @@ the common case, not the exotic one:
   marking resolved" (`ValidateMergeResult`) — RESOLVED, against the exact text the
   merge tab already recorded.
 
-Still open, and recorded because the pattern is what matters rather than the three
-instances:
+A fourth followed, and is fixed too: `GitRepositoryMetadataTracker` sampled the
+ticks of `.git/HEAD` and the branch ref, so a rewrite with identical bytes spawned
+a redundant `git status`. Both are compared by content now, which is cheaper than
+the stats it replaced. The index and `packed-refs` stay on ticks on purpose —
+reading them to compare would cost more than the refresh it avoids, and neither is
+rewritten with identical content the way HEAD is.
 
-- `GitRepositoryMetadataTracker` samples the modification ticks of `.git/HEAD`,
-  the index, the branch ref and `packed-refs` to decide whether to re-run
-  `git status`. A touch of any of them spawns a redundant refresh. Not visible,
-  just wasted work on a background executor — which is why it was left — but it is
-  the same assumption, and a remote project pays a round trip for it rather than a
-  stat.
+What remains is the standing hazard rather than an instance:
+
 - Anything new that reaches for `util::FileModificationTick` or
   `FileSignature::SameContentAs` inherits it. There is no lint for this: the check
   is legitimate as a PREFILTER and only wrong as the last word, and no pattern
