@@ -447,6 +447,32 @@ What remains is the standing hazard rather than an instance:
   is legitimate as a PREFILTER and only wrong as the last word, and no pattern
   distinguishes the two. Reviewers are the guard, and this entry is the note.
 
+### TD-2026-09-29-308 — a per-viewport write gate needs three paths, not one setter. [OPEN]
+
+`TextViewport` holds a `FileWriteGate*` so `Save()` goes through the gate rather
+than the raw write primitive, and it points at the process-wide local gate. A
+remote project wants to point it at a `MirrorWriteGate` instead — writes land in
+the mirror and are pushed — but the setter that did this had zero callers and
+would not have survived its first reload, so it was removed (2026-09-29) rather
+than left as a seam that looks wired and is not.
+
+Installing a per-viewport gate means all three of these land together:
+
+- **`TabCoordinator::ReloadEditorTabsForPath`** (`WorkspaceTabCoordinator.cpp`
+  ~590) rebuilds the view and does `editor_state.viewport = std::move(restored_view)`.
+  The replacement is default-constructed, so it carries the local gate. An
+  override survives until the file is reloaded and then silently writes a local
+  path that only looks like the file — the worst failure shape available here,
+  because the save reports success.
+- **`LspService::RunClosedFileEdits`** builds a scratch viewport to apply edits to
+  a file nobody has open, and it saves through the gate it was constructed with.
+- **who decides.** The gate is per-viewport but the answer is per-PROJECT, so
+  something has to hand it over at open/restore/reload time. That is the project
+  object a remote project needs anyway; doing it per viewport without an owner is
+  how the first two bullets became possible.
+
+Until then the member stays const-in-practice and there is deliberately no setter.
+
 ### TD-2026-09-29-305 — the write gate covers content writes, not tree operations. [OPEN]
 
 `project::FileWriteGate` is the one door for writes that replace a file's
