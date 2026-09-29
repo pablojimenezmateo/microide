@@ -608,30 +608,27 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
-### TD-2026-09-29-312 — the piece-tree install is the half of an open still on the shell thread. [OPEN]
+### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN]
 
-G4 moved the read AND the classification off the shell thread: the bytes are read
-by `project::FileReadService` and `TextViewport::ClassifyContent` (the content
-hash, the encoding sniff, the line-ending scan, the CRLF rewrite) runs on the
-reader's thread through the request's `on_worker` hook. What still runs on the
-shell thread when the completion lands is `AdoptClassifiedContent` —
-`ResetStateFromText`, which builds the buffer and its line-start index. That is
-one more full pass over the file, and for a 200 MB open it is what remains of the
-stall.
+**The editor half is done (2026-09-29).** The whole load now runs on the reader's
+thread: the bytes, the classification (content hash, encoding sniff, line-ending
+scan, CRLF rewrite) and the buffer build — `PieceTree::RebuildFromOriginal`,
+which its own comment calls the dominant cost of opening a file. A whole
+`editor::TextViewport` is constructed on the worker and MOVED into the tab by the
+completion, which is the same shape `OpenEditorViewForPath` already had with a
+local view.
 
-Moving it means building a whole `TextViewport` on the worker and moving it in,
-which is exactly what `OpenEditorViewForPath` already does with a local view — so
-the shape is there. What has to be established first is that nothing on that path
-touches shared state: `ResetState` stats the file, computes a path key, and
-invalidates the layout and highlight caches, and `language_id()` consults the
-syntax registry (a process-wide object) lazily. A viewport built on a worker that
-touches the registry is a data race that no current test would catch, so this
-needs the audit before the move, not after.
+The audit that gated it, recorded so it does not have to be redone: nothing on
+that path touches process-wide mutable state. The perf counters it bumps are
+atomic, `util::TraceChannel` is thread-aware by construction, `NormalizedPathKey`
+interns nothing, and `language_id()` — the one thing that WOULD consult the
+syntax registry — is lazy and is not called by the load path. TSAN is clean over
+it.
 
-Same shape, not yet started: the compare and merge surfaces still read their
-sides synchronously. They are a different structure (two viewports per tab, and a
-model derived from both) and the win is smaller, but a 200 MB file compares as
-badly as it opens.
+What is left is the compare and merge surfaces, which still read their sides
+synchronously. They are a different structure (two viewports per tab, and a model
+derived from both, so the completion has to find the pane rather than the tab)
+and the win is smaller, but a 200 MB file compares as badly as it used to open.
 
 ### TD-2026-09-29-313 — the async-open threshold is a size, and the remote case is not about size. [OPEN]
 

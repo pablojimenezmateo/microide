@@ -354,19 +354,26 @@ that file says exactly what, and what each one left):
   thread too. Below the threshold nothing changed: the read is a fraction of a
   frame there and a handoff would cost more than it saves.
 
-  Three things fell out of it that stand on their own. `editor::AsyncBufferWork`
+  It is the WHOLE load, not just the read: the classification and the buffer
+  build both run there, and a complete `TextViewport` is constructed on the
+  worker and moved into the tab. One file is also one read however many panes
+  wait for it — the completion hands its view to every other tab waiting on that
+  path, sharing the buffer as the synchronous open always did.
+
+  Four things fell out of it that stand on their own. `editor::AsyncBufferWork`
   is the guarded completion the design asks for once instead of per-consumer, and
   format-on-save moved onto it. `EditorTabState::needs_restore` became
   `Content{Ready, Deferred, Loading, Failed}`, so the ~40 guards that ask "is the
   viewport the file yet" cover a new state by construction rather than by
-  remembering to widen forty conditions. And `TextViewport` gained a read-only
-  mode — because a tab that exists before its content does can be typed into, and
-  that keystroke would become a buffer shadowing the real file that the next
-  Ctrl+S writes over it.
+  remembering to widen forty conditions. `TextViewport` gained a read-only mode —
+  because a tab that exists before its content does can be typed into, and that
+  keystroke would become a buffer shadowing the real file that the next Ctrl+S
+  writes over it. And writing the tests found a real bug in the split path: a
+  pane cloned while its file was loading was left empty and read-only forever.
 
-Open: the rest of **G4** (the piece-tree install is still on the shell thread,
-TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the **actions**
-half of **G7**, **G8** `ProjectId`; the rest of **G9** (the four readers now share their primitives and
+Open: the rest of **G4** (compare/merge still read their sides on the shell
+thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the
+**actions** half of **G7**, **G8** `ProjectId`; the rest of **G9** (the four readers now share their primitives and
 the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); the tree operations the
 write gate does not cover (TD-2026-09-29-305); and the rest of **G5**
