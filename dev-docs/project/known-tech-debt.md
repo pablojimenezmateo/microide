@@ -447,6 +447,32 @@ What remains is the standing hazard rather than an instance:
   is legitimate as a PREFILTER and only wrong as the last word, and no pattern
   distinguishes the two. Reviewers are the guard, and this entry is the note.
 
+### TD-2026-09-29-309 — the content-confirm read is still on the shell thread. [OPEN]
+
+`TextViewport::DiskContentUnchanged` confirms a stat mismatch by reading the file
+and comparing its digest against the one recorded for the last known on-disk
+content. That read runs INLINE on the shell thread, from the watcher's change
+sweep and from the save path.
+
+It is bounded — the recorded signature must carry a hash, the size must be
+unchanged, and the file must be under 8 MiB — and as of 2026-09-29 it happens at
+most once per watcher event rather than once per open view. So the worst case is
+one ≤8 MiB read per event, not N. But the remote-projects design states the rule
+plainly (§ 8, G6): *"Hashing never happens on the shell thread"*, and names where
+it goes — G4's asynchronous reader, with G4's guarded completion.
+
+This is not a quick fix, which is why it is a TD rather than a follow-up commit.
+`DiskSignatureMatchesOpenView` is a PREDICATE: the sweep calls it and, in the same
+breath, either suppresses the echo or reloads the buffer and raises a banner.
+Moving the read off-thread turns that answer into a deferred one, so the decision
+it gates has to become deferred too — the sweep must be able to leave a path
+undecided and act when the read lands, without having shown the user anything in
+between. That restructuring IS G4's guarded completion, so the two land together.
+
+Until then the bound is the mitigation, and the bound is load-bearing: the size
+prefilter and the 8 MiB cap are what keep a `git checkout` of a large binary from
+stalling the window.
+
 ### TD-2026-09-29-308 — a per-viewport write gate needs three paths, not one setter. [OPEN]
 
 `TextViewport` holds a `FileWriteGate*` so `Save()` goes through the gate rather
