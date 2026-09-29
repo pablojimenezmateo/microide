@@ -157,11 +157,17 @@ class TabCoordinator {
   // disk-conflict guard (the user explicitly chose to overwrite). Returns true
   // if at least one view was saved.
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
-  // True if every open editor view on `path` recorded a disk signature equal to
-  // `signature` (i.e. the on-disk change was our own write). Used to suppress the
-  // redundant self-write reload. False when no view matches the path.
-  bool DiskSignatureMatchesOpenView(const std::filesystem::path& path,
-                                    const util::FileSignature& signature) const;
+  // True if every open editor view on `path` still describes the file as it is on
+  // disk (i.e. the change was our own write). Used to suppress the redundant
+  // self-write reload. False when no view matches the path.
+  //
+  // Stats the file ITSELF, lazily, on the first matching view. Both callers used
+  // to pass `util::StatFileSignature(path)` — the only value the parameter could
+  // hold — which meant a watcher batch stat'd every path it named before asking
+  // whether any of them was open. A branch switch names thousands and a handful
+  // are open, so that was thousands of stats on the shell thread to answer a
+  // question a string compare settles.
+  bool DiskSignatureMatchesOpenView(const std::filesystem::path& path) const;
   bool OpenUntitled();
   // The live editor view of `normalized_path` in ANY group, or nullptr. A file is
   // one buffer however many panes show it (VS Code's model per resource, and the

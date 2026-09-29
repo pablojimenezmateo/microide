@@ -104,9 +104,8 @@ bool EditorTabService::OverwriteEditorTabsForPath(const std::filesystem::path& p
   return coordinator_.OverwriteEditorTabsForPath(path);
 }
 
-bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path& path,
-                                                    const util::FileSignature& signature) const {
-  return coordinator_.DiskSignatureMatchesOpenView(path, signature);
+bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {
+  return coordinator_.DiskSignatureMatchesOpenView(path);
 }
 
 bool EditorTabService::OpenUntitled() {

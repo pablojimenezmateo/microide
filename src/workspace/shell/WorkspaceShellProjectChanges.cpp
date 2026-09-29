@@ -77,8 +77,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         // Suppress the watcher's echo of our own save: if every open view on this
         // path already records the current on-disk signature, nothing changed
         // underneath us and the save path already refreshed blame/compare.
-        const util::FileSignature signature = util::StatFileSignature(normalized_path);
-        if (editor_tabs.DiskSignatureMatchesOpenView(normalized_path, signature)) {
+        if (editor_tabs.DiskSignatureMatchesOpenView(normalized_path)) {
           break;
         }
         InvalidateEditorBlamePath(normalized_path);

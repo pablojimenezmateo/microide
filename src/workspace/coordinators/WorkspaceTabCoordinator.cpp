@@ -539,7 +539,7 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   // refuse to discard. mtime+size is the same equality the self-write echo
   // suppression in WorkspaceShellProjectChanges already trusts.
   if (clean_only &&
-      DiskSignatureMatchesOpenView(normalized_path, util::StatFileSignature(normalized_path))) {
+      DiskSignatureMatchesOpenView(normalized_path)) {
     return;
   }
 

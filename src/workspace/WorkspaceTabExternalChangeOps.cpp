@@ -62,8 +62,7 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
   return saved_any;
 }
 
-bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& path,
-                                                  const util::FileSignature& signature) const {
+bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {
   // `lexically_normal()` is ~12 allocations and purely lexical, and every path
   // reaching here has been normalized on ingress — so the normalization was
   // spending a fresh path per open tab to confirm the tab's path was already the
@@ -76,6 +75,11 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
           ? (normalized_storage = path.lexically_normal())
           : path;
   bool matched_any_view = false;
+  // Stat lazily, on the first view that actually names this path: the caller is a
+  // watcher batch that may name thousands of paths of which a handful are open,
+  // and statting each one to find out costs a syscall per path on the shell
+  // thread.
+  util::FileSignature signature;
   // ONE read for the whole sweep. Every view of this path asks the same question
   // of the same file, and the per-view form re-read it each time: a file open in
   // two panes cost two full reads (up to 8 MiB each) for a single watcher event,
@@ -99,7 +103,10 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
       if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
         continue;
       }
-      matched_any_view = true;
+      if (!matched_any_view) {
+        signature = util::StatFileSignature(normalized_path);
+        matched_any_view = true;
+      }
       // Not `SameContentAs`: a touch or a byte-identical rewrite moves the mtime
       // and leaves the file as it was, and reading that as an external change
       // reloads every open clean view and shows a "reloaded from disk" notice for
