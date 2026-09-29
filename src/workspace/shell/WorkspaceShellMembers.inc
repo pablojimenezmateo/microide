@@ -723,6 +723,10 @@
   // it Failed. Finds its tab by the read id the tab holds in `pending_load`.
   void ApplyAsyncFileRead(project::FileReadService::Completion completion,
                           editor::TextViewport::ClassifiedContent classified);
+  // Hand a just-loaded buffer to every other tab still waiting on the same path,
+  // so one file is one read and one buffer however many panes show it.
+  void ShareLoadedBufferWithWaitingTabs(const std::filesystem::path& path,
+                                        const editor::TextViewport& loaded);
   void ReportSaveFormatterFailure(const SaveFormatterService::Completion& completion,
                                   std::string* error_message);
   bool OpenVirtualDocumentInNewTab(std::string_view uri);

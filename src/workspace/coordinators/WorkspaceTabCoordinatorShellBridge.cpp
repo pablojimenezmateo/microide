@@ -365,9 +365,44 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         SyncActiveEditorTabMetadata();
         lsp_service_.ScheduleBufferOpen(path);
       }
+      ShareLoadedBufferWithWaitingTabs(path, editor_state.viewport);
       RequestEditorSurfaceRedraw();
       RequestTabStripRedraw();
       return;
+    }
+  }
+}
+
+void WorkspaceShell::ShareLoadedBufferWithWaitingTabs(const std::filesystem::path& path,
+                                                      const editor::TextViewport& loaded) {
+  // One file is one buffer, whoever reads it. A split made while the read was in
+  // flight, or a second open of the same path, leaves other tabs waiting on the
+  // same bytes; handing them a copy of this view shares the DocumentState rather
+  // than reading the file again, which is what the synchronous open has always
+  // done through `OpenEditorViewForPath`.
+  for (EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      auto& waiting = *tab.editor_state;
+      if (!waiting.content_pending() || &waiting.viewport == &loaded ||
+          waiting.restored_path.lexically_normal() != path) {
+        continue;
+      }
+      // Its own read, if it posted one, is now pointless work on a file already
+      // in memory.
+      if (waiting.pending_load.armed()) {
+        file_read_service_.Cancel(waiting.pending_load.id());
+        waiting.pending_load.Disarm();
+      }
+      waiting.viewport = loaded;  // shares the DocumentState; view state is its own
+      waiting.viewport.ApplyRestoredViewState(waiting.restored_cursor_line,
+                                              waiting.restored_cursor_column,
+                                              waiting.restored_scroll_line,
+                                              waiting.restored_horizontal_scroll);
+      waiting.content = TabEntry::EditorTabState::Content::Ready;
+      waiting.folding_model->Clear();
     }
   }
 }
