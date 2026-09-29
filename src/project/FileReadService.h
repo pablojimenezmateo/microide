@@ -91,6 +91,11 @@ class FileReadService {
   // Shell thread: deliver every completion that has landed. Returns how many ran.
   int DrainCompletions() { return mailbox_.Drain(); }
 
+  // Whether a completion is waiting. One relaxed atomic load, so a caller that
+  // asks every frame pays nothing when nothing is in flight — which is the
+  // overwhelmingly common case.
+  [[nodiscard]] bool HasCompletions() const { return mailbox_.PendingCount() > 0; }
+
   // Shell thread: wait for every outstanding read and deliver its completion.
   // For a caller that cannot proceed with a tab still loading — a save sweep, a
   // session flush — where the answer is wanted rather than abandoned.

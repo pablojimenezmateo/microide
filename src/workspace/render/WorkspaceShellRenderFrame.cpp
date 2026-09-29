@@ -307,6 +307,20 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     ConsumePendingOpenFileDialogResult();
     ConsumePendingFontFileDialogResult();
     ConsumeProjectSearchUpdates();
+    // A tab waiting on an asynchronous open is READ-ONLY until its bytes land, so
+    // a completion that is never drained does not just delay the content — it
+    // leaves a tab that cannot be edited, saved or undone, with no way out.
+    //
+    // The wake-driven drain (in ReloadProjectIfFilesChanged) is not enough on its
+    // own: it depends on the wake being delivered, and a host that renders
+    // WITHOUT pumping events never sees one. The perf harness is exactly such a
+    // host — it calls Render() in a loop — and that is how this was found: an
+    // 8 MB fixture opened asynchronously, stayed Loading forever, and the
+    // scenario's Undo() failed. Rendering is the one thing every host does, so a
+    // loading tab finishes here whatever else the host skips.
+    if (file_read_service_.HasCompletions()) {
+      file_read_service_.DrainCompletions();
+    }
   }
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   // The terminal renderer is only needed (and only pays for its glyph atlas) once a
