@@ -77,13 +77,27 @@ cmake -S . -B build
 cmake --build build -j8
 ```
 
-For the inner test loop, build only the test binary — `ctest` invokes just
-`microide_tests`, so this skips the production `microide` executable and the
-bench binaries (roughly halves the build):
+For the inner test loop, build only the test binary and run only its shards. The
+narrow build skips the production `microide` executable and the bench binaries
+(roughly halves the build), and the narrow test selection is what keeps it
+HONEST:
 
 ```bash
 cmake --build build --target microide_tests -j8
+ctest --test-dir build -R microide_tests_shard --output-on-failure -j$(nproc)
 ```
+
+`ctest` with no `-R` does **not** invoke just `microide_tests`. It also runs
+`microide_perf_tests` (the `--smoke` perf gate), `microide_kernel_link_probe` and
+the perf-fixture generators — none of which the narrow build rebuilds. Running
+the full `ctest` after a narrow build therefore validates your change against
+STALE copies of those binaries and reports green: `validation-traps.md` § "A lane
+that narrows the build target but not the test selection" is the same trap, and
+it was found in `run-checks.sh` before it was found here. A whole session's worth
+of "31/31 passed" can mean the perf gate never ran.
+
+So: the two lines above for the fast loop, and `tools/run-checks.sh tests` —
+which builds every target `ctest` invokes — before concluding anything.
 
 The build auto-uses **ccache** (compiler cache) and **ld.lld** (fast linker)
 when installed; both are no-ops if absent. For the best inner-loop speed install

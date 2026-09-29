@@ -295,6 +295,30 @@ If a lane scopes the build, it must scope the test selection to match, or build
 every target the selection invokes. Fixed by building `microide_tests
 microide_perf` — the two binaries ctest actually runs in the default build.
 
+**It recurred on 2026-09-29, in the place hardest to see: `CLAUDE.md` itself.**
+The Development Workflow section told every reader to build `--target
+microide_tests` for the inner loop *because* "`ctest` invokes just
+`microide_tests`" — which is false. `ctest` also runs `microide_perf_tests`,
+`microide_kernel_link_probe` and the fixture generators. So the agent guide
+prescribed exactly the trap this entry describes, and an entire session of
+"31/31 tests passed" was reported while the perf gate had not been rebuilt once
+and therefore had not run at all. When it finally did run, under
+`run-checks.sh all`, it failed immediately — on a configuration defect
+(§ "A gate whose verdict depends on `--iterations`") that had been sitting there
+unseen for the same reason.
+
+Two lessons, and the second is the general one:
+
+- The fast loop now narrows BOTH halves: `--target microide_tests` plus
+  `ctest -R microide_tests_shard`. A narrow build with a wide test selection is
+  the bug; a narrow build with a narrow selection is honest, because what it does
+  not run, it also does not claim.
+- A trap fixed in one place is not fixed. This one was found in `run-checks.sh`,
+  fixed there, written down here — and was simultaneously being prescribed by the
+  project's own front-page guide. When an entry is added here, grep for the
+  pattern everywhere else it could live, starting with the docs that tell people
+  what to run.
+
 ### `git checkout <file>` on a `git mv`'d file restores pre-rewrite content
 
 During a large move, `git checkout` on a moved file restores the version from the
