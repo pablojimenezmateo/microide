@@ -27,6 +27,7 @@
 #define MSG_NOSIGNAL 0
 #endif
 
+#include "util/Log.h"
 #include "util/PosixPipe.h"
 #endif
 
@@ -537,7 +538,16 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
 
   const std::string path_string = socket_path.string();
   if (path_string.size() + 1 > sizeof(sockaddr_un::sun_path)) {
-    return false;  // path too long for the address family
+    // Say so. Every caller of Start() ignores the bool, so a silent refusal here
+    // is a control channel that simply does not exist with nothing anywhere to
+    // explain why — which is what a long $XDG_RUNTIME_DIR produces, and what cost
+    // a real debugging session. The limit is the address family's, not ours, so
+    // the message names it and the actual length rather than saying "failed".
+    util::Log("control channel: socket path is " + std::to_string(path_string.size()) +
+              " bytes, over the " + std::to_string(sizeof(sockaddr_un::sun_path) - 1) +
+              "-byte AF_UNIX limit; the channel will not start. Shorten "
+              "$XDG_RUNTIME_DIR or the project path: " + path_string);
+    return false;
   }
 
   std::error_code ec;
@@ -557,11 +567,17 @@ bool ControlSocketServer::Start(const std::filesystem::path& socket_path) {
   address.sun_family = AF_UNIX;
   std::memcpy(address.sun_path, path_string.c_str(), path_string.size() + 1);
   if (::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+    const int bind_errno = errno;
+    util::Log("control channel: could not bind " + path_string + ": " +
+              std::string(std::strerror(bind_errno)));
     ::close(fd);
     return false;
   }
   ::chmod(path_string.c_str(), S_IRUSR | S_IWUSR);
   if (::listen(fd, 8) != 0) {
+    const int listen_errno = errno;
+    util::Log("control channel: could not listen on " + path_string + ": " +
+              std::string(std::strerror(listen_errno)));
     ::close(fd);
     ::unlink(path_string.c_str());
     return false;

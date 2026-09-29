@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "util/Log.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -869,7 +871,44 @@ void TestStopBeganEmitsImmediatePendingEvent() {
 
 }  // namespace
 
+// Regression: a socket path over the AF_UNIX limit made Start() return false and
+// say nothing, and every caller ignores that bool — so the control channel simply
+// did not exist, with nothing anywhere to explain why. A long $XDG_RUNTIME_DIR is
+// all it takes, and it cost a real debugging session before this message existed.
+void TestOverlongSocketPathSaysWhyItRefused() {
+  std::vector<std::string> logged;
+  microide::util::SetLogSink([&logged](std::string_view message) {
+    logged.emplace_back(message);
+  });
+
+  // 108 bytes is the sun_path limit; build a path comfortably past it.
+  std::filesystem::path too_long = "/tmp";
+  while (too_long.string().size() < 140) {
+    too_long /= "a-directory-name-that-is-not-short";
+  }
+  too_long /= "control.sock";
+
+  microide::platform::ControlSocketServer server;
+  const bool started = server.Start(too_long);
+  microide::util::SetLogSink(nullptr);
+
+  Expect(!started, "an over-long socket path must not start the channel");
+  Expect(!server.IsRunning(), "a refused start leaves the server stopped");
+  bool explained = false;
+  for (const std::string& line : logged) {
+    if (line.find("AF_UNIX limit") != std::string::npos &&
+        line.find("control channel") != std::string::npos) {
+      explained = true;
+    }
+  }
+  Expect(explained,
+         "the refusal must say why, naming the limit — a silent false is a channel "
+         "that does not exist for no stated reason");
+}
+
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlChannelService/OverlongSocketPathSaysWhyItRefused",
+          TestOverlongSocketPathSaysWhyItRefused);
   AddTest(tests, "ControlChannelService/QueryAndCommandOverSocket",
           TestQueryAndCommandOverSocket);
   AddTest(tests, "ControlChannelService/QueryResponseIsBounded",
