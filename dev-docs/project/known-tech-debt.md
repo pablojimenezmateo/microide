@@ -521,11 +521,118 @@ breath, either suppresses the echo or reloads the buffer and raises a banner.
 Moving the read off-thread turns that answer into a deferred one, so the decision
 it gates has to become deferred too — the sweep must be able to leave a path
 undecided and act when the read lands, without having shown the user anything in
-between. That restructuring IS G4's guarded completion, so the two land together.
+between.
+
+**Both prerequisites now exist (2026-09-29).** `project::FileReadService` is the
+off-thread reader and `editor::AsyncBufferWork` is the guarded completion, with
+the asynchronous open as the worked example of using them together. What is left
+here is the restructuring of the predicate itself, which is the hard half.
 
 Until then the bound is the mitigation, and the bound is load-bearing: the size
 prefilter and the 8 MiB cap are what keep a `git checkout` of a large binary from
 stalling the window.
+
+### TD-2026-09-29-316 — a shard failed once during the asynchronous-open work and the output was not captured. [OPEN]
+
+`microide_tests_shard_19` failed once, on the first `ctest -j$(nproc)` run after
+the asynchronous-open wiring was built. The failing assertion was **not
+captured**: the run was piped through `tail`, so the `--output-on-failure` detail
+scrolled past and only the summary survived. That is the finding worth recording
+— the rest is what could be established afterwards.
+
+Not reproduced since: 3 runs of shard 19 alone and 8 full `ctest -j$(nproc)`
+runs, all green, on the same binary. It is NOT
+[311](#td-2026-09-29-311): `ExternalRepoChange` is not in shard 19 (checked by
+running the filter against that shard — 0 of 16 tests), so this is a different
+test, and which one is unknown.
+
+The process lesson is the actionable part: never pipe a validation run through
+`tail`. `tools/run-checks.sh` exists precisely so the whole log lands in
+`/tmp/microide-<target>.log` and can be read back without rerunning, and
+`dev-docs/project/validation-traps.md` already says a green rerun is not evidence
+about the red run. This entry stays open until either the failure recurs with its
+output, or enough loaded runs have gone green to retire it.
+
+### TD-2026-09-29-312 — the piece-tree install is the half of an open still on the shell thread. [OPEN]
+
+G4 moved the read AND the classification off the shell thread: the bytes are read
+by `project::FileReadService` and `TextViewport::ClassifyContent` (the content
+hash, the encoding sniff, the line-ending scan, the CRLF rewrite) runs on the
+reader's thread through the request's `on_worker` hook. What still runs on the
+shell thread when the completion lands is `AdoptClassifiedContent` —
+`ResetStateFromText`, which builds the buffer and its line-start index. That is
+one more full pass over the file, and for a 200 MB open it is what remains of the
+stall.
+
+Moving it means building a whole `TextViewport` on the worker and moving it in,
+which is exactly what `OpenEditorViewForPath` already does with a local view — so
+the shape is there. What has to be established first is that nothing on that path
+touches shared state: `ResetState` stats the file, computes a path key, and
+invalidates the layout and highlight caches, and `language_id()` consults the
+syntax registry (a process-wide object) lazily. A viewport built on a worker that
+touches the registry is a data race that no current test would catch, so this
+needs the audit before the move, not after.
+
+Same shape, not yet started: the compare and merge surfaces still read their
+sides synchronously. They are a different structure (two viewports per tab, and a
+model derived from both) and the win is smaller, but a 200 MB file compares as
+badly as it opens.
+
+### TD-2026-09-29-313 — the async-open threshold is a size, and the remote case is not about size. [OPEN]
+
+An open goes off-thread when the file is at least 4 MiB
+(`TabCoordinator::kAsyncOpenThresholdBytes`). That is the right question for the
+case it was built for — a generated blob, a cold disk — and the wrong one for the
+case the remote-projects design cares about: a 2 KB file on a stalled mount
+blocks the shell thread exactly as it always did, and so does the `stat` that
+decides the threshold.
+
+This is a deliberate bound, not an oversight. Reading every file off-thread would
+make every existing synchronous open path asynchronous, which is a far larger
+change than the win for a 4 KB source file on a warm page cache justifies — the
+handoff would cost more than the read. And the design's own answer to the stalled
+mount is not "make the local read asynchronous", it is § 6.2's local mirror,
+where every path the editor opens is local by construction.
+
+What this leaves open is the intermediate phase: a remote project before the
+mirror exists, or a mirror on a network home directory. If that case ever needs
+covering, the fix is to make the decision a property of the project's filesystem
+(a locality flag on the project, set by whatever owns the mount) rather than a
+size — not to lower the threshold.
+
+### TD-2026-09-29-314 — a tab that exists before its content does has two representations. [OPEN]
+
+`EditorTabState::Content::Deferred` (with `restored_path` and the four
+`restored_*` fields) and `TabEntry::deferred_handle` (a `DeferredTabHandle` with
+the same path and four near-identical fields, plus a selection) both mean "this
+tab has no buffer yet; here is what to read and where to put the caret". Session
+restore produces the second for a non-active clean tab and the first for the
+active one; `LoadEditorTabForActivation` hydrates both, and G4 had to add its
+`Loading` transition to each separately.
+
+They are not redundant by accident: the handle form carries no `editor::
+TextViewport` and no `FoldingModel`, which is what keeps 200 restored tabs from
+allocating 200 of each. So collapsing them is not "delete one" — it is either
+making `EditorTabState` cheap enough to hold for an unhydrated tab, or making the
+handle the only unhydrated form and teaching the `Content` states to live on
+`TabEntry`. Until then, anything that changes how an unhydrated tab behaves has
+to be written twice, which is how the `Loading` state could have ended up
+reachable from one path and not the other.
+
+### TD-2026-09-29-315 — a failed open explains itself once, in a toast. [OPEN]
+
+When an off-thread read fails the tab stays, which is right — dropping it makes
+the click look like a no-op — and its `Content` is `Failed`. But the only thing
+that ever says WHY is the notification posted at the moment of failure. Come back
+to that tab a minute later and it is an ordinary empty editor at the file's path,
+with no indication that the file was never read; and `RestoreEditorTab` refuses
+to retry, so it stays that way for the life of the tab.
+
+The editor banner is the surface for this (`EditorBannerState`, which already
+carries `ExternalChange` and `ReloadedNotice`), and the missing piece is a third
+kind plus a Retry action. That is why it was not done with G4: the banner's
+button layout is a fixed three-plus-dismiss rect set, so a banner with one action
+needs the layout to stop being positional first.
 
 ### TD-2026-09-29-310 — the status bar describes the welcome surface. [OPEN]
 

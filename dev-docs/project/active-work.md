@@ -1,7 +1,10 @@
 # MicroIDE Active Work
 
-Reviewed 2026-09-22 (remote-projects groundwork G1, G2, G3 and part of G9; see
-§ 7 and `known-tech-debt.md` § TD-2026-09-22-301, 303). Previously reviewed
+Reviewed 2026-09-29 (remote-projects groundwork G4: the asynchronous open, the
+guarded completion every off-thread buffer operation shares, and the dedicated
+reader; see § 7 and `known-tech-debt.md` § TD-2026-09-29-312 through 316).
+Previously reviewed 2026-09-22 (groundwork G1, G2, G3 and part of G9; see
+`known-tech-debt.md` § TD-2026-09-22-301, 303). Previously reviewed
 2026-09-05 (see `known-tech-debt.md` § TD-2026-09-05-288 for that
 pass). Shipped baseline: **v2.12.0** — the multi-caret / soft-wrap / word-selection
 correctness pass shipped in it, with Add Cursor Above/Below, Add Cursors to Line
@@ -283,7 +286,7 @@ local checkout to a host) is a development stepping stone behind an experimental
 flag, not a shipped mode.
 
 **Groundwork is ten local-tree changes, each of which stands on its own if remote
-projects are never built.** Four are shipped (the design's own table at the top of
+projects are never built.** Four are fully shipped (the design's own table at the top of
 that file says exactly what, and what each one left):
 
 - **G1 — the SDL-free kernel.** `microide_kernel` compiles util, platform, project,
@@ -340,8 +343,30 @@ that file says exactly what, and what each one left):
   (Reconnect, Compare, Show, Copy install command), which need hit-testing and
   action dispatch in the toast.
 
-Open: **G4** asynchronous file open, the **actions** half of **G7**, **G8**
-`ProjectId`; the rest of **G9** (the four readers now share their primitives and
+- **G4 (part) — a large file opens without freezing the window.** The read ran
+  synchronously on the shell thread, so a generated blob, a cold disk or a slow
+  device froze the window for its whole duration. Files at or above 4 MiB now
+  read through `project::FileReadService` — one dedicated thread, not the serial
+  executor a half-gigabyte read would park git status and search behind, with
+  cancellation checked between chunks so closing the tab stops the I/O rather
+  than finishing a read for nobody. The classification (content hash, encoding
+  sniff, line-ending scan, CRLF rewrite — four more full passes) runs on that
+  thread too. Below the threshold nothing changed: the read is a fraction of a
+  frame there and a handoff would cost more than it saves.
+
+  Three things fell out of it that stand on their own. `editor::AsyncBufferWork`
+  is the guarded completion the design asks for once instead of per-consumer, and
+  format-on-save moved onto it. `EditorTabState::needs_restore` became
+  `Content{Ready, Deferred, Loading, Failed}`, so the ~40 guards that ask "is the
+  viewport the file yet" cover a new state by construction rather than by
+  remembering to widen forty conditions. And `TextViewport` gained a read-only
+  mode — because a tab that exists before its content does can be typed into, and
+  that keystroke would become a buffer shadowing the real file that the next
+  Ctrl+S writes over it.
+
+Open: the rest of **G4** (the piece-tree install is still on the shell thread,
+TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the **actions**
+half of **G7**, **G8** `ProjectId`; the rest of **G9** (the four readers now share their primitives and
 the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); the tree operations the
 write gate does not cover (TD-2026-09-29-305); and the rest of **G5**
