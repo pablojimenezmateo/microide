@@ -297,6 +297,13 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
           },
       .on_complete =
           [this, normalized_path, digest](project::FileReadService::Completion completion) {
+            if (completion.status == project::FileReadService::Status::Cancelled) {
+              // Teardown, or the project changed under it. Whoever cancelled owns
+              // what happens next, and acting here would raise a banner on a
+              // project that is being dismantled.
+              pending_external_change_confirms_.erase(normalized_path.generic_string());
+              return;
+            }
             ApplyExternalChangeConfirm(normalized_path, completion.ok(), *digest);
           },
       .max_bytes = editor::TextViewport::kMaxConfirmBytes,
@@ -306,7 +313,13 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
 void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path,
                                                 bool read_ok,
                                                 const std::optional<std::uint64_t>& digest) {
-  pending_external_change_confirms_.erase(normalized_path.generic_string());
+  // Gone from the set means the project was switched, closed or reset while the
+  // digest was in flight: the tabs this would act on are not the tabs it was
+  // posted about. The erase is the claim, so two completions for one path cannot
+  // both act.
+  if (pending_external_change_confirms_.erase(normalized_path.generic_string()) == 0) {
+    return;
+  }
   // A read that failed cannot excuse the stat mismatch, so the change stands.
   // Announcing a change that turns out to be an echo costs the user a dismissable
   // banner; suppressing a real one costs them their edits.

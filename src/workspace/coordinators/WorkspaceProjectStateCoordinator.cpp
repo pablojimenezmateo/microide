@@ -355,6 +355,12 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   project_change_coalescer_.Reset();
   git_metadata_tracker_.Reset();
   last_applied_project_change_generation_ = 0;
+  // Digests in flight for the OLD project's paths. Dropping the claims is what
+  // makes their completions no-ops; leaving them would also wedge a path in this
+  // set forever, so a later real change to it would post no confirm and be
+  // silently ignored.
+  pending_external_change_confirms_.clear();
+  file_read_service_.CancelAllAndFlush();
   MakeMenuCoordinator().CloseTreeContextMenu();
   ClearEditorBlame();
   // Hand the retiring LSP clients to the host-owned pool BEFORE the project state

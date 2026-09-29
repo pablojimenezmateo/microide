@@ -384,6 +384,13 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
              "DIFFERENT LENGTH ENTIRELY\n",
          "and the clean buffer is reloaded with the new content");
 
+  // NOT tested here: "one confirm in flight per path". Two dispatches with no
+  // flush between them pass whether or not the dedup exists — if the first digest
+  // has already landed, the reload re-baselines the view and the second dispatch
+  // classifies as OwnEcho, posting no read for a different reason. Making it
+  // deterministic needs a seam that holds the reader, and a test that passes for
+  // two reasons is worse than none.
+
   // The whole sweep did no confirming read on the shell thread. That is the point
   // of the exercise, and it is a separate claim from "a read was posted".
   Expect(util::ReadPerformanceCounter(
