@@ -77,26 +77,23 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         // Suppress the watcher's echo of our own save: if every open view on this
         // path already records the current on-disk signature, nothing changed
         // underneath us and the save path already refreshed blame/compare.
-        if (editor_tabs.DiskSignatureMatchesOpenView(normalized_path)) {
-          break;
-        }
-        InvalidateEditorBlamePath(normalized_path);
-        InvalidateMergeTabsForPath(normalized_path);
-        refresh_compare_paths.insert(normalized_path);
-        PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-        if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
-                .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
-          dirty_external_paths.insert(normalized_path);
-        } else {
-          // Reload silently and, only when an open clean buffer was actually
-          // refreshed, surface a passive "reloaded from disk" notice.
-          const bool had_open_buffer = CountOpenBufferViews(normalized_path) > 0;
-          ReloadCleanEditorTabsForPath(normalized_path);
-          if (had_open_buffer) {
-            SetEditorBanner(context_.current_project_state,
-                            EditorBannerState::Kind::ReloadedNotice, normalized_path);
-            RequestEditorSurfaceRedraw();
-          }
+        switch (editor_tabs.ClassifyExternalChange(normalized_path)) {
+          case EditorTabService::ExternalChangeVerdict::OwnEcho:
+            break;
+          case EditorTabService::ExternalChangeVerdict::NeedsContentConfirm:
+            // One digest settles it, and computing it here is a read of up to
+            // 8 MiB on the shell thread — per changed path, per watcher event.
+            // A `git checkout` that moves the mtime of every open file pays that
+            // for each of them with the window frozen. Post it instead and
+            // decide when it lands; nothing is shown to the user in between, so
+            // an undecided path looks like no event at all rather than a wrong
+            // one.
+            BeginExternalChangeConfirm(normalized_path);
+            break;
+          case EditorTabService::ExternalChangeVerdict::Changed:
+            ApplyExternalFileChange(normalized_path, dirty_external_paths,
+                                    refresh_compare_paths);
+            break;
         }
         break;
       }
@@ -241,6 +238,87 @@ void WorkspaceShell::ClearDiagnosticsForPath(const std::filesystem::path& path) 
       RequestEditorSurfaceRedraw();
     }
     state.MaybeReleasePluginPresentation();
+  }
+}
+
+
+// The per-path half of an external change, shared by the immediate verdict and by
+// the deferred one that lands with a digest. Both must do the same things, and a
+// second copy of "invalidate blame, restage compare/merge, then banner-or-reload"
+// is how one of them ends up doing three of the four.
+void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normalized_path,
+                                             std::set<std::filesystem::path>& dirty_external_paths,
+                                             std::set<std::filesystem::path>& refresh_compare_paths) {
+  EditorTabService& editor_tabs = MakeEditorTabService();
+  InvalidateEditorBlamePath(normalized_path);
+  InvalidateMergeTabsForPath(normalized_path);
+  refresh_compare_paths.insert(normalized_path);
+  PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+  if (MakePathMutationCoordinator(editor_tabs, prompt_surfaces)
+          .HasDirtyEditorTabsForPath(normalized_path, nullptr)) {
+    dirty_external_paths.insert(normalized_path);
+    return;
+  }
+  // Reload silently and, only when an open clean buffer was actually refreshed,
+  // surface a passive "reloaded from disk" notice.
+  const bool had_open_buffer = CountOpenBufferViews(normalized_path) > 0;
+  ReloadCleanEditorTabsForPath(normalized_path);
+  if (had_open_buffer) {
+    SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice,
+                    normalized_path);
+    RequestEditorSurfaceRedraw();
+  }
+}
+
+void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& normalized_path) {
+  // One in flight per path. A watcher that reports the same file twice before the
+  // first digest lands would otherwise read it twice and decide twice; the second
+  // event is about the same question, and the re-stat inside the confirm is what
+  // makes a later change still visible.
+  if (!pending_external_change_confirms_.insert(normalized_path.generic_string()).second) {
+    return;
+  }
+  auto digest = std::make_shared<std::optional<std::uint64_t>>();
+  (void)file_read_service_.Begin({
+      .path = normalized_path,
+      .on_worker =
+          [digest](std::string& bytes) {
+            *digest = util::ContentHash(bytes);
+            // The bytes stop here. Only the digest crosses to the shell thread —
+            // handing an 8 MiB buffer across to be hashed there would be the
+            // stall this exists to remove, one hop later.
+            std::string().swap(bytes);
+          },
+      .on_complete =
+          [this, normalized_path, digest](project::FileReadService::Completion completion) {
+            ApplyExternalChangeConfirm(normalized_path, completion.ok(), *digest);
+          },
+      .max_bytes = editor::TextViewport::kMaxConfirmBytes,
+  });
+}
+
+void WorkspaceShell::ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path,
+                                                bool read_ok,
+                                                const std::optional<std::uint64_t>& digest) {
+  pending_external_change_confirms_.erase(normalized_path.generic_string());
+  // A read that failed cannot excuse the stat mismatch, so the change stands.
+  // Announcing a change that turns out to be an echo costs the user a dismissable
+  // banner; suppressing a real one costs them their edits.
+  if (read_ok && digest.has_value() &&
+      MakeEditorTabService().ExternalChangeIsOwnEcho(normalized_path, *digest)) {
+    return;
+  }
+  std::set<std::filesystem::path> dirty_external_paths;
+  std::set<std::filesystem::path> refresh_compare_paths;
+  ApplyExternalFileChange(normalized_path, dirty_external_paths, refresh_compare_paths);
+  for (const std::filesystem::path& path : refresh_compare_paths) {
+    MarkCompareTabsStaleForPath(path);
+  }
+  for (const std::filesystem::path& path : dirty_external_paths) {
+    SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ExternalChange, path);
+  }
+  if (!dirty_external_paths.empty()) {
+    RequestEditorSurfaceRedraw();
   }
 }
 

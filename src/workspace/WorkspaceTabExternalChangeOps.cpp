@@ -137,4 +137,85 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
   return matched_any_view;
 }
 
+TabCoordinator::ExternalChangeVerdict TabCoordinator::ClassifyExternalChange(
+    const std::filesystem::path& path) const {
+  // Same normalization discipline as DiskSignatureMatchesOpenView above: once per
+  // side, only when the text says it is needed.
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path& normalized_path =
+      util::PathTextNeedsNormalizing(path.native())
+          ? (normalized_storage = path.lexically_normal())
+          : path;
+  bool matched_any_view = false;
+  bool needs_confirm = false;
+  util::FileSignature signature;
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
+        continue;
+      }
+      if (!matched_any_view) {
+        // Stat lazily, on the first view that actually names this path: a watcher
+        // batch may name thousands of paths of which a handful are open.
+        signature = util::StatFileSignature(normalized_path);
+        matched_any_view = true;
+      }
+      if (signature.SameContentAs(viewport.disk_signature())) {
+        continue;  // one stat answered it for this view
+      }
+      if (!viewport.CouldConfirmDiskContent(signature)) {
+        return ExternalChangeVerdict::Changed;  // no digest can excuse this one
+      }
+      needs_confirm = true;
+    }
+  }
+  if (!matched_any_view) {
+    // Nothing has this path open, so there is no echo to suppress. The caller
+    // still has blame, compare and merge state keyed on it.
+    return ExternalChangeVerdict::Changed;
+  }
+  return needs_confirm ? ExternalChangeVerdict::NeedsContentConfirm
+                       : ExternalChangeVerdict::OwnEcho;
+}
+
+bool TabCoordinator::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
+                                             std::uint64_t disk_content_hash) const {
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path& normalized_path =
+      util::PathTextNeedsNormalizing(path.native())
+          ? (normalized_storage = path.lexically_normal())
+          : path;
+  bool matched_any_view = false;
+  util::FileSignature signature;
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
+        continue;
+      }
+      if (!matched_any_view) {
+        // Re-stat: the digest was computed off-thread and the file may have moved
+        // again since. Confirming against a stale stat would re-baseline a view to
+        // a state that no longer exists.
+        signature = util::StatFileSignature(normalized_path);
+        matched_any_view = true;
+      }
+      if (signature.SameContentAs(viewport.disk_signature())) {
+        continue;
+      }
+      if (!viewport.ConfirmDiskContentUnchanged(signature, disk_content_hash)) {
+        return false;
+      }
+    }
+  }
+  return matched_any_view;
+}
+
 }  // namespace microide::workspace

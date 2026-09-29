@@ -368,9 +368,6 @@ bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) cons
 }
 
 bool TextViewport::CouldConfirmDiskContent(const util::FileSignature& current) const {
-  // The file must be small enough that reading it is not itself the stall this
-  // check sits inside.
-  constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
   return document_->disk_signature.has_content_hash &&
          current.size == document_->disk_signature.size && current.size <= kMaxConfirmBytes;
 }

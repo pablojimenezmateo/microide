@@ -104,6 +104,14 @@ class FileReadService {
 
   [[nodiscard]] int PendingCount() const { return pending_.load(std::memory_order_acquire); }
 
+  // Reads posted over this service's lifetime. Monotonic, so a test can assert
+  // that work went off-thread at all without racing whether it has finished —
+  // which is the difference between checking the mechanism and checking the
+  // clock.
+  [[nodiscard]] std::uint64_t PostedCount() const {
+    return next_id_.load(std::memory_order_acquire);
+  }
+
  private:
   struct InFlightRead {
     std::uint64_t id = 0;

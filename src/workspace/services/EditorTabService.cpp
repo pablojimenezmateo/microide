@@ -104,6 +104,16 @@ bool EditorTabService::OverwriteEditorTabsForPath(const std::filesystem::path& p
   return coordinator_.OverwriteEditorTabsForPath(path);
 }
 
+EditorTabService::ExternalChangeVerdict EditorTabService::ClassifyExternalChange(
+    const std::filesystem::path& path) const {
+  return coordinator_.ClassifyExternalChange(path);
+}
+
+bool EditorTabService::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
+                                               std::uint64_t disk_content_hash) const {
+  return coordinator_.ExternalChangeIsOwnEcho(path, disk_content_hash);
+}
+
 bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {
   return coordinator_.DiskSignatureMatchesOpenView(path);
 }

@@ -368,6 +368,9 @@
   static int PendingFileReadCount(const WorkspaceShell& shell) {
     return shell.file_read_service_.PendingCount();
   }
+  static std::uint64_t PostedFileReadCount(const WorkspaceShell& shell) {
+    return shell.file_read_service_.PostedCount();
+  }
   // Content state of a specific tab in a specific group, for asserting what a
   // split clone inherited.
   static TabEntry::EditorTabState::Content GroupTabContentState(const WorkspaceShell& shell,

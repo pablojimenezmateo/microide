@@ -697,6 +697,22 @@
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
   void ApplyProjectChangeBatch(const project::ProjectChangeBatch& batch);
+  // The per-path half of an external change, shared by the immediate verdict and
+  // the deferred one.
+  void ApplyExternalFileChange(const std::filesystem::path& normalized_path,
+                               std::set<std::filesystem::path>& dirty_external_paths,
+                               std::set<std::filesystem::path>& refresh_compare_paths);
+  // Post the content digest that settles whether a stat mismatch is our own write
+  // coming back, and act on it when it lands. The read is bounded by
+  // TextViewport::kMaxConfirmBytes and never reaches the shell thread.
+  void BeginExternalChangeConfirm(const std::filesystem::path& normalized_path);
+  void ApplyExternalChangeConfirm(const std::filesystem::path& normalized_path,
+                                  bool read_ok,
+                                  const std::optional<std::uint64_t>& digest);
+  // Paths whose digest is in flight, so a repeat event does not read the same
+  // file twice for the same question. Keyed by generic string, as every other
+  // path-keyed store here is.
+  std::set<std::string> pending_external_change_confirms_;
   void MarkCompareTabsStaleForPath(const std::filesystem::path& path);
   void InvalidateMergeTabsForPath(const std::filesystem::path& path);
   void ActivateEditorBannerAction(EditorBannerAction action, const std::filesystem::path& path);

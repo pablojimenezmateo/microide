@@ -396,6 +396,10 @@ class TextViewport {
   // re-baselines the stat so the next event on this path is one stat again. That
   // re-baseline is why a const method writes: it memoizes a fact about the file,
   // and nothing a caller can observe changes.
+  // The file must be small enough that reading it to settle the question is not
+  // itself the stall the question sits inside. Public because the caller that
+  // posts the read off-thread has to bound it to the same budget.
+  static constexpr std::uintmax_t kMaxConfirmBytes = 8u << 20;
   bool CouldConfirmDiskContent(const util::FileSignature& current) const;
   bool ConfirmDiskContentUnchanged(const util::FileSignature& current,
                                    std::uint64_t disk_content_hash) const;

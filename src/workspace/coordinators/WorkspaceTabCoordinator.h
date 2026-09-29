@@ -178,6 +178,32 @@ class TabCoordinator {
   // are open, so that was thousands of stats on the shell thread to answer a
   // question a string compare settles.
   bool DiskSignatureMatchesOpenView(const std::filesystem::path& path) const;
+
+  // What an external-change event means for the views of a path, WITHOUT reading
+  // the file. `DiskSignatureMatchesOpenView` answers the same question but reads
+  // (up to 8 MiB) inline on the shell thread to do it, which is the stall the
+  // remote-projects design forbids outright: "hashing never happens on the shell
+  // thread".
+  enum class ExternalChangeVerdict {
+    // Every open view already records the current on-disk stat: this is our own
+    // write coming back. Suppress it.
+    OwnEcho,
+    // A view disagrees in a way a hash cannot excuse — a size change, no recorded
+    // digest, a file too large to confirm — or nothing has this path open at all.
+    // Act now.
+    Changed,
+    // The stat moved, the size did not, and a view recorded what the bytes
+    // hashed to. One digest settles it, and computing that digest is exactly the
+    // read this must not do here: the caller posts it and decides when it lands.
+    NeedsContentConfirm,
+  };
+  [[nodiscard]] ExternalChangeVerdict ClassifyExternalChange(
+      const std::filesystem::path& path) const;
+  // Resolve a `NeedsContentConfirm` verdict against a digest computed elsewhere.
+  // True when every view that disagreed is satisfied by it — our own write after
+  // all. Re-baselines those views, so the next event on this path is one stat.
+  [[nodiscard]] bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
+                                             std::uint64_t disk_content_hash) const;
   bool OpenUntitled();
   // The live editor view of `normalized_path` in ANY group, or nullptr. A file is
   // one buffer however many panes show it (VS Code's model per resource, and the

@@ -44,6 +44,10 @@ class EditorTabService {
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
   bool DiskSignatureMatchesOpenView(const std::filesystem::path& path) const;
+  using ExternalChangeVerdict = TabCoordinator::ExternalChangeVerdict;
+  ExternalChangeVerdict ClassifyExternalChange(const std::filesystem::path& path) const;
+  bool ExternalChangeIsOwnEcho(const std::filesystem::path& path,
+                               std::uint64_t disk_content_hash) const;
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool OpenNewBufferInNewTab(const std::filesystem::path& path);

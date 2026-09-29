@@ -76,6 +76,11 @@ void DispatchAndApply(WorkspaceShell& shell,
          std::string("the dispatched batch must actually be APPLIED, or every assertion "
                      "after it is about a sweep that never ran (") +
              what + ")");
+  // The echo check answers with a content digest computed OFF the shell thread,
+  // so the sweep can leave a path undecided and act when the digest lands. Wait
+  // for it here rather than letting the drain's 10 ms sleeps decide: the
+  // assertions below are about the verdict, not about how fast this machine is.
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
 }
 
 bool WaitForExternalChangeBanner(WorkspaceShell& shell,
@@ -302,6 +307,57 @@ void TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce() {
              ? std::string()
              : "a real external change still reaches a split view" +
                    ExternalChangeDiagnostics(shell, file_path));
+}
+
+// The echo check's answer is a content digest, and computing it is a read of up to
+// 8 MiB. Doing that on the shell thread is the stall the remote-projects design
+// forbids ("hashing never happens on the shell thread"), and a `git checkout` that
+// moves the mtime of every open file pays it once per file with the window frozen.
+//
+// What this pins is the MECHANISM, not the clock: the posted-read counter is
+// monotonic, so "the digest went off-thread" is checkable without racing whether
+// it has come back. A version that read inline would leave it unchanged.
+void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path relative = "notes.txt";
+  const std::filesystem::path file_path = root / relative;
+  WriteFile(file_path, "same bytes\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "off-thread-confirm fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "the fixture must have a live watcher to quiesce");
+  DrainProjectChanges(shell);
+  WorkspaceShellTestAccess::ClearEditorBannersForTesting(shell);
+
+  // Same bytes, moved mtime: the one case that cannot be settled by the stat and
+  // therefore has to read.
+  const std::uint64_t reads_before = WorkspaceShellTestAccess::PostedFileReadCount(shell);
+  WriteFile(file_path, "same bytes\n");
+  ForceDistinctModificationTime(file_path);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the identical-rewrite batch");
+
+  Expect(WorkspaceShellTestAccess::PostedFileReadCount(shell) == reads_before + 1,
+         "the confirming read is posted to the reader thread, exactly once");
+  Expect(!WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path) &&
+             !WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file_path),
+         "and the verdict it comes back with is still 'our own write'");
+
+  // A size change needs no digest, so it must not post a read at all — the stat
+  // already answered, and reading to confirm what is already known is the cost
+  // this whole path exists to avoid.
+  const std::uint64_t reads_after_confirm = WorkspaceShellTestAccess::PostedFileReadCount(shell);
+  WriteFile(file_path, "different length entirely\n");
+  ForceDistinctModificationTime(file_path);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the resized batch");
+  Expect(WorkspaceShellTestAccess::PostedFileReadCount(shell) == reads_after_confirm,
+         "a size change is decided by the stat alone, with no read posted");
+  Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
+         "and it still reaches the clean buffer as a reload");
 }
 
 // The other half: a real external change must still reach the user. Without it the
@@ -684,6 +740,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellIdenticalRewriteRaisesNoReloadNotice);
   AddTest(tests, "ExternalRepoChange/IdenticalRewriteWithSplitViewsReadsOnce",
           TestWorkspaceShellIdenticalRewriteWithSplitViewsReadsOnce);
+  AddTest(tests, "ExternalRepoChange/IdenticalRewriteConfirmsOffTheShellThread",
+          TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread);
   AddTest(tests, "ExternalRepoChange/RealRewriteStillNotifies",
           TestWorkspaceShellRealRewriteStillNotifies);
   AddTest(tests, "ExternalRepoChange/SaveTimeConflictGuardBlocksClobber",
