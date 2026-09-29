@@ -281,7 +281,8 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .stage_merge_result_path =
               [this](const std::filesystem::path& path) {
-                return project::GitStagePath(context_.current_project_state.root, path);
+                return project::GitStagePath(context_.current_project_state.root,
+                                             context_.current_project_state.launcher(), path);
               },
           .refresh_git_sidebar = [this]() { RefreshGitSidebar(); },
           .request_compare_file_history =

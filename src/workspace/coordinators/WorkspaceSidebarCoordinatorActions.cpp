@@ -444,7 +444,7 @@ bool SidebarCoordinator::StageAllGitEntries() {
   std::sort(affected_paths.begin(), affected_paths.end());
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
-  if (!project::GitStageAll(project_root_)) {
+  if (!project::GitStageAll(project_root_, state_.launcher())) {
     ReportGitMessage(NotificationService::Tone::Error,
                      "Failed to stage all changes (see git output)");
     return false;
@@ -531,7 +531,7 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
     }
   }
 
-  if (!project::GitDiscardAll(project_root_, /*remove_untracked=*/false)) {
+  if (!project::GitDiscardAll(project_root_, state_.launcher(), /*remove_untracked=*/false)) {
     ReportGitMessage(NotificationService::Tone::Error,
                      "Failed to discard all changes (see git output)");
     return false;
@@ -569,7 +569,7 @@ bool SidebarCoordinator::StageGitEntry(const std::size_t entry_index) {
     ReportDisabledGitAction(GitSidebarActionId::Stage, entry_index);
     return false;
   }
-  if (!project::GitStagePath(project_root_, entry->path)) {
+  if (!project::GitStagePath(project_root_, state_.launcher(), entry->path)) {
     ReportGitOperationFailure("stage", *entry);
     return false;
   }
@@ -589,7 +589,7 @@ bool SidebarCoordinator::UnstageGitEntry(const std::size_t entry_index) {
     ReportDisabledGitAction(GitSidebarActionId::Unstage, entry_index);
     return false;
   }
-  if (!project::GitUnstagePath(project_root_, entry->path, entry->is_staged_rename)) {
+  if (!project::GitUnstagePath(project_root_, state_.launcher(), entry->path, entry->is_staged_rename)) {
     ReportGitOperationFailure("unstage", *entry);
     return false;
   }
@@ -648,7 +648,8 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
                                !entry->is_staged_rename;
   if (entry->section == GitSidebarEntry::Section::Untracked || staged_new_file) {
     if (staged_new_file &&
-        !project::GitUnstagePath(project_root_, entry->path, /*may_be_staged_rename=*/false)) {
+        !project::GitUnstagePath(project_root_, state_.launcher(), entry->path,
+                                /*may_be_staged_rename=*/false)) {
       ReportGitOperationFailure("discard", *entry);
       return false;
     }
@@ -656,7 +657,7 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
       ReportGitOperationFailure("discard", *entry);
       return false;
     }
-  } else if (!project::GitDiscardPath(project_root_, entry->path, entry->is_staged_rename)) {
+  } else if (!project::GitDiscardPath(project_root_, state_.launcher(), entry->path, entry->is_staged_rename)) {
     ReportGitOperationFailure("discard", *entry);
     return false;
   }

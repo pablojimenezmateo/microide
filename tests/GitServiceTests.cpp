@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "platform/ProcessLauncher.h"
+
 #include "CompareSummary.h"
 
 #include "compare/CompareModel.h"
@@ -39,7 +41,7 @@ namespace {
 std::vector<microide::project::GitWorkingTreeEntry> RequireWorkingTreeEntries(
     const std::filesystem::path& root) {
   std::optional<std::vector<microide::project::GitWorkingTreeEntry>> entries =
-      CollectGitWorkingTreeEntries(root);
+      CollectGitWorkingTreeEntries(root, microide::platform::LocalProcessLauncher());
   Expect(entries.has_value(), "git must have answered the working-tree query");
   return std::move(*entries);
 }
@@ -148,7 +150,7 @@ void TestGitWorkingTreeStatusAndActions() {
   Expect(saw_modified && saw_deleted && saw_untracked,
          "working tree fixture should include modified, deleted, and untracked files");
 
-  Expect(GitStagePath(repo_path, modified_file), "git stage should succeed for modified file");
+  Expect(GitStagePath(repo_path, microide::platform::LocalProcessLauncher(), modified_file), "git stage should succeed for modified file");
   entries = RequireWorkingTreeEntries(repo_path);
   const auto staged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
     return entry.relative_path == std::filesystem::path("README.md");
@@ -157,7 +159,7 @@ void TestGitWorkingTreeStatusAndActions() {
          "staged modified file should still appear in working tree view");
   Expect(staged_it->staged, "modified file should report staged after git add");
 
-  Expect(GitUnstagePath(repo_path, modified_file), "git unstage should succeed for modified file");
+  Expect(GitUnstagePath(repo_path, microide::platform::LocalProcessLauncher(), modified_file), "git unstage should succeed for modified file");
   entries = RequireWorkingTreeEntries(repo_path);
   const auto unstaged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
     return entry.relative_path == std::filesystem::path("README.md");
@@ -166,15 +168,15 @@ void TestGitWorkingTreeStatusAndActions() {
          "unstaged modified file should still appear in working tree view");
   Expect(!unstaged_it->staged, "modified file should report unstaged after git unstage");
 
-  Expect(GitDiscardPath(repo_path, untracked_file), "discard should remove untracked file");
+  Expect(GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), untracked_file), "discard should remove untracked file");
   Expect(!std::filesystem::exists(untracked_file), "discard should delete untracked file");
 
-  Expect(GitDiscardPath(repo_path, deleted_file),
+  Expect(GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), deleted_file),
          "discard should restore deleted tracked file");
   Expect(std::filesystem::exists(deleted_file),
          "discard should restore deleted tracked file on disk");
 
-  Expect(GitDiscardPath(repo_path, modified_file),
+  Expect(GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), modified_file),
          "discard should restore modified tracked file");
   Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
          "discard should restore tracked file to HEAD content");
@@ -185,7 +187,7 @@ void TestGitWorkingTreeStatusAndActions() {
   const auto untracked_dir = repo_path / "untracked_pkg";
   std::filesystem::create_directories(untracked_dir);
   WriteFile(untracked_dir / "keep.txt", "precious\n");
-  Expect(!GitDiscardPath(repo_path, untracked_dir),
+  Expect(!GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), untracked_dir),
          "discarding an untracked directory row is refused, not a recursive clean");
   Expect(std::filesystem::exists(untracked_dir / "keep.txt"),
          "the untracked directory and its files survive a refused discard");
@@ -404,14 +406,14 @@ void TestGitBulkStageAndDiscard() {
   WriteFile(staged_added_file, "int staged = 1;\n");
   WriteFile(untracked_file, "temporary notes\n");
 
-  Expect(GitStageAll(repo_path), "git stage all should succeed");
+  Expect(GitStageAll(repo_path, microide::platform::LocalProcessLauncher()), "git stage all should succeed");
   auto entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.size() == 4, "bulk stage fixture should still report four changes");
   for (const auto& entry : entries) {
     Expect(entry.staged, "git stage all should stage every working-tree entry");
   }
 
-  Expect(GitDiscardAll(repo_path), "git discard all should succeed");
+  Expect(GitDiscardAll(repo_path, microide::platform::LocalProcessLauncher()), "git discard all should succeed");
   entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.empty(), "git discard all should leave a clean working tree");
   Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
@@ -438,7 +440,7 @@ void TestGitStageHonorsLiteralPathspecs() {
 
   const std::filesystem::path magic_rel(":(glob)weird.txt");
   WriteFile(repo_path / magic_rel, "content\n");
-  Expect(GitStagePath(repo_path, repo_path / magic_rel),
+  Expect(GitStagePath(repo_path, microide::platform::LocalProcessLauncher(), repo_path / magic_rel),
          "staging a pathspec-magic-named file should succeed");
 
   const auto entries = RequireWorkingTreeEntries(repo_path);

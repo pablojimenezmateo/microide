@@ -20,6 +20,7 @@
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/registries/WorkspaceFileIconRegistry.h"
+#include "platform/ProcessLauncher.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
 #include "project/EditorConfig.h"
@@ -745,6 +746,21 @@ struct PluginGhostText {
 
 struct ProjectWorkspaceState {
   std::filesystem::path root;
+  // The launcher every spawn belonging to THIS project goes through. Local today;
+  // a remote project's is transport-prefixed, and that is the whole point — § 6.5
+  // of the remote design says a session that chooses locality per call silently
+  // splits across two machines.
+  //
+  // A pointer rather than a reference so the state stays copyable and assignable
+  // (it is reset and reassigned wholesale on project switch). Never null: it
+  // defaults to the process-wide local launcher, which is what every project is
+  // until remote projects exist.
+  //
+  // Spawns that must NEVER follow the project — `xdg-open`, "Open Local
+  // Terminal" — keep naming `platform::LocalProcessLauncher()` explicitly and say
+  // why, rather than reading this. (TD-2026-09-22-301.)
+  const platform::ProcessLauncher* process_launcher = &platform::LocalProcessLauncher();
+  [[nodiscard]] const platform::ProcessLauncher& launcher() const { return *process_launcher; }
   bool initialized = false;
   bool restore_persistence_on_activate = false;
   project::DirectoryTree directory_tree;

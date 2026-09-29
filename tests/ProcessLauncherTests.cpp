@@ -5,6 +5,7 @@
 #include "platform/ProcessLauncher.h"
 #include "project/GitRepository.h"
 #include "project/GitStatusRefresh.h"
+#include "project/GitStatusService.h"
 
 #include <string>
 #include <vector>
@@ -163,6 +164,31 @@ void TestStatusRefreshDistinguishesItsFailures() {
          "and says why, rather than showing a prefix as the whole truth");
 }
 
+
+// The seam only means anything if the service actually USES the launcher it was
+// handed. Before TD-2026-09-22-301's first slice, every one of these functions
+// reached for `LocalProcessLauncher()` internally, so a project could not choose
+// where its own git ran — and nothing would have noticed a reintroduction.
+void TestStatusServiceRunsThroughTheLauncherItIsGiven() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");  // the marker, not a real repo
+
+  ScriptedProcessLauncher launcher;
+  launcher.standing_response.exit_code = 0;
+  Expect(project::GitStageAll(root, launcher), "the staging call reports the scripted success");
+  Expect(!launcher.runs.empty(),
+         "the service ran git through the launcher it was given, not a local one it "
+         "reached for itself");
+  Expect(launcher.runs.front().front() == "git", "and the program it ran was git");
+
+  // A failure from that launcher is the service's answer too — no silent fallback
+  // to a local run.
+  ScriptedProcessLauncher failing = ScriptedProcessLauncher::MissingProgram();
+  Expect(!project::GitStageAll(root, failing), "a launcher that cannot run git fails the call");
+  Expect(!failing.runs.empty(), "having actually been asked");
+}
+
 }  // namespace
 
 void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
@@ -177,6 +203,8 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestTruncatedStatusIsNotACompleteChangeList);
   AddTest(tests, "ProcessLauncher/StatusRefreshDistinguishesItsFailures",
           TestStatusRefreshDistinguishesItsFailures);
+  AddTest(tests, "ProcessLauncher/StatusServiceRunsThroughTheLauncherItIsGiven",
+          TestStatusServiceRunsThroughTheLauncherItIsGiven);
 }
 
 }  // namespace microide::tests

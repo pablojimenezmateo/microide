@@ -144,7 +144,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
   const std::filesystem::path root = state_.root;
 
   const std::optional<std::vector<project::GitWorkingTreeEntry>> entries =
-      project::CollectGitWorkingTreeEntries(root);
+      project::CollectGitWorkingTreeEntries(root, state_.launcher());
   if (!entries.has_value()) {
     // git could not be asked — it is not installed, it failed, or its output was
     // truncated. Saying "no conflicts to review" here would be a claim about the

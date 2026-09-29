@@ -12,10 +12,10 @@
 namespace microide::project {
 
 std::optional<std::vector<GitWorkingTreeEntry>> CollectGitWorkingTreeEntries(
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher) {
   util::PerformanceTrace::Scope perf_scope("git::CollectGitWorkingTreeEntries");
   util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+  const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return std::nullopt;  // not a repository is not the same as a clean one
   }
@@ -26,16 +26,19 @@ std::optional<std::vector<GitWorkingTreeEntry>> CollectGitWorkingTreeEntries(
   return entries;
 }
 
-bool GitStageAll(const std::filesystem::path& root) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+bool GitStageAll(const std::filesystem::path& root,
+                 const platform::ProcessLauncher& launcher) {
+  const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return false;
   }
   return repo.StageAll();
 }
 
-bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+bool GitStagePath(const std::filesystem::path& root,
+                  const platform::ProcessLauncher& launcher,
+                  const std::filesystem::path& absolute_path) {
+  const GitRepository repo(root, launcher);
   if (absolute_path.empty() || !repo.IsValid()) {
     return false;
   }
@@ -47,9 +50,10 @@ bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path
   return repo.Stage(*relative_path);
 }
 
-bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path,
-                    bool may_be_staged_rename) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+bool GitUnstagePath(const std::filesystem::path& root,
+                    const platform::ProcessLauncher& launcher,
+                    const std::filesystem::path& absolute_path, bool may_be_staged_rename) {
+  const GitRepository repo(root, launcher);
   if (absolute_path.empty() || !repo.IsValid()) {
     return false;
   }
@@ -61,9 +65,10 @@ bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::pa
   return repo.Unstage(*relative_path, may_be_staged_rename);
 }
 
-bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::path& absolute_path,
-                    bool may_be_staged_rename) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+bool GitDiscardPath(const std::filesystem::path& root,
+                    const platform::ProcessLauncher& launcher,
+                    const std::filesystem::path& absolute_path, bool may_be_staged_rename) {
+  const GitRepository repo(root, launcher);
   if (absolute_path.empty() || !repo.IsValid()) {
     return false;
   }
@@ -75,8 +80,9 @@ bool GitDiscardPath(const std::filesystem::path& root, const std::filesystem::pa
   return repo.Discard(*relative_path, may_be_staged_rename);
 }
 
-bool GitDiscardAll(const std::filesystem::path& root, bool remove_untracked) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+bool GitDiscardAll(const std::filesystem::path& root,
+                   const platform::ProcessLauncher& launcher, bool remove_untracked) {
+  const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return false;
   }
