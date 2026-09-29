@@ -441,6 +441,14 @@ struct DeferredTabHandle {
   std::optional<editor::SelectionRange> selection;
 };
 
+// Whether a clean reload must re-establish for itself that the file actually
+// changed. The guard is not free — settling a moved mtime on an unchanged file
+// costs a read — and a caller that has already settled it would otherwise pay for
+// the same answer twice. Namespace scope because the shell, the service and the
+// coordinator all name it and the shell sees none of the other two as complete
+// types.
+enum class EditorReloadEchoGuard { Check, AlreadyResolved };
+
 struct TabEntry {
   enum class Kind {
     Editor,

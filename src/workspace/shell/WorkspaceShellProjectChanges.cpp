@@ -4,6 +4,7 @@
 #include <set>
 
 #include "project/ProjectChangeNormalizer.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/TextFileIO.h"
 #include "workspace/services/EditorTabService.h"
@@ -262,7 +263,11 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
   // Reload silently and, only when an open clean buffer was actually refreshed,
   // surface a passive "reloaded from disk" notice.
   const bool had_open_buffer = CountOpenBufferViews(normalized_path) > 0;
-  ReloadCleanEditorTabsForPath(normalized_path);
+  // AlreadyResolved: the verdict above IS the echo check, and it has already read
+  // the file (off-thread) if a read was needed. Letting the reload re-ask would
+  // read the same file a second time, on the shell thread, to learn what the
+  // caller just established.
+  ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved);
   if (had_open_buffer) {
     SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice,
                     normalized_path);
@@ -278,6 +283,7 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
   if (!pending_external_change_confirms_.insert(normalized_path.generic_string()).second) {
     return;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmPostedReads);
   auto digest = std::make_shared<std::optional<std::uint64_t>>();
   (void)file_read_service_.Begin({
       .path = normalized_path,

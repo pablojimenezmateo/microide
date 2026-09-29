@@ -516,7 +516,15 @@ namespace microide::util {
   X(DocumentEdits, "document.edits")                                                            \
   X(DocumentAddBufferCompactions, "document.add_buffer_compactions")                            \
   X(DocumentFullTextMaterializations, "document.full_text_materializations")                    \
-  X(DocumentFullTextBytes, "document.full_text_bytes")
+  X(DocumentFullTextBytes, "document.full_text_bytes")                                          \
+  /* --- external-change confirmation ------------------------------------- */                 \
+  /* Files read ON THE SHELL THREAD to settle whether a moved mtime is our own */               \
+  /* write coming back. The watcher sweep posts that read to the reader thread */               \
+  /* instead, so this counts only the paths that still confirm inline: the save */              \
+  /* conflict guard and the reload guard for a caller with no verdict in hand.  */              \
+  X(ExternalChangeConfirmInlineReads, "external_change.confirm_inline_reads")                   \
+  /* Digests posted to the reader thread for the same question.               */                \
+  X(ExternalChangeConfirmPostedReads, "external_change.confirm_posted_reads")
 
 enum class PerfCounterId : std::size_t {
 #define MICROIDE_PERF_COUNTER_ENUM(id, name) id,

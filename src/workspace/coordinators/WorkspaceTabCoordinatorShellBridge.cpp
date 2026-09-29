@@ -791,8 +791,9 @@ std::vector<GroupTabRef> WorkspaceShell::DirtyEditorGroupTabsForProject(
       .DirtyGroupTabsForProject(project_index);
 }
 
-void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
-  MakeEditorTabService().ReloadCleanEditorTabsForPath(path);
+void WorkspaceShell::ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+                                                  EditorReloadEchoGuard echo_guard) {
+  MakeEditorTabService().ReloadCleanEditorTabsForPath(path, echo_guard);
 }
 
 bool WorkspaceShell::OpenUntitledTab() {

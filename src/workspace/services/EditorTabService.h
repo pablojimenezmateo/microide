@@ -40,7 +40,9 @@ class EditorTabService {
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
-  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
+  using EchoGuard = TabCoordinator::EchoGuard;
+  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+                                    EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
   bool DiskSignatureMatchesOpenView(const std::filesystem::path& path) const;

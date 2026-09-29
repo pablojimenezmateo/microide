@@ -11,6 +11,7 @@
 #include <string>
 
 #include "util/PathMatch.h"
+#include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
 
 namespace microide::workspace {
@@ -121,6 +122,7 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
         return false;  // a size change is a real change; no read needed
       }
       if (!disk_content_hash.has_value() && !disk_read_failed) {
+        util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
         if (const std::optional<std::string> bytes = util::ReadTextFile(normalized_path);
             bytes.has_value()) {
           disk_content_hash = util::ContentHash(*bytes);

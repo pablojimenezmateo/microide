@@ -92,8 +92,9 @@ void EditorTabService::SyncActiveEditorTabMetadata() {
   coordinator_.SyncActiveEditorTabMetadata();
 }
 
-void EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
-  coordinator_.ReloadCleanEditorTabsForPath(path);
+void EditorTabService::ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+                                                   EchoGuard echo_guard) {
+  coordinator_.ReloadCleanEditorTabsForPath(path, echo_guard);
 }
 
 void EditorTabService::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {

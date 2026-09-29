@@ -485,15 +485,17 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
   }
 }
 
-void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path) {
-  ReloadEditorTabsForPath(path, /*clean_only=*/true);
+void TabCoordinator::ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+                                                  EchoGuard echo_guard) {
+  ReloadEditorTabsForPath(path, /*clean_only=*/true, echo_guard);
 }
 
 void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path) {
   ReloadEditorTabsForPath(path, /*clean_only=*/false);
 }
 
-void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only) {
+void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
+                                             EchoGuard echo_guard) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   operations_.invalidate_editor_blame_path(normalized_path);
 
@@ -550,7 +552,7 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   // still match the file it was loaded from -- skipping there would silently
   // refuse to discard. mtime+size is the same equality the self-write echo
   // suppression in WorkspaceShellProjectChanges already trusts.
-  if (clean_only &&
+  if (clean_only && echo_guard == EchoGuard::Check &&
       DiskSignatureMatchesOpenView(normalized_path)) {
     return;
   }

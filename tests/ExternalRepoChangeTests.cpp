@@ -1,5 +1,9 @@
 #include "TestSupport.h"
 
+#include "editor/LineSpan.h"
+#include "util/PerformanceCounters.h"
+#include "util/StringUtil.h"
+
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -198,6 +202,10 @@ platform::IndexUpdateBatch BuildModifiedBatch(const std::filesystem::path& root,
 // occurrence should say which input it saw rather than only which banner was
 // missing, because that is the difference between a fixture problem and a real
 // suppression bug.
+std::string BufferText(const editor::TextViewport& view) {
+  return util::SerializeLinesStreaming(editor::LineSpan(view.lines()), view.line_ending());
+}
+
 std::string ExternalChangeDiagnostics(WorkspaceShell& shell,
                                       const std::filesystem::path& file_path) {
   const auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
@@ -337,6 +345,8 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
   // Same bytes, moved mtime: the one case that cannot be settled by the stat and
   // therefore has to read.
   const std::uint64_t reads_before = WorkspaceShellTestAccess::PostedFileReadCount(shell);
+  const std::uint64_t inline_reads_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
   WriteFile(file_path, "same bytes\n");
   ForceDistinctModificationTime(file_path);
   DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the identical-rewrite batch");
@@ -358,6 +368,27 @@ void TestWorkspaceShellIdenticalRewriteConfirmsOffTheShellThread() {
          "a size change is decided by the stat alone, with no read posted");
   Expect(WorkspaceShellTestAccess::HasReloadedNoticeBanner(shell, file_path),
          "and it still reaches the clean buffer as a reload");
+
+  // The case where the second read actually happened: same SIZE, different bytes,
+  // over a CLEAN buffer. The digest says "changed", so the sweep reloads — and the
+  // reload used to re-ask the echo question for itself, reading the same file a
+  // second time on the shell thread to learn what the sweep had just settled. A
+  // size change (above) never reached that read, which is why asserting it there
+  // proved nothing.
+  WriteFile(file_path, "DIFFERENT LENGTH ENTIRELY\n");
+  ForceDistinctModificationTime(file_path);
+  DispatchAndApply(shell, BuildModifiedBatch(root, relative), "the same-size rewrite batch");
+  Expect(WorkspaceShellTestAccess::PostedFileReadCount(shell) == reads_after_confirm + 1,
+         "the same-size rewrite posts one digest");
+  Expect(BufferText(WorkspaceShellTestAccess::ActiveEditor(shell)) ==
+             "DIFFERENT LENGTH ENTIRELY\n",
+         "and the clean buffer is reloaded with the new content");
+
+  // The whole sweep did no confirming read on the shell thread. That is the point
+  // of the exercise, and it is a separate claim from "a read was posted".
+  Expect(util::ReadPerformanceCounter(
+             util::PerfCounterId::ExternalChangeConfirmInlineReads) == inline_reads_before,
+         "no confirming read ran on the shell thread");
 }
 
 // The other half: a real external change must still reach the user. Without it the

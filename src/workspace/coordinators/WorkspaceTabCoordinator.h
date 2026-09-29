@@ -156,13 +156,23 @@ class TabCoordinator {
   void SyncActiveEditorTab();
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
-  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path);
+  // Whether the clean reload must re-establish for itself that the file actually
+  // changed. The guard is not free — settling a moved mtime on an unchanged file
+  // costs a read — and the watcher sweep has ALREADY settled it (off-thread) by
+  // the time it calls this, so re-asking there read the same file a second time
+  // on the shell thread. `Check` is for callers with no verdict in hand: opening
+  // a file that is already open, which is what Ctrl+P to an open tab does, where
+  // the guard is what avoids a full re-read plus a width rebuild.
+  using EchoGuard = EditorReloadEchoGuard;
+  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+                                    EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   // Shared reload core for both of the above. Reloads every editor view on `path`
   // across ALL editor groups (not just the focused one) so a split view of the same
   // file in the non-focused group is refreshed too. `clean_only` skips dirty views
   // (the clean-reload path); false reloads unconditionally (the from-disk overwrite).
-  void ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only);
+  void ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
+                               EchoGuard echo_guard = EchoGuard::Check);
   // Force-saves every dirty editor view on `path`, bypassing the save-time
   // disk-conflict guard (the user explicitly chose to overwrite). Returns true
   // if at least one view was saved.

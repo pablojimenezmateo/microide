@@ -360,6 +360,7 @@ bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) cons
   if (!CouldConfirmDiskContent(current)) {
     return false;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
   const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
   if (!bytes.has_value()) {
     return false;
