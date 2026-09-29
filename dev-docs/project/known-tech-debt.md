@@ -556,14 +556,21 @@ save, which is the one that used to freeze the window on every Ctrl+S. Three thi
 it did not finish, all of them the same shape — a caller that acts on the save's
 completion, and therefore still blocks:
 
-- **the blocking callers.** Closing a tab, renaming, deleting, quitting and the
-  dirty prompt all call `SaveGroupTab` in `SaveMode::Blocking`, which reaches
-  `SaveFormatterService::RunBlocking` and waits. The wait is no worse than it ever
-  was, and it is bounded by the same five-second cap, but it is still a freeze —
-  just a rarer one. Finishing it means what the design's G5 describes: those
-  callers hold a continuation and run it when the save completes, rather than
-  waiting for it. `CheckNoSynchronousSubprocessInWorkspace`'s second half confines
-  `RunBlocking` to the save-pipeline TU so this cannot spread meanwhile.
+- **the blocking callers.** Renaming, deleting, quitting, closing a PROJECT and
+  the multi-tab close all call `SaveGroupTab` in `SaveMode::Blocking`, which
+  reaches `SaveFormatterService::RunBlocking` and waits. The wait is bounded by
+  the same five-second cap, but it is still a freeze.
+  `CheckNoSynchronousSubprocessInWorkspace`'s second half confines `RunBlocking`
+  to the save-pipeline TU so this cannot spread meanwhile.
+
+  **Closing a single dirty tab is done (2026-09-29)** and is the pattern for the
+  rest: `TabCoordinator::SaveThenClose` defers the save and marks the tab
+  `close_after_save`, and the formatter completion performs the close once the
+  write lands. The shell thread returns immediately; the close waits, because
+  closing before the write would discard the edits the user asked to keep. The
+  remaining callers are harder for one reason each — quit must not exit until
+  every save lands, close-project and multi-tab close have N in flight at once,
+  and rename/delete have to sequence the path mutation AFTER the write.
 - **save participants still run on the shell thread.** They are plugin calls that
   hand off to the plugin worker and wait, so they are bounded by the plugin
   runtime's own budget rather than by a subprocess — but they are a wait, and
