@@ -416,11 +416,81 @@ RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path&
   return result;
 }
 
+RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "project-tree writes go through the write gate";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!RequireRuleTarget(result, src_dir)) {
+    return result;
+  }
+
+  // `util::WriteTextFileAtomically` is the primitive that replaces a file's
+  // contents. Six subsystems used to call it (or its neighbours) directly and share
+  // nothing above it: no common notion of what the write was computed against, no
+  // serialization between them, and no single place that knows a file under the
+  // project root just changed — which is why each of them grew its own post-write
+  // fixup. `project::FileWriteGate` is that place, and it is the seam a remote
+  // project needs (MirrorWriteGate writes into the mirror and enqueues the push).
+  //
+  // Scope: the content writers in the layers that hold project files open. NOT the
+  // LSP resource-ops journal or the sidebar's tree operations — those create,
+  // rename and delete paths transactionally with rollback, which is a different
+  // contract the gate does not offer yet (TD-2026-09-29-305). NOT persistence, the
+  // tool-download cache or the control channel's descriptor, none of which write
+  // into a project tree.
+  static constexpr std::array<const char*, 3> kGatedDirectories = {
+      "workspace/", "plugin/", "editor/",
+  };
+  const std::regex raw_write(R"(\bWriteTextFileAtomically\s*\()");
+
+  bool saw_gate_call = false;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file() || !IsSourceExtension(entry.path())) {
+      continue;
+    }
+    const std::string key = std::filesystem::relative(entry.path(), src_dir).generic_string();
+    const std::string text = ReadText(entry.path());
+    if (key.starts_with("project/FileWriteGate")) {
+      if (std::regex_search(text, raw_write)) {
+        saw_gate_call = true;
+      }
+      continue;
+    }
+    bool gated_layer = false;
+    for (const std::string_view dir : kGatedDirectories) {
+      if (key.starts_with(dir)) {
+        gated_layer = true;
+        break;
+      }
+    }
+    if (!gated_layer) {
+      continue;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, raw_write,
+        "a write that replaces a file in a project tree must go through "
+        "project::FileWriteGate, not util::WriteTextFileAtomically directly — the gate "
+        "is what captures the post-write signature and what a remote project replaces");
+  }
+  if (!saw_gate_call) {
+    result.missing_targets.push_back(Violation{
+        .path = src_dir / "project" / "FileWriteGate.cpp",
+        .line = 1,
+        .message = "the gate no longer calls WriteTextFileAtomically; either the primitive "
+                   "was renamed (repoint this rule) or the gate stopped writing — either "
+                   "way the rule is scanning for a call form the tree no longer uses",
+    });
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
       {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
       {"CheckEveryUserSaveRunsTheSamePreparation", CheckEveryUserSaveRunsTheSamePreparation},
+      {"CheckProjectWritesGoThroughTheWriteGate", CheckProjectWritesGoThroughTheWriteGate},
   };
   return rules;
 }

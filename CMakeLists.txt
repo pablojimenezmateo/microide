@@ -270,6 +270,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
   src/project/FileOperationService.cpp
+  src/project/FileWriteGate.cpp
   src/project/GitBlameParser.cpp
   src/project/GitBlameService.cpp
   src/project/GitBranchOperations.cpp
@@ -1151,6 +1152,7 @@ add_executable(microide_tests
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
   tests/CommandLineTests.cpp
+  tests/FileWriteGateTests.cpp
   tests/SaveFormatterPipelineTests.cpp
   tests/ProcessLauncherTests.cpp
   tests/FileIndexWatcherTests.cpp
@@ -1667,6 +1669,7 @@ add_executable(microide_diff_bench
   src/editor/PieceTree.cpp
   src/editor/TextLayoutCache.cpp
   src/editor/WordBoundary.cpp
+  src/project/FileWriteGate.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp
   src/editor/TextViewportFileIO.cpp

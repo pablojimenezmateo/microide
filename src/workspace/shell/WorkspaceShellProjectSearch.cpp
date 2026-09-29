@@ -1,3 +1,4 @@
+#include "project/FileWriteGate.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
@@ -109,7 +110,7 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   for (auto& buffered : pending) {
     // Atomic temp-file + rename: a failed write leaves the original intact. Keep
     // going and collect failures rather than leaving a partial half-applied set.
-    if (!util::WriteTextFileAtomically(buffered.absolute_path, buffered.content)) {
+    if (!project::LocalFileWriteGate().WriteText(buffered.absolute_path, buffered.content).ok) {
       ++outcome.failed_write_count;
       continue;
     }

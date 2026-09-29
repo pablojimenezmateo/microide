@@ -1,5 +1,7 @@
 #include "workspace/coordinators/WorkspaceCompareInteractionCoordinator.h"
 
+#include "project/FileWriteGate.h"
+
 #include <algorithm>
 
 #include "project/GitStatusService.h"
@@ -738,7 +740,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
 
     const auto restore_working_file = [&]() {
       if (backup.has_value()) {
-        util::WriteTextFileAtomically(merge_tab->output_path, *backup);
+        (void)project::LocalFileWriteGate().WriteText(merge_tab->output_path, *backup);
       }
       merge_tab->result_viewport.SetDirty(prior_dirty);
       merge_tab->disk_result_tick = prior_disk_tick;

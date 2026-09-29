@@ -1111,6 +1111,50 @@ void RunProcessLauncherRuleFixtures() {
          "spawn rule must accept a launcher that still calls the spawn primitive");
 }
 
+void RunWriteGateRuleFixtures() {
+  TemporaryDirectory gate_dir;
+  const std::filesystem::path& root = gate_dir.path();
+  std::filesystem::create_directories(root / "src/project");
+  std::filesystem::create_directories(root / "src/workspace");
+  std::filesystem::create_directories(root / "src/editor");
+  std::filesystem::create_directories(root / "src/platform");
+  // The rule reports a missing target unless the gate itself still calls the
+  // primitive, so the fixture root carries one.
+  WriteFile(root / "src/project/FileWriteGate.cpp",
+            "bool W(){ return util::WriteTextFileAtomically(p, t); }\n");
+
+  WriteFile(root / "src/workspace/Replace.cpp",
+            "void F(){ util::WriteTextFileAtomically(path, text); }\n");
+  WriteFile(root / "src/editor/Save.cpp",
+            "void G(){ util::WriteTextFileAtomically(path, text); }\n");
+  const RuleResult flagged = CheckProjectWritesGoThroughTheWriteGate(root);
+  Expect(flagged.violations.size() == 2,
+         "the write-gate rule must flag a raw atomic write in workspace and in editor");
+
+  // Positive control: the same writes routed through the gate.
+  WriteFile(root / "src/workspace/Replace.cpp",
+            "void F(){ project::LocalFileWriteGate().WriteText(path, text); }\n");
+  WriteFile(root / "src/editor/Save.cpp",
+            "void G(){ write_gate_->WriteText(path, text); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
+         "the write-gate rule must accept writes routed through the gate");
+
+  // Layer scoping, and it is the half worth pinning: platform/ owns the atomic
+  // write primitive and its neighbours, and is NOT a layer that holds project files
+  // open. A rule that flagged it would have to grow an allowlist for the primitive
+  // itself.
+  WriteFile(root / "src/platform/FsOps.cpp",
+            "void H(){ util::WriteTextFileAtomically(path, text); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
+         "the write-gate rule is scoped to the layers that hold project files open");
+
+  // Loud-missing-target guard: a gate that no longer writes means the rule is
+  // scanning for a call form the tree does not use.
+  WriteFile(root / "src/project/FileWriteGate.cpp", "bool W(){ return false; }\n");
+  Expect(!CheckProjectWritesGoThroughTheWriteGate(root).missing_targets.empty(),
+         "the write-gate rule must report that the gate no longer calls the primitive");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -1132,6 +1176,7 @@ void RunAllRuleFixtures() {
   RunHintSeparatorRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();
   RunProcessLauncherRuleFixtures();
+  RunWriteGateRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

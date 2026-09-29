@@ -5,6 +5,8 @@
 
 #include "editor/TextViewport.h"
 
+#include "project/FileWriteGate.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -238,7 +240,8 @@ bool TextViewport::Save() {
     // the file keeps it.
     text.insert(0, util::kUtf8Bom);
   }
-  if (!util::WriteTextFileAtomically(document_->path, text)) {
+  const project::FileWriteGate::Result written = write_gate_->WriteText(document_->path, text);
+  if (!written.ok) {
     return false;
   }
 
@@ -275,7 +278,9 @@ bool TextViewport::Save() {
   // Record the just-written file's identity so (a) a save-time conflict check
   // sees a matching signature next time and (b) the watcher's echo of our own
   // write is recognized and suppressed instead of forcing a redundant reload.
-  document_->disk_signature = util::StatFileSignature(document_->path);
+  // The gate captured it as part of the write, so this is no longer a second stat
+  // of a path we just touched.
+  document_->disk_signature = written.signature;
   return true;
 }
 

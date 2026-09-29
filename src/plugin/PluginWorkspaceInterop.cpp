@@ -1,5 +1,7 @@
 #include "plugin/PluginWorkspaceInterop.h"
 
+#include "project/FileWriteGate.h"
+
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <array>
@@ -184,7 +186,12 @@ int LuaFilesWriteText(lua_State* state, const PluginFsContext& fs, bool* denied)
     return 1;
   }
   lua_pushboolean(
-      state, util::WriteTextFileAtomically(*path, std::string_view(text, text_length)) ? 1 : 0);
+      state,
+      project::LocalFileWriteGate()
+              .WriteText(*path, std::string_view(text, text_length))
+              .ok
+          ? 1
+          : 0);
   return 1;
 }
 

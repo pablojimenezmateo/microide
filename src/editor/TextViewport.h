@@ -23,6 +23,7 @@
 #include "editor/TextLayoutCache.h"
 #include "editor/TextViewportUndoHistory.h"
 #include "util/StringUtil.h"
+#include "project/FileWriteGate.h"
 #include "util/TextFileIO.h"
 
 namespace microide::editor {
@@ -116,6 +117,12 @@ class TextViewport {
 
   bool OpenFile(const std::filesystem::path& path);
   bool Save();
+  // Where this viewport's saves are written. Local by default; a remote project
+  // hands its viewports the mirror's gate so a save lands in the mirror and is
+  // pushed, rather than writing a local path that only looks like the file.
+  // A reference into something that outlives the viewport (the process-wide local
+  // gate, or the project's own).
+  void SetWriteGate(project::FileWriteGate& gate) { write_gate_ = &gate; }
 
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
@@ -328,6 +335,7 @@ class TextViewport {
   // is false for untitled buffers and files that were absent when last sampled.
   const util::FileSignature& disk_signature() const { return document_->disk_signature; }
   bool HasDiskSignature() const { return document_->disk_signature.exists; }
+  const project::FileWriteGate& write_gate() const { return *write_gate_; }
   // True when `other` is another view of this viewport's document (a split
   // clone, a second tab on the same file). Views of one document share its
   // content, dirty state, undo history and disk signature; closing one of them
@@ -1191,6 +1199,11 @@ class TextViewport {
   // reset) by `ConsumeFoldEditSpan`.
   LineEditSpan fold_edit_span_;
   std::shared_ptr<DocumentState> document_;
+  // Not owned, and deliberately per-VIEWPORT rather than per-document: two
+  // viewports can share one buffer (the same file in two panes), and both belong to
+  // the same project, so they resolve to the same gate anyway — but a viewport is
+  // what a project hands its settings to.
+  project::FileWriteGate* write_gate_ = &project::LocalFileWriteGate();
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
   // Sticky column for vertical motion, measured in ON-SCREEN cells of the caret's

@@ -96,6 +96,10 @@ void RunKernelWindowingLibraryRuleFixtures();
 // asynchronous half is a per-file co-occurrence check rather than a call-shape match.
 void RunProcessLauncherRuleFixtures();
 
+// Negative + positive control for CheckProjectWritesGoThroughTheWriteGate, including
+// the layer scoping: the same call is a violation in workspace and fine in project.
+void RunWriteGateRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

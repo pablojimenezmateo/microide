@@ -20,6 +20,10 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
 // it was triggered from, and refuses the same disk conflicts. See the rule body.
 RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path& repo_root);
 
+// Every write that replaces a file inside a project tree goes through
+// project::FileWriteGate. See the rule body for what is out of scope and why.
+RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& repo_root);
+
 const std::vector<NamedRule>& KernelArchitectureRuleList();
 
 }  // namespace microide::tests::architecture
