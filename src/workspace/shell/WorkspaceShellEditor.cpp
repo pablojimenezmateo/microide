@@ -357,7 +357,7 @@ WorkspaceShell::TabEntry::EditorTabState WorkspaceShell::MakeEditorTabState(
   state.restored_cursor_column = view.cursor_column();
   state.restored_scroll_line = view.scroll_line();
   state.restored_horizontal_scroll = view.horizontal_scroll();
-  state.needs_restore = false;
+  state.content = EditorTabState::Content::Ready;
   return state;
 }
 
@@ -367,8 +367,8 @@ void WorkspaceShell::SyncActiveEditorTabMetadata() {
 
 std::filesystem::path WorkspaceShell::EditorViewPath(
     const TabEntry::EditorTabState& editor_state) const {
-  return editor_state.needs_restore ? editor_state.restored_path.lexically_normal()
-                                     : editor_state.viewport.path().lexically_normal();
+  return editor_state.content_pending() ? editor_state.restored_path.lexically_normal()
+                                        : editor_state.viewport.path().lexically_normal();
 }
 
 bool WorkspaceShell::ActivateCurrentTabAfterStateLoad() {
@@ -387,7 +387,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
 
   const std::filesystem::path old_path = editor_tab->viewport.path().lexically_normal();
   editor_tab->viewport = configured_view;
-  editor_tab->needs_restore = false;
+  editor_tab->content = EditorTabState::Content::Ready;
   editor_tab->restored_path = configured_view.path().lexically_normal();
   editor_tab->folding_model->Clear();
   const std::filesystem::path new_path = configured_view.path().lexically_normal();
@@ -534,8 +534,8 @@ namespace {
 std::optional<std::filesystem::path> OpenBufferViewPath(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
     std::filesystem::path view_path =
-        (tab.editor_state->needs_restore ? tab.editor_state->restored_path
-                                         : tab.editor_state->viewport.path())
+        (tab.editor_state->content_pending() ? tab.editor_state->restored_path
+                                             : tab.editor_state->viewport.path())
             .lexically_normal();
     if (view_path.empty()) {
       return std::nullopt;

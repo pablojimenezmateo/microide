@@ -191,7 +191,7 @@ TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
     editor_state.restored_cursor_column = tab.editor_state->restored_cursor_column;
     editor_state.restored_scroll_line = tab.editor_state->restored_scroll_line;
     editor_state.restored_horizontal_scroll = tab.editor_state->restored_horizontal_scroll;
-    editor_state.needs_restore = tab.editor_state->needs_restore;
+    editor_state.content = tab.editor_state->content;
     editor_state.snippet_session = tab.editor_state->snippet_session;
     clone.editor_state = std::move(editor_state);
   } else if (tab.deferred_handle.has_value()) {

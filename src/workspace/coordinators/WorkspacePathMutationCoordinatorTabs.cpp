@@ -179,7 +179,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         const std::filesystem::path updated_path =
             util::ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
 
-        if (!preserve_unsaved_state && !editor_state.needs_restore &&
+        if (!preserve_unsaved_state && !editor_state.content_pending() &&
             editor_state.viewport.dirty()) {
           const std::size_t cursor_line = editor_state.viewport.cursor_line();
           const std::size_t cursor_column = editor_state.viewport.cursor_column();
@@ -194,18 +194,18 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
             editor_state.viewport.SetScrollLine(scroll_line);
             editor_state.viewport.SetHorizontalScroll(horizontal_scroll);
           }
-        } else if (!editor_state.needs_restore) {
+        } else if (!editor_state.content_pending()) {
           editor_state.viewport.SetPath(updated_path);
         }
 
         if (!close_tab) {
           editor_state.restored_path = updated_path;
-          if (!editor_state.needs_restore) {
+          if (!editor_state.content_pending()) {
             editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
             editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
             editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
             editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
-            editor_state.needs_restore = false;
+            editor_state.content = EditorTabState::Content::Ready;
           }
           retargeted = true;
         }
@@ -289,7 +289,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         continue;
       }
       auto& editor_state = *tab.editor_state;
-      if (editor_state.needs_restore) {
+      if (editor_state.content_pending()) {
         // Restore-pending tab: fix the deferred-open target path.
         if (!editor_state.restored_path.empty() &&
             util::PathEqualsOrWithinNormalized(editor_state.restored_path, old_path)) {

@@ -442,11 +442,11 @@ bool PersistenceCoordinator::RestoreSessionState() {
                                            persisted_tab.scroll_line,
                                            persisted_tab.horizontal_scroll);
       editor_state.viewport = std::move(restored_view);
-      editor_state.needs_restore = false;
+      editor_state.content = EditorTabState::Content::Ready;
     } else if (std::error_code exists_ec;
                !view_path.empty() && std::filesystem::exists(view_path, exists_ec) &&
                !exists_ec) {
-      editor_state.needs_restore = true;
+      editor_state.content = EditorTabState::Content::Deferred;
     } else {
       return std::nullopt;
     }
@@ -466,7 +466,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
       restored_tab.editor_state = std::move(editor_state);
     } else {
       std::optional<editor::SelectionRange> selection;
-      if (!editor_state.needs_restore) {
+      if (!editor_state.content_pending()) {
         selection = editor_state.viewport.selection_range();
       }
       restored_tab.deferred_handle = TabEntry::DeferredTabHandle{
@@ -760,11 +760,11 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   // ~12 allocations even when it changes nothing -- once per open tab of every
   // group, on every session save (TD-2026-08-10-174).
   const std::filesystem::path& source_path =
-      editor_state.needs_restore ? editor_state.restored_path : persisted_viewport->path();
+      editor_state.content_pending() ? editor_state.restored_path : persisted_viewport->path();
   const std::filesystem::path normalized_path =
       util::PathTextNeedsNormalizing(source_path.native()) ? source_path.lexically_normal()
                                                            : source_path;
-  const bool dirty_snapshot = !editor_state.needs_restore && persisted_viewport->dirty();
+  const bool dirty_snapshot = !editor_state.content_pending() && persisted_viewport->dirty();
 
   // Enforce the reader's dirty-buffer budget BEFORE snapshotting. Without this a
   // huge dirty generated file materializes its whole buffer into a second vector
@@ -795,17 +795,17 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
     return std::nullopt;
   }
   const std::size_t cursor_line =
-      editor_state.needs_restore ? editor_state.restored_cursor_line
-                                 : persisted_viewport->cursor_line();
+      editor_state.content_pending() ? editor_state.restored_cursor_line
+                                     : persisted_viewport->cursor_line();
   const std::size_t cursor_column =
-      editor_state.needs_restore ? editor_state.restored_cursor_column
-                                 : persisted_viewport->cursor_column();
+      editor_state.content_pending() ? editor_state.restored_cursor_column
+                                     : persisted_viewport->cursor_column();
   const std::size_t scroll_line =
-      editor_state.needs_restore ? editor_state.restored_scroll_line
-                                 : persisted_viewport->scroll_line();
+      editor_state.content_pending() ? editor_state.restored_scroll_line
+                                     : persisted_viewport->scroll_line();
   const std::size_t horizontal_scroll =
-      editor_state.needs_restore ? editor_state.restored_horizontal_scroll
-                                 : persisted_viewport->horizontal_scroll();
+      editor_state.content_pending() ? editor_state.restored_horizontal_scroll
+                                     : persisted_viewport->horizontal_scroll();
 
   PersistedEditorTabState persisted_tab;
   persisted_tab.kind = "editor";

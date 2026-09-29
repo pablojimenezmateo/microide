@@ -37,7 +37,7 @@ bool TabCoordinator::CloseWouldDiscardEdits(std::size_t index) const {
   // edits are its own to lose.
   const auto document_view = [](const TabEntry& tab) -> const editor::TextViewport* {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-        !tab.editor_state->needs_restore) {
+        !tab.editor_state->content_pending()) {
       return &tab.editor_state->viewport;
     }
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&

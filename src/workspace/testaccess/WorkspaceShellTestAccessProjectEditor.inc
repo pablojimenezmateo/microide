@@ -779,7 +779,7 @@
       return &tab.compare->right_viewport;
     }
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-        tab.editor_state->needs_restore) {
+        tab.editor_state->content_pending()) {
       return nullptr;
     }
     return &tab.editor_state->viewport;

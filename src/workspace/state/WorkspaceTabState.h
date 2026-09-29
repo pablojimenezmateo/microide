@@ -359,15 +359,37 @@ struct EditorTabState {
   // modelled as editor *groups* above the tab level (see `EditorGroup`), not as
   // a split tree inside a tab.
   editor::TextViewport viewport;
-  // Deferred-restore metadata: while `needs_restore` is true the viewport is a
-  // placeholder and these fields carry the real on-disk path + caret/scroll so
-  // the tab can be hydrated lazily (session restore / background open).
+  // Where this tab's content is. A tab can exist before its content does — a
+  // session-restored tab that has never been activated, and a file large enough
+  // that reading it on the shell thread would drop frames — and every guard in
+  // the tree asks the same question of it: is the viewport the file yet?
+  //
+  // `Deferred` is the lazily-hydrated tab: nothing has been read, and the
+  // `restored_*` fields below carry the on-disk path plus the caret and scroll
+  // to place once it is. `Loading` is the same tab with a read already in
+  // flight (`pending_load` names it). `Failed` is a read that finished and
+  // could not produce a buffer; the tab stays, so the user sees which file it
+  // was rather than a tab that silently vanished.
+  enum class Content : std::uint8_t {
+    Ready,
+    Deferred,
+    Loading,
+    Failed,
+  };
+  Content content = Content::Ready;
+  // The one question almost every call site actually asks: is the viewport NOT
+  // the file? Every non-Ready state answers yes, so a new state cannot be
+  // forgotten at a site that only knew about deferred restore.
+  [[nodiscard]] bool content_pending() const { return content != Content::Ready; }
+
+  // Deferred-restore metadata: while `content_pending()` the viewport is empty
+  // and these fields carry the real on-disk path + caret/scroll so the tab can
+  // be hydrated lazily (session restore / background open).
   std::filesystem::path restored_path;
   std::size_t restored_cursor_line = 0;
   std::size_t restored_cursor_column = 0;
   std::size_t restored_scroll_line = 0;
   std::size_t restored_horizontal_scroll = 0;
-  bool needs_restore = false;
 
   // Format-on-save runs off the shell thread, so a save can be in flight for this
   // tab with nothing written yet. Armed while that is true, with the
@@ -500,8 +522,8 @@ struct EditorPreferences {
 // pathname string plus a component list with a path per component).
 [[nodiscard]] inline const std::filesystem::path& EditorViewPathRef(
     const TabEntry::EditorTabState& editor_state) {
-  return editor_state.needs_restore ? editor_state.restored_path
-                                    : editor_state.viewport.path();
+  return editor_state.content_pending() ? editor_state.restored_path
+                                        : editor_state.viewport.path();
 }
 
 // Whether an editor tab's view is showing `normalized_path`, which the caller

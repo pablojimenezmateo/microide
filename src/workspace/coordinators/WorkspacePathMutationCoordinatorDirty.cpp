@@ -24,7 +24,7 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
       const TabEntry& tab = open_tabs[i];
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
         const auto& editor_state = *tab.editor_state;
-        if (!editor_state.needs_restore && !editor_state.viewport.path().empty() &&
+        if (!editor_state.content_pending() && !editor_state.viewport.path().empty() &&
             editor_state.viewport.dirty() &&
             util::PathEqualsOrWithinNormalized(editor_state.viewport.path(), normalized_path)) {
           targets.push_back(DirtyPathTarget{
@@ -200,7 +200,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
 
       auto& editor_state = *tab.editor_state;
       editor::TextViewport* viewport = &editor_state.viewport;
-      if (editor_state.needs_restore || viewport->path().empty() || !viewport->dirty()) {
+      if (editor_state.content_pending() || viewport->path().empty() || !viewport->dirty()) {
         continue;
       }
 
@@ -220,7 +220,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       editor_state.restored_cursor_column = viewport->cursor_column();
       editor_state.restored_scroll_line = viewport->scroll_line();
       editor_state.restored_horizontal_scroll = viewport->horizontal_scroll();
-      editor_state.needs_restore = false;
+      editor_state.content = EditorTabState::Content::Ready;
     }
     if (saved_any) {
       state.directory_tree.Refresh();

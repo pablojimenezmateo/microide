@@ -377,7 +377,7 @@ void TabCoordinator::SyncActiveEditorTab() {
   }
 
   auto& editor_state = *tab.editor_state;
-  if (editor_state.needs_restore) {
+  if (editor_state.content_pending()) {
     tab.path = operations_.editor_view_path(editor_state);
     tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
     return;
@@ -410,7 +410,7 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
       // Skip the preference re-apply for a freshly-hydrated tab: RestoreEditorTab
       // already applied current preferences, and re-running them here would fire
       // EnsureCursorVisible and clobber the restored scroll.
-      const bool was_deferred = tab.editor_state->needs_restore;
+      const bool was_deferred = tab.editor_state->content_pending();
       if (EnsureEditorTabLoaded(tab) && !was_deferred) {
         operations_.apply_editor_preferences(tab.editor_state->viewport);
       }
@@ -603,7 +603,7 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
       editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
       editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
       editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
-      editor_state.needs_restore = false;
+      editor_state.content = EditorTabState::Content::Ready;
       editor_state.folding_model->Clear();
       if (is_focused_group && i == group.active_tab_index) {
         SyncActiveEditorTabMetadata();

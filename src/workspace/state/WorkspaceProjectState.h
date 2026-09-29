@@ -619,7 +619,7 @@ struct EditorGroup {
   for (const EditorGroup& group : groups) {
     for (const TabEntry& tab : group.open_tabs) {
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-          !tab.editor_state->needs_restore && &tab.editor_state->viewport != exclude &&
+          !tab.editor_state->content_pending() && &tab.editor_state->viewport != exclude &&
           EditorViewPathIs(*tab.editor_state, normalized_path)) {
         return &tab.editor_state->viewport;
       }
@@ -650,7 +650,7 @@ struct EditorGroup {
   for (const EditorGroup& group : groups) {
     for (const TabEntry& tab : group.open_tabs) {
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-          !tab.editor_state->needs_restore &&
+          !tab.editor_state->content_pending() &&
           EditorViewPathIs(*tab.editor_state, normalized_path)) {
         return &tab.editor_state->viewport;
       }

@@ -15,7 +15,7 @@ namespace microide::workspace {
 
 bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   util::PerformanceTrace::Scope perf_scope("TabCoordinator::RestoreEditorTab");
-  if (!editor_state.needs_restore) {
+  if (!editor_state.content_pending()) {
     return true;
   }
   if (editor_state.restored_path.empty()) {
@@ -40,7 +40,7 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
                                      editor_state.restored_scroll_line,
                                      editor_state.restored_horizontal_scroll);
   editor_state.viewport = std::move(loaded_view);
-  editor_state.needs_restore = false;
+  editor_state.content = EditorTabState::Content::Ready;
   return true;
 }
 
@@ -51,7 +51,7 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
   }
 
   auto& editor_state = *tab.editor_state;
-  if (editor_state.needs_restore && !RestoreEditorTab(editor_state)) {
+  if (editor_state.content_pending() && !RestoreEditorTab(editor_state)) {
     return false;
   }
 
@@ -69,7 +69,7 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
     // which view state (scroll) is authoritative. Re-applying preferences here
     // would run EnsureCursorVisible again and snap scroll back onto the caret, so
     // only refresh preferences for tabs that were already loaded.
-    const bool was_deferred = tab.editor_state->needs_restore;
+    const bool was_deferred = tab.editor_state->content_pending();
     if (!EnsureEditorTabLoaded(tab)) {
       return false;
     }

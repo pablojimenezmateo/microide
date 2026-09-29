@@ -622,7 +622,7 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
         editor_state.restored_cursor_column = reopened_view->cursor_column();
         editor_state.restored_scroll_line = reopened_view->scroll_line();
         editor_state.restored_horizontal_scroll = reopened_view->horizontal_scroll();
-        editor_state.needs_restore = false;
+        editor_state.content = EditorTabState::Content::Ready;
         if (is_focused_group && i == group.active_tab_index) {
           SyncActiveEditorTabMetadata();
         }

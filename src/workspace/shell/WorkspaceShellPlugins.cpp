@@ -124,9 +124,9 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
         const auto& view = *tab.editor_state;
         const std::filesystem::path path =
-            (view.needs_restore ? view.restored_path : view.viewport.path()).lexically_normal();
+            (view.content_pending() ? view.restored_path : view.viewport.path()).lexically_normal();
         if (!path.empty()) {
-          if (view.needs_restore) {
+          if (view.content_pending()) {
             callback(path, nullptr);
           } else {
             callback(path, &view.viewport);
@@ -972,7 +972,7 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
   for (auto& tab : context_.current_project_state.focused_group().open_tabs) {
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       auto& editor_state = *tab.editor_state;
-      if (!editor_state.needs_restore && should_invalidate_viewport(editor_state.viewport)) {
+      if (!editor_state.content_pending() && should_invalidate_viewport(editor_state.viewport)) {
         editor_state.viewport.InvalidateSyntaxHighlighting();
       }
       continue;
@@ -1639,7 +1639,7 @@ void WorkspaceShell::CommitPendingRenameSave() {
   for (auto& group : context_.current_project_state.editor_groups) {
     for (auto& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          tab.editor_state->needs_restore) {
+          tab.editor_state->content_pending()) {
         continue;
       }
       editor::TextViewport& viewport = tab.editor_state->viewport;
