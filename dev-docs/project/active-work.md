@@ -321,8 +321,20 @@ that file says exactly what, and what each one left):
   byte-identical content, or an agent rewriting a file with the same bytes all
   refused the save and announced a reload of a file nobody had changed.
 
-Open: **G4** asynchronous file open, **G7** notifications with
-key/actions/progress/lifetime, **G8** `ProjectId`; the persisted cross-machine
+- **G7 (part) — notifications have identity, lifetime and progress.** A row can
+  carry a `key` (posting it again REPLACES the one on screen in place, so a
+  changing count is one row rather than a stack of them), can be `sticky` (it
+  reports a state and lives until its owner dismisses it by key, rather than
+  vanishing four seconds after the state began), and can carry a `progress`
+  fraction drawn as a bar. Sticky rows sit outside the transient visible cap and
+  under a cap of their own. First caller: "Project too large to index fully",
+  which is a state and was a four-second toast — after it faded nothing explained
+  why search results were incomplete. Still open in G7: per-row ACTIONS
+  (Reconnect, Compare, Show, Copy install command), which need hit-testing and
+  action dispatch in the toast.
+
+Open: **G4** asynchronous file open, the **actions** half of **G7**, **G8**
+`ProjectId`; the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); the tree operations the
 write gate does not cover (TD-2026-09-29-305); and the rest of **G5**
 (TD-2026-09-28-304). Groundwork carries its own perf gates (design
