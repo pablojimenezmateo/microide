@@ -1,5 +1,6 @@
 #include "project/GitCommandUtil.h"
 
+#include <fstream>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -195,6 +196,35 @@ std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
   return head_id.empty() ? std::nullopt : std::make_optional(std::move(head_id));
 }
 
+std::optional<std::string> ReadFirstLineOfGitFile(const std::filesystem::path& path) {
+  // status() stats without opening, so a special file is rejected before any
+  // potentially-blocking stream operation.
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(std::filesystem::status(path, error)) || error) {
+    return std::nullopt;
+  }
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) {
+    return std::nullopt;
+  }
+  std::string line;
+  line.reserve(64);
+  // Bounded read: stop at the newline or the cap, whichever comes first, so an
+  // unterminated multi-megabyte file cannot be pulled into memory by a helper
+  // whose whole job is to look at one short line.
+  for (std::size_t read = 0; read < kMaxGitMetadataLineBytes; ++read) {
+    const int byte = stream.get();
+    if (byte == std::char_traits<char>::eof() || byte == '\n') {
+      break;
+    }
+    line.push_back(static_cast<char>(byte));
+  }
+  if (!line.empty() && line.back() == '\r') {
+    line.pop_back();
+  }
+  return line;
+}
+
 std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::path& root) {
   if (root.empty()) {
     return std::nullopt;
@@ -207,19 +237,12 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
   if (std::filesystem::is_directory(marker, error) && !error) {
     return marker;
   }
-  error.clear();
-  if (!std::filesystem::is_regular_file(marker, error) || error) {
-    return std::nullopt;
-  }
-  const std::optional<std::string> contents = util::ReadTextFile(marker);
-  if (!contents.has_value()) {
+  const std::optional<std::string> first_line = ReadFirstLineOfGitFile(marker);
+  if (!first_line.has_value()) {
     return std::nullopt;
   }
   constexpr std::string_view kGitDirPrefix = "gitdir:";
-  std::string_view line(*contents);
-  if (const std::size_t newline = line.find('\n'); newline != std::string_view::npos) {
-    line = line.substr(0, newline);
-  }
+  std::string_view line(*first_line);
   if (!line.starts_with(kGitDirPrefix)) {
     return std::nullopt;
   }
@@ -247,16 +270,13 @@ std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& r
   if (!git_dir.has_value()) {
     return std::nullopt;
   }
-  const std::optional<std::string> contents = util::ReadTextFile(*git_dir / "MERGE_HEAD");
-  if (!contents.has_value()) {
+  const std::optional<std::string> line = ReadFirstLineOfGitFile(*git_dir / "MERGE_HEAD");
+  if (!line.has_value()) {
     return std::nullopt;
   }
-  std::string_view first_line(*contents);
-  if (const std::size_t newline = first_line.find('\n'); newline != std::string_view::npos) {
-    first_line = first_line.substr(0, newline);
-  }
+  std::string_view first_line(*line);
   while (!first_line.empty() &&
-         (first_line.back() == '\r' || first_line.back() == ' ' || first_line.back() == '\t')) {
+         (first_line.back() == ' ' || first_line.back() == '\t')) {
     first_line.remove_suffix(1);
   }
   // Only accept a plain object id. A ref file holding anything else (a symref, a

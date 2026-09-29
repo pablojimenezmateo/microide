@@ -1,6 +1,5 @@
 #include "project/GitRepositoryMetadataTracker.h"
 
-#include <fstream>
 #include <string>
 #include <system_error>
 
@@ -10,25 +9,6 @@
 
 namespace microide::project {
 namespace {
-
-// Read the first line of a tiny git metadata file, refusing non-regular nodes
-// (FIFO/device/socket) before opening. Opening/reading a FIFO named `.git`,
-// `commondir`, or `HEAD` could block the change-sampling thread indefinitely
-// (TD-2026-07-17A-113). status() stats without opening, so a special file is
-// rejected before any potentially-blocking stream read.
-std::optional<std::string> ReadFirstLineOfRegularFile(const std::filesystem::path& path) {
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(std::filesystem::status(path, error))) {
-    return std::nullopt;
-  }
-  std::ifstream stream(path);
-  if (!stream) {
-    return std::nullopt;
-  }
-  std::string line;
-  std::getline(stream, line);
-  return line;
-}
 
 // A symbolic HEAD ref must be a relative name under the common gitdir (e.g.
 // `refs/heads/main`). Reject absolute paths, root names, and empty/`.`/`..`
@@ -56,7 +36,7 @@ bool IsSafeRelativeRefName(const std::string& ref) {
 // `<gitdir>/commondir`. Absent that file (an ordinary checkout), the gitdir IS the
 // common dir. Returns the resolved common directory. (TD-2026-07-16-63.)
 std::filesystem::path ResolveCommonDir(const std::filesystem::path& git_dir) {
-  const std::optional<std::string> line = ReadFirstLineOfRegularFile(git_dir / "commondir");
+  const std::optional<std::string> line = internal::ReadFirstLineOfGitFile(git_dir / "commondir");
   if (!line.has_value()) {
     return git_dir;
   }
@@ -102,7 +82,7 @@ std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& proje
     return std::nullopt;
   }
   const std::optional<std::string> ref =
-      SymbolicRefFromHeadLine(ReadFirstLineOfRegularFile(*git_dir / "HEAD"));
+      SymbolicRefFromHeadLine(internal::ReadFirstLineOfGitFile(*git_dir / "HEAD"));
   if (!ref.has_value()) {
     return std::nullopt;  // detached HEAD — no branch name to show
   }
@@ -188,7 +168,7 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   // which costs a process. An earlier version of this comment claimed the read was
   // already happening and therefore free; it was not — it had added a second open
   // of the same file.
-  const std::optional<std::string> head_line = ReadFirstLineOfRegularFile(git_dir / "HEAD");
+  const std::optional<std::string> head_line = internal::ReadFirstLineOfGitFile(git_dir / "HEAD");
   if (head_line.has_value()) {
     fingerprint.head_text = util::TrimAsciiWhitespace(*head_line);
   }
@@ -204,7 +184,7 @@ GitRepositoryMetadataTracker::ReadCurrentFingerprint() const {
   if (const std::optional<std::string> ref = SymbolicRefFromHeadLine(head_line);
       ref.has_value()) {
     if (const std::optional<std::string> ref_line =
-            ReadFirstLineOfRegularFile(common_dir / *ref);
+            internal::ReadFirstLineOfGitFile(common_dir / *ref);
         ref_line.has_value()) {
       fingerprint.branch_ref_text = util::TrimAsciiWhitespace(*ref_line);
     }

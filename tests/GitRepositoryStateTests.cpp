@@ -330,6 +330,46 @@ void TestPorcelainV2CapturesSubmoduleField() {
 // returned an absolute one verbatim, so `/a/b/../.git` and `/a/.git` could name the
 // same repository and compare unequal. There is one now, and this pins its answer for
 // each of the three layouts plus the case the copies differed on.
+// The one reader the three `.git` metadata readers now share. It exists because
+// each of the three had a hole the others did not: two read the WHOLE file to
+// look at its first line, and the third read only the first line but had no size
+// cap. Both holes are asserted here, so a future "simplification" back to either
+// shape fails rather than passing quietly.
+void TestReadFirstLineOfGitFile() {
+  namespace gitutil = microide::project::internal;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path base = temp_dir.path();
+
+  WriteFile(base / "plain", "refs/heads/main\nsecond line\n");
+  Expect(gitutil::ReadFirstLineOfGitFile(base / "plain") == "refs/heads/main",
+         "the first line is returned without its newline");
+
+  WriteFile(base / "crlf", "ref: refs/heads/main\r\n");
+  Expect(gitutil::ReadFirstLineOfGitFile(base / "crlf") == "ref: refs/heads/main",
+         "a trailing CR is stripped — a repo touched from Windows still resolves");
+
+  WriteFile(base / "no-newline", "0123456789abcdef");
+  Expect(gitutil::ReadFirstLineOfGitFile(base / "no-newline") == "0123456789abcdef",
+         "a file with no trailing newline still yields its line");
+
+  WriteFile(base / "empty", "");
+  Expect(gitutil::ReadFirstLineOfGitFile(base / "empty") == std::string(),
+         "an empty file reads as an empty line, not as unreadable");
+
+  Expect(!gitutil::ReadFirstLineOfGitFile(base / "absent").has_value(),
+         "a missing file is unreadable");
+  Expect(!gitutil::ReadFirstLineOfGitFile(base).has_value(),
+         "a directory is not a metadata file");
+
+  // The bound the getline version did not have: one unterminated line must not
+  // pull the whole file into memory. Read is capped, and the cap is what is
+  // returned.
+  WriteFile(base / "huge", std::string(gitutil::kMaxGitMetadataLineBytes * 4, 'a'));
+  const std::optional<std::string> capped = gitutil::ReadFirstLineOfGitFile(base / "huge");
+  Expect(capped.has_value() && capped->size() == gitutil::kMaxGitMetadataLineBytes,
+         "an unterminated line is truncated at the cap rather than read whole");
+}
+
 void TestResolveGitDirectoryLayouts() {
   namespace gitutil = microide::project::internal;
   TemporaryDirectory temp_dir;
@@ -489,6 +529,7 @@ void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
           TestRefreshFailureClassification);
   AddTest(tests, "GitRepositoryState/PorcelainV2CapturesSubmoduleField",
           TestPorcelainV2CapturesSubmoduleField);
+  AddTest(tests, "GitRepositoryState/ReadFirstLineOfGitFile", TestReadFirstLineOfGitFile);
   AddTest(tests, "GitRepositoryState/ResolveGitDirectoryLayouts", TestResolveGitDirectoryLayouts);
   AddTest(tests, "GitRepositoryState/ReadPendingMergeHeadId", TestReadPendingMergeHeadId);
   AddTest(tests, "GitRepositoryState/DetectGitOperationState", TestDetectGitOperationState);

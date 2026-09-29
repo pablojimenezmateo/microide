@@ -48,6 +48,24 @@ const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
     const std::filesystem::path& absolute_path);
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root);
 
+// The first line of a small `.git` metadata file (`HEAD`, `MERGE_HEAD`, a loose
+// ref, `commondir`, the `.git` file itself), with any trailing CR removed and
+// nothing else trimmed — callers trim to their own grammar.
+//
+// One helper because there were three, each with a hole the others did not have:
+// the two here read the WHOLE file through `util::ReadTextFile` to look at its
+// first line, and the change tracker's `getline` version read only the first line
+// but had no size cap, so a single unterminated line would have allocated the
+// whole file. This reads at most `kMaxGitMetadataLineBytes` and stops at the
+// first newline, so neither hole survives.
+//
+// Refuses anything that is not a regular file BEFORE opening. Opening a FIFO
+// named `HEAD` or `commondir` would block the caller — the change-sampling
+// thread, or the shell thread labelling a merge pane — indefinitely
+// (TD-2026-07-17A-113).
+inline constexpr std::size_t kMaxGitMetadataLineBytes = 4096;
+std::optional<std::string> ReadFirstLineOfGitFile(const std::filesystem::path& path);
+
 // The repository's git directory: `<root>/.git` when it is a real directory, or
 // the path a `.git` *file* points at (`gitdir: …`, the linked-worktree and
 // submodule layout). Nullopt when `root` has no usable marker.
