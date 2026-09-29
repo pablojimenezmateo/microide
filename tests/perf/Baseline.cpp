@@ -293,6 +293,65 @@ NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
 // only get more permissive, which is a note rather than a failure — but it is
 // still worth saying, because a permissive gate that nobody knows is permissive
 // is how a baseline set goes quietly vacuous (validation-traps.md).
+// A median over a settling series, read at fewer samples than the baseline was
+// recorded over, is not that median. At one iteration it IS the first iteration —
+// the cold one, which is the series' MAXIMUM.
+//
+// `editor_soft_wrap_long_line_scroll` is the worked example, and the numbers are
+// exact rather than approximate: its `scroll_frames` phase records p50 = 10
+// allocations over ten iterations and max = 324, and a one-iteration run measures
+// 324. The scenario total records p50 = 384 and max = 699, and a one-iteration run
+// measures 699. So `--smoke --iterations=1`, which is what `ctest` runs on every
+// invocation, reported +3130 % on code that had not moved — and the same binary
+// passes at `--iterations=10`. The only reason nobody was looking at it is that
+// `microide_perf` was not being rebuilt in the default build directory, so the
+// gate was not running at all.
+//
+// Disarming is the established answer for the other two settling statistics
+// (TD-2026-08-06-148, TD-2026-08-10-173) and it is the WRONG one here: it would
+// switch off the suite's most deterministic gate in the one lane that runs on
+// every `ctest`, which is how a baseline set goes quietly vacuous.
+//
+// So the gate is REPOINTED rather than switched off. A single sample is bounded by
+// the series' maximum, so a short run is compared against the baseline's recorded
+// max with the max tolerance. It stays armed, the comparison is true rather than
+// approximately true, and a real regression still trips it — a cold iteration that
+// allocates more than the baseline's worst iteration is a regression by any
+// reading.
+void RepointSettlingAllocationGateAtRecordedMax(BaselineComparison* result,
+                                                std::size_t metric_index,
+                                                double recorded_max,
+                                                double max_tolerance_percent,
+                                                std::size_t measured_iterations,
+                                                std::size_t baseline_iterations,
+                                                std::string_view metric_name) {
+  // Either side unknown (a pre-iteration-count baseline, or an aggregate built
+  // from summary metrics alone), or the run is long enough to mean its median.
+  if (baseline_iterations == 0 || measured_iterations == 0 ||
+      measured_iterations >= baseline_iterations) {
+    return;
+  }
+  MetricComparison& metric = result->metrics[metric_index];
+  metric.expected = recorded_max;
+  metric.tolerance_percent = max_tolerance_percent;
+  metric.passed = WithinTolerance(recorded_max, metric.actual, max_tolerance_percent);
+  std::ostringstream note;
+  note << metric_name << " gated against the baseline's recorded MAX (" << recorded_max
+       << "), not its median: this run measured " << measured_iterations
+       << " iterations against a baseline recorded over " << baseline_iterations
+       << ", and a median over that few samples of a settling series is the cold first "
+          "iteration — which is the series' maximum, not its middle";
+  metric.note = note.str();
+  // A metric that failed under the median comparison may pass under this one, so
+  // the run's verdict is recomputed from every metric rather than left latched.
+  result->passed = true;
+  for (const MetricComparison& entry : result->metrics) {
+    if (entry.enforced && !entry.passed) {
+      result->passed = false;
+    }
+  }
+}
+
 void AnnotateSettlingGateForIterationCount(BaselineComparison* result,
                                            std::size_t metric_index,
                                            const BaselineRecord& baseline,
@@ -376,8 +435,12 @@ void ComparePhaseAllocations(BaselineComparison* out,
       out->metrics.push_back(std::move(missing));
       continue;
     }
-    AddMetric(out, metric_name, expected.p50_allocations, measured->p50_allocations,
-              baseline.tolerances.phase_alloc_p50_percent);
+    const std::size_t phase_index =
+        AddMetric(out, metric_name, expected.p50_allocations, measured->p50_allocations,
+                  baseline.tolerances.phase_alloc_p50_percent);
+    RepointSettlingAllocationGateAtRecordedMax(
+        out, phase_index, expected.max_allocations, baseline.tolerances.alloc_max_percent,
+        aggregate.iterations.size(), baseline.iterations, metric_name);
   }
 
   std::string ungated;
@@ -924,10 +987,22 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
             EffectiveWallTolerance(baseline.tolerances.max_percent, wall_spread),
             aggregate.metrics.max_wall_ms);
   result.clock = wall.clock;
-  AddMetric(&result, "p50_allocations", baseline.metrics.p50_allocations,
-            aggregate.metrics.p50_allocations, baseline.tolerances.alloc_p50_percent);
-  AddMetric(&result, "p95_allocations", baseline.metrics.p95_allocations,
-            aggregate.metrics.p95_allocations, baseline.tolerances.alloc_p95_percent);
+  const std::size_t alloc_p50_index =
+      AddMetric(&result, "p50_allocations", baseline.metrics.p50_allocations,
+                aggregate.metrics.p50_allocations, baseline.tolerances.alloc_p50_percent);
+  RepointSettlingAllocationGateAtRecordedMax(
+      &result, alloc_p50_index, baseline.metrics.max_allocations,
+      baseline.tolerances.alloc_max_percent, aggregate.iterations.size(), baseline.iterations,
+      "p50_allocations");
+  const std::size_t alloc_p95_index =
+      AddMetric(&result, "p95_allocations", baseline.metrics.p95_allocations,
+                aggregate.metrics.p95_allocations, baseline.tolerances.alloc_p95_percent);
+  // Same defect, same fix: a 95th percentile over a settling series read at one
+  // sample is that sample, which is the cold first iteration.
+  RepointSettlingAllocationGateAtRecordedMax(
+      &result, alloc_p95_index, baseline.metrics.max_allocations,
+      baseline.tolerances.alloc_max_percent, aggregate.iterations.size(), baseline.iterations,
+      "p95_allocations");
   AddMetric(&result, "max_allocations", baseline.metrics.max_allocations,
             aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
   if (baseline.has_cpu_metrics) {
