@@ -22,15 +22,15 @@ void DapClient::SetEventCallback(EventCallback callback) {
   impl_->event_callback = std::move(callback);
 }
 
-bool DapClient::Start(const std::vector<std::string>& command, const std::string& adapter_id,
+bool DapClient::Start(const platform::ProcessLauncher& launcher,
+                      const std::vector<std::string>& command, const std::string& adapter_id,
                       const std::string& cwd, const platform::SubprocessSandbox& sandbox) {
   impl_->last_error.clear();
   impl_->adapter_id = adapter_id;
 
   // Through the project's launcher, like every other spawn: a debug adapter that
   // runs on a different machine from the binary it is debugging reports line numbers
-  // for a file nobody is looking at. Explicitly local today (TD-2026-09-22-301).
-  const platform::ProcessLauncher& launcher = platform::LocalProcessLauncher();
+  // for a file nobody is looking at.
   if (!impl_->proc.Start(launcher.ResolveArgv(command),
                          launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
     impl_->last_error = "failed to start debug adapter process";

@@ -489,7 +489,7 @@ void TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "config_done"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "config_done"));
   Expect(manager.HasAdapter("mock"), "adapter should be registered");
 
   CapturedSession captured;
@@ -535,7 +535,7 @@ void TestDebugSessionRunsWithoutConfigurationDoneSupport() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "no_config_done"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "no_config_done"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -566,7 +566,7 @@ void TestDebugSessionLaunchHandshakeOrder() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "config_done"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "config_done"));
 
   CapturedSession captured;
   DebugSession::Callbacks callbacks = MakeCallbacks(captured);
@@ -652,7 +652,7 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -728,7 +728,7 @@ void TestDebugSessionDropsStaleStackResolvedAfterResume() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stale_stack"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stale_stack"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -784,7 +784,7 @@ void TestDebugSessionRejectedResumeRestoresStoppedView() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "reject_resume"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "reject_resume"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -822,7 +822,7 @@ void TestDebugSessionPauseFromRunning() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "pause"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "pause"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -859,7 +859,7 @@ void TestDebugSessionReverseStepAndContinue() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "reverse"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "reverse"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -901,7 +901,7 @@ void TestDebugSessionReverseGatedOnCapability() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));  // no supportsStepBack
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));  // no supportsStepBack
 
   CapturedSession captured;
   LaunchConfig config;
@@ -943,7 +943,7 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "reverse_late"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "reverse_late"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -995,7 +995,7 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "variables"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "variables"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1089,7 +1089,7 @@ void TestDebugSessionSetVariableGatedOnCapability() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1123,7 +1123,7 @@ void TestDebugSessionEvaluateHover() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "evaluate"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "evaluate"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1179,7 +1179,7 @@ void TestDebugSessionWatchEvaluate() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "evaluate"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "evaluate"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1224,7 +1224,7 @@ void TestDebugSessionReplEvaluate() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "evaluate"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "evaluate"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1294,7 +1294,7 @@ void TestDebugSessionHoverFallsBackToReplWithoutCapability() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));  // no evaluate cap
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));  // no evaluate cap
 
   CapturedSession captured;
   LaunchConfig config;
@@ -1821,7 +1821,7 @@ void TestGdbAdapterClampsValueFormatting() {
   // gdb-flavored adapter: the limit commands must be on the wire with safe values.
   {
     DapManager manager;
-    manager.RegisterAdapter("gdb-mock", GdbFlavoredAdapterCommand(server_path, "no_config_done"));
+    manager.RegisterAdapter("gdb-mock", platform::LocalProcessLauncher(), GdbFlavoredAdapterCommand(server_path, "no_config_done"));
     CapturedSession captured;
     LaunchConfig config;
     config.type = "gdb-mock";
@@ -1851,7 +1851,7 @@ void TestGdbAdapterClampsValueFormatting() {
   // Non-gdb adapter: no value-limit commands at all.
   {
     DapManager manager;
-    manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "no_config_done"));
+    manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "no_config_done"));
     CapturedSession captured;
     LaunchConfig config;
     config.type = "mock";
@@ -2048,7 +2048,7 @@ void TestDebugSessionRestartViaRestartRequest() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "restart"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "restart"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -2081,7 +2081,7 @@ void TestDebugSessionRestartNoOpWithoutCapability() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));  // no restart cap
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));  // no restart cap
 
   CapturedSession captured;
   LaunchConfig config;
@@ -2113,7 +2113,7 @@ void TestDebugSessionThreadsCachedAndSwitch() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "threads"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "threads"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -2153,7 +2153,7 @@ void TestDebugSessionThreadEventRefreshesThreadList() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "thread_event"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "thread_event"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -2182,7 +2182,7 @@ void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "exception"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "exception"));
 
   CapturedSession captured;
   DebugSession::Callbacks callbacks = MakeCallbacks(captured);
@@ -2446,8 +2446,8 @@ void TestSummarizeCommandForErrorRedactsArgs() {
 
 void TestDebugManagerRetainAdaptersDropsStaleTypes() {
   DapManager manager;
-  manager.RegisterAdapter("a", {"true"});
-  manager.RegisterAdapter("b", {"true"});
+  manager.RegisterAdapter("a", platform::LocalProcessLauncher(), {"true"});
+  manager.RegisterAdapter("b", platform::LocalProcessLauncher(), {"true"});
   Expect(manager.HasAdapter("a") && manager.HasAdapter("b"), "both adapters should register");
   manager.RetainAdaptersIn({"b"});
   Expect(!manager.HasAdapter("a"), "stale adapter 'a' should be dropped on reconcile");
@@ -2458,7 +2458,7 @@ void TestDebugManagerRetainAdaptersDropsStaleTypes() {
 // channel's `adapters` query (so a headless driver sees what runs).
 void TestDebugManagerAdapterDetailsCarryCommand() {
   DapManager manager;
-  manager.RegisterAdapter("gdb", {"gdb", "--interpreter=dap"});
+  manager.RegisterAdapter("gdb", platform::LocalProcessLauncher(), {"gdb", "--interpreter=dap"});
   const std::vector<DapManager::AdapterInfo> details = manager.AdapterDetails();
   Expect(details.size() == 1, "one adapter should be reported");
   Expect(details[0].type == "gdb", "adapter type should be carried");
@@ -2518,7 +2518,7 @@ void TestDebugManagerMultipleConcurrentSessions() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession cap_a;
   CapturedSession cap_b;
@@ -2589,7 +2589,7 @@ void TestDebugManagerReplaceActiveSession() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "config_done"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "config_done"));
 
   CapturedSession cap1;
   LaunchConfig config;
@@ -2619,7 +2619,7 @@ void TestDebugManagerStopAllSessions() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   CapturedSession cap_a;
   CapturedSession cap_b;
@@ -2694,7 +2694,7 @@ void TestDebugServiceTwoPhaseStopReporting() {
                 cap.order_resolved = ++cap.tick;
               },
       });
-  service.CurrentDapManager().RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+  service.CurrentDapManager().RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   LaunchConfig config;
   config.name = "session";
@@ -2742,7 +2742,7 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
   service.Configure(context, microide::workspace::DebugService::Operations{
                                  .notify_stop_began = [&](const std::string&, int) { ++began; },
                                  .notify_stop_resolved = [&]() {}});
-  service.CurrentDapManager().RegisterAdapter("mock", MockAdapterCommand(server_path, "stop"));
+  service.CurrentDapManager().RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop"));
 
   DapManager& manager = service.CurrentDapManager();
   LaunchConfig config;
@@ -2984,7 +2984,7 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "die"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "die"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -3041,7 +3041,7 @@ void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "function"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "function"));
 
   editor::FunctionBreakpointStore fn_store;
   fn_store.Add("add");
@@ -3105,7 +3105,7 @@ void TestDebugSessionExceptionFilterConditionsSent() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "exception"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "exception"));
 
   CapturedSession captured;
   DebugSession::Callbacks callbacks = MakeCallbacks(captured);
@@ -3280,7 +3280,7 @@ void TestGdbRealFunctionBreakpointsE2E() {
   }
 
   DapManager manager;
-  manager.RegisterAdapter("gdb", std::vector<std::string>{"gdb", "--interpreter=dap"});
+  manager.RegisterAdapter("gdb", platform::LocalProcessLauncher(), std::vector<std::string>{"gdb", "--interpreter=dap"});
 
   editor::FunctionBreakpointStore fn_store;
   fn_store.Add("add");
@@ -3378,7 +3378,7 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
 
   microide::workspace::DebugService service;
   service.Configure(context, microide::workspace::DebugService::Operations{});
-  service.CurrentDapManager().RegisterAdapter("mock", MockAdapterCommand(server_path, "relocate"));
+  service.CurrentDapManager().RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "relocate"));
 
   LaunchConfig config;
   config.name = "session";
@@ -3442,7 +3442,7 @@ void TestDebugSessionPartialContinueDoesNotResume() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "partial_continue"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "partial_continue"));
 
   CapturedSession captured;
   LaunchConfig config;
@@ -3479,7 +3479,7 @@ void TestDebugSessionStopWithoutThreadIdResolvesThread() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapManager manager;
-  manager.RegisterAdapter("mock", MockAdapterCommand(server_path, "stop_no_thread"));
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "stop_no_thread"));
 
   CapturedSession captured;
   LaunchConfig config;

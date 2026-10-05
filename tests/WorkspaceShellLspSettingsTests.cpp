@@ -162,7 +162,7 @@ void TestMenuReadDoesNotStartLspServer() {
   // running yet. `/bin/cat` blocks on stdin, so IF the menu read starts it the
   // process stays alive and IsServerRunning flips true — a deterministic probe.
   workspace::LspManager& manager = WorkspaceShellTestAccess::LspManagerForTesting(shell);
-  manager.RegisterServer({"python"}, {"/bin/cat"}, "file://" + project.string(),
+  manager.RegisterServer({"python"}, platform::LocalProcessLauncher(), {"/bin/cat"}, "file://" + project.string(),
                          project.string(), /*eager_start=*/false);
   Expect(manager.HasServer("python"), "server is registered");
   Expect(!manager.IsServerRunning("python"), "server is not started yet");

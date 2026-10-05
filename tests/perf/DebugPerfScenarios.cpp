@@ -411,7 +411,7 @@ void RunDebugSessionStopToVariables(ScenarioContext& context) {
 
   context.Measure("session.stop_to_variables", [&]() {
     DapManager manager;
-    manager.RegisterAdapter("mock", {"python3", adapter.string(), "400"});
+    manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), {"python3", adapter.string(), "400"});
 
     int stop_count = 0;
     std::vector<codec::DapStackFrame> last_frames;

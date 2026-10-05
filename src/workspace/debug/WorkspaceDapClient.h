@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/AsyncSubprocess.h"
+#include "platform/ProcessLauncher.h"
 #include "util/JsonValue.h"
 #include "workspace/debug/DapProtocol.h"
 
@@ -43,7 +44,10 @@ class DapClient {
 
   // Spawn the adapter and begin the asynchronous `initialize` handshake.
   // `adapter_id` is forwarded as the DAP `adapterID` and used in traces.
-  bool Start(const std::vector<std::string>& command, const std::string& adapter_id,
+  // `launcher` decides which machine the adapter runs on — the project's
+  // (TD-2026-09-22-301). It is used only during Start.
+  bool Start(const platform::ProcessLauncher& launcher, const std::vector<std::string>& command,
+             const std::string& adapter_id,
              const std::string& cwd = {}, const platform::SubprocessSandbox& sandbox = {});
 
   // True while the adapter process is running.

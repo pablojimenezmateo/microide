@@ -80,7 +80,8 @@ bool DebugSession::IsActive() const {
   return false;
 }
 
-bool DebugSession::Start(const std::vector<std::string>& command, const LaunchConfig& config,
+bool DebugSession::Start(const platform::ProcessLauncher& launcher,
+                         const std::vector<std::string>& command, const LaunchConfig& config,
                          const std::string& cwd, const platform::SubprocessSandbox& sandbox) {
   config_ = config;
   launch_sent_ = false;
@@ -91,7 +92,7 @@ bool DebugSession::Start(const std::vector<std::string>& command, const LaunchCo
   client_->SetEventCallback(
       [this](const std::string& event, const util::JsonValue& body) { HandleEvent(event, body); });
 
-  if (!client_->Start(command, config_.type, cwd, sandbox)) {
+  if (!client_->Start(launcher, command, config_.type, cwd, sandbox)) {
     std::string reason = client_->LastError();
     if (reason.empty()) {
       reason = "debug adapter failed to start";

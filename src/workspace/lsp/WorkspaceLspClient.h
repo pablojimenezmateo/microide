@@ -1,6 +1,7 @@
 #pragma once
 
 #include "platform/AsyncSubprocess.h"
+#include "platform/ProcessLauncher.h"
 #include "util/JsonValue.h"
 #include "workspace/lsp/LspFileWatchRegistry.h"
 
@@ -397,7 +398,10 @@ class LspClient {
   // settings answers server-initiated `workspace/configuration` requests and is
   // pushed once via `workspace/didChangeConfiguration` after initialize. Both
   // should be JSON objects (or Null to omit).
-  bool Start(const std::vector<std::string>& command, const std::string& root_uri,
+  // `launcher` decides which machine the server runs on — the project's
+  // (TD-2026-09-22-301). It is used only during Start.
+  bool Start(const platform::ProcessLauncher& launcher, const std::vector<std::string>& command,
+             const std::string& root_uri,
              const std::string& language_id, const std::string& cwd = {},
              const util::JsonValue& initialization_options = {},
              const util::JsonValue& settings = {},

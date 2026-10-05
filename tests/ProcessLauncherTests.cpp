@@ -11,6 +11,9 @@
 #include "project/GitRepository.h"
 #include "project/GitStatusRefresh.h"
 #include "project/GitStatusService.h"
+#include "workspace/debug/LaunchConfig.h"
+#include "workspace/debug/WorkspaceDapManager.h"
+#include "workspace/lsp/WorkspaceLspManager.h"
 
 #include <chrono>
 #include <string>
@@ -163,8 +166,11 @@ void TestStatusRefreshDistinguishesItsFailures() {
   // the result looks like an ordinary, complete change list.
   ScriptedProcessLauncher truncated;
   truncated.standing_response.exit_code = 0;
-  truncated.standing_response.stdout_text = std::string("1 .M N... 100644 100644 100644 ") +
-                                            "0000000 0000000 changed.txt" + '\0';
+  // Appended rather than chained with operator+: GCC 13's -Warray-bounds misreads
+  // the chained temporary's SSO buffer and warns on every build of this file.
+  truncated.standing_response.stdout_text = "1 .M N... 100644 100644 100644 ";
+  truncated.standing_response.stdout_text += "0000000 0000000 changed.txt";
+  truncated.standing_response.stdout_text.push_back('\0');
   truncated.standing_response.truncated = true;
   const project::GitRepositoryState partial = build(truncated);
   Expect(partial.stale, "a truncated status is stale, not a complete change list");
@@ -325,6 +331,50 @@ void TestBlameRunsThroughTheRequestsLauncher() {
          "a blame ran its git through the launcher on its request, not a held local one");
 }
 
+// Slice 4: the two long-lived spawns. A language server and a debug adapter do not
+// go through `Run`; they resolve their argv through the launcher and start the
+// process themselves, so `resolved_argvs` is what shows which launcher they asked.
+// `true` really starts and exits at once — nothing here waits on it.
+void TestLanguageServerStartsThroughTheProjectsLauncher() {
+  ScriptedProcessLauncher launcher;
+  {
+    workspace::LspManager manager;
+    manager.RegisterServer({"scripted"}, launcher, {"true"}, "file:///tmp", /*cwd=*/{},
+                           /*eager_start=*/true);
+  }
+  Expect(!launcher.resolved_argvs.empty() && launcher.resolved_argvs.front().front() == "true",
+         "the language server's argv was resolved through the launcher it was registered "
+         "with, not a local one the client reached for");
+
+  // Re-registering the same server under a DIFFERENT launcher is a different
+  // server — the project moved machines — so it must restart on the new one
+  // rather than be skipped as an unchanged registration.
+  ScriptedProcessLauncher first;
+  ScriptedProcessLauncher second;
+  {
+    workspace::LspManager manager;
+    manager.RegisterServer({"scripted"}, first, {"true"}, "file:///tmp", {}, true);
+    manager.RegisterServer({"scripted"}, second, {"true"}, "file:///tmp", {}, true);
+  }
+  Expect(!second.resolved_argvs.empty(),
+         "a re-registration that changes only the launcher restarts the server on it");
+}
+
+void TestDebugAdapterStartsThroughTheProjectsLauncher() {
+  ScriptedProcessLauncher launcher;
+  {
+    workspace::DapManager manager;
+    manager.RegisterAdapter("scripted", launcher, {"true"});
+    workspace::LaunchConfig config;
+    config.type = "scripted";
+    config.request = "launch";
+    (void)manager.StartSession(config, workspace::DebugSession::Callbacks{});
+  }
+  Expect(!launcher.resolved_argvs.empty() && launcher.resolved_argvs.front().front() == "true",
+         "the debug adapter's argv was resolved through the launcher it was registered "
+         "with, not a local one the client reached for");
+}
+
 }  // namespace
 
 void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
@@ -347,6 +397,10 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestWriteSideRunsThroughTheLauncherItIsGiven);
   AddTest(tests, "ProcessLauncher/BlameRunsThroughTheRequestsLauncher",
           TestBlameRunsThroughTheRequestsLauncher);
+  AddTest(tests, "ProcessLauncher/LanguageServerStartsThroughTheProjectsLauncher",
+          TestLanguageServerStartsThroughTheProjectsLauncher);
+  AddTest(tests, "ProcessLauncher/DebugAdapterStartsThroughTheProjectsLauncher",
+          TestDebugAdapterStartsThroughTheProjectsLauncher);
 }
 
 }  // namespace microide::tests

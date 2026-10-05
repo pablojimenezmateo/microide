@@ -19,7 +19,8 @@ void LspClient::SetWakeChannel(Uint32 event_type) {
   impl_->main_mailbox.SetWakeChannel(event_type);
 }
 
-bool LspClient::Start(const std::vector<std::string>& command, const std::string& root_uri,
+bool LspClient::Start(const platform::ProcessLauncher& launcher,
+                      const std::vector<std::string>& command, const std::string& root_uri,
                       const std::string& language_id, const std::string& cwd,
                       const util::JsonValue& initialization_options,
                       const util::JsonValue& settings,
@@ -40,8 +41,7 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
     util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
     // Through the project's launcher, like every other spawn: a language server that
     // indexes a different machine's tree lands diagnostics on lines the buffer does
-    // not have. Explicitly local today (TD-2026-09-22-301).
-    const platform::ProcessLauncher& launcher = platform::LocalProcessLauncher();
+    // not have.
     if (!impl_->proc.Start(launcher.ResolveArgv(command),
                            launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
       impl_->last_error = "failed to start language server process";

@@ -126,7 +126,7 @@ void TestWorkspaceDapClientInitializeHandshakeReportsCapabilities() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapClient client;
-  const bool started = client.Start(MockAdapterCommand(server_path, marker_path), "mock");
+  const bool started = client.Start(platform::LocalProcessLauncher(), MockAdapterCommand(server_path, marker_path), "mock");
   Expect(started, "mock adapter should start");
   Expect(WaitForInitialized(client), "client should complete the initialize handshake");
 
@@ -147,7 +147,7 @@ void TestWorkspaceDapClientCorrelatesResponsesBySeq() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapClient client;
-  Expect(client.Start(MockAdapterCommand(server_path, marker_path), "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), MockAdapterCommand(server_path, marker_path), "mock"),
          "mock adapter should start");
   Expect(WaitForInitialized(client), "client should initialize");
 
@@ -192,7 +192,7 @@ void TestWorkspaceDapClientDispatchesEventsOnMainThread() {
       stopped_reason = codec::ParseStoppedEvent(body).reason;
     }
   });
-  Expect(client.Start(MockAdapterCommand(server_path, marker_path), "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), MockAdapterCommand(server_path, marker_path), "mock"),
          "mock adapter should start");
   Expect(WaitForInitialized(client), "client should initialize");
 
@@ -218,7 +218,7 @@ void TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize() {
   WriteFile(server_path, std::string("import sys\nsys.exit(3)\n"));
 
   DapClient client;
-  Expect(client.Start({"python3", server_path.string()}, "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "client should launch the adapter process");
   // It never answers initialize; the client must give up rather than hang. The
   // init thread starts asynchronously, so wait for the failure to surface rather
@@ -286,7 +286,7 @@ while sys.stdin.buffer.readline():
 )py"));
 
   DapClient client;
-  Expect(client.Start({"python3", server_path.string()}, "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "client should launch the flooding adapter");
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -312,7 +312,7 @@ void TestWorkspaceDapClientShutdownSendsDisconnect() {
   WriteFile(server_path, std::string(MockAdapterSource()));
 
   DapClient client;
-  Expect(client.Start(MockAdapterCommand(server_path, marker_path), "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), MockAdapterCommand(server_path, marker_path), "mock"),
          "mock adapter should start");
   Expect(WaitForInitialized(client), "client should initialize");
   client.Shutdown();
@@ -387,7 +387,7 @@ time.sleep(0.3)
 )py"));
 
   DapClient client;
-  Expect(client.Start({"python3", server_path.string()}, "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "stall adapter should start");
 
   // Issue a request while the client is still initializing. When init fails, the
@@ -474,7 +474,7 @@ while True:
 )py"));
 
   DapClient client;
-  Expect(client.Start({"python3", server_path.string()}, "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "flood adapter should start");
   Expect(WaitForInitialized(client, 10000),
          "a burst of pre-initialize events must not exhaust the init budget and kill "
@@ -554,7 +554,7 @@ while True:
       caps_when_initialized = client.Capabilities().supports_configuration_done_request;
     }
   });
-  Expect(client.Start({"python3", server_path.string()}, "mock"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "mock"),
          "reorder adapter should start");
   Expect(WaitForInitialized(client, 10000),
          "client should initialize despite the reordered messages");

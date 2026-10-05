@@ -148,7 +148,7 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
     events.push_back(event);
   });
 
-  if (!client.Start({gdb, "--interpreter=dap"}, "gdb")) {
+  if (!client.Start(platform::LocalProcessLauncher(), {gdb, "--interpreter=dap"}, "gdb")) {
     std::fprintf(stderr, "[dap-e2e] SKIP: gdb could not be started as a DAP adapter\n");
     return;
   }
@@ -280,7 +280,7 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
     }
   });
 
-  if (!client.Start({gdb, "--interpreter=dap"}, "gdb")) {
+  if (!client.Start(platform::LocalProcessLauncher(), {gdb, "--interpreter=dap"}, "gdb")) {
     std::fprintf(stderr, "[dap-e2e] SKIP: gdb could not be started as a DAP adapter\n");
     return;
   }

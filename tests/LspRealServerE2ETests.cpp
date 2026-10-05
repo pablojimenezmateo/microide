@@ -98,7 +98,7 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
 
   LspClient client;
   const bool started =
-      client.Start({clangd, "--log=error", "--background-index=false"}, root_uri, "cpp",
+      client.Start(platform::LocalProcessLauncher(), {clangd, "--log=error", "--background-index=false"}, root_uri, "cpp",
                    root.string());
   Expect(started, "clangd should start");
 

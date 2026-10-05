@@ -140,7 +140,8 @@ class DebugSession {
 
   // Spawn `command` and begin driving the lifecycle for `config`. Returns false
   // only when the adapter process cannot be spawned (state becomes Failed).
-  bool Start(const std::vector<std::string>& command, const LaunchConfig& config,
+  bool Start(const platform::ProcessLauncher& launcher, const std::vector<std::string>& command,
+             const LaunchConfig& config,
              const std::string& cwd = {}, const platform::SubprocessSandbox& sandbox = {});
 
   State CurrentState() const { return state_; }

@@ -33,12 +33,14 @@ void DapManager::SetWakeChannel(Uint32 event_type) {
   }
 }
 
-void DapManager::RegisterAdapter(const std::string& type, const std::vector<std::string>& command,
+void DapManager::RegisterAdapter(const std::string& type, const platform::ProcessLauncher& launcher,
+                                 const std::vector<std::string>& command,
                                  const platform::SubprocessSandbox& sandbox) {
   if (type.empty()) {
     return;
   }
   AdapterEntry& entry = adapters_[type];
+  entry.launcher = &launcher;
   entry.command = command;
   entry.sandbox = sandbox;
 }
@@ -113,7 +115,7 @@ int DapManager::StartSession(const LaunchConfig& config,
   if (spawn_sandbox.limits.address_space_bytes <= 0) {
     spawn_sandbox.limits.address_space_bytes = kDefaultAdapterAddressSpaceBytes;
   }
-  if (!session.Start(entry.command, config, cwd, spawn_sandbox)) {
+  if (!session.Start(*entry.launcher, entry.command, config, cwd, spawn_sandbox)) {
     last_error_ = session.LastError();
     if (last_error_.empty()) {
       last_error_ = "debug adapter failed to start";

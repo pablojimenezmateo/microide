@@ -60,7 +60,12 @@ class DapManager {
   // the same type with the same command/sandbox is a no-op. Re-registering with
   // different params replaces the definition (a live session keeps running on
   // the old command until it terminates).
-  void RegisterAdapter(const std::string& type, const std::vector<std::string>& command,
+  //
+  // `launcher` is the PROJECT's, required with no default (TD-2026-09-22-301): a
+  // debug adapter on a different machine from the binary it debugs reports line
+  // numbers for a file nobody is looking at. It must outlive the manager's sessions.
+  void RegisterAdapter(const std::string& type, const platform::ProcessLauncher& launcher,
+                       const std::vector<std::string>& command,
                        const platform::SubprocessSandbox& sandbox = {});
   // Drop adapter definitions whose type is not in `types` (plugin-reload reconcile).
   void RetainAdaptersIn(const std::unordered_set<std::string>& types);
@@ -150,6 +155,7 @@ class DapManager {
 
  private:
   struct AdapterEntry {
+    const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
     std::vector<std::string> command;
     platform::SubprocessSandbox sandbox;
   };

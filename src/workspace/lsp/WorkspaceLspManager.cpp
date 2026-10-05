@@ -31,6 +31,7 @@ const LspManager::ServerEntry* LspManager::ResolveEntry(const std::string& langu
 }
 
 void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
+                                const platform::ProcessLauncher& launcher,
                                 const std::vector<std::string>& command,
                                 const std::string& root_uri,
                                 const std::string& cwd,
@@ -50,7 +51,8 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
     // server with an unchanged config is the common project-activation / plugin-
     // refresh case, and large init-options/settings trees should not materialize
     // four JSON strings just to detect "nothing changed".
-    if (existing.language_ids == language_ids && existing.command == command &&
+    if (existing.language_ids == language_ids && existing.launcher == &launcher &&
+        existing.command == command &&
         existing.root_uri == root_uri && existing.cwd == cwd &&
         existing.initialization_options == initialization_options &&
         existing.settings == settings) {
@@ -67,6 +69,7 @@ void LspManager::RegisterServer(const std::vector<std::string>& language_ids,
   ServerEntry& entry = servers_[key];
   entry = ServerEntry{};
   entry.language_ids = language_ids;
+  entry.launcher = &launcher;
   entry.command = command;
   entry.root_uri = root_uri;
   entry.cwd = cwd;
@@ -134,7 +137,7 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
     // The label is only used for tracing; use the canonical language id.
     const std::string& label =
         entry.language_ids.empty() ? std::string() : entry.language_ids.front();
-    if (!entry.client->Start(entry.command, entry.root_uri, label, entry.cwd,
+    if (!entry.client->Start(*entry.launcher, entry.command, entry.root_uri, label, entry.cwd,
                              entry.initialization_options, entry.settings, entry.sandbox)) {
       entry.last_error = entry.client->LastError();
       if (entry.last_error.empty()) {

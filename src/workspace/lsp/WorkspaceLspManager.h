@@ -27,7 +27,13 @@ class LspManager {
   // c / c++ / objective-c), so a mixed-language project spawns one process.
   // If eager_start is true, the server will be started in the background immediately.
   // initialization_options / settings are forwarded to LspClient::Start.
+  //
+  // `launcher` is the PROJECT's (ProjectWorkspaceState::launcher()), required with no
+  // default (TD-2026-09-22-301): a language server that indexes a different machine's
+  // tree lands diagnostics on lines the buffer does not have. It must outlive the
+  // manager's clients. Re-registering with a different launcher restarts the server.
   void RegisterServer(const std::vector<std::string>& language_ids,
+                      const platform::ProcessLauncher& launcher,
                       const std::vector<std::string>& command,
                       const std::string& root_uri,
                       const std::string& cwd = {},
@@ -102,6 +108,8 @@ class LspManager {
   struct ServerEntry {
     // Every language id this single subprocess answers for.
     std::vector<std::string> language_ids;
+    // Where this server's process runs; set by RegisterServer.
+    const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
     std::vector<std::string> command;
     std::string root_uri;
     std::string cwd;

@@ -696,7 +696,8 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
       }
       std::vector<std::string> command = AugmentClangdWithCompileCommandsDir(
           language_server.command, context_.current_project_state.root);
-      CurrentLspManager().RegisterServer(language_server.language_ids, command,
+      CurrentLspManager().RegisterServer(language_server.language_ids,
+                                         context_.current_project_state.launcher(), command,
                                          // Percent-encode the rootUri the same way
                                          // document URIs are (FileUriForPath); a raw
                                          // "file://" + path is a malformed URI for a
@@ -722,7 +723,8 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
         continue;
       }
       active_debug_adapter_types.insert(adapter.type);
-      CurrentDapManager().RegisterAdapter(adapter.type, adapter.command, adapter.sandbox);
+      CurrentDapManager().RegisterAdapter(adapter.type, context_.current_project_state.launcher(),
+                                          adapter.command, adapter.sandbox);
     }
     CurrentDapManager().RetainAdaptersIn(active_debug_adapter_types);
 

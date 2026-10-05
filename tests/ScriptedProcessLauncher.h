@@ -41,6 +41,12 @@ class ScriptedProcessLauncher final : public platform::ProcessLauncher {
   // real program and inspecting its side effects.
   mutable std::vector<std::vector<std::string>> runs;
 
+  // Every argv resolved through this launcher. A long-lived spawn (a language
+  // server, a debug adapter) does not go through `Run`: it resolves its argv here
+  // and starts the process itself, so this is how a test sees which launcher it
+  // asked. The argv is passed through unchanged, so the process really starts.
+  mutable std::vector<std::vector<std::string>> resolved_argvs;
+
   // Answer every invocation with this unless a queued response is waiting.
   Response standing_response;
 
@@ -61,6 +67,7 @@ class ScriptedProcessLauncher final : public platform::ProcessLauncher {
   }
 
   std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override {
+    resolved_argvs.push_back(argv);
     return argv;
   }
   std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override {

@@ -39,7 +39,7 @@ void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
   for (int iteration = 0; iteration < 200; ++iteration) {
     LspClient client;
     const bool started =
-        client.Start({"/bin/sh", "-c", "sleep 0.01"}, "file:///tmp", "sh");
+        client.Start(platform::LocalProcessLauncher(), {"/bin/sh", "-c", "sleep 0.01"}, "file:///tmp", "sh");
     Expect(started, "lsp lifecycle stress fixture should start");
     client.Shutdown();
   }
@@ -105,7 +105,7 @@ while True:
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "graceful shutdown fixture should start");
   for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
@@ -181,7 +181,7 @@ while True:
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "async graceful shutdown fixture should start");
   for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
@@ -261,7 +261,7 @@ while True:
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "stdin close fixture should start");
   for (int attempt = 0; attempt < 300 && !client.IsInitialized(); ++attempt) {  // ~3s: real subprocess init can be slow under load
@@ -294,7 +294,7 @@ time.sleep(10)
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "preinit cancel fixture should start");
   for (int attempt = 0; attempt < 100 && !std::filesystem::exists(marker_path); ++attempt) {  // ~2s under load
@@ -385,7 +385,7 @@ while True:
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python");
   Expect(started, "readiness snapshot fixture should start");
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Starting, 200),
          "readiness snapshot should report starting before initialize completes");
@@ -480,7 +480,7 @@ while True:
   }
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string(), marker_path.string()},
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), marker_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "didOpen queue fixture should start");
   Expect(client.DidOpen("file:///tmp/sample.py", "python", full_text),
@@ -586,7 +586,7 @@ while True:
   Expect(init_options.has_value() && settings.has_value(), "fixture JSON should parse");
 
   LspClient client;
-  const bool started = client.Start(
+  const bool started = client.Start(platform::LocalProcessLauncher(), 
       {"python3", server_path.string(), init_marker.string(), config_marker.string(),
        error_marker.string()},
       "file:///tmp", "cpp", {}, *init_options, *settings);
@@ -682,7 +682,7 @@ while True:
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string()}, "file:///tmp", "cpp");
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "cpp");
   Expect(started, "utf-8 negotiation fixture should start");
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -1048,7 +1048,7 @@ while True:
         }
       });
   const bool started =
-      client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+      client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python");
   Expect(started, "oversized-frame fixture should start");
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
              client.IsInitialized(),
@@ -1145,7 +1145,7 @@ while True:
           got_preinit_diag = true;
         }
       });
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "pre-initialize fixture should start");
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -1224,7 +1224,7 @@ while True:
 )py"));
 
   LspClient client;
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "pre-initialize flood fixture should start");
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -1324,7 +1324,7 @@ while True:
           received.push_back(diags.front().message);
         }
       });
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "stale-diagnostics fixture should start");
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
              client.IsInitialized(),
@@ -1434,7 +1434,7 @@ while True:
           received.push_back(diags.front().message);
         }
       });
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "float-version stale-diagnostics fixture should start");
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
              client.IsInitialized(),
@@ -1550,7 +1550,7 @@ while True:
           received.push_back(diags.front().message);
         }
       });
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "reopen-diagnostics fixture should start");
   Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
              client.IsInitialized(),
@@ -1668,13 +1668,13 @@ void TestLspClientDidOpenCloseCommitAfterSuccess() {
 void TestLspManagerReRegistrationDropsStaleAliases() {
   workspace::LspManager manager;
   // eager_start=false so no subprocess is spawned in the unit test.
-  manager.RegisterServer({"cpp", "c"}, {"true"}, "file:///tmp", /*cwd=*/{},
+  manager.RegisterServer({"cpp", "c"}, platform::LocalProcessLauncher(), {"true"}, "file:///tmp", /*cwd=*/{},
                          /*eager_start=*/false);
   Expect(manager.HasServer("cpp"), "the C++ server registers under its primary id");
   Expect(manager.HasServer("c"), "the secondary language id also resolves");
 
   // Re-register without "c": the stale alias must be gone.
-  manager.RegisterServer({"cpp"}, {"true"}, "file:///tmp", /*cwd=*/{},
+  manager.RegisterServer({"cpp"}, platform::LocalProcessLauncher(), {"true"}, "file:///tmp", /*cwd=*/{},
                          /*eager_start=*/false);
   Expect(manager.HasServer("cpp"), "the C++ server still resolves under cpp");
   Expect(!manager.HasServer("c"),
@@ -1840,7 +1840,7 @@ while True:
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string(), log_path.string()},
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), log_path.string()},
                                     "file:///tmp", "python");
   Expect(started, "didChange order fixture should start");
 
@@ -1947,7 +1947,7 @@ while True:
 
   LspClient client;
   const bool started =
-      client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+      client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python");
   Expect(started, "completion fixture should start");
 
   std::optional<std::vector<LspClient::CompletionItem>> received;
@@ -2039,7 +2039,7 @@ while True:
 
   LspClient client;
   const bool started =
-      client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+      client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python");
   Expect(started, "float-id fixture should start");
 
   std::optional<std::vector<LspClient::CompletionItem>> received;
@@ -2090,7 +2090,7 @@ time.sleep(0.3)
 )py"));
 
   LspClient client;
-  const bool started = client.Start({"python3", server_path.string()}, "file:///tmp", "python");
+  const bool started = client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python");
   Expect(started, "init-failure fixture should start");
 
   // Issue a feature request while the client is still initializing: it registers a
@@ -2210,7 +2210,7 @@ void TestWorkspaceLspClientTimeoutReportsTimeoutOutcome() {
   LspClient client;
   // Shorten the per-request deadline so the sweep fires quickly instead of at 30s.
   client.SetRequestTimeoutForTesting(std::chrono::milliseconds(150));
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "outcome fixture should start");
 
   std::atomic<bool> done{false};
@@ -2245,7 +2245,7 @@ void TestWorkspaceLspClientOutcomeTaxonomy() {
   WriteFile(server_path, std::string(kOutcomeFixtureServer));
 
   LspClient client;
-  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp", "python"),
          "outcome fixture should start");
 
   // 1. signatureHelp -> JSON-RPC error -> ProtocolError, not answered.

@@ -903,7 +903,7 @@ there — which is a smaller gap than it sounds (the same objects are sanitized 
 `microide_tests`) but is worth closing when the second test binary lands, since that
 is the same CMake work.
 
-### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — the git layer is done (slices 1-3, 2026-09-29 / 2026-10-06); LSP, DAP and plugin tools remain]
+### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — git, LSP, DAP, formatter and terminal done (slices 1-4, 2026-09-29 / 2026-10-06); plugin tools remain]
 
 **Slice 1 (2026-09-29): a project owns a launcher, and git status routes through
 it.** `ProjectWorkspaceState::launcher()` is that launcher — a pointer so the
@@ -972,13 +972,21 @@ that fires when nothing in scope constructs a `GitRepository` from a passed
 launcher. Headers are out of scope on purpose: a copyable request struct needs a
 default pointer value, and its builder is what overwrites it.
 
-**What remains** (outside the git layer, each its own slice):
+**Slice 4 (2026-10-06): the language server and the debug adapter.**
+`LspManager::RegisterServer` and `DapManager::RegisterAdapter` take the project's
+launcher (required, no default) and store it on the server/adapter entry;
+`LspClient::Start`, `DebugSession::Start` and `DapClient::Start` take it as their
+first argument. Re-registering a language server with a different launcher is a
+different server and restarts it rather than being skipped as unchanged. The
+pinning tests watch `ScriptedProcessLauncher::resolved_argvs`, because these two
+spawns never go through `Run`.
 
-| spawner | why it is not one line |
-| --- | --- |
-| `WorkspaceLspClient` | started by `WorkspaceLspManager` entries keyed by language + root; the launcher belongs on the entry |
-| `WorkspaceDapClient` | `WorkspaceDapManager` → `DebugSession` → client; same shape, one more hop |
-| `PluginProcessInterop` | runs plugin-requested tools; needs a decision on whether a plugin's tool follows the project |
+**What remains:** `PluginProcessInterop` runs plugin-requested tools. That one is a
+decision, not a mechanical change — does a plugin's tool follow the project, or is
+it the plugin's own helper that must run where the plugin runs? VSCode's answer is
+the extension host's location: a "workspace" extension runs on the remote and its
+tools with it, a "UI" extension stays local. microide has no such declaration yet,
+so the site stays explicitly local until a plugin manifest can say which it is.
 
 `HostIntegration.cpp` (xdg-open) stays local by design. The three
 `ProjectLauncher()` fallbacks in `src/workspace/git/` return the local launcher
