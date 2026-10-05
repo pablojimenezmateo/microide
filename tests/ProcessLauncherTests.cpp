@@ -3,13 +3,19 @@
 #include "ScriptedProcessLauncher.h"
 
 #include "platform/ProcessLauncher.h"
+#include "project/CommitWorkflowChecks.h"
+#include "project/GitBlameService.h"
+#include "project/GitBranchOperations.h"
+#include "project/GitCommitExecutor.h"
 #include "project/GitCompareService.h"
 #include "project/GitRepository.h"
 #include "project/GitStatusRefresh.h"
 #include "project/GitStatusService.h"
 
+#include <chrono>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -242,6 +248,83 @@ void TestCompareServiceRunsThroughTheLauncherItIsGiven() {
   });
 }
 
+// Slice 3: the WRITE side — branch switch/create, fetch/pull/push, stash, the
+// commit itself and the staged-diff pre-checks — plus the HEAD resolution that
+// `GitRepository::ResolveHeadId` used to send to the local launcher whatever the
+// repository it was called on had been constructed with.
+void TestWriteSideRunsThroughTheLauncherItIsGiven() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");  // the marker, not a real repo
+
+  const auto ran = [&](std::string_view what, auto&& invoke) {
+    ScriptedProcessLauncher launcher;
+    invoke(launcher);
+    Expect(!launcher.runs.empty(), std::string(what) + " ran git through the launcher it was "
+                                                       "given, not a local one it reached for");
+  };
+
+  ran("SwitchGitBranch", [&](const ScriptedProcessLauncher& l) {
+    (void)project::SwitchGitBranch(root, l, "main");
+  });
+  ran("CreateGitBranch", [&](const ScriptedProcessLauncher& l) {
+    (void)project::CreateGitBranch(root, l, "topic");
+  });
+  ran("RunGitRemoteOperation", [&](const ScriptedProcessLauncher& l) {
+    (void)project::RunGitRemoteOperation(root, l, project::GitRemoteOperationKind::Fetch);
+  });
+  ran("StashGitChanges", [&](const ScriptedProcessLauncher& l) {
+    (void)project::StashGitChanges(root, l, "", false);
+  });
+  ran("PopGitStash", [&](const ScriptedProcessLauncher& l) { (void)project::PopGitStash(root, l); });
+  ran("ExecuteGitCommit", [&](const ScriptedProcessLauncher& l) {
+    (void)project::ExecuteGitCommit(root, l, "subject", "", project::CommitOperationKind::Create);
+  });
+
+  project::GitRepositoryState state;
+  state.repository_root = root;
+  state.repo_available = true;
+  ran("BuildCommitStagedSummary", [&](const ScriptedProcessLauncher& l) {
+    (void)project::BuildCommitStagedSummary(state, l);
+  });
+  ran("StagedDiffContainsConflictMarkers", [&](const ScriptedProcessLauncher& l) {
+    (void)project::StagedDiffContainsConflictMarkers(root, l);
+  });
+  ran("GitRepository::ResolveHeadId", [&](const ScriptedProcessLauncher& l) {
+    (void)project::GitRepository(root, l).ResolveHeadId();
+  });
+}
+
+// Blame is the one that used to be HELD rather than passed: the service carried a
+// launcher behind a `SetLauncher` nothing called, so every blame ran locally. It
+// rides on the request now. Only a liveness wait here — the scripted launcher
+// answers instantly, so the deadline is a bound on "never ran", not a timing claim.
+void TestBlameRunsThroughTheRequestsLauncher() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+  const std::filesystem::path file = root / "a.txt";
+  WriteFile(file, "one\ntwo\n");
+
+  ScriptedProcessLauncher launcher;
+  project::GitBlameService service;
+  project::GitBlameRequest request;
+  request.launcher = &launcher;
+  request.root = root;
+  request.absolute_path = file;
+  request.visible_line_count = 2;
+  request.total_line_count = 2;
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+  service.Request(request);
+  while (service.Snapshot(request).loading && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  service.Stop();  // joins nothing in flight after this; the worker is quiescent
+  Expect(!launcher.runs.empty(),
+         "a blame ran its git through the launcher on its request, not a held local one");
+}
+
 }  // namespace
 
 void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
@@ -260,6 +343,10 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestStatusServiceRunsThroughTheLauncherItIsGiven);
   AddTest(tests, "ProcessLauncher/CompareServiceRunsThroughTheLauncherItIsGiven",
           TestCompareServiceRunsThroughTheLauncherItIsGiven);
+  AddTest(tests, "ProcessLauncher/WriteSideRunsThroughTheLauncherItIsGiven",
+          TestWriteSideRunsThroughTheLauncherItIsGiven);
+  AddTest(tests, "ProcessLauncher/BlameRunsThroughTheRequestsLauncher",
+          TestBlameRunsThroughTheRequestsLauncher);
 }
 
 }  // namespace microide::tests

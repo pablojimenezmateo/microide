@@ -83,13 +83,14 @@ std::unordered_set<std::string> PartiallyStagedPaths(const GitRepositoryState& r
 
 }  // namespace
 
-CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repository_state) {
+CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repository_state,
+                                             const platform::ProcessLauncher& launcher) {
   CommitStagedSummary summary;
   if (!repository_state.repo_available || repository_state.repository_root.empty()) {
     return summary;
   }
 
-  GitRepository repo(repository_state.repository_root, platform::LocalProcessLauncher());
+  GitRepository repo(repository_state.repository_root, launcher);
   // `-z`: NUL-delimited, unquoted. Without it a path containing a newline splits
   // into bogus rows and a rename shows up as one mangled "old => new" path.
   const GitRepository::CommandResult numstat =
@@ -182,11 +183,12 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
   return summary;
 }
 
-std::optional<bool> StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_root) {
+std::optional<bool> StagedDiffContainsConflictMarkers(
+    const std::filesystem::path& repository_root, const platform::ProcessLauncher& launcher) {
   if (repository_root.empty()) {
     return false;
   }
-  GitRepository repo(repository_root, platform::LocalProcessLauncher());
+  GitRepository repo(repository_root, launcher);
   const GitRepository::CommandResult diff = repo.Execute({"diff", "--cached"}, true);
   if (!diff.success()) {
     return std::nullopt;  // could not determine (e.g. locked index) — not "clean"
@@ -196,6 +198,7 @@ std::optional<bool> StagedDiffContainsConflictMarkers(const std::filesystem::pat
 
 std::vector<CommitPreCheck> RunCommitPreChecks(
     const GitRepositoryState& repository_state,
+    const platform::ProcessLauncher& launcher,
     const std::string_view subject,
     const std::string_view body,
     const std::unordered_set<std::string>& acknowledged_warning_ids,
@@ -219,7 +222,7 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
   CommitStagedSummary owned_summary;
   const CommitStagedSummary* summary_view = precomputed_summary;
   if (summary_view == nullptr) {
-    owned_summary = BuildCommitStagedSummary(repository_state);
+    owned_summary = BuildCommitStagedSummary(repository_state, launcher);
     summary_view = &owned_summary;
   }
   const CommitStagedSummary& staged_summary = *summary_view;
@@ -257,7 +260,7 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
 
   if (scan_staged_diff_for_conflict_markers) {
     const std::optional<bool> has_markers =
-        StagedDiffContainsConflictMarkers(repository_state.repository_root);
+        StagedDiffContainsConflictMarkers(repository_state.repository_root, launcher);
     if (!has_markers.has_value()) {
       checks.push_back(MakeCheck(CommitPreCheckKind::ConflictMarkers, CommitPreCheckSeverity::Warning,
                                  "Could not verify staged changes for conflict markers"));

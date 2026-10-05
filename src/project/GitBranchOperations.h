@@ -5,6 +5,8 @@
 #include <string_view>
 #include <vector>
 
+#include "platform/ProcessLauncher.h"
+
 namespace microide::project {
 
 // Why a git write operation ended the way it did. Kept coarse and closed so the
@@ -65,13 +67,19 @@ GitOperationOutcome ClassifyGitOperationFailure(int exit_code, std::string_view 
 // one date-sorted, capped, HEAD-aware list shared with the compare pickers rather
 // than a second for-each-ref parser here.
 
+// Every write operation below takes the launcher explicitly — no default. See
+// GitStatusService.h for why (TD-2026-09-22-301): a branch switch or a push that
+// quietly inherits locality runs on the wrong machine the day a project is remote.
+//
 // `git switch <branch>`. Refuses to run with a dirty index/worktree conflict rather
 // than clobbering local work — git's own guard, surfaced as DirtyWorktree.
 GitOperationReport SwitchGitBranch(const std::filesystem::path& repository_root,
+                                   const platform::ProcessLauncher& launcher,
                                    std::string_view branch);
 
 // `git switch -c <branch> [start_point]`. An empty `start_point` branches from HEAD.
 GitOperationReport CreateGitBranch(const std::filesystem::path& repository_root,
+                                   const platform::ProcessLauncher& launcher,
                                    std::string_view branch,
                                    std::string_view start_point = {});
 
@@ -80,14 +88,17 @@ GitOperationReport CreateGitBranch(const std::filesystem::path& repository_root,
 // means in a GUI client; otherwise a missing upstream reports NoUpstream so the
 // caller can offer to publish.
 GitOperationReport RunGitRemoteOperation(const std::filesystem::path& repository_root,
+                                         const platform::ProcessLauncher& launcher,
                                          GitRemoteOperationKind kind,
                                          std::string_view branch = {},
                                          bool set_upstream = false);
 
 // `git stash push` (optionally including untracked files) and `git stash pop`.
 GitOperationReport StashGitChanges(const std::filesystem::path& repository_root,
+                                   const platform::ProcessLauncher& launcher,
                                    std::string_view message,
                                    bool include_untracked);
-GitOperationReport PopGitStash(const std::filesystem::path& repository_root);
+GitOperationReport PopGitStash(const std::filesystem::path& repository_root,
+                               const platform::ProcessLauncher& launcher);
 
 }  // namespace microide::project

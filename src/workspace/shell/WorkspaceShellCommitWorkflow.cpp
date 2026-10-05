@@ -12,6 +12,7 @@ namespace microide::workspace {
 
 void WorkspaceShell::InitializeCommitWorkflowService() {
   commit_workflow_service_.SetCallbacks(CommitWorkflowService::Callbacks{
+      .project_launcher = [this]() { return &context_.current_project_state.launcher(); },
       .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
       .append_output =
           [this](const std::string_view channel_id, const std::string_view label,
@@ -143,6 +144,7 @@ bool WorkspaceShell::RequestCommitWorkflowCommit() {
 
 void WorkspaceShell::InitializeGitOperationService() {
   git_operation_service_.SetCallbacks(GitOperationService::Callbacks{
+      .project_launcher = [this]() { return &context_.current_project_state.launcher(); },
       .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
       // A branch switch, pull, or stash pop rewrites files under open editors. Clean
       // buffers are re-read from disk; dirty ones are left alone (the reload helper

@@ -573,7 +573,7 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     constexpr int kFormatterTimeoutMs = 5000;
     // Through the project's launcher: a formatter must run where the file it is
     // formatting lives, or it reformats against the wrong toolchain's config.
-    // Explicitly local today (TD-2026-09-22-301: the project does not own one yet).
+    const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
     SaveFormatterService::Request request{
         .command = formatter->command,
         .cwd = context_.current_project_state.root,
@@ -586,7 +586,7 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
       // is NOT applied to the viewport yet: the completion decides, against the
       // revision, whether the formatter's answer is still about this buffer.
       const std::uint64_t run_id = save_formatter_service_.Begin(
-          path.generic_string(), std::move(request), platform::LocalProcessLauncher(),
+          path.generic_string(), std::move(request), launcher,
           [this](SaveFormatterService::Completion completion) {
             ApplyDeferredSaveFormat(completion);
           });
@@ -598,7 +598,7 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
       // still has to have the file on disk when it returns. It pays the same wait the
       // inline path always did, off the shell thread's own stack.
       const SaveFormatterService::Completion completion =
-          save_formatter_service_.RunBlocking(std::move(request), platform::LocalProcessLauncher());
+          save_formatter_service_.RunBlocking(std::move(request), launcher);
       if (!completion.ok) {
         ReportSaveFormatterFailure(completion, error_message);
         return SavePreparation::Ready();

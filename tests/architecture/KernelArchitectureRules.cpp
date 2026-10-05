@@ -515,10 +515,70 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
   return result;
 }
 
+RuleResult CheckGitLayerDoesNotChooseLocality(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "the git layer takes its launcher, it does not choose one";
+  result.hard_fail = true;
+  const std::filesystem::path project_dir = repo_root / "src" / "project";
+  if (!RequireRuleTarget(result, project_dir)) {
+    return result;
+  }
+
+  // TD-2026-09-22-301 threaded the project's launcher through every git entry
+  // point in three slices: status, the read side, then the write side and blame.
+  // Before it, 17 `LocalProcessLauncher()` constructions lived INSIDE these units,
+  // each one a place where a remote project's git would quietly run on this
+  // machine — against whatever tree happens to share the path. The caller knows
+  // which project a query belongs to; the git layer never does, so it must not be
+  // the one deciding. A spawn that must stay local whatever the project says
+  // (xdg-open) lives outside this layer and names the local launcher there.
+  //
+  // Scoped to .cpp: a copyable request struct (GitBlameRequest, PatchApplyRequest)
+  // needs SOME default for its launcher pointer, and the request's builder is what
+  // overwrites it — that is a value, not a decision.
+  const std::regex local_launcher(R"(\bLocalProcessLauncher\s*\()");
+  // Vacuity guard: the rule is only meaningful while these files still build
+  // GitRepository objects from a launcher they were handed. If nothing in scope
+  // constructs one, the layer was renamed or moved and this scans nothing.
+  const std::regex repository_from_launcher(
+      R"(\bGitRepository\s+\w+\s*\(\s*\w[\w.]*\s*,\s*\*?\w+)");
+  bool saw_repository_construction = false;
+  for (const auto& entry : std::filesystem::directory_iterator(project_dir)) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
+      continue;
+    }
+    const std::string name = entry.path().filename().string();
+    if (!name.starts_with("Git") && !name.starts_with("Commit") &&
+        !name.starts_with("PatchApply")) {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    if (CodeMaskedPatternAppears(text, repository_from_launcher)) {
+      saw_repository_construction = true;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, local_launcher,
+        "the git layer must take the launcher from its caller (the project's, via "
+        "ProjectWorkspaceState::launcher()), not construct LocalProcessLauncher() "
+        "itself — a remote project's git would silently run on this machine");
+  }
+  if (!saw_repository_construction) {
+    result.missing_targets.push_back(Violation{
+        .path = project_dir,
+        .line = 1,
+        .message = "no src/project/Git*/Commit*/PatchApply* .cpp constructs a GitRepository "
+                   "any more; the git layer moved or was renamed and this rule scans nothing "
+                   "(repoint it)",
+    });
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
       {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
+      {"CheckGitLayerDoesNotChooseLocality", CheckGitLayerDoesNotChooseLocality},
       {"CheckEveryUserSaveRunsTheSamePreparation", CheckEveryUserSaveRunsTheSamePreparation},
       {"CheckProjectWritesGoThroughTheWriteGate", CheckProjectWritesGoThroughTheWriteGate},
   };

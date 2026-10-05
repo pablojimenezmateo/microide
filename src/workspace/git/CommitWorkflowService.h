@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "platform/ProcessLauncher.h"
 #include "project/CommitWorkflowTypes.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "util/MainThreadMailbox.h"
@@ -21,6 +22,10 @@ class GitRepositoryService;
 class CommitWorkflowService {
  public:
   struct Callbacks {
+    // The ACTIVE project's launcher: where this project's `git commit` and the
+    // staged-diff pre-checks run (TD-2026-09-22-301). Unset or null means the
+    // process-wide local one.
+    std::function<const platform::ProcessLauncher*()> project_launcher;
     std::function<void()> request_git_refresh;
     std::function<void(std::string_view channel_id, std::string_view label, std::string line)>
         append_output;
@@ -71,6 +76,11 @@ class CommitWorkflowService {
   // the shell thread responsive; only the pre-dispatch refresh in RequestCommit pays
   // for the unbounded scan, which still blocks the commit if it fires.
   void RefreshDerivedState(CommitWorkflowState& state, bool run_blocking_conflict_scan = false);
+
+  // The project's launcher, or the process-wide local one when no callback is
+  // wired. Every git this service runs — the staged summary, the pre-checks and
+  // the commit itself — goes through it (TD-2026-09-22-301).
+  const platform::ProcessLauncher& ProjectLauncher() const;
   void OnDraftEdited(CommitWorkflowState& state);
   bool RequestCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
   bool ConfirmPendingOperation(CommitWorkflowState& state);

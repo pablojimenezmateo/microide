@@ -903,7 +903,7 @@ there — which is a smaller gap than it sounds (the same objects are sanitized 
 `microide_tests`) but is worth closing when the second test binary lands, since that
 is the same CMake work.
 
-### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — slices 1 and 2 done; 2026-09-29, 2026-10-06]
+### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — the git layer is done (slices 1-3, 2026-09-29 / 2026-10-06); LSP, DAP and plugin tools remain]
 
 **Slice 1 (2026-09-29): a project owns a launcher, and git status routes through
 it.** `ProjectWorkspaceState::launcher()` is that launcher — a pointer so the
@@ -940,24 +940,49 @@ the nine entry points against its OWN scripted launcher, so a reintroduced
 internal local launcher shows as an empty run list for that entry point rather
 than being masked by a neighbour's runs.
 
-**Remaining slices, measured rather than estimated** (`LocalProcessLauncher()`
-constructions):
+**Slice 3 (2026-10-06): the write side, blame, and the lint.** Branch switch and
+create, fetch/pull/push, stash push/pop, the commit itself, the staged summary
+and the conflict-marker scan all take the launcher, again with no default. The
+three workspace services that dispatch them to a worker (`GitOperationService`,
+`CommitWorkflowService`, `PatchApplyService`) each read the active project's
+launcher through a `project_launcher` callback on the main thread and capture
+the POINTER into the task, so a project switch mid-operation cannot move a
+push to another machine halfway.
 
-| unit | internal sites |
+Two things fell out that were wrong rather than just unfinished:
+
+- **`GitBlameService::SetLauncher` had no callers.** The service held a launcher
+  behind a setter nothing ever invoked, so every blame ran locally whatever the
+  project. Holding it was also the wrong shape: one service serves every project
+  tab, so a request queued for one project would have run on another's launcher
+  after a tab switch. The launcher rides on `GitBlameRequest` now, stamped by
+  `EditorBlameOverlayService` from the active project; the setter is deleted.
+- **`GitRepository::ResolveHeadId()` ignored its own launcher.** It called the
+  free `gitutil::ResolveHeadId(root)`, which was hard-wired local — so a
+  repository constructed with a remote launcher still resolved HEAD on this
+  machine. The free function takes the launcher; the member passes its own.
+
+The format-on-save formatter and new terminal tabs had the project in hand and a
+comment saying "the project does not own a launcher yet"; both use it now.
+
+**The lint:** `CheckGitLayerDoesNotChooseLocality` hard-fails any
+`LocalProcessLauncher()` call in a `src/project/{Git,Commit,PatchApply}*.cpp`,
+code-masked, with negative and positive fixtures and a loud-missing-target guard
+that fires when nothing in scope constructs a `GitRepository` from a passed
+launcher. Headers are out of scope on purpose: a copyable request struct needs a
+default pointer value, and its builder is what overwrites it.
+
+**What remains** (outside the git layer, each its own slice):
+
+| spawner | why it is not one line |
 | --- | --- |
-| `CommitWorkflowChecks` | 2 |
-| `GitBlameService`, `GitBranchOperations`, `GitCommitExecutor`, `GitCommandUtil` | 1 each |
-| `PatchApplyService` | 1 |
+| `WorkspaceLspClient` | started by `WorkspaceLspManager` entries keyed by language + root; the launcher belongs on the entry |
+| `WorkspaceDapClient` | `WorkspaceDapManager` → `DebugSession` → client; same shape, one more hop |
+| `PluginProcessInterop` | runs plugin-requested tools; needs a decision on whether a plugin's tool follows the project |
 
-Plus the non-git spawners that are a separate question: the LSP client, the DAP
-client, the terminal, and the plugin process interop each name the local launcher
-and each has its own answer under the design (a remote project runs all four on
-the host).
-
-A lint belongs with the last slice, not before it: while most sites still
-construct their own local launcher, a rule saying "take the launcher as a
-parameter" would have to carry an allowlist of everything not yet converted,
-which reads as "these are exceptions" when they are just unfinished.
+`HostIntegration.cpp` (xdg-open) stays local by design. The three
+`ProjectLauncher()` fallbacks in `src/workspace/git/` return the local launcher
+only when no callback is wired, which is the unit-test construction path.
 
 
 `platform::ProcessLauncher` is in place and `CheckEverySpawnGoesThroughAProcessLauncher`

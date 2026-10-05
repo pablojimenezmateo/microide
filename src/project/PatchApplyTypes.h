@@ -5,6 +5,8 @@
 #include <optional>
 #include <string>
 
+#include "platform/ProcessLauncher.h"
+
 #include "compare/CompareModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
@@ -88,6 +90,12 @@ struct PatchApplyRequest {
   PatchOperationKind operation = PatchOperationKind::StageHunk;
   PatchApplyTarget target{};
   compare::CompareModel model{};
+  // The launcher the apply's `git apply` runs through — the PROJECT's, captured
+  // on the main thread when the request is built and read on the apply worker
+  // (TD-2026-09-22-301). A pointer so the request stays copyable; it outlives the
+  // request because the local launcher is a function-local static and a remote
+  // one is owned by the project's connection.
+  const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
   std::uint64_t repository_snapshot_generation = 0;
   std::uint64_t diff_model_generation = 0;
 };

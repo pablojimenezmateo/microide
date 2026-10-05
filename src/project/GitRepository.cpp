@@ -311,7 +311,7 @@ std::optional<std::string> GitRepository::ReadFileAtRevision(
 }
 
 std::optional<std::string> GitRepository::ResolveHeadId() const {
-  return gitutil::ResolveHeadId(root_);
+  return gitutil::ResolveHeadId(*launcher_, root_);
 }
 
 bool GitRepository::HasHeadCommit() const {

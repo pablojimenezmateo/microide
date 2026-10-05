@@ -1127,6 +1127,43 @@ void RunKernelWindowingLibraryRuleFixtures() {
          "kernel rule must report a MICROIDE_KERNEL_SOURCES list it cannot read");
 }
 
+void RunGitLayerLocalityRuleFixtures() {
+  TemporaryDirectory dir;
+  const std::filesystem::path& root = dir.path();
+  std::filesystem::create_directories(root / "src/project");
+
+  // Negative control: a git unit that picks the local launcher for itself.
+  WriteFile(root / "src/project/GitThing.cpp",
+            "void F(const std::filesystem::path& root){\n"
+            "  const GitRepository repo(root, platform::LocalProcessLauncher());\n}\n");
+  const RuleResult flagged = CheckGitLayerDoesNotChooseLocality(root);
+  Expect(flagged.violations.size() == 1,
+         "git-locality rule must flag a git unit that constructs LocalProcessLauncher()");
+  Expect(flagged.missing_targets.empty(),
+         "and a GitRepository built from an argument still counts as something to scan");
+
+  // Positive control: the same unit taking its caller's launcher.
+  WriteFile(root / "src/project/GitThing.cpp",
+            "void F(const std::filesystem::path& root, const platform::ProcessLauncher& l){\n"
+            "  const GitRepository repo(root, l);\n}\n");
+  Expect(CheckGitLayerDoesNotChooseLocality(root).violations.empty(),
+         "git-locality rule must accept a launcher passed in by the caller");
+
+  // Out of scope: a non-git unit, and prose that mentions the call.
+  WriteFile(root / "src/project/Other.cpp", "void G(){ platform::LocalProcessLauncher(); }\n");
+  WriteFile(root / "src/project/CommitNotes.cpp",
+            "// used to call LocalProcessLauncher() here\n"
+            "void H(const std::filesystem::path& r, const L& l){ GitRepository repo(r, l); }\n");
+  Expect(CheckGitLayerDoesNotChooseLocality(root).violations.empty(),
+         "git-locality rule must ignore non-git units and comments");
+
+  // Loud-missing-target: nothing in scope builds a GitRepository.
+  std::filesystem::remove(root / "src/project/GitThing.cpp");
+  std::filesystem::remove(root / "src/project/CommitNotes.cpp");
+  Expect(!CheckGitLayerDoesNotChooseLocality(root).missing_targets.empty(),
+         "git-locality rule must report a scope with no GitRepository construction");
+}
+
 void RunProcessLauncherRuleFixtures() {
   TemporaryDirectory launcher_dir;
   const std::filesystem::path& root = launcher_dir.path();
@@ -1283,6 +1320,7 @@ void RunAllRuleFixtures() {
   RunHintSeparatorRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();
   RunProcessLauncherRuleFixtures();
+  RunGitLayerLocalityRuleFixtures();
   RunWriteGateRuleFixtures();
 }
 

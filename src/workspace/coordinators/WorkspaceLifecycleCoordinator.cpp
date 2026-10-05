@@ -192,10 +192,13 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   InitializeCommitWorkflowService();
   // The patch apply's post-apply shell work rides the same wake and drain.
   patch_apply_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
+  editor_blame_overlay_service_.SetProjectLauncherSource(
+      [this]() { return &context_.current_project_state.launcher(); });
   patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
       .current_repository_state = [this]() {
         return git_repository_service_.CurrentState();
       },
+      .project_launcher = [this]() { return &context_.current_project_state.launcher(); },
       .request_git_refresh = [this]() { RequestAutomaticGitSidebarRefresh(); },
       .refresh_compare_tab_for_path =
           [this](const std::filesystem::path& path) { RefreshOpenCompareTabsForPath(path); },

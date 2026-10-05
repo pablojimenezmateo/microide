@@ -5,12 +5,18 @@
 #include <unordered_set>
 #include <vector>
 
+#include "platform/ProcessLauncher.h"
 #include "project/CommitWorkflowTypes.h"
 #include "project/GitRepositoryState.h"
 
 namespace microide::project {
 
-CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repository_state);
+// The three entry points here take the launcher explicitly — no default, same
+// rule as GitStatusService.h (TD-2026-09-22-301). They run `git diff --cached`
+// against the repository the state describes, which for a remote project is not
+// this machine's.
+CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repository_state,
+                                             const platform::ProcessLauncher& launcher);
 
 // `precomputed_summary`, when non-null, is used instead of re-running the staged-diff
 // subprocess (git diff --cached --numstat) internally. Callers that already built the
@@ -24,6 +30,7 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
 // for it. The check is blocking, so surfacing it at commit time still prevents the commit.
 std::vector<CommitPreCheck> RunCommitPreChecks(
     const GitRepositoryState& repository_state,
+    const platform::ProcessLauncher& launcher,
     std::string_view subject,
     std::string_view body,
     const std::unordered_set<std::string>& acknowledged_warning_ids,
@@ -36,6 +43,7 @@ bool CommitPreChecksAllowExecution(const std::vector<CommitPreCheck>& checks,
 // nullopt when the staged diff could not be read (e.g. a transiently locked
 // index) — distinct from a definitive "no markers" so the caller can surface an
 // advisory instead of silently disabling the safety check.
-std::optional<bool> StagedDiffContainsConflictMarkers(const std::filesystem::path& repository_root);
+std::optional<bool> StagedDiffContainsConflictMarkers(
+    const std::filesystem::path& repository_root, const platform::ProcessLauncher& launcher);
 
 }  // namespace microide::project

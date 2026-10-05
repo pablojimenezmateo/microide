@@ -88,6 +88,12 @@ void CommitWorkflowService::RestorePersistedDraft(
   state.draft_restored = true;
 }
 
+const platform::ProcessLauncher& CommitWorkflowService::ProjectLauncher() const {
+  const platform::ProcessLauncher* launcher =
+      callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr;
+  return launcher != nullptr ? *launcher : platform::LocalProcessLauncher();
+}
+
 void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
                                                 const bool run_blocking_conflict_scan) {
   const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
@@ -96,7 +102,7 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
   // `git diff --cached --numstat` summary only when the generation moves so a
   // field-switch / warning-ack refresh does not re-run the subprocess redundantly.
   if (state.staged_summary_generation != repository_state.generation) {
-    state.staged_summary = project::BuildCommitStagedSummary(repository_state);
+    state.staged_summary = project::BuildCommitStagedSummary(repository_state, ProjectLauncher());
     state.staged_summary_generation = repository_state.generation;
     if (state.staged_summary.file_count == 0) {
       state.staged_summary_line = "Nothing staged";
@@ -112,7 +118,7 @@ void CommitWorkflowService::RefreshDerivedState(CommitWorkflowState& state,
   // `git diff --cached` conflict-marker scan only runs when a commit is about to
   // dispatch (run_blocking_conflict_scan); interactive refreshes skip it for speed.
   state.checks = project::RunCommitPreChecks(
-      repository_state, state.subject.text(), state.BodyText(),
+      repository_state, ProjectLauncher(), state.subject.text(), state.BodyText(),
       state.acknowledged_warning_ids, &state.staged_summary, run_blocking_conflict_scan);
   if (callbacks_.request_commit_workflow_redraw != nullptr) {
     callbacks_.request_commit_workflow_redraw();
@@ -311,13 +317,14 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   state.in_flight_claim_ = CommitOperationClaim(this, captured_generation);
   background_executor_.Post([this, &state, operation, subject, body, repository_generation,
                              captured_generation,
-                             repository_root = repository_state.repository_root]() {
+                             repository_root = repository_state.repository_root,
+                             launcher = &ProjectLauncher()]() {
     // Worker thread: only run the (possibly slow, hook-invoking) git commit and
     // produce a result. Mutating CommitWorkflowState here would race the main
     // thread, which reads state.subject/body/status_message while rendering the
     // commit overlay. Marshal the state mutation back to the render thread.
     project::CommitOperationResult result =
-        project::ExecuteGitCommit(repository_root, subject, body, operation);
+        project::ExecuteGitCommit(repository_root, *launcher, subject, body, operation);
     completion_mailbox_.Post([this, &state, operation, repository_generation, captured_generation,
                               result = std::move(result)]() mutable {
       std::lock_guard completion_lock(mutex_);

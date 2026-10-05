@@ -54,6 +54,7 @@ CommitOperationResultCategory ClassifyCommitFailure(const int exit_code,
 }
 
 CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_root,
+                                       const platform::ProcessLauncher& launcher,
                                        const std::string_view subject,
                                        const std::string_view body,
                                        const CommitOperationKind operation) {
@@ -64,7 +65,7 @@ CommitOperationResult ExecuteGitCommit(const std::filesystem::path& repository_r
     return result;
   }
 
-  GitRepository repo(repository_root, platform::LocalProcessLauncher());
+  GitRepository repo(repository_root, launcher);
   std::vector<std::string> arguments;
   arguments.emplace_back("commit");
   if (operation == CommitOperationKind::Amend) {

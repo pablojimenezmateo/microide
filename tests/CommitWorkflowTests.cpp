@@ -36,6 +36,10 @@ using microide::workspace::EncodeProjectConfigRecord;
 using microide::workspace::PersistedCommitDraftState;
 using microide::workspace::PersistedProjectConfigState;
 
+// The pre-checks and commits here run against a real local repository (or a state
+// that names one), so every call names the local launcher.
+const platform::ProcessLauncher& Local() { return platform::LocalProcessLauncher(); }
+
 GitRepositoryState MakeRepositoryState() {
   GitRepositoryState state{
       .repository_root = "/repo",
@@ -70,7 +74,7 @@ GitRepositoryState MakeRepositoryState() {
 
 void TestEmptySubjectBlocksCommit() {
   const GitRepositoryState state = MakeRepositoryState();
-  const auto checks = RunCommitPreChecks(state, "", "", {});
+  const auto checks = RunCommitPreChecks(state, Local(), "", "", {});
   bool saw_empty_subject = false;
   for (const auto& check : checks) {
     if (check.kind == CommitPreCheckKind::EmptySubject &&
@@ -99,14 +103,14 @@ void TestCommitSubjectLengthCountsCharactersNotBytes() {
   // 72-character limit, so no long-subject check should fire.
   std::string cjk;
   for (int i = 0; i < 40; ++i) cjk += "\xe5\xad\x97";  // 字
-  Expect(!has_long_subject(RunCommitPreChecks(state, cjk, "", {}, &summary)),
+  Expect(!has_long_subject(RunCommitPreChecks(state, Local(), cjk, "", {}, &summary)),
          "a 40-character (120-byte) subject must not be flagged as too long");
 
   // 80 characters really is over the limit and must still be flagged -- as a
   // WARNING the user can acknowledge, not a block: git accepts any length and VS
   // Code only decorates the input, so a project with a longer convention commits.
   const std::string too_long(80, 'a');
-  const auto checks = RunCommitPreChecks(state, too_long, "", {}, &summary);
+  const auto checks = RunCommitPreChecks(state, Local(), too_long, "", {}, &summary);
   Expect(has_long_subject(checks), "an 80-character subject must still be flagged as too long");
   for (const auto& check : checks) {
     if (check.kind == microide::project::CommitPreCheckKind::LongSubject) {
@@ -124,7 +128,7 @@ void TestCommitSubjectLengthCountsCharactersNotBytes() {
 
 void TestWarningsRequireAcknowledgement() {
   const GitRepositoryState state = MakeRepositoryState();
-  const auto checks = RunCommitPreChecks(state, "subject", "", {});
+  const auto checks = RunCommitPreChecks(state, Local(), "subject", "", {});
   Expect(!CommitPreChecksAllowExecution(checks, {}), "warnings should block until acknowledged");
   std::unordered_set<std::string> acknowledged;
   for (const auto& check : checks) {
@@ -178,7 +182,7 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
       .worktree_dirty = true,
   });
 
-  const auto checks = RunCommitPreChecks(state, "subject", "", {});
+  const auto checks = RunCommitPreChecks(state, Local(), "subject", "", {});
   bool saw_partial = false;
   for (const auto& check : checks) {
     if (check.kind == CommitPreCheckKind::UnstagedLeftovers) {
@@ -191,7 +195,7 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
   // A fully-staged file (M.) — staged but not worktree-dirty — must NOT warn.
   GitRepositoryState fully_staged = state;
   fully_staged.entries[0].worktree_dirty = false;
-  const auto clean_checks = RunCommitPreChecks(fully_staged, "subject", "", {});
+  const auto clean_checks = RunCommitPreChecks(fully_staged, Local(), "subject", "", {});
   bool saw_clean = false;
   for (const auto& check : clean_checks) {
     if (check.kind == CommitPreCheckKind::UnstagedLeftovers) {
@@ -221,9 +225,9 @@ void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
       .worktree_dirty = true,
   });
 
-  const auto summary = BuildCommitStagedSummary(state);
-  const auto recomputed = RunCommitPreChecks(state, "subject", "", {});
-  const auto reused = RunCommitPreChecks(state, "subject", "", {}, &summary);
+  const auto summary = BuildCommitStagedSummary(state, Local());
+  const auto recomputed = RunCommitPreChecks(state, Local(), "subject", "", {});
+  const auto reused = RunCommitPreChecks(state, Local(), "subject", "", {}, &summary);
 
   Expect(reused.size() == recomputed.size(),
          "precomputed-summary path must yield the same number of checks");
@@ -316,7 +320,7 @@ void TestExecuteCommitInTempRepo() {
   WriteFile(root / "file.txt", "hello\n");
   RequireGitCommandSuccess(root, {"add", "file.txt"}, "stage file for commit workflow test");
   const auto result =
-      project::ExecuteGitCommit(root, "Initial commit", "", CommitOperationKind::Create);
+      project::ExecuteGitCommit(root, Local(), "Initial commit", "", CommitOperationKind::Create);
   Expect(result.category == CommitOperationResultCategory::Success, "commit should succeed");
 }
 
@@ -334,13 +338,13 @@ void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
   const std::string long_tail(300000, 'x');
   const std::string body = "Body with $(dangerous) substitution and a long tail:\n" + long_tail;
   const auto result =
-      project::ExecuteGitCommit(root, subject, body, CommitOperationKind::Create);
+      project::ExecuteGitCommit(root, Local(), subject, body, CommitOperationKind::Create);
   Expect(result.category == CommitOperationResultCategory::Success,
          "a huge shell-significant body must commit via -F - stdin");
 
   // %B is the raw commit message (subject + blank line + body). It must contain
   // the subject and the long tail verbatim.
-  microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
+  microide::project::GitRepository repo(root, Local());
   const auto logged = repo.Execute({"log", "-1", "--format=%B"});
   Expect(logged.success(), "git log should read back the message");
   Expect(logged.output.find(subject) != std::string::npos,
@@ -402,7 +406,7 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   };
 
   check("before any refresh");
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
@@ -415,7 +419,7 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   const std::uint64_t first_generation = git_service.CurrentState().generation;
   RequireGitCommandSuccess(repo, {"checkout", "--ours", "shared.txt"}, "resolve the conflict");
   RequireGitCommandSuccess(repo, {"add", "shared.txt"}, "stage the resolution");
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().generation != first_generation,
@@ -450,7 +454,7 @@ void TestCommitResultIsMarshaledToMainThread() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
@@ -518,7 +522,7 @@ void TestCommitCompletionSurvivesStateDestruction() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
@@ -575,7 +579,7 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
 
@@ -603,7 +607,7 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
   // Second project dispatches; only now does the first project's tab close.
   WriteFile(repo / "seed.txt", "seed\nfirst\nsecond\n");
   RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage second change");
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   CommitWorkflowState second;
@@ -643,12 +647,12 @@ void TestConflictMarkerScanGate() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   const GitRepositoryState state = git_service.CurrentState();
   Expect(state.repo_available, "fixture repo should be available");
-  const auto summary = BuildCommitStagedSummary(state);
+  const auto summary = BuildCommitStagedSummary(state, Local());
 
   auto has_conflict_marker_check = [](const std::vector<microide::project::CommitPreCheck>& checks) {
     for (const auto& check : checks) {
@@ -661,12 +665,12 @@ void TestConflictMarkerScanGate() {
   };
 
   const auto scanned =
-      RunCommitPreChecks(state, "subject", "", {}, &summary, /*scan=*/true);
+      RunCommitPreChecks(state, Local(), "subject", "", {}, &summary, /*scan=*/true);
   Expect(has_conflict_marker_check(scanned),
          "scan=true must surface the blocking conflict-marker check for staged markers");
 
   const auto skipped =
-      RunCommitPreChecks(state, "subject", "", {}, &summary, /*scan=*/false);
+      RunCommitPreChecks(state, Local(), "subject", "", {}, &summary, /*scan=*/false);
   Expect(!has_conflict_marker_check(skipped),
          "scan=false (interactive refresh) must skip the unbounded conflict-marker scan");
 }
@@ -729,7 +733,7 @@ void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
@@ -803,7 +807,7 @@ void TestCancelledWarningConfirmationCommitsNothing() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+  git_service.RunRefreshSynchronouslyForTesting(repo, Local(),
                                                 GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
 

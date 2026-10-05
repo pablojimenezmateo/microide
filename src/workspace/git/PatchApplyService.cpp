@@ -178,9 +178,12 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
   // reads request.model. Copying a whole CompareModel here — every row and hunk
   // of a potentially huge diff — just to stage one small hunk was pure UI-thread
   // overhead. The .model field is left value-initialized (empty).
+  const platform::ProcessLauncher* launcher =
+      callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr;
   return project::PatchApplyRequest{
       .operation = operation,
       .target = std::move(target),
+      .launcher = launcher != nullptr ? launcher : &platform::LocalProcessLauncher(),
       .repository_snapshot_generation = repository_state.generation,
       .diff_model_generation = compare_tab.model_revision,
   };
@@ -221,11 +224,10 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
       return;
     }
 
-    // Explicitly local, and greppable as such: the project does not own a launcher
-    // yet (TD-2026-09-22-301), and a patch applied on the wrong machine is exactly
-    // the silent wrong answer the launcher exists to prevent.
-    PatchApplyResult result =
-        project::ApplyPatchRequest(platform::LocalProcessLauncher(), request, patch_text);
+    // The project's launcher, captured when the request was built: a patch
+    // applied on the wrong machine is exactly the silent wrong answer the
+    // launcher exists to prevent.
+    PatchApplyResult result = project::ApplyPatchRequest(*request.launcher, request, patch_text);
     const bool patch_applied = result.category == PatchApplyResultCategory::Success;
     if (patch_applied) {
       git_repository_service_.MarkStale();

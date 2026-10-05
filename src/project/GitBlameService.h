@@ -29,6 +29,13 @@ struct GitBlameAttribution {
 std::vector<GitBlameAttribution> ParseGitBlameIncrementalOutput(std::string_view output);
 
 struct GitBlameRequest {
+  // Where this blame's git runs — the launcher of the project the file belongs
+  // to (TD-2026-09-22-301). Carried on the REQUEST, not held by the service: one
+  // service serves every project tab, and a request queued for one project must
+  // not run on another's launcher because the active tab changed underneath it.
+  // Must outlive the request (the local launcher is a function-local static; a
+  // remote one is owned by its project's connection).
+  const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
   std::filesystem::path root;
   std::filesystem::path absolute_path;
   std::size_t visible_start_line = 0;
@@ -74,11 +81,6 @@ class GitBlameService {
   ~GitBlameService();
 
   void SetWakeChannel(util::WakeChannel channel);
-  // Where `git blame` runs. Held, not passed per call: a blame belongs to the project
-  // whose file it annotates, and the worker that runs it outlives any one request.
-  // The reference must outlive the service (the process-wide local launcher, or the
-  // project's own).
-  void SetLauncher(const platform::ProcessLauncher& launcher);
   void Request(const GitBlameRequest& request);
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const;
   void InvalidatePath(const std::filesystem::path& root,

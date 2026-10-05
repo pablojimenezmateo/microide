@@ -31,6 +31,11 @@ namespace microide::workspace {
 class GitOperationService {
  public:
   struct Callbacks {
+    // The ACTIVE project's launcher: a branch switch, a push or a stash belongs
+    // to the machine the project lives on (TD-2026-09-22-301). Read on the main
+    // thread at dispatch and captured into the background task; unset or null
+    // means the process-wide local one.
+    std::function<const platform::ProcessLauncher*()> project_launcher;
     // Re-read git state after an operation that could have changed HEAD, the index,
     // or the working tree.
     std::function<void()> request_git_refresh;
@@ -54,6 +59,9 @@ class GitOperationService {
   int PendingCompletionCount() const { return completion_mailbox_.PendingCount(); }
 
   bool busy() const { return in_flight_.load(std::memory_order_acquire); }
+  // The project's launcher, or the process-wide local one when no callback is
+  // wired. Main-thread only; the pointer is what the background task captures.
+  const platform::ProcessLauncher& ProjectLauncher() const;
   // Label of the operation currently running ("Switching branch…"), for the status
   // surface. Empty when idle. Main-thread only.
   const std::string& status_message() const { return status_message_; }

@@ -64,7 +64,8 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
 const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path);
-std::optional<std::string> ResolveHeadId(const std::filesystem::path& root);
+std::optional<std::string> ResolveHeadId(const platform::ProcessLauncher& launcher,
+                                         const std::filesystem::path& root);
 
 // The first line of a small `.git` metadata file (`HEAD`, `MERGE_HEAD`, a loose
 // ref, `commondir`, the `.git` file itself), with any trailing CR removed and

@@ -133,6 +133,12 @@ void GitOperationService::Publish(const std::uint64_t generation,
   }
 }
 
+const platform::ProcessLauncher& GitOperationService::ProjectLauncher() const {
+  const platform::ProcessLauncher* launcher =
+      callbacks_.project_launcher ? callbacks_.project_launcher() : nullptr;
+  return launcher != nullptr ? *launcher : platform::LocalProcessLauncher();
+}
+
 bool GitOperationService::SwitchBranch(const std::filesystem::path& repository_root,
                                        std::string branch) {
   if (branch.empty()) {
@@ -140,8 +146,9 @@ bool GitOperationService::SwitchBranch(const std::filesystem::path& repository_r
   }
   std::string success = "Switched to " + branch;
   return Dispatch(repository_root, "Switching branch…", std::move(success),
-                  [repository_root, branch = std::move(branch)]() {
-                    return project::SwitchGitBranch(repository_root, branch);
+                  [repository_root, launcher = &ProjectLauncher(),
+                   branch = std::move(branch)]() {
+                    return project::SwitchGitBranch(repository_root, *launcher, branch);
                   });
 }
 
@@ -153,23 +160,27 @@ bool GitOperationService::CreateBranch(const std::filesystem::path& repository_r
   }
   std::string success = "Created and switched to " + branch;
   return Dispatch(repository_root, "Creating branch…", std::move(success),
-                  [repository_root, branch = std::move(branch),
+                  [repository_root, launcher = &ProjectLauncher(), branch = std::move(branch),
                    start_point = std::move(start_point)]() {
-                    return project::CreateGitBranch(repository_root, branch, start_point);
+                    return project::CreateGitBranch(repository_root, *launcher, branch,
+                                                    start_point);
                   });
 }
 
 bool GitOperationService::Fetch(const std::filesystem::path& repository_root) {
-  return Dispatch(repository_root, "Fetching…", "Fetched from remote", [repository_root]() {
-    return project::RunGitRemoteOperation(repository_root,
-                                          project::GitRemoteOperationKind::Fetch);
-  });
+  return Dispatch(repository_root, "Fetching…", "Fetched from remote",
+                  [repository_root, launcher = &ProjectLauncher()]() {
+                    return project::RunGitRemoteOperation(
+                        repository_root, *launcher, project::GitRemoteOperationKind::Fetch);
+                  });
 }
 
 bool GitOperationService::Pull(const std::filesystem::path& repository_root) {
-  return Dispatch(repository_root, "Pulling…", "Pulled from remote", [repository_root]() {
-    return project::RunGitRemoteOperation(repository_root, project::GitRemoteOperationKind::Pull);
-  });
+  return Dispatch(repository_root, "Pulling…", "Pulled from remote",
+                  [repository_root, launcher = &ProjectLauncher()]() {
+                    return project::RunGitRemoteOperation(
+                        repository_root, *launcher, project::GitRemoteOperationKind::Pull);
+                  });
 }
 
 bool GitOperationService::Push(const std::filesystem::path& repository_root,
@@ -180,22 +191,24 @@ bool GitOperationService::Push(const std::filesystem::path& repository_root,
   }
   const std::string success = set_upstream ? "Published " + branch : "Pushed to remote";
   return Dispatch(repository_root, set_upstream ? "Publishing branch…" : "Pushing…", success,
-                  [repository_root, branch = std::move(branch), set_upstream]() {
+                  [repository_root, launcher = &ProjectLauncher(), branch = std::move(branch),
+                   set_upstream]() {
                     return project::RunGitRemoteOperation(
-                        repository_root, project::GitRemoteOperationKind::Push, branch,
+                        repository_root, *launcher, project::GitRemoteOperationKind::Push, branch,
                         set_upstream);
                   });
 }
 
 bool GitOperationService::Sync(const std::filesystem::path& repository_root) {
-  return Dispatch(repository_root, "Syncing…", "Synced with remote", [repository_root]() {
+  return Dispatch(repository_root, "Syncing…", "Synced with remote",
+                  [repository_root, launcher = &ProjectLauncher()]() {
     project::GitOperationReport pull = project::RunGitRemoteOperation(
-        repository_root, project::GitRemoteOperationKind::Pull);
+        repository_root, *launcher, project::GitRemoteOperationKind::Pull);
     if (!pull.success()) {
       return pull;
     }
     project::GitOperationReport push = project::RunGitRemoteOperation(
-        repository_root, project::GitRemoteOperationKind::Push);
+        repository_root, *launcher, project::GitRemoteOperationKind::Push);
     // Keep both halves' output so the panel shows what the pull did even when the
     // push is what failed.
     if (!pull.output.empty()) {
@@ -213,14 +226,18 @@ bool GitOperationService::Stash(const std::filesystem::path& repository_root,
                                 std::string message,
                                 const bool include_untracked) {
   return Dispatch(repository_root, "Stashing…", "Stashed local changes",
-                  [repository_root, message = std::move(message), include_untracked]() {
-                    return project::StashGitChanges(repository_root, message, include_untracked);
+                  [repository_root, launcher = &ProjectLauncher(),
+                   message = std::move(message), include_untracked]() {
+                    return project::StashGitChanges(repository_root, *launcher, message,
+                                                    include_untracked);
                   });
 }
 
 bool GitOperationService::StashPop(const std::filesystem::path& repository_root) {
   return Dispatch(repository_root, "Popping stash…", "Restored stashed changes",
-                  [repository_root]() { return project::PopGitStash(repository_root); });
+                  [repository_root, launcher = &ProjectLauncher()]() {
+                    return project::PopGitStash(repository_root, *launcher);
+                  });
 }
 
 }  // namespace microide::workspace

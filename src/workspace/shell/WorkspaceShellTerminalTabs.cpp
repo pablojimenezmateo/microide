@@ -31,10 +31,10 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
   const bool started =
       terminal::UsePlaceholderTerminalsForTesting()
           ? terminal_tab->session.StartPlaceholderForTesting(working_directory, command)
-          // Explicitly local today (TD-2026-09-22-301: the project does not own a
-          // launcher yet). A remote project's terminal is this same call with a
-          // different launcher.
-          : terminal_tab->session.Start(platform::LocalProcessLauncher(), working_directory,
+          // The project's launcher: a remote project's terminal is this same call,
+          // and its shell runs on the host (TD-2026-09-22-301).
+          : terminal_tab->session.Start(context_.current_project_state.launcher(),
+                                        working_directory,
                                         command,
                                         GetSettingValue("terminal.shell").value_or(""));
   if (!started) {

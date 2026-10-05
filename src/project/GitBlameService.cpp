@@ -373,16 +373,6 @@ GitBlameLine MakeBlameLine(std::size_t line, const GitBlameAttribution& attribut
 struct GitBlameService::Impl {
   ~Impl() { Stop(); }
 
-  void SetLauncher(const platform::ProcessLauncher& new_launcher) {
-    std::lock_guard lock(mutex);
-    launcher = &new_launcher;
-  }
-
-  const platform::ProcessLauncher& Launcher() const {
-    std::lock_guard lock(mutex);
-    return *launcher;
-  }
-
   void SetWakeChannel(util::WakeChannel channel) {
     std::lock_guard lock(mutex);
     wake_channel = channel;
@@ -638,9 +628,8 @@ struct GitBlameService::Impl {
   }
 
   void ProcessRequest(const PendingRequest& request, const util::CancellationToken& token) {
-    // Sampled once per request rather than per git call: a launcher swap mid-request
-    // would otherwise split one blame across two machines.
-    const platform::ProcessLauncher& launcher = Launcher();
+    // The request's own launcher: every git call of one blame runs on one machine.
+    const platform::ProcessLauncher& launcher = *request.request.launcher;
     bool changed = false;
     if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
       return;
@@ -663,7 +652,7 @@ struct GitBlameService::Impl {
       return;
     }
 
-    const auto head_id = gitutil::ResolveHeadId(request.request.root);
+    const auto head_id = gitutil::ResolveHeadId(launcher, request.request.root);
     const auto stamp = ReadFileStamp(request.request.absolute_path);
     if (token.IsCancellationRequested() || !GenerationsStillCurrent(request)) {
       return;
@@ -905,7 +894,6 @@ struct GitBlameService::Impl {
   }
 
   mutable std::mutex mutex;
-  const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
   util::WakeChannel wake_channel = 0;
   std::unordered_set<std::string> pending_request_keys;
   std::unordered_map<std::string, std::string> pending_request_files;
@@ -923,13 +911,6 @@ struct GitBlameService::Impl {
 GitBlameService::~GitBlameService() {
   Stop();
   delete impl_;
-}
-
-void GitBlameService::SetLauncher(const platform::ProcessLauncher& launcher) {
-  if (impl_ == nullptr) {
-    impl_ = new Impl();
-  }
-  impl_->SetLauncher(launcher);
 }
 
 void GitBlameService::SetWakeChannel(util::WakeChannel channel) {

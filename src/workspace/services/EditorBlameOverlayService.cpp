@@ -55,6 +55,11 @@ std::string FormatBlameDate(std::int64_t author_time) {
 
 }  // namespace
 
+const platform::ProcessLauncher* EditorBlameOverlayService::ProjectLauncher() const {
+  const platform::ProcessLauncher* launcher = project_launcher_ ? project_launcher_() : nullptr;
+  return launcher != nullptr ? launcher : &platform::LocalProcessLauncher();
+}
+
 bool EditorBlameOverlayService::FitsPane(render::TextRenderer& text_renderer,
                                          const editor::TextViewport& viewport,
                                          const SDL_FRect& rect,
@@ -100,6 +105,7 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
                                  : std::min(viewport.line_count() - 1, viewport.cursor_line() + kCaretBlameRadius);
   // Reuse the descriptor rather than build one: see editor_request_'s comment.
   project::GitBlameRequest& request = editor_request_;
+  request.launcher = ProjectLauncher();
   AssignPathIfChanged(request.root, project_root);
   AssignPathIfChanged(request.absolute_path, viewport.path());
   request.visible_start_line = visible_start_line;
@@ -204,6 +210,7 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
                                     : std::min(compare_tab.right_viewport.line_count() - 1,
                                                compare_tab.right_viewport.cursor_line() + kCaretBlameRadius);
   project::GitBlameRequest& request = compare_request_;
+  request.launcher = ProjectLauncher();
   AssignPathIfChanged(request.root, project_root);
   AssignPathIfChanged(request.absolute_path, compare_tab.right_viewport.path());
   request.visible_start_line = compare_tab.right_viewport.scroll_line();

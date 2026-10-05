@@ -68,12 +68,13 @@ GitOperationReport MakeReport(const GitOperationOutcome outcome,
 // this file funnels through here so the timeout/classification contract cannot drift
 // between them.
 GitOperationReport RunOperation(const std::filesystem::path& repository_root,
+                                const platform::ProcessLauncher& launcher,
                                 std::vector<std::string> arguments,
                                 const std::string_view verb) {
   if (repository_root.empty()) {
     return MakeReport(GitOperationOutcome::NotARepo, verb, {});
   }
-  GitRepository repo(repository_root, platform::LocalProcessLauncher());
+  GitRepository repo(repository_root, launcher);
   if (!repo.IsValid()) {
     return MakeReport(GitOperationOutcome::NotARepo, verb, {});
   }
@@ -158,15 +159,17 @@ GitOperationOutcome ClassifyGitOperationFailure(const int exit_code,
 }
 
 GitOperationReport SwitchGitBranch(const std::filesystem::path& repository_root,
+                                   const platform::ProcessLauncher& launcher,
                                    const std::string_view branch) {
   if (branch.empty()) {
     return MakeReport(GitOperationOutcome::BadRef, "switch", {});
   }
   // `--` terminates options so a branch named like a flag cannot inject one.
-  return RunOperation(repository_root, {"switch", "--", std::string(branch)}, "switch");
+  return RunOperation(repository_root, launcher, {"switch", "--", std::string(branch)}, "switch");
 }
 
 GitOperationReport CreateGitBranch(const std::filesystem::path& repository_root,
+                                   const platform::ProcessLauncher& launcher,
                                    const std::string_view branch,
                                    const std::string_view start_point) {
   if (branch.empty()) {
@@ -176,10 +179,11 @@ GitOperationReport CreateGitBranch(const std::filesystem::path& repository_root,
   if (!start_point.empty()) {
     arguments.emplace_back(start_point);
   }
-  return RunOperation(repository_root, std::move(arguments), "branch create");
+  return RunOperation(repository_root, launcher, std::move(arguments), "branch create");
 }
 
 GitOperationReport RunGitRemoteOperation(const std::filesystem::path& repository_root,
+                                         const platform::ProcessLauncher& launcher,
                                          const GitRemoteOperationKind kind,
                                          const std::string_view branch,
                                          const bool set_upstream) {
@@ -187,9 +191,9 @@ GitOperationReport RunGitRemoteOperation(const std::filesystem::path& repository
     case GitRemoteOperationKind::Fetch:
       // --prune keeps the remote-branch list from accumulating refs deleted upstream,
       // which is what makes the branch picker trustworthy after a fetch.
-      return RunOperation(repository_root, {"fetch", "--prune"}, "fetch");
+      return RunOperation(repository_root, launcher, {"fetch", "--prune"}, "fetch");
     case GitRemoteOperationKind::Pull:
-      return RunOperation(repository_root, {"pull"}, "pull");
+      return RunOperation(repository_root, launcher, {"pull"}, "pull");
     case GitRemoteOperationKind::Push:
     default: {
       std::vector<std::string> arguments{"push"};
@@ -201,12 +205,13 @@ GitOperationReport RunGitRemoteOperation(const std::filesystem::path& repository
         arguments.emplace_back("origin");
         arguments.emplace_back(branch);
       }
-      return RunOperation(repository_root, std::move(arguments), "push");
+      return RunOperation(repository_root, launcher, std::move(arguments), "push");
     }
   }
 }
 
 GitOperationReport StashGitChanges(const std::filesystem::path& repository_root,
+                                   const platform::ProcessLauncher& launcher,
                                    const std::string_view message,
                                    const bool include_untracked) {
   std::vector<std::string> arguments{"stash", "push"};
@@ -217,7 +222,7 @@ GitOperationReport StashGitChanges(const std::filesystem::path& repository_root,
     arguments.emplace_back("-m");
     arguments.emplace_back(message);
   }
-  GitOperationReport report = RunOperation(repository_root, std::move(arguments), "stash");
+  GitOperationReport report = RunOperation(repository_root, launcher, std::move(arguments), "stash");
   // `git stash push` with a clean tree exits 0 and says so; report it as a no-op
   // rather than letting the caller claim changes were stashed.
   if (report.outcome == GitOperationOutcome::Success &&
@@ -228,8 +233,9 @@ GitOperationReport StashGitChanges(const std::filesystem::path& repository_root,
   return report;
 }
 
-GitOperationReport PopGitStash(const std::filesystem::path& repository_root) {
-  GitOperationReport report = RunOperation(repository_root, {"stash", "pop"}, "stash pop");
+GitOperationReport PopGitStash(const std::filesystem::path& repository_root,
+                               const platform::ProcessLauncher& launcher) {
+  GitOperationReport report = RunOperation(repository_root, launcher, {"stash", "pop"}, "stash pop");
   if (!report.success() &&
       util::ToLowerAscii(report.output).find("no stash entries") != std::string::npos) {
     report.outcome = GitOperationOutcome::NothingToDo;

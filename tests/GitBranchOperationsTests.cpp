@@ -21,6 +21,10 @@ using microide::project::RunGitRemoteOperation;
 using microide::project::StashGitChanges;
 using microide::project::SwitchGitBranch;
 
+// Every operation here is exercised against a real local repository, so every
+// call names the local launcher; this keeps that from dominating each line.
+const platform::ProcessLauncher& Local() { return platform::LocalProcessLauncher(); }
+
 bool ListContains(const std::vector<microide::project::GitBranchReference>& branches,
                   std::string_view label) {
   return std::any_of(branches.begin(), branches.end(),
@@ -99,16 +103,16 @@ void TestGitBranchListingAndSwitch() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "branch ops fixture");
 
-  const auto initial = CollectGitBranches(root, platform::LocalProcessLauncher());
+  const auto initial = CollectGitBranches(root, Local());
   Expect(!initial.empty(), "listing branches in a real repo should return the branch");
   const std::string base_branch = CurrentBranchLabel(initial);
   Expect(!base_branch.empty(), "a repo on a branch should mark one entry as HEAD");
   Expect(ListContains(initial, base_branch),
          "the current branch should appear in the listing");
-  const auto created = CreateGitBranch(root, "feature/topic");
+  const auto created = CreateGitBranch(root, Local(), "feature/topic");
   Expect(created.success(), "creating a branch should succeed");
 
-  const auto after_create = CollectGitBranches(root, platform::LocalProcessLauncher());
+  const auto after_create = CollectGitBranches(root, Local());
   Expect(CurrentBranchLabel(after_create) == "feature/topic",
          "creating a branch with switch -c should check it out");
   Expect(ListContains(after_create, "feature/topic"),
@@ -120,18 +124,18 @@ void TestGitBranchListingAndSwitch() {
                        [](const auto& branch) { return branch.is_head; }) == 1,
          "exactly one entry should be marked as HEAD");
 
-  Expect(CreateGitBranch(root, "feature/topic").outcome == GitOperationOutcome::BadRef,
+  Expect(CreateGitBranch(root, Local(), "feature/topic").outcome == GitOperationOutcome::BadRef,
          "recreating an existing branch should report bad-ref, not a generic failure");
 
-  const auto switched = SwitchGitBranch(root, base_branch);
+  const auto switched = SwitchGitBranch(root, Local(), base_branch);
   Expect(switched.success(), "switching back to the base branch should succeed");
   Expect(CurrentBranchLabel(CollectGitBranches(root,
-                                               platform::LocalProcessLauncher())) == base_branch,
+                                               Local())) == base_branch,
          "the switch should take effect");
 
-  Expect(SwitchGitBranch(root, "does-not-exist").outcome == GitOperationOutcome::BadRef,
+  Expect(SwitchGitBranch(root, Local(), "does-not-exist").outcome == GitOperationOutcome::BadRef,
          "switching to a missing branch should report bad-ref");
-  Expect(SwitchGitBranch(root, "").outcome == GitOperationOutcome::BadRef,
+  Expect(SwitchGitBranch(root, Local(), "").outcome == GitOperationOutcome::BadRef,
          "an empty branch name should be rejected without spawning git");
 }
 
@@ -144,15 +148,17 @@ void TestGitSwitchRefusesToOverwriteLocalChanges() {
   CommitAll(root, "initial", "switch guard fixture");
 
   const std::string base_branch = CurrentBranchLabel(CollectGitBranches(root,
-                                                                        platform::LocalProcessLauncher()));
-  Expect(CreateGitBranch(root, "other").success(), "creating the second branch should succeed");
+                                                                        Local()));
+  Expect(CreateGitBranch(root, Local(), "other").success(),
+         "creating the second branch should succeed");
   WriteFile(root / "a.txt", "two\n");
   CommitAll(root, "diverge on other", "switch guard fixture");
 
-  Expect(SwitchGitBranch(root, base_branch).success(), "returning to the base branch should work");
+  Expect(SwitchGitBranch(root, Local(), base_branch).success(),
+         "returning to the base branch should work");
   WriteFile(root / "a.txt", "local edit\n");
 
-  const auto blocked = SwitchGitBranch(root, "other");
+  const auto blocked = SwitchGitBranch(root, Local(), "other");
   Expect(!blocked.success(), "a switch that would clobber local edits must fail");
   Expect(blocked.outcome == GitOperationOutcome::DirtyWorktree,
          "the blocked switch should be reported as a dirty worktree, not an unknown error");
@@ -166,19 +172,19 @@ void TestGitStashRoundTrip() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "stash fixture");
 
-  Expect(PopGitStash(root).outcome == GitOperationOutcome::NothingToDo,
+  Expect(PopGitStash(root, Local()).outcome == GitOperationOutcome::NothingToDo,
          "popping an empty stash should report nothing-to-do, not a failure");
 
-  const auto clean_stash = StashGitChanges(root, "", false);
+  const auto clean_stash = StashGitChanges(root, Local(), "", false);
   Expect(clean_stash.outcome == GitOperationOutcome::NothingToDo,
          "stashing a clean tree should report nothing-to-do");
 
   WriteFile(root / "a.txt", "stashed edit\n");
-  const auto stashed = StashGitChanges(root, "microide test stash", false);
+  const auto stashed = StashGitChanges(root, Local(), "microide test stash", false);
   Expect(stashed.success(), "stashing a dirty tree should succeed");
   Expect(ReadFile(root / "a.txt") == "one\n", "stashing should restore the committed content");
 
-  const auto popped = PopGitStash(root);
+  const auto popped = PopGitStash(root, Local());
   Expect(popped.success(), "popping the stash should succeed");
   Expect(ReadFile(root / "a.txt") == "stashed edit\n", "popping should restore the edit");
 }
@@ -192,13 +198,13 @@ void TestGitRemoteOperationsWithoutRemoteAreClassified() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "remote fixture");
 
-  const auto push = RunGitRemoteOperation(root, GitRemoteOperationKind::Push);
+  const auto push = RunGitRemoteOperation(root, Local(), GitRemoteOperationKind::Push);
   Expect(!push.success(), "pushing with no remote should fail");
   Expect(push.outcome == GitOperationOutcome::NoRemote ||
              push.outcome == GitOperationOutcome::NoUpstream,
          "pushing with no remote should be reported as a missing remote/upstream");
 
-  const auto pull = RunGitRemoteOperation(root, GitRemoteOperationKind::Pull);
+  const auto pull = RunGitRemoteOperation(root, Local(), GitRemoteOperationKind::Pull);
   Expect(!pull.success(), "pulling with no remote should fail");
   Expect(pull.outcome == GitOperationOutcome::NoRemote ||
              pull.outcome == GitOperationOutcome::NoUpstream,
@@ -211,13 +217,13 @@ void TestGitOperationsOutsideRepositoryAreRejected() {
   const std::filesystem::path root = temp_dir.path() / "plain";
   WriteFile(root / "a.txt", "one\n");
 
-  Expect(CollectGitBranches(root, platform::LocalProcessLauncher()).empty(),
+  Expect(CollectGitBranches(root, Local()).empty(),
          "a non-repository should not produce a branch listing");
-  Expect(SwitchGitBranch(root, "main").outcome == GitOperationOutcome::NotARepo,
+  Expect(SwitchGitBranch(root, Local(), "main").outcome == GitOperationOutcome::NotARepo,
          "switching outside a repository should report not-a-repo");
-  Expect(StashGitChanges(root, "", false).outcome == GitOperationOutcome::NotARepo,
+  Expect(StashGitChanges(root, Local(), "", false).outcome == GitOperationOutcome::NotARepo,
          "stashing outside a repository should report not-a-repo");
-  Expect(SwitchGitBranch({}, "main").outcome == GitOperationOutcome::NotARepo,
+  Expect(SwitchGitBranch({}, Local(), "main").outcome == GitOperationOutcome::NotARepo,
          "an empty root should report not-a-repo");
 }
 

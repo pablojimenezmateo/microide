@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 
+#include "platform/ProcessLauncher.h"
 #include "project/PatchApplyTypes.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "util/MainThreadMailbox.h"
@@ -19,6 +20,10 @@ class PatchApplyService {
  public:
   struct Callbacks {
     std::function<project::GitRepositoryState()> current_repository_state;
+    // The ACTIVE project's launcher, read on the main thread when a request is
+    // built so the apply's `git apply` runs where the project does
+    // (TD-2026-09-22-301). Null (or unset) means the process-wide local one.
+    std::function<const platform::ProcessLauncher*()> project_launcher;
     std::function<void()> request_git_refresh;
     std::function<void(const std::filesystem::path&)> refresh_compare_tab_for_path;
     std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;

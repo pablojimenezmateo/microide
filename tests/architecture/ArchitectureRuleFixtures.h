@@ -96,6 +96,7 @@ void RunKernelWindowingLibraryRuleFixtures();
 // Negative + positive control for CheckEverySpawnGoesThroughAProcessLauncher, whose
 // asynchronous half is a per-file co-occurrence check rather than a call-shape match.
 void RunProcessLauncherRuleFixtures();
+void RunGitLayerLocalityRuleFixtures();
 
 // Negative + positive control for CheckProjectWritesGoThroughTheWriteGate, including
 // the layer scoping: the same call is a violation in workspace and fine in project.

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <utility>
 
 #include "editor/EditorViewRenderer.h"
 #include "editor/TextViewport.h"
@@ -32,6 +33,13 @@ class EditorBlameOverlayService {
     int visible_rows = 0;
     std::size_t visible_columns = 0;
   };
+
+  // The active project's launcher, stamped onto every blame request so its git
+  // runs where the project lives (TD-2026-09-22-301). Wired once by the shell;
+  // unset or null means the process-wide local launcher.
+  void SetProjectLauncherSource(std::function<const platform::ProcessLauncher*()> source) {
+    project_launcher_ = std::move(source);
+  }
 
   bool FitsPane(render::TextRenderer& text_renderer,
                 const editor::TextViewport& viewport,
@@ -72,6 +80,9 @@ class EditorBlameOverlayService {
   const editor::EditorBlameLine* LineAtPosition(float x, float y) const;
 
  private:
+  const platform::ProcessLauncher* ProjectLauncher() const;
+
+  std::function<const platform::ProcessLauncher*()> project_launcher_;
   std::optional<editor::EditorBlameOverlay> visible_overlay_;
   // The query descriptors, kept alive between frames rather than rebuilt inside
   // each Build* call. `GitBlameRequest` owns two `std::filesystem::path`s, and a

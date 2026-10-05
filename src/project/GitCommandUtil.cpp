@@ -181,12 +181,9 @@ const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
   return memo[0].result;
 }
 
-std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {
-  // ResolveHeadId has no launcher of its own: it is reached from paths that only
-  // know a root. It stays local-only until a remote project gives it one (the git
-  // metadata source in the design's G9 is where that lands).
-  const auto result =
-      ReadGitCommandOutput(platform::LocalProcessLauncher(), root, {"rev-parse", "--verify", "HEAD"});
+std::optional<std::string> ResolveHeadId(const platform::ProcessLauncher& launcher,
+                                         const std::filesystem::path& root) {
+  const auto result = ReadGitCommandOutput(launcher, root, {"rev-parse", "--verify", "HEAD"});
   if (!result.success() || result.output.empty()) {
     return std::nullopt;
   }
