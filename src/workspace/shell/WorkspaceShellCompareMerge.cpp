@@ -493,20 +493,32 @@ void WorkspaceShell::JumpCompareHunk(int delta) {
 
 void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  for (std::size_t index = 0; index < context_.current_project_state.focused_group().open_tabs.size(); ++index) {
-    const auto& tab = context_.current_project_state.focused_group().open_tabs[index];
-    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
-        tab.compare->path != normalized_path) {
-      continue;
-    }
-    auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());
-    if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
-      continue;
-    }
-    context_.current_project_state.focused_group().open_tabs[index] = std::move(*rebuilt);
-    if (index == context_.current_project_state.focused_group().active_tab_index) {
-      RevealActiveCompareSelection();
-      RequestActiveTabRedraw(false);
+  // EVERY group, not just the focused one. This walked only the focused group, so a
+  // compare in the other split kept painting the pre-change diff after its file
+  // changed on disk or a hunk was staged from elsewhere — which is exactly what
+  // MarkCompareTabsStaleForPath's own comment said it was there to prevent.
+  ProjectWorkspaceState& project = context_.current_project_state;
+  for (std::size_t group_index = 0; group_index < project.editor_groups.size(); ++group_index) {
+    EditorGroup& group = project.editor_groups[group_index];
+    for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
+      const auto& tab = group.open_tabs[index];
+      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
+          tab.compare->path != normalized_path) {
+        continue;
+      }
+      auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());
+      if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
+        continue;
+      }
+      group.open_tabs[index] = std::move(*rebuilt);
+      if (index == group.active_tab_index) {
+        // Only the focused group's front tab owns the selection reveal; any
+        // visible pane's front tab needs repainting.
+        if (group_index == project.focused_group_index) {
+          RevealActiveCompareSelection();
+        }
+        RequestEditorSurfaceRedraw();
+      }
     }
   }
 }

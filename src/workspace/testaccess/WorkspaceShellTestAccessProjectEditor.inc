@@ -211,6 +211,21 @@
     auto& compare = group.open_tabs[group.active_tab_index].compare;
     return compare.has_value() ? &*compare : nullptr;
   }
+  // The front compare tab of pane `group_index`, whichever pane has focus.
+  static WorkspaceShell::CompareTabState* GroupActiveCompareOrNull(WorkspaceShell& shell,
+                                                                   std::size_t group_index) {
+    auto& groups = shell.context_.current_project_state.editor_groups;
+    if (group_index >= groups.size() || !groups[group_index].has_active_tab()) {
+      return nullptr;
+    }
+    auto& compare = groups[group_index].active_tab().compare;
+    return compare.has_value() ? &*compare : nullptr;
+  }
+  // The watcher's path for an external change to a compared file.
+  static void MarkCompareTabsStaleForPath(WorkspaceShell& shell,
+                                          const std::filesystem::path& path) {
+    shell.MarkCompareTabsStaleForPath(path);
+  }
   static void RefreshActiveCompareDerivedState(WorkspaceShell& shell) {
     shell.RefreshCompareTabDerivedState(ActiveCompare(shell));
   }

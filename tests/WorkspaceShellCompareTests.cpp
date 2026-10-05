@@ -521,6 +521,49 @@ void TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity() {
   Expect(saw_new_left, "and the rebuilt model is diffed against the new left side");
 }
 
+// An external change to a compared file refreshes the compare in EVERY pane. The
+// refresh walked only the focused pane, so a compare in the other split kept the
+// pre-change diff — the case MarkCompareTabsStaleForPath's own comment named.
+void TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "a.txt";
+  const std::filesystem::path other = root / "b.txt";
+  WriteFile(source, "one\ntwo\n");
+  WriteFile(other, "other\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(source, "one\nTWO\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // A split clones an EDITOR tab, so split on a plain file first, then put the
+  // compare in the first pane and move focus to the second.
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, other), "open a file to split");
+  const std::size_t compare_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "split the editor area");
+  const std::size_t other_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+  Expect(other_group != compare_group, "the split made a second pane");
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, compare_group);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "the comparison should open in the first pane");
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, other_group);
+
+  WriteFile(source, "one\nTHREE\n");
+  WorkspaceShellTestAccess::MarkCompareTabsStaleForPath(shell, source);
+
+  const auto* compare = WorkspaceShellTestAccess::GroupActiveCompareOrNull(shell, compare_group);
+  Expect(compare != nullptr, "the unfocused pane still shows the compare");
+  bool saw_new_text = false;
+  for (const auto& row : compare->model.rows) {
+    saw_new_text = saw_new_text || row.right_text == "THREE";
+  }
+  Expect(saw_new_text, "the unfocused pane's compare was rebuilt from the changed file");
+}
+
 // The compare's editable side IS the file, so it is one buffer with an editor
 // tab on the same path -- VS Code's diff editor edits the same model the text
 // editor shows. Each side used to load its own copy from disk: an edit in one
@@ -3164,6 +3207,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/CompareLeftSideIsRecognizedByIdentity",
           TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity);
+  AddTest(tests, "WorkspaceShell/ExternalChangeRefreshesACompareInAnUnfocusedPane",
+          TestWorkspaceShellExternalChangeRefreshesACompareInAnUnfocusedPane);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneTakesMultipleCarets",
           TestWorkspaceShellCompareEditablePaneTakesMultipleCarets);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
