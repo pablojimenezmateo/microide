@@ -531,19 +531,19 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   // instead of serializing the whole right buffer and hashing both buffers on every
   // refresh: the editable right pane changes exactly when its viewport `content_revision`
   // (or line ending) advances, so it needs no per-refresh serialize; the read-only left
-  // string is hashed directly (allocation-free); the ignore-whitespace option changes the
+  // side is an immutable shared buffer, compared by identity (O(1) — see the field's
+  // comment); the ignore-whitespace option changes the
   // model with no content change. The serialize below then runs only on an actual rebuild.
   // The review/presentation markers further down depend on external git + branch-review
   // state and always refresh.
   const std::uint64_t right_content_revision = compare_tab.right_viewport.content_revision();
   const util::LineEnding right_line_ending = compare_tab.right_viewport.line_ending();
-  const std::size_t left_content_hash = std::hash<std::string_view>{}(*compare_tab.left_content);
   const bool ignore_whitespace = compare_tab.build_options.ignore_whitespace;
   const bool content_changed =
       !compare_tab.derived_fingerprint_valid ||
       compare_tab.derived_right_content_revision != right_content_revision ||
       compare_tab.derived_right_line_ending != right_line_ending ||
-      compare_tab.derived_left_content_hash != left_content_hash ||
+      compare_tab.derived_left_content != compare_tab.left_content ||
       compare_tab.derived_ignore_whitespace != ignore_whitespace;
   if (content_changed) {
     util::PerformanceTrace::Scope rebuild_scope(
@@ -562,7 +562,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     ResetCompareVisibleLayoutCache(compare_tab);
     compare_tab.derived_right_content_revision = right_content_revision;
     compare_tab.derived_right_line_ending = right_line_ending;
-    compare_tab.derived_left_content_hash = left_content_hash;
+    compare_tab.derived_left_content = compare_tab.left_content;
     compare_tab.derived_left_line_count =
         compare_tab.left_content->empty()
             ? 0

@@ -188,13 +188,15 @@ struct CompareTabState {
   // mouse, focus, plugin, external-change event fires RefreshCompareTabDerivedState from
   // ~10 sites, most leaving content untouched), so its change is detected by the viewport's
   // monotonic `content_revision` + line ending — no whole-buffer serialize on the no-op
-  // path. The read-only `left_content` string has no viewport/revision, so it is hashed
-  // directly; it is write-once in production (BuildCompareTabFromBuffers on a fresh state)
-  // and the hash is allocation-free. Together with the ignore-whitespace option these
-  // reproduce the old fingerprint's coverage without the per-refresh right-buffer copy.
+  // path. The read-only left side is an IMMUTABLE shared buffer, so its identity is its
+  // content: a new left side is always a new buffer. It used to be hashed instead, which
+  // is allocation-free but O(file) — on every refresh, and the refresh fires on every
+  // mouse move, so a 200 MB left side cost a full pass over 200 MB per pointer motion.
+  // The fingerprint HOLDS the buffer rather than its address: a raw address could be
+  // freed and reused by a later buffer and then compare equal to it.
   std::uint64_t derived_right_content_revision = 0;
   util::LineEnding derived_right_line_ending = util::LineEnding::LF;
-  std::size_t derived_left_content_hash = 0;
+  compare::CompareTextBuffer derived_left_content;
   // Cached line count of the read-only left content, so compare gutter sizing does not
   // rescan left_content for '\n' on every render/hit-test/scroll/cursor layout request
   // (TD-2026-07-17A-094). Recomputed only when the derived fingerprint rebuilds.

@@ -483,6 +483,44 @@ void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
          "one undo takes back all three splits, got " + std::to_string(viewport.line_count()));
 }
 
+// The left side is an immutable shared buffer, and the derived-state refresh now
+// recognizes it by IDENTITY rather than hashing its bytes on every call (the refresh
+// runs per mouse move, and hashing was a full pass over the left file each time).
+// Pin both halves of that: the same buffer is not a change, and a new buffer is one
+// even when its bytes are identical, because identity is the whole signal.
+void TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "a.txt";
+  WriteFile(source, "one\ntwo\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(source, "one\nTWO\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "the comparison should open");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+
+  const std::uint64_t built = compare.model_revision;
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision == built, "an unchanged left buffer does not rebuild the model");
+
+  compare.left_content = compare::MakeCompareText(std::string(*compare.left_content));
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision != built, "a new left buffer rebuilds, whatever its bytes");
+
+  compare.left_content = compare::MakeCompareText("zero\n");
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  bool saw_new_left = false;
+  for (const auto& row : compare.model.rows) {
+    saw_new_left = saw_new_left || row.left_text == "zero";
+  }
+  Expect(saw_new_left, "and the rebuilt model is diffed against the new left side");
+}
+
 // The compare's editable side IS the file, so it is one buffer with an editor
 // tab on the same path -- VS Code's diff editor edits the same model the text
 // editor shows. Each side used to load its own copy from disk: an edit in one
@@ -3124,6 +3162,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/MergeDragAutoscrollsAndKeepsGranularity",
           TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
+  AddTest(tests, "WorkspaceShell/CompareLeftSideIsRecognizedByIdentity",
+          TestWorkspaceShellCompareLeftSideIsRecognizedByIdentity);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneTakesMultipleCarets",
           TestWorkspaceShellCompareEditablePaneTakesMultipleCarets);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
