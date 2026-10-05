@@ -642,6 +642,36 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
+### TD-2026-10-06-318 — the plugin host knows the project's root, not its launcher or write gate. [OPEN]
+
+Every other writer into a project tree and every other spawn now take their
+locality from the project (`ProjectWorkspaceState::launcher()` and
+`write_gate()`, TD-2026-09-22-301 and TD-2026-09-29-305/308). The plugin host is
+the one surface that does not, and for one structural reason: it learns the
+project through `current_project_root` alone, set on the plugin thread by the
+reload path (`PluginHostInternal::RunReloadLoad`, the reset interop) from a root
+the shell hands it across the thread boundary.
+
+Two consequences, both currently local-by-construction and both silent for a
+remote project:
+
+- `ctx.files.write` (`PluginWorkspaceInterop.cpp`) writes through
+  `LocalFileWriteGate()`. For a path inside the project root it should be the
+  project's gate (a mirror write that must be pushed); for a path in the plugin's
+  own `data_dir` it should stay local. `ResolveContained` already knows which root
+  contained the path, so the choice is one comparison once the gate is in hand.
+- `ctx.process.run` (`PluginProcessInterop.cpp`) spawns through
+  `LocalProcessLauncher()`. Here the right answer is a DECISION, not a lookup:
+  is a plugin's tool the project's (runs on the host) or the plugin's own helper
+  (runs where the plugin runs)? VS Code answers per extension with
+  `extensionKind` (workspace vs ui); a manifest field is the equivalent.
+
+The fix is one hand-off: carry the launcher and the gate wherever
+`current_project_root` travels (both are pointers with the project's lifetime
+rule), add them to `PluginFsContext`, and choose per path / per manifest. It was
+left out of the slices that did everything else because it crosses the plugin
+thread boundary at several entry points and wants the manifest decision first.
+
 ### TD-2026-09-29-317 — the asynchronous open has no perf gate, and it changed what three existing ones measure. [OPEN]
 
 The design names the gate (§ 9): *"open a 100 MB local file (G4) — shell-thread

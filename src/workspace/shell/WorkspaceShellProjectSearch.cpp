@@ -35,7 +35,8 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
                                         const std::string& query,
                                         const std::string& replace_text, bool case_sensitive,
                                         const util::CompiledRegex* regex,
-                                        std::size_t aggregate_cap_bytes) {
+                                        std::size_t aggregate_cap_bytes,
+                                        project::FileWriteGate& gate) {
   ProjectReplaceOutcome outcome;
   struct Buffered {
     std::filesystem::path relative_path;
@@ -110,7 +111,7 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   for (auto& buffered : pending) {
     // Atomic temp-file + rename: a failed write leaves the original intact. Keep
     // going and collect failures rather than leaving a partial half-applied set.
-    if (!project::LocalFileWriteGate().WriteText(buffered.absolute_path, buffered.content).ok) {
+    if (!gate.WriteText(buffered.absolute_path, buffered.content).ok) {
       ++outcome.failed_write_count;
       continue;
     }
@@ -517,6 +518,9 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
 
   const std::size_t aggregate_cap = replace_all_aggregate_cap_bytes_;
   const std::uint64_t generation = ++project_replace_generation_;
+  // The project's gate, captured here: the job runs off the shell thread and must
+  // not read project state. The gate outlives the job (see ProjectWorkspaceState).
+  project::FileWriteGate* gate = &context_.current_project_state.write_gate();
 
   // Run the read/replace/buffer/atomic-write off the shell thread; apply the outcome
   // (reload clean tabs, refresh index/tree/finder, status) back on the main thread.
@@ -524,10 +528,10 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   project_background_executor_.PostLatest(
       "project-replace-all",
       [this, files = std::move(files), dirty_open = std::move(dirty_open), query, replace_text,
-       case_sensitive, regex, root, aggregate_cap, generation]() mutable {
+       case_sensitive, regex, root, aggregate_cap, generation, gate]() mutable {
         ProjectReplaceOutcome outcome =
             RunProjectReplace(root, files, dirty_open, query, replace_text, case_sensitive,
-                              regex.get(), aggregate_cap);
+                              regex.get(), aggregate_cap, *gate);
         outcome.project_root = root;
         outcome.generation = generation;
         project_replace_mailbox_.Post([this, outcome = std::move(outcome)]() mutable {
