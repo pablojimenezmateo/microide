@@ -196,7 +196,7 @@ void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
 
   // Make the parent directory unwritable so staging the temp fails.
   Expect(::chmod(temp_dir.path().c_str(), 0500) == 0, "chmod dir 0500 should succeed");
-  const bool saved = viewport.Save();
+  const bool saved = viewport.Save(microide::project::LocalFileWriteGate());
   Expect(::chmod(temp_dir.path().c_str(), 0700) == 0, "restoring dir perms should succeed");
 
   Expect(!saved, "a save into an unwritable directory must fail");
@@ -226,12 +226,12 @@ void TestSavePreservesCrlfLineEnding() {
 
   TextViewport viewport;
   Expect(viewport.OpenFile(path), "opening the CRLF file should succeed");
-  Expect(viewport.Save(), "save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(ReadFile(path) == "a\r\nb\r\n",
          "a clean CRLF round-trip must preserve CRLF endings on disk");
 
   viewport.InsertText("X");
-  Expect(viewport.Save(), "save after an edit should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save after an edit should succeed");
   Expect(ReadFile(path) == "Xa\r\nb\r\n",
          "an edited CRLF file must still be written back with CRLF endings");
 }
@@ -243,7 +243,7 @@ void TestSavePreservesCrOnlyLineEnding() {
 
   TextViewport viewport;
   Expect(viewport.OpenFile(path), "opening the CR file should succeed");
-  Expect(viewport.Save(), "save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(ReadFile(path) == "a\rb\r", "a clean CR round-trip must preserve CR endings on disk");
 }
 
@@ -256,7 +256,7 @@ void TestSaveLineEndingOverrideRewritesEndings() {
   TextViewport viewport;
   Expect(viewport.OpenFile(path), "opening the LF file should succeed");
   viewport.SetSaveLineEnding(microide::util::LineEnding::CRLF);
-  Expect(viewport.Save(), "save with a CRLF override should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save with a CRLF override should succeed");
   Expect(ReadFile(path) == "a\r\nb\r\n",
          "an explicit CRLF save override must rewrite LF endings to CRLF on disk");
 }
@@ -274,11 +274,11 @@ void TestSavePreservesTrailingNewlinePresence() {
   {
     TextViewport viewport;
     Expect(viewport.OpenFile(no_nl), "opening the no-final-newline file should succeed");
-    Expect(viewport.Save(), "save should succeed");
+    Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
     Expect(ReadFile(no_nl) == "a\nb",
            "a clean save must not fabricate a trailing newline");
     viewport.InsertText("X");
-    Expect(viewport.Save(), "save after an edit should succeed");
+    Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save after an edit should succeed");
     Expect(ReadFile(no_nl) == "Xa\nb",
            "an edited file with no trailing newline must stay newline-free at EOF");
   }
@@ -288,7 +288,7 @@ void TestSavePreservesTrailingNewlinePresence() {
   {
     TextViewport viewport;
     Expect(viewport.OpenFile(with_nl), "opening the trailing-newline file should succeed");
-    Expect(viewport.Save(), "save should succeed");
+    Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
     Expect(ReadFile(with_nl) == "a\nb\n",
            "a clean save must preserve exactly one trailing newline");
   }
@@ -308,12 +308,12 @@ void TestCleanSaveStreamsMultiLineBufferByteExact() {
   TextViewport viewport;
   Expect(viewport.OpenFile(path), "opening the multi-line file should succeed");
   // Transforms default off — this is the clean/streaming path, not the normalize path.
-  Expect(viewport.Save(), "clean save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "clean save should succeed");
   Expect(ReadFile(path) == content,
          "a clean multi-line save must reproduce the buffer byte-for-byte via streaming");
 
   // A second clean save must be idempotent (streaming is deterministic; no drift).
-  Expect(viewport.Save(), "a second clean save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "a second clean save should succeed");
   Expect(ReadFile(path) == content, "repeated clean saves stay byte-stable");
 }
 
@@ -340,7 +340,7 @@ void TestSaveBinaryContentRoundTripsExactly() {
     Expect(viewport.OpenFile(path), "opening the binary file should succeed");
     Expect(viewport.encoding() == TextViewport::TextEncoding::Bytes,
            "a file with an embedded NUL must classify as Bytes");
-    Expect(viewport.Save(), "saving unedited binary content should succeed");
+    Expect(viewport.Save(microide::project::LocalFileWriteGate()), "saving unedited binary content should succeed");
     Expect(ReadFile(path) == payload,
            "an unedited save of binary content must reproduce the exact bytes");
   }
@@ -364,7 +364,7 @@ void TestSavePreservesUtf8Bom() {
   // remembered, so the save writes it back.
   Expect(viewport.has_utf8_bom() && viewport.lines().LineView(0) == "hello",
          "the BOM is remembered and kept out of line 0");
-  Expect(viewport.Save(), "clean save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "clean save should succeed");
   Expect(ReadFile(path) == original, "a clean save must preserve the UTF-8 BOM bytes verbatim");
 }
 
@@ -427,7 +427,7 @@ void TestSaveDetectsExternalChangeConflict() {
 
   // After our own successful save the signature re-baselines, so there must be no false
   // conflict that would nag the user or block the next legitimate save.
-  Expect(viewport.Save(), "save should succeed and re-record the disk signature");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed and re-record the disk signature");
   Expect(viewport.DetectDiskConflict() == TextViewport::DiskConflict::None,
          "our own save must not leave a phantom disk conflict behind");
 }

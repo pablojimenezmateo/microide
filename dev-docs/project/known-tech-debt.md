@@ -832,7 +832,7 @@ detector decided — so decide the intent before changing it. The welcome-surfac
 half is a real defect with a known one-line fix, left only because it wants its
 two tests alongside it.
 
-### TD-2026-09-29-308 — a per-viewport write gate needs three paths, not one setter. [OPEN]
+### TD-2026-09-29-308 — a per-viewport write gate needs three paths, not one setter. [RESOLVED 2026-10-06]
 
 `TextViewport` holds a `FileWriteGate*` so `Save()` goes through the gate rather
 than the raw write primitive, and it points at the process-wide local gate. A
@@ -857,6 +857,22 @@ Installing a per-viewport gate means all three of these land together:
   how the first two bullets became possible.
 
 Until then the member stays const-in-practice and there is deliberately no setter.
+
+**Resolved 2026-10-06 — by removing the member rather than by propagating it.**
+The third bullet's owner now exists: `ProjectWorkspaceState::write_gate()` (added
+for TD-2026-09-29-305). With an owner, nothing needs to be STORED on the
+viewport at all: `TextViewport::Save(project::FileWriteGate&)` takes the gate per
+call, with no default, the same rule as the launcher (TD-2026-09-22-301). There is
+no override to drop, so the reload and the scratch view stop being hazards by
+construction. All seven production callers pass their project's gate; the LSP's
+off-thread closed-file edits capture it on the shell thread at dispatch, as the
+staged-directory disposal does. `CheckEveryUserSaveRunsTheSamePreparation`'s
+call pattern was pinned to `Save()` with an EMPTY argument list and was repointed
+in the same change — its vacuity guard would have reported the miss, but a rule
+that is silently one signature change from blind is the wrong shape.
+`FileWriteGate/AnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload` drives the
+exact failure this entry described: a project gate, a save, a reload that
+replaces the viewport, and a second save that must still reach the gate.
 
 ### TD-2026-09-29-305 — the write gate covers content writes, not tree operations. [RESOLVED 2026-10-06]
 
@@ -911,9 +927,7 @@ on the local tree ops' move primitive.
 
 Not covered, on purpose: the plugin data directory, persistence, the tool cache
 and the control descriptor create and remove files that are not in a project
-tree. And `TextViewport` still holds its own gate pointer (defaulting to the local
-gate) rather than reading the project's — every editor save is therefore still
-local-by-default; a remote project must set it when a buffer is opened.
+tree. (The editor save's own gate is TD-2026-09-29-308, resolved the same day.)
 
 ### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [OPEN]
 

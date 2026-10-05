@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
 #include "editor/TextViewport.h"
+#include "workspace/shell/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "project/FileWriteGate.h"
 
 #include <filesystem>
@@ -76,7 +78,7 @@ void TestEditorSaveRecordsTheGatesSignature() {
   Expect(viewport.OpenFile(file), "the fixture file opens");
   viewport.InsertText("edited ");
   Expect(viewport.dirty(), "the buffer is dirty before saving");
-  Expect(viewport.Save(), "the save succeeds through the gate");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "the save succeeds through the gate");
 
   Expect(ReadFile(file) == "edited original\n", "the save wrote through the gate");
   Expect(!viewport.dirty(), "a saved buffer is clean");
@@ -146,7 +148,7 @@ void TestSaveRecordsContentSoTheNextCheckIsClean() {
   editor::TextViewport viewport;
   Expect(viewport.OpenFile(file), "the fixture file opens");
   viewport.InsertText("after ");
-  Expect(viewport.Save(), "the save succeeds");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "the save succeeds");
   Expect(viewport.disk_signature().has_content_hash,
          "a save records the content it wrote, not just a stat");
 
@@ -198,6 +200,56 @@ void TestGateSkipsTheSignatureStatByDefault() {
          "a caller that did not ask for the signature does not pay for the stat");
 }
 
+// A gate that records every content write and then performs it locally — the
+// shape of a MirrorWriteGate, minus the push.
+class RecordingGate final : public FileWriteGate {
+ public:
+  std::vector<std::filesystem::path> writes;
+  Result WriteText(const std::filesystem::path& path, std::string_view text,
+                   Signature signature) override {
+    writes.push_back(path);
+    return LocalFileWriteGate().WriteText(path, text, signature);
+  }
+  TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
+    return LocalFileWriteGate().ApplyTreeOps(ops);
+  }
+  void DisposeStaged(std::span<const std::filesystem::path> staged) override {
+    LocalFileWriteGate().DisposeStaged(staged);
+  }
+};
+
+// TD-2026-09-29-308. An editor save goes through the PROJECT's gate — and still
+// does after the file is reloaded from disk. That reload replaces the viewport
+// wholesale, which is exactly what made a gate STORED on the viewport unsafe: the
+// override was dropped, and the save wrote locally while reporting success.
+void TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload() {
+  using microide::workspace::WorkspaceShell;
+  using TA = WorkspaceShell::TestAccess;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "note.txt";
+  WriteFile(file, "one\n");
+
+  WorkspaceShell shell;
+  TA::SetProjectRoot(shell, root);
+  RecordingGate gate;
+  TA::SetProjectWriteGate(shell, gate);
+  Expect(TA::OpenFileInNewTab(shell, file), "open the file");
+  Expect(TA::HandleTextInput(shell, "x"), "edit it");
+  Expect(TA::SaveTab(shell, TA::GroupActiveTabIndex(shell, 0)), "save it");
+  Expect(gate.writes.size() == 1 && gate.writes.front() == file,
+         "the save went through the project's gate");
+
+  WriteFile(file, "changed on disk\n");
+  TA::ReloadCleanEditorTabsForPath(shell, file);
+  Expect(TA::ActiveEditor(shell).lines().LineView(0) == "changed on disk",
+         "the clean buffer was reloaded — its viewport replaced");
+  Expect(TA::HandleTextInput(shell, "y"), "edit again");
+  Expect(TA::SaveTab(shell, TA::GroupActiveTabIndex(shell, 0)), "save again");
+  Expect(gate.writes.size() == 2,
+         "and the save after the reload still went through the project's gate");
+}
+
 }  // namespace
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
@@ -215,6 +267,8 @@ void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
           TestSaveRecordsContentSoTheNextCheckIsClean);
   AddTest(tests, "FileWriteGate/IdenticalRewriteIsNotAConflictForADirtyBuffer",
           TestIdenticalRewriteIsNotAConflictForADirtyBuffer);
+  AddTest(tests, "FileWriteGate/AnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload",
+          TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload);
   AddTest(tests, "FileWriteGate/GateSkipsTheSignatureStatByDefault",
           TestGateSkipsTheSignatureStatByDefault);
 }

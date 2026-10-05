@@ -835,7 +835,7 @@ void TestMultiCaretSelectAllAndCutLeaveATypableCaretSet() {
   };
   saved.SetSecondaryCaretsWithRanges(foo_ranges);
   saved.DeleteMultiCaretSelections();
-  Expect(saved.Save(), "the save with trim succeeds");
+  Expect(saved.Save(microide::project::LocalFileWriteGate()), "the save with trim succeeds");
   Expect(saved.lines()[0].empty(), "the trim emptied the line of one space");
   saved.InsertText("R");
   Expect(saved.lines().Snapshot() == std::vector<std::string>{"R", "R bar", ""},

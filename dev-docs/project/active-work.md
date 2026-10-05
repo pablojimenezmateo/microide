@@ -386,8 +386,7 @@ Open: the rest of **G4** (the working-tree compare loads off-thread as of
 on the shell thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the
 **actions** half of **G7**, **G8** `ProjectId`; the rest of **G9** (the four readers now share their primitives and
 the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
-digest the manifest needs (blake3, the rest of **G6**); the editor buffers'
-own gate pointer, which does not yet follow the project (TD-2026-09-29-305's tail); and the rest of **G5**
+digest the manifest needs (blake3, the rest of **G6**); and the rest of **G5**
 (TD-2026-09-28-304). Groundwork carries its own perf gates (design
 § 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;
 display forwarding (`xpra`) remains the zero-code answer until Phase 2.

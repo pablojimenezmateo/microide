@@ -228,9 +228,10 @@ WorkspaceShell::WorkspaceShell() {
                 // Load/apply/save the server rename's closed-file targets off the
                 // shell thread; the file-index watcher reflects the on-disk changes
                 // (TD-2026-07-17-011). The task captures only the buckets by value.
+                project::FileWriteGate* gate = &context_.current_project_state.write_gate();
                 project_background_executor_.Post(
-                    [buckets = std::move(buckets)]() mutable {
-                      LspService::RunClosedFileEdits(buckets);
+                    [gate, buckets = std::move(buckets)]() mutable {
+                      LspService::RunClosedFileEdits(buckets, *gate);
                     });
               },
           .get_setting_value = [this](std::string_view id) { return GetSettingValue(id); },
@@ -1657,7 +1658,7 @@ void WorkspaceShell::CommitPendingRenameSave() {
         any_conflict = true;
         continue;
       }
-      if (viewport.Save()) {
+      if (viewport.Save(context_.current_project_state.write_gate())) {
         NotifyPluginBufferSave(viewport.path());
         ++saved;
       }

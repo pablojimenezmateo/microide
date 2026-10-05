@@ -1531,7 +1531,7 @@ std::vector<LspClosedFileEditBucket> LspService::PrepareClosedFileBuckets(
 }
 
 LspService::DiskEditResult LspService::RunClosedFileEdits(
-    const std::vector<LspClosedFileEditBucket>& buckets) {
+    const std::vector<LspClosedFileEditBucket>& buckets, project::FileWriteGate& gate) {
   DiskEditResult result;
   for (const LspClosedFileEditBucket& bucket : buckets) {
     if (bucket.edits.empty()) {
@@ -1610,7 +1610,7 @@ LspService::DiskEditResult LspService::RunClosedFileEdits(
     for (const std::size_t idx : apply_order) {
       scratch.ReplaceRange(file_edits[idx].first, file_edits[idx].second, /*record_undo=*/false);
     }
-    if (!scratch.Save()) {
+    if (!scratch.Save(gate)) {
       result.any_failed = true;
       continue;
     }
@@ -1626,7 +1626,8 @@ LspService::DiskEditResult LspService::ApplyLspEditsToClosedFilesOnDisk(
   // Synchronous wrapper kept for the user-initiated rename path (which reports a
   // file count in its feedback). The server-initiated path dispatches
   // RunClosedFileEdits off-thread instead (see ApplyServerWorkspaceEdit).
-  return RunClosedFileEdits(PrepareClosedFileBuckets(edits, is_open));
+  return RunClosedFileEdits(PrepareClosedFileBuckets(edits, is_open),
+                            CurrentProjectState().write_gate());
 }
 
 bool LspService::IsPathOpenInProject(const std::filesystem::path& normalized) const {
@@ -1946,7 +1947,7 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient& client, LspClient::Workspac
     if (operations_.run_closed_file_edits_async) {
       operations_.run_closed_file_edits_async(std::move(buckets));
     } else {
-      RunClosedFileEdits(buckets);  // headless fallback: synchronous
+      RunClosedFileEdits(buckets, CurrentProjectState().write_gate());  // headless: synchronous
     }
   }
   // Acceptance response: report `applied: false` only when an OPEN-buffer group the

@@ -352,7 +352,9 @@ RuleResult CheckEveryUserSaveRunsTheSamePreparation(const std::filesystem::path&
       // read-modify-write of a closed file.
       "src/workspace/lsp/LspService.cpp",
   };
-  const std::regex viewport_save(R"([Vv]iewport(_)?\s*(\.|->)\s*Save\s*\(\s*\))");
+  // Any argument list: `Save` takes the project's write gate since TD-2026-09-29-308,
+  // and a pattern pinned to `Save()` would have stopped matching every call at once.
+  const std::regex viewport_save(R"([Vv]iewport(_)?\s*(\.|->)\s*Save\s*\()");
   // Only the preparation itself counts. An earlier draft also accepted `SaveGroupTab`
   // and `EditorTabService`, which appear in most of the workspace, so every file it
   // scanned passed on a name that had nothing to do with preparing a save.

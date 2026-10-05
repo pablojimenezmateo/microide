@@ -308,7 +308,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
                          .ok()) {
                   return false;
                 }
-                return merge_tab->result_viewport.Save();
+                return merge_tab->result_viewport.Save(context_.current_project_state.write_gate());
               },
           .stage_merge_result_path =
               [this](const std::filesystem::path& path) {

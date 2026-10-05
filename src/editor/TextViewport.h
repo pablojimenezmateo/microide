@@ -147,7 +147,12 @@ class TextViewport {
   bool AdoptFileContent(const std::filesystem::path& path, std::string bytes) {
     return AdoptClassifiedContent(path, ClassifyContent(std::move(bytes)));
   }
-  [[nodiscard]] bool Save();
+  // Through `gate` — the PROJECT's (ProjectWorkspaceState::write_gate()). Passed per
+  // call, with no default and nothing stored, for the reason the launcher is: the
+  // answer is per project, and a viewport that HELD a gate lost it on every path
+  // that replaces a viewport wholesale (a reload, the LSP's scratch view), then
+  // wrote the wrong place while reporting success (TD-2026-09-29-308).
+  [[nodiscard]] bool Save(project::FileWriteGate& gate);
   // Save-time normalization knobs. When set, `Save()` applies these transforms
   // to the in-memory line buffer (recorded as undo) before the file is
   // serialized. Defaults are off; callers should configure them from
@@ -1267,15 +1272,6 @@ class TextViewport {
   void RecordOpenedContentHash(std::size_t raw_content_hash);
 
   std::shared_ptr<DocumentState> document_;
-  // Not owned. There is deliberately NO setter: every path that replaces a
-  // viewport wholesale (the reload in WorkspaceTabCoordinator, the LSP's scratch
-  // view) would drop a per-viewport override without a word, so an override
-  // installed today would work until the file was reloaded and then silently
-  // write the wrong place. The pointer stays because it is what makes `Save()`
-  // go through the gate interface rather than the raw primitive; pointing it at
-  // a MirrorWriteGate is a one-line change once those two paths propagate it
-  // (TD-2026-09-29-308).
-  project::FileWriteGate* write_gate_ = &project::LocalFileWriteGate();
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
   // Sticky column for vertical motion, measured in ON-SCREEN cells of the caret's

@@ -310,7 +310,10 @@ class LspService {
   // Load/apply/save each prepared closed-file bucket (highest-position-first, atomic
   // save). Pure — touches only its arguments + the filesystem (each file via a
   // private scratch viewport), so it is safe to run on a background thread. Static.
-  static DiskEditResult RunClosedFileEdits(const std::vector<LspClosedFileEditBucket>& buckets);
+  // `gate` is the project's write gate, captured on the shell thread by whoever
+  // dispatches this; it runs off-thread and must not read project state.
+  static DiskEditResult RunClosedFileEdits(const std::vector<LspClosedFileEditBucket>& buckets,
+                                           project::FileWriteGate& gate);
 
   // Outcome of applying a WorkspaceEdit's file resource ops.
   struct ResourceOpsResult {

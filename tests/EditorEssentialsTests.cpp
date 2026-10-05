@@ -1050,7 +1050,7 @@ void TestTextViewportSaveAppliesNormalization() {
   Expect(viewport.OpenFile(path), "OpenFile should succeed");
   viewport.SetSaveTrimTrailingWhitespace(true);
   viewport.SetSaveEnsureFinalNewline(true);
-  Expect(viewport.Save(), "Save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
   std::string after = ReadFile(path);
   Expect(after == "foo\nbar\nbaz\n",
          "saved file should be trimmed and end with a single newline");
@@ -1069,7 +1069,7 @@ void TestTextViewportSaveNormalizationPreservesCaret() {
     viewport.SetSaveTrimTrailingWhitespace(true);
     viewport.SetSaveEnsureFinalNewline(true);
     viewport.MoveCursorTo(3, 4);  // inside "delta", a line unaffected by trimming
-    Expect(viewport.Save(), "Save should succeed");
+    Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
     Expect(viewport.cursor_line() == 3 && viewport.cursor_column() == 4,
            "the caret must be preserved across a normalizing save, not reset to (0,0)");
   }
@@ -1082,7 +1082,7 @@ void TestTextViewportSaveNormalizationPreservesCaret() {
     Expect(viewport.OpenFile(path), "OpenFile should succeed");
     viewport.SetSaveTrimTrailingWhitespace(true);
     viewport.MoveCursorTo(1, 6);  // end of "beta  " (col 6, inside the trailing spaces)
-    Expect(viewport.Save(), "Save should succeed");
+    Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
     Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 4,
            "a caret in trimmed trailing whitespace clamps to the shortened line end");
   }
@@ -1105,7 +1105,7 @@ void TestTextViewportDetectsDiskConflict() {
          "an external rewrite should be detected as a disk conflict");
 
   // Saving recaptures the signature, clearing the conflict.
-  Expect(viewport.Save(), "Save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "Save should succeed");
   Expect(viewport.DetectDiskConflict() == DiskConflict::None,
          "saving should re-baseline the on-disk signature");
 

@@ -93,7 +93,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
              .ok()) {
       return false;
     }
-    if (!compare_tab.right_viewport.Save()) {
+    if (!compare_tab.right_viewport.Save(state_.write_gate())) {
       if (operations_.notify_save_failed) {
         operations_.notify_save_failed(compare_tab.right_viewport.path());
       }
@@ -125,7 +125,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
              .ok()) {
       return false;
     }
-    if (!merge_tab.result_viewport.Save()) {
+    if (!merge_tab.result_viewport.Save(state_.write_gate())) {
       if (operations_.notify_save_failed) {
         operations_.notify_save_failed(merge_tab.result_viewport.path());
       }
@@ -205,7 +205,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
   }
   editor_state->pending_format_save.Disarm();
-  if (!candidate->Save()) {
+  if (!candidate->Save(state_.write_gate())) {
     if (operations_.notify_save_failed) {
       operations_.notify_save_failed(candidate->path());
     }

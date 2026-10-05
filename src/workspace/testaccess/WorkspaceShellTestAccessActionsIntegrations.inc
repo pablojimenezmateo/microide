@@ -351,6 +351,19 @@
   }
   static void OpenCommandPalette(WorkspaceShell& shell) { shell.OpenCommandPalette(); }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
+  // Point the current project at another write gate, as a remote project's
+  // MirrorWriteGate would be. Set AFTER the project is opened: opening resets the
+  // project state, gate included.
+  static void SetProjectWriteGate(WorkspaceShell& shell, microide::project::FileWriteGate& gate) {
+    shell.context_.current_project_state.file_write_gate = &gate;
+  }
+  // The watcher's reload of a clean buffer whose file changed on disk — the path
+  // that replaces the editor's viewport wholesale.
+  static void ReloadCleanEditorTabsForPath(WorkspaceShell& shell,
+                                           const std::filesystem::path& path) {
+    shell.ReloadCleanEditorTabsForPath(path,
+                                       microide::workspace::EditorReloadEchoGuard::AlreadyResolved);
+  }
   static bool SaveTabDeferred(WorkspaceShell& shell, std::size_t index) {
     return shell.SaveTab(index, SaveMode::Deferred);
   }

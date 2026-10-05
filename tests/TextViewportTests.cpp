@@ -5414,7 +5414,7 @@ void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
          "the disk form reproduces the mark");
 
   view.InsertText("// top\n");
-  Expect(view.Save(), "BOM file saves");
+  Expect(view.Save(microide::project::LocalFileWriteGate()), "BOM file saves");
   Expect(microide::util::ReadTextFile(path).value_or("") ==
              "\xEF\xBB\xBF// top\n#!/bin/sh\necho hi\n",
          "the mark is written back ahead of text typed at the start of the file");
@@ -5426,7 +5426,7 @@ void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
   Expect(plain.OpenFile(WriteScratchFile("nobom.txt", "plain\n")), "plain file opens");
   Expect(!plain.has_utf8_bom() && plain.EncodingLabel() == "UTF-8",
          "a file without a mark reports plain UTF-8");
-  Expect(plain.Save() && microide::util::ReadTextFile(plain.path()).value_or("") == "plain\n",
+  Expect(plain.Save(microide::project::LocalFileWriteGate()) && microide::util::ReadTextFile(plain.path()).value_or("") == "plain\n",
          "saving a plain file adds no mark");
 
   // LoadContent (the compare pane's right side, a merge result) follows the
@@ -5444,7 +5444,7 @@ void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
   Expect(only.OpenFile(only_path) && only.line_count() == 1 &&
              only.lines().LineView(0).empty() && only.has_utf8_bom(),
          "a BOM-only file is one empty line with the mark remembered");
-  Expect(only.Save() && microide::util::ReadTextFile(only_path).value_or("") == "\xEF\xBB\xBF",
+  Expect(only.Save(microide::project::LocalFileWriteGate()) && microide::util::ReadTextFile(only_path).value_or("") == "\xEF\xBB\xBF",
          "a BOM-only file saves back as the mark");
 }
 
@@ -5775,7 +5775,7 @@ void TestTextViewportUndoPastSaveMarksDirty() {
 
   viewport.ReplaceRange(SelectionRange{{1, 0}, {2, 0}}, "", /*record_undo=*/true);
   Expect(viewport.dirty(), "deleting a line marks the buffer dirty");
-  Expect(viewport.Save(), "save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "a successful save clears the dirty flag");
 
   Expect(viewport.Undo(), "undo should succeed");
@@ -5804,7 +5804,7 @@ void TestTextViewportSaveAboveUndoneEditsDirtiesRedo() {
   viewport.ReplaceRange(SelectionRange{{1, 0}, {1, 0}}, "b", /*record_undo=*/true);  // E2
   Expect(viewport.Undo(), "undo should reverse the second insert");  // parked at E1's result
 
-  Expect(viewport.Save(), "saving while above an undone edit should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "saving while above an undone edit should succeed");
   Expect(!viewport.dirty(), "the just-saved (undone-to) position is clean");
 
   Expect(viewport.Redo(), "redo should re-apply the undone edit");
@@ -5830,7 +5830,7 @@ void TestTextViewportSaveThenCoalescingKeystrokeStartsFreshEntry() {
   viewport.LoadContent("", path);
 
   viewport.InsertCharacter('a');
-  Expect(viewport.Save(), "save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "save clears dirty");
 
   viewport.InsertCharacter('b');  // contiguous with 'a' — must NOT fold into the saved entry
@@ -5893,7 +5893,7 @@ void TestTextViewportGroupedEditSaveUndoMarksDirty() {
   viewport.ReplaceRange(SelectionRange{{0, 0}, {1, 0}}, "", /*record_undo=*/true);
   viewport.EndUndoGroup();
   Expect(viewport.dirty(), "a grouped edit dirties the buffer");
-  Expect(viewport.Save(), "save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "save clears dirty");
 
   Expect(viewport.Undo(), "one undo reverses the whole group");
@@ -5915,7 +5915,7 @@ void TestTextViewportSaveEvictionNeverFalseClean() {
   viewport.LoadContent("seed\n", path);
 
   viewport.ReplaceRange(SelectionRange{{0, 0}, {0, 0}}, "x", /*record_undo=*/true);
-  Expect(viewport.Save(), "save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "save should succeed");
   Expect(!viewport.dirty(), "save clears dirty");
 
   // Push well past the 128-entry cap with discrete (non-coalescing) edits so the saved
@@ -5944,9 +5944,9 @@ void TestTextViewportDoubleSaveRebaselines() {
   viewport.LoadContent("base\n", path);
 
   viewport.InsertText("A");
-  Expect(viewport.Save(), "first save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "first save should succeed");
   viewport.InsertText("B");
-  Expect(viewport.Save(), "second save should succeed");
+  Expect(viewport.Save(microide::project::LocalFileWriteGate()), "second save should succeed");
   Expect(!viewport.dirty(), "the second save is the clean point");
 
   Expect(viewport.Undo(), "undo returns to the first-save content");

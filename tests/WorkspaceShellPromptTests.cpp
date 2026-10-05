@@ -75,7 +75,7 @@ void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
          "rename save flow should clear the dirty flag after saving");
 }
 
-// Regression: the dirty prompt's "Save" used to call viewport->Save() directly for an
+// Regression: the dirty prompt's "Save" used to call viewport->Save(microide::project::LocalFileWriteGate()) directly for an
 // EDITOR tab, while its own compare and merge branches went through the tab service.
 // Two things followed from that one bare call. It ran no save participants and no
 // format-on-save, so "Save" from the prompt did something different from Ctrl+S on the

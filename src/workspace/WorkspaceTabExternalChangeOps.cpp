@@ -47,7 +47,7 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
       }
       // Deliberately skip DetectDiskConflict: the user chose to overwrite. Save()
       // recaptures the post-write signature so the watcher's echo is suppressed.
-      if (viewport.Save()) {
+      if (viewport.Save(state_.write_gate())) {
         saved_any = true;
         operations_.invalidate_editor_blame_path(normalized_path);
         operations_.notify_plugin_buffer_save(normalized_path);
