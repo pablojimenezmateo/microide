@@ -624,8 +624,12 @@ struct EditorGroup {
           EditorViewPathIs(*tab.editor_state, normalized_path)) {
         return &tab.editor_state->viewport;
       }
+      // A compare still loading holds an empty read-only stand-in, not the file —
+      // the same reason a `content_pending()` editor tab is skipped above. Sharing
+      // it would hand a new editor tab a document the load is about to replace.
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-          tab.compare->right_editable && &tab.compare->right_viewport != exclude &&
+          tab.compare->right_editable && !tab.compare->load_pending &&
+          &tab.compare->right_viewport != exclude &&
           util::SameAsNormalizedPath(tab.compare->right_viewport.path(), normalized_path)) {
         return &tab.compare->right_viewport;
       }

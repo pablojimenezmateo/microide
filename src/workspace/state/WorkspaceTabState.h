@@ -219,8 +219,15 @@ struct CompareTabState {
   bool presentation_valid = false;
   std::uint64_t presentation_built_model_revision = 0;
   bool presentation_built_show_whitespace = false;
-  bool model_stale = false;
-  bool model_refreshing = false;
+  // A tab created before its content (TD-2026-09-29-312): a large working-tree
+  // compare opens as an empty, read-only stand-in and loads off the shell thread.
+  // `load_pending` means "this tab still owes a load"; the frame that SHOWS it
+  // posts the load and arms `pending_load`. Lazy on purpose, as VS Code's diff
+  // editor is: a review that opens thirty large files reads the one on screen,
+  // and a load cancelled by a project switch simply runs again the next time the
+  // tab is shown, because cancelling disarms the slot and leaves this set.
+  bool load_pending = false;
+  editor::AsyncBufferWork pending_load;
   std::optional<CompareHoverState> hover_state;
   std::size_t selected_row = 0;
   int scroll_row = 0;

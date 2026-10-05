@@ -16,6 +16,7 @@
 #include "workspace/WorkspaceTextSearch.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/coordinators/WorkspaceDiffTabCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
@@ -369,6 +370,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       continue;
     }
     CompareTabState& compare_tab = *group.active_tab().compare;
+    // A large compare opens as a stand-in and loads when first SHOWN — here — and
+    // again after a cancelled load (TD-2026-09-29-312). Settled frames pay one
+    // bool test; the coordinator is built only when a load is actually owed.
+    if (compare_tab.load_pending) {
+      if (!compare_tab.pending_load.armed()) {
+        (void)MakeDiffTabCoordinator().StartPendingCompareLoad(compare_tab);
+      }
+      continue;
+    }
     if (compare_tab.right_editable &&
         (!compare_tab.derived_fingerprint_valid ||
          compare_tab.derived_right_content_revision !=

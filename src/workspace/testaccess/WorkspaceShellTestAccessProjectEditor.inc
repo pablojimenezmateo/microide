@@ -211,6 +211,9 @@
     auto& compare = group.open_tabs[group.active_tab_index].compare;
     return compare.has_value() ? &*compare : nullptr;
   }
+  static const std::vector<TabEntry>& FocusedGroupTabs(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.focused_group().open_tabs;
+  }
   // The front compare tab of pane `group_index`, whichever pane has focus.
   static WorkspaceShell::CompareTabState* GroupActiveCompareOrNull(WorkspaceShell& shell,
                                                                    std::size_t group_index) {

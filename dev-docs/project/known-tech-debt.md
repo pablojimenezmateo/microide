@@ -666,7 +666,7 @@ the worked example of why this matters: it did not merely measure something
 different, it stopped working entirely, because the harness renders without an
 event loop and nothing drained the completion (fixed in 39f309f2).
 
-### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN]
+### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN — the working-tree compare is done (2026-10-06); branch/commit compares and the conflict merge remain]
 
 **The editor half is done (2026-09-29).** The whole load now runs on the reader's
 thread: the bytes, the classification (content hash, encoding sniff, line-ending
@@ -687,6 +687,39 @@ What is left is the compare and merge surfaces, which still read their sides
 synchronously. They are a different structure (two viewports per tab, and a model
 derived from both, so the completion has to find the pane rather than the tab)
 and the win is smaller, but a 200 MB file compares as badly as it used to open.
+
+**The working-tree compare half (2026-10-06).** That is the compare the git
+sidebar opens on a click, so it is the one that matters. A working-tree compare of
+a file of at least 4 MiB opens as an empty, READ-ONLY stand-in
+(`CompareTabState::load_pending`) and loads off the shell thread through the same
+`FileReadService`: the worker reads the left blob through the project's launcher,
+classifies and builds the right viewport, and builds the diff
+(`workspace/git/CompareTabLoad`), and the completion moves all three in and
+records the fingerprint through `MarkCompareModelBuilt`, which the synchronous
+rebuild now uses too, so the derived-state refresh that follows does not rebuild
+the model on the shell thread.
+
+It is LAZY, as VS Code's diff editor is: the open creates the stand-in and the
+frame that first SHOWS it posts the load (the prepared-frame pass over each
+pane's front compare tab). So a review that opens thirty large files reads the
+one on screen, and a load cancelled by a project switch needs no special
+recovery: cancelling disarms the slot, the tab still owes its load, and the next
+frame that shows it posts it again. A stand-in is not a live buffer
+(`LiveBufferViewOfPath` skips it, like a loading editor tab), the synchronous
+rebuilds refuse it, and an external change to its file cancels an in-flight load
+so the re-post reads the file as it is now.
+
+Writing the tests found a pre-existing one-buffer violation in the EDITOR's async
+open: a tab whose read was in flight installed its own bytes even when another
+surface had made the same file live meanwhile, so the file ended up as two
+independent buffers that save over each other. The editor completion now shares
+the live buffer when there is one.
+
+**Still synchronous:** `OpenBranchHeadComparison` (two git blobs, no working
+file to size — a size-gated stand-in needs `git cat-file -s` or the prefetch
+cache to know whether to bother) and `OpenGitConflictMerge` (three stages and a
+different tab type). Neither has a perf gate for the large case, and nor does the
+new path (see TD-2026-09-29-317).
 
 ### TD-2026-09-29-313 — the async-open threshold is a size, and the remote case is not about size. [OPEN]
 

@@ -365,6 +365,15 @@
   static void FlushPendingFileReads(WorkspaceShell& shell) {
     shell.file_read_service_.FlushPendingReads();
   }
+  // A compare load's completion delivered as CANCELLED, whatever the real read is
+  // doing. Cancelling the real one races the reader (a fast disk finishes first),
+  // so a test that needs the cancelled outcome delivers it; the real completion
+  // then arrives for a slot that no longer holds its id, and must be dropped.
+  static void DeliverCancelledCompareLoad(WorkspaceShell& shell, std::uint64_t id) {
+    microide::workspace::CompareTabLoadResult empty;
+    shell.MakeDiffTabCoordinator().ApplyCompareTabLoad(id, /*cancelled=*/true,
+                                                        /*read_ok=*/false, empty);
+  }
   static int PendingFileReadCount(const WorkspaceShell& shell) {
     return shell.file_read_service_.PendingCount();
   }

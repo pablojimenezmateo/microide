@@ -354,7 +354,18 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
       // gets the preferences and indent detection a synchronous open applies.
       // (Every other tab waiting on this path is handed a copy below, so a pane
       // that was sharing the stand-in's document does not keep pointing at it.)
-      editor_state.viewport = std::move(loaded);
+      // One file is one buffer. If another surface made the file live while this
+      // read ran — a compare tab opened, or finished its own load, on the same
+      // path — share THAT document rather than installing a second, independent
+      // copy of the same file: two buffers diverge on the first edit and save
+      // over each other. The stand-in is excluded by `content_pending()`.
+      if (const editor::TextViewport* live =
+              LiveBufferViewOfPath(context_.current_project_state.editor_groups, path);
+          live != nullptr) {
+        editor_state.viewport = *live;
+      } else {
+        editor_state.viewport = std::move(loaded);
+      }
       ApplyEditorPreferences(editor_state.viewport);
       ApplyDetectedIndentOnOpen(editor_state.viewport);
       // View state last: preferences re-run EnsureCursorVisible, which would snap

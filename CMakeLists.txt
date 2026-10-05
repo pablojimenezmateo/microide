@@ -528,6 +528,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceProjectPresentation.cpp
   src/workspace/coordinators/WorkspaceProjectCatalogCoordinator.cpp
   src/workspace/services/AssistService.cpp
+  src/workspace/git/CompareTabLoad.cpp
   src/workspace/git/CompareTabReview.cpp
   src/workspace/git/BranchReviewStateBridge.cpp
   src/workspace/services/CompareMergeService.cpp

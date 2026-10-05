@@ -11,6 +11,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
+#include "workspace/git/CompareTabLoad.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
@@ -76,6 +77,11 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
 std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const std::filesystem::path& path,
     const CompareTabState& compare_tab) const {
+  // A stand-in still owes its asynchronous load; rebuilding it here would be the
+  // very synchronous read the load exists to avoid. Its load reads the file fresh.
+  if (compare_tab.load_pending) {
+    return std::nullopt;
+  }
   const std::filesystem::path normalized_path = path.lexically_normal();
   const std::filesystem::path left_source_path =
       (compare_tab.left_path.empty() ? normalized_path : compare_tab.left_path).lexically_normal();
@@ -557,20 +563,14 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare::BuildCompareModelInto(compare_tab.model, compare_tab.left_content,
                                    compare::MakeCompareText(std::move(right_content)),
                                    compare_tab.build_options);
-    ++compare_tab.model_revision;
-    compare_tab.visible_layouts.model_revision = compare_tab.model_revision;
-    ResetCompareVisibleLayoutCache(compare_tab);
-    compare_tab.derived_right_content_revision = right_content_revision;
-    compare_tab.derived_right_line_ending = right_line_ending;
-    compare_tab.derived_left_content = compare_tab.left_content;
-    compare_tab.derived_left_line_count =
-        compare_tab.left_content->empty()
-            ? 0
-            : static_cast<std::size_t>(std::count(compare_tab.left_content->begin(),
-                                                  compare_tab.left_content->end(), '\n')) +
-                  1;
-    compare_tab.derived_ignore_whitespace = ignore_whitespace;
-    compare_tab.derived_fingerprint_valid = true;
+    // The left line count is recounted only when the LEFT buffer is new; a
+    // keystroke in the right pane rebuilds the model but cannot move it.
+    const std::size_t left_line_count =
+        compare_tab.derived_fingerprint_valid &&
+                compare_tab.derived_left_content == compare_tab.left_content
+            ? compare_tab.derived_left_line_count
+            : CountCompareTextLines(*compare_tab.left_content);
+    MarkCompareModelBuilt(compare_tab, ignore_whitespace, left_line_count);
   }
   CompareTabReviewRefreshInput review_input{
       .repository_root = context_.current_project_state.root,

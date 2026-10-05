@@ -8,6 +8,7 @@
 #include "compare/CompareReviewTypes.h"
 #include "workspace/git/BranchReviewStateBridge.h"
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/git/CompareTabLoad.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
@@ -127,6 +128,36 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
+          // The whole load runs on the reader's thread: the left blob's git spawn,
+          // the working file's classification and buffer build, and the diff. The
+          // result slot is written by the worker before it posts and read by the
+          // completion after, which orders the two (as the editor's async open).
+          .begin_compare_tab_load =
+              [this](CompareTabLoadRequest request) -> std::uint64_t {
+                auto shared_request =
+                    std::make_shared<const CompareTabLoadRequest>(std::move(request));
+                auto result = std::make_shared<CompareTabLoadResult>();
+                return file_read_service_.Begin({
+                    .path = shared_request->path,
+                    .on_worker =
+                        [shared_request, result](std::string& bytes) {
+                          RunCompareTabLoad(*shared_request, std::move(bytes), *result);
+                        },
+                    .on_complete =
+                        [this, result](project::FileReadService::Completion completion) {
+                          MakeDiffTabCoordinator().ApplyCompareTabLoad(
+                              completion.id,
+                              completion.status == project::FileReadService::Status::Cancelled,
+                              completion.ok(), *result);
+                        },
+                });
+              },
+          .apply_editor_preferences =
+              [this](editor::TextViewport& view) { ApplyEditorPreferences(view); },
+          .report_compare_load_failure =
+              [this](std::string message) {
+                Notify(NotificationService::Tone::Error, std::move(message));
+              },
       });
 }
 
@@ -501,9 +532,19 @@ void WorkspaceShell::RefreshOpenCompareTabsForPath(const std::filesystem::path& 
   for (std::size_t group_index = 0; group_index < project.editor_groups.size(); ++group_index) {
     EditorGroup& group = project.editor_groups[group_index];
     for (std::size_t index = 0; index < group.open_tabs.size(); ++index) {
-      const auto& tab = group.open_tabs[index];
+      auto& tab = group.open_tabs[index];
       if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
           tab.compare->path != normalized_path) {
+        continue;
+      }
+      if (tab.compare->load_pending) {
+        // Still a stand-in. A load in flight read the file BEFORE this change, so
+        // drop it; the tab still owes a load and the next frame that shows it
+        // reads the file as it is now.
+        if (tab.compare->pending_load.armed()) {
+          file_read_service_.Cancel(tab.compare->pending_load.id());
+          tab.compare->pending_load.Disarm();
+        }
         continue;
       }
       auto rebuilt = BuildCompareTabEntry(normalized_path, tab.compare.value());

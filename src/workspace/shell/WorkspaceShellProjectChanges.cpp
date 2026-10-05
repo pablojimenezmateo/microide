@@ -168,30 +168,16 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 
 void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  bool refreshed_any = false;
   // Scan every editor group: a compare tab in the non-focused split must also be
   // invalidated when its file changes externally, otherwise it keeps rendering a
-  // pre-change diff.
-  for (EditorGroup& group : context_.current_project_state.editor_groups) {
-    for (TabEntry& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
-          tab.compare->path != normalized_path) {
-        continue;
-      }
-      tab.compare->model_stale = true;
-      tab.compare->model_refreshing = true;
-      refreshed_any = true;
-    }
-  }
-  if (refreshed_any) {
-    RefreshOpenCompareTabsForPath(normalized_path);
-    for (EditorGroup& group : context_.current_project_state.editor_groups) {
-      for (TabEntry& tab : group.open_tabs) {
-        if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-            tab.compare->path == normalized_path) {
-          tab.compare->model_stale = false;
-          tab.compare->model_refreshing = false;
-        }
+  // pre-change diff. (This used to set two `model_stale`/`model_refreshing` flags
+  // around the refresh and clear them right after; nothing ever read either.)
+  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+          tab.compare->path == normalized_path) {
+        RefreshOpenCompareTabsForPath(normalized_path);
+        return;
       }
     }
   }

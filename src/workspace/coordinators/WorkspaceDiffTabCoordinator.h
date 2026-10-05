@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "workspace/CompareInput.h"
+#include "workspace/git/CompareTabLoad.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -56,7 +57,20 @@ class DiffTabCoordinator {
         build_merge_tab_from_buffers;
     std::function<void(MergeTabState&, const std::filesystem::path&)> finalize_git_merge_tab;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
+    // Post a working-tree compare load off the shell thread (TD-2026-09-29-312).
+    // Returns the id the completion will carry, or 0 when no reader is wired — in
+    // which case the open stays synchronous, exactly as before. The completion
+    // must reach ApplyCompareTabLoad, whatever its outcome.
+    std::function<std::uint64_t(CompareTabLoadRequest)> begin_compare_tab_load;
+    std::function<void(editor::TextViewport&)> apply_editor_preferences;
+    std::function<void(std::string)> report_compare_load_failure;
   };
+
+  // A working-tree compare at least this large opens as a stand-in and loads off
+  // the shell thread. The editor's async-open threshold, for the same reason: below
+  // it the whole load is a fraction of a frame and a handoff costs more than it
+  // saves (TabCoordinator::kAsyncOpenThresholdBytes).
+  static constexpr std::uintmax_t kAsyncCompareThresholdBytes = 4ull * 1024 * 1024;
 
   DiffTabCoordinator(ProjectWorkspaceState& state, Operations operations);
 
@@ -97,6 +111,16 @@ class DiffTabCoordinator {
                                 const std::vector<std::filesystem::path>* review_files = nullptr);
   bool OpenGitConflictMerge(const std::filesystem::path& path,
                             const project::GitRevisionBlobCache* prefetched = nullptr);
+
+  // Post the load a stand-in compare tab owes, if it owes one and none is in
+  // flight. Called for each pane's FRONT compare tab when a frame is prepared, so
+  // a tab loads when it is first shown and again after a cancelled load. Returns
+  // whether a load was posted.
+  bool StartPendingCompareLoad(CompareTabState& compare_tab);
+  // Shell thread: the completion of a load posted by StartPendingCompareLoad.
+  // `cancelled` leaves the tab owing its load; `read_ok` is the working file's read.
+  void ApplyCompareTabLoad(std::uint64_t id, bool cancelled, bool read_ok,
+                           CompareTabLoadResult& result);
 
  private:
   void ActivateCompareTab(std::size_t index, bool dismiss_overlay);
