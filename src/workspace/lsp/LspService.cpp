@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1769,80 +1768,15 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
     }
   }
 
-  // --- Apply in order, journaling the inverse of each mutation. A delete (or an
-  // overwrite's displaced target) is STAGED — renamed to a hidden sibling in the
-  // same directory (same filesystem, pure rename) — so it stays restorable until
-  // the whole batch lands; only then are the staged backups disposed.
-  struct JournalEntry {
-    enum class Undo : std::uint8_t {
-      RemoveCreatedFile,  // a: created file
-      RemoveCreatedDirs,  // a: topmost directory this batch created
-      RenameBack,         // a: current (new) path, b: original path
-      RestoreStaged,      // a: original path, b: staged path
-    };
-    Undo undo;
-    fs::path a;
-    fs::path b;
-  };
-  std::vector<JournalEntry> journal;
-  std::vector<fs::path> staged_disposals;
-  std::size_t stage_seq = 0;
-  const auto stage_aside = [&](const fs::path& victim) -> std::optional<fs::path> {
-    while (true) {
-      const fs::path staged =
-          victim.parent_path() / (".microide-lsp-staged-" + std::to_string(stage_seq++) + "-" +
-                                  victim.filename().string());
-      std::error_code ec;
-      if (fs::exists(staged, ec)) {
-        continue;  // seq collision with leftover debris; try the next name
-      }
-      fs::rename(victim, staged, ec);
-      if (ec) {
-        return std::nullopt;
-      }
-      return staged;
-    }
-  };
-  const auto ensure_parent_dirs = [&](const fs::path& target) -> bool {
-    const fs::path parent = target.parent_path();
-    std::error_code ec;
-    if (parent.empty() || fs::exists(parent, ec)) {
-      return true;
-    }
-    // Journal the TOPMOST directory this call creates so rollback removes the
-    // whole new chain, not just the leaf.
-    fs::path topmost = parent;
-    while (!topmost.parent_path().empty() && topmost.parent_path() != topmost &&
-           !fs::exists(topmost.parent_path(), ec)) {
-      topmost = topmost.parent_path();
-    }
-    fs::create_directories(parent, ec);
-    if (ec) {
-      return false;
-    }
-    journal.push_back({JournalEntry::Undo::RemoveCreatedDirs, topmost, {}});
-    return true;
-  };
-  const auto rollback = [&]() {
-    for (auto it = journal.rbegin(); it != journal.rend(); ++it) {
-      std::error_code ec;
-      switch (it->undo) {
-        case JournalEntry::Undo::RemoveCreatedFile:
-          fs::remove(it->a, ec);
-          break;
-        case JournalEntry::Undo::RemoveCreatedDirs:
-          fs::remove_all(it->a, ec);
-          break;
-        case JournalEntry::Undo::RenameBack:
-          fs::rename(it->a, it->b, ec);
-          break;
-        case JournalEntry::Undo::RestoreStaged:
-          fs::rename(it->b, it->a, ec);
-          break;
-      }
-    }
-  };
-
+  // --- Apply: one all-or-nothing batch through the project's write gate, which
+  // journals each op's inverse and unwinds the lot on the first failure (deleted
+  // and overwritten paths are staged aside until the batch lands). This used to be
+  // a journal of its own here — a second implementation of create/rename/delete
+  // beside the sidebar's, with a truncating create and an overwriting rename made
+  // safe only by the staging (TD-2026-09-29-305).
+  using TreeOp = project::FileWriteGate::TreeOp;
+  std::vector<TreeOp> tree_ops;
+  tree_ops.reserve(ops.size());
   // Reconcile actions are recorded in APPLY ORDER, not grouped by kind: a batch
   // like [delete B, rename A->B] must close B's tabs before A's tabs are
   // retargeted onto B, or the retargeted tab (and its unsaved contents) is closed
@@ -1854,98 +1788,51 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
   };
   std::vector<AppliedReconcile> applied_reconciles;
   fs::path last_mutated;
-  bool any_applied = false;
   for (std::size_t i = 0; i < ops.size(); ++i) {
     if (skip[i] != 0) {
       continue;
     }
     const WorkspaceResourceOp& op = ops[i];
     const fs::path target = op.path.lexically_normal();
-    std::string failure;
     switch (op.kind) {
-      case Kind::Create: {
-        std::error_code ec;
-        if (!ensure_parent_dirs(target)) {
-          failure = "could not create parent directory for: " + target.generic_string();
-          break;
-        }
-        if (fs::exists(target, ec)) {
-          // Validated as an overwrite: stage the displaced content aside first so
-          // a later failure restores it byte-identically.
-          const std::optional<fs::path> staged = stage_aside(target);
-          if (!staged.has_value()) {
-            failure = "could not stage existing file for overwrite: " + target.generic_string();
-            break;
-          }
-          journal.push_back({JournalEntry::Undo::RestoreStaged, target, *staged});
-          staged_disposals.push_back(*staged);
-        }
-        std::ofstream created(target, std::ios::binary | std::ios::trunc);
-        if (!created) {
-          failure = "could not create file: " + target.generic_string();
-          break;
-        }
-        created.close();
-        journal.push_back({JournalEntry::Undo::RemoveCreatedFile, target, {}});
+      case Kind::Create:
+        tree_ops.push_back({.kind = TreeOp::Kind::CreateFile,
+                            .path = target,
+                            .overwrite = op.overwrite});
+        last_mutated = target;
         break;
-      }
       case Kind::Rename: {
         const fs::path dest = op.new_path.lexically_normal();
-        std::error_code ec;
-        if (!ensure_parent_dirs(dest)) {
-          failure = "could not create parent directory for: " + dest.generic_string();
-          break;
-        }
-        if (fs::exists(dest, ec)) {
-          const std::optional<fs::path> staged = stage_aside(dest);
-          if (!staged.has_value()) {
-            failure = "could not stage existing file for overwrite: " + dest.generic_string();
-            break;
-          }
-          journal.push_back({JournalEntry::Undo::RestoreStaged, dest, *staged});
-          staged_disposals.push_back(*staged);
-        }
-        fs::rename(target, dest, ec);
-        if (ec) {
-          failure = "could not rename " + target.generic_string() + " -> " +
-                    dest.generic_string() + ": " + ec.message();
-          break;
-        }
-        journal.push_back({JournalEntry::Undo::RenameBack, dest, target});
+        tree_ops.push_back({.kind = TreeOp::Kind::Rename,
+                            .path = target,
+                            .new_path = dest,
+                            .overwrite = op.overwrite});
         applied_reconciles.push_back({/*is_rename=*/true, target, dest});
         last_mutated = dest;
         break;
       }
-      case Kind::Delete: {
-        const std::optional<fs::path> staged = stage_aside(target);
-        if (!staged.has_value()) {
-          failure = "could not delete: " + target.generic_string();
-          break;
-        }
-        journal.push_back({JournalEntry::Undo::RestoreStaged, target, *staged});
-        staged_disposals.push_back(*staged);
+      case Kind::Delete:
+        tree_ops.push_back({.kind = TreeOp::Kind::Delete,
+                            .path = target,
+                            .recursive = op.recursive});
         applied_reconciles.push_back({/*is_rename=*/false, target, {}});
         last_mutated = target.parent_path();
         break;
-      }
     }
-    if (op.kind == Kind::Create && failure.empty()) {
-      last_mutated = target;
-    }
-    if (!failure.empty()) {
-      rollback();
-      return fail(std::move(failure));
-    }
-    any_applied = true;
   }
-  result.any_applied = any_applied;
-  if (!any_applied) {
+  if (tree_ops.empty()) {
     return result;  // every op was an ignore-option no-op
   }
+  project::FileWriteGate::TreeResult applied =
+      CurrentProjectState().write_gate().ApplyTreeOps(tree_ops);
+  if (!applied.ok) {
+    return fail(std::move(applied.error_message));
+  }
+  result.any_applied = true;
 
-  // --- The batch landed: reconcile shell state per op, dispose the staged
-  // backups (off the shell thread when possible — a staged directory removal can
-  // be slow), and refresh the project views once.
+  // --- The batch landed: reconcile shell state per op, hand the staged
+  // directories off the shell thread (the gate already unlinked staged files), and
+  // refresh the project views once.
   for (const AppliedReconcile& action : applied_reconciles) {
     if (action.is_rename) {
       if (operations_.reconcile_tabs_after_resource_rename) {
@@ -1955,27 +1842,11 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
       operations_.reconcile_tabs_after_resource_delete(action.from);
     }
   }
-  // A staged FILE is one unlink — do it here, before the view refresh below, so
-  // the hidden staging entry can never be walked into the file index and shown in
-  // the tree/finder. Only a staged DIRECTORY (arbitrarily deep remove_all) is
-  // worth an off-thread hop, and directory ops are the rare case.
-  std::vector<fs::path> slow_disposals;
-  for (fs::path& staged : staged_disposals) {
-    std::error_code ec;
-    if (fs::is_directory(staged, ec)) {
-      slow_disposals.push_back(std::move(staged));
-      continue;
-    }
-    fs::remove(staged, ec);
-  }
-  if (!slow_disposals.empty()) {
+  if (!applied.staged_directories.empty()) {
     if (operations_.dispose_staged_paths_async) {
-      operations_.dispose_staged_paths_async(std::move(slow_disposals));
+      operations_.dispose_staged_paths_async(std::move(applied.staged_directories));
     } else {
-      for (const fs::path& staged : slow_disposals) {
-        std::error_code ec;
-        fs::remove_all(staged, ec);
-      }
+      CurrentProjectState().write_gate().DisposeStaged(applied.staged_directories);
     }
   }
   if (operations_.refresh_views_after_resource_ops) {

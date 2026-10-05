@@ -58,7 +58,7 @@ void RegisterCompileCommandsLocatorTests(std::vector<TestCase>& tests);
 void RegisterFileFinderTests(std::vector<TestCase>& tests);
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
 void RegisterFileIndexTests(std::vector<TestCase>& tests);
-void RegisterFileOperationServiceTests(std::vector<TestCase>& tests);
+void RegisterFileTreeOpsTests(std::vector<TestCase>& tests);
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
 void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests);
@@ -635,7 +635,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterReviewTabPlanTests(tests);
   microide::tests::RegisterReviewSessionTests(tests);
   microide::tests::RegisterMergeConflictResolutionTests(tests);
-  microide::tests::RegisterFileOperationServiceTests(tests);
+  microide::tests::RegisterFileTreeOpsTests(tests);
   microide::tests::RegisterContributionRegistryTests(tests);
   microide::tests::RegisterPhase3Tests(tests);
   microide::tests::RegisterPhase4Tests(tests);

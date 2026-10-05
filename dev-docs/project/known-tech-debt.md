@@ -858,7 +858,7 @@ Installing a per-viewport gate means all three of these land together:
 
 Until then the member stays const-in-practice and there is deliberately no setter.
 
-### TD-2026-09-29-305 — the write gate covers content writes, not tree operations. [OPEN]
+### TD-2026-09-29-305 — the write gate covers content writes, not tree operations. [RESOLVED 2026-10-06]
 
 `project::FileWriteGate` is the one door for writes that replace a file's
 contents, and `CheckProjectWritesGoThroughTheWriteGate` keeps it that way for
@@ -881,6 +881,39 @@ the base the write was computed against". That is also what a remote project
 needs, because an `fs/op` is how a rename reaches the host. Until then the lint
 is scoped to content writes and says so, rather than carrying an allowlist that
 reads as "these are exceptions" when they are actually a different contract.
+
+**Resolved 2026-10-06.** `FileWriteGate::ApplyTreeOps` takes a batch of
+`TreeOp`s — create file, create directory, rename, delete, trash — and applies it
+ALL OR NOTHING: each op journals its inverse and the first failure unwinds the lot.
+That is the LSP's journal, moved into the gate (`project/LocalTreeOps`), built on
+the sidebar's atomic primitives rather than its own: an O_EXCL create where the
+journal had a truncating `ofstream`, a RENAME_NOREPLACE move where it had an
+overwriting `fs::rename`. A non-recursive directory delete is an `rmdir`, so the
+kernel refuses a non-empty directory instead of a check that can be raced; that
+is what the sidebar's empty-directory prune needed. Staged directories come back
+to the caller for off-thread disposal through `DisposeStaged`, which is also on
+the gate because a remote host is where they live.
+
+`project::FileOperationService` is gone; its tests moved to the gate
+(`tests/FileTreeOpsTests.cpp`) with the batch's own: all-or-nothing rollback, no
+staging debris after an overwrite, rmdir refusing content. Every caller — the
+path-mutation prompts, the sidebar's discard (trash + prune), the merge surface's
+delete of a resolved-to-deleted file, and the LSP resource ops — reaches it
+through `ProjectWorkspaceState::write_gate()`, the launcher's twin: the project
+owns its gate, so a remote project swaps in `MirrorWriteGate` in one place.
+
+`CheckProjectWritesGoThroughTheWriteGate` gained a tree half: the platform tree
+primitives may not be named in workspace/plugin/editor at all, and the
+`std::filesystem` mutators are banned in the directories that act on the project
+tree (coordinators/, lsp/, git/). `LspService.cpp` is no longer exempt. Fixtures
+cover both halves, the directory scoping, a comment mention, and a vacuity guard
+on the local tree ops' move primitive.
+
+Not covered, on purpose: the plugin data directory, persistence, the tool cache
+and the control descriptor create and remove files that are not in a project
+tree. And `TextViewport` still holds its own gate pointer (defaulting to the local
+gate) rather than reading the project's — every editor save is therefore still
+local-by-default; a remote project must set it when a buffer is opened.
 
 ### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [OPEN]
 

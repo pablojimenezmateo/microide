@@ -1241,6 +1241,9 @@ void RunWriteGateRuleFixtures() {
   // primitive, so the fixture root carries one.
   WriteFile(root / "src/project/FileWriteGate.cpp",
             "bool W(){ return util::WriteTextFileAtomically(p, t); }\n");
+  // ...and the tree half's vacuity guard looks for the local tree ops' move.
+  WriteFile(root / "src/project/LocalTreeOps.cpp",
+            "bool M(){ return platform::MovePathNoOverwrite(a, b); }\n");
 
   WriteFile(root / "src/workspace/Replace.cpp",
             "void F(){ util::WriteTextFileAtomically(path, text); }\n");
@@ -1265,15 +1268,19 @@ void RunWriteGateRuleFixtures() {
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
          "the write-gate rule must accept writes routed through the gate");
 
-  // The two named exemptions are exempt, and only those two.
+  // The one named exemption is exempt, and only that one. The LSP journal used to
+  // be a second — it moved into the gate (TD-2026-09-29-305), so it is checked now.
   std::filesystem::create_directories(root / "src/workspace/lsp");
   std::filesystem::create_directories(root / "src/workspace/control");
-  WriteFile(root / "src/workspace/lsp/LspService.cpp",
-            "void J(){ std::ofstream created(target); }\n");
   WriteFile(root / "src/workspace/control/ControlChannelService.cpp",
             "void K(){ std::ofstream out(temp_path); }\n");
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
-         "the transactional LSP journal and the control descriptor are named exemptions");
+         "the control descriptor is a named exemption");
+  WriteFile(root / "src/workspace/lsp/LspService.cpp",
+            "void J(){ std::ofstream created(target); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.size() == 1,
+         "the LSP service is no longer exempt");
+  std::filesystem::remove(root / "src/workspace/lsp/LspService.cpp");
   WriteFile(root / "src/workspace/lsp/Other.cpp",
             "void L(){ std::ofstream created(target); }\n");
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.size() == 1,
@@ -1290,6 +1297,31 @@ void RunWriteGateRuleFixtures() {
             "void H(){ util::WriteTextFileAtomically(path, text); }\n");
   Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
          "the write-gate rule is scoped to the layers that hold project files open");
+
+  // TREE half. A platform tree primitive in any gated layer, and a raw
+  // std::filesystem mutation in a tree-acting directory, are both flagged; the same
+  // mutation in a directory that is NOT about the project tree is not.
+  std::filesystem::create_directories(root / "src/workspace/coordinators");
+  WriteFile(root / "src/workspace/coordinators/Sidebar.cpp",
+            "void T(){ platform::MovePathToTrash(p); }\n");
+  WriteFile(root / "src/workspace/lsp/Ops.cpp",
+            "void R(){ std::error_code ec; fs::rename(a, b, ec); }\n");
+  WriteFile(root / "src/workspace/control/Descriptor.cpp",
+            "void D(){ std::error_code ec; std::filesystem::remove(p, ec); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.size() == 2,
+         "the tree half flags a platform primitive and a raw fs mutation where the "
+         "project tree is acted on, and not a descriptor cleanup elsewhere");
+  WriteFile(root / "src/workspace/coordinators/Sidebar.cpp",
+            "void T(){ (void)gate.ApplyTreeOp(op); }\n");
+  WriteFile(root / "src/workspace/lsp/Ops.cpp",
+            "// used to call fs::rename(a, b, ec) here\nvoid R(){ (void)gate.ApplyTreeOps(ops); }\n");
+  Expect(CheckProjectWritesGoThroughTheWriteGate(root).violations.empty(),
+         "and accepts the gate, and a mention in a comment");
+  WriteFile(root / "src/project/LocalTreeOps.cpp", "bool M(){ return false; }\n");
+  Expect(!CheckProjectWritesGoThroughTheWriteGate(root).missing_targets.empty(),
+         "the tree half reports local tree ops that no longer call a move primitive");
+  WriteFile(root / "src/project/LocalTreeOps.cpp",
+            "bool M(){ return platform::MovePathNoOverwrite(a, b); }\n");
 
   // Loud-missing-target guard: a gate that no longer writes means the rule is
   // scanning for a call form the tree does not use.

@@ -4,7 +4,6 @@
 #include <utility>
 
 #include "util/Parse.h"
-#include "project/FileOperationService.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -68,14 +67,17 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
       return;
     }
 
-    project::FileOperationResult result;
-    if (state.action == PromptSurfaceState::Action::CreateFile) {
-      result = project::FileOperationService::CreateFile(destination);
-    } else if (state.action == PromptSurfaceState::Action::CreateDirectory) {
-      result = project::FileOperationService::CreateDirectory(destination);
-    } else {
-      result = project::FileOperationService::RenamePath(state.path, destination);
-    }
+    using TreeOp = project::FileWriteGate::TreeOp;
+    const TreeOp op{
+        .kind = state.action == PromptSurfaceState::Action::CreateFile ? TreeOp::Kind::CreateFile
+                : state.action == PromptSurfaceState::Action::CreateDirectory
+                    ? TreeOp::Kind::CreateDirectory
+                    : TreeOp::Kind::Rename,
+        .path = state.action == PromptSurfaceState::Action::RenamePath ? state.path : destination,
+        .new_path = destination,
+    };
+    const project::FileWriteGate::TreeResult result =
+        CurrentProjectState().write_gate().ApplyTreeOp(op);
 
     if (!result.ok) {
       if (operations_.notify) {
@@ -154,7 +156,8 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     return;
   }
 
-  const project::FileOperationResult result = project::FileOperationService::TrashPath(state.path);
+  const project::FileWriteGate::TreeResult result = CurrentProjectState().write_gate().ApplyTreeOp(
+      {.kind = project::FileWriteGate::TreeOp::Kind::Trash, .path = state.path});
   if (!result.ok) {
     if (operations_.notify) {
       std::string message = "Could not delete";

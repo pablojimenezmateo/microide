@@ -260,11 +260,11 @@ WorkspaceShell::WorkspaceShell() {
                 // Removing a staged (already-renamed-aside) backup can be slow for
                 // directories; do it off the shell thread. Failure is harmless — a
                 // leftover hidden staging entry, never user data.
-                project_background_executor_.Post([staged = std::move(staged)]() {
-                  for (const std::filesystem::path& path : staged) {
-                    std::error_code ec;
-                    std::filesystem::remove_all(path, ec);
-                  }
+                // Through the project's gate (captured now: the worker must not read
+                // shell state), which is where a remote project's host removes them.
+                project::FileWriteGate* gate = &context_.current_project_state.write_gate();
+                project_background_executor_.Post([gate, staged = std::move(staged)]() {
+                  gate->DisposeStaged(staged);
                 });
               },
           .plugin_has_definition_provider =

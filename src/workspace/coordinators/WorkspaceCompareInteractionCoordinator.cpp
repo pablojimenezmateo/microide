@@ -740,15 +740,17 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
 
     const auto restore_working_file = [&]() {
       if (backup.has_value()) {
-        (void)project::LocalFileWriteGate().WriteText(merge_tab->output_path, *backup);
+        (void)state_.write_gate().WriteText(merge_tab->output_path, *backup);
       }
       merge_tab->result_viewport.SetDirty(prior_dirty);
       merge_tab->disk_result_tick = prior_disk_tick;
       merge_tab->external_result_stale = prior_external_stale;
     };
 
-    std::error_code remove_error;
-    std::filesystem::remove(merge_tab->output_path, remove_error);
+    // Through the gate: it is a change to the project tree like any other, and in a
+    // remote project it is the host's file that has to go.
+    (void)state_.write_gate().ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Delete,
+                                           .path = merge_tab->output_path});
     // The file is gone; the buffer is no longer the source of truth. Mark it clean
     // so a later Save cannot resurrect the file, and drop the disk tick / stale flag.
     merge_tab->result_viewport.SetDirty(false);

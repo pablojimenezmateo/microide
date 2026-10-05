@@ -9,7 +9,7 @@
 #include <optional>
 
 #include "editor/TextViewport.h"
-#include "project/FileOperationService.h"
+#include "project/FileWriteGate.h"
 #include "project/GitStatusService.h"
 #include "util/PathMatch.h"
 #include "workspace/SelectionMovement.h"
@@ -41,7 +41,8 @@ const typename Vec::value_type* SelectedListEntry(const Vec& entries, std::size_
 // do NOT take, because it destroys the files instead of trashing them — would have
 // removed them. A directory holding anything else (an ignored build artifact, say)
 // is not empty and is left alone.
-void PruneEmptyDirectoriesBelow(const std::filesystem::path& root,
+void PruneEmptyDirectoriesBelow(project::FileWriteGate& gate,
+                                const std::filesystem::path& root,
                                 std::filesystem::path directory) {
   const std::filesystem::path normalized_root = root.lexically_normal();
   std::error_code error;
@@ -50,10 +51,13 @@ void PruneEmptyDirectoriesBelow(const std::filesystem::path& root,
     if (!std::filesystem::is_directory(directory, error) || error) {
       return;
     }
-    if (!std::filesystem::is_empty(directory, error) || error) {
-      return;
-    }
-    if (!std::filesystem::remove(directory, error) || error) {
+    // A NON-recursive delete is an rmdir: the kernel refuses a directory that is
+    // not empty, so the emptiness here is decided atomically rather than by a
+    // check something else could race.
+    if (!gate.ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Delete,
+                           .path = directory,
+                           .recursive = false})
+             .ok) {
       return;
     }
     directory = directory.parent_path();
@@ -526,7 +530,9 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
     // Best-effort: a failed trash must not abort the tracked discard, and it must
     // not be silently `git clean`-deleted either — the file simply stays untracked
     // and the count below tells the user which half of the operation fell short.
-    if (!project::FileOperationService::TrashPath(untracked).ok) {
+    if (!state_.write_gate()
+             .ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Trash, .path = untracked})
+             .ok) {
       ++trash_failures;
     }
   }
@@ -540,7 +546,7 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
   // After the restore has recreated every deleted tracked file, the only directories
   // still empty are the ones the trashed untracked files left behind.
   for (const auto& untracked : untracked_paths) {
-    PruneEmptyDirectoriesBelow(project_root_, untracked.parent_path());
+    PruneEmptyDirectoriesBelow(state_.write_gate(), project_root_, untracked.parent_path());
   }
 
   if (trash_failures > 0) {
@@ -653,7 +659,9 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
       ReportGitOperationFailure("discard", *entry);
       return false;
     }
-    if (!project::FileOperationService::TrashPath(entry->path).ok) {
+    if (!state_.write_gate()
+             .ApplyTreeOp({.kind = project::FileWriteGate::TreeOp::Kind::Trash, .path = entry->path})
+             .ok) {
       ReportGitOperationFailure("discard", *entry);
       return false;
     }

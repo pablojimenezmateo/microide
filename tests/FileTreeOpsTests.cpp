@@ -1,32 +1,52 @@
 #include "TestSupport.h"
 
 #include "platform/FsOps.h"
-#include "project/FileOperationService.h"
+#include "project/FileWriteGate.h"
 
 #include <filesystem>
+#include <vector>
 
 namespace microide::tests {
 namespace {
 
-using microide::project::FileOperationService;
+using microide::project::FileWriteGate;
+using TreeOp = FileWriteGate::TreeOp;
+
+// The single-op calls these tests were written against, now through the gate.
+FileWriteGate::TreeResult Op(TreeOp op) {
+  return microide::project::LocalFileWriteGate().ApplyTreeOp(op);
+}
+FileWriteGate::TreeResult CreateFile(const std::filesystem::path& p) {
+  return Op({.kind = TreeOp::Kind::CreateFile, .path = p});
+}
+FileWriteGate::TreeResult CreateDirectory(const std::filesystem::path& p) {
+  return Op({.kind = TreeOp::Kind::CreateDirectory, .path = p});
+}
+FileWriteGate::TreeResult RenamePath(const std::filesystem::path& from,
+                                     const std::filesystem::path& to) {
+  return Op({.kind = TreeOp::Kind::Rename, .path = from, .new_path = to});
+}
+FileWriteGate::TreeResult TrashPath(const std::filesystem::path& p) {
+  return Op({.kind = TreeOp::Kind::Trash, .path = p});
+}
 
 void TestFileOperationService() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
   std::filesystem::create_directories(root);
 
-  const auto created_directory = FileOperationService::CreateDirectory(root / "nested" / "folder");
+  const auto created_directory = CreateDirectory(root / "nested" / "folder");
   Expect(created_directory.ok, "create directory should succeed");
   Expect(std::filesystem::is_directory(root / "nested" / "folder"),
          "created directory should exist");
 
-  const auto created_file = FileOperationService::CreateFile(root / "nested" / "folder" / "draft.txt");
+  const auto created_file = CreateFile(root / "nested" / "folder" / "draft.txt");
   Expect(created_file.ok, "create file should succeed");
   Expect(std::filesystem::is_regular_file(root / "nested" / "folder" / "draft.txt"),
          "created file should exist");
 
   const auto renamed_file =
-      FileOperationService::RenamePath(root / "nested" / "folder" / "draft.txt",
+      RenamePath(root / "nested" / "folder" / "draft.txt",
                                        root / "nested" / "folder" / "final.txt");
   Expect(renamed_file.ok, "rename file should succeed");
   Expect(!std::filesystem::exists(root / "nested" / "folder" / "draft.txt"),
@@ -35,7 +55,7 @@ void TestFileOperationService() {
          "destination file should exist after rename");
 
   const auto renamed_directory =
-      FileOperationService::RenamePath(root / "nested" / "folder", root / "nested" / "renamed");
+      RenamePath(root / "nested" / "folder", root / "nested" / "renamed");
   Expect(renamed_directory.ok, "rename directory should succeed");
   Expect(!std::filesystem::exists(root / "nested" / "folder"),
          "source directory should disappear after rename");
@@ -49,7 +69,7 @@ void TestFileOperationService() {
   ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
   const auto trash_target = root / "trash-me.txt";
   WriteFile(trash_target, "trash me");
-  const auto trashed = FileOperationService::TrashPath(trash_target);
+  const auto trashed = TrashPath(trash_target);
   Expect(trashed.ok, "trash should succeed on linux");
   Expect(!std::filesystem::exists(trash_target), "source file should disappear after trash");
   Expect(std::filesystem::is_regular_file(trashed.resulting_path),
@@ -66,7 +86,7 @@ void TestCreateDirectoryClassifiesExistingTargets() {
   std::filesystem::create_directories(root);
 
   // Re-creating an existing directory reports "already exists", not a hard error.
-  const auto again = FileOperationService::CreateDirectory(root);
+  const auto again = CreateDirectory(root);
   Expect(!again.ok, "creating an existing directory should fail");
   Expect(again.error_message == "The directory already exists",
          "existing directory is classified distinctly");
@@ -75,7 +95,7 @@ void TestCreateDirectoryClassifiesExistingTargets() {
   // clash (the create-first path classifies via status, no TOCTOU probe).
   const auto file_target = root / "occupied";
   WriteFile(file_target, "not a directory");
-  const auto clash = FileOperationService::CreateDirectory(file_target);
+  const auto clash = CreateDirectory(file_target);
   Expect(!clash.ok, "creating a directory over a file should fail");
   Expect(clash.error_message == "A non-directory already exists at that path",
          "file clash is classified distinctly from a real create failure");
@@ -105,7 +125,7 @@ void TestTrashReservationDoesNotOverwriteExistingMetadata() {
 
   const auto trash_target = root / "trash-me.txt";
   WriteFile(trash_target, "trash me");
-  const auto trashed = FileOperationService::TrashPath(trash_target);
+  const auto trashed = TrashPath(trash_target);
 
   Expect(trashed.ok, "trash should still succeed by choosing a free slot");
   Expect(!std::filesystem::exists(trash_target), "source file should disappear after trash");
@@ -141,7 +161,7 @@ void TestTrashFinalMoveRefusesExistingFilesDestination() {
 
   const auto trash_target = root / "collide.txt";
   WriteFile(trash_target, "new content");
-  const auto trashed = FileOperationService::TrashPath(trash_target);
+  const auto trashed = TrashPath(trash_target);
 
   Expect(trashed.ok, "trash should succeed by choosing a free files slot");
   Expect(!std::filesystem::exists(trash_target), "source should disappear after trash");
@@ -176,7 +196,7 @@ void TestTrashRetriesPastADanglingSlot() {
 
   const auto trash_target = root / "collide.txt";
   WriteFile(trash_target, "new content");
-  const auto trashed = FileOperationService::TrashPath(trash_target);
+  const auto trashed = TrashPath(trash_target);
 
   Expect(trashed.ok, "trash must succeed by retrying past the occupied slot");
   Expect(std::filesystem::symlink_status(dangling_slot).type() !=
@@ -203,7 +223,7 @@ void TestRenamePathRefusesToOverwriteExistingDestination() {
   WriteFile(source, "SOURCE");
   WriteFile(dest, "DESTINATION");
 
-  const auto result = FileOperationService::RenamePath(source, dest);
+  const auto result = RenamePath(source, dest);
   Expect(!result.ok, "rename onto an existing destination must fail");
   Expect(result.error_message == "The destination path already exists",
          "the failure is classified as an existing-destination clash");
@@ -250,7 +270,7 @@ void TestRenamePathAcceptsDanglingSymlinkSource() {
   Expect(!std::filesystem::exists(link), "the symlink target is absent (dangling)");
 
   const auto dest = root / "renamed_link";
-  const auto result = FileOperationService::RenamePath(link, dest);
+  const auto result = RenamePath(link, dest);
   Expect(result.ok, "a dangling symlink source must be renameable, not rejected as absent");
   Expect(std::filesystem::is_symlink(std::filesystem::symlink_status(dest)),
          "the renamed node is still a symlink at the new path");
@@ -286,8 +306,104 @@ void TestFailedMovePathLeavesADanglingDestinationSymlinkAlone() {
 }
 #endif
 
-void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
-  AddTest(tests, "Project/FileOperationService", TestFileOperationService);
+// ---- The transaction (TD-2026-09-29-305) -----------------------------------
+//
+// The LSP's workspace-edit resource ops are all-or-nothing, and that journal now
+// lives in the gate. These pin it at the gate, where any caller gets it.
+
+std::size_t CountEntries(const std::filesystem::path& dir) {
+  std::size_t count = 0;
+  for ([[maybe_unused]] const auto& entry : std::filesystem::directory_iterator(dir)) {
+    ++count;
+  }
+  return count;
+}
+
+// One failure undoes everything before it, in reverse: a created file goes, a
+// rename goes back, a deleted file comes back byte-identical, and a chain of
+// parent directories created on the way is removed whole.
+void TestATreeBatchIsAllOrNothing() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  WriteFile(root / "keep.txt", "KEEP");
+  WriteFile(root / "move.txt", "MOVE");
+  WriteFile(root / "victim.txt", "VICTIM");
+  WriteFile(root / "occupied.txt", "OCCUPIED");
+
+  const std::vector<TreeOp> ops = {
+      {.kind = TreeOp::Kind::CreateFile, .path = root / "deep" / "er" / "new.txt"},
+      {.kind = TreeOp::Kind::Rename, .path = root / "move.txt", .new_path = root / "moved.txt"},
+      {.kind = TreeOp::Kind::Delete, .path = root / "victim.txt"},
+      // Fails: the destination exists and overwrite is off.
+      {.kind = TreeOp::Kind::Rename, .path = root / "keep.txt",
+       .new_path = root / "occupied.txt"},
+  };
+  const auto result = microide::project::LocalFileWriteGate().ApplyTreeOps(ops);
+  Expect(!result.ok && result.failed_index == 3, "the batch fails at the clashing rename");
+  Expect(!std::filesystem::exists(root / "deep"),
+         "the created file AND the directory chain created for it are gone");
+  Expect(ReadFile(root / "move.txt") == "MOVE" && !std::filesystem::exists(root / "moved.txt"),
+         "the rename went back");
+  Expect(ReadFile(root / "victim.txt") == "VICTIM", "the deleted file came back intact");
+  Expect(ReadFile(root / "occupied.txt") == "OCCUPIED" && ReadFile(root / "keep.txt") == "KEEP",
+         "and nothing the failing op touched was clobbered");
+  Expect(CountEntries(root) == 4, "with no staging debris left behind");
+}
+
+// An overwrite stages the victim aside and, once the batch lands, disposes of it:
+// a staged FILE is unlinked by the gate itself, so nothing hidden is left for the
+// file index to find before the caller refreshes.
+void TestAnOverwritingRenameLeavesNoStagingEntry() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  WriteFile(root / "a.txt", "A");
+  WriteFile(root / "b.txt", "B");
+  const auto result = Op({.kind = TreeOp::Kind::Rename,
+                          .path = root / "a.txt",
+                          .new_path = root / "b.txt",
+                          .overwrite = true});
+  Expect(result.ok, "an overwriting rename succeeds");
+  Expect(ReadFile(root / "b.txt") == "A", "the destination holds the source's bytes");
+  Expect(CountEntries(root) == 1 && result.staged_directories.empty(),
+         "and the replaced file is gone, not parked under a hidden name");
+}
+
+// A non-recursive delete of a directory is an rmdir: the KERNEL refuses a
+// non-empty one, so content cannot be taken along by racing an emptiness check.
+void TestANonRecursiveDeleteRefusesANonEmptyDirectory() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root / "full");
+  WriteFile(root / "full" / "inside.txt", "INSIDE");
+  std::filesystem::create_directories(root / "empty");
+
+  const auto refused = Op({.kind = TreeOp::Kind::Delete, .path = root / "full"});
+  Expect(!refused.ok, "a directory with content is not deleted without `recursive`");
+  Expect(ReadFile(root / "full" / "inside.txt") == "INSIDE", "and its content is untouched");
+
+  Expect(Op({.kind = TreeOp::Kind::Delete, .path = root / "empty"}).ok,
+         "an empty directory is");
+  Expect(!std::filesystem::exists(root / "empty"), "and is gone");
+
+  const auto recursive =
+      Op({.kind = TreeOp::Kind::Delete, .path = root / "full", .recursive = true});
+  Expect(recursive.ok && !std::filesystem::exists(root / "full"),
+         "a recursive delete takes the tree");
+  Expect(recursive.staged_directories.size() == 1,
+         "handing the staged tree back for the caller to remove off-thread");
+  microide::project::LocalFileWriteGate().DisposeStaged(recursive.staged_directories);
+  Expect(CountEntries(root) == 0, "which disposing removes");
+}
+
+void RegisterFileTreeOpsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Project/FileTreeOps", TestFileOperationService);
+  AddTest(tests, "Project/ATreeBatchIsAllOrNothing", TestATreeBatchIsAllOrNothing);
+  AddTest(tests, "Project/AnOverwritingRenameLeavesNoStagingEntry",
+          TestAnOverwritingRenameLeavesNoStagingEntry);
+  AddTest(tests, "Project/ANonRecursiveDeleteRefusesANonEmptyDirectory",
+          TestANonRecursiveDeleteRefusesANonEmptyDirectory);
   AddTest(tests, "Project/RenamePathRefusesToOverwriteExistingDestination",
           TestRenamePathRefusesToOverwriteExistingDestination);
   AddTest(tests, "Project/MovePathNoOverwriteRefusesExistingDestination",

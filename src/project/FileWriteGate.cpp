@@ -1,5 +1,9 @@
 #include "project/FileWriteGate.h"
 
+#include "project/LocalTreeOps.h"
+
+#include <system_error>
+
 namespace microide::project {
 
 namespace {
@@ -19,6 +23,17 @@ class LocalGate final : public FileWriteGate {
       result.signature = util::SignatureForKnownContent(path, text);
     }
     return result;
+  }
+
+  TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
+    return ApplyLocalTreeOps(ops);
+  }
+
+  void DisposeStaged(std::span<const std::filesystem::path> staged) override {
+    for (const std::filesystem::path& path : staged) {
+      std::error_code error;
+      std::filesystem::remove_all(path, error);
+    }
   }
 };
 

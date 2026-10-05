@@ -436,26 +436,29 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
   // Scope, stated precisely because a lint that implies more than it checks is
   // worse than one that admits its edges (dev-docs/project/validation-traps.md).
   //
-  // It guards the primitives that REPLACE A FILE'S CONTENTS —
+  // Two halves.
+  //
+  // CONTENT: the primitives that replace a file's contents —
   // `WriteTextFileAtomically` and a writing `std::ofstream` — in the three layers
-  // that hold project files open. It does NOT guard create/rename/delete: the LSP
-  // resource-ops journal and the sidebar's file operations do those
-  // transactionally with rollback, which is a different contract the gate does not
-  // offer yet (TD-2026-09-29-305), and `LspService.cpp` is allowlisted for exactly
-  // that reason rather than being quietly outside the pattern. It does not reach
-  // persistence, the tool-download cache or the control channel's descriptor, none
-  // of which write into a project tree.
+  // that hold project files open.
+  //
+  // TREE (TD-2026-09-29-305): create/rename/delete/trash. The platform primitives
+  // that do them (`MovePath*`, `RemovePath`, `CopyPath`, `MovePathToTrash`) may not
+  // be named in those layers at all — the gate's ApplyTreeOps is the door, with one
+  // transactional journal instead of the two that used to exist. And the
+  // `std::filesystem` mutators are banned in the three directories whose files act
+  // on the project tree (coordinators/, lsp/, git/). Not everywhere in the gated
+  // layers: persistence, the tool-download cache, the plugin data directory and the
+  // control descriptor all legitimately create and remove files that are NOT in a
+  // project tree, and naming that list file by file is how this rule would stop
+  // meaning anything.
   static constexpr std::array<const char*, 3> kGatedDirectories = {
       "workspace/", "plugin/", "editor/",
   };
   // Files in a gated layer that do not write into a project tree, each named with
   // the reason rather than lumped together — an allowlist whose entries are not
   // individually justified is how a rule stops meaning anything.
-  static constexpr std::array<const char*, 2> kWritersOutsideTheGate = {
-      // Creates files with a raw ofstream as part of a transaction it rolls back.
-      // Until the gate speaks tree operations it cannot host that
-      // (TD-2026-09-29-305).
-      "workspace/lsp/LspService.cpp",
+  static constexpr std::array<const char*, 1> kWritersOutsideTheGate = {
       // Publishes the per-instance control descriptor under $XDG_RUNTIME_DIR. Not
       // a project file at all, and its temp-then-rename is its own atomicity
       // contract for a concurrent reader racing startup.
@@ -463,8 +466,16 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
   };
   const std::regex raw_write(
       R"(\bWriteTextFileAtomically\s*\(|\bstd::ofstream\s+\w+\s*\()");
+  const std::regex raw_tree_primitive(
+      R"(\b(?:MovePathToTrash|MovePathNoOverwrite|MovePath|RemovePath|CopyPath)\s*\()");
+  const std::regex raw_fs_mutation(
+      R"(\b(?:std::filesystem|fs)::(?:rename|remove|remove_all|create_directory|create_directories)\s*\()");
+  static constexpr std::array<const char*, 3> kTreeActingDirectories = {
+      "workspace/coordinators/", "workspace/lsp/", "workspace/git/",
+  };
 
   bool saw_gate_call = false;
+  bool saw_tree_primitive = false;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
     if (!entry.is_regular_file() || !IsSourceExtension(entry.path())) {
       continue;
@@ -474,6 +485,12 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
     if (key.starts_with("project/FileWriteGate")) {
       if (std::regex_search(text, raw_write)) {
         saw_gate_call = true;
+      }
+      continue;
+    }
+    if (key.starts_with("project/LocalTreeOps")) {
+      if (CodeMaskedPatternAppears(text, raw_tree_primitive)) {
+        saw_tree_primitive = true;
       }
       continue;
     }
@@ -502,6 +519,29 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
         "a write that replaces a file in a project tree must go through "
         "project::FileWriteGate, not util::WriteTextFileAtomically directly — the gate "
         "is what captures the post-write signature and what a remote project replaces");
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, raw_tree_primitive,
+        "a create/rename/delete/trash in a project tree goes through "
+        "FileWriteGate::ApplyTreeOps (the project's write_gate()), not a platform "
+        "primitive — the gate is the one journal, and what a remote project replaces");
+    for (const std::string_view dir : kTreeActingDirectories) {
+      if (key.starts_with(dir)) {
+        AppendCodeMaskRegexViolations(
+            result, entry.path(), text, raw_fs_mutation,
+            "this directory acts on the project tree: a create/rename/remove goes through "
+            "FileWriteGate::ApplyTreeOps (the project's write_gate()), not std::filesystem");
+        break;
+      }
+    }
+  }
+  if (!saw_tree_primitive) {
+    result.missing_targets.push_back(Violation{
+        .path = src_dir / "project" / "LocalTreeOps.cpp",
+        .line = 1,
+        .message = "the local tree operations no longer call a platform move primitive; "
+                   "the tree half of this rule is scanning for a call form the tree no "
+                   "longer uses (repoint it)",
+    });
   }
   if (!saw_gate_call) {
     result.missing_targets.push_back(Violation{
