@@ -5,6 +5,7 @@
 namespace microide::workspace {
 
 ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& project_root,
+                                               const platform::ProcessLauncher& launcher,
                                                const OutgoingBaseChoice& choice,
                                                bool repo_available) {
   ResolvedGitOutgoingBase resolved;
@@ -14,7 +15,7 @@ ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& proj
 
   switch (choice.kind) {
     case OutgoingBaseChoice::Kind::Auto: {
-      const auto base_ref = project::ResolveGitBaseReference(project_root);
+      const auto base_ref = project::ResolveGitBaseReference(project_root, launcher);
       if (base_ref.has_value()) {
         resolved.repo_available = true;
         resolved.base_ref = base_ref->ref;

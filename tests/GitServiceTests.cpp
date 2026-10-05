@@ -75,13 +75,16 @@ void TestGitCompareFixture() {
   WriteFile(new_file, ReadFile(head_dir / "src/new_panel.cpp"));
   CommitAll(repo_path, "head fixture", "head fixture");
 
-  const auto history = CollectGitFileHistory(repo_path, tracked_file).commits;
+  const auto history = CollectGitFileHistory(repo_path, platform::LocalProcessLauncher(),
+                                             tracked_file).commits;
   Expect(history.size() == 2, "tracked file should have two commits in history");
   Expect(history[0].subject == "head fixture", "newest history entry subject mismatch");
   Expect(history[1].subject == "base fixture", "oldest history entry subject mismatch");
 
-  const auto latest = ReadGitFileAtCommit(repo_path, tracked_file, history[0].hash);
-  const auto original = ReadGitFileAtCommit(repo_path, tracked_file, history[1].hash);
+  const auto latest = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(), tracked_file,
+                                          history[0].hash);
+  const auto original = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(),
+                                            tracked_file, history[1].hash);
   Expect(latest.has_value(), "latest commit read should succeed");
   Expect(original.has_value(), "base commit read should succeed");
   Expect(latest->exists, "latest tracked file should exist");
@@ -89,7 +92,8 @@ void TestGitCompareFixture() {
   Expect(latest->content == ReadFile(head_dir / "src/session.cpp"), "latest content mismatch");
   Expect(original->content == ReadFile(base_dir / "src/session.cpp"), "base content mismatch");
 
-  const auto missing_in_base = ReadGitFileAtCommit(repo_path, new_file, history[1].hash);
+  const auto missing_in_base = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(),
+                                                   new_file, history[1].hash);
   Expect(missing_in_base.has_value(), "missing file at base commit should produce result");
   Expect(!missing_in_base->exists, "new file should not exist in base commit");
   Expect(missing_in_base->content.empty(), "missing file should have empty content");
@@ -150,7 +154,8 @@ void TestGitWorkingTreeStatusAndActions() {
   Expect(saw_modified && saw_deleted && saw_untracked,
          "working tree fixture should include modified, deleted, and untracked files");
 
-  Expect(GitStagePath(repo_path, microide::platform::LocalProcessLauncher(), modified_file), "git stage should succeed for modified file");
+  Expect(GitStagePath(repo_path, microide::platform::LocalProcessLauncher(), modified_file),
+         "git stage should succeed for modified file");
   entries = RequireWorkingTreeEntries(repo_path);
   const auto staged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
     return entry.relative_path == std::filesystem::path("README.md");
@@ -159,7 +164,8 @@ void TestGitWorkingTreeStatusAndActions() {
          "staged modified file should still appear in working tree view");
   Expect(staged_it->staged, "modified file should report staged after git add");
 
-  Expect(GitUnstagePath(repo_path, microide::platform::LocalProcessLauncher(), modified_file), "git unstage should succeed for modified file");
+  Expect(GitUnstagePath(repo_path, microide::platform::LocalProcessLauncher(), modified_file),
+         "git unstage should succeed for modified file");
   entries = RequireWorkingTreeEntries(repo_path);
   const auto unstaged_it = std::find_if(entries.begin(), entries.end(), [&](const auto& entry) {
     return entry.relative_path == std::filesystem::path("README.md");
@@ -168,7 +174,8 @@ void TestGitWorkingTreeStatusAndActions() {
          "unstaged modified file should still appear in working tree view");
   Expect(!unstaged_it->staged, "modified file should report unstaged after git unstage");
 
-  Expect(GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), untracked_file), "discard should remove untracked file");
+  Expect(GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), untracked_file),
+         "discard should remove untracked file");
   Expect(!std::filesystem::exists(untracked_file), "discard should delete untracked file");
 
   Expect(GitDiscardPath(repo_path, microide::platform::LocalProcessLauncher(), deleted_file),
@@ -209,7 +216,7 @@ void TestGitOutgoingBranchFiles() {
   WriteFile(repo_path / "src/new_panel.cpp", ReadFile(head_dir / "src/new_panel.cpp"));
   CommitAll(repo_path, "feature fixture", "feature fixture");
 
-  const auto base_ref = ResolveGitBaseReference(repo_path);
+  const auto base_ref = ResolveGitBaseReference(repo_path, platform::LocalProcessLauncher());
   Expect(base_ref.has_value(), "git base reference should resolve in a main-based repo");
   // TD-2026-07-17A-025: the default-branch fallback keeps the FULL ref as identity
   // (so a same-named tag cannot shadow it in `git diff`), and the short name as label.
@@ -217,7 +224,8 @@ void TestGitOutgoingBranchFiles() {
          "local repo without remotes should resolve the full refs/heads/main as the base ref");
   Expect(base_ref->label == "main", "the base label stays the short branch name");
 
-  const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, base_ref->ref);
+  const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, platform::LocalProcessLauncher(),
+                                                      base_ref->ref);
   Expect(outgoing.size() == 2, "feature branch should report two outgoing files");
 
   bool saw_modified = false;
@@ -254,34 +262,40 @@ void TestGitOutgoingBaseChoiceResolution() {
   CommitAll(repo_path, "feature beta", "feature beta");
 
   const auto auto_base = ResolveGitOutgoingBase(
-      repo_path, OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::Auto, .custom_ref = {}}, true);
+      repo_path, platform::LocalProcessLauncher(),
+          OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::Auto, .custom_ref = {}}, true);
   Expect(auto_base.repo_available && auto_base.base_ref == "refs/heads/main" &&
              auto_base.base_label == "main",
          "auto outgoing base should resolve the full base ref with the short label");
-  const auto auto_outgoing = CollectGitBranchOutgoingFiles(repo_path, auto_base.base_ref);
+  const auto auto_outgoing = CollectGitBranchOutgoingFiles(repo_path,
+                                                           platform::LocalProcessLauncher(),
+                                                               auto_base.base_ref);
   Expect(auto_outgoing.size() == 2,
          "auto outgoing base should include both commits ahead of the base branch");
 
   const auto previous_commit = ResolveGitOutgoingBase(
-      repo_path,
+      repo_path, platform::LocalProcessLauncher(),
       OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::PreviousCommit, .custom_ref = {}}, true);
   Expect(previous_commit.repo_available && previous_commit.base_ref == "HEAD~1" &&
              previous_commit.base_label == "HEAD~1",
          "previous-commit outgoing base should map to HEAD~1");
   const auto previous_outgoing =
-      CollectGitBranchOutgoingFiles(repo_path, previous_commit.base_ref);
+      CollectGitBranchOutgoingFiles(repo_path, platform::LocalProcessLauncher(),
+                                    previous_commit.base_ref);
   Expect(previous_outgoing.size() == 1 &&
              previous_outgoing.front().relative_path == std::filesystem::path("src/beta.cpp"),
          "previous-commit outgoing base should limit results to the latest commit delta");
 
   const auto specific_ref = ResolveGitOutgoingBase(
-      repo_path,
+      repo_path, platform::LocalProcessLauncher(),
       OutgoingBaseChoice{.kind = OutgoingBaseChoice::Kind::SpecificRef, .custom_ref = "HEAD~2"},
       true);
   Expect(specific_ref.repo_available && specific_ref.base_ref == "HEAD~2" &&
              specific_ref.base_label == "HEAD~2",
          "specific-ref outgoing base should preserve the exact ref string");
-  const auto specific_outgoing = CollectGitBranchOutgoingFiles(repo_path, specific_ref.base_ref);
+  const auto specific_outgoing = CollectGitBranchOutgoingFiles(repo_path,
+                                                               platform::LocalProcessLauncher(),
+                                                                   specific_ref.base_ref);
   Expect(specific_outgoing.size() == 2,
          "specific-ref outgoing base should pass the custom ref through unchanged");
 }
@@ -297,7 +311,7 @@ void TestGitBranchAndRecentCommitCollection() {
   RequireGitCommandSuccess(repo_path, {"checkout", "-b", "feature/topic"},
                            "git checkout feature branch");
 
-  const auto branches = CollectGitBranches(repo_path);
+  const auto branches = CollectGitBranches(repo_path, platform::LocalProcessLauncher());
   bool saw_main = false;
   bool saw_feature = false;
   for (const auto& branch : branches) {
@@ -318,14 +332,14 @@ void TestGitBranchAndRecentCommitCollection() {
   Expect(saw_main && saw_feature,
          "branch collection should list both local branches by short label");
 
-  const auto recent = CollectGitRecentCommits(repo_path, 10);
+  const auto recent = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 10);
   Expect(recent.size() == 2, "recent commit collection should return both commits on HEAD");
   Expect(recent[0].subject == "second commit",
          "recent commit collection should list newest commit first");
   Expect(!recent[0].short_hash.empty() && !recent[0].relative_date.empty(),
          "recent commit collection should populate short hash and relative date");
 
-  const auto capped = CollectGitRecentCommits(repo_path, 1);
+  const auto capped = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 1);
   Expect(capped.size() == 1, "recent commit collection should honor the limit");
 
   // A caller-supplied limit far above the helper-level cap (kMaxRecentCommits =
@@ -333,7 +347,8 @@ void TestGitBranchAndRecentCommitCollection() {
   // ParseLog. This repo only has two commits, so an over-cap request must still
   // succeed and return at most the cap (here, the two available commits).
   static constexpr std::size_t kRecentCommitHelperCap = 1000;
-  const auto over_cap = CollectGitRecentCommits(repo_path, 1'000'000);
+  const auto over_cap = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(),
+                                                1'000'000);
   Expect(over_cap.size() <= kRecentCommitHelperCap,
          "over-cap recent-commit request must be clamped to the helper cap");
   Expect(over_cap.size() == 2,
@@ -349,7 +364,7 @@ void TestRecentCommitsOnUnbornBranchIsEmpty() {
   const auto repo_path = temp_dir.path() / "repo";
   InitializeGitRepo(repo_path);  // No commit yet: HEAD is unborn.
 
-  const auto recent = CollectGitRecentCommits(repo_path, 10);
+  const auto recent = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 10);
   Expect(recent.empty(), "recent-commit collection on an unborn branch must be empty");
 }
 
@@ -374,12 +389,13 @@ void TestGitResolvePrBaseReferenceFromGhMergeBase() {
                            {"config", "branch.feature/pr-base.gh-merge-base", "release/2.0"},
                            "git config gh merge base");
 
-  const auto base_ref = ResolveGitBaseReference(repo_path);
+  const auto base_ref = ResolveGitBaseReference(repo_path, platform::LocalProcessLauncher());
   Expect(base_ref.has_value(), "git base reference should resolve from gh-merge-base");
   Expect(base_ref->ref == "refs/heads/release/2.0",
          "gh-merge-base should override the default branch when resolving the PR base");
 
-  const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, base_ref->ref);
+  const auto outgoing = CollectGitBranchOutgoingFiles(repo_path, platform::LocalProcessLauncher(),
+                                                      base_ref->ref);
   Expect(outgoing.size() == 1,
          "outgoing files should only include commits ahead of the configured PR base");
   Expect(outgoing[0].relative_path == std::filesystem::path("src/pr_only.cpp"),
@@ -406,14 +422,16 @@ void TestGitBulkStageAndDiscard() {
   WriteFile(staged_added_file, "int staged = 1;\n");
   WriteFile(untracked_file, "temporary notes\n");
 
-  Expect(GitStageAll(repo_path, microide::platform::LocalProcessLauncher()), "git stage all should succeed");
+  Expect(GitStageAll(repo_path, microide::platform::LocalProcessLauncher()),
+         "git stage all should succeed");
   auto entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.size() == 4, "bulk stage fixture should still report four changes");
   for (const auto& entry : entries) {
     Expect(entry.staged, "git stage all should stage every working-tree entry");
   }
 
-  Expect(GitDiscardAll(repo_path, microide::platform::LocalProcessLauncher()), "git discard all should succeed");
+  Expect(GitDiscardAll(repo_path, microide::platform::LocalProcessLauncher()),
+         "git discard all should succeed");
   entries = RequireWorkingTreeEntries(repo_path);
   Expect(entries.empty(), "git discard all should leave a clean working tree");
   Expect(ReadFile(modified_file) == ReadFile(base_dir / "README.md"),
@@ -1047,14 +1065,15 @@ void TestGitExplicitRevisionArgsUseEndOfOptions() {
   WriteFile(repo_path / "added.txt", "two\n");
   CommitAll(repo_path, "add file", "second");
 
-  const auto recent = CollectGitRecentCommits(repo_path, 10);
+  const auto recent = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 10);
   Expect(recent.size() == 2, "fixture should have two commits");
   const std::string& head_hash = recent[0].hash;
   Expect(!head_hash.empty(), "HEAD commit hash should be resolvable");
 
   // diff-tree over an explicit commit hash now passes the revision after
   // `--end-of-options`; the changed-file list must still parse correctly.
-  const auto changed = CollectGitCommitChangedFiles(repo_path, head_hash);
+  const auto changed = CollectGitCommitChangedFiles(repo_path, platform::LocalProcessLauncher(),
+                                                    head_hash);
   Expect(std::find(changed.begin(), changed.end(), std::filesystem::path("added.txt")) !=
              changed.end(),
          "commit changed-files should list the added path with an explicit revision");
@@ -1085,7 +1104,8 @@ void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
   WriteFile(repo_path / "root_b.txt", "two\n");
   CommitAll(repo_path, "root", "root commit");
 
-  const auto root_changed = CollectGitCommitChangedFiles(repo_path, "HEAD");
+  const auto root_changed = CollectGitCommitChangedFiles(repo_path,
+                                                         platform::LocalProcessLauncher(), "HEAD");
   Expect(std::find(root_changed.begin(), root_changed.end(),
                    std::filesystem::path("root_a.txt")) != root_changed.end() &&
              std::find(root_changed.begin(), root_changed.end(),
@@ -1106,13 +1126,16 @@ void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
   RequireGitCommandSuccess(repo_path, {"merge", "--no-ff", "-m", "merge feature", "feature"},
                            "merge the feature branch");
 
-  const auto merge_changed = CollectGitCommitChangedFiles(repo_path, "HEAD");
+  const auto merge_changed = CollectGitCommitChangedFiles(repo_path,
+                                                          platform::LocalProcessLauncher(), "HEAD");
   Expect(std::find(merge_changed.begin(), merge_changed.end(),
                    std::filesystem::path("feature.txt")) != merge_changed.end(),
          "a merge commit must list the files it brought in from the merged side");
 
   // An ordinary single-parent commit is unaffected by the added flags.
-  const auto feature_changed = CollectGitCommitChangedFiles(repo_path, "feature");
+  const auto feature_changed = CollectGitCommitChangedFiles(repo_path,
+                                                            platform::LocalProcessLauncher(),
+                                                                "feature");
   Expect(feature_changed.size() == 1 && feature_changed.front() ==
                                             std::filesystem::path("feature.txt"),
          "an ordinary commit still lists exactly the paths it touched");
@@ -1310,11 +1333,13 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
     absolute.push_back(repo_path / relative);
   }
   GitRevisionBlobCache cache;
-  cache.Prefetch(repo_path, revisions, absolute);
+  cache.Prefetch(repo_path, platform::LocalProcessLauncher(), revisions, absolute);
   for (const std::string& revision : revisions) {
     for (const std::filesystem::path& path : absolute) {
-      const auto prefetched = ReadGitFileAtCommit(repo_path, path, revision, &cache);
-      const auto direct = ReadGitFileAtCommit(repo_path, path, revision, nullptr);
+      const auto prefetched = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(), path,
+                                                  revision, &cache);
+      const auto direct = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(), path,
+                                              revision, nullptr);
       Expect(prefetched.has_value() == direct.has_value(),
              "the prefetched read must agree with the direct read on reachability");
       Expect(!prefetched.has_value() ||
@@ -1328,9 +1353,11 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
   // A cache that holds nothing for the pair is exactly as good as no cache: this
   // is what keeps the prefetch advisory rather than load-bearing.
   GitRevisionBlobCache unrelated;
-  unrelated.Prefetch(repo_path, {"HEAD"}, {repo_path / "b.txt"});
-  const auto miss = ReadGitFileAtCommit(repo_path, repo_path / "a.txt", "HEAD~1", &unrelated);
-  const auto miss_direct = ReadGitFileAtCommit(repo_path, repo_path / "a.txt", "HEAD~1", nullptr);
+  unrelated.Prefetch(repo_path, platform::LocalProcessLauncher(), {"HEAD"}, {repo_path / "b.txt"});
+  const auto miss = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(),
+                                        repo_path / "a.txt", "HEAD~1", &unrelated);
+  const auto miss_direct = ReadGitFileAtCommit(repo_path, platform::LocalProcessLauncher(),
+                                               repo_path / "a.txt", "HEAD~1", nullptr);
   Expect(miss.has_value() && miss_direct.has_value() && miss->content == miss_direct->content,
          "a cache miss falls back to the single read");
 

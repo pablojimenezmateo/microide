@@ -114,8 +114,9 @@ std::optional<GitBranchReference> ResolveNamedBranchReference(const GitRepositor
 }  // namespace
 
 GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
+                                           const platform::ProcessLauncher& launcher,
                                            const std::filesystem::path& absolute_path) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+  const GitRepository repo(root, launcher);
   if (absolute_path.empty() || !repo.IsValid()) {
     return {};
   }
@@ -128,8 +129,9 @@ GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
 }
 
 std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path& root,
+                                                    const platform::ProcessLauncher& launcher,
                                                     std::size_t limit) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+  const GitRepository repo(root, launcher);
   if (limit == 0 || !repo.IsValid()) {
     return {};
   }
@@ -147,8 +149,9 @@ std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path&
   return GitPorcelainParser::ParseLog(result.output);
 }
 
-std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root,
+                                                   const platform::ProcessLauncher& launcher) {
+  const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return {};
   }
@@ -213,6 +216,7 @@ std::string BlobCacheKey(const std::string& revision, const std::filesystem::pat
 }  // namespace
 
 void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
+                                    const platform::ProcessLauncher& launcher,
                                     const std::vector<std::string>& revisions,
                                     const std::vector<std::filesystem::path>& absolute_paths) {
   util::PerformanceTrace::Scope perf_scope("git::PrefetchRevisionBlobs");
@@ -220,7 +224,7 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
   if (root.empty() || revisions.empty() || absolute_paths.empty()) {
     return;
   }
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+  const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return;
   }
@@ -273,6 +277,7 @@ const GitFileContentAtCommit* GitRevisionBlobCache::Find(
 }
 
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
+                                                          const platform::ProcessLauncher& launcher,
                                                           const std::filesystem::path& absolute_path,
                                                           const std::string& hash,
                                                           const GitRevisionBlobCache* prefetched) {
@@ -291,7 +296,7 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     }
   }
 
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+  const GitRepository repo(root, launcher);
   const auto relative = repo.ToRelative(absolute_path);
   if (!relative.has_value()) {
     return std::nullopt;
@@ -327,13 +332,14 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
       .exists = true, .content = blob->content, .truncated = blob->truncated};
 }
 
-std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root) {
+std::optional<GitBranchReference> ResolveGitBaseReference(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher) {
   // Chains up to six git subprocesses (symbolic-ref, config, config, symbolic-ref,
   // show-ref, rev-parse) to answer one question. Scoped because that is ~8 ms of
   // spawn cost whose thread and call count are the whole story -- the ranking
   // showed the cluster as five separate RunSubprocess rows with no owner.
   util::PerformanceTrace::Scope perf_scope("git::ResolveBaseReference");
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+  const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return std::nullopt;
   }
@@ -439,9 +445,10 @@ std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view o
   return entries;
 }
 
-std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
-                                                              std::string_view base_ref) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher,
+    std::string_view base_ref) {
+  const GitRepository repo(root, launcher);
   if (base_ref.empty() || !repo.IsValid()) {
     return {};
   }
@@ -461,9 +468,10 @@ std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesys
   return ParseGitBranchDiffNameStatusZ(result.output);
 }
 
-std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesystem::path& root,
-                                                              std::string_view ref) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher,
+    std::string_view ref) {
+  const GitRepository repo(root, launcher);
   if (ref.empty() || !repo.IsValid()) {
     return {};
   }
@@ -480,9 +488,10 @@ std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesy
   return ParseGitBranchDiffNameStatusZ(result.output);
 }
 
-std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
-                                                                std::string_view commit_hash) {
-  const GitRepository repo(root, platform::LocalProcessLauncher());
+std::vector<std::filesystem::path> CollectGitCommitChangedFiles(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher,
+    std::string_view commit_hash) {
+  const GitRepository repo(root, launcher);
   if (commit_hash.empty() || !repo.IsValid()) {
     return {};
   }

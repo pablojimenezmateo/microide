@@ -99,7 +99,7 @@ void TestGitBranchListingAndSwitch() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "branch ops fixture");
 
-  const auto initial = CollectGitBranches(root);
+  const auto initial = CollectGitBranches(root, platform::LocalProcessLauncher());
   Expect(!initial.empty(), "listing branches in a real repo should return the branch");
   const std::string base_branch = CurrentBranchLabel(initial);
   Expect(!base_branch.empty(), "a repo on a branch should mark one entry as HEAD");
@@ -108,7 +108,7 @@ void TestGitBranchListingAndSwitch() {
   const auto created = CreateGitBranch(root, "feature/topic");
   Expect(created.success(), "creating a branch should succeed");
 
-  const auto after_create = CollectGitBranches(root);
+  const auto after_create = CollectGitBranches(root, platform::LocalProcessLauncher());
   Expect(CurrentBranchLabel(after_create) == "feature/topic",
          "creating a branch with switch -c should check it out");
   Expect(ListContains(after_create, "feature/topic"),
@@ -125,7 +125,8 @@ void TestGitBranchListingAndSwitch() {
 
   const auto switched = SwitchGitBranch(root, base_branch);
   Expect(switched.success(), "switching back to the base branch should succeed");
-  Expect(CurrentBranchLabel(CollectGitBranches(root)) == base_branch,
+  Expect(CurrentBranchLabel(CollectGitBranches(root,
+                                               platform::LocalProcessLauncher())) == base_branch,
          "the switch should take effect");
 
   Expect(SwitchGitBranch(root, "does-not-exist").outcome == GitOperationOutcome::BadRef,
@@ -142,7 +143,8 @@ void TestGitSwitchRefusesToOverwriteLocalChanges() {
   InitializeGitRepo(root);
   CommitAll(root, "initial", "switch guard fixture");
 
-  const std::string base_branch = CurrentBranchLabel(CollectGitBranches(root));
+  const std::string base_branch = CurrentBranchLabel(CollectGitBranches(root,
+                                                                        platform::LocalProcessLauncher()));
   Expect(CreateGitBranch(root, "other").success(), "creating the second branch should succeed");
   WriteFile(root / "a.txt", "two\n");
   CommitAll(root, "diverge on other", "switch guard fixture");
@@ -209,7 +211,7 @@ void TestGitOperationsOutsideRepositoryAreRejected() {
   const std::filesystem::path root = temp_dir.path() / "plain";
   WriteFile(root / "a.txt", "one\n");
 
-  Expect(CollectGitBranches(root).empty(),
+  Expect(CollectGitBranches(root, platform::LocalProcessLauncher()).empty(),
          "a non-repository should not produce a branch listing");
   Expect(SwitchGitBranch(root, "main").outcome == GitOperationOutcome::NotARepo,
          "switching outside a repository should report not-a-repo");

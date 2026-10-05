@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 
+#include "platform/ProcessLauncher.h"
 #include "workspace/state/WorkspaceSidebarState.h"
 
 namespace microide::workspace {
@@ -14,6 +15,7 @@ struct ResolvedGitOutgoingBase {
 };
 
 ResolvedGitOutgoingBase ResolveGitOutgoingBase(const std::filesystem::path& project_root,
+                                               const platform::ProcessLauncher& launcher,
                                                const OutgoingBaseChoice& choice,
                                                bool repo_available);
 

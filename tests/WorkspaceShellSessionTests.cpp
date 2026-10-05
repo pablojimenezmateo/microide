@@ -74,7 +74,9 @@ void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   WriteFile(source, "head line\n");
   CommitAll(root, "head fixture", "head fixture");
 
-  const auto history = microide::project::CollectGitFileHistory(root, source).commits;
+  const auto history = microide::project::CollectGitFileHistory(root,
+                                                                platform::LocalProcessLauncher(),
+                                                                    source).commits;
   Expect(history.size() == 2, "session restore fixture should have two commits");
 
   WorkspaceShell shell;
@@ -147,7 +149,9 @@ void TestWorkspaceShellRestoreWorkspaceSessionAcrossProjects() {
   WriteFile(repo_file, "head line\n");
   CommitAll(repo_root, "head fixture", "head fixture");
 
-  const auto history = microide::project::CollectGitFileHistory(repo_root, repo_file).commits;
+  const auto history = microide::project::CollectGitFileHistory(repo_root,
+                                                                platform::LocalProcessLauncher(),
+                                                                    repo_file).commits;
   Expect(history.size() == 2, "workspace restore fixture should have two commits");
 
   WorkspaceShell shell;

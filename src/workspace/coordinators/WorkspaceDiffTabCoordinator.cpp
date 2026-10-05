@@ -227,7 +227,7 @@ void DiffTabCoordinator::RestoreMergeViewState(MergeTabState& rebuilt_merge,
 
 void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
   const std::vector<std::filesystem::path> review_files =
-      project::CollectGitCommitChangedFiles(state_.root, commit.hash);
+      project::CollectGitCommitChangedFiles(state_.root, state_.launcher(), commit.hash);
   if (const auto existing_index =
           FindOpenCompareTabIndex(state_.overlay.workflow.compare_picker.path, commit.hash, "WORKTREE");
       existing_index.has_value()) {
@@ -319,7 +319,8 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
   }
 
   const auto left_content =
-      project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref, prefetched);
+      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, left_ref,
+                                   prefetched);
   if (!left_content.has_value() || left_content->truncated) {
     // Absent revision, or a blob clipped at the subprocess capture ceiling: refuse
     // rather than diff partial bytes as if they were the file's full content.
@@ -385,9 +386,11 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
   }
 
   const auto left_content =
-      project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref, prefetched);
+      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, left_ref,
+                                   prefetched);
   const auto right_content =
-      project::ReadGitFileAtCommit(state_.root, normalized_path, right_ref, prefetched);
+      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, right_ref,
+                                   prefetched);
   if (!left_content.has_value() || !right_content.has_value() || left_content->truncated ||
       right_content->truncated) {
     // A truncated blob was clipped at the subprocess capture ceiling; refuse rather
@@ -413,7 +416,7 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
         // running this diff once per opened tab is what froze a large review.
         std::vector<std::filesystem::path> paths;
         for (const project::GitBranchFileEntry& entry :
-             project::CollectGitBranchOutgoingFiles(state_.root, left_ref)) {
+             project::CollectGitBranchOutgoingFiles(state_.root, state_.launcher(), left_ref)) {
           paths.push_back(entry.relative_path);
         }
         return paths;
@@ -444,11 +447,11 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
   }
 
   const auto base_content =
-      project::ReadGitFileAtCommit(state_.root, normalized_path, ":1", prefetched);
+      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, ":1", prefetched);
   const auto current_content =
-      project::ReadGitFileAtCommit(state_.root, normalized_path, ":2", prefetched);
+      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, ":2", prefetched);
   const auto incoming_content =
-      project::ReadGitFileAtCommit(state_.root, normalized_path, ":3", prefetched);
+      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, ":3", prefetched);
   if (!current_content.has_value() || !incoming_content.has_value() ||
       current_content->truncated || incoming_content->truncated ||
       (base_content.has_value() && base_content->truncated)) {

@@ -454,7 +454,7 @@ void WorkspaceShell::RequestGitSidebarRefresh(GitSidebarRefreshScope scope) {
 
   context_.current_project_state.sidebar.git.refreshing = true;
   git_repository_service_.RequestRefresh(
-      context_.current_project_state.root, scope,
+      context_.current_project_state.root, context_.current_project_state.launcher(), scope,
       context_.current_project_state.sidebar.git.outgoing_base_choice,
       context_.current_project_state.sidebar.git.tree_git_badges_materialized);
   RequestSidebarRedraw();

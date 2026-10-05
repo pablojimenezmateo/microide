@@ -142,9 +142,10 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
 
 ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
   const std::filesystem::path root = state_.root;
+  const platform::ProcessLauncher& launcher = state_.launcher();
 
   const std::optional<std::vector<project::GitWorkingTreeEntry>> entries =
-      project::CollectGitWorkingTreeEntries(root, state_.launcher());
+      project::CollectGitWorkingTreeEntries(root, launcher);
   if (!entries.has_value()) {
     // git could not be asked — it is not installed, it failed, or its output was
     // truncated. Saying "no conflicts to review" here would be a claim about the
@@ -181,20 +182,22 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
         return compare_merge_.OpenGitConflictMerge(path, &prefetched);
       },
       "no merge conflicts",
-      [root, &prefetched](const std::vector<std::filesystem::path>& paths) {
+      [root, &launcher, &prefetched](const std::vector<std::filesystem::path>& paths) {
         // Three index stages per conflicted file — the worst per-file spawn count
         // in the app before this.
-        prefetched.Prefetch(root, {":1", ":2", ":3"}, paths);
+        prefetched.Prefetch(root, launcher, {":1", ":2", ":3"}, paths);
       });
 }
 
 ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& ref_arg) {
   const std::filesystem::path root = state_.root;
+  const platform::ProcessLauncher& launcher = state_.launcher();
 
   std::string ref = ref_arg;
   std::string label = ref_arg;
   if (ref.empty() || ref == "origin") {
-    const std::optional<project::GitBranchReference> base = project::ResolveGitBaseReference(root);
+    const std::optional<project::GitBranchReference> base =
+        project::ResolveGitBaseReference(root, launcher);
     if (!base.has_value()) {
       return {false, "review-branch: no base branch found (pass an explicit ref)"};
     }
@@ -204,7 +207,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
 
   std::vector<std::filesystem::path> targets;
   for (const project::GitBranchFileEntry& entry :
-       project::CollectGitWorkingTreeDiffFiles(root, ref)) {
+       project::CollectGitWorkingTreeDiffFiles(root, launcher, ref)) {
     targets.push_back((root / entry.relative_path).lexically_normal());
   }
 
@@ -223,14 +226,15 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
         return compare_merge_.OpenWorkingTreeComparison(path, ref, label, &prefetched);
       },
       "no differences",
-      [root, ref, &prefetched](const std::vector<std::filesystem::path>& paths) {
+      [root, ref, &launcher, &prefetched](const std::vector<std::filesystem::path>& paths) {
         // Only the left side is a revision; the right is the working tree on disk.
-        prefetched.Prefetch(root, {ref}, paths);
+        prefetched.Prefetch(root, launcher, {ref}, paths);
       });
 }
 
 ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& ref_arg) {
   const std::filesystem::path root = state_.root;
+  const platform::ProcessLauncher& launcher = state_.launcher();
 
   const std::string ref = ref_arg.empty() ? std::string("HEAD") : ref_arg;
   const std::string left_ref = ref + "~1";
@@ -242,7 +246,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
   // same question, and would answer it with `<commit>~1...HEAD` (everything since
   // the commit) instead of the commit itself.
   const std::vector<std::filesystem::path> review_files =
-      project::CollectGitCommitChangedFiles(root, ref);
+      project::CollectGitCommitChangedFiles(root, launcher, ref);
   std::vector<std::filesystem::path> targets;
   targets.reserve(review_files.size());
   for (const std::filesystem::path& relative : review_files) {
@@ -266,9 +270,9 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
                                                        right_ref, &prefetched, &review_files);
       },
       "no changes in commit",
-      [root, left_ref, right_ref,
+      [root, left_ref, right_ref, &launcher,
        &prefetched](const std::vector<std::filesystem::path>& paths) {
-        prefetched.Prefetch(root, {left_ref, right_ref}, paths);
+        prefetched.Prefetch(root, launcher, {left_ref, right_ref}, paths);
       });
 }
 

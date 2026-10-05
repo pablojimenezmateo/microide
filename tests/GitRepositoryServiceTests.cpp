@@ -60,7 +60,8 @@ void TestRefreshMarksFileDirectoryConflict() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
   const auto state = service.CurrentState();
 
@@ -110,7 +111,8 @@ void TestRefreshDoesNotMistakeTildeDirectoryForFileDirectoryConflict() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
   const auto state = service.CurrentState();
 
@@ -171,7 +173,8 @@ void TestRefreshMarksSubmoduleConflict() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  service.RunRefreshSynchronouslyForTesting(outer, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(outer, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
   const auto state = service.CurrentState();
 
@@ -202,7 +205,8 @@ void TestCurrentStateReturnsSnapshotCopy() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
 
   const auto first_snapshot = service.CurrentState();
@@ -210,7 +214,8 @@ void TestCurrentStateReturnsSnapshotCopy() {
   const std::uint64_t first_generation = first_snapshot.generation;
 
   WriteFile(file_path, "before\nafter\n");
-  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
 
   const auto second_snapshot = service.CurrentState();
@@ -231,13 +236,15 @@ void TestCurrentStateReadsRemainConsistentDuringRefresh() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
 
   std::atomic<bool> stop{false};
   std::thread refresher([&]() {
     while (!stop.load()) {
-      service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::StatusOnly,
+      service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::StatusOnly,
                                                 OutgoingBaseChoice{}, false);
     }
   });
@@ -258,7 +265,8 @@ void TestRefreshSurfacesMergeConflictsInSidebar() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService service(executor);
-  service.RunRefreshSynchronouslyForTesting(fixture.root, GitSidebarRefreshScope::Full,
+  service.RunRefreshSynchronouslyForTesting(fixture.root, platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::Full,
                                             OutgoingBaseChoice{}, false);
 
   const auto repository_state = service.CurrentState();
@@ -321,7 +329,8 @@ void TestAsyncRefreshCountsGlobalCounterOnce() {
   const int before = microide::util::GetBackgroundTaskCount();
   Expect(before == base + 1, "the occupying task should raise the global counter by one");
 
-  service.RequestRefresh(repo_path, GitSidebarRefreshScope::StatusOnly, OutgoingBaseChoice{}, false);
+  service.RequestRefresh(repo_path, platform::LocalProcessLauncher(),
+                         GitSidebarRefreshScope::StatusOnly, OutgoingBaseChoice{}, false);
   // Both the executor enqueue and — under the old bug — the service's manual
   // increment happen synchronously before this line, so the old code reads
   // before+2 here and fails.
@@ -348,7 +357,8 @@ void TestSyncRefreshLeavesGlobalCounterUntouched() {
 
   const int base = microide::util::GetBackgroundTaskCount();
   for (int i = 0; i < 5; ++i) {
-    service.RunRefreshSynchronouslyForTesting(repo_path, GitSidebarRefreshScope::Full,
+    service.RunRefreshSynchronouslyForTesting(repo_path, platform::LocalProcessLauncher(),
+                                              GitSidebarRefreshScope::Full,
                                               OutgoingBaseChoice{}, false);
     Expect(microide::util::GetBackgroundTaskCount() == base,
            "a synchronous refresh must leave the global counter untouched");
@@ -383,7 +393,8 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   for (int t = 0; t < kThreads; ++t) {
     threads.emplace_back([&]() {
       for (int i = 0; i < kPerThread; ++i) {
-        service.RequestRefresh(repo_path, GitSidebarRefreshScope::StatusOnly,
+        service.RequestRefresh(repo_path, platform::LocalProcessLauncher(),
+                               GitSidebarRefreshScope::StatusOnly,
                                OutgoingBaseChoice{}, false);
       }
     });
@@ -410,7 +421,8 @@ void TestConcurrentRefreshBurstStaysLiveAndBalanced() {
   // request must schedule, run, and publish a new snapshot. A frozen state
   // machine would defer this forever and never publish.
   const std::uint64_t generation_before = service.CurrentState().generation;
-  service.RequestRefresh(repo_path, GitSidebarRefreshScope::Full, OutgoingBaseChoice{}, false);
+  service.RequestRefresh(repo_path, platform::LocalProcessLauncher(), GitSidebarRefreshScope::Full,
+                         OutgoingBaseChoice{}, false);
   bool published = false;
   for (int i = 0; i < 1000 && !published; ++i) {
     GitSidebarState::RefreshSnapshot snapshot;
@@ -469,7 +481,8 @@ void TestBlockingRepositoryStateProviderIsAsync() {
   OutgoingBaseChoice choice;
   choice.kind = OutgoingBaseChoice::Kind::SpecificRef;
   choice.custom_ref = "HEAD~1";
-  service.RequestRefresh("/fake/repo", GitSidebarRefreshScope::StatusOnly, choice, false);
+  service.RequestRefresh("/fake/repo", platform::LocalProcessLauncher(),
+                         GitSidebarRefreshScope::StatusOnly, choice, false);
 
   // The caller returned immediately; wait until the worker is actually parked
   // inside the injected provider so the assertions below prove async behavior
@@ -534,19 +547,22 @@ void TestOutgoingBaseResolutionIsMemoizedByRepositoryIdentity() {
   choice.kind = OutgoingBaseChoice::Kind::SpecificRef;
   choice.custom_ref = "origin/main";
 
-  service.RunRefreshSynchronouslyForTesting("/fake/repo", GitSidebarRefreshScope::StatusOnly,
+  service.RunRefreshSynchronouslyForTesting("/fake/repo", platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::StatusOnly,
                                             choice, false);
   Expect(service.OutgoingBaseResolveCountForTesting() == 1, "first refresh resolves the base once");
 
   // Same branch + HEAD + choice: served from cache, no re-resolution.
-  service.RunRefreshSynchronouslyForTesting("/fake/repo", GitSidebarRefreshScope::StatusOnly,
+  service.RunRefreshSynchronouslyForTesting("/fake/repo", platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::StatusOnly,
                                             choice, false);
   Expect(service.OutgoingBaseResolveCountForTesting() == 1,
          "an unchanged repository identity must hit the outgoing-base cache");
 
   // HEAD moved (commit/checkout/reset): the memo must invalidate and re-resolve.
   head_oid = "bbbbbbb";
-  service.RunRefreshSynchronouslyForTesting("/fake/repo", GitSidebarRefreshScope::StatusOnly,
+  service.RunRefreshSynchronouslyForTesting("/fake/repo", platform::LocalProcessLauncher(),
+                                            GitSidebarRefreshScope::StatusOnly,
                                             choice, false);
   Expect(service.OutgoingBaseResolveCountForTesting() == 2,
          "a HEAD change must invalidate the cache and re-resolve");

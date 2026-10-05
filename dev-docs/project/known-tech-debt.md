@@ -903,7 +903,7 @@ there — which is a smaller gap than it sounds (the same objects are sanitized 
 `microide_tests`) but is worth closing when the second test binary lands, since that
 is the same CMake work.
 
-### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — first slice done 2026-09-29]
+### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — slices 1 and 2 done; 2026-09-29, 2026-10-06]
 
 **Slice 1 (2026-09-29): a project owns a launcher, and git status routes through
 it.** `ProjectWorkspaceState::launcher()` is that launcher — a pointer so the
@@ -920,20 +920,39 @@ through the launcher it was HANDED, so a reintroduced internal
 `LocalProcessLauncher()` leaves the scripted launcher with no recorded runs and
 fails.
 
+**Slice 2 (2026-10-06): the read side.** All nine `LocalProcessLauncher()`
+constructions inside `GitCompareService` are gone — history, recent commits,
+branches, base-reference resolution, the blob read, the bulk `GitRevisionBlobCache::
+Prefetch`, and the three changed-file enumerations all take the launcher as a
+required second parameter with no default, same rule as slice 1. The thread runs
+further than that unit, because two of its callers were themselves the place the
+locality decision belonged: `ResolveGitOutgoingBase` takes it, and
+`GitRepositoryService::RequestRefresh` takes the ACTIVE project's launcher and
+stores it in the `RefreshRequest` — so the background status refresh and its
+outgoing-base resolution run git on the project's machine rather than always on
+this one. Two compare-picker provider seams take `(root)` and `(root, limit)`, so
+their real-function fallbacks bind the project's launcher in a lambda at the call
+site instead of letting the free function pick.
+
+The pinning test is widened the same way slice 1's was:
+`ProcessLauncher/CompareServiceRunsThroughTheLauncherItIsGiven` drives each of
+the nine entry points against its OWN scripted launcher, so a reintroduced
+internal local launcher shows as an empty run list for that entry point rather
+than being masked by a neighbour's runs.
+
 **Remaining slices, measured rather than estimated** (`LocalProcessLauncher()`
-constructions / call sites that would need the launcher threaded):
+constructions):
 
-| unit | internal sites | call sites |
-| --- | --- | --- |
-| `GitCompareService` | 9 | ~70 |
-| `CommitWorkflowChecks` | 2 | — |
-| `GitBlameService`, `GitBranchOperations`, `GitCommitExecutor`, `GitCommandUtil` | 1 each | — |
-| `GitRepositoryService`, `PatchApplyService` | 1 each | — |
+| unit | internal sites |
+| --- | --- |
+| `CommitWorkflowChecks` | 2 |
+| `GitBlameService`, `GitBranchOperations`, `GitCommitExecutor`, `GitCommandUtil` | 1 each |
+| `PatchApplyService` | 1 |
 
-`GitCompareService` is the one that dominates, and its ~70 call sites are why it
-was not folded into slice 1: it is a mechanical change, but a mechanical change
-of that size landed alongside other work is one nobody can review, and it should
-start a session rather than end one.
+Plus the non-git spawners that are a separate question: the LSP client, the DAP
+client, the terminal, and the plugin process interop each name the local launcher
+and each has its own answer under the design (a remote project runs all four on
+the host).
 
 A lint belongs with the last slice, not before it: while most sites still
 construct their own local launcher, a rule saying "take the launcher as a

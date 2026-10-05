@@ -38,7 +38,10 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     const project::GitCommitEntry& commit,
     std::size_t selected_row) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
-  const auto content = project::ReadGitFileAtCommit(context_.current_project_state.root, normalized_path, commit.hash);
+  const auto content =
+      project::ReadGitFileAtCommit(context_.current_project_state.root,
+                                   context_.current_project_state.launcher(), normalized_path,
+                                   commit.hash);
   if (!content.has_value() || content->truncated) {
     // Absent revision -> nullopt; a truncated blob was clipped at the subprocess
     // capture ceiling, so diffing the partial bytes as truth would be bogus.
@@ -79,7 +82,9 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   const std::filesystem::path right_source_path =
       (compare_tab.right_path.empty() ? normalized_path : compare_tab.right_path).lexically_normal();
   const auto left_content =
-      project::ReadGitFileAtCommit(context_.current_project_state.root, left_source_path, compare_tab.commit_hash);
+      project::ReadGitFileAtCommit(context_.current_project_state.root,
+                                   context_.current_project_state.launcher(), left_source_path,
+                                   compare_tab.commit_hash);
   if (!left_content.has_value() || left_content->truncated) {
     return std::nullopt;
   }
@@ -101,7 +106,9 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     }
   } else {
     const auto right_commit_content =
-        project::ReadGitFileAtCommit(context_.current_project_state.root, right_source_path, compare_tab.right_ref);
+        project::ReadGitFileAtCommit(context_.current_project_state.root,
+                                     context_.current_project_state.launcher(), right_source_path,
+                                     compare_tab.right_ref);
     if (!right_commit_content.has_value() || right_commit_content->truncated) {
       return std::nullopt;
     }

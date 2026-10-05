@@ -368,6 +368,12 @@ void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path
   picker.active_request_generation = generation;
 
   const std::filesystem::path root = context_.current_project_state.root;
+  // Bind the PROJECT's launcher into the fallback rather than letting the free
+  // function pick one: the provider seam's signature is (root, path), so the
+  // locality has to be captured here, where the project is in hand
+  // (TD-2026-09-22-301). The launcher outlives the task — it is a process-wide
+  // static locally, and project-owned for a remote connection.
+  const platform::ProcessLauncher* launcher = &context_.current_project_state.launcher();
   // Copy the provider (fall back to the real free function) so the worker never
   // touches shell state. The captured closure produces raw commits; the mailbox
   // marshals a completion back to the render thread (see ApplyComparePickerFileHistory).
@@ -375,7 +381,11 @@ void WorkspaceShell::RequestComparePickerFileHistory(const std::filesystem::path
                       ? compare_picker_file_history_provider_
                       : std::function<project::GitFileHistoryResult(
                             const std::filesystem::path&, const std::filesystem::path&)>(
-                            &project::CollectGitFileHistory);
+                            [launcher](const std::filesystem::path& repo_root,
+                                       const std::filesystem::path& file_path) {
+                              return project::CollectGitFileHistory(repo_root, *launcher,
+                                                                    file_path);
+                            });
   interactive_background_executor_.PostLatest(
       "compare-picker",
       [this, root, path, generation, provider = std::move(provider)]() {
@@ -396,17 +406,24 @@ void WorkspaceShell::RequestComparePickerRefs(const bool include_commits) {
   picker.active_request_generation = generation;
 
   const std::filesystem::path root = context_.current_project_state.root;
+  // See RequestComparePickerFileHistory: the provider seam takes (root[, limit]),
+  // so the project's launcher is bound here (TD-2026-09-22-301).
+  const platform::ProcessLauncher* launcher = &context_.current_project_state.launcher();
   auto branches_provider =
       compare_picker_branches_provider_
           ? compare_picker_branches_provider_
           : std::function<std::vector<project::GitBranchReference>(const std::filesystem::path&)>(
-                &project::CollectGitBranches);
+                [launcher](const std::filesystem::path& repo_root) {
+                  return project::CollectGitBranches(repo_root, *launcher);
+                });
   auto commits_provider =
       compare_picker_recent_commits_provider_
           ? compare_picker_recent_commits_provider_
           : std::function<std::vector<project::GitCommitEntry>(const std::filesystem::path&,
                                                                std::size_t)>(
-                &project::CollectGitRecentCommits);
+                [launcher](const std::filesystem::path& repo_root, std::size_t limit) {
+                  return project::CollectGitRecentCommits(repo_root, *launcher, limit);
+                });
   interactive_background_executor_.PostLatest(
       "compare-picker",
       [this, root, generation, include_commits, branches_provider = std::move(branches_provider),

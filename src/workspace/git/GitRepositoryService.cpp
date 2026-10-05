@@ -137,8 +137,7 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
     return state;
   }
 
-  // Explicitly local (TD-2026-09-22-301: the project does not own a launcher yet).
-  const project::GitRepository repo(request.project_root, platform::LocalProcessLauncher());
+  const project::GitRepository repo(request.project_root, *request.launcher);
   return project::BuildGitRepositoryStateFromStatus(repo, request.project_root,
                                                     request.generation, SDL_GetTicks());
 }
@@ -202,7 +201,8 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
     }
 
     const auto outgoing_entries =
-        project::CollectGitBranchOutgoingFiles(request.project_root, snapshot.base_ref);
+        project::CollectGitBranchOutgoingFiles(request.project_root, *request.launcher,
+                                               snapshot.base_ref);
     for (const auto& entry : outgoing_entries) {
       std::string path_key = entry.relative_path.generic_string();
       if (conflicted_paths.contains(path_key)) {
@@ -351,8 +351,9 @@ ResolvedGitOutgoingBase GitRepositoryService::ResolveOutgoingBaseCached(
     return outgoing_base_cache_value_;
   }
   ++outgoing_base_resolve_count_;
-  ResolvedGitOutgoingBase resolved = ResolveGitOutgoingBase(
-      request.project_root, request.outgoing_base_choice, repository_state.repo_available);
+  ResolvedGitOutgoingBase resolved =
+      ResolveGitOutgoingBase(request.project_root, *request.launcher,
+                             request.outgoing_base_choice, repository_state.repo_available);
   outgoing_base_cache_key_ = std::move(key);
   outgoing_base_cache_value_ = resolved;
   outgoing_base_cache_valid_ = true;
@@ -360,6 +361,7 @@ ResolvedGitOutgoingBase GitRepositoryService::ResolveOutgoingBaseCached(
 }
 
 void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_root,
+                                          const platform::ProcessLauncher& launcher,
                                           GitSidebarRefreshScope scope,
                                           OutgoingBaseChoice outgoing_base_choice,
                                           bool tree_git_badges_materialized) {
@@ -370,6 +372,7 @@ void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_r
 
   RefreshRequest request{
       .project_root = project_root,
+      .launcher = &launcher,
       .scope = scope,
       .outgoing_base_choice = outgoing_base_choice,
       .tree_git_badges_materialized = tree_git_badges_materialized,
@@ -399,6 +402,7 @@ void GitRepositoryService::RequestRefresh(const std::filesystem::path& project_r
 
 void GitRepositoryService::RunRefreshSynchronouslyForTesting(
     const std::filesystem::path& project_root,
+    const platform::ProcessLauncher& launcher,
     GitSidebarRefreshScope scope,
     OutgoingBaseChoice outgoing_base_choice,
     bool tree_git_badges_materialized) {
@@ -409,6 +413,7 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
 
   RefreshRequest request{
       .project_root = project_root,
+      .launcher = &launcher,
       .scope = scope,
       .outgoing_base_choice = outgoing_base_choice,
       .tree_git_badges_materialized = tree_git_badges_materialized,

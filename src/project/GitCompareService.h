@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "platform/ProcessLauncher.h"
 #include "project/DirectoryTree.h"
 
 namespace microide::project {
@@ -27,12 +28,20 @@ struct GitFileHistoryResult {
   bool truncated = false;
 };
 
+// Every entry point in this header takes the launcher explicitly — there is NO
+// default, for the reason G2 removed the default from `GitRepository`: a spawn
+// that can quietly inherit locality is a spawn that runs on the wrong machine the
+// day a project is remote. Callers pass `ProjectWorkspaceState::launcher()`; a
+// caller that must stay local whatever the project says
+// `platform::LocalProcessLauncher()` and says why. (TD-2026-09-22-301.)
 GitFileHistoryResult CollectGitFileHistory(const std::filesystem::path& root,
+                                           const platform::ProcessLauncher& launcher,
                                            const std::filesystem::path& absolute_path);
 
 // Repo-wide commit log on HEAD, newest first, capped at `limit`. Used by the
 // ref/commit picker so the outgoing-base flow can offer recent commits.
 std::vector<GitCommitEntry> CollectGitRecentCommits(const std::filesystem::path& root,
+                                                    const platform::ProcessLauncher& launcher,
                                                     std::size_t limit);
 
 struct GitFileContentAtCommit {
@@ -57,6 +66,7 @@ struct GitFileContentAtCommit {
 class GitRevisionBlobCache {
  public:
   void Prefetch(const std::filesystem::path& root,
+                const platform::ProcessLauncher& launcher,
                 const std::vector<std::string>& revisions,
                 const std::vector<std::filesystem::path>& absolute_paths);
 
@@ -81,6 +91,7 @@ class GitRevisionBlobCache {
 // exactly as if it were absent.
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(
     const std::filesystem::path& root,
+    const platform::ProcessLauncher& launcher,
     const std::filesystem::path& absolute_path,
     const std::string& hash,
     const GitRevisionBlobCache* prefetched = nullptr);
@@ -101,25 +112,30 @@ struct GitBranchFileEntry {
   GitFileStatus status = GitFileStatus::Clean;
 };
 
-std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root);
+std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root,
+                                                          const platform::ProcessLauncher& launcher);
 
 // Local + remote branches, most-recently-committed first, with short labels
 // ("main", "origin/main"). Symbolic refs like origin/HEAD are skipped. The single
 // branch enumerator in the tree: the compare/outgoing-base pickers, the
 // switch-branch picker, and the git status surfaces all read this one list.
-std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root);
+std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& root,
+                                                   const platform::ProcessLauncher& launcher);
 
-std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(const std::filesystem::path& root,
-                                                              std::string_view base_ref);
+std::vector<GitBranchFileEntry> CollectGitBranchOutgoingFiles(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher,
+    std::string_view base_ref);
 // Parses the NUL-delimited output of `git diff --name-status -z --find-renames`.
 // Exposed for testing: handles paths containing spaces and rename/copy records
 // (status NUL old NUL new), which the previous whitespace-split parser corrupted.
 std::vector<GitBranchFileEntry> ParseGitBranchDiffNameStatusZ(std::string_view output);
 // Files differing between `ref` and the current working tree (two-dot diff, so
 // uncommitted edits are included). Backs the `review-branch` control verb.
-std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(const std::filesystem::path& root,
-                                                              std::string_view ref);
-std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::filesystem::path& root,
-                                                                std::string_view commit_hash);
+std::vector<GitBranchFileEntry> CollectGitWorkingTreeDiffFiles(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher,
+    std::string_view ref);
+std::vector<std::filesystem::path> CollectGitCommitChangedFiles(
+    const std::filesystem::path& root, const platform::ProcessLauncher& launcher,
+    std::string_view commit_hash);
 
 }  // namespace microide::project

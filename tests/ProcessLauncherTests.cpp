@@ -3,11 +3,13 @@
 #include "ScriptedProcessLauncher.h"
 
 #include "platform/ProcessLauncher.h"
+#include "project/GitCompareService.h"
 #include "project/GitRepository.h"
 #include "project/GitStatusRefresh.h"
 #include "project/GitStatusService.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::tests {
@@ -189,6 +191,57 @@ void TestStatusServiceRunsThroughTheLauncherItIsGiven() {
   Expect(!failing.runs.empty(), "having actually been asked");
 }
 
+// Slice 2 of the same TD: every read-side git query (the compare/merge surfaces,
+// the review verbs, the branch and commit pickers) now takes the launcher too.
+// Nine `LocalProcessLauncher()` constructions lived inside GitCompareService, and
+// a reintroduced one leaves the scripted launcher with no recorded run for that
+// entry point — which is exactly what this walks.
+void TestCompareServiceRunsThroughTheLauncherItIsGiven() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");  // the marker, not a real repo
+  const std::filesystem::path file = root / "a.txt";
+
+  // Every entry point, each against its own launcher, so a function that reached
+  // for a local one internally shows up as an EMPTY run list rather than being
+  // masked by its neighbours' runs.
+  const auto ran = [&](std::string_view what, auto&& invoke) {
+    ScriptedProcessLauncher launcher;
+    invoke(launcher);
+    Expect(!launcher.runs.empty(), std::string(what) + " ran git through the launcher it was "
+                                                       "given, not a local one it reached for");
+    Expect(launcher.runs.front().front() == "git",
+           std::string(what) + " ran git, not some other program");
+  };
+
+  ran("CollectGitFileHistory", [&](const ScriptedProcessLauncher& l) {
+    (void)project::CollectGitFileHistory(root, l, file);
+  });
+  ran("CollectGitRecentCommits", [&](const ScriptedProcessLauncher& l) {
+    (void)project::CollectGitRecentCommits(root, l, 10);
+  });
+  ran("CollectGitBranches",
+      [&](const ScriptedProcessLauncher& l) { (void)project::CollectGitBranches(root, l); });
+  ran("ReadGitFileAtCommit", [&](const ScriptedProcessLauncher& l) {
+    (void)project::ReadGitFileAtCommit(root, l, file, "HEAD");
+  });
+  ran("ResolveGitBaseReference",
+      [&](const ScriptedProcessLauncher& l) { (void)project::ResolveGitBaseReference(root, l); });
+  ran("CollectGitBranchOutgoingFiles", [&](const ScriptedProcessLauncher& l) {
+    (void)project::CollectGitBranchOutgoingFiles(root, l, "main");
+  });
+  ran("CollectGitWorkingTreeDiffFiles", [&](const ScriptedProcessLauncher& l) {
+    (void)project::CollectGitWorkingTreeDiffFiles(root, l, "main");
+  });
+  ran("CollectGitCommitChangedFiles", [&](const ScriptedProcessLauncher& l) {
+    (void)project::CollectGitCommitChangedFiles(root, l, "HEAD");
+  });
+  ran("GitRevisionBlobCache::Prefetch", [&](const ScriptedProcessLauncher& l) {
+    project::GitRevisionBlobCache cache;
+    cache.Prefetch(root, l, {"HEAD"}, {file});
+  });
+}
+
 }  // namespace
 
 void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
@@ -205,6 +258,8 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestStatusRefreshDistinguishesItsFailures);
   AddTest(tests, "ProcessLauncher/StatusServiceRunsThroughTheLauncherItIsGiven",
           TestStatusServiceRunsThroughTheLauncherItIsGiven);
+  AddTest(tests, "ProcessLauncher/CompareServiceRunsThroughTheLauncherItIsGiven",
+          TestCompareServiceRunsThroughTheLauncherItIsGiven);
 }
 
 }  // namespace microide::tests

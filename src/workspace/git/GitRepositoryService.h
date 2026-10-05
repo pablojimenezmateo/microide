@@ -6,6 +6,7 @@
 #include <mutex>
 #include <optional>
 
+#include "platform/ProcessLauncher.h"
 #include "project/GitRepositoryState.h"
 #include "project/ProjectBackgroundExecutor.h"
 #include "workspace/git/WorkspaceGitOutgoingBase.h"
@@ -44,7 +45,13 @@ class GitRepositoryService {
   bool IsRefreshing() const;
 
   void MarkStale();
+  // `launcher` is the ACTIVE PROJECT's launcher (`ProjectWorkspaceState::launcher()`),
+  // not the process-wide local one — it decides which machine the refresh's git runs
+  // on. It is stored by pointer in the request and read on the refresh worker, so it
+  // must outlive the refresh; the local launcher is a function-local static and a
+  // remote one is owned by the project's connection. (TD-2026-09-22-301.)
   void RequestRefresh(const std::filesystem::path& project_root,
+                      const platform::ProcessLauncher& launcher,
                       GitSidebarRefreshScope scope,
                       OutgoingBaseChoice outgoing_base_choice,
                       bool tree_git_badges_materialized);
@@ -61,6 +68,7 @@ class GitRepositoryService {
   // Test seam: drives a refresh on the calling thread. Always compiled; unused
   // by production code paths (which dispatch refreshes asynchronously).
   void RunRefreshSynchronouslyForTesting(const std::filesystem::path& project_root,
+                                         const platform::ProcessLauncher& launcher,
                                          GitSidebarRefreshScope scope,
                                          OutgoingBaseChoice outgoing_base_choice,
                                          bool tree_git_badges_materialized);
@@ -88,6 +96,7 @@ class GitRepositoryService {
  private:
   struct RefreshRequest {
     std::filesystem::path project_root;
+    const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
     GitSidebarRefreshScope scope = GitSidebarRefreshScope::Full;
     OutgoingBaseChoice outgoing_base_choice;
     bool tree_git_badges_materialized = false;

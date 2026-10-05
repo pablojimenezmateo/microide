@@ -151,7 +151,7 @@ bool CompareInteractionCoordinator::OpenPickerForPath(
     // return and there is no UI to freeze. Run the git query inline.
     picker.loading = false;
     const project::GitFileHistoryResult history =
-        project::CollectGitFileHistory(state_.root, picker.path);
+        project::CollectGitFileHistory(state_.root, state_.launcher(), picker.path);
     ApplyFileHistoryResult(history);
     if (picker.matches.empty()) {
       return false;

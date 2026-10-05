@@ -458,7 +458,9 @@ RunMetrics RunBenchmark(const std::filesystem::path& repo_root,
   RunMetrics metrics;
 
   const Clock::time_point read_start = Clock::now();
-  const auto left = microide::project::ReadGitFileAtCommit(repo_root, file_path, std::string(left_ref));
+  const auto left = microide::project::ReadGitFileAtCommit(repo_root,
+                                                           platform::LocalProcessLauncher(),
+                                                               file_path, std::string(left_ref));
   if (!left.has_value()) {
     throw std::runtime_error("failed to read left side from git");
   }
@@ -468,7 +470,8 @@ RunMetrics RunBenchmark(const std::filesystem::path& repo_root,
     right_content = ReadFileText(file_path).value_or("");
   } else {
     const auto right =
-        microide::project::ReadGitFileAtCommit(repo_root, file_path, std::string(right_ref));
+        microide::project::ReadGitFileAtCommit(repo_root, platform::LocalProcessLauncher(),
+                                               file_path, std::string(right_ref));
     if (!right.has_value()) {
       throw std::runtime_error("failed to read right side from git");
     }

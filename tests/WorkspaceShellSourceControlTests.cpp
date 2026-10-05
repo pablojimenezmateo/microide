@@ -911,7 +911,8 @@ bool SettleGitOperation(WorkspaceShell& shell) {
 }
 
 std::string CurrentGitBranch(const std::filesystem::path& root) {
-  for (const auto& branch : microide::project::CollectGitBranches(root)) {
+  for (const auto& branch : microide::project::CollectGitBranches(root,
+                                                                  platform::LocalProcessLauncher())) {
     if (branch.is_head) {
       return branch.label;
     }

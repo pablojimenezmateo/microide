@@ -402,7 +402,8 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   };
 
   check("before any refresh");
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
   Expect(check("after the conflicted refresh") > 0,
@@ -414,7 +415,8 @@ void TestGitRepositorySummaryAgreesWithFullState() {
   const std::uint64_t first_generation = git_service.CurrentState().generation;
   RequireGitCommandSuccess(repo, {"checkout", "--ours", "shared.txt"}, "resolve the conflict");
   RequireGitCommandSuccess(repo, {"add", "shared.txt"}, "stage the resolution");
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().generation != first_generation,
          "the second refresh must install its own state, not leave the first one behind");
@@ -448,7 +450,8 @@ void TestCommitResultIsMarshaledToMainThread() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
 
@@ -515,7 +518,8 @@ void TestCommitCompletionSurvivesStateDestruction() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
 
@@ -571,7 +575,8 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
 
   CommitWorkflowService service(executor, git_service);
@@ -598,7 +603,8 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
   // Second project dispatches; only now does the first project's tab close.
   WriteFile(repo / "seed.txt", "seed\nfirst\nsecond\n");
   RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage second change");
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   CommitWorkflowState second;
   Expect(acknowledge_and_commit(second, "Second"), "second commit should dispatch");
@@ -637,7 +643,8 @@ void TestConflictMarkerScanGate() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   const GitRepositoryState state = git_service.CurrentState();
   Expect(state.repo_available, "fixture repo should be available");
@@ -722,7 +729,8 @@ void TestUnacknowledgedWarningsConfirmRatherThanBlock() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
   Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
 
@@ -795,7 +803,8 @@ void TestCancelledWarningConfirmationCommitsNothing() {
 
   ProjectBackgroundExecutor executor;
   GitRepositoryService git_service(executor);
-  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+  git_service.RunRefreshSynchronouslyForTesting(repo, platform::LocalProcessLauncher(),
+                                                GitSidebarRefreshScope::Full,
                                                 OutgoingBaseChoice{}, false);
 
   CommitWorkflowService service(executor, git_service);
