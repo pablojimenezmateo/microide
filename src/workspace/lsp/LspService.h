@@ -245,10 +245,6 @@ class LspService {
   // A handle from a superseded publish resolves to nothing and is ignored — the
   // lens the click landed on no longer exists.
   void ActivateCodeLens(std::uint64_t payload);
-  // Drop the "lsp:codelens" decorations for `viewport`'s file. Same reasoning as
-  // the inlay overlay: the lens line numbers are absolute, so any content edit
-  // invalidates them until the next clean pull.
-  void ClearLspCodeLensesForFile(const editor::TextViewport& viewport);
 
   // Keep the caret's semantic occurrence highlights fresh. Drained once per
   // presented frame (WorkspaceShell::OnFramePresented), because a caret can move
@@ -433,9 +429,15 @@ class LspService {
   // wrong colors once the buffer returns to a clean, render-visible state.
   void ClearLspSemanticTokensForFile(const editor::TextViewport& viewport);
 
-  // Drop the "lsp:inlay" mid-line virtual text for `viewport`'s file (mirrors the
-  // semantic overlay: any content edit invalidates the absolute hint positions).
-  void ClearLspInlayHintsForFile(const editor::TextViewport& viewport);
+  // Drop the edit-invalidated LSP overlays for `viewport`'s file: the "lsp:inlay"
+  // mid-line virtual text and the "lsp:codelens" lines. Both are absolute positions,
+  // so any content edit invalidates them until the next clean pull. Runs on EVERY
+  // keystroke, so the file's URI — a fresh string — is built at most once, and only
+  // when an inlay or lens request could be in flight to invalidate: with no such
+  // request ever issued (no server, or one without either capability) the
+  // generation maps are empty and the keystroke allocates nothing here
+  // (TD-2026-09-20-302).
+  void ClearLspEditOverlaysForFile(const editor::TextViewport& viewport);
 
   WorkspaceContext* context_ = nullptr;
   CompletionRegistry* completion_registry_ = nullptr;

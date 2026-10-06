@@ -351,6 +351,11 @@
   }
   static void OpenCommandPalette(WorkspaceShell& shell) { shell.OpenCommandPalette(); }
   static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
+  // The LSP half of every keystroke: shift stored diagnostics, drop edit-stale
+  // overlays, sync the open document. Exposed to pin its per-key cost.
+  static void SyncLspForActiveEditableLastChange(WorkspaceShell& shell) {
+    shell.lsp_service_.SyncLspForActiveEditableLastChange();
+  }
   // Point the current project at another write gate, as a remote project's
   // MirrorWriteGate would be. Set AFTER the project is opened: opening resets the
   // project state, gate included.

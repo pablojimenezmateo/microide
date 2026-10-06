@@ -1056,27 +1056,6 @@ void LspService::ActivateCodeLens(std::uint64_t payload) {
       [this](LspResult<util::JsonValue>) { FinishTrackedLspRequest(); });
 }
 
-void LspService::ClearLspCodeLensesForFile(const editor::TextViewport& viewport) {
-  if (viewport.path().empty()) {
-    return;
-  }
-  // Bump the generation first for the same reason inlay hints do: lenses paint in
-  // every buffer state, so an in-flight response captured before this edit would
-  // otherwise re-add lenses at pre-edit line numbers.
-  std::string uri = FileUriForPath(viewport.path());
-  NextOverlayGeneration(code_lens_generation_, uri);
-  std::erase_if(code_lens_commands_,
-                [&uri](const auto& entry) { return entry.second.uri == uri; });
-  ProjectWorkspaceState& state = CurrentProjectState();
-  auto* presentation = state.plugin_presentation.get();
-  if (presentation == nullptr) {
-    return;
-  }
-  if (presentation->decorations.ClearOwnerFile("lsp:codelens", viewport.path())) {
-    state.MaybeReleasePluginPresentation();
-    operations_.request_editor_surface_redraw();
-  }
-}
 
 void LspService::MaybeRequestDocumentHighlights() {
   if (!operations_.active_editable_viewport) {
@@ -1207,23 +1186,40 @@ void LspService::PublishLspDocumentHighlights(
   operations_.request_editor_surface_redraw();
 }
 
-void LspService::ClearLspInlayHintsForFile(const editor::TextViewport& viewport) {
+void LspService::ClearLspEditOverlaysForFile(const editor::TextViewport& viewport) {
   if (viewport.path().empty()) {
     return;
   }
-  // Bump the generation FIRST, unconditionally: unlike the semantic overlay (which
-  // the renderer suppresses while the buffer is dirty), inlay-hint InlineText
-  // decorations paint in every state, so an in-flight response captured before this
-  // edit would otherwise re-add hints at pre-edit positions on the now-shifted
-  // buffer. Invalidating the generation makes PublishLspInlayHints drop it even if
-  // there is currently no overlay to clear.
-  NextOverlayGeneration(inlay_hint_generation_, FileUriForPath(viewport.path()));
+  // Bump each overlay's generation FIRST, unconditionally of whether there is an
+  // overlay to clear: unlike the semantic overlay (which the renderer suppresses
+  // while the buffer is dirty), inlay hints and lenses paint in every state, so an
+  // in-flight response captured before this edit would otherwise re-add them at
+  // pre-edit positions on the now-shifted buffer. A response is current only if
+  // its URI's entry EXISTS and matches (OverlayGenerationCurrent), and a request
+  // creates that entry when it is issued — so an empty map has nothing to
+  // invalidate, and the URI is not worth building.
+  const bool any_inlay_request = !inlay_hint_generation_.empty();
+  const bool any_lens_state = !code_lens_generation_.empty() || !code_lens_commands_.empty();
+  if (any_inlay_request || any_lens_state) {
+    const std::string uri = FileUriForPath(viewport.path());
+    if (any_inlay_request) {
+      NextOverlayGeneration(inlay_hint_generation_, uri);
+    }
+    if (any_lens_state) {
+      NextOverlayGeneration(code_lens_generation_, uri);
+      std::erase_if(code_lens_commands_,
+                    [&uri](const auto& entry) { return entry.second.uri == uri; });
+    }
+  }
   ProjectWorkspaceState& state = CurrentProjectState();
   auto* presentation = state.plugin_presentation.get();
   if (presentation == nullptr) {
     return;
   }
-  if (presentation->decorations.ClearOwnerFile("lsp:inlay", viewport.path())) {
+  const bool cleared_inlay = presentation->decorations.ClearOwnerFile("lsp:inlay", viewport.path());
+  const bool cleared_lens =
+      presentation->decorations.ClearOwnerFile("lsp:codelens", viewport.path());
+  if (cleared_inlay || cleared_lens) {
     state.MaybeReleasePluginPresentation();
     operations_.request_editor_surface_redraw();
   }
@@ -1324,8 +1320,16 @@ bool LspService::OverlayGenerationCurrent(
 template <typename Transform>
 void LspService::TransformLspDiagnostics(const editor::TextViewport& viewport,
                                          Transform&& transform) {
-  CurrentProjectState().diagnostics_store.TransformOwnerFile("lsp", viewport.path(),
-                                                             std::forward<Transform>(transform));
+  editor::DiagnosticsStore& store = CurrentProjectState().diagnostics_store;
+  // Checked HERE, before the transform becomes the store's `std::function`: the
+  // per-keystroke shift's lambda captures three positions (48 bytes), past the
+  // inline buffer, so the conversion alone heap-allocates on every key — even in a
+  // file with no diagnostics, where the store would then return at once
+  // (TD-2026-09-20-302). The path-key lookup is the allocation-free hot-path form.
+  if (store.FindByPathKey(viewport.path_key()) == nullptr) {
+    return;
+  }
+  store.TransformOwnerFile("lsp", viewport.path(), std::forward<Transform>(transform));
 }
 
 void LspService::SyncLspForActiveEditableChange(const std::vector<std::string>& before_lines,
@@ -1357,8 +1361,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   // overlay is now stale -> drop it (the lexical layer keeps painting). Done
   // before the client early-out so a stale overlay is cleared even with no server.
   ClearLspSemanticTokensForFile(viewport);
-  ClearLspInlayHintsForFile(viewport);
-  ClearLspCodeLensesForFile(viewport);
+  ClearLspEditOverlaysForFile(viewport);
 
   // Keep diagnostics positioned for the dirty buffer until the server republishes.
   // Runs before the client early-out so a dead/absent server never strands them.
@@ -1404,8 +1407,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   // the buffer is dirty the overlay is render-suppressed anyway; the clean-branch
   // re-request below repopulates it when an undo/redo lands on the saved point.
   ClearLspSemanticTokensForFile(*viewport);
-  ClearLspInlayHintsForFile(*viewport);
-  ClearLspCodeLensesForFile(*viewport);
+  ClearLspEditOverlaysForFile(*viewport);
 
   // Slide stored diagnostics through this keystroke so they stay on their text while
   // the buffer is dirty, until the server republishes authoritative ranges. Runs

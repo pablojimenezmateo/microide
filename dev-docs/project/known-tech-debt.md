@@ -1177,7 +1177,7 @@ it is reached from paths that only know a root. It is where the design's G9
 `GitMetadataSource` lands, and the third "unknown" state that design asks for is what
 makes the remote implementation a drop-in rather than a retrofit.
 
-### TD-2026-09-20-302 — the keystroke path allocates ~2 small strings per key, and the site tops seven phases. [OPEN — measured, not yet diagnosed]
+### TD-2026-09-20-302 — the keystroke path allocates ~2 small strings per key, and the site tops seven phases. [RESOLVED 2026-10-06]
 
 The 2026-09-20 regeneration of `dev-docs/performance/perf-phase-allocation-trace.md`
 is the first one whose symbol names can be trusted (it was built on the
@@ -1203,6 +1203,33 @@ Start by reading `HandleKeyDown` and `HandleGlobalKeyDown` for a `std::string`
 built to be compared or looked up (`FileUriForPath` is #2 in the same phase at 48
 allocations / 5,424 bytes, on a path that has the URI already). The 24-byte size
 says short string, above the 15-byte SSO threshold.
+
+**Resolved 2026-10-06 — diagnosed under gdb, not from the symbol.** A probe drove
+16 Enter/Backspace keys through `HandleKeyDown` in a project with no language
+server and broke on `operator new` for each allocation. 100 allocations for 16
+keys; the culprit was not in the key handler at all but in the LSP half of every
+keystroke, `LspService::SyncLspForActiveEditableLastChange`, which LTO had inlined
+into the frame the trace named:
+
+- **two `FileUriForPath` per key** (the "~2 small strings"): `ClearLspInlayHintsForFile`
+  and `ClearLspCodeLensesForFile` each built the file's URI to bump a per-URI
+  generation counter. A response is current only if its URI's entry EXISTS, and the
+  request is what creates it — so with no inlay or lens request ever issued the maps
+  are empty and there is nothing to invalidate. The two functions are one,
+  `ClearLspEditOverlaysForFile`, which builds the URI at most once and only when
+  either map (or the lens command table) holds anything.
+- **one `std::function` per key**: the diagnostic shift's lambda captures three
+  positions (48 bytes), past libstdc++'s inline buffer, and was converted to the
+  store's `std::function` parameter before the store returned "nothing for this
+  file". `TransformLspDiagnostics` now asks first, through the allocation-free
+  `FindByPathKey(viewport.path_key())`.
+
+100 → 52 allocations for the same 16 keys; what remains is the edit itself (the
+undo entry owns the replaced text, and Enter's auto-indent string).
+`WorkspaceShell/LspKeystrokeSyncAllocatesNothingWithoutAServer` pins the sync at
+zero allocations (perf-tests lane, like every allocation contract), and the
+existing `LspDiagnosticsShiftOnEditWithoutServer` proves the new guard still lets a
+real shift through — i.e. that the view's path key matches the store's.
 
 ### TD-2026-09-20-301 — an undo group merged into the SMALLER side, so every multi-region shaping verb was quadratic. [RESOLVED 2026-09-20, same session it was found.]
 

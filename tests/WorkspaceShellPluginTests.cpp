@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "perf/AllocationCounter.h"
 
 #include "editor/FoldingModel.h"
 #include "editor/PluginDecorationStore.h"
@@ -4964,6 +4965,41 @@ void TestWorkspaceShellLspInlayOverlayClearedOnEdit() {
   Expect(!has_inlay(), "a content edit must clear the stale lsp:inlay overlay");
 }
 
+// TD-2026-09-20-302. The LSP half of a keystroke runs on EVERY key in every file,
+// served or not. With no language server and no diagnostics it has nothing to do,
+// and it used to allocate ~3 times per key doing it: the file's URI (a fresh string)
+// built twice to bump inlay-hint and code-lens generations that no request had ever
+// created, and the diagnostic shift's 48-byte lambda converted to a std::function
+// before the store said it had nothing for this file.
+void TestWorkspaceShellLspKeystrokeSyncAllocatesNothingWithoutAServer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "an edit, so there is a last change");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  WorkspaceShellTestAccess::SyncLspForActiveEditableLastChange(shell);  // warm
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+  for (int i = 0; i < 16; ++i) {
+    WorkspaceShellTestAccess::SyncLspForActiveEditableLastChange(shell);
+  }
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0,
+         "the per-keystroke LSP sync must not allocate with no server and no diagnostics, "
+         "got " + std::to_string(delta.allocations) + " allocations for 16 syncs");
+#endif
+}
+
 // The applied-edit diagnostic shift must run even when no language server serves
 // the buffer. Phase-1.4 moved ShiftLspDiagnosticsForAppliedEdit ahead of the
 // client early-out in SyncLspForActiveEditableLastChange, so stored "lsp"
@@ -5845,6 +5881,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellLspSemanticOverlayClearedOnEditAndUndo);
   AddTest(tests, "WorkspaceShell/LspInlayOverlayClearedOnEdit",
           TestWorkspaceShellLspInlayOverlayClearedOnEdit);
+  AddTest(tests, "WorkspaceShell/LspKeystrokeSyncAllocatesNothingWithoutAServer",
+          TestWorkspaceShellLspKeystrokeSyncAllocatesNothingWithoutAServer);
   AddTest(tests, "WorkspaceShell/LspDiagnosticsShiftOnEditWithoutServer",
           TestWorkspaceShellLspDiagnosticsShiftOnEditWithoutServer);
   AddTest(tests, "WorkspaceShell/GhostTextPublishStoresAndSplits",
