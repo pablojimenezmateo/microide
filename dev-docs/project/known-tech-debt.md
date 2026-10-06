@@ -642,6 +642,32 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
+### TD-2026-10-06-319 — the git layer's own validity probes read a LOCAL `.git`, which a mirror does not have. [OPEN]
+
+Found while scoping G9 (`GitMetadataSource`). The design lists four direct `.git`
+readers to consolidate — `ResolveGitDirectory`, `ReadPendingMergeHeadId`, the
+metadata tracker's sampling, and the status bar's `ReadHeadBranchName` — and
+treats the remote source as "unknown until the first `git/metadata`". That
+undercounts. Three more places decide whether git is usable by statting `.git`
+under the project root on THIS machine, and they are on every git path:
+
+- `GitRepository::IsValid()` (`HasGitMarker(root_)`), which guards nearly every
+  entry point in `GitCompareService`, `GitBranchOperations`, `CommitWorkflowChecks`
+  and the status refresh;
+- `GitBlameService::ProcessRequest`'s `HasGitMarker` check;
+- `DetectGitOperationState` (`GitRepositoryState.cpp`), which reads MERGE_HEAD /
+  rebase markers out of the resolved git directory.
+
+In a remote project the launcher already runs git on the host (TD-2026-09-22-301),
+but the mirror has no `.git` (§ 6.2 mirrors the working tree), so each of these
+answers "not a repository" and the call never reaches the launcher at all. The
+fix is that `GitRepository` carries the project's metadata source beside its
+launcher — `GitRepository(root, launcher, metadata)` — and `IsValid` and the
+operation-state probe ask the source. That is another pass over every
+construction site, which is why it was not folded into the launcher slices; it
+should land as G9's first slice, ahead of consolidating the status-bar readers,
+because it is the part that would make a remote project silently git-less.
+
 ### TD-2026-10-06-318 — the plugin host knows the project's root, not its launcher or write gate. [RESOLVED 2026-10-06]
 
 Every other writer into a project tree and every other spawn now take their
