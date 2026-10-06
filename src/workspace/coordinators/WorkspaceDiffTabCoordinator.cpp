@@ -409,6 +409,7 @@ bool DiffTabCoordinator::StartPendingCompareLoad(CompareTabState& compare_tab) {
       .root = state_.root,
       .launcher = &state_.launcher(),
       .left_ref = compare_tab.commit_hash,
+      .right_ref = compare_tab.right_ref,
       .build_options = compare_tab.build_options,
   });
   if (id == 0) {
@@ -446,12 +447,18 @@ void DiffTabCoordinator::ApplyCompareTabLoad(const std::uint64_t id, const bool 
         // happened — and stays READ-ONLY, so nothing can save its empty text over
         // the file it failed to read.
         if (operations_.report_compare_load_failure) {
-          operations_.report_compare_load_failure(
-              !read_ok        ? "Could not read " + compare.path.filename().string()
-              : !result.left_ok ? "Could not read " + compare.path.filename().string() + " at " +
-                                      compare.commit_hash
-                              : "Cannot compare " + compare.path.filename().string() +
-                                    ": not a text file");
+          const std::string name = compare.path.filename().string();
+          std::string message;
+          if (!read_ok) {
+            message = "Could not read " + name;
+          } else if (!result.left_ok) {
+            message = "Could not read " + name + " at " + compare.commit_hash;
+          } else if (!result.right_read) {
+            message = "Could not read " + name + " at " + compare.right_ref;
+          } else {
+            message = "Cannot compare " + name + ": not a text file";
+          }
+          operations_.report_compare_load_failure(std::move(message));
         }
         operations_.request_active_tab_redraw(false);
         return;
@@ -499,24 +506,48 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
     return true;
   }
 
-  const auto left_content =
-      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, left_ref,
-                                   prefetched);
-  const auto right_content =
-      project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, right_ref,
-                                   prefetched);
-  if (!left_content.has_value() || !right_content.has_value() || left_content->truncated ||
-      right_content->truncated) {
-    // A truncated blob was clipped at the subprocess capture ceiling; refuse rather
-    // than present a partial diff as truth.
-    return false;
+  // Two revisions, no file to read — but a large one still costs two blob pipes and
+  // an O(file) diff on the shell thread, and a commit review opens one of these per
+  // file. Sized by the working copy at the same path: the blobs are not known until
+  // they are read, and the file a review walks is almost always about the size it
+  // was at either end. No working copy (a deleted file) reads synchronously.
+  const bool load_off_thread = [&] {
+    if (!operations_.begin_compare_tab_load) {
+      return false;
+    }
+    std::error_code error;
+    const std::uintmax_t size = std::filesystem::file_size(normalized_path, error);
+    return !error && size >= kAsyncCompareThresholdBytes;
+  }();
+
+  std::optional<TabEntry> compare_tab;
+  if (load_off_thread) {
+    compare_tab = operations_.build_compare_tab_from_buffers(
+        normalized_path, "", "", left_label, right_label, 0, true, true, true);
+  } else {
+    const auto left_content =
+        project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, left_ref,
+                                     prefetched);
+    const auto right_content =
+        project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, right_ref,
+                                     prefetched);
+    if (!left_content.has_value() || !right_content.has_value() || left_content->truncated ||
+        right_content->truncated) {
+      // A truncated blob was clipped at the subprocess capture ceiling; refuse rather
+      // than present a partial diff as truth.
+      return false;
+    }
+    compare_tab = operations_.build_compare_tab_from_buffers(
+        normalized_path, left_content->exists ? left_content->content : "",
+        right_content->exists ? right_content->content : "", left_label, right_label, 0, true,
+        left_content->exists, right_content->exists);
   }
-  auto compare_tab = operations_.build_compare_tab_from_buffers(
-      normalized_path, left_content->exists ? left_content->content : "",
-      right_content->exists ? right_content->content : "", left_label, right_label, 0, true,
-      left_content->exists, right_content->exists);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return false;
+  }
+  if (load_off_thread) {
+    compare_tab->compare->right_viewport.SetReadOnly(true);
+    compare_tab->compare->load_pending = true;
   }
   compare_tab->compare->commit_hash = left_ref;
   compare_tab->compare->right_ref = right_ref;
@@ -543,9 +574,13 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
-  SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
+  if (!load_off_thread) {
+    SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
+  }
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
-  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
+  if (!load_off_thread) {
+    NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
+  }
   return true;
 }
 

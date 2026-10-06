@@ -386,9 +386,9 @@ that file says exactly what, and what each one left):
   writes over it. And writing the tests found a real bug in the split path: a
   pane cloned while its file was loading was left empty and read-only forever.
 
-Open: the rest of **G4** (the working-tree compare loads off-thread as of
-2026-10-06; branch/commit compares and the conflict merge still read their sides
-on the shell thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the
+Open: the rest of **G4** (working-tree and branch/commit compares load
+off-thread as of 2026-10-06; the conflict merge still reads its stages on the
+shell thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the
 **actions** half of **G7**, **G8** `ProjectId`; the rest of **G9** (the four readers now share their primitives and
 the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); and the rest of **G5**

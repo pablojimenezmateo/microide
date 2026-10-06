@@ -159,6 +159,35 @@ void TestCancellingAnUnknownIdIsHarmless() {
   Expect(collector.completions.front().status == Status::Ok, "and succeeded");
 }
 
+// `read_path = false`: the reader's thread, cancellation and completion contract
+// for a load whose inputs are not a file — a branch compare's two git blobs. It
+// must not touch the path at all (here it does not even exist) and must still run
+// the hook and report Ok.
+void TestANoReadRequestRunsItsHookWithoutTouchingThePath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path missing = temp_dir.path() / "not-there.txt";
+
+  FileReadService service;
+  Collector collector;
+  bool hook_ran = false;
+  bool hook_saw_empty = false;
+  service.Begin({.path = missing,
+                 .on_worker =
+                     [&](std::string& bytes) {
+                       hook_ran = true;
+                       hook_saw_empty = bytes.empty();
+                     },
+                 .on_complete = collector.Sink(),
+                 .read_path = false});
+  service.FlushPendingReads();
+
+  Expect(collector.completions.size() == 1, "one completion");
+  Expect(collector.completions.front().status == Status::Ok,
+         "a load with nothing to read is Ok, not Unreadable");
+  Expect(collector.completions.front().path == missing, "and still names its path");
+  Expect(hook_ran && hook_saw_empty, "the hook ran, with no bytes");
+}
+
 }  // namespace
 
 void RegisterFileReadServiceTests(std::vector<TestCase>& tests) {
@@ -169,6 +198,8 @@ void RegisterFileReadServiceTests(std::vector<TestCase>& tests) {
           TestUnreadableAndOversizedAreDistinctFromOk);
   AddTest(tests, "FileReadService/EveryPostedReadIsReportedExactlyOnce",
           TestEveryPostedReadIsReportedExactlyOnce);
+  AddTest(tests, "FileReadService/ANoReadRequestRunsItsHookWithoutTouchingThePath",
+          TestANoReadRequestRunsItsHookWithoutTouchingThePath);
   AddTest(tests, "FileReadService/CancellingAnUnknownIdIsHarmless",
           TestCancellingAnUnknownIdIsHarmless);
 }

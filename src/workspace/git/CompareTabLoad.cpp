@@ -27,11 +27,22 @@ void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_b
   result.left = compare::MakeCompareText(left->exists ? std::move(left->content) : std::string());
   result.left_line_count = CountCompareTextLines(*result.left);
 
+  bool right_exists = true;
+  if (!request.right_is_working_tree()) {
+    std::optional<project::GitFileContentAtCommit> right = project::ReadGitFileAtCommit(
+        request.root, *request.launcher, request.path, request.right_ref);
+    if (!right.has_value() || right->truncated) {
+      return;
+    }
+    right_exists = right->exists;
+    right_bytes = right->exists ? std::move(right->content) : std::string();
+  }
+  result.right_read = true;
   if (!result.right.AdoptFileContent(request.path, std::move(right_bytes))) {
     return;
   }
   result.right_ok = true;
-  result.built_options.right_exists = true;
+  result.built_options.right_exists = right_exists;
 
   // The same serialize the derived-state refresh does before a rebuild, so the
   // model is byte-for-byte the one a synchronous open would have built.

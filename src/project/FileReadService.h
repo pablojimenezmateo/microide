@@ -79,6 +79,11 @@ class FileReadService {
     // have, and a dropped completion here leaves a tab loading forever.
     std::function<void(Completion)> on_complete;
     std::uintmax_t max_bytes = util::kMaxTextFileBytes;
+    // False: read nothing, and run `on_worker` with empty bytes. For a load whose
+    // inputs are not a file on disk — a branch compare's two git blobs — but which
+    // wants this thread, its cancellation and its completion contract all the same.
+    // `path` still names what the load is about, and is what the completion carries.
+    bool read_path = true;
   };
 
   // Post one read. Returns the id its completion will carry; never 0.

@@ -28,7 +28,15 @@ struct CompareTabLoadRequest {
   // The project's. Must outlive the load; see ProjectWorkspaceState::launcher().
   const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
   std::string left_ref;
+  // The right side: the working file ("WORKTREE", the default, read by the caller
+  // and handed in as bytes) or a revision, read here like the left one — a branch
+  // or commit compare, which has no file on disk to read.
+  std::string right_ref = "WORKTREE";
   compare::CompareBuildOptions build_options;
+
+  [[nodiscard]] bool right_is_working_tree() const {
+    return right_ref.empty() || right_ref == "WORKTREE";
+  }
 };
 
 struct CompareTabLoadResult {
@@ -36,9 +44,11 @@ struct CompareTabLoadResult {
   // the subprocess capture ceiling — the same refusals the synchronous open
   // makes, because a partial blob diffed as the whole file is a wrong answer.
   bool left_ok = false;
-  // False when the working file's bytes could not be installed (binary,
-  // undecodable). Never the case for a merely ABSENT file: the load is only
-  // posted for a file whose size was just read.
+  // Whether the right side's bytes were obtained at all (a revision git could not
+  // answer, or that came back truncated, leaves this false), and then whether they
+  // could be installed (binary, undecodable bytes leave `right_ok` false). Two
+  // flags because the two failures tell the user different things.
+  bool right_read = false;
   bool right_ok = false;
   compare::CompareTextBuffer left = compare::EmptyCompareText();
   editor::TextViewport right;
@@ -50,8 +60,10 @@ struct CompareTabLoadResult {
   std::size_t left_line_count = 0;
 };
 
-// Worker: read the left revision, install the right side's bytes into a fresh
-// viewport, and build the diff. `right_bytes` is the working file, already read.
+// Worker: read the left revision, install the right side into a fresh viewport,
+// and build the diff. `right_bytes` is the working file, already read, when the
+// right side IS the working file; otherwise it is ignored and the right revision
+// is read here.
 void RunCompareTabLoad(const CompareTabLoadRequest& request, std::string right_bytes,
                        CompareTabLoadResult& result);
 

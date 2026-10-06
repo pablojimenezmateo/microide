@@ -150,6 +150,8 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                               completion.status == project::FileReadService::Status::Cancelled,
                               completion.ok(), *result);
                         },
+                    // A revision-vs-revision compare has no file to read.
+                    .read_path = shared_request->right_is_working_tree(),
                 });
               },
           .apply_editor_preferences =

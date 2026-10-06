@@ -715,7 +715,7 @@ the worked example of why this matters: it did not merely measure something
 different, it stopped working entirely, because the harness renders without an
 event loop and nothing drained the completion (fixed in 39f309f2).
 
-### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN — the working-tree compare is done (2026-10-06); branch/commit compares and the conflict merge remain]
+### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN — working-tree and branch/commit compares done (2026-10-06); the conflict merge remains]
 
 **The editor half is done (2026-09-29).** The whole load now runs on the reader's
 thread: the bytes, the classification (content hash, encoding sniff, line-ending
@@ -764,10 +764,18 @@ surface had made the same file live meanwhile, so the file ended up as two
 independent buffers that save over each other. The editor completion now shares
 the live buffer when there is one.
 
-**Still synchronous:** `OpenBranchHeadComparison` (two git blobs, no working
-file to size — a size-gated stand-in needs `git cat-file -s` or the prefetch
-cache to know whether to bother) and `OpenGitConflictMerge` (three stages and a
-different tab type). Neither has a perf gate for the large case, and nor does the
+**Branch/commit compares (2026-10-06, the same day).** `OpenBranchHeadComparison`
+takes the same stand-in path. It has no file to read and no blob sizes until the
+blobs are read, so it sizes by the working copy at the same path — a stat, not a
+`git cat-file -s` spawn, and a file a review walks is almost always about the size
+it was at either end (no working copy, e.g. a deleted file, stays synchronous).
+`CompareTabLoadRequest::right_ref` makes the loader read the right side as a
+revision too, and `FileReadService::Request::read_path = false` runs the worker
+hook with nothing read, keeping the reader's one thread, cancellation and
+completion contract for a load whose inputs are not a file.
+
+**Still synchronous:** `OpenGitConflictMerge` (three stages and a different tab
+type). Neither has a perf gate for the large case, and nor does the
 new path (see TD-2026-09-29-317).
 
 ### TD-2026-09-29-313 — the async-open threshold is a size, and the remote case is not about size. [OPEN]

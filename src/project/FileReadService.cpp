@@ -43,7 +43,7 @@ std::uint64_t FileReadService::Begin(Request request) {
   // the cancel flag. It reads no shell state and no viewport, which is what makes
   // running it off-thread safe at all.
   executor_.Submit([this, id, path = std::move(request.path), max_bytes = request.max_bytes,
-                    cancelled = std::move(cancelled), on_worker = std::move(request.on_worker),
+                    read_path = request.read_path, cancelled = std::move(cancelled), on_worker = std::move(request.on_worker),
                     on_complete = std::move(request.on_complete)](
                        const util::CancellationToken&) mutable {
     util::PerformanceTrace::Scope perf_scope("FileReadService::Read");
@@ -58,6 +58,8 @@ std::uint64_t FileReadService::Begin(Request request) {
 
     if (is_cancelled()) {
       completion.status = Status::Cancelled;
+    } else if (!read_path) {
+      completion.status = Status::Ok;  // nothing to read; the hook does the work
     } else if (!util::IsRegularFileFollowingSymlinks(path)) {
       // A FIFO, device node or procfs entry can block on open or seek before any
       // size guard runs, so it is rejected up front — the same rule every
