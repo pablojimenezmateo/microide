@@ -14,7 +14,9 @@
 #include "editor/DiagnosticsStore.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
+#include "platform/ProcessLauncher.h"
 #include "platform/SubprocessSandbox.h"
+#include "project/FileWriteGate.h"
 #include "util/JsonValue.h"
 
 namespace microide::plugin {
@@ -586,15 +588,33 @@ class PluginHost {
   // Plugin ids whose setup should be skipped on the next Reload. They still appear in
   // LoadedPlugins() as disabled so the UI can re-enable them.
   void SetDisabledPlugins(std::vector<std::string> disabled_ids);
-  bool Reload(const std::filesystem::path& project_root);
+  // The project's locality: where its processes run and its files are written. A
+  // plugin's `ctx.files.write` and `ctx.process.run` use these for a path INSIDE the
+  // project tree, and the local ones for the plugin's own data directory — locality
+  // is a property of the path an operation targets (TD-2026-10-06-318). Both must
+  // outlive the reload's project, as ProjectWorkspaceState's do.
+  struct ProjectLocality {
+    const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
+    project::FileWriteGate* write_gate = &project::LocalFileWriteGate();
+  };
+  // The workspace passes its project's locality. The root-only forms are the local
+  // project, for tests and tools.
+  bool Reload(const std::filesystem::path& project_root, ProjectLocality locality);
+  bool Reload(const std::filesystem::path& project_root) {
+    return Reload(project_root, ProjectLocality{});
+  }
   // Non-blocking reload: runs the plugin Lua load on the worker without parking the UI
   // thread, then publishes the rebuilt contribution snapshot and invokes `on_complete`
   // (with the clean/error result) on the UI thread during the mailbox drain. When no
   // worker is wired or there is nothing to load, runs inline and calls `on_complete`
   // synchronously before returning, so callers that depend on synchronous completion in
   // that configuration (e.g. tests with no worker) are unaffected.
-  void ReloadAsync(const std::filesystem::path& project_root,
+  void ReloadAsync(const std::filesystem::path& project_root, ProjectLocality locality,
                    std::function<void(bool)> on_complete);
+  void ReloadAsync(const std::filesystem::path& project_root,
+                   std::function<void(bool)> on_complete) {
+    ReloadAsync(project_root, ProjectLocality{}, std::move(on_complete));
+  }
   void Shutdown();
   void OnBufferOpen(const std::filesystem::path& path);
   void OnBufferSave(const std::filesystem::path& path);

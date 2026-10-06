@@ -72,6 +72,7 @@ bool WorkspacePluginRuntime::ConsumeAssetChanges(bool force_check) {
 }
 
 void WorkspacePluginRuntime::ReloadAsync(const std::filesystem::path& project_root,
+                                         plugin::PluginHost::ProjectLocality locality,
                                          bool reload_syntax_definitions,
                                          std::function<void(bool)> on_complete) {
   syntax_definitions_changed_ = false;
@@ -83,7 +84,7 @@ void WorkspacePluginRuntime::ReloadAsync(const std::filesystem::path& project_ro
   // the runtime-syntax sources are stat/read/parsed on the plugin worker and only the
   // built registry is swapped in on the main thread (TD-2026-07-17A-108).
   plugin_host_.ReloadAsync(
-      project_root, [this, project_root, reload_syntax_definitions, generation,
+      project_root, locality, [this, project_root, reload_syntax_definitions, generation,
                      on_complete = std::move(on_complete)](bool clean_reload) mutable {
         if (!reload_syntax_definitions) {
           asset_monitor_.SetProjectRoot(project_root);

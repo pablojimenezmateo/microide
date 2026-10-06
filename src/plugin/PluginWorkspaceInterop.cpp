@@ -187,7 +187,7 @@ int LuaFilesWriteText(lua_State* state, const PluginFsContext& fs, bool* denied)
   }
   lua_pushboolean(
       state,
-      project::LocalFileWriteGate()
+      fs.WriteGateFor(*path)
               .WriteText(*path, std::string_view(text, text_length))
               .ok
           ? 1

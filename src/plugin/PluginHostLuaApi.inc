@@ -56,6 +56,8 @@
         host != nullptr ? host->current_project_root : EmptyProjectRoot(),
         plugin != nullptr ? plugin->data_dir : EmptyDataDir(),
         plugin != nullptr ? plugin->capabilities : DenyAllCaps(),
+        host != nullptr ? *host->current_project_launcher : platform::LocalProcessLauncher(),
+        host != nullptr ? *host->current_project_write_gate : project::LocalFileWriteGate(),
     };
   }
 

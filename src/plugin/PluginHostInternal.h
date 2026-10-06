@@ -124,6 +124,10 @@ struct PluginHost::Impl {
   Callbacks raw_callbacks{};
   Callbacks callbacks{};
   std::filesystem::path current_project_root;
+  // The current project's locality, set with the root by RunReloadLoad (see
+  // PluginHost::ProjectLocality). Read through MakeFsContext.
+  const platform::ProcessLauncher* current_project_launcher = &platform::LocalProcessLauncher();
+  project::FileWriteGate* current_project_write_gate = &project::LocalFileWriteGate();
 
   // The dedicated worker that runs plugin Lua. Set once at wiring time and read
   // from both threads as a stable pointer; the per-call execution context lives in
@@ -325,13 +329,17 @@ struct PluginHost::Impl {
   // shell writes deferred). Shared by the synchronous Reload and the detached
   // ReloadAsync so the load sequence lives in exactly one place.
   void RunReloadLoad(const std::filesystem::path& next_project_root,
-                     const std::vector<std::filesystem::path>& plugin_roots) {
+                     const std::vector<std::filesystem::path>& plugin_roots,
+                     const platform::ProcessLauncher* project_launcher,
+                     project::FileWriteGate* project_write_gate) {
     // Mark the reload window; the enclosing ExecuteWithContext's ContextGuard restores
     // this to false when the load body returns.
     g_exec.in_reload = true;
     TearDownPlugins();
     disabled_plugin_meta.clear();
     current_project_root = next_project_root;
+    current_project_launcher = project_launcher;
+    current_project_write_gate = project_write_gate;
     for (const auto& plugin_root : plugin_roots) {
       std::string error_message;
       if (!LoadPluginRoot(plugin_root, &error_message) && !error_message.empty()) {
@@ -360,7 +368,10 @@ struct PluginHost::Impl {
                    plugin_roots = std::move(plugin_roots),
                    on_complete = std::move(on_complete)]() mutable {
       ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/true,
-                         [&]() { RunReloadLoad(snapshot.project_root, plugin_roots); });
+                         [&]() {
+                           RunReloadLoad(snapshot.project_root, plugin_roots,
+                                         snapshot.project_launcher, snapshot.project_write_gate);
+                         });
       // Build the snapshot here (live registries are worker-owned); patch the
       // error-count-bearing summary on the UI thread where errors are settled.
       auto built = std::make_shared<ContributionSnapshot>(BuildContributionSnapshot());

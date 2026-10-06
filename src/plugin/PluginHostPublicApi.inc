@@ -6,7 +6,7 @@ void PluginHost::SetStartupPluginsEnabled(bool enabled) {
   impl_->startup_plugins_enabled = enabled;
 }
 
-bool PluginHost::Reload(const std::filesystem::path& project_root) {
+bool PluginHost::Reload(const std::filesystem::path& project_root, ProjectLocality locality) {
   impl_->errors.clear();
   if (!impl_->enabled()) {
     lifecycle_reset_interop::ResetForDisabledRuntime(
@@ -33,8 +33,11 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 
   PluginHostSnapshot snapshot = impl_->CaptureSnapshot();
   snapshot.project_root = next_project_root;
-  auto load_body = [impl = impl_.get(), next_project_root, plugin_roots]() {
-    impl->RunReloadLoad(next_project_root, plugin_roots);
+  snapshot.project_launcher = locality.launcher;
+  snapshot.project_write_gate = locality.write_gate;
+  auto load_body = [impl = impl_.get(), next_project_root, plugin_roots, locality]() {
+    impl->RunReloadLoad(next_project_root, plugin_roots, locality.launcher,
+                        locality.write_gate);
   };
   if (needs_worker) {
     // Synchronous round-trip: the UI thread parks until the worker finishes. Direct
@@ -53,6 +56,7 @@ bool PluginHost::Reload(const std::filesystem::path& project_root) {
 }
 
 void PluginHost::ReloadAsync(const std::filesystem::path& project_root,
+                             ProjectLocality locality,
                              std::function<void(bool)> on_complete) {
   impl_->errors.clear();
   if (!impl_->enabled()) {
@@ -76,11 +80,16 @@ void PluginHost::ReloadAsync(const std::filesystem::path& project_root,
 
   PluginHostSnapshot snapshot = impl_->CaptureSnapshot();
   snapshot.project_root = next_project_root;
+  snapshot.project_launcher = locality.launcher;
+  snapshot.project_write_gate = locality.write_gate;
   if (!needs_worker) {
     // Nothing to run on a worker: stay inline and complete synchronously, exactly like
     // the no-plugin Reload path. Keeps no-worker callers (and most tests) synchronous.
     impl_->ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/true,
-                              [&]() { impl_->RunReloadLoad(next_project_root, plugin_roots); });
+                              [&]() {
+                                impl_->RunReloadLoad(next_project_root, plugin_roots,
+                                                     locality.launcher, locality.write_gate);
+                              });
     impl_->SetReloadSummary();
     impl_->PublishContributionSnapshot();
     on_complete(impl_->errors.empty());

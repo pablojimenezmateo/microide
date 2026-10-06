@@ -266,11 +266,11 @@ const char* CheckProcessCapability(const PluginFsContext& fs, const ProcessRunAr
 // kind that goes unnoticed.
 static platform::SubprocessResult RunPluginSubprocess(const PluginFsContext& fs,
                                                       ProcessRunArgs& parsed) {
-  // Through a launcher, like every other spawn: a plugin tool belongs to the project
-  // whose files it reads. Explicitly local today (TD-2026-09-22-301), and the sandbox
-  // stays attached to the options because it is a property of the CHILD, not of where
-  // the child runs.
-  return platform::LocalProcessLauncher().Run(
+  // Through the launcher the cwd's tree belongs to: a tool run in the project runs
+  // where the project does (the host, for a remote one), and one run in the plugin's
+  // own data directory runs here (TD-2026-10-06-318). The sandbox stays attached to
+  // the options because it is a property of the CHILD, not of where the child runs.
+  return fs.LauncherFor(parsed.cwd).Run(
       parsed.argv, platform::SubprocessOptions{
                        .cwd = parsed.cwd,
                        .stdin_text = parsed.stdin_text,

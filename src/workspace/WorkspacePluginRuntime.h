@@ -50,7 +50,12 @@ class WorkspacePluginRuntime {
   // definitions and invokes `on_complete` with the clean/error result. `on_complete`
   // runs on the UI thread during the mailbox drain (or synchronously when no worker is
   // wired / nothing needs loading).
-  void ReloadAsync(const std::filesystem::path& project_root, bool reload_syntax_definitions,
+  // `locality` is the PROJECT's launcher and write gate, forwarded to the host so a
+  // plugin's file writes and tool runs in the project tree follow the project
+  // (TD-2026-10-06-318). Required: a plugin reload that defaulted it would make
+  // every plugin of a remote project write locally.
+  void ReloadAsync(const std::filesystem::path& project_root,
+                   plugin::PluginHost::ProjectLocality locality, bool reload_syntax_definitions,
                    std::function<void(bool)> on_complete);
   std::span<const std::string_view> ChangedSyntaxLanguages() const {
     return changed_syntax_language_views_;

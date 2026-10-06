@@ -642,7 +642,7 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
-### TD-2026-10-06-318 — the plugin host knows the project's root, not its launcher or write gate. [OPEN]
+### TD-2026-10-06-318 — the plugin host knows the project's root, not its launcher or write gate. [RESOLVED 2026-10-06]
 
 Every other writer into a project tree and every other spawn now take their
 locality from the project (`ProjectWorkspaceState::launcher()` and
@@ -671,6 +671,25 @@ The fix is one hand-off: carry the launcher and the gate wherever
 rule), add them to `PluginFsContext`, and choose per path / per manifest. It was
 left out of the slices that did everything else because it crosses the plugin
 thread boundary at several entry points and wants the manifest decision first.
+
+**Resolved the same day — and without the manifest field.** The locality travels
+with the root: `PluginHost::ProjectLocality` (launcher + gate) rides on the reload
+snapshot into `RunReloadLoad`, which stores it beside `current_project_root`, and
+`PluginFsContext` carries both. The decision the entry expected to need a manifest
+turned out to have the same answer as the write: **locality is a property of the
+path an operation targets.** A write, or a tool's working directory, inside the
+project tree goes through the project's gate/launcher; the plugin's own data
+directory stays local (`PluginFsContext::WriteGateFor` / `LauncherFor`). A plugin
+that wants a helper to run locally runs it in its data directory — which is also
+what VS Code's split amounts to in practice, without a second field to keep in
+sync with the paths the plugin actually uses.
+
+`WorkspacePluginRuntime::ReloadAsync` takes the locality as a required parameter
+and the shell passes its project's; the root-only `PluginHost::Reload` overloads
+remain as the local project, for the host's own tests.
+`PluginHost/OperationsFollowTheProjectForProjectPaths` drives a real plugin through
+a project write, a data-dir write and a project-cwd tool run, and fails if the
+write goes through the wrong gate (probed).
 
 ### TD-2026-09-29-317 — the asynchronous open has no perf gate, and it changed what three existing ones measure. [OPEN]
 
@@ -1013,7 +1032,7 @@ there — which is a smaller gap than it sounds (the same objects are sanitized 
 `microide_tests`) but is worth closing when the second test binary lands, since that
 is the same CMake work.
 
-### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [OPEN — git, LSP, DAP, formatter and terminal done (slices 1-4, 2026-09-29 / 2026-10-06); plugin tools remain]
+### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [RESOLVED 2026-10-06 — slices 1-4 plus plugin tools via TD-2026-10-06-318]
 
 **Slice 1 (2026-09-29): a project owns a launcher, and git status routes through
 it.** `ProjectWorkspaceState::launcher()` is that launcher — a pointer so the
@@ -1091,12 +1110,12 @@ different server and restarts it rather than being skipped as unchanged. The
 pinning tests watch `ScriptedProcessLauncher::resolved_argvs`, because these two
 spawns never go through `Run`.
 
-**What remains:** `PluginProcessInterop` runs plugin-requested tools. That one is a
-decision, not a mechanical change — does a plugin's tool follow the project, or is
-it the plugin's own helper that must run where the plugin runs? VSCode's answer is
-the extension host's location: a "workspace" extension runs on the remote and its
-tools with it, a "UI" extension stays local. microide has no such declaration yet,
-so the site stays explicitly local until a plugin manifest can say which it is.
+**Plugin tools (2026-10-06, TD-2026-10-06-318):** a plugin's tool runs on the
+launcher of the tree its working directory is in — the project's for a project
+cwd, the local one for the plugin's data directory. With that, every spawn in the
+tree takes its locality from the project or from the path it targets; the only
+`LocalProcessLauncher()` left outside fallbacks is `HostIntegration.cpp`
+(xdg-open), which must never follow the project.
 
 `HostIntegration.cpp` (xdg-open) stays local by design. The three
 `ProjectLauncher()` fallbacks in `src/workspace/git/` return the local launcher

@@ -9,6 +9,9 @@
 #include <utility>
 #include <vector>
 
+#include "platform/ProcessLauncher.h"
+#include "project/FileWriteGate.h"
+
 namespace microide::plugin {
 
 // Plugin-contributed settings pre-resolved to their current values. Shared as an
@@ -30,6 +33,11 @@ struct PluginHostSnapshot {
   };
 
   std::filesystem::path project_root;
+  // Where the project's processes run and its files are written — travels WITH the
+  // root, because it is a property of the same project (TD-2026-10-06-318). Never
+  // null; the local ones unless the reload said otherwise.
+  const platform::ProcessLauncher* project_launcher = &platform::LocalProcessLauncher();
+  project::FileWriteGate* project_write_gate = &project::LocalFileWriteGate();
   ActiveBuffer active_buffer;
   // Declared plugin settings pre-resolved to their current values, shared as an
   // immutable block across snapshots. Unknown keys resolve to "absent" on the

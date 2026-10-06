@@ -1,6 +1,8 @@
 #include "TestSupport.h"
+#include "ScriptedProcessLauncher.h"
 
 #include "plugin/PluginHost.h"
+#include "project/FileWriteGate.h"
 #include "plugin/PluginInstallRoot.h"
 #include "plugin/PluginThread.h"
 #include "plugin/LuaRuntime.h"
@@ -16,6 +18,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <future>
+#include <span>
+#include <string_view>
 #include <string>
 #include <thread>
 #include <vector>
@@ -3498,7 +3502,8 @@ return ide.plugin({ id = "syntax" })
 
   bool done = false;
   bool clean = false;
-  runtime.ReloadAsync(project_root, /*reload_syntax_definitions=*/true, [&](bool ok) {
+  runtime.ReloadAsync(project_root, microide::plugin::PluginHost::ProjectLocality{},
+                      /*reload_syntax_definitions=*/true, [&](bool ok) {
     clean = ok;
     done = true;
   });
@@ -4036,6 +4041,83 @@ return ide.plugin({
   host.Shutdown();
 }
 
+
+// TD-2026-10-06-318. A plugin's operations follow the project for a path IN the
+// project tree and stay local for the plugin's own data directory. The project's
+// locality here is a recording gate and a scripted launcher; in a remote project
+// they are the mirror gate and the host's launcher.
+class RecordingWriteGate final : public microide::project::FileWriteGate {
+ public:
+  std::vector<std::filesystem::path> writes;
+  Result WriteText(const std::filesystem::path& path, std::string_view text,
+                   Signature signature) override {
+    writes.push_back(path);
+    return microide::project::LocalFileWriteGate().WriteText(path, text, signature);
+  }
+  TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
+    return microide::project::LocalFileWriteGate().ApplyTreeOps(ops);
+  }
+  void DisposeStaged(std::span<const std::filesystem::path> staged) override {
+    microide::project::LocalFileWriteGate().DisposeStaged(staged);
+  }
+};
+
+void TestPluginOperationsFollowTheProjectForProjectPaths() {
+#if !MICROIDE_HAS_LUA_PLUGINS || !defined(__linux__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path data_home = temp_dir.path() / "data";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "locality\n");
+
+  WritePluginInit(global_plugins, "locality", R"(local ide = require("microide")
+return ide.plugin({
+  id = "locality",
+  capabilities = { fs = { read = "data", write = "data" }, process = { exec = true } },
+  setup = function(ctx)
+    ctx.commands.add("locality.probe", function(ctx, args)
+      ctx.log("project-write:" .. tostring(ctx.files.write_text("notes.txt", "p")))
+      local dir = ctx.workspace.data_dir()
+      ctx.log("data-write:" .. tostring(ctx.files.write_text(dir .. "/scratch.txt", "d")))
+      local run = ctx.process.run({"true"}, { cwd = "." })
+      ctx.log("run:" .. tostring(run.exit_code))
+    end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  ScopedEnvVar data_env("XDG_DATA_HOME", data_home.string());
+  RecordingWriteGate gate;
+  ScriptedProcessLauncher launcher;
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  Expect(host.Reload(project_root,
+                     PluginHost::ProjectLocality{.launcher = &launcher, .write_gate = &gate}),
+         "the locality fixture loads");
+  std::string error;
+  Expect(host.ExecuteCommand("locality.probe", {}, &error), "the probe runs: " + error);
+  const auto has_message = [&](std::string_view needle) {
+    for (const std::string& message : host.Messages()) {
+      if (message.find(needle) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(has_message("project-write:true") && has_message("data-write:true"),
+         "both writes succeed");
+  Expect(gate.writes.size() == 1 && gate.writes.front().filename() == "notes.txt",
+         "the project write went through the project's gate, the data-dir write did not");
+  Expect(launcher.runs.size() == 1 && launcher.runs.front().front() == "true",
+         "a tool run in the project went through the project's launcher");
+  Expect(has_message("run:0"), "and its answer is what the plugin saw");
+#endif
+}
+
 }  // namespace
 
 // Regression for the buffer-lifecycle interest gate: open/save/close events must
@@ -4414,6 +4496,8 @@ return ide.plugin({
 }
 
 void RegisterPluginHostTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PluginHost/OperationsFollowTheProjectForProjectPaths",
+          TestPluginOperationsFollowTheProjectForProjectPaths);
   AddTest(tests, "PluginHost/ThemeRegisterRejectsNonTableWithoutCrash",
           TestPluginHostThemeRegisterRejectsNonTableWithoutCrash);
   AddTest(tests, "PluginHost/BufferLifecycleInterestGate",

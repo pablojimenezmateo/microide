@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 
+#include "platform/ProcessLauncher.h"
+#include "project/FileWriteGate.h"
+#include "util/PathMatch.h"
+
 namespace microide::plugin {
 
 // Filesystem reach a plugin may have through ctx.files.*. Default is project-scoped:
@@ -42,6 +46,26 @@ struct PluginFsContext {
   const std::filesystem::path& project_root;
   const std::filesystem::path& data_dir;
   const PluginCapabilities& caps;
+  // The project's locality (PluginHost::ProjectLocality). Not used directly:
+  // locality is a property of the PATH an operation targets, so callers go through
+  // LauncherFor / WriteGateFor (TD-2026-10-06-318).
+  const platform::ProcessLauncher& project_launcher;
+  project::FileWriteGate& project_write_gate;
+
+  // A path inside the project tree belongs to the project — in a remote project it
+  // lives on the host, and its local copy is the mirror. Anything else a plugin may
+  // reach (its own data directory) is this machine's. `path` must already be
+  // resolved and contained, which is what both callers hold.
+  [[nodiscard]] bool InProjectTree(const std::filesystem::path& path) const {
+    return !project_root.empty() && util::NormalizedPathEqualsOrWithin(path, project_root);
+  }
+  [[nodiscard]] const platform::ProcessLauncher& LauncherFor(
+      const std::filesystem::path& cwd) const {
+    return InProjectTree(cwd) ? project_launcher : platform::LocalProcessLauncher();
+  }
+  [[nodiscard]] project::FileWriteGate& WriteGateFor(const std::filesystem::path& path) const {
+    return InProjectTree(path) ? project_write_gate : project::LocalFileWriteGate();
+  }
 };
 
 }  // namespace microide::plugin

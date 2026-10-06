@@ -299,7 +299,12 @@ that file says exactly what, and what each one left):
 - **G2 — one process launcher.** Every spawn routes through
   `platform::ProcessLauncher`, both primitives are linted, and `GitRepository` has
   no default launcher so all 25 sites state their locality. Git is now testable
-  against a scripted launcher with no `git` binary.
+  against a scripted launcher with no `git` binary. As of 2026-10-06 a PROJECT owns its launcher and write
+  gate (`ProjectWorkspaceState::launcher()` / `write_gate()`): git (read and write
+  side, blame), the LSP and DAP, the formatter, terminals, plugin tools and plugin
+  writes all take their locality from it, `TextViewport::Save` takes the gate per
+  call, and tree operations (create/rename/delete/trash) go through the gate's one
+  transactional journal (TD-2026-09-22-301, -305, -308, TD-2026-10-06-318).
 - **G3 — argv-shaped terminal launch**, which fixed `terminal.shell = "ssh host"`
   (ran `ssh -i`) and `terminal.shell = "bash"` (never resolved through PATH).
 - **G9 (part)** — one `ResolveGitDirectory` instead of two that disagreed, then
