@@ -37,6 +37,8 @@ class TabMouseCoordinator {
     std::function<bool()> bottom_panel_visible;
     std::function<SDL_FRect(const SDL_FRect&)> bottom_panel_terminal_new_tab_rect;
     std::function<void(std::string)> open_terminal;
+    std::function<SDL_FRect(const SDL_FRect&)> bottom_panel_maximize_button_rect;
+    std::function<void()> toggle_panel_maximized;
     std::function<const std::vector<WorkspaceShell::VisibleStripTab>&(const SDL_FRect&)>
         compute_visible_bottom_panel_tabs;
     std::function<bool(std::size_t)> activate_bottom_panel_tab;

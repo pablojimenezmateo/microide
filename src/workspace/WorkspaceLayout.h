@@ -50,6 +50,9 @@ struct WorkspaceLayoutInputs {
   bool right_pane_visible = false;
   float right_pane_width = 0.0f;
   bool project_tab_strip_visible = true;
+  // Maximized ("immersive") bottom panel: with the panel visible, everything
+  // below the menu bar and project strip belongs to it. See `WorkspaceLayout`.
+  bool bottom_panel_maximized = false;
 
   friend bool operator==(const WorkspaceLayoutInputs&, const WorkspaceLayoutInputs&) = default;
 };
@@ -67,7 +70,17 @@ struct WorkspaceLayout {
   SDL_FRect breadcrumb{};
   SDL_FRect editor_surface{};
   SDL_FRect status_bar{};
+  // Where the centred overlays (quick open, command palette, Settings) and their
+  // backdrop sit: the editor area, or the bottom panel while it is maximized and
+  // the editor area has collapsed to nothing. Ctrl+P has to work in immersive
+  // mode, and an overlay centred in a zero-height rect is invisible.
+  SDL_FRect overlay_anchor{};
   LayoutMode layout_mode = LayoutMode::Regular;
+  // The panel owns the window below the project strip: the editor column, the
+  // sidebar, the debug pane, the tab strip and the status bar are all
+  // zero-height, and the panel's resize handle is gone (its stored height is
+  // what restoring returns to).
+  bool panel_maximized = false;
 };
 
 bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept;

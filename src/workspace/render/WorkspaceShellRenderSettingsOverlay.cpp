@@ -113,7 +113,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   // stayed at full brightness behind them and neither read as modal at all. They
   // sit inside `editor_area` like the five quick-open surfaces, so they dim the
   // same region those do.
-  DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
+  DrawFilledRect(renderer, layout.overlay_anchor, theme_.overlay_backdrop);
   DrawFilledRect(renderer, vm.rect, theme_.surface_background);
   DrawRect(renderer, vm.rect, theme_.border);
   DrawFilledRect(renderer, vm.header_rect, theme_.chrome_background);

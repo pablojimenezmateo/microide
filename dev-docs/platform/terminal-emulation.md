@@ -8,6 +8,50 @@ protocols, and the performance posture of the grid model. The emulator lives in
 The driving goal is to run modern interactive TUI applications (Claude CLI,
 Codex CLI, vim, less, tmux) correctly while staying fast and low-footprint.
 
+## Panel, tabs and panes
+
+The emulator is one `TerminalSession`; what the user sees is the bottom panel's
+terminal strip, and its structure lives in `src/workspace/`:
+
+- `TerminalPaneState` (`state/WorkspaceTabState.h`) is one session plus its
+  host-side view state: scroll row and follow-tail, the visible-line snapshot,
+  the selection, the pending-input capture for "copy last command", and the
+  launch record (`launch_working_directory`, `launch_command`) that Relaunch
+  reuses.
+- `TerminalTabState` is one strip tab: one to `kMaxTerminalPanes` (6) panes side
+  by side, their normalised horizontal shares (`weights`), the active pane and
+  the unseen-output flag behind the strip's activity dot. `InsertPane` /
+  `RemovePane` / `ResizeDivider` edit panes and weights together, so a pane is
+  never left without a share; `PaneRects(body)` carves the panel body for the
+  render, hit-test and grid-fit paths.
+- `TerminalPaneLayout.{h,cpp}` holds the pure arithmetic: the weight edits (a
+  split halves the split pane, a removal hands the share to the left neighbour,
+  a divider drag moves only its pair with a 10 % floor) and the exact tiling of a
+  body rect into panes and 6 px dividers, with the last pane absorbing the
+  rounding. `tests/TerminalPaneLayoutTests.cpp` pins it, including a random
+  weight-mix tiling property.
+- `TerminalPanelService` (`services/`) owns the verbs: open / close / cycle tabs,
+  split / close / focus / activate panes, relaunch, divider edits, and the
+  panel's visibility (`TogglePanel`, `ToggleTerminal`) and maximized state. The
+  shell supplies session launch (project launcher, `terminal.shell`, scrollback
+  cap, wake channel) and redraw requests through its `Operations`.
+
+Only the ACTIVE pane of the active tab has the keyboard, the selection, the find
+bar and the blinking caret; the other panes paint their own snapshot with a steady
+outline caret and answer the wheel. Each pane is gridded (`Resize(rows, cols)`)
+to its own slice of the body — the row count is the panel's, the column count is
+the slice's — and the fit is keyed on (panel rect, active tab, pane layout
+revision), so a tab switch, a split or a divider move re-fits without reading
+every pane's grid under its mutex each frame.
+
+The maximized ("immersive") panel is a layout input (`bottom_panel_maximized`):
+`ComputeLayout` gives the panel everything below the menu bar and project strip,
+collapses the editor column, sidebar, debug pane and status bar to zero height,
+drops the panel's resize handle and re-anchors the centred overlays to the panel
+(`WorkspaceLayout::overlay_anchor`). Frame prep restores it the moment the
+editor, sidebar or debug pane takes focus (`SyncPanelMaximizedWithFocus`), and
+clears the active tab's activity dot (`NoteActiveTabShown`).
+
 ## Cell model
 
 `TerminalCell` (`src/terminal/TerminalCell.h`) is a trivially copyable POD so

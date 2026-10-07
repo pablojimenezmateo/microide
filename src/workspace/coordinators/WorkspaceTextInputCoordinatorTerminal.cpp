@@ -10,6 +10,7 @@
 
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/TerminalPanelService.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -28,7 +29,7 @@ void ClampTerminalPasteText(std::string& text) {
 
 bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
                                                  SDL_Keymod modifiers) {
-  auto* terminal_tab = operations_.active_terminal_tab();
+  auto* terminal_tab = operations_.active_terminal_pane();
   if (terminal_tab == nullptr) {
     return false;
   }
@@ -73,6 +74,19 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
 
   if (event.key == SDLK_ESCAPE && operations_.terminal_has_selection()) {
     operations_.clear_terminal_selection();
+    return handled_with_panel_redraw();
+  }
+
+  // Enter in a pane whose process has exited relaunches it in place — the
+  // dropped-ssh-link case: the tab, its position and its scrollback stay, and the
+  // shell comes back under the same cwd and command. A pane that was never
+  // launched by the host (a test placeholder) has no launch record and keeps
+  // sending the key to its session.
+  if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
+      (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI | SDL_KMOD_SHIFT)) == 0 &&
+      !terminal_tab->session.running() && !terminal_tab->launch_working_directory.empty() &&
+      operations_.relaunch_active_terminal) {
+    operations_.relaunch_active_terminal();
     return handled_with_panel_redraw();
   }
 
@@ -182,7 +196,7 @@ bool TextInputCoordinator::PasteClipboardIntoTerminal() {
 }
 
 bool TextInputCoordinator::PasteTextIntoTerminal(std::string text) {
-  auto* terminal_tab = operations_.active_terminal_tab();
+  auto* terminal_tab = operations_.active_terminal_pane();
   if (terminal_tab == nullptr) {
     return false;
   }
@@ -219,11 +233,11 @@ bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
 
   // Alt+C / Alt+W mirror VSCode's find-widget toggles.
   if (alt && event.key == SDLK_C) {
-    terminal_find_service_.ToggleCaseSensitive(ActiveTerminalTab());
+    terminal_find_service_.ToggleCaseSensitive(ActiveTerminalPane());
     return handled();
   }
   if (alt && event.key == SDLK_W) {
-    terminal_find_service_.ToggleWholeWord(ActiveTerminalTab());
+    terminal_find_service_.ToggleWholeWord(ActiveTerminalPane());
     return handled();
   }
 
@@ -237,13 +251,13 @@ bool WorkspaceShell::HandleTerminalFindKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_F3:
       // Enter steps forward, Shift+Enter back. The first search lands on the
       // newest hit, so Shift+Enter is the natural way to walk up the history.
-      terminal_find_service_.SelectRelative(ActiveTerminalTab(), shift ? -1 : 1);
+      terminal_find_service_.SelectRelative(ActiveTerminalPane(), shift ? -1 : 1);
       return handled();
     case SDLK_UP:
-      terminal_find_service_.SelectRelative(ActiveTerminalTab(), -1);
+      terminal_find_service_.SelectRelative(ActiveTerminalPane(), -1);
       return handled();
     case SDLK_DOWN:
-      terminal_find_service_.SelectRelative(ActiveTerminalTab(), 1);
+      terminal_find_service_.SelectRelative(ActiveTerminalPane(), 1);
       return handled();
     default:
       break;
@@ -276,7 +290,7 @@ bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
     }
     return false;
   }
-  TerminalTabState* terminal_tab = ActiveTerminalTab();
+  TerminalPaneState* terminal_tab = ActiveTerminalPane();
   if (Contains(fw.close_button, x, y)) {
     terminal_find_service_.Close();
   } else if (Contains(fw.prev_button, x, y)) {
@@ -327,7 +341,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               },
           .terminal_find_query_editor =
               [this]() -> editor::SingleLineEditor* { return &terminal_find_service_.query(); },
-          .refresh_terminal_find = [this]() { terminal_find_service_.Refresh(ActiveTerminalTab()); },
+          .refresh_terminal_find = [this]() { terminal_find_service_.Refresh(ActiveTerminalPane()); },
           .refresh_settings_overlay =
               [this]() {
                 settings_overlay_service_.SyncQueryFromEditor();
@@ -366,7 +380,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
                 RequestActiveEditableBlameNeighborhoodRedraw(first_line, last_line);
               },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
-          .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
+          .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
           .append_terminal_pending_input =
               [this](std::string_view input) { AppendTerminalPendingInput(input); },
@@ -390,6 +404,8 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this](editor::TextViewport* viewport, std::string_view text) {
                 return assist_service_.TrySnippetInsertTextInEditor(viewport, text);
               },
+          .relaunch_active_terminal =
+              [this]() { return MakeTerminalPanelService().RelaunchActivePane(); },
       });
   return *glue_->text_input_coordinator;
 }

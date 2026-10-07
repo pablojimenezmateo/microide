@@ -325,8 +325,12 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         continue;
       }
       auto& editor_state = *tab.editor_state;
-      editor_state.pending_load.Resolve(completion.id,
-                                        editor_state.viewport.content_revision());
+      // Resolved only to CONSUME the slot (a duplicate delivery then reads
+      // NotMine). The claim itself is not the decision here: `Holds` above already
+      // matched the id, and a Loading tab is read-only, so its content revision
+      // cannot have moved — the Content check below is what decides.
+      (void) editor_state.pending_load.Resolve(completion.id,
+                                               editor_state.viewport.content_revision());
       if (editor_state.content != TabEntry::EditorTabState::Content::Loading) {
         // Something already gave this tab content — a retarget, a reload, a
         // session restore. Whatever it installed is newer than these bytes.
@@ -374,6 +378,10 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
                                                    editor_state.restored_cursor_column,
                                                    editor_state.restored_scroll_line,
                                                    editor_state.restored_horizontal_scroll);
+      if (editor_state.center_cursor_on_load) {
+        editor_state.center_cursor_on_load = false;
+        editor_state.viewport.CenterLine(editor_state.viewport.cursor_line());
+      }
       editor_state.content = TabEntry::EditorTabState::Content::Ready;
       editor_state.folding_model->Clear();
       NotifyPluginBufferOpen(path);

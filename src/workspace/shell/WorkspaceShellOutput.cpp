@@ -57,7 +57,7 @@ void WorkspaceShell::CloseOutputChannelTab(std::string_view channel_id) {
     return;
   }
 
-  if (ActiveTerminalTab() != nullptr) {
+  if (ActiveTerminalPane() != nullptr) {
     context_.current_project_state.panel.content = PanelContentKind::Terminal;
     return;
   }

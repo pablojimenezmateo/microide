@@ -148,9 +148,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   }
   if (!skip_bottom_panel) {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::BottomPanel");
-    RenderBottomPanelSurface(
-        renderer, layout,
-        ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : std::size_t{0});
+    RenderBottomPanelSurface(renderer, layout);
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::TooltipAndMenus");

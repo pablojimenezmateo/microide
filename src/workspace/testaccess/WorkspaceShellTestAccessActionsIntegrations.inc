@@ -575,14 +575,16 @@
   }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
     if (shell.context_.current_project_state.terminal_tabs.empty()) {
-      shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
+      shell.context_.current_project_state.terminal_tabs.push_back(
+          MakeTerminalTab(std::make_unique<WorkspaceShell::TerminalPaneState>()));
     }
     shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
     shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
   static void AddTerminalTab(WorkspaceShell& shell) {
-    shell.context_.current_project_state.terminal_tabs.push_back(std::make_unique<WorkspaceShell::TerminalTabState>());
+    shell.context_.current_project_state.terminal_tabs.push_back(
+        MakeTerminalTab(std::make_unique<WorkspaceShell::TerminalPaneState>()));
     shell.context_.current_project_state.active_terminal_tab_index = shell.context_.current_project_state.terminal_tabs.size() - 1;
     shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
@@ -590,23 +592,75 @@
   static void ConsumeTerminalSessionUpdates(WorkspaceShell& shell) {
     shell.ConsumeTerminalSessionUpdates();
   }
+  // --- terminal panes / panel (TerminalPanelService) ---
+  static std::size_t TerminalPaneCount(const WorkspaceShell& shell) {
+    const auto* tab = shell.context_.current_project_state.active_terminal_tab();
+    return tab == nullptr ? 0 : tab->pane_count();
+  }
+  static std::size_t ActiveTerminalPaneIndex(const WorkspaceShell& shell) {
+    const auto* tab = shell.context_.current_project_state.active_terminal_tab();
+    return tab == nullptr ? 0 : tab->active_pane;
+  }
+  static std::vector<float> TerminalPaneWeights(const WorkspaceShell& shell) {
+    const auto* tab = shell.context_.current_project_state.active_terminal_tab();
+    return tab == nullptr ? std::vector<float>{}
+                          : std::vector<float>(tab->weights.begin(), tab->weights.end());
+  }
+  static microide::workspace::TerminalPaneRectsLayout TerminalPaneRects(WorkspaceShell& shell) {
+    return shell.MakeTerminalPanelService().PaneRects(CurrentLayout(shell));
+  }
+  static microide::terminal::TerminalSession& TerminalPaneSession(WorkspaceShell& shell,
+                                                                  std::size_t pane_index) {
+    return shell.context_.current_project_state.active_terminal_tab()->panes[pane_index]->session;
+  }
+  static microide::terminal::TerminalSession& TerminalTabSession(WorkspaceShell& shell,
+                                                                 std::size_t tab_index) {
+    return shell.context_.current_project_state.terminal_tabs[tab_index]->active()->session;
+  }
+  static bool TerminalTabHasUnseenOutput(const WorkspaceShell& shell, std::size_t tab_index) {
+    return shell.context_.current_project_state.terminal_tabs[tab_index]->has_unseen_output;
+  }
+  static bool PanelMaximized(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.panel.maximized;
+  }
+  static std::filesystem::path ActiveTerminalPaneLaunchDirectory(const WorkspaceShell& shell) {
+    const auto* pane = shell.context_.current_project_state.active_terminal_pane();
+    return pane == nullptr ? std::filesystem::path{} : pane->launch_working_directory;
+  }
+  static void OpenTerminalViaService(WorkspaceShell& shell, std::string command = {}) {
+    shell.MakeTerminalPanelService().OpenTerminal(std::move(command));
+  }
+  static bool ActivateTerminalTab(WorkspaceShell& shell, std::size_t index) {
+    return shell.MakeTerminalPanelService().ActivateTerminalTab(index);
+  }
+  static bool TerminalPaneFollowTail(const WorkspaceShell& shell, std::size_t pane_index) {
+    return shell.context_.current_project_state.active_terminal_tab()->panes[pane_index]->follow_tail;
+  }
+  static SDL_FRect BottomPanelMaximizeButtonRect(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                 kWorkspaceBottomPanelHeaderHeight);
+    return shell.tab_strip_service_.BottomPanelMaximizeButtonRect(
+        shell.layout_mode_service_.CurrentMode(), panel_header);
+  }
   static std::size_t TerminalTabCount(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.terminal_tabs.size();
   }
   static microide::terminal::TerminalSession& ActiveTerminalSession(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->session;
+    return shell.context_.current_project_state.active_terminal_pane()->session;
   }
   static void SetActiveTerminalFollowTail(WorkspaceShell& shell, bool follow_tail) {
-    shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->follow_tail = follow_tail;
+    shell.context_.current_project_state.active_terminal_pane()->follow_tail = follow_tail;
   }
   static bool ActiveTerminalFollowTail(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->follow_tail;
+    return shell.context_.current_project_state.active_terminal_pane()->follow_tail;
   }
   static void SetActiveTerminalScrollRow(WorkspaceShell& shell, int scroll_row) {
-    shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->scroll_row = scroll_row;
+    shell.context_.current_project_state.active_terminal_pane()->scroll_row = scroll_row;
   }
   static int ActiveTerminalScrollRow(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->scroll_row;
+    return shell.context_.current_project_state.active_terminal_pane()->scroll_row;
   }
   static void AppendTerminalPendingInput(WorkspaceShell& shell, std::string_view input) {
     shell.AppendTerminalPendingInput(input);
@@ -615,10 +669,10 @@
     shell.SubmitTerminalPendingInput();
   }
   static std::size_t ActiveTerminalPendingInputSize(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->pending_input.size();
+    return shell.context_.current_project_state.active_terminal_pane()->pending_input.size();
   }
   static bool ActiveTerminalPendingInputTruncated(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.terminal_tabs[shell.context_.current_project_state.active_terminal_tab_index]->pending_input_truncated;
+    return shell.context_.current_project_state.active_terminal_pane()->pending_input_truncated;
   }
   static bool HandleTerminalKeyDown(WorkspaceShell& shell,
                                     SDL_Keycode key,
@@ -694,7 +748,7 @@
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,
                                       std::size_t column) {
-    const auto* terminal_tab = shell.ActiveTerminalTab();
+    const auto* terminal_tab = shell.ActiveTerminalPane();
     const auto lines = terminal_tab != nullptr ? terminal_tab->session.SnapshotLines()
                                                : std::vector<microide::terminal::TerminalLine>{};
     const WorkspaceLayout layout = CurrentLayout(shell);
@@ -707,7 +761,7 @@
     };
   }
   static SDL_FPoint BottomPanelTextOrigin(WorkspaceShell& shell) {
-    const auto* terminal_tab = shell.ActiveTerminalTab();
+    const auto* terminal_tab = shell.ActiveTerminalPane();
     const std::size_t line_count =
         terminal_tab != nullptr ? terminal_tab->session.LineCount() : 0;
     const WorkspaceLayout layout = CurrentLayout(shell);
@@ -718,7 +772,7 @@
     return shell.terminal_find_service_;
   }
   static void RefreshTerminalFind(WorkspaceShell& shell) {
-    shell.terminal_find_service_.Refresh(shell.ActiveTerminalTab());
+    shell.terminal_find_service_.Refresh(shell.ActiveTerminalPane());
   }
   static bool HandleTerminalFindKeyDown(WorkspaceShell& shell,
                                         SDL_Keycode key,

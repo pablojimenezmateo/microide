@@ -28,6 +28,7 @@ enum class DragTarget {
   EditorVerticalScrollbar,
   EditorHorizontalScrollbar,
   EditorSplitDivider,
+  TerminalPaneDivider,
   CompareVerticalScrollbar,
   CompareHorizontalScrollbar,
   SettingsScrollbar,
@@ -176,6 +177,8 @@ struct InteractionState {
   // boundary pair still names the same two panes after the resize moves them.
   std::uint8_t drag_editor_split_node = 0;
   std::uint8_t drag_editor_split_boundary = 0;
+  // Boundary (left pane index) of the terminal pane divider being dragged.
+  std::uint8_t drag_terminal_pane_boundary = 0;
   TabDragState tab_drag;
   TabSlideState tab_slide;
   // Sub-tick wheel accumulators. High-resolution trackpads and touchpads emit

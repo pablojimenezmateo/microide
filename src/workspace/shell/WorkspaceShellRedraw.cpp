@@ -137,6 +137,7 @@ WorkspaceLayoutInputs WorkspaceShell::CurrentLayoutInputs(float window_width,
       .right_pane_visible = state.debug_pane.visible,
       .right_pane_width = state.debug_pane.width,
       .project_tab_strip_visible = ProjectTabStripVisible(),
+      .bottom_panel_maximized = state.panel.maximized,
   };
 }
 
@@ -742,7 +743,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   if (!context_.current_project_state.overlay.visible) {
     return std::nullopt;
   }
-  return ComputeOverlayRect(layout->editor_area);
+  return ComputeOverlayRect(layout->overlay_anchor);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
@@ -1263,7 +1264,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
     // The bottom panel's terminal is checked first: its selection drag is
     // independent of which editor tab is active, so keying off the tab kind
     // (as the other three arms do) would never reach it (TD-2026-08-13-205).
-    if (TerminalTabState* terminal_tab = ActiveTerminalTab();
+    if (TerminalPaneState* terminal_tab = ActiveTerminalPane();
         terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
         BottomPanelShowsTerminal()) {
       const std::optional<selection_autoscroll::StepDelta> delta =
@@ -1346,7 +1347,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       synthetic.motion.x = context_.interaction_state.selection_pointer_x;
       synthetic.motion.y = context_.interaction_state.selection_pointer_y;
       synthetic.motion.state = SDL_BUTTON_LMASK;
-      const TerminalTabState* terminal_tab = ActiveTerminalTab();
+      const TerminalPaneState* terminal_tab = ActiveTerminalPane();
       if (terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
           BottomPanelShowsTerminal()) {
         (void)MakePanelMouseCoordinator().HandleMotion(synthetic);

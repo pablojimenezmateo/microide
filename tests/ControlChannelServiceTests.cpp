@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TerminalSessionTestAccess.h"
 
 #include "util/Log.h"
 
@@ -15,6 +16,7 @@
 #include "workspace/control/ControlChannelService.h"
 #include "workspace/debug/LaunchConfig.h"
 #include "workspace/WorkspaceContext.h"
+#include "workspace/state/WorkspaceTabState.h"
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/socket.h>
@@ -65,6 +67,130 @@ std::string ExchangeLine(microide::workspace::ControlChannelService& service, in
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   return received;
+}
+
+// Agent-facing queries: `editor`, `commands`, `terminals`, `terminal-output`.
+// Ported from the never-merged feat/editor-groups control branch and made
+// pane-aware (a terminal tab is a group of panes now).
+void TestAgentQueriesOverSocket() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-agent-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  auto& state = context.current_project_state;
+  state.root = "/tmp/proj";
+  // Two terminal tabs; the first is split into two panes with output in each.
+  for (int t = 0; t < 2; ++t) {
+    state.terminal_tabs.push_back(microide::workspace::MakeTerminalTab(
+        std::make_unique<microide::workspace::TerminalPaneState>()));
+  }
+  state.terminal_tabs[0]->InsertPane(1, std::make_unique<microide::workspace::TerminalPaneState>());
+  state.terminal_tabs[0]->active_pane = 0;
+  state.active_terminal_tab_index = 0;
+  auto& left = state.terminal_tabs[0]->panes[0]->session;
+  auto& right = state.terminal_tabs[0]->panes[1]->session;
+  TerminalSessionTestAccess::Reset(left, 8, 40);
+  TerminalSessionTestAccess::Reset(right, 8, 40);
+  TerminalSessionTestAccess::SetLaunchLabel(left, "agent");
+  TerminalSessionTestAccess::SetLaunchLabel(right, "build");
+  TerminalSessionTestAccess::AppendOutput(left, "first\r\nsecond\r\nthird\r\n");
+  TerminalSessionTestAccess::AppendOutput(right, "compiling\r\ndone\r\n");
+  TerminalSessionTestAccess::SetRunning(left, true);
+  TerminalSessionTestAccess::SetRunning(right, false);
+
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context,
+      microide::workspace::ControlChannelService::Operations{
+          .execute_command_line =
+              [](const std::string&) {
+                return microide::workspace::ControlChannelService::CommandOutcome{.ok = true};
+              },
+      });
+  service.SetWakeChannel(0);
+  Expect(service.Start("/tmp/proj"), "service should start");
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect");
+
+  // editor: one group, the split tree is a single leaf, the focused group flagged.
+  const auto editor = util::ParseJson(ExchangeLine(service, fd, R"({"query":"editor"})"));
+  Expect(editor.has_value() && (*editor)["ok"].AsBool(), "editor query should succeed");
+  const util::JsonValue& editor_result = (*editor)["result"];
+  Expect(editor_result["focusedGroupIndex"].AsInt(-1) == 0, "editor reports the focused group");
+  Expect(editor_result["groups"].IsArray() && editor_result["groups"].AsArray().size() == 1 &&
+             editor_result["groups"].AsArray()[0]["focused"].AsBool(),
+         "editor lists every group and flags the focused one");
+  Expect(editor_result["split"].IsArray() && editor_result["split"].AsArray().size() == 1 &&
+             editor_result["split"].AsArray()[0]["orientation"].AsString() == "leaf",
+         "an unsplit editor area is a single-leaf split tree");
+
+  // commands: the runnable registry, including the verbs this change added.
+  const auto commands = util::ParseJson(ExchangeLine(service, fd, R"({"query":"commands"})"));
+  Expect(commands.has_value() && (*commands)["ok"].AsBool(), "commands query should succeed");
+  bool saw_reveal = false;
+  bool saw_split = false;
+  for (const util::JsonValue& command : (*commands)["result"].AsArray()) {
+    saw_reveal = saw_reveal || command["command"].AsString() == "reveal";
+    saw_split = saw_split || command["command"].AsString() == "term-split";
+    Expect(!command["usage"].AsString().empty(), "every command carries its usage");
+  }
+  Expect(saw_reveal && saw_split, "commands lists reveal and term-split");
+
+  // terminals: tabs with their panes, so an agent can address one.
+  const auto terminals = util::ParseJson(ExchangeLine(service, fd, R"({"query":"terminals"})"));
+  Expect(terminals.has_value() && (*terminals)["ok"].AsBool(), "terminals query should succeed");
+  const auto& tabs = (*terminals)["result"].AsArray();
+  Expect(tabs.size() == 2, "terminals lists both tabs");
+  Expect(tabs[0]["active"].AsBool() && tabs[0]["panes"].AsArray().size() == 2,
+         "the active tab reports its two panes");
+  Expect(tabs[0]["panes"].AsArray()[1]["label"].AsString() == "build" &&
+             !tabs[0]["panes"].AsArray()[1]["running"].AsBool(),
+         "a pane reports its label and whether its process is still running");
+
+  // terminal-output: defaults to the active tab's active pane.
+  const auto out = util::ParseJson(ExchangeLine(service, fd, R"({"query":"terminal-output"})"));
+  Expect(out.has_value() && (*out)["ok"].AsBool(), "terminal-output should succeed");
+  Expect((*out)["result"]["pane"].AsInt(-1) == 0 && (*out)["result"]["running"].AsBool(),
+         "the default is the active pane");
+  const std::string left_text = (*out)["result"]["text"].AsString();
+  Expect(left_text.find("first\nsecond\nthird") != std::string::npos,
+         "terminal-output returns the scrollback as newline-joined text");
+  Expect(left_text.empty() || left_text.back() != '\n', "trailing blank rows are trimmed");
+
+  // An explicit pane and a line cap.
+  const auto right_out = util::ParseJson(ExchangeLine(
+      service, fd, R"({"query":"terminal-output","args":{"tab":0,"pane":1}})"));
+  Expect(right_out.has_value() && (*right_out)["ok"].AsBool() &&
+             (*right_out)["result"]["text"].AsString().find("done") != std::string::npos &&
+             !(*right_out)["result"]["running"].AsBool(),
+         "terminal-output addresses another pane by index");
+  const auto capped = util::ParseJson(ExchangeLine(
+      service, fd, R"({"query":"terminal-output","args":{"pane":0,"lines":1}})"));
+  Expect(capped.has_value() && (*capped)["ok"].AsBool() &&
+             (*capped)["result"]["text"].AsString().find("first") == std::string::npos,
+         "lines caps the reply to the tail of the scrollback");
+
+  const auto bad = util::ParseJson(ExchangeLine(
+      service, fd, R"({"query":"terminal-output","args":{"tab":0,"pane":7}})"));
+  Expect(bad.has_value() && !(*bad)["ok"].AsBool(), "an out-of-range pane is an error, not a crash");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
 }
 
 void TestLaunchConfigsAndAdaptersOverSocket() {
@@ -730,6 +856,7 @@ void TestDebugCommandAutoEnablesDebugger() {
 #else
 
 void TestQueryAndCommandOverSocket() {}
+void TestAgentQueriesOverSocket() {}
 void TestQueryResponseIsBounded() {}
 void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
@@ -915,6 +1042,7 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestQueryResponseIsBounded);
   AddTest(tests, "ControlChannelService/ControlListFiltersDeadPids",
           TestControlListFiltersDeadPids);
+  AddTest(tests, "ControlChannelService/AgentQueriesOverSocket", TestAgentQueriesOverSocket);
   AddTest(tests, "ControlChannelService/LaunchConfigsAndAdaptersOverSocket",
           TestLaunchConfigsAndAdaptersOverSocket);
   AddTest(tests, "ControlChannelService/StdoutMirrorEmitsWithoutConnections",

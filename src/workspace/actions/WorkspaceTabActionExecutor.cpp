@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/Parse.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -82,6 +83,44 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       std::string error_message;
       if (!context_.OpenPath(request->path, &error_message)) {
         return reject(error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::Reveal: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      if (args.size() < 2) {
+        return reject("reveal requires <path> <line[:col]>");
+      }
+      const std::optional<OpenPathRequest> path_request =
+          BuildOpenPathRequest({args[0]}, context_.ProjectRoot());
+      const std::optional<LineNavigationRequest> line_request =
+          BuildLineNavigationRequest({args[1]}, /*allow_zero_line=*/false);
+      if (!path_request.has_value() || !line_request.has_value() ||
+          line_request->requested_line <= 0) {
+        return reject("reveal requires <path> <line[:col]> with a positive line");
+      }
+      std::string error_message;
+      if (!context_.RevealPathAtLine(path_request->path, *line_request, &error_message)) {
+        return reject(error_message.empty() ? "Cannot reveal " + args[0] : error_message);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::TabToGroup: {
+      if (args.empty()) {
+        return reject("tab-to-group requires <group> [slot]");
+      }
+      const std::optional<std::size_t> group = util::ParseSize(args[0]);
+      std::optional<std::size_t> slot;
+      if (args.size() > 1) {
+        slot = util::ParseSize(args[1]);
+        if (!slot.has_value()) {
+          return reject("tab-to-group slot must be a non-negative integer");
+        }
+      }
+      if (!group.has_value() || !context_.MoveActiveTabToGroup(*group, slot)) {
+        return reject("No editor group " + args[0] + " to move the tab to");
       }
       return DispatchResult::Handled;
     }

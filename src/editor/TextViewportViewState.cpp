@@ -33,6 +33,8 @@ void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visibl
   // whole extra O(document) wrap of a width nothing will ever paint.
   const bool reanchor = wrap_width_changed && document_ != nullptr && scroll_line_ != 0;
   const std::size_t anchor_line = reanchor ? VisualRowLineIndex(scroll_line_) : 0;
+  const bool size_changed =
+      visible_lines_ != next_visible_lines || visible_columns_ != next_visible_columns;
   visible_lines_ = next_visible_lines;
   visible_columns_ = next_visible_columns;
   if (wrap_width_changed) {
@@ -45,6 +47,19 @@ void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visibl
     }
   }
   ClampScrollState();
+  // A centre requested before this viewport had its real size: re-centre now that
+  // it does. One-shot either way — the request describes the sizing that follows
+  // it, not every later resize.
+  if (pending_center_line_ != kNoPendingCenter) {
+    const std::size_t line = pending_center_line_;
+    pending_center_line_ = kNoPendingCenter;
+    if (size_changed && document_ != nullptr && line < document_->lines.size()) {
+      const std::size_t visual_row = VisualRowForLine(line);
+      const std::size_t half = visible_lines_ / 2;
+      scroll_line_ = visual_row > half ? visual_row - half : 0;
+      ClampScrollState();
+    }
+  }
 }
 
 void TextViewport::SetScrollLine(std::size_t scroll_line) {
@@ -505,6 +520,18 @@ void TextViewport::MoveCursorToVisualColumn(std::size_t line,
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
   const std::size_t text_column = TextColumnAtVisualColumn(clamped_line, visual_column);
   MoveCursorTo(clamped_line, text_column, extend_selection);
+}
+
+void TextViewport::CenterLine(std::size_t line) {
+  if (document_->lines.empty()) {
+    return;
+  }
+  const std::size_t clamped = std::min(line, document_->lines.size() - 1);
+  pending_center_line_ = clamped;
+  const std::size_t visual_row = VisualRowForLine(clamped);
+  const std::size_t half = visible_lines_ / 2;
+  scroll_line_ = visual_row > half ? visual_row - half : 0;
+  ClampScrollState();
 }
 
 void TextViewport::ScrollVertical(int delta) {

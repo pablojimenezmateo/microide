@@ -28,6 +28,7 @@
 #include "workspace/DiffWrapLayout.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/state/SurfaceTokenWindow.h"
+#include "workspace/TerminalPaneLayout.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -395,6 +396,9 @@ struct EditorTabState {
   // and these fields carry the real on-disk path + caret/scroll so the tab can
   // be hydrated lazily (session restore / background open).
   std::filesystem::path restored_path;
+  // `reveal` targeted this tab while its content was still loading: centre the
+  // restored caret line once the load lands (the placeholder had no real size).
+  bool center_cursor_on_load = false;
   std::size_t restored_cursor_line = 0;
   std::size_t restored_cursor_column = 0;
   std::size_t restored_scroll_line = 0;
@@ -490,9 +494,25 @@ struct TabEntry {
 // owns the shape, rather than an error at whichever call site next reaches for
 // `emplace()`.
 static_assert(std::is_default_constructible_v<TabEntry::EditorTabState>);
+
+// Whether closing this tab would discard edits: an editable compare's right side,
+// a merge's result, or an editor buffer. The one definition the tab coordinator's
+// close prompt and the control channel's `editor` query both read.
+inline bool TabEntryIsDirty(const TabEntry& tab) {
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    return tab.compare->right_editable && tab.compare->right_viewport.dirty();
+  }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    return tab.merge->result_viewport.dirty();
+  }
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return false;
+  }
+  return tab.editor_state->viewport.dirty();
+}
 static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
-struct TerminalTabState {
+struct TerminalPaneState {
   terminal::TerminalSession session;
   terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
   std::size_t visible_lines_first_row = 0;
@@ -520,7 +540,106 @@ struct TerminalTabState {
   // absolute-row mirrors below (scroll_row, selection, last_command_start_row) when
   // scrollback is trimmed, so they track the same content instead of jumping.
   std::uint64_t observed_scrollback_trim_total = 0;
+  // How this pane was launched, kept so an exited session (a dropped ssh link,
+  // a shell that was killed) can be relaunched in place with the same cwd and
+  // command rather than opened as a fresh tab that loses its position.
+  std::filesystem::path launch_working_directory;
+  std::string launch_command;
 };
+
+// One tab of the bottom panel's terminal strip: one to `kMaxTerminalPanes`
+// sessions laid out side by side (VS Code's terminal group). The strip shows the
+// tab; the keyboard, the find bar, the selection and the scroll verbs all act on
+// its ACTIVE pane, and every other pane only paints. `panes` and `weights` are
+// parallel and edited together through the methods below so a pane can never be
+// left without a share of the body (the same discipline `EditorSplitTree` keeps
+// with `editor_groups`).
+struct TerminalTabState {
+  std::vector<std::unique_ptr<TerminalPaneState>> panes;
+  TerminalPaneWeights weights;
+  std::size_t active_pane = 0;
+  // Output arrived while this tab was not the one on screen. Drawn as a dot on
+  // the strip tab and cleared the first frame the tab is shown, so an agent that
+  // finishes in a background tab is visible without switching to it.
+  bool has_unseen_output = false;
+  // Bumped by every structural edit and divider move; the per-frame grid resize
+  // keys on it instead of re-reading each pane's rows and columns under the
+  // session mutex.
+  std::uint64_t layout_revision = 0;
+
+  TerminalPaneState* active() {
+    return active_pane < panes.size() ? panes[active_pane].get() : nullptr;
+  }
+  const TerminalPaneState* active() const {
+    return active_pane < panes.size() ? panes[active_pane].get() : nullptr;
+  }
+  std::size_t pane_count() const { return panes.size(); }
+  bool full() const { return panes.size() >= kMaxTerminalPanes; }
+
+  // Insert `pane` at `index` (clamped), halving the share of the pane it was
+  // split from, and make it the active pane. Returns false (pane untouched) when
+  // the tab is full.
+  bool InsertPane(std::size_t index, std::unique_ptr<TerminalPaneState> pane) {
+    if (full() || pane == nullptr) {
+      return false;
+    }
+    index = std::min(index, panes.size());
+    InsertTerminalPaneWeight(weights, index);
+    panes.insert(panes.begin() + static_cast<std::ptrdiff_t>(index), std::move(pane));
+    active_pane = index;
+    ++layout_revision;
+    return true;
+  }
+
+  // Drop pane `index`, giving its share to its left neighbour. The active pane
+  // follows the survivor on the left (or the new first pane). Returns the
+  // removed pane so a caller can finish its shutdown; null when `index` is out
+  // of range.
+  std::unique_ptr<TerminalPaneState> RemovePane(std::size_t index) {
+    if (index >= panes.size()) {
+      return nullptr;
+    }
+    std::unique_ptr<TerminalPaneState> removed = std::move(panes[index]);
+    panes.erase(panes.begin() + static_cast<std::ptrdiff_t>(index));
+    RemoveTerminalPaneWeight(weights, index);
+    if (panes.empty()) {
+      active_pane = 0;
+    } else if (active_pane > index || active_pane >= panes.size()) {
+      active_pane = std::min(active_pane == 0 ? 0 : active_pane - 1, panes.size() - 1);
+    }
+    ++layout_revision;
+    return removed;
+  }
+
+  bool ResizeDivider(std::size_t boundary, float first_share) {
+    if (!ResizeTerminalPaneDivider(weights, boundary, first_share)) {
+      return false;
+    }
+    ++layout_revision;
+    return true;
+  }
+  bool ResetDivider(std::size_t boundary) { return ResizeDivider(boundary, 0.5f); }
+
+  // The panes carved out of the panel body, and the active pane's slice of it
+  // (the whole body for a single pane).
+  TerminalPaneRectsLayout PaneRects(const SDL_FRect& body) const {
+    return ComputeTerminalPaneRects(body, std::span<const float>(weights.data(), weights.size()));
+  }
+  SDL_FRect ActivePaneRect(const SDL_FRect& body) const {
+    if (panes.size() < 2) {
+      return body;
+    }
+    const TerminalPaneRectsLayout rects = PaneRects(body);
+    return active_pane < rects.panes.size() ? rects.panes[active_pane] : body;
+  }
+};
+
+// A tab around one pane: the shape every terminal starts in.
+inline std::unique_ptr<TerminalTabState> MakeTerminalTab(std::unique_ptr<TerminalPaneState> pane) {
+  auto tab = std::make_unique<TerminalTabState>();
+  tab->InsertPane(0, std::move(pane));
+  return tab;
+}
 
 struct EditorPreferences {
   std::size_t tab_size = 4;

@@ -34,7 +34,12 @@ void CommandLineCoordinator::SetFeedback(std::string feedback) {
 
 bool CommandLineCoordinator::RejectAction(ActionSource source, std::string feedback) {
   if (source != ActionSource::Command) {
-    return true;
+    // A rejection WITH a sentence counts as handled from a shortcut, menu or
+    // button: the refusal is shown and the gesture is spent. A SILENT rejection
+    // is a decline — the verb had nothing to act on and says nothing — so a
+    // shortcut's key falls through to whatever is under it (a single-pane
+    // terminal keeps Alt+Left for its programs).
+    return !feedback.empty();
   }
   SetFeedback(std::move(feedback));
   return false;

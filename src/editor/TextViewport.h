@@ -295,6 +295,15 @@ class TextViewport {
                                 std::size_t visual_column,
                                 bool extend_selection = false);
   void ScrollVertical(int delta);
+  // Scroll so `line` (0-based logical line) sits mid-viewport, clamped to the
+  // valid scroll range: a line near EOF or a tiny viewport settles as close to
+  // centred as the content allows. Soft-wrap aware (scrolls in visual rows).
+  //
+  // The request is also remembered until the next SetViewportSize, and re-applied
+  // there if the size changed: a tab opened and centred in one step (`reveal`)
+  // has no real size until the frame after it opens, and centring in its initial
+  // one-row viewport would leave the line at the top of the pane.
+  void CenterLine(std::size_t line);
   void Page(int direction, bool extend_selection = false);
   void InsertCharacter(char character);
   void InsertText(std::string_view text, bool record_undo = true);
@@ -1294,6 +1303,11 @@ class TextViewport {
   std::size_t scroll_line_ = 0;
   std::size_t horizontal_scroll_ = 0;
   std::size_t visible_lines_ = 1;
+  // CenterLine's target until the next SetViewportSize (see CenterLine). Copied
+  // with the rest: a pane cloned from a just-revealed tab is centred the same way
+  // on its own first sizing.
+  static constexpr std::size_t kNoPendingCenter = static_cast<std::size_t>(-1);
+  std::size_t pending_center_line_ = kNoPendingCenter;
   std::size_t visible_columns_ = 80;
   std::size_t tab_size_ = 4;
   std::size_t indent_width_ = 4;
@@ -1302,6 +1316,9 @@ class TextViewport {
   bool save_trim_trailing_whitespace_ = false;
   bool save_ensure_final_newline_ = false;
   std::optional<LineEnding> save_line_ending_override_;
+  // Declared before `lc_view_` because both the copy and the move constructor
+  // initialize it there; clang's -Wreorder-ctor rejects the other order.
+  bool read_only_ = false;
   // Shared, not owned: see SetLanguageContractView. Null ⇒ no contract.
   std::shared_ptr<const LanguageContractView> lc_view_;
   // language_id() memo. Keyed on document identity + content revision + path +
@@ -1310,7 +1327,6 @@ class TextViewport {
   mutable std::string language_id_;
   mutable const void* language_id_document_ = nullptr;
   mutable std::filesystem::path language_id_path_;
-  bool read_only_ = false;
   mutable std::uint64_t language_id_content_revision_ = 0;
   mutable std::size_t language_id_registry_revision_ = 0;
   mutable bool language_id_valid_ = false;

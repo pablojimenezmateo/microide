@@ -529,6 +529,15 @@ struct LspUiState {
 struct PanelState {
   PanelContentKind content = PanelContentKind::None;
   float height = kWorkspaceDefaultBottomPanelHeight;
+  // Maximized ("immersive") panel: the layout gives the panel everything below
+  // the menu bar and project strip, and the editor column, sidebar, debug pane
+  // and status bar collapse. `height` is untouched so restoring is exact. Only
+  // meaningful while `content != None`; a hidden panel keeps the flag so it
+  // comes back maximized, as VS Code's does.
+  bool maximized = false;
+  // What the panel showed before it was hidden by the panel toggle, so showing
+  // it again brings the same content back rather than always a terminal.
+  PanelContentKind restore_content = PanelContentKind::None;
   // Horizontal scroll offset (first visible tab index) for the bottom-panel tab
   // strip, shared by terminal and output tabs so an overflowed strip stays
   // reachable via the chevrons or the header wheel.
@@ -822,6 +831,8 @@ struct ProjectWorkspaceState {
   SidebarState sidebar;
   OverlayState overlay;
   PanelState panel;
+  // The bottom panel's terminal strip: one entry per strip tab, each a group of
+  // side-by-side panes (see TerminalTabState).
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
 
@@ -838,6 +849,16 @@ struct ProjectWorkspaceState {
     return active_terminal_tab_index < terminal_tabs.size()
                ? terminal_tabs[active_terminal_tab_index].get()
                : nullptr;
+  }
+  // The pane the keyboard, find bar and selection act on: the active tab's
+  // active pane, or nullptr when there is no terminal at all.
+  TerminalPaneState* active_terminal_pane() {
+    TerminalTabState* tab = active_terminal_tab();
+    return tab != nullptr ? tab->active() : nullptr;
+  }
+  const TerminalPaneState* active_terminal_pane() const {
+    const TerminalTabState* tab = active_terminal_tab();
+    return tab != nullptr ? tab->active() : nullptr;
   }
   editor::DiagnosticsStore diagnostics_store;
 

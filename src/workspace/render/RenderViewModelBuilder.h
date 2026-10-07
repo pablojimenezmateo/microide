@@ -264,6 +264,15 @@ struct BottomPanelSurfaceViewModel {
   // the visible rows. Null when nothing is highlighted.
   const std::vector<terminal::TerminalSearchMatch>* find_matches = nullptr;
   std::size_t find_selected_index = 0;
+
+  // The strip tab on screen (Terminal content only): its panes paint side by
+  // side, the active one with the selection, the find highlights and the blinking
+  // caret. Borrowed on the same contract as `find_matches`; mutable because the
+  // paint refreshes each pane's visible-line snapshot and clamped scroll, so it
+  // is filled by frame prep (which owns the state) along with `terminal_panes`
+  // once the panel rect is known.
+  TerminalTabState* terminal_tab = nullptr;
+  TerminalPaneRectsLayout terminal_panes;
 };
 
 // Right-side debug pane surface (Call Stack / Variables / Watch / Breakpoints).

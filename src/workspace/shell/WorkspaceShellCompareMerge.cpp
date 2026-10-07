@@ -174,7 +174,7 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .reveal_compare_picker_selection =
               [this]() {
                 if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-                  RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+                  RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
                 }
               },
           .open_comparison =

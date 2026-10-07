@@ -205,7 +205,8 @@ WorkspaceShell::WorkspaceShell() {
               [this](std::string_view id) { EnsureOutputChannelTabOpen(id); },
           .close_output_channel_tab =
               [this](std::string_view id) { CloseOutputChannelTab(id); },
-          .close_terminal_tab = [this](std::size_t index) { CloseTerminalTab(index); },
+          .close_terminal_tab =
+              [this](std::size_t index) { MakeTerminalPanelService().CloseTerminalTab(index); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
       });
   lsp_service_.Configure(

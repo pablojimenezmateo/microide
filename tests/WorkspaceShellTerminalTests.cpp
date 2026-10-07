@@ -605,7 +605,7 @@ void TestWorkspaceShellTerminalPendingInputIsCapped() {
   auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  const std::size_t cap = microide::workspace::TerminalTabState::kMaxPendingInputBytes;
+  const std::size_t cap = microide::workspace::TerminalPaneState::kMaxPendingInputBytes;
   // Multi-byte UTF-8 so a naive byte-cut could split a codepoint; the cap must back off
   // to a codepoint boundary.
   std::string chunk;
@@ -1890,7 +1890,412 @@ void TestWorkspaceShellTerminalClosesFromTheCommandLine() {
          "Close Terminal should be disabled with no terminal open");
 }
 
+namespace {
+
+// ---------------------------------------------------------------------------
+// Terminal panes, the maximized panel and the panel verbs (TerminalPanelService).
+
+struct SplitTerminalFixture {
+  TemporaryDirectory temp_dir;
+  std::filesystem::path root;
+  WorkspaceShell shell;
+  // Frame prep (the grid fit, the maximize-restore rule, the activity-dot clear)
+  // runs only under a real renderer; RenderFrame's null renderer stops at the
+  // guard every surface opens with.
+  SoftwareCanvas canvas{1280, 720};
+
+  SplitTerminalFixture() : root(temp_dir.path() / "project") {
+    EnsureDummySdlVideo();
+    WriteFile(root / "README.md", "root\n");
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+    TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  }
+
+  void PaintFrame() { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); }
+};
+
+void TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  // One frame before the split fits the lone pane to the whole body.
+  fixture.PaintFrame();
+  const std::size_t full_columns = WorkspaceShellTestAccess::ActiveTerminalSession(shell).columns();
+  Expect(full_columns > 0, "the single pane is gridded to the panel body");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "Split Terminal should be accepted with a terminal open");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1,
+         "a split adds a pane to the tab, not a tab to the strip");
+  Expect(WorkspaceShellTestAccess::TerminalPaneCount(shell) == 2,
+         "the tab holds two panes after one split");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1,
+         "the new pane (to the right) takes the keyboard");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "splitting shows the terminal content");
+  const std::vector<float> weights = WorkspaceShellTestAccess::TerminalPaneWeights(shell);
+  Expect(weights.size() == 2 && std::abs(weights[0] - 0.5f) < 1e-5f, "the split pane is halved");
+
+  const SDL_FRect body = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  Expect(rects.panes.size() == 2 && rects.dividers.size() == 1, "two pane rects and one divider");
+  Expect(rects.panes[0].x == body.x && rects.panes[1].x > rects.panes[0].x &&
+             std::abs(rects.panes[1].x + rects.panes[1].w - (body.x + body.w)) < 1e-3f,
+         "the panes tile the panel body left to right");
+
+  // The keyboard reaches only the active pane.
+  TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::TerminalPaneSession(shell, 0));
+  TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::TerminalPaneSession(shell, 1));
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter is handled by the terminal");
+  Expect(TerminalSessionTestAccess::SentBytes(WorkspaceShellTestAccess::TerminalPaneSession(shell, 1)) ==
+             "\r",
+         "the active (new) pane receives the key");
+  Expect(TerminalSessionTestAccess::SentBytes(WorkspaceShellTestAccess::TerminalPaneSession(shell, 0))
+             .empty(),
+         "the other pane receives nothing");
+
+  // A painted frame grids every pane to its own slice.
+  fixture.PaintFrame();
+  const std::size_t left_columns = WorkspaceShellTestAccess::TerminalPaneSession(shell, 0).columns();
+  const std::size_t right_columns = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1).columns();
+  Expect(left_columns > 0 && right_columns > 0, "both panes get a grid");
+  Expect(left_columns < full_columns && right_columns < full_columns &&
+             left_columns + right_columns <= full_columns,
+         "each pane's grid is a slice of the body the lone pane had");
+  Expect(WorkspaceShellTestAccess::TerminalPaneSession(shell, 0).rows() ==
+             WorkspaceShellTestAccess::TerminalPaneSession(shell, 1).rows(),
+         "side-by-side panes share the panel's row count");
+}
+
+void TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "split");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1, "new pane active");
+  const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  const SDL_FRect left = rects.panes[0];
+  const SDL_FRect right = rects.panes[1];
+
+  Expect(SendMouseDown(shell, left.x + left.w * 0.5f, left.y + left.h * 0.5f, SDL_BUTTON_LEFT),
+         "a press in the left pane is handled");
+  SendMouseUp(shell, left.x + left.w * 0.5f, left.y + left.h * 0.5f, SDL_BUTTON_LEFT);
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
+         "pressing in another pane makes it the active one");
+
+  // Fill the (now inactive) right pane with more lines than fit, then wheel over it.
+  auto& right_session = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1);
+  TerminalSessionTestAccess::Reset(right_session, 8, 40);
+  for (int i = 0; i < 60; ++i) {
+    TerminalSessionTestAccess::AppendOutput(right_session, "line\r\n");
+  }
+  Expect(WorkspaceShellTestAccess::TerminalPaneFollowTail(shell, 1), "the pane follows its tail");
+  // The press above anchored a selection in the left pane, which (as in every
+  // terminal) stops it following its tail; what matters here is that the wheel
+  // over the RIGHT pane leaves the left pane's scroll exactly as it was.
+  const bool left_follow_before = WorkspaceShellTestAccess::TerminalPaneFollowTail(shell, 0);
+  const int left_scroll_before = WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell);
+  Expect(SendMouseWheel(shell, right.x + right.w * 0.5f, right.y + right.h * 0.5f, 1),
+         "a wheel over the inactive pane is handled");
+  Expect(!WorkspaceShellTestAccess::TerminalPaneFollowTail(shell, 1),
+         "the wheel scrolls the pane under the pointer, active or not");
+  Expect(WorkspaceShellTestAccess::TerminalPaneFollowTail(shell, 0) == left_follow_before &&
+             WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == left_scroll_before,
+         "the active pane did not scroll");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
+         "scrolling is not focusing");
+}
+
+void TestWorkspaceShellTerminalPaneDividerDragResizesAndDoubleClickResets() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "split");
+  const auto rects = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  const SDL_FRect divider = rects.dividers[0].rect;
+  const float grab_x = divider.x + divider.w * 0.5f;
+  const float grab_y = divider.y + divider.h * 0.5f;
+
+  Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "a press on the divider starts a drag");
+  Expect(SendMouseMotion(shell, grab_x - 150.0f, grab_y, SDL_BUTTON_LMASK), "dragging is handled");
+  Expect(SendMouseUp(shell, grab_x - 150.0f, grab_y, SDL_BUTTON_LEFT), "release ends the drag");
+  const std::vector<float> dragged = WorkspaceShellTestAccess::TerminalPaneWeights(shell);
+  Expect(dragged[0] < 0.5f - 0.05f && dragged[1] > 0.5f + 0.05f,
+         "dragging the divider left shrinks the left pane and grows the right one");
+  Expect(std::abs(dragged[0] + dragged[1] - 1.0f) < 1e-4f, "the shares still sum to one");
+  const auto moved = WorkspaceShellTestAccess::TerminalPaneRects(shell);
+  Expect(moved.dividers[0].rect.x < divider.x, "the divider rect follows the drag");
+
+  const SDL_FRect moved_divider = moved.dividers[0].rect;
+  Expect(SendMouseDown(shell, moved_divider.x + moved_divider.w * 0.5f,
+                       moved_divider.y + moved_divider.h * 0.5f, SDL_BUTTON_LEFT, /*clicks=*/2),
+         "a double-click on the divider is handled");
+  const std::vector<float> reset = WorkspaceShellTestAccess::TerminalPaneWeights(shell);
+  Expect(std::abs(reset[0] - 0.5f) < 1e-5f, "double-click restores the even split");
+}
+
+void TestWorkspaceShellTerminalCloseTerminalClosesThePaneThenTheTab() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "split");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TermClose, {}),
+         "Close Terminal on a split tab is accepted");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1 &&
+             WorkspaceShellTestAccess::TerminalPaneCount(shell) == 1,
+         "closing the active pane keeps the tab with its other pane");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0, "the survivor is active");
+  Expect(WorkspaceShellTestAccess::TerminalPaneWeights(shell).size() == 1 &&
+             std::abs(WorkspaceShellTestAccess::TerminalPaneWeights(shell)[0] - 1.0f) < 1e-5f,
+         "the survivor owns the whole body");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TermClose, {}),
+         "Close Terminal on the last pane is accepted");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 0, "the tab goes with its last pane");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
+         "the panel hides with the last terminal");
+}
+
+void TestWorkspaceShellTerminalPaneFocusKeysFallThroughWithOnePane() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  auto& only = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::ClearSentBytes(only);
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is handled");
+  Expect(!TerminalSessionTestAccess::SentBytes(only).empty(),
+         "with a single pane Alt+Left reaches the shell as an escape sequence");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "split");
+  auto& left_pane = WorkspaceShellTestAccess::TerminalPaneSession(shell, 0);
+  auto& right_pane = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1);
+  TerminalSessionTestAccess::ClearSentBytes(left_pane);
+  TerminalSessionTestAccess::ClearSentBytes(right_pane);
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left is handled with two panes");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
+         "with two panes Alt+Left moves the keyboard to the left pane");
+  Expect(TerminalSessionTestAccess::SentBytes(left_pane).empty() &&
+             TerminalSessionTestAccess::SentBytes(right_pane).empty(),
+         "the chord is consumed by the pane move and reaches no shell");
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_ALT), "Alt+Left at the leftmost pane is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0, "no wrap-around");
+  Expect(!TerminalSessionTestAccess::SentBytes(left_pane).empty(),
+         "at the edge the chord falls through to the active pane's shell");
+  Expect(SendKeyDown(shell, SDLK_RIGHT, SDL_KMOD_ALT), "Alt+Right is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1, "Alt+Right moves right");
+}
+
+void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::OpenFile(shell, fixture.root / "README.md");
+  WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalToggle, {});
+  const microide::workspace::WorkspaceLayout before = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(before.editor_area.h > 0.0f, "the editor column is laid out before maximizing");
+  Expect(WorkspaceShellTestAccess::GroupEditorTabRect(shell, 0, 0).w > 0.0f,
+         "the open file has a tab in the regular layout");
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized,
+                                                 {}),
+         "Maximize Panel is accepted");
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell), "the panel is maximized");
+  const microide::workspace::WorkspaceLayout maximized = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(maximized.panel_maximized && maximized.editor_area.h == 0.0f && maximized.sidebar.h == 0.0f &&
+             maximized.status_bar.h == 0.0f,
+         "only the menu bar and project strip remain around the panel");
+  Expect(maximized.bottom_panel.y == maximized.project_tab_strip.y + maximized.project_tab_strip.h &&
+             maximized.bottom_panel.y + maximized.bottom_panel.h == before.full.h,
+         "the panel fills everything below the project strip");
+  Expect(WorkspaceShellTestAccess::BottomPanelHeight(shell) == 156.0f,
+         "the stored panel height is untouched, so restoring is exact");
+  // Regression (found by a headless screenshot): the editor strip collapsed to
+  // zero height but its tabs kept a 22 px floor, so they painted over the panel
+  // header and stayed clickable there.
+  const SDL_FRect maximized_tab = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 0, 0);
+  Expect(maximized_tab.w == 0.0f && maximized_tab.h == 0.0f,
+         "a maximized panel leaves the editor strip with no tabs to paint or hit");
+  fixture.PaintFrame();
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell),
+         "a frame with the panel focused keeps it maximized");
+
+  // The toggle restores.
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized,
+                                                 {}),
+         "Restore is accepted");
+  Expect(!WorkspaceShellTestAccess::PanelMaximized(shell) &&
+             WorkspaceShellTestAccess::CurrentLayout(shell) == before,
+         "restoring returns the exact previous layout");
+
+  // Focusing the editor restores too: immersive mode never traps a file the
+  // user just opened from a terminal link.
+  WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized, {});
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  fixture.PaintFrame();
+  Expect(!WorkspaceShellTestAccess::PanelMaximized(shell),
+         "editor focus restores the maximized panel on the next frame");
+  Expect(WorkspaceShellTestAccess::CurrentLayout(shell).editor_area.h > 0.0f,
+         "the editor column is back");
+
+  // The header button is the mouse way in and out.
+  const SDL_FRect button = WorkspaceShellTestAccess::BottomPanelMaximizeButtonRect(shell);
+  Expect(SendMouseDown(shell, button.x + button.w * 0.5f, button.y + button.h * 0.5f, SDL_BUTTON_LEFT),
+         "the header button takes the press");
+  SendMouseUp(shell, button.x + button.w * 0.5f, button.y + button.h * 0.5f, SDL_BUTTON_LEFT);
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell), "the header button maximizes");
+  const SDL_FRect restore = WorkspaceShellTestAccess::BottomPanelMaximizeButtonRect(shell);
+  Expect(SendMouseDown(shell, restore.x + restore.w * 0.5f, restore.y + restore.h * 0.5f, SDL_BUTTON_LEFT),
+         "the header button takes the press in the maximized layout too");
+  SendMouseUp(shell, restore.x + restore.w * 0.5f, restore.y + restore.h * 0.5f, SDL_BUTTON_LEFT);
+  Expect(!WorkspaceShellTestAccess::PanelMaximized(shell), "the header button restores");
+}
+
+void TestWorkspaceShellTerminalToggleAndPanelToggleKeys() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "fixture shows a terminal");
+
+  // Ctrl+` from a focused terminal hides the panel and hands focus back.
+  Expect(SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL), "Ctrl+` is handled");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
+         "Ctrl+` on a focused terminal hides the panel");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "the terminal survives hidden");
+  // Ctrl+` again brings the same terminal back, focused.
+  Expect(SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL), "Ctrl+` is handled again");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal &&
+             WorkspaceShellTestAccess::TerminalTabCount(shell) == 1,
+         "Ctrl+` shows the existing terminal instead of opening another");
+  // From the editor Ctrl+` focuses the terminal rather than hiding it.
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(SendKeyDown(shell, SDLK_GRAVE, SDL_KMOD_CTRL), "Ctrl+` from the editor is handled");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "Ctrl+` from the editor keeps the panel up and focuses the terminal");
+  TerminalSessionTestAccess::ClearSentBytes(WorkspaceShellTestAccess::ActiveTerminalSession(shell));
+  SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
+  Expect(TerminalSessionTestAccess::SentBytes(WorkspaceShellTestAccess::ActiveTerminalSession(shell)) ==
+             "\r",
+         "the terminal has the keyboard after Ctrl+`");
+
+  // Ctrl+J toggles the panel and remembers its content.
+  Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J is handled");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
+         "Ctrl+J hides the panel");
+  Expect(SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL), "Ctrl+J is handled again");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Terminal,
+         "Ctrl+J brings the terminal content back");
+
+  // Ctrl+Shift+` opens a new terminal tab.
+  Expect(SendKeyDown(shell, SDLK_GRAVE, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "Ctrl+Shift+` is handled");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 2, "Ctrl+Shift+` opens a terminal");
+
+  // Ctrl+PageUp/PageDown walk the terminal tabs while the terminal has focus.
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1, "the new tab is active");
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_CTRL), "Ctrl+PageDown is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 0, "next wraps to the first tab");
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL), "Ctrl+PageUp is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1, "previous wraps to the last");
+}
+
+void TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(shell) == 1, "second tab active");
+
+  // Output lands in the background tab and in the visible one.
+  auto& background = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  auto& foreground = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+  TerminalSessionTestAccess::AppendOutput(background, "done\r\n");
+  TerminalSessionTestAccess::MarkOutputArrived(background);
+  TerminalSessionTestAccess::AppendOutput(foreground, "typing\r\n");
+  TerminalSessionTestAccess::MarkOutputArrived(foreground);
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 0),
+         "output in a tab that is not on screen lights its activity dot");
+  Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 1),
+         "output in the tab on screen is seen as it arrives");
+
+  // Showing the tab clears it on the next frame.
+  Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 0), "activate the background tab");
+  fixture.PaintFrame();
+  Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 0),
+         "the dot clears once the tab is shown");
+
+  // Output behind a hidden panel counts as unseen too.
+  SendKeyDown(shell, SDLK_J, SDL_KMOD_CTRL);
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::None,
+         "panel hidden");
+  TerminalSessionTestAccess::MarkOutputArrived(background);
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenOutput(shell, 0),
+         "output behind a hidden panel is unseen");
+}
+
+void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenTerminalViaService(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "a terminal opened");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(shell) == root.lexically_normal(),
+         "the pane records the directory it was launched in");
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  Expect(session.running(), "a (placeholder) launched session reports running");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::TerminalRelaunch),
+         "a running terminal has nothing to relaunch, so the verb greys out");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\r",
+         "Enter in a live pane goes to the shell");
+
+  // The process dies (the ssh link dropped).
+  TerminalSessionTestAccess::AppendOutput(session, "connection closed\r\n");
+  TerminalSessionTestAccess::EmitProcessExitMarker(session);
+  TerminalSessionTestAccess::SetRunning(session, false);
+  Expect(TerminalScreenText(session).find("[process exited]") != std::string::npos, "exit marker shown");
+
+  SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
+  Expect(session.running(), "Enter in an exited pane relaunches it in place");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1 &&
+             WorkspaceShellTestAccess::TerminalPaneCount(shell) == 1,
+         "relaunching reuses the pane: no new tab, no new pane");
+  Expect(TerminalScreenText(session).find("[process exited]") == std::string::npos,
+         "the relaunched session starts on a fresh screen");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(shell) == root.lexically_normal(),
+         "the relaunch keeps the recorded directory");
+
+  // The menu verb does the same for an exited pane.
+  TerminalSessionTestAccess::SetRunning(session, false);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalRelaunch, {}),
+         "Relaunch Terminal is accepted for an exited pane");
+  Expect(session.running(), "the menu verb relaunches too");
+}
+
+}  // namespace
+
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/TerminalSplitAddsPaneRightOfTheActiveOne",
+          TestWorkspaceShellTerminalSplitAddsPaneRightOfTheActiveOne);
+  AddTest(tests, "WorkspaceShell/TerminalPaneClickActivatesAndWheelScrollsUnderThePointer",
+          TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer);
+  AddTest(tests, "WorkspaceShell/TerminalPaneDividerDragResizesAndDoubleClickResets",
+          TestWorkspaceShellTerminalPaneDividerDragResizesAndDoubleClickResets);
+  AddTest(tests, "WorkspaceShell/TerminalCloseTerminalClosesThePaneThenTheTab",
+          TestWorkspaceShellTerminalCloseTerminalClosesThePaneThenTheTab);
+  AddTest(tests, "WorkspaceShell/TerminalPaneFocusKeysFallThroughWithOnePane",
+          TestWorkspaceShellTerminalPaneFocusKeysFallThroughWithOnePane);
+  AddTest(tests, "WorkspaceShell/PanelMaximizeTakesTheWindowAndRestoresOnEditorFocus",
+          TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus);
+  AddTest(tests, "WorkspaceShell/TerminalToggleAndPanelToggleKeys",
+          TestWorkspaceShellTerminalToggleAndPanelToggleKeys);
+  AddTest(tests, "WorkspaceShell/TerminalActivityDotMarksBackgroundOutput",
+          TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput);
+  AddTest(tests, "WorkspaceShell/TerminalRelaunchRestartsAnExitedPane",
+          TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane);
   AddTest(tests, "WorkspaceShell/TerminalClosesFromTheCommandLine",
           TestWorkspaceShellTerminalClosesFromTheCommandLine);
   AddTest(tests, "WorkspaceShell/OutputReferenceClickUsesCharacterColumns",

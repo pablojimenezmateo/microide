@@ -291,7 +291,7 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
 
 bool WorkspaceShell::BottomPanelShowsTerminal() const {
   return context_.current_project_state.panel.content == PanelContentKind::Terminal &&
-         ActiveTerminalTab() != nullptr;
+         ActiveTerminalPane() != nullptr;
 }
 
 bool WorkspaceShell::BottomPanelShowsOutput() const {
@@ -347,15 +347,59 @@ void WorkspaceShell::ApplyTerminalFontPreferences() {
   }
 }
 
+namespace {
+
+// The part of a log layout that is pure geometry: the body and its text insets.
+WorkspaceShell::LogSurfaceLayout LogLayoutForBody(const SDL_FRect& body, float line_height) {
+  WorkspaceShell::LogSurfaceLayout panel_layout;
+  panel_layout.content_rect = body;
+  panel_layout.text_x = body.x + kBottomPanelTextInset;
+  panel_layout.text_y = body.y + kBottomPanelTextTopInset;
+  panel_layout.line_height = line_height;
+  return panel_layout;
+}
+
+}  // namespace
+
+SDL_FRect WorkspaceShell::ActiveTerminalBodyRect(const WorkspaceLayout& layout) const {
+  const SDL_FRect body = BottomPanelContentRect(layout);
+  const TerminalTabState* tab = context_.current_project_state.active_terminal_tab();
+  return tab != nullptr && BottomPanelShowsTerminal() ? tab->ActivePaneRect(body) : body;
+}
+
+WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeTerminalPaneLogLayout(
+    const SDL_FRect& body,
+    float panel_height,
+    const TerminalPaneState& pane,
+    std::size_t line_count) const {
+  LogSurfaceLayout panel_layout = LogLayoutForBody(body, terminal_text_renderer_.LineHeight());
+  const int visible_rows =
+      BottomPanelVisibleRowsForHeight(panel_height, panel_layout.line_height);
+  const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
+  const int scroll_row = pane.follow_tail
+                             ? max_scroll
+                             : ClampScrollRowToContent(pane.scroll_row, line_count, visible_rows);
+  panel_layout.scroll = ComputeScrollSurfaceLayout(body, line_count, visible_rows, scroll_row);
+  panel_layout.text_width =
+      std::max(0.0f, body.w - kBottomPanelTextInset * 2.0f -
+                         (panel_layout.scroll.show_vertical ? kBottomPanelScrollbarTextReserve
+                                                            : 0.0f));
+  return panel_layout;
+}
+
 WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeBottomPanelLogLayout(
     const WorkspaceLayout& layout,
     std::size_t line_count) const {
-  LogSurfaceLayout panel_layout;
-  panel_layout.content_rect = BottomPanelContentRect(layout);
-  panel_layout.text_x = panel_layout.content_rect.x + kBottomPanelTextInset;
-  panel_layout.text_y = panel_layout.content_rect.y + kBottomPanelTextTopInset;
-  panel_layout.line_height = PanelTextRenderer().LineHeight();
-
+  // The terminal lays out per PANE: the active pane's slice of the body with its
+  // own scroll state. Output (and an empty Terminal panel) keep the whole body.
+  if (BottomPanelShowsTerminal()) {
+    if (const TerminalPaneState* pane = ActiveTerminalPane(); pane != nullptr) {
+      return ComputeTerminalPaneLogLayout(ActiveTerminalBodyRect(layout), layout.bottom_panel.h,
+                                          *pane, line_count);
+    }
+  }
+  LogSurfaceLayout panel_layout =
+      LogLayoutForBody(BottomPanelContentRect(layout), PanelTextRenderer().LineHeight());
   const int visible_rows = BottomPanelVisibleRows(layout.bottom_panel.h);
   const int scroll_row = BottomPanelScrollRow(line_count, visible_rows);
   panel_layout.scroll =
@@ -374,7 +418,7 @@ int WorkspaceShell::BottomPanelVisibleRows(float panel_height) const {
 int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_rows) const {
   const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
   if (BottomPanelShowsTerminal()) {
-    if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+    if (const auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
       return terminal_tab->follow_tail ? max_scroll
                                        : ClampScrollRowToContent(terminal_tab->scroll_row,
                                                                  line_count,
@@ -388,7 +432,7 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
                ? max_scroll
                : ClampScrollRowToContent(output.scroll_row, line_count, visible_rows);
   }
-  if (const auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+  if (const auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
     return terminal_tab->follow_tail ? max_scroll
                                      : ClampScrollRowToContent(terminal_tab->scroll_row,
                                                                line_count,
@@ -398,7 +442,7 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
 }
 
 std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) const {
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return std::nullopt;
   }
@@ -516,7 +560,7 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
   const int max_scroll = TailScrollRowForContent(line_count, visible_rows);
   const int clamped_scroll = ClampScrollRowToContent(scroll_row, line_count, visible_rows);
   if (BottomPanelShowsTerminal()) {
-    if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+    if (auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
       terminal_tab->scroll_row = clamped_scroll;
       terminal_tab->follow_tail = clamped_scroll >= max_scroll;
     }
@@ -528,14 +572,14 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
     output.follow_tail = clamped_scroll >= max_scroll;
     return;
   }
-  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+  if (auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
     terminal_tab->scroll_row = clamped_scroll;
     terminal_tab->follow_tail = clamped_scroll >= max_scroll;
   }
 }
 
 void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
-  auto* terminal_tab = ActiveTerminalTab();
+  auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return;
   }
@@ -570,7 +614,7 @@ void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
 }
 
 void WorkspaceShell::ClearTerminalSelection() {
-  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+  if (auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
     terminal_tab->mouse_selecting = false;
     selection_autoscroll::Disarm(context_.interaction_state);
     terminal_tab->selection_anchor.reset();
@@ -579,18 +623,18 @@ void WorkspaceShell::ClearTerminalSelection() {
 }
 
 void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
-  auto* terminal_tab = ActiveTerminalTab();
+  auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return;
   }
   // TD-2026-07-17A-068: pending_input feeds only copy-last-command prompt stripping,
   // never the PTY, so bound its growth across repeated sends/pastes before a newline.
   std::string& pending = terminal_tab->pending_input;
-  if (pending.size() >= TerminalTabState::kMaxPendingInputBytes) {
+  if (pending.size() >= TerminalPaneState::kMaxPendingInputBytes) {
     terminal_tab->pending_input_truncated = true;
     return;
   }
-  const std::size_t remaining = TerminalTabState::kMaxPendingInputBytes - pending.size();
+  const std::size_t remaining = TerminalPaneState::kMaxPendingInputBytes - pending.size();
   if (input.size() <= remaining) {
     pending.append(input);
     return;
@@ -602,13 +646,13 @@ void WorkspaceShell::AppendTerminalPendingInput(std::string_view input) {
 }
 
 void WorkspaceShell::EraseLastTerminalPendingInputCodepoint() {
-  if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
+  if (auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
     (void)util::RemoveLastUtf8Codepoint(&terminal_tab->pending_input);
   }
 }
 
 void WorkspaceShell::SubmitTerminalPendingInput() {
-  auto* terminal_tab = ActiveTerminalTab();
+  auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return;
   }
@@ -642,7 +686,7 @@ bool WorkspaceShell::HasLastTerminalCommand() const {
   // LastTerminalCommandText() is guaranteed to return a value. Menu/context enablement
   // must not snapshot + join the whole scrollback transcript just to answer "is Copy Last
   // Command available?" (TD-2026-07-17A-065).
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
   return terminal_tab != nullptr && terminal_tab->has_last_command &&
          !terminal_tab->last_command_invocation.empty();
 }
@@ -651,7 +695,7 @@ std::optional<std::string> WorkspaceShell::LastTerminalCommandText() const {
   if (!HasLastTerminalCommand()) {
     return std::nullopt;
   }
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
 
   if (terminal_tab->session.using_alternate_screen()) {
     return terminal_tab->last_command_invocation;
@@ -702,7 +746,7 @@ WorkspaceShell::TerminalSelectionPointAt(
     int y,
     const std::vector<terminal::TerminalLine>& lines,
     std::size_t first_row) const {
-  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr || lines.empty()) {
+  if (!BottomPanelVisible() || ActiveTerminalPane() == nullptr || lines.empty()) {
     return std::nullopt;
   }
 
@@ -737,11 +781,11 @@ WorkspaceShell::TerminalSelectionPointAt(
 
 std::optional<WorkspaceShell::TerminalSelectionPoint>
 WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
-  if (!BottomPanelVisible() || ActiveTerminalTab() == nullptr) {
+  if (!BottomPanelVisible() || ActiveTerminalPane() == nullptr) {
     return std::nullopt;
   }
 
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return std::nullopt;
   }
@@ -757,13 +801,15 @@ WorkspaceShell::TerminalViewportPositionForPoint(int x, int y) const {
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  const SDL_FRect panel_content = BottomPanelContentRect(layout);
+  // Mouse reports are in the ACTIVE pane's grid; a point in another pane is
+  // outside it (the press that lands there activates that pane first).
+  const SDL_FRect panel_content = ActiveTerminalBodyRect(layout);
   if (!Contains(panel_content, x, y)) {
     return std::nullopt;
   }
 
-  const float text_x = panel_content.x + 12.0f;
-  const float text_y = panel_content.y + 8.0f;
+  const float text_x = panel_content.x + kBottomPanelTextInset;
+  const float text_y = panel_content.y + kBottomPanelTextTopInset;
   const float line_height = terminal_text_renderer_.LineHeight();
   const float char_width = std::max(1.0f, terminal_text_renderer_.CharWidth());
   if (line_height <= 0.0f || y < text_y) {
@@ -790,7 +836,7 @@ terminal::TerminalSession::MouseButton WorkspaceShell::TerminalMouseButtonForSdl
 }
 
 std::optional<TerminalSelectionBounds> WorkspaceShell::ActiveTerminalSelectionBounds() const {
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr || !terminal_tab->selection_anchor.has_value() ||
       !terminal_tab->selection_head.has_value()) {
     return std::nullopt;
@@ -805,7 +851,7 @@ std::string WorkspaceShell::SelectedTerminalText() const {
     return {};
   }
 
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return {};
   }

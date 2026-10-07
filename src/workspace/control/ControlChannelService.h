@@ -137,6 +137,18 @@ class ControlChannelService {
   util::JsonValue BuildFunctionBreakpoints() const;
   util::JsonValue BuildExceptionFilters() const;
   util::JsonValue BuildTabs() const;
+  // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
+  // range of the focused active tab) and the split tree in its pre-order form.
+  util::JsonValue BuildEditor() const;
+  // The runnable command registry: {command, usage, label}.
+  util::JsonValue BuildCommands() const;
+  // Terminal strip: every tab with its panes ({pane, active, label, running,
+  // lineCount}), so an agent can address one with `terminal-output`.
+  util::JsonValue BuildTerminals() const;
+  // One pane's scrollback tail: args {tab, pane, lines}, defaulting to the active
+  // tab's active pane and the last 1000 lines.
+  util::JsonValue BuildTerminalOutput(const util::JsonValue& args, bool* ok,
+                                      std::string* error) const;
   util::JsonValue BuildProjects() const;
   util::JsonValue BuildStatus() const;
   util::JsonValue BuildLaunchConfigs() const;

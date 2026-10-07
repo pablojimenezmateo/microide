@@ -97,6 +97,7 @@ void TabStripService::BuildVisibleStripTabsInto(
     tab.badge_text.clear();
     tab.badge_color = SDL_Color{};
     tab.show_badge = false;
+    tab.activity_dot = false;
   }
 }
 
@@ -291,6 +292,14 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
     visible_cache.valid = false;
     return EmptyVisibleTabs();
   }
+  // A collapsed strip (zero height: the maximized panel owns the window) has no
+  // tabs. The tab height below has a 22 px floor, so without this the strip laid
+  // its tabs out — and painted them, over the panel header — at full size in a
+  // band that no longer exists. The caches are left alone: restoring the strip
+  // brings back the same geometry.
+  if (tab_strip.h <= 0.0f || tab_strip.w <= 0.0f) {
+    return EmptyVisibleTabs();
+  }
 
   RefreshEditorGeometryCache(group, group_index, tab_strip.w, measure_width, display_title,
                              tooltip_label, dirty_fingerprint);
@@ -452,7 +461,11 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
       continue;
     }
     hash = HashMix(hash, std::uint64_t{1});
-    hash = HashMix(hash, std::string_view{terminal_tab->session.LaunchLabel()});
+    const TerminalPaneState* pane = terminal_tab->active();
+    hash = HashMix(hash, pane != nullptr ? std::string_view{pane->session.LaunchLabel()}
+                                         : std::string_view{});
+    // The activity dot is part of the model: it is painted from the strip tab.
+    hash = HashMix(hash, terminal_tab->has_unseen_output ? std::uint64_t{1} : std::uint64_t{0});
   }
   // Output: the augmentation inputs plus the resolved open ids and the full channel
   // id/label table. The per-tab label is a deterministic function of (open ids,
@@ -495,11 +508,12 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
 
   for (std::size_t i = 0; i < state.terminal_tabs.size(); ++i) {
     const TerminalTabState* terminal_tab = state.terminal_tabs[i].get();
-    if (terminal_tab == nullptr) {
+    const TerminalPaneState* pane = terminal_tab != nullptr ? terminal_tab->active() : nullptr;
+    if (pane == nullptr) {
       continue;
     }
 
-    std::string label = terminal_tab->session.LaunchLabel();
+    std::string label = pane->session.LaunchLabel();
     if (label.empty()) {
       label = "Terminal";
     }
@@ -509,6 +523,7 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
         .output_channel_id = {},
         .label = label,
         .tooltip_label = label,
+        .activity = terminal_tab->has_unseen_output,
     });
   }
 
@@ -649,6 +664,9 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   if (all_tabs_visible) {
     build_tabs(panel_header.x, 0.0f);
   }
+  for (VisibleStripTab& tab : visible) {
+    tab.activity_dot = tab.index < tabs.size() && tabs[tab.index].activity;
+  }
   cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
   cache.geometry_epoch = geometry_epoch_;
   cache.header = panel_header;
@@ -678,11 +696,12 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
   tooltip_labels.reserve(state.terminal_tabs.size());
   for (std::size_t i = 0; i < state.terminal_tabs.size(); ++i) {
     const TerminalTabState* terminal_tab = state.terminal_tabs[i].get();
-    if (terminal_tab == nullptr) {
+    const TerminalPaneState* pane = terminal_tab != nullptr ? terminal_tab->active() : nullptr;
+    if (pane == nullptr) {
       continue;
     }
 
-    std::string label = terminal_tab->session.LaunchLabel();
+    std::string label = pane->session.LaunchLabel();
     if (label.empty()) {
       label = "Terminal";
     }
@@ -734,11 +753,28 @@ bool TabStripService::ScrollBottomPanelTabStrip(
   return ScrollTabIndex(state.panel.tab_scroll_index, direction, total);
 }
 
+namespace {
+
+float BottomPanelHeaderButtonSize(LayoutMode mode, const SDL_FRect& panel_header) {
+  const float compact_max = mode == LayoutMode::Compact ? 14.0f : kBottomPanelHeaderButtonSize;
+  return std::min(compact_max, std::max(14.0f, panel_header.h - 8.0f));
+}
+
+}  // namespace
+
+SDL_FRect TabStripService::BottomPanelMaximizeButtonRect(LayoutMode mode,
+                                                         const SDL_FRect& panel_header) const {
+  const float button_size = BottomPanelHeaderButtonSize(mode, panel_header);
+  return MakeRect(panel_header.x + panel_header.w - button_size - 8.0f,
+                  panel_header.y + (panel_header.h - button_size) * 0.5f, button_size,
+                  button_size);
+}
+
 SDL_FRect TabStripService::BottomPanelTerminalNewTabRect(LayoutMode mode,
                                                          const SDL_FRect& panel_header) const {
-  const float compact_max = mode == LayoutMode::Compact ? 14.0f : kBottomPanelHeaderButtonSize;
-  const float button_size = std::min(compact_max, std::max(14.0f, panel_header.h - 8.0f));
-  return MakeRect(panel_header.x + panel_header.w - button_size - 8.0f,
+  const float button_size = BottomPanelHeaderButtonSize(mode, panel_header);
+  const SDL_FRect maximize = BottomPanelMaximizeButtonRect(mode, panel_header);
+  return MakeRect(maximize.x - button_size - 6.0f,
                   panel_header.y + (panel_header.h - button_size) * 0.5f, button_size,
                   button_size);
 }

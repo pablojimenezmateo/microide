@@ -97,6 +97,14 @@ class WorkspaceActionContext {
     std::function<bool(const std::filesystem::path&)> reveal_path_in_tree;
     std::function<void(std::string)> open_terminal;
     std::function<bool()> close_active_terminal;
+    // Terminal panes and the panel (TerminalPanelService).
+    std::function<bool()> split_terminal;
+    std::function<bool(int)> focus_terminal_pane;
+    std::function<bool(int)> cycle_terminal;
+    std::function<bool()> relaunch_terminal;
+    std::function<void()> toggle_terminal;
+    std::function<void()> toggle_panel;
+    std::function<void()> toggle_panel_maximized;
     // Opens/refocuses the terminal find bar; false when no terminal is showing.
     std::function<bool(std::string)> open_terminal_find;
     std::function<void(OverlayMode)> show_overlay;
@@ -178,6 +186,9 @@ class WorkspaceActionContext {
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<void()> close_all_tabs;
     std::function<editor::TextViewport*()> active_navigable_viewport;
+    // Move tab `from_index` of group `from_group` into group `to_group` at
+    // `to_slot` (EditorTabService::MoveTabToGroup).
+    std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
     std::function<void()> request_focused_editor_redraw;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<bool(std::string_view, bool)> insert_text_into_active_text_surface;
@@ -224,7 +235,7 @@ class WorkspaceActionContext {
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
     std::function<void()> request_toggle_fullscreen;
-    std::function<TerminalTabState*()> active_terminal_tab;
+    std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<bool()> plugin_runtime_enabled;
     std::function<void()> reload_plugins_for_current_project;
     std::function<std::string()> plugin_runtime_reload_summary;
@@ -372,6 +383,17 @@ class WorkspaceActionContext {
   // Closes the active terminal tab. False when there is none — the terminal
   // strip was the one tab strip whose tabs could only be closed by mouse.
   bool CloseActiveTerminal();
+  // Split the active terminal tab (a new pane right of the active one).
+  bool SplitTerminal();
+  // Move the active pane left (-1) / right (+1); false when there is none that way.
+  bool FocusTerminalPane(int delta);
+  // Activate the terminal tab `delta` steps away; false with fewer than two.
+  bool CycleTerminal(int delta);
+  // Restart the active pane's exited session in place.
+  bool RelaunchTerminal();
+  void ToggleTerminal();
+  void TogglePanel();
+  void TogglePanelMaximized();
   bool OpenTerminalFind(std::string query);
   void ShowFileFinderWithQuery(std::string query);
   void ShowFileFinder();
@@ -475,6 +497,15 @@ class WorkspaceActionContext {
   void CloseAllTabs();
 
   bool ExecuteLineNavigation(const LineNavigationRequest& request, bool relative);
+  // Open `path` and put the caret on the requested line, centred. A file still
+  // loading off-thread records the position so the load lands on it. False with
+  // `error_message` set when the open fails.
+  bool RevealPathAtLine(const std::filesystem::path& path,
+                        const LineNavigationRequest& request,
+                        std::string* error_message);
+  // Move the focused pane's active tab into group `to_group` at `to_slot`
+  // (clamped to the end). False when there is no such group or no tab.
+  bool MoveActiveTabToGroup(std::size_t to_group, std::optional<std::size_t> to_slot);
   void SelectAll();
   void Undo();
   void Redo();

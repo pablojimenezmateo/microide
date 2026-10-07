@@ -8021,6 +8021,71 @@ void TestWorkspaceShellOpenAtTheTabCeilingIsRejected() {
          "the refused open must not have added a tab");
 }
 
+void TestWorkspaceShellRevealOpensAndCentresTheLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::string body;
+  for (int i = 1; i <= 300; ++i) {
+    body += "row " + std::to_string(i) + "\n";
+  }
+  WriteFile(root / "src" / "long.txt", body);
+  WriteFile(root / "README.md", "root\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reveal src/long.txt 150:3"),
+         "reveal is accepted for an existing file");
+  const microide::editor::TextViewport& viewport =
+      WorkspaceShellTestAccess::GroupActiveViewport(shell, 0);
+  Expect(viewport.path().filename() == "long.txt", "reveal opened the file");
+  Expect(viewport.cursor_line() == 149 && viewport.cursor_column() == 2,
+         "the caret lands on the 1-based line:col");
+  // The tab was opened by the reveal itself, so it has not been sized yet; size
+  // it the way the next painted frame does and check the line ends mid-view.
+  const_cast<microide::editor::TextViewport&>(viewport).SetViewportSize(30, 120);
+  Expect(viewport.scroll_line() == 149 - 15,
+         "the line is centred once the new tab has its real size");
+
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reveal src/long.txt"),
+         "reveal without a line is rejected");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "reveal src/long.txt 0"),
+         "reveal with a non-positive line is rejected");
+}
+
+void TestWorkspaceShellTabToGroupMovesTheActiveTabAcrossPanes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(root / "b.txt", "b\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "a.txt");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "split the editor");
+  WorkspaceShellTestAccess::OpenFile(shell, root / "b.txt");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2 &&
+             WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "two panes, the second focused");
+  const std::size_t before_left = WorkspaceShellTestAccess::GroupTabCount(shell, 0);
+  const std::size_t before_right = WorkspaceShellTestAccess::GroupTabCount(shell, 1);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 0"),
+         "tab-to-group into the other pane is accepted");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == before_left + 1,
+         "the target pane gained the tab");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1 ||
+             WorkspaceShellTestAccess::GroupTabCount(shell, 1) == before_right - 1,
+         "the source pane lost it (or collapsed when emptied)");
+
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 9"),
+         "a group that does not exist is rejected");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group x"),
+         "a non-numeric group is rejected");
+}
+
 }  // namespace
 
 void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
@@ -8345,6 +8410,10 @@ void TestWorkspaceShellRegexReplaceAllInvalidReplacementAborts() {
 }
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/RevealOpensAndCentresTheLine",
+          TestWorkspaceShellRevealOpensAndCentresTheLine);
+  AddTest(tests, "WorkspaceShell/TabToGroupMovesTheActiveTabAcrossPanes",
+          TestWorkspaceShellTabToGroupMovesTheActiveTabAcrossPanes);
   AddTest(tests, "WorkspaceShell/RegexReplaceAllAcrossFiles",
           TestWorkspaceShellRegexReplaceAllAcrossFiles);
   AddTest(tests, "WorkspaceShell/RegexReplaceAllInvalidReplacementAborts",

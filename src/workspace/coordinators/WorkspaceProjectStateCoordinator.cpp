@@ -1,6 +1,8 @@
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/services/TerminalPanelService.h"
+
 #include <chrono>
 #include <filesystem>
 #include <mutex>
@@ -429,7 +431,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (context_.current_project_state.terminal_tabs.empty()) {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
-      OpenDefaultTerminalForProjectInit();
+      MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
     }
     {
       util::PerformanceTrace::Scope scope(
@@ -488,7 +490,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       if (context_.current_project_state.terminal_tabs.empty()) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
-        OpenDefaultTerminalForProjectInit();
+        MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
       }
       {
         util::PerformanceTrace::Scope scope(
@@ -507,7 +509,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (context_.current_project_state.terminal_tabs.empty()) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
-    OpenDefaultTerminalForProjectInit();
+    MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
   }
   {
     util::PerformanceTrace::Scope scope(

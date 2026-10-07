@@ -155,7 +155,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
 
   // Modal overlay (file finder, buffer search/replace, project search, commit picker).
   if (context_.current_project_state.overlay.visible) {
-    const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
+    const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
     if (!Contains(overlay, x, y)) {
       return std::nullopt;
     }
@@ -261,7 +261,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
   // renderer, so click-to-caret lands exactly where the text is drawn.
   if (terminal_find_service_.visible() && BottomPanelShowsTerminal()) {
     const FindWidgetLayout fw =
-        ComputeFindWidgetLayout(BottomPanelContentRect(layout), /*replace_mode=*/false,
+        ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout), /*replace_mode=*/false,
                                 kTerminalFindToggleCount);
     if (Contains(fw.search_field, x, y)) {
       return FilledHit(TextInputSurface::TerminalFind, fw.search_field, "",
@@ -447,7 +447,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
       // Re-dispatch via FindSingleLineInputHit at the *current* pointer is wrong
       // (the pointer may have left the rect mid-drag). Re-derive directly from
       // the stored surface using the same layout math the press used.
-      const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
+      const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
       const auto overlay_field_rect = [&](float text_y) {
         return MakeRect(overlay.x + kOverlayFieldOuterPad, text_y - 4.0f,
                         std::max(0.0f, overlay.w - 2.0f * kOverlayFieldOuterPad),

@@ -59,6 +59,7 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   const bool right_pane_visible = inputs.right_pane_visible;
   const float right_pane_width = inputs.right_pane_width;
   const bool project_tab_strip_visible = inputs.project_tab_strip_visible;
+  const bool panel_maximized = bottom_panel_visible && inputs.bottom_panel_maximized;
   const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
   // Clamp HERE, not only in frame prep. The stored pane sizes outlive the window
   // they were set in, so after a shrink the raw sidebar width can leave the editor
@@ -67,8 +68,13 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   // painting (hit tests, cursor shape, redraw rects, and every test) worked off a
   // geometry the next painted frame would disagree with. The clamps are pure and
   // idempotent, so frame prep still runs them to persist the corrected value.
+  // A maximized panel takes the whole band below the project strip: the clamp
+  // below is what keeps an editor column alive, and here there is none to keep.
+  const float chrome_top = kMenuBarHeight + (project_tab_strip_visible ? kProjectTabStripHeight : 0.0f);
   const float resolved_bottom_panel_height =
-      bottom_panel_visible ? ClampBottomPanelHeight(bottom_panel_height, window_height) : 0.0f;
+      panel_maximized         ? std::max(0.0f, window_height - chrome_top)
+      : bottom_panel_visible  ? ClampBottomPanelHeight(bottom_panel_height, window_height)
+                              : 0.0f;
   const float resolved_sidebar_width =
       sidebar_visible ? ClampSidebarWidth(sidebar_width, window_width) : 0.0f;
   // The right debug pane is suppressed in compact layouts so the sidebar + pane
@@ -79,11 +85,14 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
       right_pane_effective_visible
           ? ClampRightPaneWidth(right_pane_width, window_width, resolved_sidebar_width)
           : 0.0f;
+  // The status bar is the one strip the user asked immersive mode to drop too:
+  // only the menu bar and the project strip stay.
   const float status_bar_height =
-      reserve_status_bar ? kWorkspaceStatusBarHeight : 0.0f;
+      reserve_status_bar && !panel_maximized ? kWorkspaceStatusBarHeight : 0.0f;
 
   WorkspaceLayout layout;
   layout.layout_mode = layout_mode;
+  layout.panel_maximized = panel_maximized;
   layout.full = MakeRect(0.0f, 0.0f, window_width, window_height);
   layout.menu_bar = MakeRect(0.0f, 0.0f, window_width, kMenuBarHeight);
   // The strip collapses to zero height (but keeps its y) when hidden, so every render
@@ -102,9 +111,14 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
       resolved_right_pane_width + (right_pane_effective_visible ? kDivider : 0.0f);
   const float editor_area_width =
       std::max(0.0f, window_width - editor_area_x - right_pane_reserve);
+  // Every editor-column band keeps its x/y/w and collapses to zero HEIGHT when the
+  // panel is maximized, the same way the hidden project strip does: a zero-height
+  // rect contains no point and paints nothing, so render and hit-test paths need
+  // no second branch.
+  const float tab_strip_height = panel_maximized ? 0.0f : kTabStripHeight;
   layout.tab_strip = MakeRect(editor_area_x, kMenuBarHeight + project_tab_strip_height,
-                              editor_area_width, kTabStripHeight);
-  const float content_top = kMenuBarHeight + project_tab_strip_height + kTabStripHeight;
+                              editor_area_width, tab_strip_height);
+  const float content_top = kMenuBarHeight + project_tab_strip_height + tab_strip_height;
   const float content_bottom_reserved = resolved_bottom_panel_height + status_bar_height;
   layout.bottom_panel =
       MakeRect(0.0f, window_height - content_bottom_reserved, window_width,
@@ -129,6 +143,14 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   layout.editor_surface =
       MakeRect(layout.editor_area.x, layout.editor_area.y + kHeaderHeight + kDivider,
                layout.editor_area.w, layout.editor_area.h - kHeaderHeight - kDivider);
+  if (panel_maximized) {
+    // The column collapsed: no header band, no surface, and the overlays centre
+    // in the panel instead.
+    layout.breadcrumb.h = 0.0f;
+    layout.editor_surface = MakeRect(layout.editor_area.x, layout.editor_area.y,
+                                     layout.editor_area.w, 0.0f);
+  }
+  layout.overlay_anchor = panel_maximized ? layout.bottom_panel : layout.editor_area;
   return layout;
 }
 
@@ -373,7 +395,8 @@ SDL_FRect SidebarResizeHandleRect(const WorkspaceLayout& layout) {
 }
 
 SDL_FRect BottomPanelResizeHandleRect(const WorkspaceLayout& layout) {
-  if (layout.bottom_panel.w <= 0.0f || layout.bottom_panel.h <= 0.0f) {
+  // A maximized panel has no top edge to drag: its height is the window's.
+  if (layout.bottom_panel.w <= 0.0f || layout.bottom_panel.h <= 0.0f || layout.panel_maximized) {
     return MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
   }
   return MakeRect(layout.bottom_panel.x,
@@ -1168,7 +1191,9 @@ bool operator==(const WorkspaceLayout& lhs, const WorkspaceLayout& rhs) noexcept
          rect_eq(lhs.content, rhs.content) && rect_eq(lhs.sidebar, rhs.sidebar) &&
          rect_eq(lhs.editor_area, rhs.editor_area) && rect_eq(lhs.right_pane, rhs.right_pane) &&
          rect_eq(lhs.breadcrumb, rhs.breadcrumb) &&
-         rect_eq(lhs.editor_surface, rhs.editor_surface) && rect_eq(lhs.status_bar, rhs.status_bar);
+         rect_eq(lhs.editor_surface, rhs.editor_surface) && rect_eq(lhs.status_bar, rhs.status_bar) &&
+         rect_eq(lhs.overlay_anchor, rhs.overlay_anchor) &&
+         lhs.panel_maximized == rhs.panel_maximized;
 }
 
 }  // namespace microide::workspace

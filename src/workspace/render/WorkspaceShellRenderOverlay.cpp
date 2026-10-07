@@ -32,7 +32,7 @@ void WorkspaceShell::RenderOverlaySurface(SDL_Renderer* renderer,
   // the editor (that hides the code being completed) or carry a title bar. Code
   // actions are a centered, titled menu like the other pickers.
   if (!overlay_vm.caret_anchored) {
-    DrawFilledRect(renderer, layout.editor_area, theme_.overlay_backdrop);
+    DrawFilledRect(renderer, layout.overlay_anchor, theme_.overlay_backdrop);
   }
   const SDL_FRect overlay = overlay_vm.overlay_rect;
   constexpr float kOverlayInset = 18.0f;

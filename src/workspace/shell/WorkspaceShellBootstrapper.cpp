@@ -52,30 +52,6 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   return result;
 }
 
-TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
-  if (glue_->terminal_panel_service != nullptr) {
-    return *glue_->terminal_panel_service;
-  }
-  glue_->terminal_panel_service = std::make_unique<TerminalPanelService>(TerminalPanelService::Operations{
-      .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
-      .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
-      .append_terminal_pending_input =
-          [this](std::string_view input) { AppendTerminalPendingInput(input); },
-      .terminal_url_at_point = [this](float x, float y) { return TerminalUrlAtPoint(x, y); },
-      .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
-      .sync_primary_selection_with_terminal_selection =
-          [this]() { SyncPrimarySelectionWithTerminalSelection(); },
-      .open_terminal =
-          [this](std::string command, bool focus_terminal, bool log_feedback) {
-            OpenTerminal(std::move(command), focus_terminal, log_feedback);
-          },
-      .close_terminal_tab = [this](std::size_t index) { CloseTerminalTab(index); },
-      .move_active_terminal_tab_to =
-          [this](std::size_t index) { return MoveActiveTerminalTabTo(index); },
-  });
-  return *glue_->terminal_panel_service;
-}
-
 CommandLineCoordinator& WorkspaceShell::MakeCommandLineCoordinator() {
   if (glue_->command_line_coordinator != nullptr) {
     return *glue_->command_line_coordinator;
@@ -143,7 +119,7 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
               [shell]() {
                 return shell->MakeTextInputCoordinator().HasSelectionAtActiveSingleLineSurface();
               },
-          .active_terminal_tab = [shell]() { return shell->ActiveTerminalTab(); },
+          .active_terminal_pane = [shell]() { return shell->ActiveTerminalPane(); },
           .has_last_terminal_command = [shell]() { return shell->HasLastTerminalCommand(); },
           .terminal_has_selection = [shell]() { return shell->TerminalHasSelection(); },
           .active_tab_is_editor = [shell]() { return shell->ActiveTabIsEditor(); },

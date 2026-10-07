@@ -6,10 +6,11 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 9> kQueryVerbs = {
+constexpr std::array<std::string_view, 13> kQueryVerbs = {
     "debug-state",          "breakpoints", "function-breakpoints", "exception-filters",
     "tabs",                 "projects",    "status",               "launch-configs",
-    "adapters",
+    "adapters",             "editor",      "commands",             "terminals",
+    "terminal-output",
 };
 
 }  // namespace

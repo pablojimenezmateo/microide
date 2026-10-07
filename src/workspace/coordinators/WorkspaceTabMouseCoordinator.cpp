@@ -230,6 +230,12 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     operations_.open_terminal({});
     return true;
   }
+  if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_maximize_button_rect &&
+      Contains(operations_.bottom_panel_maximize_button_rect(panel_header), event.button.x,
+               event.button.y)) {
+    operations_.toggle_panel_maximized();
+    return true;
+  }
 
   const auto& bottom_panel_tabs = operations_.compute_visible_bottom_panel_tabs(panel_header);
   if (event.button.button == SDL_BUTTON_LEFT &&
@@ -454,6 +460,13 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
               [this](std::string command) {
                 MakeTerminalPanelService().OpenTerminal(std::move(command));
               },
+          .bottom_panel_maximize_button_rect =
+              [this](const SDL_FRect& rect) {
+                return tab_strip_service_.BottomPanelMaximizeButtonRect(
+                    layout_mode_service_.CurrentMode(), rect);
+              },
+          .toggle_panel_maximized =
+              [this]() { MakeTerminalPanelService().TogglePanelMaximized(); },
           .compute_visible_bottom_panel_tabs =
               [this](const SDL_FRect& rect) -> const std::vector<VisibleStripTab>& {
                 return tab_strip_service_.ComputeVisibleBottomPanelTabs(

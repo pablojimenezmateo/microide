@@ -117,6 +117,22 @@ enum class ActionId {
   TabSwitch,
   Term,
   TermClose,
+  // `reveal <path> <line[:col]>`: open + caret + centre the line, one atomic verb
+  // for an agent that wants to show the user a place in a file.
+  Reveal,
+  // `tab-to-group <group> [slot]`: move the focused pane's active tab into editor
+  // group `group` (0-based, layout order) at `slot` (default: the end).
+  TabToGroup,
+  // Terminal panes and the panel's visibility/maximized state (TerminalPanelService).
+  TerminalSplit,
+  TerminalFocusPaneLeft,
+  TerminalFocusPaneRight,
+  TerminalNext,
+  TerminalPrev,
+  TerminalRelaunch,
+  TerminalToggle,
+  PanelToggle,
+  PanelToggleMaximized,
   TestsDiscover,
   TestsRun,
   Tree,

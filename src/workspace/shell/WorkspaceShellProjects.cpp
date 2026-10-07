@@ -2,6 +2,8 @@
 
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/services/TerminalPanelService.h"
+
 #include <algorithm>
 #include <chrono>
 
@@ -58,7 +60,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
               [this]() {
                 if (!context_.current_project_state.root.empty() &&
                     context_.current_project_state.terminal_tabs.empty()) {
-                  OpenDefaultTerminalForProjectInit();
+                  MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
                 }
               },
           .activate_current_tab_after_state_load =

@@ -248,10 +248,31 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
           kEditorToggles);
     }
   }
+  // 5a) Bottom-panel header buttons: new terminal, and maximize / restore. The
+  //     glyphs are bare (a plus, a chevron), so the tooltip carries the verb and
+  //     the chord.
+  if (!found && BottomPanelVisible()) {
+    const SDL_FRect panel_header =
+        MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                 kWorkspaceBottomPanelHeaderHeight);
+    if (Contains(panel_header, x, y)) {
+      const LayoutMode mode = layout_mode_service_.CurrentMode();
+      if (const SDL_FRect rect = tab_strip_service_.BottomPanelTerminalNewTabRect(mode, panel_header);
+          Contains(rect, x, y)) {
+        found = hit("New Terminal (Ctrl+Shift+`)", rect);
+      } else if (const SDL_FRect maximize =
+                     tab_strip_service_.BottomPanelMaximizeButtonRect(mode, panel_header);
+                 Contains(maximize, x, y)) {
+        found = hit(layout.panel_maximized ? "Restore Panel Size (Ctrl+Shift+J)"
+                                           : "Maximize Panel (Ctrl+Shift+J)",
+                    maximize);
+      }
+    }
+  }
   if (!found && BottomPanelVisible() && terminal_find_service_.visible()) {
     static constexpr std::array<std::string_view, kTerminalFindToggleCount> kTerminalToggles = {
         "Match Case (Alt+C)", "Match Whole Word (Alt+W)"};
-    found = find_widget_hit(ComputeFindWidgetLayout(BottomPanelContentRect(layout),
+    found = find_widget_hit(ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout),
                                                     /*replace_mode=*/false,
                                                     kTerminalFindToggleCount),
                             kTerminalToggles);

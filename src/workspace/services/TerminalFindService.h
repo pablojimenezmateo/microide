@@ -12,7 +12,7 @@
 
 namespace microide::workspace {
 
-struct TerminalTabState;
+struct TerminalPaneState;
 
 // Find-in-scrollback for the terminal panel, VSCode's terminal find widget in
 // shape: a floating bar over the terminal body, all matches highlighted, an
@@ -59,15 +59,15 @@ class TerminalFindService {
   // Shows the bar and scans `tab`. `seed` replaces the query when non-empty
   // (reopening with a selection preloads it, as VSCode does); otherwise the
   // previous query is kept and re-run.
-  void Open(TerminalTabState* tab, std::string_view seed = {});
+  void Open(TerminalPaneState* tab, std::string_view seed = {});
   void Close();
-  void ToggleCaseSensitive(TerminalTabState* tab);
-  void ToggleWholeWord(TerminalTabState* tab);
+  void ToggleCaseSensitive(TerminalPaneState* tab);
+  void ToggleWholeWord(TerminalPaneState* tab);
 
   // Rescans when anything the match set depends on has changed. Cheap to call
   // every frame: an unchanged query over unchanged output does nothing, and new
   // output only rescans the visible grid rather than the whole scrollback.
-  void Refresh(TerminalTabState* tab);
+  void Refresh(TerminalPaneState* tab);
   // Drops the cached scan identity so the next Refresh rescans from row 0. Used
   // when the query text itself changed under the caller's fingers.
   void Invalidate() { scanned_session_ = nullptr; }
@@ -75,14 +75,14 @@ class TerminalFindService {
   // Steps the selection by `delta` matches, wrapping at both ends, and scrolls
   // the terminal so the new match is on screen. Returns false when there is
   // nothing to step to.
-  bool SelectRelative(TerminalTabState* tab, int delta);
+  bool SelectRelative(TerminalPaneState* tab, int delta);
 
  private:
   void ClearMatches();
   void RebuildCountText();
   // Detaches the terminal from its tail and scrolls the selected match into
   // view, centering it when the panel is tall enough to bother.
-  void RevealSelected(TerminalTabState* tab) const;
+  void RevealSelected(TerminalPaneState* tab) const;
 
   bool visible_ = false;
   bool focused_ = false;

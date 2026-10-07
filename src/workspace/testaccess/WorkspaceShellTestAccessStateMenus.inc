@@ -243,7 +243,8 @@
     std::vector<std::string> labels;
     labels.reserve(shell.context_.current_project_state.terminal_tabs.size());
     for (const auto& terminal_tab : shell.context_.current_project_state.terminal_tabs) {
-      labels.push_back(terminal_tab == nullptr ? std::string{} : terminal_tab->session.LaunchLabel());
+      const auto* pane = terminal_tab == nullptr ? nullptr : terminal_tab->active();
+      labels.push_back(pane == nullptr ? std::string{} : pane->session.LaunchLabel());
     }
     return labels;
   }
@@ -843,13 +844,13 @@
   }
   static SDL_FRect SettingsOverlayRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return ComputeSettingsOverlaySurfaceRect(layout.editor_area);
+    return ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor);
   }
   // Overlay rect for whatever overlay is currently open — routes through the shell's
   // ComputeOverlayRect (so a code-action overlay yields its centered-menu rect).
   static SDL_FRect ActiveOverlayRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ComputeOverlayRect(layout.editor_area);
+    return shell.ComputeOverlayRect(layout.overlay_anchor);
   }
   static const std::optional<SDL_FRect>& OverlayCaretAnchor(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.caret_anchor;
@@ -866,7 +867,7 @@
     overlay.workflow.code_actions.items.resize(item_count);
     overlay.workflow.code_actions.selected_index = 0;
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.ComputeOverlayRect(layout.editor_area);
+    return shell.ComputeOverlayRect(layout.overlay_anchor);
   }
   static int SettingsOverlayScrollRow(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.ScrollRow();

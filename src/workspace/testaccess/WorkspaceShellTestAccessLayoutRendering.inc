@@ -620,7 +620,7 @@
     shell.InvalidateCursorKindFingerprint();
   }
   static void CloseTerminalTab(WorkspaceShell& shell, std::size_t index) {
-    shell.CloseTerminalTab(index);
+    shell.MakeTerminalPanelService().CloseTerminalTab(index);
   }
   static void NoteLayoutInputsChanged(WorkspaceShell& shell) { shell.NoteLayoutInputsChanged(); }
   static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {

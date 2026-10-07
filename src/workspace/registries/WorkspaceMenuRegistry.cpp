@@ -155,6 +155,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
+      MenuItem(ActionId::PanelToggle, {}, "Ctrl+J", {}, 0, true),
+      MenuItem(ActionId::PanelToggleMaximized, {}, "Ctrl+Shift+J", {}, 0, true),
       MenuSeparator(),
       MenuItem(ActionId::Wrap, {}, "Alt+Z", {}, 0, true),
       MenuSeparator(),
@@ -211,7 +213,18 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CompareHead),
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::Term),
+      MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),
+      MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
+      MenuItem(ActionId::TerminalRelaunch),
+      MenuSeparator(),
+      MenuItem(ActionId::TerminalFocusPaneLeft, {}, "Alt+Left"),
+      MenuItem(ActionId::TerminalFocusPaneRight, {}, "Alt+Right"),
+      MenuItem(ActionId::TerminalPrev, {}, "Ctrl+PageUp"),
+      MenuItem(ActionId::TerminalNext, {}, "Ctrl+PageDown"),
+      MenuSeparator(),
+      MenuItem(ActionId::TerminalToggle, {}, "Ctrl+`"),
+      MenuItem(ActionId::PanelToggleMaximized, {}, "Ctrl+Shift+J", {}, 0, true),
+      MenuSeparator(),
       MenuItem(ActionId::CopyLastTerminalCommand),
       MenuItem(ActionId::TermClose),
   });
@@ -250,6 +263,10 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kTerminalContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopySelection),
       MenuItem(ActionId::PasteClipboard),
+      MenuSeparator(),
+      MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
+      MenuItem(ActionId::TerminalRelaunch),
+      MenuItem(ActionId::PanelToggleMaximized, {}, "Ctrl+Shift+J", {}, 0, true),
   });
   static const auto kEditorTabContextItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::CopyRelativePath),
@@ -270,6 +287,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CloseTabsToLeft),
   });
   static const auto kTerminalTabContextItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
+      MenuItem(ActionId::TerminalRelaunch),
       MenuItem(ActionId::CopyLastTerminalCommand),
       MenuSeparator(),
       MenuItem(ActionId::TermClose),

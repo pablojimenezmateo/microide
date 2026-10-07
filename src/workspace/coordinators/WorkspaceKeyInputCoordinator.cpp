@@ -143,7 +143,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   }
   if (state_.surface.focus == FocusTarget::Panel &&
       state_.panel.content == PanelContentKind::Terminal &&
-      operations_.active_terminal_tab() != nullptr) {
+      operations_.active_terminal_pane() != nullptr) {
     // Shift+PageUp/PageDown page through the transcript, as in VS Code and every
     // Linux terminal; they used to reach the shell as shifted PageUp/PageDown,
     // which left the terminal with no keyboard scrollback at all. Same pan the
@@ -569,7 +569,7 @@ KeybindingContext KeyInputCoordinator::ActiveKeybindingContext() const {
       return KeybindingContext::Sidebar;
     case FocusTarget::Panel:
       return state_.panel.content == PanelContentKind::Terminal &&
-                     operations_.active_terminal_tab() != nullptr
+                     operations_.active_terminal_pane() != nullptr
                  ? KeybindingContext::Terminal
                  : KeybindingContext::Global;
     case FocusTarget::Overlay:
@@ -754,7 +754,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },
           .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
-          .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
+          .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .dismiss_overlay = [this](bool focus_editor) { DismissOverlay(focus_editor); },
           .settings_overlay_visible = [this]() { return settings_overlay_service_.Visible(); },
           .close_settings_overlay = [this]() { CloseSettingsOverlay(); },

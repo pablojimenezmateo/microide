@@ -13,6 +13,7 @@
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
@@ -236,25 +237,40 @@ std::span<const editor::SelectionRange> BufferSearchHighlightFragments(
 
 }  // namespace
 
-void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
-  auto* terminal_tab = ActiveTerminalTab();
-  if (terminal_tab == nullptr) {
+void WorkspaceShell::ResizeTerminalToPanel(const WorkspaceLayout& layout) {
+  TerminalTabState* tab = prepare_cached_bottom_panel_vm_.has_value()
+                              ? prepare_cached_bottom_panel_vm_->terminal_tab
+                              : nullptr;
+  if (tab == nullptr) {
     return;
   }
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::ResizeTerminalToPanel");
-  const int rows = BottomPanelVisibleRows(panel_rect.h);
-  const float usable_width =
-      std::max(16.0f, panel_rect.w - 24.0f - kWorkspaceScrollbarThickness - 6.0f);
-  const int columns = std::max(
-      1, static_cast<int>(
-             std::floor(usable_width / std::max(1.0f, terminal_text_renderer_.CharWidth()))));
-  if (terminal_tab->session.rows() == static_cast<std::size_t>(rows) &&
-      terminal_tab->session.columns() == static_cast<std::size_t>(columns)) {
-    return;
+  // Every pane of the tab on screen gets its own column count from its own slice
+  // of the body; the row count is the panel's, shared by all of them.
+  const int rows = BottomPanelVisibleRows(layout.bottom_panel.h);
+  const TerminalPaneRectsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
+  bool regridded = false;
+  for (std::size_t i = 0; i < tab->panes.size() && i < rects.panes.size(); ++i) {
+    TerminalPaneState* pane = tab->panes[i].get();
+    if (pane == nullptr) {
+      continue;
+    }
+    const float usable_width =
+        std::max(16.0f, rects.panes[i].w - 24.0f - kWorkspaceScrollbarThickness - 6.0f);
+    const int columns = std::max(
+        1, static_cast<int>(
+               std::floor(usable_width / std::max(1.0f, terminal_text_renderer_.CharWidth()))));
+    if (pane->session.rows() == static_cast<std::size_t>(rows) &&
+        pane->session.columns() == static_cast<std::size_t>(columns)) {
+      continue;
+    }
+    pane->session.Resize(static_cast<std::size_t>(rows), static_cast<std::size_t>(columns));
+    regridded = true;
   }
-  terminal_tab->session.Resize(static_cast<std::size_t>(rows), static_cast<std::size_t>(columns));
-  post_render_redraws_remaining_ = std::max(post_render_redraws_remaining_, 2);
+  if (regridded) {
+    post_render_redraws_remaining_ = std::max(post_render_redraws_remaining_, 2);
+  }
 }
 
 void WorkspaceShell::DrawFilledRect(SDL_Renderer* renderer,
@@ -348,6 +364,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
+  if (prepare_cached_bottom_panel_vm_->content == PanelContentKind::Terminal) {
+    prepare_cached_bottom_panel_vm_->terminal_tab = project_state.active_terminal_tab();
+  }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ApplyLiveSettings");
     ApplyLiveSettings();
@@ -407,6 +426,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // with. The window size was written into `window_presentation_` above, so the
   // key sees this frame's size. A miss here is the only place the resolved
   // layout mode is committed back to the service (its hysteresis input).
+  // Two terminal-panel rules that read focus and must land before the layout is
+  // resolved: a maximized panel restores itself the moment another surface takes
+  // the keyboard, and the tab on screen has no unseen output.
+  {
+    TerminalPanelService& terminal_panel = MakeTerminalPanelService();
+    terminal_panel.SyncPanelMaximizedWithFocus();
+    terminal_panel.NoteActiveTabShown();
+  }
   const std::uint64_t layout_generation_before = layout_memo_generation_;
   WorkspaceLayout layout;
   {
@@ -440,14 +467,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::SyncTextInputSurface");
     MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   }
-  if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
+  if (panel_vm.content == PanelContentKind::Terminal && panel_vm.terminal_tab != nullptr) {
     const SDL_FRect& panel = layout.bottom_panel;
+    // The grid depends on the panel rect AND on which tab is up with which pane
+    // layout; the key folds the latter so a tab switch, a split or a divider move
+    // re-fits without a per-pane mutex read on every frame.
+    const std::uint64_t grid_key =
+        (static_cast<std::uint64_t>(project_state.active_terminal_tab_index + 1) * 0x9E3779B97F4A7C15ull) ^
+        (panel_vm.terminal_tab->layout_revision * 0xC2B2AE3D27D4EB4Full) ^
+        static_cast<std::uint64_t>(panel_vm.terminal_tab->pane_count());
     const auto& cached = last_terminal_panel_rect_;
     const bool unchanged = cached.has_value() && cached->x == panel.x && cached->y == panel.y &&
-                           cached->w == panel.w && cached->h == panel.h;
+                           cached->w == panel.w && cached->h == panel.h &&
+                           last_terminal_grid_key_ == grid_key;
     if (!unchanged) {
-      ResizeTerminalToPanel(panel);
+      ResizeTerminalToPanel(layout);
       last_terminal_panel_rect_ = panel;
+      last_terminal_grid_key_ = grid_key;
     }
   } else {
     last_terminal_panel_rect_.reset();
@@ -471,13 +507,18 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         tab_strip_service_.ComputeBottomPanelTabOverflowControls(
             project_state, panel_header, layout_mode_service_.CurrentMode(),
             *prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
+    // The pane slices of the tab on screen, so the render TU paints prebuilt
+    // rects instead of carving the body itself.
+    if (TerminalTabState* tab = prepare_cached_bottom_panel_vm_->terminal_tab; tab != nullptr) {
+      prepare_cached_bottom_panel_vm_->terminal_panes = tab->PaneRects(BottomPanelContentRect(layout));
+    }
   }
   // 1a) Terminal find bar: rescan and lay the bar out here, where the panel rect
   //     is known, so the render TU paints a fully prepared widget. The rescan is
   //     cheap by construction — settled scrollback is kept and only the visible
   //     grid is re-walked (see TerminalFindService::Refresh).
   if (panel_vm.content == PanelContentKind::Terminal && terminal_find_service_.visible()) {
-    TerminalTabState* terminal_tab = ActiveTerminalTab();
+    TerminalPaneState* terminal_tab = ActiveTerminalPane();
     terminal_find_service_.Refresh(terminal_tab);
     BottomPanelSurfaceViewModel& panel_out = *prepare_cached_bottom_panel_vm_;
     panel_out.find_visible = true;
@@ -485,7 +526,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     panel_out.find_matches = &terminal_find_service_.matches();
     panel_out.find_selected_index = terminal_find_service_.selected_index();
     OverlayFindWidgetViewModel& find_vm = panel_out.find;
-    find_vm.fw = ComputeFindWidgetLayout(BottomPanelContentRect(layout), /*replace_mode=*/false,
+    find_vm.fw = ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout), /*replace_mode=*/false,
                                          kTerminalFindToggleCount);
     find_vm.search_focused = terminal_find_service_.focused();
     find_vm.toggles[0] = FindWidgetToggleViewModel{
@@ -526,7 +567,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // 2) Overlay scroll clamp: the stored scroll row is normalized here so the
   //    overlay view model (and render) consume an already-clamped value.
   if (project_state.overlay.visible) {
-    ClampOverlayScrollRow(ComputeOverlayRect(layout.editor_area));
+    ClampOverlayScrollRow(ComputeOverlayRect(layout.overlay_anchor));
   }
   // 3) Commit-draft body viewport sizing + caret-keep-visible scroll clamp (the
   //    083 residual): moved out of RenderCommitBodyField so paint stays pure.
@@ -585,7 +626,7 @@ void WorkspaceShell::EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& 
     clip_cached_overlay_vm_.emplace();
   }
   RenderViewModelBuilder(context_).BuildOverlaySurfaceInto(
-      *clip_cached_overlay_vm_, layout, ComputeOverlayRect(layout.editor_area), text_renderer_);
+      *clip_cached_overlay_vm_, layout, ComputeOverlayRect(layout.overlay_anchor), text_renderer_);
   util::AddPerformanceCounter(util::PerfCounterId::RenderViewModelBuildOverlaySurfaceCalls, 1);
   clip_frame_overlay_view_models_layout_ = layout;
   clip_frame_overlay_view_models_frame_id_ = prepared_frame_id_;

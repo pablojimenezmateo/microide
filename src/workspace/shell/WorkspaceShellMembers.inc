@@ -229,7 +229,7 @@
   using MergeTabState = workspace::MergeTabState;
   using TabEntry = workspace::TabEntry;
   using TerminalSelectionPoint = workspace::TerminalSelectionPoint;
-  using TerminalTabState = workspace::TerminalTabState;
+  using TerminalPaneState = workspace::TerminalPaneState;
   using EditorPreferences = workspace::EditorPreferences;
   using ProjectSurfaceState = workspace::ProjectSurfaceState;
   using BufferSearchState = workspace::BufferSearchState;
@@ -1422,12 +1422,6 @@
   bool RunAllDiscoveredTests(std::string* error_message = nullptr);
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
   void ConsumeLspCallbacks();
-  void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
-  // Opens the default terminal during project initialization. In placeholder
-  // terminal test mode (terminal::UsePlaceholderTerminalsForTesting) it installs
-  // a bare, unstarted terminal tab to avoid spawning a real shell; otherwise it
-  // delegates to OpenTerminal. Shared by every project-init entry point.
-  void OpenDefaultTerminalForProjectInit();
   bool ReopenActiveTab();
   std::filesystem::path ConfigStatePath() const;
   std::filesystem::path UserConfigPath() const;
@@ -1601,13 +1595,11 @@
   bool HasLastTerminalCommand() const;
   std::optional<std::string> LastTerminalCommandText() const;
   TextInputSurface CurrentTextInputSurface() const;
-  TerminalTabState* ActiveTerminalTab();
-  const TerminalTabState* ActiveTerminalTab() const;
+  TerminalPaneState* ActiveTerminalPane();
+  const TerminalPaneState* ActiveTerminalPane() const;
   std::optional<std::size_t> FocusedTerminalTabIndex() const;
   void SyncTerminalFocusState();
-  bool MoveActiveTerminalTabTo(std::size_t index);
   bool MoveActiveOutputTabTo(std::size_t index);
-  void CloseTerminalTab(std::size_t index);
   void ConsumeTerminalSessionUpdates();
   bool BottomPanelVisible() const;
   // Whether the project tab strip is laid out this frame. Hidden only when the
@@ -1623,6 +1615,11 @@
   // Push `terminal.font_size` / `terminal.font_family` into terminal_text_renderer_. Called
   // from the render prepare step only while a terminal is shown; re-grids on a real change.
   void ApplyTerminalFontPreferences();
+  // Body rect of the terminal pane the keyboard acts on (the whole panel body
+  // unless the active tab is split); falls back to the panel body for Output.
+  SDL_FRect ActiveTerminalBodyRect(const WorkspaceLayout& layout) const;
+  // One pane's log layout: its own scroll/follow-tail, the panel's row count.
+  LogSurfaceLayout ComputeTerminalPaneLogLayout(const SDL_FRect& body, float panel_height, const TerminalPaneState& pane, std::size_t line_count) const;
   LogSurfaceLayout ComputeBottomPanelLogLayout(const WorkspaceLayout& layout,
                                                    std::size_t line_count) const;
   int BottomPanelVisibleRows(float panel_height) const;
@@ -1650,7 +1647,7 @@
   bool OpenExternalUrl(std::string_view url);
   void OpenExternalUrlPrompt(std::string url);
   bool RevealPathInFileExplorer(const std::filesystem::path& directory);
-  void ResizeTerminalToPanel(const SDL_FRect& panel_rect);
+  void ResizeTerminalToPanel(const WorkspaceLayout& layout);
   bool OpenUntitledTab();
   bool OpenFileInNewTab(const std::filesystem::path& path);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
@@ -1713,9 +1710,7 @@
   // Whether the debug toolbar is currently shown (debugger enabled + active
   // session). Used to gate rendering and hit-testing.
   bool DebugToolbarVisible() const;
-  void RenderBottomPanelSurface(SDL_Renderer* renderer,
-                                const WorkspaceLayout& layout,
-                                std::size_t terminal_line_count);
+  void RenderBottomPanelSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   // Right-side debug pane (Call Stack / Variables / Watch / Breakpoints). Defined in
   // DebugPaneRender.cpp; the four structured debug surfaces moved here from the
   // bottom panel.
@@ -2020,9 +2015,6 @@
   // and the blink half-period in milliseconds (clamped to 100..2000).
   bool CaretBlinkEnabled() const;
   Uint64 CaretBlinkIntervalMs() const;
-  // Resolved `terminal.scrollback_lines` (clamped). Applied to new terminals at
-  // creation and to existing terminals when the value changes.
-  std::size_t TerminalScrollbackLines() const;
   // True when ShouldBlinkCaret() AND the caret hasn't been idle past
   // kCaretBlinkIdleStopMs since the last ResetCaretBlink(). After that
   // window the caret freezes visible and no further blink wakes fire.
@@ -2212,6 +2204,9 @@
   // the panel rect is unchanged between frames there's nothing to recompute,
   // so we skip the call entirely. Reset when no terminal is active.
   std::optional<SDL_FRect> last_terminal_panel_rect_;
+  // (active tab, its pane layout revision) the grid was last fitted for, so a tab
+  // switch, a split or a divider move re-grids without asking every pane.
+  std::uint64_t last_terminal_grid_key_ = 0;
   WorkspaceOutputChannels output_channels_;
   FormatterRegistry formatter_registry_;
   SaveParticipantRegistry save_participant_registry_;

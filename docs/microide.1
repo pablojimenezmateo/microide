@@ -147,6 +147,10 @@ Query verbs
   status
   launch-configs
   adapters
+  editor
+  commands
+  terminals
+  terminal-output
 
 Commands
 --------
@@ -313,6 +317,8 @@ Every runnable command (also printed by
   indent-width [n]
   jump <line[:col]>
   open <path>
+  reveal <path> <line[:col]>
+  tab-to-group <group> [slot]
   about
   keyboard-shortcuts
   settings
@@ -379,6 +385,15 @@ Every runnable command (also printed by
   tabswitch <tab|+n|-n>
   term [command]
   term-close
+  term-split
+  term-pane-left
+  term-pane-right
+  term-next
+  term-prev
+  term-relaunch
+  term-toggle
+  panel-toggle
+  panel-maximize
   tests-discover
   tests-run [test-id...]
   tree [root]

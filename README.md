@@ -109,6 +109,20 @@ for what is actually measured, and what is not.
 
 ### Terminal
 - PTY-backed terminal tabs with scrollback and selection
+- **Split panes**: a tab holds up to six terminals side by side (`Ctrl+Shift+\` with the
+  terminal focused, or Terminal ▸ Split Terminal); `Alt+Left` / `Alt+Right` move between panes,
+  the divider drags and double-click resets it, the wheel scrolls whichever pane is under it
+- **Immersive (maximized) panel**: `Ctrl+Shift+J`, the header's chevron button, or View ▸ Maximize
+  Panel gives the terminal the whole window below the menu bar and project strip; it restores
+  itself the moment the editor, sidebar or debug pane takes focus (a file opened from a terminal
+  link, Ctrl+P, Ctrl+Tab), so it never traps you
+- `` Ctrl+` `` toggles the terminal (show + focus, or hide when it already has the keyboard),
+  `` Ctrl+Shift+` `` opens one, `Ctrl+J` hides/shows the panel, `Ctrl+PageUp` / `Ctrl+PageDown`
+  walk the terminal tabs while one is focused
+- An **activity dot** on a tab whose terminal printed while it was not on screen (an agent
+  finishing in another tab, or behind a hidden panel); it clears when the tab is shown
+- **Relaunch** an exited terminal in place (`Enter` in the dead pane, or Terminal ▸ Relaunch
+  Terminal): same tab, same position, same cwd and command — the dropped-ssh case
 - Alternate-screen support, application cursor-key mode, origin mode, autowrap, bracketed paste
 - OSC 52 clipboard copy (opt-in, off by default), focus notifications, basic device/cursor query replies
 - Terminal text selection, copy, and paste shortcuts
@@ -604,6 +618,12 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Alt+F8` / `Shift+Alt+F8` | Next / previous problem in the file (wraps; the message shows as a toast) |
 | `Ctrl+Shift+e` / `Ctrl+Shift+g` / `Ctrl+Shift+m` | Show the project, source control, or problems sidebar |
 | `Shift+PageUp` / `Shift+PageDown` in terminal | Page through the transcript (`Ctrl+Shift+C` copies the selection, `Ctrl+Shift+V` pastes) |
+| `` Ctrl+` `` / `` Ctrl+Shift+` `` | Toggle the terminal (show and focus it, or hide it when it has the keyboard) / open a new terminal |
+| `Ctrl+J` / `Ctrl+Shift+J` | Toggle the bottom panel / maximize it (immersive terminal: only the menu bar and project strip stay; any editor, sidebar or debug-pane focus restores it) |
+| `Ctrl+Shift+\` in terminal | Split the terminal into a pane to the right (up to six per tab) |
+| `Alt+Left` / `Alt+Right` in terminal | Focus the pane to the left / right (with one pane the chord reaches the shell) |
+| `Ctrl+PageUp` / `Ctrl+PageDown` in terminal | Previous / next terminal tab |
+| `Enter` in an exited terminal | Relaunch it in place with the same cwd and command |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |
 | `i` `b` `c` `m` in merge | Apply incoming / base / current / both (current first) for selected hunk |
@@ -685,6 +705,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open <path>`
+- `reveal <path> <line[:col]>`
+- `tab-to-group <group> [slot]`
 - `about`
 - `keyboard-shortcuts`
 - `settings`
@@ -751,6 +773,15 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `tabswitch <tab|+n|-n>`
 - `term [command]`
 - `term-close`
+- `term-split`
+- `term-pane-left`
+- `term-pane-right`
+- `term-next`
+- `term-prev`
+- `term-relaunch`
+- `term-toggle`
+- `panel-toggle`
+- `panel-maximize`
 - `tests-discover`
 - `tests-run [test-id...]`
 - `tree [root]`

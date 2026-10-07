@@ -36,7 +36,7 @@ void TerminalFindService::RebuildCountText() {
   }
 }
 
-void TerminalFindService::Open(TerminalTabState* tab, const std::string_view seed) {
+void TerminalFindService::Open(TerminalPaneState* tab, const std::string_view seed) {
   visible_ = true;
   focused_ = true;
   if (!seed.empty()) {
@@ -57,17 +57,17 @@ void TerminalFindService::Close() {
   count_text_.clear();
 }
 
-void TerminalFindService::ToggleCaseSensitive(TerminalTabState* tab) {
+void TerminalFindService::ToggleCaseSensitive(TerminalPaneState* tab) {
   case_sensitive_ = !case_sensitive_;
   Refresh(tab);
 }
 
-void TerminalFindService::ToggleWholeWord(TerminalTabState* tab) {
+void TerminalFindService::ToggleWholeWord(TerminalPaneState* tab) {
   whole_word_ = !whole_word_;
   Refresh(tab);
 }
 
-void TerminalFindService::Refresh(TerminalTabState* tab) {
+void TerminalFindService::Refresh(TerminalPaneState* tab) {
   if (!visible_ || tab == nullptr) {
     ClearMatches();
     count_text_.clear();
@@ -150,7 +150,7 @@ void TerminalFindService::Refresh(TerminalTabState* tab) {
   RebuildCountText();
 }
 
-bool TerminalFindService::SelectRelative(TerminalTabState* tab, const int delta) {
+bool TerminalFindService::SelectRelative(TerminalPaneState* tab, const int delta) {
   Refresh(tab);
   if (matches_.empty()) {
     return false;
@@ -168,7 +168,7 @@ bool TerminalFindService::SelectRelative(TerminalTabState* tab, const int delta)
   return true;
 }
 
-void TerminalFindService::RevealSelected(TerminalTabState* tab) const {
+void TerminalFindService::RevealSelected(TerminalPaneState* tab) const {
   if (tab == nullptr || selected_index_ >= matches_.size()) {
     return;
   }
