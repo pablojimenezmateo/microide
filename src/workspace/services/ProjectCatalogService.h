@@ -11,7 +11,8 @@ namespace microide::workspace {
 class ProjectCatalogService {
  public:
   struct Operations {
-    std::function<bool(const std::filesystem::path&, bool, bool, bool)>
+    std::function<bool(const std::filesystem::path&, bool, bool, bool,
+                       const project::ProjectLocality&)>
         initialize_current_project;
     std::function<void()> sync_active_editor_tab;
     std::function<void()> stop_project_search;
@@ -41,7 +42,8 @@ class ProjectCatalogService {
 
   bool Open(const std::filesystem::path& normalized_root,
             bool restore_persistence,
-            bool log_feedback);
+            bool log_feedback,
+            const project::ProjectLocality& locality = {});
   bool Switch(std::size_t index, bool activate_restored_tab = true);
   void Close(std::size_t index, bool activate_restored_tab = true);
   bool RestoreAfterRemoval(std::size_t preferred_index, bool activate_restored_tab = true);

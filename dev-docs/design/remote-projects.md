@@ -51,8 +51,13 @@ gap on TD-2026-10-06-319 and passes since that was resolved the same day — the
 list is empty). Its first run found two things: git named its tree as
 `-C <root>` in argv, which no launcher can map (now the working directory, and
 `ProcessLauncher::Run` owns the mapping for every caller), and a real local bug in
-the git sidebar's refresh state machine. Still to do in G11: parameterize the
-LSP, formatter, plugin-tool, tree-op, terminal and real-server tests over locality,
+the git sidebar's refresh state machine. Then (same day) the language server row,
+which measured the missing path translation in both directions and drove
+`HostPathTranslator` (§ 6.5); the project's locality is now fixed AT the open
+(`project::ProjectLocality`, carried through `OpenProjectTab` and the catalog),
+because the open is what registers servers and loads plugins. Still to do in G11:
+parameterize the formatter, plugin-tool, tree-op, terminal and real-server tests
+over locality,
 the count budgets, the control-channel transcript diff and the `parity` lane.
 
 One measurement worth carrying: opening a 1 MB file to first paint is 1.48 ms
@@ -943,11 +948,23 @@ manifest hash. So:
   presenting it as the truth.
 - **LSP.** The language server runs on the host, so `rootUri`, every `textDocument` URI
   and every `workspace/didChangeWatchedFiles` event name **remote** paths, and
-  every URI in a reply names a remote path the editor must map back. The **12**
-  files that call `FileUriForPath` / `PathFromFileUri` route through a
-  `ProjectUriMapper` held by the project state: the identity mapper for a local
-  project, `RemotePathMap` for a remote one. `LspService::Operations` gets the
-  mapper; the transport does not know it exists.
+  every URI in a reply names a remote path the editor must map back.
+
+  **Revised 2026-10-07, and shipped:** the translation lives at the transport, not
+  at the 12 caller files. `workspace/HostPathTranslator` rewrites the path-bearing
+  KEYS of every message the shared stdio transport sends and receives (`uri`,
+  `rootUri`, `targetUri`, `oldUri`, `newUri`, `scopeUri`, `baseUri`, `rootPath`,
+  DAP's `path`, `program` and `cwd`, and the URI keys of `WorkspaceEdit.changes`),
+  using the launcher's own two-way map (`ResolveWorkingDirectory` /
+  `LocalPathFromHost`), so `RemotePathMap` becomes the remote launcher's internals.
+  One seam instead of a dozen means no call site can forget; keying on field names
+  means document text that happens to contain a file URI is never touched; and
+  the translator is inactive for a local launcher, so a local project does not
+  even walk the message. Measured by the parity row
+  `Parity/LanguageServerSeesTheHostTree`, which failed both ways before it (the
+  server told about a mirror path it could not open; go-to-definition opening the
+  HOST's copy of a file) and matches local after. What it cannot reach is a path
+  inside a server's ARGV (TD-2026-10-07-322).
 
   **One of those 12 files is not a project path.**
   `WorkspaceToolDownloader.cpp:49` calls `PathFromFileUri` on a download **URL**,
@@ -2669,6 +2686,7 @@ that check it agrees with local.
 | Tree completeness vs the content set | The content set is files, non-ignored, one repository deep: no empty directories, no ignored directories, no submodule contents until Phase 3. Stated as a limitation in the docs rather than implied away by "the tree is never behind". Two are softened rather than absolute: an ignored path is not *listed* but is still openable through § 6.5's read-only fetch, and an empty directory the **user** creates is kept as `local-only` (§ 6.3) though one the host already had is invisible. § 6.2. |
 | A tree too large to mirror | Fails at `server/hello` against `remote.max_manifest_files`. A truncated manifest is the one state the content-state model cannot express, since a missing row is indistinguishable from a missing file. § 6.2. |
 | Should groundwork stay cheap and non-disruptive | **No.** Compatibility breaks are allowed, so groundwork is eleven items and ~4,200 production lines rather than three and ~450. All eleven stand alone if remote never ships, which is the test each had to pass to be in that phase rather than in Phase 2. § 8. |
+| Where LSP/DAP paths are translated | At the shared stdio transport, by field name, with the launcher's two-way map — not by a mapper threaded to every `FileUriForPath` caller. No call site can forget, user text is never rewritten, and a local project pays nothing. § 6.5. |
 | How remote is tested end to end | By **parity with local**: one scenario under the local launcher, a loopback non-local launcher and later the real server, with split host and mirror roots, comparing what the user sees and the round-trip count. Equality, not two independent assertions, because two independent assertions drift together. A known-gaps file that may only shrink; Phase 2b ships with it empty. The groundwork half (G11) needs no server and lands first. § 10.1, § 8. |
 | Does the server link SDL | No. Groundwork G1 splits an SDL-free kernel, so the server is a small separate binary. The coupling is only the cross-thread wake and SDL types in terminal data. This also closes the server-install question: copy one static binary. § 8. |
 | Wire format | Length-prefixed binary frames, not JSON-RPC. The traffic is content, manifests and terminal state, and JSON charges +33% on bodies, ~6 MB on a large manifest, and base64 on the latency path. The hardened transport behaviour is kept; only the codec changes. § 6.4. |

@@ -27,6 +27,7 @@
 #include "project/EditorConfig.h"
 #include "project/FileIndex.h"
 #include "project/FileWriteGate.h"
+#include "project/ProjectLocality.h"
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
 #include "project/ProjectSearchService.h"
@@ -803,18 +804,15 @@ struct ProjectWorkspaceState {
   // Spawns that must NEVER follow the project — `xdg-open`, "Open Local
   // Terminal" — keep naming `platform::LocalProcessLauncher()` explicitly and say
   // why, rather than reading this. (TD-2026-09-22-301.)
-  const platform::ProcessLauncher* process_launcher = &platform::LocalProcessLauncher();
-  [[nodiscard]] const platform::ProcessLauncher& launcher() const { return *process_launcher; }
+  project::ProjectLocality locality;
+  [[nodiscard]] const platform::ProcessLauncher& launcher() const { return *locality.launcher; }
   // The write gate every write into THIS project's tree goes through — content
-  // replacement and tree operations alike. The launcher's twin, for the same
-  // reason and with the same lifetime rule: a remote project's is the
-  // MirrorWriteGate that writes into the mirror and enqueues the push, and a
-  // write that picks its gate per call lands in the wrong tree. Mutable through a
-  // const state for the same reason a launcher can run from one: the gate is a
+  // replacement and tree operations alike, the launcher's twin for the same reason
+  // (a remote project's is the MirrorWriteGate that writes into the mirror and
+  // enqueues the push). Mutable through a const state because the gate is a
   // service the project points at, not part of the project's value.
   // (TD-2026-09-29-305.)
-  project::FileWriteGate* file_write_gate = &project::LocalFileWriteGate();
-  [[nodiscard]] project::FileWriteGate& write_gate() const { return *file_write_gate; }
+  [[nodiscard]] project::FileWriteGate& write_gate() const { return *locality.write_gate; }
   bool initialized = false;
   bool restore_persistence_on_activate = false;
   project::DirectoryTree directory_tree;

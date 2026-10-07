@@ -538,6 +538,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/git/MergeResultValidation.cpp
   src/workspace/EditorPreferenceSettings.cpp
   src/workspace/FileUri.cpp
+  src/workspace/HostPathTranslator.cpp
   src/workspace/render/CompareMergeRender.cpp
   src/workspace/services/ProjectCatalogService.cpp
   src/workspace/git/GitOperationService.cpp

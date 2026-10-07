@@ -26,11 +26,10 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
               [this](const std::filesystem::path& project_root,
                      bool restore_persistence,
                      bool log_feedback,
-                     bool activate_restored_tab) {
-                return InitializeCurrentProject(project_root,
-                                                restore_persistence,
-                                                log_feedback,
-                                                activate_restored_tab);
+                     bool activate_restored_tab,
+                     const project::ProjectLocality& locality) {
+                return InitializeCurrentProject(project_root, restore_persistence, log_feedback,
+                                                activate_restored_tab, locality);
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
           .stop_project_search = [this]() { StopProjectSearch(); },
@@ -107,7 +106,8 @@ void WorkspaceShell::ResetProjectCatalogToWelcomeState() {
 
 bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
                                     bool restore_persistence,
-                                    bool log_feedback) {
+                                    bool log_feedback,
+                                    const project::ProjectLocality& locality) {
   const std::filesystem::path normalized_root = ResolveProjectRootInput(project_root);
   if (normalized_root.empty()) {
     return false;
@@ -129,7 +129,8 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
   }
 
   const bool opened =
-      MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback);
+      MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback,
+                                       locality);
   if (opened) {
     recents_service_.RecordProjectOpen(normalized_root);
     NoteLayoutInputsChanged();

@@ -647,6 +647,23 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
+### TD-2026-10-07-322 — a path inside a host process's ARGV is not translated. [OPEN]
+
+Found while adding `HostPathTranslator` (design § 6.5). Paths in LSP and DAP
+MESSAGES are translated at the transport; paths in the COMMAND that starts the
+process are not, and cannot be by a launcher: `ProcessLauncher::Run`'s contract is
+that argv is opaque (a launcher cannot know which words are paths), which is why
+git now passes its root as the working directory instead of `-C <root>`. What is
+left is every plugin- or setting-supplied server command that names a project path
+— `clangd --compile-commands-dir=<root>/build`, a `pyright` `--project`, a debug
+adapter launched with a program path in argv rather than in the launch request.
+Locally identical; remotely the host is told the mirror's path. The fix belongs
+where the argv is BUILT: the LSP/DAP manager knows which of its own arguments are
+paths and can map them through the project's launcher before `ResolveArgv`; a
+plugin-supplied command needs a placeholder (`${workspaceFolder}`, as VS Code's
+launch configs use) resolved per locality rather than a literal path. A parity row
+that starts a server with a path argument is the test that can fail.
+
 ### TD-2026-10-07-321 — completion never opens by itself: no quick suggestions, no trigger characters. [OPEN]
 
 Found while resolving TD-2026-10-07-320. The completion list opens only from the

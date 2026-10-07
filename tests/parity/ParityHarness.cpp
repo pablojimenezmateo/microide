@@ -110,12 +110,14 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     // Declared after the launcher and gate, so it is destroyed before them: the
     // project state points at both until the shell is gone.
     WorkspaceShell shell;
-    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, tree.root, false, false),
-           "parity: the project opens under " + std::string(LocalityName(locality)));
-    if (launcher != nullptr) {
-      WorkspaceShellTestAccess::SetProjectLauncher(shell, *launcher);
-      WorkspaceShellTestAccess::SetProjectWriteGate(shell, *gate);
-    }
+    // The locality is fixed AT the open (project::ProjectLocality): the open is
+    // what registers language servers, loads plugins and starts git.
+    const bool opened =
+        launcher == nullptr
+            ? WorkspaceShellTestAccess::OpenProjectTab(shell, tree.root, false, false)
+            : WorkspaceShellTestAccess::OpenProjectTabWithLocality(
+                  shell, tree.root, project::ProjectLocality{launcher.get(), gate.get()});
+    Expect(opened, "parity: the project opens under " + std::string(LocalityName(locality)));
     scenario.run(shell, tree, outcome);
   }
 

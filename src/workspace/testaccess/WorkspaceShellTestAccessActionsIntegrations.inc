@@ -360,13 +360,15 @@
   // MirrorWriteGate would be. Set AFTER the project is opened: opening resets the
   // project state, gate included.
   static void SetProjectWriteGate(WorkspaceShell& shell, microide::project::FileWriteGate& gate) {
-    shell.context_.current_project_state.file_write_gate = &gate;
+    shell.context_.current_project_state.locality.write_gate = &gate;
   }
-  // The launcher's twin of SetProjectWriteGate, with the same set-after-open rule:
-  // the parity suite's loopback locality (tests/parity) installs both.
-  static void SetProjectLauncher(WorkspaceShell& shell,
-                                 const microide::platform::ProcessLauncher& launcher) {
-    shell.context_.current_project_state.process_launcher = &launcher;
+  // Open a project with a locality fixed AT the open, as a remote project is: the
+  // open registers language servers, loads plugins and starts git with it. (The
+  // parity suite's loopback locality, tests/parity.)
+  static bool OpenProjectTabWithLocality(WorkspaceShell& shell,
+                                         const std::filesystem::path& project_root,
+                                         const microide::project::ProjectLocality& locality) {
+    return shell.OpenProjectTab(project_root, false, false, locality);
   }
   // The watcher's reload of a clean buffer whose file changed on disk — the path
   // that replaces the editor's viewport wholesale.

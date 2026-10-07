@@ -17,6 +17,7 @@
 #include "platform/ProcessLauncher.h"
 #include "platform/SubprocessSandbox.h"
 #include "project/FileWriteGate.h"
+#include "project/ProjectLocality.h"
 #include "util/JsonValue.h"
 
 namespace microide::plugin {
@@ -593,10 +594,7 @@ class PluginHost {
   // project tree, and the local ones for the plugin's own data directory — locality
   // is a property of the path an operation targets (TD-2026-10-06-318). Both must
   // outlive the reload's project, as ProjectWorkspaceState's do.
-  struct ProjectLocality {
-    const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
-    project::FileWriteGate* write_gate = &project::LocalFileWriteGate();
-  };
+  using ProjectLocality = project::ProjectLocality;
   // The workspace passes its project's locality. The root-only forms are the local
   // project, for tests and tools.
   bool Reload(const std::filesystem::path& project_root, ProjectLocality locality);

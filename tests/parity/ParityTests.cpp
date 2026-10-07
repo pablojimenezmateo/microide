@@ -9,7 +9,11 @@
 #include <vector>
 
 #include "TestSupport.h"
+#include "parity/LoopbackLocality.h"
 #include "parity/ParityHarness.h"
+#include "util/JsonValue.h"
+#include "workspace/FileUri.h"
+#include "workspace/HostPathTranslator.h"
 #include "support/GitSidebarWait.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -99,6 +103,128 @@ Scenario GitSidebarShowsTheWorkingTree() {
   };
 }
 
+// A language server that, like any process on a real host, sees only the host's
+// files: its working directory is the host root, and a path outside it is one it
+// cannot open. It reports what it could read (a diagnostic per TODO line, from
+// the bytes ON ITS DISK) and answers definition with a host path, as a real
+// server does. Whatever it is told, it echoes back -- so an untranslated mirror
+// path reaches it as "not a host path", and an untranslated host path reaches
+// the user as a path outside the project.
+constexpr std::string_view kHostConfinedLspServer = R"py(import json, os, sys
+from urllib.parse import quote, unquote
+
+host = os.path.realpath(os.getcwd())
+
+def uri_to_path(u):
+    return unquote(u[len("file://"):]) if u.startswith("file://") else u
+
+def path_to_uri(p):
+    return "file://" + quote(p, safe="/-._~")
+
+def on_host(p):
+    p = os.path.realpath(p)
+    return p == host or p.startswith(host + os.sep)
+
+def read():
+    n = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            break
+        if line.lower().startswith(b"content-length:"):
+            n = int(line.split(b":", 1)[1])
+    return json.loads(sys.stdin.buffer.read(n)) if n else None
+
+def write(m):
+    b = json.dumps(m).encode()
+    sys.stdout.buffer.write(b"Content-Length: %d\r\n\r\n" % len(b) + b)
+    sys.stdout.buffer.flush()
+
+def rng(line):
+    return {"start": {"line": line, "character": 0}, "end": {"line": line, "character": 1}}
+
+while True:
+    m = read()
+    if m is None:
+        break
+    method = m.get("method")
+    if method == "initialize":
+        root = uri_to_path(m["params"].get("rootUri") or "")
+        write({"jsonrpc": "2.0", "id": m["id"], "result": {"capabilities": {
+            "textDocumentSync": 1, "definitionProvider": True}}})
+        if not on_host(root):
+            write({"jsonrpc": "2.0", "method": "window/logMessage",
+                   "params": {"type": 1, "message": "root is not a host path"}})
+    elif method == "textDocument/didOpen":
+        uri = m["params"]["textDocument"]["uri"]
+        path = uri_to_path(uri)
+        if on_host(path) and os.path.isfile(path):
+            with open(path) as f:
+                diags = [{"range": rng(i), "message": "todo", "severity": 2}
+                         for i, l in enumerate(f.read().split("\n")) if "TODO" in l]
+        else:
+            diags = [{"range": rng(0), "message": "not a host path", "severity": 1}]
+        write({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+               "params": {"uri": uri, "diagnostics": diags}})
+    elif method == "textDocument/definition":
+        write({"jsonrpc": "2.0", "id": m["id"], "result": [
+            {"uri": path_to_uri(os.path.join(host, "defs.md")), "range": rng(1)}]})
+    elif method == "shutdown":
+        write({"jsonrpc": "2.0", "id": m["id"], "result": None})
+    elif method == "exit":
+        break
+)py";
+
+// The language server runs on the host, reads the host's bytes, and every path
+// it is given or gives back crosses the mirror/host boundary: diagnostics land on
+// the editor's buffer and go-to-definition opens the editor's copy of the file.
+Scenario LanguageServerSeesTheHostTree() {
+  return Scenario{
+      .name = "Parity/LanguageServerSeesTheHostTree",
+      .build =
+          [](const std::filesystem::path& root, bool) {
+            WriteFile(root / "notes.md", "alpha\nTODO one\nbeta\nTODO two\n");
+            WriteFile(root / "defs.md", "first\nthe definition\n");
+          },
+      .run =
+          [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
+            const std::filesystem::path notes = tree.root / "notes.md";
+            WorkspaceShellTestAccess::OpenFile(shell, notes);
+            const auto pump = [&shell] { WorkspaceShellTestAccess::ConsumeLspCallbacks(shell); };
+            (void)WaitUntil(
+                [&] { return WorkspaceShellTestAccess::DiagnosticsForPath(shell, notes) != nullptr; },
+                std::chrono::seconds(10), std::chrono::milliseconds(5), pump);
+            if (const auto* diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(shell, notes)) {
+              for (const auto& diagnostic : *diagnostics) {
+                outcome.Add("diagnostic", "notes.md:" + std::to_string(diagnostic.range.start.line + 1),
+                            diagnostic.message);
+              }
+            } else {
+              outcome.Add("diagnostic", "notes.md", "none arrived");
+            }
+            if (tree.locality == parity::Locality::kLocal) {
+              Expect(WorkspaceShellTestAccess::DiagnosticsForPath(shell, notes) != nullptr &&
+                         WorkspaceShellTestAccess::DiagnosticsForPath(shell, notes)->size() == 2,
+                     "parity reference: the local server reports both TODO lines");
+            }
+
+            WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 1);
+            Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto-definition"),
+                   "goto-definition runs");
+            (void)WaitUntil(
+                [&] { return WorkspaceShellTestAccess::ActiveEditor(shell).path() != notes; },
+                std::chrono::seconds(10), std::chrono::milliseconds(5), pump);
+            const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+            outcome.Add("definition", "opened", editor.path().generic_string());
+            outcome.Add("definition", "line", std::to_string(editor.cursor_line() + 1));
+          },
+      .spawns = true,
+  };
+}
+
 }  // namespace
 
 void RegisterParityTests(std::vector<TestCase>& tests) {
@@ -106,6 +232,80 @@ void RegisterParityTests(std::vector<TestCase>& tests) {
           [] { parity::ExpectParity(SaveReachesTheTree()); });
   AddTest(tests, "Parity/GitSidebarShowsTheWorkingTree",
           [] { parity::ExpectParity(GitSidebarShowsTheWorkingTree()); });
+  AddTest(tests, "Parity/LanguageServerSeesTheHostTree", [] {
+#if !MICROIDE_HAS_LUA_PLUGINS
+    return;
+#endif
+    TemporaryDirectory support_dir;
+    const std::filesystem::path server = support_dir.path() / "host_confined_lsp.py";
+    WriteFile(server, std::string(kHostConfinedLspServer));
+    const std::filesystem::path config_home = support_dir.path() / "config";
+    WritePluginInit(config_home / "microide" / "plugins", "parity-lsp",
+                    R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "parity-lsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "python3", ")lua" +
+                        server.generic_string() + R"lua(" } })
+  end
+})
+)lua");
+    ScopedPluginConfigHomeEnv scoped_config(config_home);
+    parity::ExpectParity(LanguageServerSeesTheHostTree());
+  });
+
+  // The transport's path translation (workspace/HostPathTranslator), unit-level.
+  AddTest(tests, "HostPathTranslator/RewritesPathKeysAndNothingElse", [] {
+    const parity::LoopbackProcessLauncher launcher(
+        parity::LoopbackPathMap("/m/project", "/h/project"));
+    const workspace::HostPathTranslator translator(launcher);
+    Expect(translator.active(), "a non-local launcher's translator is active");
+    const std::string mirror_uri = workspace::FileUriForPath("/m/project/a.md");
+    const std::string host_uri = workspace::FileUriForPath("/h/project/a.md");
+
+    util::JsonObject text_document;
+    text_document["uri"] = util::JsonValue(mirror_uri);
+    // A document that MENTIONS a mirror URI: the user's bytes, never rewritten.
+    text_document["text"] = util::JsonValue("see " + mirror_uri);
+    util::JsonObject params;
+    params["textDocument"] = util::JsonValue(std::move(text_document));
+    params["rootPath"] = util::JsonValue("/m/project");
+    util::JsonValue message(std::move(params));
+    translator.ToHost(message);
+    Expect(message["textDocument"]["uri"].AsString() == host_uri, "a uri key goes to the host");
+    Expect(message["textDocument"]["text"].AsString() == "see " + mirror_uri,
+           "document text is never rewritten, even when it contains a file URI");
+    Expect(message["rootPath"].AsString() == "/h/project", "a path key goes to the host");
+
+    // WorkspaceEdit.changes: the URI is an object KEY.
+    util::JsonObject changes;
+    changes[host_uri] = util::JsonValue(util::JsonArray{});
+    util::JsonObject edit;
+    edit["changes"] = util::JsonValue(std::move(changes));
+    util::JsonValue reply(std::move(edit));
+    translator.FromHost(reply);
+    Expect(reply["changes"].HasKey(mirror_uri) && !reply["changes"].HasKey(host_uri),
+           "a WorkspaceEdit's changes come back keyed by the editor's URI");
+
+    // DAP: a stack frame's source path, and a path outside the project untouched.
+    util::JsonObject source;
+    source["path"] = util::JsonValue("/h/project/main.c");
+    util::JsonObject outside;
+    outside["path"] = util::JsonValue("/usr/include/stdio.h");
+    util::JsonArray frames;
+    frames.push_back(util::JsonValue(std::move(source)));
+    frames.push_back(util::JsonValue(std::move(outside)));
+    util::JsonValue frames_value(std::move(frames));
+    translator.FromHost(frames_value);
+    Expect(frames_value[0]["path"].AsString() == "/m/project/main.c",
+           "a debugger's host path comes back as the editor's");
+    Expect(frames_value[1]["path"].AsString() == "/usr/include/stdio.h",
+           "a path outside the project is left alone");
+
+    const workspace::HostPathTranslator local(platform::LocalProcessLauncher());
+    Expect(!local.active(), "a local project's translator is inactive: no walk at all");
+  });
 
   // Positive controls: the runner must be able to fail. A parity suite that cannot
   // tell a leaked host path from a correct one, or that passes when nothing went

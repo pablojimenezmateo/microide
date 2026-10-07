@@ -30,7 +30,9 @@ bool DapClient::Start(const platform::ProcessLauncher& launcher,
 
   // Through the project's launcher, like every other spawn: a debug adapter that
   // runs on a different machine from the binary it is debugging reports line numbers
-  // for a file nobody is looking at.
+  // for a file nobody is looking at. The same launcher translates every path in the
+  // messages both ways.
+  impl_->SetPathTranslator(HostPathTranslator(launcher));
   if (!impl_->proc.Start(launcher.ResolveArgv(command),
                          launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
     impl_->last_error = "failed to start debug adapter process";

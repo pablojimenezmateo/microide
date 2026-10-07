@@ -41,7 +41,8 @@ bool LspClient::Start(const platform::ProcessLauncher& launcher,
     util::StartupTrace::Scope start_proc_scope("LspClient::Start::StartProcess");
     // Through the project's launcher, like every other spawn: a language server that
     // indexes a different machine's tree lands diagnostics on lines the buffer does
-    // not have.
+    // not have. The same launcher translates every path in the messages both ways.
+    impl_->SetPathTranslator(HostPathTranslator(launcher));
     if (!impl_->proc.Start(launcher.ResolveArgv(command),
                            launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
       impl_->last_error = "failed to start language server process";

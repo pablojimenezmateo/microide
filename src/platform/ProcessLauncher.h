@@ -42,6 +42,11 @@ class ProcessLauncher {
   // Rewrite a working directory into one meaningful on the machine that runs the
   // process. Local: unchanged.
   virtual std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const = 0;
+  // The inverse: a path a process on that machine reported (a language server's
+  // definition, a debugger's stack frame) as the editor's path for the same file.
+  // Local: unchanged. A path the mapping does not cover comes back unchanged too,
+  // and is then simply a path outside the project.
+  virtual std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const = 0;
 
   // Run to completion. Every synchronous spawn in the tree goes through here.
   //

@@ -833,10 +833,7 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   const std::filesystem::path project_root = context_.current_project_state.root;
   plugin_runtime_.ReloadAsync(
       project_root,
-      plugin::PluginHost::ProjectLocality{
-          .launcher = &context_.current_project_state.launcher(),
-          .write_gate = &context_.current_project_state.write_gate(),
-      },
+      context_.current_project_state.locality,
       request.syntax_definitions,
       [this, request, generation, project_root](bool clean_reload) {
         // Drop a stale completion. Two independent guards:

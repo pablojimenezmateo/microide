@@ -75,6 +75,9 @@ class ScriptedProcessLauncher final : public platform::ProcessLauncher {
   std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override {
     return cwd;
   }
+  std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override {
+    return host_path;
+  }
   platform::SubprocessResult Run(std::vector<std::string> argv,
                                  platform::SubprocessOptions options) const override {
     runs.push_back(std::move(argv));

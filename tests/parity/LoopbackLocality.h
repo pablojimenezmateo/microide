@@ -31,6 +31,7 @@ class LoopbackPathMap {
  public:
   LoopbackPathMap(std::filesystem::path mirror_root, std::filesystem::path host_root);
   std::optional<std::filesystem::path> ToHost(const std::filesystem::path& mirror_path) const;
+  std::optional<std::filesystem::path> ToMirror(const std::filesystem::path& host_path) const;
   const std::filesystem::path& mirror_root() const { return mirror_root_; }
   const std::filesystem::path& host_root() const { return host_root_; }
 
@@ -56,6 +57,7 @@ class LoopbackProcessLauncher final : public platform::ProcessLauncher,
 
   std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override;
   std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override;
+  std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override;
   platform::SubprocessResult Run(std::vector<std::string> argv,
                                  platform::SubprocessOptions options) const override;
   bool is_local() const override { return false; }

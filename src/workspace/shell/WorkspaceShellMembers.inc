@@ -774,10 +774,10 @@
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
                                 bool restore_persistence,
                                 bool log_feedback,
-                                bool activate_restored_tab = true);
+                                bool activate_restored_tab = true, project::ProjectLocality locality = {});
   bool OpenProjectTab(const std::filesystem::path& project_root,
                       bool restore_persistence,
-                      bool log_feedback);
+                      bool log_feedback, const project::ProjectLocality& locality = {});
   bool SwitchProject(std::size_t index, bool log_feedback);
   bool MoveActiveProjectTo(std::size_t index);
   void RequestCloseProject(std::size_t index);

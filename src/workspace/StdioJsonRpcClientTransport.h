@@ -12,6 +12,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/WakePipe.h"
+#include "workspace/HostPathTranslator.h"
 #include "workspace/JsonRpcMessageFraming.h"
 #include "workspace/StdioClientQueue.h"
 #include "platform/AsyncSubprocess.h"
@@ -86,6 +87,9 @@ class StdioJsonRpcClientTransport {
   std::atomic<bool> stop_io{false};
   util::WakePipe wake_pipe_;  // self-pipe that breaks the I/O thread's poll() on demand
   int cached_stdout_fd_ = -1;
+  // Editor <-> host path translation for a process in a remote project; inactive
+  // (and free) for a local one. Written before Start, read-only after.
+  HostPathTranslator path_translator_;
 
   std::atomic<bool> shutting_down{false};
   std::atomic<bool> process_shutdown_started{false};
@@ -113,6 +117,21 @@ class StdioJsonRpcClientTransport {
   // Single funnel for every outbound message (requests, handshakes, and
   // reverse-request responses): trace, serialize, frame.
   std::string SerializeMessage(const util::JsonValue& msg) const {
+    // Remote only: rewrite the editor's paths as the host's on a copy. A local
+    // project's translator is inactive and this is the plain serialize.
+    if (path_translator_.active()) {
+      util::JsonValue translated = msg;
+      path_translator_.ToHost(translated);
+      return SerializeTranslated(translated);
+    }
+    return SerializeTranslated(msg);
+  }
+
+  // Set once, before Start, from the launcher the process runs through.
+  void SetPathTranslator(HostPathTranslator translator) { path_translator_ = translator; }
+
+ private:
+  std::string SerializeTranslated(const util::JsonValue& msg) const {
     derived().TraceSend(msg);
     const std::string json = util::SerializeJson(msg);
     std::string framed;
@@ -123,6 +142,8 @@ class StdioJsonRpcClientTransport {
     framed += json;
     return framed;
   }
+
+ public:
 
   // Flush every queued outbound message. Runs only on the I/O thread; holds
   // write_mutex across the proc.Write calls so it never races a shutdown-time
@@ -293,6 +314,7 @@ class StdioJsonRpcClientTransport {
       const std::size_t buffered_before = framer_.BufferedBytes();
       auto msg_opt = framer_.Next();
       if (msg_opt) {
+        path_translator_.FromHost(*msg_opt);
         derived().DispatchMessage(std::move(*msg_opt));
         continue;
       }

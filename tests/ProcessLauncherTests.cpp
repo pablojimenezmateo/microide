@@ -140,6 +140,7 @@ class UnknownHostLauncher final : public platform::ProcessLauncher,
  public:
   std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override { return argv; }
   std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override { return cwd; }
+  std::filesystem::path LocalPathFromHost(std::filesystem::path p) const override { return p; }
   platform::SubprocessResult Run(std::vector<std::string>, platform::SubprocessOptions) const override {
     return {};
   }

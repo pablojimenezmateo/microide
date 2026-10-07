@@ -10,7 +10,8 @@ namespace microide::workspace {
 class ProjectCatalogCoordinator {
  public:
   struct Operations {
-    std::function<bool(const std::filesystem::path&, bool, bool)> initialize_current_project;
+    std::function<bool(const std::filesystem::path&, bool, bool, const project::ProjectLocality&)>
+        initialize_current_project;
     std::function<bool(ProjectWorkspaceState&, bool)> activate_project_state;
     std::function<void(ProjectWorkspaceState&)> store_current_project_state;
     std::function<void()> save_config_state;
@@ -24,9 +25,12 @@ class ProjectCatalogCoordinator {
 
   ProjectCatalogCoordinator(WorkspaceContext& context, Operations operations);
 
+  // `locality` is fixed here, at the open, and travels with the project
+  // (project::ProjectLocality).
   bool Open(const std::filesystem::path& normalized_root,
             bool restore_persistence,
-            bool log_feedback);
+            bool log_feedback,
+            const project::ProjectLocality& locality = {});
   bool Switch(std::size_t index, bool activate_restored_tab = true);
   void Close(std::size_t index, bool activate_restored_tab = true);
   bool RestoreAfterRemoval(std::size_t preferred_index, bool activate_restored_tab = true);

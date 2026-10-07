@@ -17,11 +17,13 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
       .initialize_current_project =
           [this](const std::filesystem::path& project_root,
                  bool restore_persistence,
-                 bool log_feedback) {
+                 bool log_feedback,
+                 const project::ProjectLocality& locality) {
             return operations_.initialize_current_project(project_root,
                                                           restore_persistence,
                                                           log_feedback,
-                                                          true);
+                                                          true,
+                                                          locality);
           },
       .activate_project_state =
           [this](ProjectWorkspaceState& state, bool activate_restored_tab) {
@@ -42,8 +44,9 @@ ProjectCatalogCoordinator::Operations ProjectCatalogService::BuildCoordinatorOpe
 
 bool ProjectCatalogService::Open(const std::filesystem::path& normalized_root,
                                  bool restore_persistence,
-                                 bool log_feedback) {
-  return coordinator_.Open(normalized_root, restore_persistence, log_feedback);
+                                 bool log_feedback,
+                                 const project::ProjectLocality& locality) {
+  return coordinator_.Open(normalized_root, restore_persistence, log_feedback, locality);
 }
 
 bool ProjectCatalogService::Switch(std::size_t index, bool activate_restored_tab) {
@@ -76,7 +79,8 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
       util::PerformanceTrace::Scope scope(
           "ProjectCatalogService::ActivateProjectState::InitializeCurrentProject");
       initialized = operations_.initialize_current_project(
-          state.root, state.restore_persistence_on_activate, false, activate_restored_tab);
+          state.root, state.restore_persistence_on_activate, false, activate_restored_tab,
+          state.locality);
     }
     if (!initialized) {
       return false;

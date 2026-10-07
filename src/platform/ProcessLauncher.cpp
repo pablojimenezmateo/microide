@@ -16,6 +16,10 @@ class LocalLauncher final : public ProcessLauncher {
     return cwd;
   }
 
+  std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override {
+    return host_path;
+  }
+
   SubprocessResult Run(std::vector<std::string> argv,
                                  SubprocessOptions options) const override {
     return RunSubprocess(argv, options);
