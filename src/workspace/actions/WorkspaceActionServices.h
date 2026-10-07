@@ -186,6 +186,9 @@ class WorkspaceActionContext {
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<void()> close_all_tabs;
     std::function<editor::TextViewport*()> active_navigable_viewport;
+    // Move tab `from_index` of group `from_group` into group `to_group` at
+    // `to_slot` (EditorTabService::MoveTabToGroup).
+    std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
     std::function<void()> request_focused_editor_redraw;
     std::function<editor::TextViewport*()> active_editable_viewport;
     std::function<bool(std::string_view, bool)> insert_text_into_active_text_surface;
@@ -494,6 +497,15 @@ class WorkspaceActionContext {
   void CloseAllTabs();
 
   bool ExecuteLineNavigation(const LineNavigationRequest& request, bool relative);
+  // Open `path` and put the caret on the requested line, centred. A file still
+  // loading off-thread records the position so the load lands on it. False with
+  // `error_message` set when the open fails.
+  bool RevealPathAtLine(const std::filesystem::path& path,
+                        const LineNavigationRequest& request,
+                        std::string* error_message);
+  // Move the focused pane's active tab into group `to_group` at `to_slot`
+  // (clamped to the end). False when there is no such group or no tab.
+  bool MoveActiveTabToGroup(std::size_t to_group, std::optional<std::size_t> to_slot);
   void SelectAll();
   void Undo();
   void Redo();

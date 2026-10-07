@@ -730,6 +730,14 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::vector<std::size_t> indices) { RequestCloseTabs(std::move(indices)); },
           .close_all_tabs = [this]() { CloseAllTabs(); },
           .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
+          .move_tab_to_group =
+              [this](std::size_t from_group, std::size_t from_index, std::size_t to_group,
+                     std::size_t to_slot) {
+                // Same geometry drop the drag path does: both strips change length.
+                tab_strip_service_.InvalidateTabStripGeometry();
+                return MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group,
+                                                             to_slot);
+              },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .insert_text_into_active_text_surface =

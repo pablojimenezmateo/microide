@@ -705,6 +705,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open <path>`
+- `reveal <path> <line[:col]>`
+- `tab-to-group <group> [slot]`
 - `about`
 - `keyboard-shortcuts`
 - `settings`

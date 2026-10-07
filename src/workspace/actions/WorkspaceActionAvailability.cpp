@@ -341,6 +341,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Tree:
     case ActionId::TreeRefresh:
       return !context_.current_project_state.root.empty();
+    case ActionId::Reveal:
+      return !context_.current_project_state.root.empty();
+    case ActionId::TabToGroup:
+      return context_.current_project_state.editor_groups.size() > 1 &&
+             !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::TermClose:
     case ActionId::TerminalSplit:
     case ActionId::TerminalFocusPaneLeft:

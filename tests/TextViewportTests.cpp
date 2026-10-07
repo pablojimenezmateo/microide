@@ -1017,6 +1017,55 @@ void TestTextViewportNoOpLineReplaceDoesNotDirty() {
 
 // A line replacement that shrinks the span (real deletion of content) must still
 // apply — the no-op guard only skips edits that leave the buffer byte-identical.
+void TestTextViewportCenterLinePutsTheLineMidViewportAndClamps() {
+  TextViewport viewport;
+  std::string text;
+  for (int i = 0; i < 200; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  viewport.LoadContent(text, "/tmp/center-line.txt");
+  viewport.SetViewportSize(20, 80);
+
+  viewport.CenterLine(100);
+  Expect(viewport.scroll_line() == 90, "line 100 in a 20-row view scrolls to row 90 (10 above it)");
+
+  viewport.CenterLine(3);
+  Expect(viewport.scroll_line() == 0, "a line near the top cannot scroll above row 0");
+
+  viewport.CenterLine(198);
+  const std::size_t max_scroll = viewport.lines().size() - 20;
+  Expect(viewport.scroll_line() == max_scroll,
+         "a line near EOF settles at the last full page, not past it");
+
+  viewport.CenterLine(100000);
+  Expect(viewport.scroll_line() == max_scroll, "an out-of-range line clamps to the end");
+
+  // `reveal` centres a tab in the same step that opens it, before its first
+  // frame sizes it. The first real sizing must re-centre, once.
+  TextViewport fresh;
+  fresh.LoadContent(text, "/tmp/center-line-fresh.txt");
+  fresh.CenterLine(100);
+  fresh.SetViewportSize(20, 80);
+  Expect(fresh.scroll_line() == 90, "the first sizing after CenterLine re-centres the line");
+  fresh.SetScrollLine(10);
+  fresh.SetViewportSize(30, 80);
+  Expect(fresh.scroll_line() == 10, "the request is one-shot: a later resize does not re-centre");
+
+  // Soft wrap: the view scrolls in visual rows, so wrapped lines above the target
+  // push it down.
+  TextViewport wrapped;
+  std::string wrapped_text;
+  for (int i = 0; i < 100; ++i) {
+    wrapped_text += std::string(30, 'x') + "\n";  // 3 visual rows at width 10
+  }
+  wrapped.LoadContent(wrapped_text, "/tmp/center-line-wrapped.txt");
+  wrapped.SetSoftWrap(true);
+  wrapped.SetViewportSize(10, 10);
+  wrapped.CenterLine(20);
+  Expect(wrapped.scroll_line() == 20 * 3 - 5,
+         "under soft wrap the line's first visual row is what gets centred");
+}
+
 void TestTextViewportEmptyLineDeleteIsNotTreatedAsNoOp() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\n", "/tmp/line-shrink.txt");
@@ -6643,6 +6692,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportAppliedEditReplaysRandomEdits);
   AddTest(tests, "TextViewport/NoOpLineReplaceDoesNotDirty",
           TestTextViewportNoOpLineReplaceDoesNotDirty);
+  AddTest(tests, "TextViewport/CenterLinePutsTheLineMidViewportAndClamps",
+          TestTextViewportCenterLinePutsTheLineMidViewportAndClamps);
   AddTest(tests, "TextViewport/EmptyLineDeleteIsNotTreatedAsNoOp",
           TestTextViewportEmptyLineDeleteIsNotTreatedAsNoOp);
 }

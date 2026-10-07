@@ -160,7 +160,33 @@ Newline-delimited JSON, one object per line.
 | applied (stdout)  | `{"applied":"breakpoint-set ..","ok":true}` |
 
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
-`exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`.
+`exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
+`editor`, `commands`, `terminals`, `terminal-output`.
+
+The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
+`feat/editor-groups` control work, and made pane-aware):
+
+- `editor` returns every editor group (`index`, `focused`, `tabs`) and the split
+  tree in its persisted pre-order form (`split`: `{orientation, weights}` per node;
+  a `leaf` is one group, in group order). Each tab carries `kind`, `path`,
+  `title`, `active`, `dirty` and 1-based `cursorLine`/`cursorColumn`/`scrollLine`;
+  a file still loading off-thread reports `loading: true` and the position it will
+  open at. The focused group's active tab also reports `visibleTop`/`visibleCount`
+  — what the user is looking at. `tabs` stays as the flat list the media scripts use.
+- `commands` lists the runnable command registry as `{command, usage, label}`.
+- `terminals` lists the terminal strip: per tab `{tab, active, unseenOutput,
+  panes}`, per pane `{pane, active, label, running, lineCount}`.
+- `terminal-output` snapshots one pane's scrollback: args `{tab, pane, lines}`
+  default to the active tab's active pane and the last 1000 lines (capped at
+  20000). It returns `{tab, pane, running, lineCount, text}` with trailing blank
+  rows trimmed. PTY output is asynchronous, so this reads what is already
+  buffered: run a command with `term`, then poll until `running` is false (no exit
+  code is exposed).
+
+Agent navigation commands: `reveal <path> <line[:col]>` opens the file, puts the
+caret on the 1-based line and centres it (a large file still loading lands there
+when the load completes); `tab-to-group <group> [slot]` moves the focused pane's
+active tab into editor group `group` (0-based, layout order), at `slot` or the end.
 Events: `stopped`, `terminated`, `output`. With `--control` (stdout mirror on),
 events surface even with zero socket clients; responses and `applied` lines are
 mirrored too. `ready`/`applied` lines are stdout-only.

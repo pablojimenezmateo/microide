@@ -50,6 +50,25 @@ project (see [README](README.md)); versions track meaningful shipped work.
   keeping its position in the strip. A pane the host did not launch (a test
   placeholder) keeps sending the key to its session.
 
+- **Agent control queries and navigation verbs.** The control channel gains
+  `editor` (every group, the split tree, per-tab cursor/scroll/dirty and what the
+  user is looking at), `commands` (the runnable registry), `terminals` (each
+  terminal tab and its panes, with running state) and `terminal-output` (one
+  pane's scrollback tail, by tab and pane), plus the `reveal <path> <line[:col]>`
+  and `tab-to-group <group> [slot]` commands. Ported from a June control branch
+  that never reached main, generalised to the N-pane editor grid and to terminal
+  panes.
+
+### Fixed
+
+- **Indent guides on pathological indentation.** A line opening with hundreds of
+  thousands of spaces made the guide sweep walk one column per indent step every
+  frame; guides now stop at visual column 512. The one fix of the July
+  audit-backlog pass that had not reached main.
+- **A maximized panel no longer shows editor tabs over its header.** A collapsed
+  editor strip still laid out its tabs (and the "Welcome" placeholder) at their
+  minimum height; it now paints and hit-tests nothing.
+
 ### Changed
 
 - The bottom panel's terminal tab, pane and panel logic moved from `WorkspaceShell`

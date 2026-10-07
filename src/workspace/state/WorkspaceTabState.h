@@ -396,6 +396,9 @@ struct EditorTabState {
   // and these fields carry the real on-disk path + caret/scroll so the tab can
   // be hydrated lazily (session restore / background open).
   std::filesystem::path restored_path;
+  // `reveal` targeted this tab while its content was still loading: centre the
+  // restored caret line once the load lands (the placeholder had no real size).
+  bool center_cursor_on_load = false;
   std::size_t restored_cursor_line = 0;
   std::size_t restored_cursor_column = 0;
   std::size_t restored_scroll_line = 0;
@@ -491,6 +494,22 @@ struct TabEntry {
 // owns the shape, rather than an error at whichever call site next reaches for
 // `emplace()`.
 static_assert(std::is_default_constructible_v<TabEntry::EditorTabState>);
+
+// Whether closing this tab would discard edits: an editable compare's right side,
+// a merge's result, or an editor buffer. The one definition the tab coordinator's
+// close prompt and the control channel's `editor` query both read.
+inline bool TabEntryIsDirty(const TabEntry& tab) {
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    return tab.compare->right_editable && tab.compare->right_viewport.dirty();
+  }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    return tab.merge->result_viewport.dirty();
+  }
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return false;
+  }
+  return tab.editor_state->viewport.dirty();
+}
 static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
 struct TerminalPaneState {

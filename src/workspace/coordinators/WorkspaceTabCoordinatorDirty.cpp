@@ -11,16 +11,7 @@ namespace microide::workspace {
 // with no dependency on the coordinator's Operations hooks.
 
 bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
-  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    return tab.compare->right_editable && tab.compare->right_viewport.dirty();
-  }
-  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    return tab.merge->result_viewport.dirty();
-  }
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-    return false;
-  }
-  return tab.editor_state->viewport.dirty();
+  return TabEntryIsDirty(tab);
 }
 
 bool TabCoordinator::IsDirty(std::size_t index) const {

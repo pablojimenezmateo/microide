@@ -378,6 +378,10 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
                                                    editor_state.restored_cursor_column,
                                                    editor_state.restored_scroll_line,
                                                    editor_state.restored_horizontal_scroll);
+      if (editor_state.center_cursor_on_load) {
+        editor_state.center_cursor_on_load = false;
+        editor_state.viewport.CenterLine(editor_state.viewport.cursor_line());
+      }
       editor_state.content = TabEntry::EditorTabState::Content::Ready;
       editor_state.folding_model->Clear();
       NotifyPluginBufferOpen(path);

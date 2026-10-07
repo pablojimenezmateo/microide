@@ -994,6 +994,57 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
   return true;
 }
 
+bool WorkspaceActionContext::RevealPathAtLine(const std::filesystem::path& path,
+                                              const LineNavigationRequest& request,
+                                              std::string* error_message) {
+  if (!OpenPath(path, error_message)) {
+    return false;
+  }
+  const std::size_t line =
+      request.requested_line > 0 ? static_cast<std::size_t>(request.requested_line - 1) : 0;
+  // A large file opens off the shell thread; until it lands the tab's viewport is
+  // a read-only placeholder. The load applies the tab's restored view state, so
+  // record the target there and let the completion place it.
+  if (TabEntry::EditorTabState* editor_tab =
+          operations_.active_editor_tab ? operations_.active_editor_tab() : nullptr;
+      editor_tab != nullptr && editor_tab->content_pending()) {
+    editor_tab->restored_cursor_line = line;
+    editor_tab->restored_cursor_column = request.column > 0 ? request.column - 1 : 0;
+    editor_tab->restored_scroll_line = line;
+    editor_tab->center_cursor_on_load = true;
+    state_.surface.focus = FocusTarget::Editor;
+    return true;
+  }
+  if (!ExecuteLineNavigation(request, /*relative=*/false)) {
+    if (error_message != nullptr) {
+      *error_message = "Cannot place the caret in " + path.string();
+    }
+    return false;
+  }
+  if (editor::TextViewport* viewport = operations_.active_navigable_viewport();
+      viewport != nullptr) {
+    viewport->CenterLine(viewport->cursor_line());
+  }
+  return true;
+}
+
+bool WorkspaceActionContext::MoveActiveTabToGroup(std::size_t to_group,
+                                                  std::optional<std::size_t> to_slot) {
+  const std::size_t from_group = state_.clamped_focused_group_index();
+  if (to_group >= state_.editor_groups.size() || to_group == from_group ||
+      !operations_.move_tab_to_group) {
+    return false;
+  }
+  const EditorGroup& source = state_.editor_groups[from_group];
+  if (source.active_tab_index >= source.open_tabs.size()) {
+    return false;
+  }
+  const std::size_t slot =
+      std::min(to_slot.value_or(state_.editor_groups[to_group].open_tabs.size()),
+               state_.editor_groups[to_group].open_tabs.size());
+  return operations_.move_tab_to_group(from_group, source.active_tab_index, to_group, slot);
+}
+
 void WorkspaceActionContext::SelectAll() {
   if (operations_.select_all_at_active_single_line_text_surface()) {
     operations_.reset_caret_blink();
