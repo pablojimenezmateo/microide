@@ -154,6 +154,32 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                     .read_path = shared_request->right_is_working_tree(),
                 });
               },
+          .begin_git_conflict_prefetch =
+              [this](const std::filesystem::path& path) {
+                const std::filesystem::path root = context_.current_project_state.root;
+                const platform::ProcessLauncher* launcher =
+                    &context_.current_project_state.launcher();
+                auto cache = std::make_shared<project::GitRevisionBlobCache>();
+                (void)file_read_service_.Begin({
+                    .path = path,
+                    .on_worker =
+                        [root, launcher, path, cache](std::string&) {
+                          cache->Prefetch(root, *launcher, {":1", ":2", ":3"}, {path});
+                        },
+                    .on_complete =
+                        [this, root, path, cache](
+                            project::FileReadService::Completion completion) {
+                          // A project switch since the click owns the screen now.
+                          if (completion.status ==
+                                  project::FileReadService::Status::Cancelled ||
+                              context_.current_project_state.root != root) {
+                            return;
+                          }
+                          (void)MakeDiffTabCoordinator().OpenGitConflictMerge(path, cache.get());
+                        },
+                    .read_path = false,
+                });
+              },
           .apply_editor_preferences =
               [this](editor::TextViewport& view) { ApplyEditorPreferences(view); },
           .report_compare_load_failure =

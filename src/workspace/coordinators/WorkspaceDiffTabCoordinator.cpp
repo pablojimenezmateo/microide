@@ -595,6 +595,15 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
     return true;
   }
 
+  // Three `git show :N:path` runs -- three round trips for a remote project -- do
+  // not belong on the shell thread. Read them on the file reader and come back;
+  // the open completes with the stages in hand. A review session prefetches its
+  // whole batch first and passes it in, so it takes the inline path below.
+  if (prefetched == nullptr && operations_.begin_git_conflict_prefetch) {
+    operations_.begin_git_conflict_prefetch(normalized_path);
+    return true;
+  }
+
   const auto base_content =
       project::ReadGitFileAtCommit(state_.root, state_.launcher(), normalized_path, ":1", prefetched);
   const auto current_content =

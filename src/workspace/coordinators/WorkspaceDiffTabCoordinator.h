@@ -62,6 +62,11 @@ class DiffTabCoordinator {
     // which case the open stays synchronous, exactly as before. The completion
     // must reach ApplyCompareTabLoad, whatever its outcome.
     std::function<std::uint64_t(CompareTabLoadRequest)> begin_compare_tab_load;
+    // Read a conflicted file's three index stages off the shell thread, then finish
+    // the open there with them (TD-2026-09-29-312) -- through a coordinator made
+    // at completion time, since this one is a per-use value that is long gone by
+    // then. Unset: the open reads them inline, as it always did.
+    std::function<void(const std::filesystem::path& path)> begin_git_conflict_prefetch;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(std::string)> report_compare_load_failure;
   };

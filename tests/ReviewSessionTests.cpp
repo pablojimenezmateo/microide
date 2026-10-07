@@ -113,6 +113,38 @@ void TestReviewBranchOpensAndCleansCompareTabs() {
   Expect(!HasCompareTabFor(shell, repo_path / "b.txt"), "stale compare tab was cleaned up");
 }
 
+// Opening one conflicted file (the git sidebar's click) reads its three index
+// stages on the file reader, not the shell thread: three `git show` runs are three
+// round trips in a remote project, with the window frozen for all of them
+// (TD-2026-09-29-312). The tab appears when the stages are in hand.
+void TestConflictMergeOpensOffTheShellThread() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "conflict.txt", "base\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "theirs"}, "create theirs branch");
+  WriteFile(repo_path / "conflict.txt", "theirs change\n");
+  CommitAll(repo_path, "theirs", "theirs commit");
+  RequireGitCommandSuccess(repo_path, {"checkout", "main"}, "back to main");
+  WriteFile(repo_path / "conflict.txt", "ours change\n");
+  CommitAll(repo_path, "ours", "ours commit");
+  RunGitCommand(repo_path, {"merge", "theirs"});
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  const std::uint64_t posted_before = TestAccess::PostedFileReadCount(shell);
+  Expect(TestAccess::OpenGitConflictMerge(shell, repo_path / "conflict.txt"),
+         "the open is accepted");
+  Expect(TestAccess::PostedFileReadCount(shell) == posted_before + 1 &&
+             !TestAccess::ActiveTabIsMerge(shell),
+         "the stages are read on the file reader; nothing is built on the shell thread yet");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(TestAccess::ActiveTabIsMerge(shell), "the merge tab opens when the stages arrive");
+  Expect(!TestAccess::ActiveMerge(shell).conflicts.empty(),
+         "and it holds the conflict between ours and theirs");
+}
+
 // review-conflicts opens one merge tab per conflicted working-tree file, and a
 // rerun reuses them.
 void TestReviewConflictsOpensMergeTabsPerConflict() {
@@ -230,6 +262,8 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
 }
 
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/ConflictMergeOpensOffTheShellThread",
+          TestConflictMergeOpensOffTheShellThread);
   AddTest(tests, "ReviewSession/CommitCapsOpenedTabs",
           TestReviewCommitCapsOpenedTabs);
   AddTest(tests, "ReviewSession/CommitTabsCarryTheirOwnReviewFileIndex",

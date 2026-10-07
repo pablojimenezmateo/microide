@@ -400,6 +400,9 @@
     shell.MakeDiffTabCoordinator().ApplyCompareTabLoad(id, /*cancelled=*/true,
                                                         /*read_ok=*/false, empty);
   }
+  static bool OpenGitConflictMerge(WorkspaceShell& shell, const std::filesystem::path& path) {
+    return shell.OpenGitConflictMerge(path);
+  }
   static int PendingFileReadCount(const WorkspaceShell& shell) {
     return shell.file_read_service_.PendingCount();
   }

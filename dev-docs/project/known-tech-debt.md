@@ -647,6 +647,19 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
+### TD-2026-10-07-323 — review sessions run git on the shell thread. [OPEN]
+
+Split from TD-2026-09-29-312. `review-conflicts`, `review-commit` and
+`review-branch` (`ReviewSessionCoordinator`) collect their file lists with a git
+status or diff and batch-prefetch every blob through `GitRevisionBlobCache::Prefetch`
+— all synchronously on the shell thread, before the first tab opens. Locally that
+is one or two spawns; in a remote project it is the same number of round trips
+with the window frozen, for a command whose whole point is opening many files. The
+shape is the conflict merge's: post the collect-and-prefetch to the file reader
+(or the background executor), then open the tabs from the completion with the
+filled cache. Tests drive these commands synchronously today and will need to
+flush the reader.
+
 ### TD-2026-10-07-322 — a path inside a host process's ARGV is not translated. [RESOLVED 2026-10-07]
 
 **Resolution.** `platform::ExpandWorkspaceFolder(argv, root, launcher)` replaces
@@ -885,7 +898,14 @@ the worked example of why this matters: it did not merely measure something
 different, it stopped working entirely, because the harness renders without an
 event loop and nothing drained the completion (fixed in 39f309f2).
 
-### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [OPEN — working-tree and branch/commit compares done (2026-10-06); the conflict merge remains]
+### TD-2026-09-29-312 — compare and merge still read their sides on the shell thread. [RESOLVED 2026-10-07 — the conflict merge opens off-thread too; review sessions split out as TD-2026-10-07-323]
+
+**The conflict merge (2026-10-07).** `OpenGitConflictMerge` with no prefetched
+cache — the git sidebar's click — posts the three `git show :N:path` reads to the
+file reader (`read_path = false`, the branch compare's shape) and finishes the
+open from the completion, through a coordinator made then, if the project has not
+changed. Test `ReviewSession/ConflictMergeOpensOffTheShellThread` asserts the tab
+does not exist until the reader completes and holds the conflict after.
 
 **The editor half is done (2026-09-29).** The whole load now runs on the reader's
 thread: the bytes, the classification (content hash, encoding sniff, line-ending
