@@ -16,6 +16,7 @@
 #include "workspace/FileUri.h"
 #include "workspace/HostPathTranslator.h"
 #include "support/GitSidebarWait.h"
+#include "terminal/TerminalSession.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -353,6 +354,53 @@ Scenario PluginToolsFollowTheProject() {
   };
 }
 
+// The terminal's shell starts in the project's tree as the HOST has it: the
+// command finds the repository only the host's copy carries.
+Scenario TerminalStartsInTheHostTree() {
+  return Scenario{
+      .name = "Parity/TerminalStartsInTheHostTree",
+      .build =
+          [](const std::filesystem::path& root, bool is_mirror) {
+            if (!is_mirror) {
+              InitializeGitRepo(root);
+            }
+            WriteFile(root / "README.md", "readme\n");
+          },
+      .run =
+          [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
+            // A plain `sh`, not the user's login shell and its profile.
+            (void)WorkspaceShellTestAccess::SetSettingValueTransient(shell, "terminal.shell", "sh");
+            WorkspaceShellTestAccess::OpenTerminalViaService(
+                shell, "test -d .git && echo PARITY-REPO || echo PARITY-NOREPO");
+            const auto screen = [&shell] {
+              std::string text;
+              for (const auto& line :
+                   WorkspaceShellTestAccess::ActiveTerminalSession(shell).SnapshotLines()) {
+                for (const auto& cell : line.cells) {
+                  text += cell.DisplayText();
+                }
+                text += '\n';
+              }
+              return text;
+            };
+            (void)WaitUntil([&] { return screen().find("PARITY-") != std::string::npos; },
+                            std::chrono::seconds(10), std::chrono::milliseconds(10),
+                            [&shell] { WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell); });
+            const std::string text = screen();
+            const bool repo = text.find("PARITY-REPO") != std::string::npos;
+            const bool no_repo = text.find("PARITY-NOREPO") != std::string::npos;
+            outcome.Add("terminal", "saw", repo ? "repository" : no_repo ? "no repository" : "nothing");
+            outcome.Add("terminal", "launch-directory",
+                        WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(shell)
+                            .generic_string());
+            if (tree.locality == parity::Locality::kLocal) {
+              Expect(repo, "parity reference: the local terminal starts in the repository; screen:\n" + text);
+            }
+          },
+      .spawns = true,
+  };
+}
+
 // One plugin for the format-on-save and plugin-tool rows: a `todo` filetype with
 // an uppercasing formatter, and a command that runs git and writes a file.
 void WriteParityToolsPlugin(const std::filesystem::path& config_home) {
@@ -391,6 +439,18 @@ void RegisterParityTests(std::vector<TestCase>& tests) {
           [] { parity::ExpectParity(SaveReachesTheTree()); });
   AddTest(tests, "Parity/GitSidebarShowsTheWorkingTree",
           [] { parity::ExpectParity(GitSidebarShowsTheWorkingTree()); });
+  AddTest(tests, "Parity/TerminalStartsInTheHostTree", [] {
+#if !defined(__unix__)
+    return;
+#endif
+    // The suite runs terminals as placeholders that spawn nothing; this row is
+    // about where a REAL shell starts, so it turns them off for its own duration.
+    struct RealTerminals {
+      RealTerminals() { terminal::SetUsePlaceholderTerminalsForTesting(false); }
+      ~RealTerminals() { terminal::SetUsePlaceholderTerminalsForTesting(true); }
+    } real_terminals;
+    parity::ExpectParity(TerminalStartsInTheHostTree());
+  });
   AddTest(tests, "Parity/FileOperationsReachTheTree",
           [] { parity::ExpectParity(FileOperationsReachTheTree()); });
   AddTest(tests, "Parity/FormatOnSaveReachesTheTree", [] {
