@@ -664,7 +664,23 @@ plugin-supplied command needs a placeholder (`${workspaceFolder}`, as VS Code's
 launch configs use) resolved per locality rather than a literal path. A parity row
 that starts a server with a path argument is the test that can fail.
 
-### TD-2026-10-07-321 — completion never opens by itself: no quick suggestions, no trigger characters. [OPEN]
+### TD-2026-10-07-321 — completion never opens by itself: no quick suggestions, no trigger characters. [RESOLVED 2026-10-07]
+
+**Resolution.** `AssistService::CompletionAfterTyping` sees every typed character.
+A server trigger character (parsed from `completionProvider.triggerCharacters` into
+a lock-free ASCII bitmask, `LspClient::IsCompletionTriggerCharacter`) starts a list
+at the caret with `triggerKind: 2` and the `triggerCharacter`, replacing any list
+the character just ended. The first character of a word starts one when the new
+`editor.quickSuggestions` setting is on (default, as VS Code) and something
+completes the language — once per word, remembered by the word's anchor. An
+automatic list is HIDDEN until it has rows and never shows "Loading…" or "No
+completions available", so typing prose costs nothing on screen; Esc or a list
+narrowed to nothing stays closed for the rest of the word. Tests:
+`QuickSuggestionsAskOncePerWord` (request count per word),
+`QuickSuggestionsWithNothingToOfferStayHidden`,
+`TriggerCharacterOpensCompletionAtTheCaret`.
+
+Original entry:
 
 Found while resolving TD-2026-10-07-320. The completion list opens only from the
 `completion` command (Ctrl+Space). VS Code opens it as the user types an identifier

@@ -790,6 +790,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Shaping And Save",
       },
       SettingSpec{
+          .id = "editor.quickSuggestions",
+          .label = "Quick Suggestions",
+          .description = "Open the completion list while typing a word, and on the language "
+                         "server's trigger characters (such as '.'), as VS Code does. One "
+                         "request per word; Ctrl+Space still opens it on demand.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → Suggestions",
+      },
+      SettingSpec{
           .id = "editor.snippets.enabled",
           .label = "Snippets",
           .description = "Enable snippet expansion and the Insert Snippet overlay.",

@@ -18,6 +18,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/FileUri.h"
 #include "workspace/lsp/LspWorkspaceEditOps.h"
+#include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/lsp/LspPositionEncoding.h"
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
@@ -179,6 +180,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
   session.replacement_range = CompletionReplacementRange(*viewport);
   session.request_column = viewport->cursor_column();
   session.is_incomplete = false;
+  session.automatic = false;
   session.source = "lsp";
   session.error = "Loading\xE2\x80\xA6";
   operations_.show_overlay(OverlayMode::Completion);
@@ -186,7 +188,81 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
   return true;
 }
 
-void AssistService::RequestCompletions(editor::TextViewport& viewport, bool refresh) {
+void AssistService::StartAutomaticCompletion(editor::TextViewport& viewport,
+                                             char trigger_character) {
+  auto& session = context_->current_project_state.overlay.workflow.completion;
+  session.items.clear();
+  session.visible.clear();
+  session.selected_index = 0;
+  session.replacement_range = CompletionReplacementRange(viewport);
+  session.request_column = viewport.cursor_column();
+  session.is_incomplete = false;
+  session.automatic = true;
+  session.source = "lsp";
+  session.error.clear();
+  auto_completion_anchor_ = session.replacement_range.start;
+  RequestCompletions(viewport, /*refresh=*/false,
+                     trigger_character != '\0' ? LspClient::CompletionTrigger::kTriggerCharacter
+                                                : LspClient::CompletionTrigger::kInvoked,
+                     trigger_character);
+}
+
+void AssistService::CompletionAfterTyping(std::string_view typed) {
+  const OverlayState& overlay = context_->current_project_state.overlay;
+  const bool list_up = overlay.visible && overlay.mode == OverlayMode::Completion;
+  if (overlay.visible && !list_up) {
+    return;  // another overlay owns the screen
+  }
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  if (typed.size() != 1 || viewport == nullptr || viewport->path().empty() ||
+      viewport->has_multiple_carets()) {
+    if (list_up) {
+      FollowCompletionCaret();
+    }
+    return;
+  }
+  const char c = typed.front();
+  // A server trigger character starts a new list at the caret, replacing any list
+  // the character just ended (`obj` + `.` -> members of obj).
+  if (LspFeatureEnabled(operations_.get_setting_value, "lsp.completion.enabled")) {
+    if (LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+        client != nullptr && client->IsCompletionTriggerCharacter(c)) {
+      if (list_up) {
+        operations_.dismiss_overlay(true);
+      }
+      StartAutomaticCompletion(*viewport, c);
+      return;
+    }
+  }
+  if (list_up) {
+    FollowCompletionCaret();
+    return;
+  }
+  const auto byte = static_cast<unsigned char>(c);
+  const bool word_character = byte >= 0x80 || byte == '_' || (byte >= '0' && byte <= '9') ||
+                              (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z');
+  if (!word_character ||
+      !SettingFlagEnabled(operations_.get_setting_value("editor.quickSuggestions"),
+                          /*default_value=*/true)) {
+    return;
+  }
+  // Once per word: a word whose request is out (or came back empty) is not asked
+  // about again on every character typed into it.
+  const editor::SelectionRange word = CompletionReplacementRange(*viewport);
+  if (auto_completion_anchor_.has_value() && auto_completion_anchor_->line == word.start.line &&
+      auto_completion_anchor_->column == word.start.column) {
+    return;
+  }
+  if (operations_.has_completion_provider &&
+      !operations_.has_completion_provider(viewport->language_id())) {
+    return;
+  }
+  StartAutomaticCompletion(*viewport, '\0');
+}
+
+void AssistService::RequestCompletions(editor::TextViewport& viewport, bool refresh,
+                                       LspClient::CompletionTrigger trigger,
+                                       char trigger_character) {
   const std::string language_id = viewport.language_id();
   const std::filesystem::path request_path = viewport.path();
 
@@ -221,8 +297,8 @@ void AssistService::RequestCompletions(editor::TextViewport& viewport, bool refr
           }
           PublishCompletionMerge(merge, request_path);
         },
-        refresh ? LspClient::CompletionTrigger::kIncomplete
-                : LspClient::CompletionTrigger::kInvoked);
+        refresh ? LspClient::CompletionTrigger::kIncomplete : trigger,
+        refresh ? '\0' : trigger_character);
   } else {
     merge->sources.lsp_pending = false;
   }
@@ -362,11 +438,35 @@ void AssistService::PublishCompletionMerge(const std::shared_ptr<CompletionMerge
   session.is_incomplete = merge->lsp_incomplete;
   session.request_column = merge->request_column;
   session.source = merge->lsp_items.empty() ? "plugin" : "lsp";
+  const OverlayState& overlay = context_->current_project_state.overlay;
+  const bool list_up = overlay.visible && overlay.mode == OverlayMode::Completion;
+  // A list the user closed stays closed; only an automatic one opens itself.
+  if (!list_up && !session.automatic) {
+    return;
+  }
   // The answer may arrive after more typing; it is filtered by the word as it is
   // NOW, which is the point of keeping the items rather than the rows.
   editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr || !RefilterCompletion(session, *viewport)) {
-    operations_.dismiss_overlay(true);
+    if (list_up) {
+      operations_.dismiss_overlay(true);
+    }
+    return;
+  }
+  if (session.automatic) {
+    // Never "Loading…" or "No completions available" for a list nobody asked
+    // for: it opens when it has rows and otherwise stays out of the way.
+    session.error.clear();
+    if (session.visible.empty()) {
+      if (list_up && !merge->sources.AnyPending()) {
+        operations_.dismiss_overlay(true);
+      }
+      return;
+    }
+    if (!list_up) {
+      operations_.show_overlay(OverlayMode::Completion);
+    }
+    operations_.request_overlay_redraw();
     return;
   }
   if (merge->sources.AnyPending()) {

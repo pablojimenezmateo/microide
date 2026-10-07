@@ -407,6 +407,11 @@ struct CompletionSessionState {
   // The language server said `isIncomplete`: the next keystroke re-asks instead of
   // only refiltering.
   bool is_incomplete = false;
+  // Opened by typing (quick suggestions or a trigger character), not by the
+  // command: stays hidden until it has rows, and never shows "Loading…" or "No
+  // completions available" -- an empty answer to a question the user did not ask
+  // is not news.
+  bool automatic = false;
   std::string source;
   std::string error;
 

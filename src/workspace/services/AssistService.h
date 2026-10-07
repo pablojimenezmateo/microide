@@ -87,6 +87,10 @@ class AssistService {
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
+    // Does anything (a language server, a plugin provider) offer completion for
+    // this language? Gates quick suggestions, so typing prose in a file nothing
+    // completes asks no one.
+    std::function<bool(std::string_view)> has_completion_provider;
   };
 
   AssistService() = default;
@@ -122,6 +126,11 @@ class AssistService {
   // incomplete, and closes the list once the caret has left the word -- a
   // non-word character, a backspace past its start, another line, a selection.
   void FollowCompletionCaret();
+  // Text was typed into the editor. Follows an open list; otherwise opens one
+  // automatically (TD-2026-10-07-321) on a server trigger character, or on the
+  // first character of a word when `editor.quickSuggestions` is on -- once per
+  // word, hidden until it has rows.
+  void CompletionAfterTyping(std::string_view typed);
   bool ApplySelectedCompletion();
   bool ShowInsertSnippetOverlay(std::string* error_message = nullptr);
   bool TrySnippetTabInEditor(bool shift_tab);
@@ -255,7 +264,11 @@ class AssistService {
       lsp_encoding::PositionEncoding encoding) const;
   // Query both completion sources for the word at the caret. `refresh` keeps the
   // list on screen (a re-ask for an incomplete list) instead of opening it empty.
-  void RequestCompletions(editor::TextViewport& viewport, bool refresh);
+  void RequestCompletions(editor::TextViewport& viewport, bool refresh,
+                          LspClient::CompletionTrigger trigger = LspClient::CompletionTrigger::kInvoked,
+                          char trigger_character = '\0');
+  // Start a hidden, automatic session at the caret (see CompletionSessionState::automatic).
+  void StartAutomaticCompletion(editor::TextViewport& viewport, char trigger_character);
   // Narrow `session.items` into `session.visible` by the word between the anchor
   // and the caret. Returns false when the caret is no longer in that word.
   bool RefilterCompletion(CompletionSessionState& session, const editor::TextViewport& viewport);
@@ -352,6 +365,9 @@ class AssistService {
   // RankCompletionCandidates' (score, index) buffer, kept so a keystroke's
   // refilter reuses it instead of allocating.
   std::vector<std::pair<int, std::uint32_t>> completion_rank_scratch_;
+  // Where the last automatic request's word began, so a word is asked about once
+  // however many characters are typed into it.
+  std::optional<editor::TextPosition> auto_completion_anchor_;
   std::uint64_t code_action_request_generation_ = 0;
   // Cursor-jump navigation (definition / type-def / impl / declaration): one
   // counter, since the user only ever jumps once — any new navigation supersedes a

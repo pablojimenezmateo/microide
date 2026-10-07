@@ -353,12 +353,13 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         if (viewport == nullptr) {
           return false;
         }
-        // The completion list narrows by what was just typed, or closes when it
-        // ended the word. A no-op when the list is not up.
-        const auto follow_completion = [this] {
-          if (state_.overlay.visible && state_.overlay.mode == OverlayMode::Completion &&
-              operations_.follow_completion_caret) {
-            operations_.follow_completion_caret();
+        // The completion list narrows by what was just typed or closes when it
+        // ended the word; with no list up, a trigger character or the start of a
+        // word may open one. A paste is not typing.
+        const auto follow_completion = [this, input, distribute_across_carets] {
+          if (operations_.completion_after_typing) {
+            operations_.completion_after_typing(distribute_across_carets ? std::string_view{}
+                                                                         : input);
           }
         };
         if (operations_.try_editor_snippet_insert_text &&

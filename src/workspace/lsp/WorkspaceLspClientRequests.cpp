@@ -44,7 +44,7 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
 }
 
 void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback,
-                                       CompletionTrigger trigger) {
+                                       CompletionTrigger trigger, char trigger_character) {
   if (!callback) return;
   if (impl_->DispatchTestStub(impl_->test_handlers.completion, callback, std::move(uri), pos)) {
     return;
@@ -55,6 +55,9 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
   {
     util::JsonObject context;
     context["triggerKind"] = util::JsonValue(static_cast<std::int64_t>(trigger));
+    if (trigger == CompletionTrigger::kTriggerCharacter && trigger_character != '\0') {
+      context["triggerCharacter"] = util::JsonValue(std::string(1, trigger_character));
+    }
     params["context"] = util::JsonValue(std::move(context));
   }
   impl_->DispatchResultRequest(

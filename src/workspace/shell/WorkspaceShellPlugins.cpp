@@ -438,6 +438,12 @@ WorkspaceShell::WorkspaceShell() {
               [this](MergeTabState& tab) {
                 UpdateMergeTrackingAfterViewportEdit(tab);
               },
+          .has_completion_provider =
+              [this](std::string_view language_id) {
+                return !language_id.empty() &&
+                       (FindProvider(completion_registry_, std::string(language_id)) != nullptr ||
+                        CurrentLspManager().HasServer(std::string(language_id)));
+              },
       });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
       .is_command_name_available =

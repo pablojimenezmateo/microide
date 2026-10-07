@@ -404,7 +404,8 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this](editor::TextViewport* viewport, std::string_view text) {
                 return assist_service_.TrySnippetInsertTextInEditor(viewport, text);
               },
-          .follow_completion_caret = [this]() { assist_service_.FollowCompletionCaret(); },
+          .completion_after_typing =
+              [this](std::string_view typed) { assist_service_.CompletionAfterTyping(typed); },
           .relaunch_active_terminal =
               [this]() { return MakeTerminalPanelService().RelaunchActivePane(); },
       });

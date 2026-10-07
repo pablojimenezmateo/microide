@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "workspace/lsp/WorkspaceLspClient.h"
 #include "workspace/lsp/LspFileWatchRegistry.h"
 #include "workspace/lsp/LspProtocol.h"
@@ -145,6 +147,10 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   std::atomic<bool> supports_code_lens_resolve{false};
   // Server advertised a callHierarchyProvider (captured at initialize).
   std::atomic<bool> supports_call_hierarchy{false};
+  // completionProvider.triggerCharacters as a bitmask over ASCII (every server
+  // in use advertises single ASCII characters: `.`, `:`, `>`, `/`, `"`, `<`, `@`).
+  // Asked on every typed character, so lock-free.
+  std::array<std::atomic<std::uint64_t>, 2> completion_trigger_mask{};
 
   // File watchers the server registered via client/registerCapability for
   // workspace/didChangeWatchedFiles. Written on the I/O thread (registrations

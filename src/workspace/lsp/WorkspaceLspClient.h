@@ -528,7 +528,8 @@ class LspClient {
   // a re-request for a list the server called incomplete says so, which is how
   // a server knows to widen rather than start over.
   void RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback,
-                              CompletionTrigger trigger = CompletionTrigger::kInvoked);
+                              CompletionTrigger trigger = CompletionTrigger::kInvoked,
+                              char trigger_character = '\0');
 
   // Order a parsed completion list the way the LSP spec and VS Code do: by
   // `sortText` (case-insensitively, and only when BOTH items carry one), then
@@ -617,6 +618,9 @@ class LspClient {
   // Reports nullopt when the server advertises no inlayHint provider.
   void RequestInlayHintsAsync(std::string uri, Range range, InlayHintCallback callback);
   bool SupportsInlayHints() const;
+  // Is `c` one of the server's completionProvider.triggerCharacters?
+  bool IsCompletionTriggerCharacter(char c) const;
+  void SetCompletionTriggerCharactersForTesting(std::string_view characters);
 
   // Async textDocument/documentHighlight for the symbol at `pos`. Reports nullopt
   // when the server advertises no documentHighlightProvider, so the caller keeps

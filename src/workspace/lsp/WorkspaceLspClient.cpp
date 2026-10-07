@@ -496,6 +496,24 @@ bool LspClient::SupportsPrepareRename() const {
   return impl_->supports_prepare_rename.load(std::memory_order_acquire);
 }
 
+bool LspClient::IsCompletionTriggerCharacter(char c) const {
+  const auto byte = static_cast<unsigned char>(c);
+  return byte < 128 && ((impl_->completion_trigger_mask[byte / 64].load(std::memory_order_acquire) >>
+                         (byte % 64)) & 1U) != 0;
+}
+
+void LspClient::SetCompletionTriggerCharactersForTesting(std::string_view characters) {
+  std::uint64_t mask[2] = {0, 0};
+  for (const char c : characters) {
+    const auto byte = static_cast<unsigned char>(c);
+    if (byte < 128) {
+      mask[byte / 64] |= std::uint64_t{1} << (byte % 64);
+    }
+  }
+  impl_->completion_trigger_mask[0].store(mask[0], std::memory_order_release);
+  impl_->completion_trigger_mask[1].store(mask[1], std::memory_order_release);
+}
+
 bool LspClient::SupportsInlayHints() const {
   return impl_->supports_inlay_hints.load(std::memory_order_acquire);
 }

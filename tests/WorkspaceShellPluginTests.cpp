@@ -2146,7 +2146,8 @@ void WithMarkdownCompletionServer(
     std::function<void(std::string, workspace::LspClient::Position,
                        workspace::LspClient::CompletionCallback)>
         handler,
-    const std::function<void(WorkspaceShell&, editor::TextViewport&)>& body) {
+    const std::function<void(WorkspaceShell&, editor::TextViewport&)>& body,
+    std::string_view trigger_characters = {}) {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
@@ -2178,6 +2179,7 @@ return ide.plugin({
   auto stub = std::make_unique<workspace::LspClient>();
   stub->EnableTestStubMode();
   stub->SetTestCompletionHandler(std::move(handler));
+  stub->SetCompletionTriggerCharactersForTesting(trigger_characters);
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
              .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
          "fixture should attach a stub markdown client");
@@ -2332,6 +2334,102 @@ void TestWorkspaceShellCompletionAcceptAfterTypingReplacesTheTypedWord() {
     Expect(!CompletionListUp(shell), "a space ends the word and closes the list");
     Expect(editor.lines()[0] == "x = v ", "and the space was typed, not swallowed");
   });
+}
+
+// TD-2026-10-07-321: the list opens by itself, as VS Code's quick suggestions do --
+// on the first character of a word, ONE request for the word, hidden until it
+// has rows.
+void TestWorkspaceShellQuickSuggestionsAskOncePerWord() {
+  int requests = 0;
+  WithMarkdownCompletionServer(
+      "x = \n", 0, 4,
+      [&requests](std::string, workspace::LspClient::Position,
+                  workspace::LspClient::CompletionCallback cb) {
+        ++requests;
+        std::vector<workspace::LspClient::CompletionItem> items;
+        items.push_back(PlainCompletionItem("alpha_one"));
+        items.push_back(PlainCompletionItem("beta"));
+        cb(workspace::LspClient::CompletionList{std::move(items)});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        Expect(!CompletionListUp(shell), "nothing is open before typing");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "a"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
+        Expect(requests == 1, "the first character of a word asks once");
+        Expect(CompletionListUp(shell) && session.VisibleCount() == 1 &&
+                   session.VisibleItem(0).label == "alpha_one",
+               "the list opens by itself, narrowed to the typed word");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "l"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(requests == 1, "typing on in the word refilters, it does not ask again");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, " "), "end the word");
+        Expect(!CompletionListUp(shell), "a space closes it");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "b"), "a new word");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(requests == 2, "a new word asks once more; requests=" + std::to_string(requests));
+        Expect(CompletionListUp(shell) && session.VisibleItem(0).label == "beta",
+               "and opens on its own candidates");
+        Expect(editor.lines()[0] == "x = al b", "every character reached the buffer, got: " +
+                                                     std::string(editor.lines()[0]));
+      });
+}
+
+// A source with nothing to offer is silent: no "No completions available" card
+// on every word typed in a comment, and no second request for the same word.
+void TestWorkspaceShellQuickSuggestionsWithNothingToOfferStayHidden() {
+  int requests = 0;
+  WithMarkdownCompletionServer(
+      "\n", 0, 0,
+      [&requests](std::string, workspace::LspClient::Position,
+                  workspace::LspClient::CompletionCallback cb) {
+        ++requests;
+        cb(workspace::LspClient::CompletionList{});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport&) {
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "z"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+               "an empty automatic answer opens nothing");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "z"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(requests == 1, "and the word is not asked about again");
+      });
+}
+
+// A server trigger character opens a list anchored AT the caret: `x.` + accept
+// gives `x.member`, not a replacement of `x`.
+void TestWorkspaceShellTriggerCharacterOpensCompletionAtTheCaret() {
+  std::vector<workspace::LspClient::Position> positions;
+  WithMarkdownCompletionServer(
+      "\n", 0, 0,
+      [&positions](std::string, workspace::LspClient::Position pos,
+                   workspace::LspClient::CompletionCallback cb) {
+        positions.push_back(pos);
+        std::vector<workspace::LspClient::CompletionItem> items;
+        items.push_back(PlainCompletionItem("member"));
+        cb(workspace::LspClient::CompletionList{std::move(items)});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.quickSuggestions",
+                                                                  "false"),
+               "quick suggestions off, so only the trigger character asks");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(positions.empty() && !CompletionListUp(shell),
+               "with quick suggestions off, a word character asks nothing");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "."), "the trigger character");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(positions.size() == 1 && positions[0].character == 2,
+               "the trigger character asks once, at the caret after it");
+        Expect(CompletionListUp(shell), "and the list opens on the answer");
+        Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+               "accept");
+        Expect(editor.lines()[0] == "x.member",
+               "the item is inserted at the caret, after the trigger, got: " +
+                   std::string(editor.lines()[0]));
+      },
+      ".");
 }
 
 // Signature help is LSP-primary: when a server serves the language, its result is
@@ -6143,6 +6241,12 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete);
   AddTest(tests, "WorkspaceShell/CompletionAcceptAfterTypingReplacesTheTypedWord",
           TestWorkspaceShellCompletionAcceptAfterTypingReplacesTheTypedWord);
+  AddTest(tests, "WorkspaceShell/QuickSuggestionsAskOncePerWord",
+          TestWorkspaceShellQuickSuggestionsAskOncePerWord);
+  AddTest(tests, "WorkspaceShell/QuickSuggestionsWithNothingToOfferStayHidden",
+          TestWorkspaceShellQuickSuggestionsWithNothingToOfferStayHidden);
+  AddTest(tests, "WorkspaceShell/TriggerCharacterOpensCompletionAtTheCaret",
+          TestWorkspaceShellTriggerCharacterOpensCompletionAtTheCaret);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
   AddTest(tests, "WorkspaceShell/InlayHintsPublishMidLineDecorations",

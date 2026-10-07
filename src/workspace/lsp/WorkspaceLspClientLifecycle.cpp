@@ -381,6 +381,26 @@ void LspClient::Impl::DoInitializeBlocking() {
           }
           supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
 
+          // Completion trigger characters (TD-2026-10-07-321): typing one opens the
+          // list as VS Code does. Only single ASCII characters are representable,
+          // which is every trigger a real server advertises.
+          {
+            std::uint64_t mask[2] = {0, 0};
+            const auto& triggers = server_caps["completionProvider"]["triggerCharacters"];
+            if (triggers.IsArray()) {
+              for (const auto& trigger : triggers.AsArray()) {
+                if (trigger.IsString() && trigger.AsString().size() == 1) {
+                  const auto c = static_cast<unsigned char>(trigger.AsString()[0]);
+                  if (c < 128) {
+                    mask[c / 64] |= std::uint64_t{1} << (c % 64);
+                  }
+                }
+              }
+            }
+            completion_trigger_mask[0].store(mask[0], std::memory_order_release);
+            completion_trigger_mask[1].store(mask[1], std::memory_order_release);
+          }
+
           // Capture the negotiated position encoding. utf-8 means our editor
           // byte offsets are already exact; utf-16/utf-32 are converted per line
           // at every position seam (lsp_encoding::*), and the per-keystroke
