@@ -81,6 +81,31 @@ class LoopbackProcessLauncher final : public platform::ProcessLauncher,
   mutable std::vector<std::string> spawns_;
 };
 
+// The LOCAL locality, counted: it is the local launcher in every respect that
+// matters (`is_local()`, no path mapping, local git metadata) and records each
+// spawn, so a parity run can compare how many processes the same work took in
+// each locality -- a remote that is right but makes more round trips fails too.
+class RecordingLocalLauncher final : public platform::ProcessLauncher {
+ public:
+  std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override;
+  std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override {
+    return cwd;
+  }
+  std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override {
+    return host_path;
+  }
+  platform::SubprocessResult Run(std::vector<std::string> argv,
+                                 platform::SubprocessOptions options) const override;
+  bool is_local() const override { return true; }
+  std::string_view description() const override { return "local (recorded)"; }
+
+  std::vector<std::string> spawns() const;
+
+ private:
+  mutable std::mutex mutex_;
+  mutable std::vector<std::string> spawns_;
+};
+
 // Writes go to the mirror through the local gate and are then replicated to the
 // host synchronously: a PERFECT sync engine, so that a parity failure is never the
 // stand-in's latency and always a write that did not go through the gate, or a

@@ -115,6 +115,39 @@ std::size_t LoopbackProcessLauncher::spawn_count() const {
   return spawns_.size();
 }
 
+namespace {
+std::string JoinArgv(const std::vector<std::string>& argv) {
+  std::string line;
+  for (const std::string& word : argv) {
+    if (!line.empty()) {
+      line += ' ';
+    }
+    line += word;
+  }
+  return line;
+}
+}  // namespace
+
+std::vector<std::string> RecordingLocalLauncher::ResolveArgv(std::vector<std::string> argv) const {
+  std::lock_guard lock(mutex_);
+  spawns_.push_back(JoinArgv(argv));
+  return argv;
+}
+
+platform::SubprocessResult RecordingLocalLauncher::Run(std::vector<std::string> argv,
+                                                       platform::SubprocessOptions options) const {
+  {
+    std::lock_guard lock(mutex_);
+    spawns_.push_back(JoinArgv(argv));
+  }
+  return platform::LocalProcessLauncher().Run(std::move(argv), std::move(options));
+}
+
+std::vector<std::string> RecordingLocalLauncher::spawns() const {
+  std::lock_guard lock(mutex_);
+  return spawns_;
+}
+
 project::FileWriteGate::Result LoopbackWriteGate::WriteText(const std::filesystem::path& path,
                                                             std::string_view text,
                                                             Signature signature) {

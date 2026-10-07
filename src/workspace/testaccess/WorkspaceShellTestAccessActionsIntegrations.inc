@@ -362,6 +362,9 @@
   static void SetProjectWriteGate(WorkspaceShell& shell, microide::project::FileWriteGate& gate) {
     shell.context_.current_project_state.locality.write_gate = &gate;
   }
+  static const microide::platform::ProcessLauncher& ProjectLauncher(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.launcher();
+  }
   // Open a project with a locality fixed AT the open, as a remote project is: the
   // open registers language servers, loads plugins and starts git with it. (The
   // parity suite's loopback locality, tests/parity.)

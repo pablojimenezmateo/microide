@@ -85,6 +85,7 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
   tree.locality = locality;
   std::unique_ptr<LoopbackProcessLauncher> launcher;
   std::unique_ptr<LoopbackWriteGate> gate;
+  const RecordingLocalLauncher local_launcher;
   if (locality == Locality::kLocal) {
     tree.root = temp_dir.path() / "project";
     tree.host_root = tree.root;
@@ -114,7 +115,9 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     // what registers language servers, loads plugins and starts git.
     const bool opened =
         launcher == nullptr
-            ? WorkspaceShellTestAccess::OpenProjectTab(shell, tree.root, false, false)
+            ? WorkspaceShellTestAccess::OpenProjectTabWithLocality(
+                  shell, tree.root,
+                  project::ProjectLocality{&local_launcher, &project::LocalFileWriteGate()})
             : WorkspaceShellTestAccess::OpenProjectTabWithLocality(
                   shell, tree.root, project::ProjectLocality{launcher.get(), gate.get()});
     Expect(opened, "parity: the project opens under " + std::string(LocalityName(locality)));
@@ -127,6 +130,9 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     result.spawns = launcher->spawn_count();
     result.spawn_log = launcher->spawns();
     result.writes = gate->write_count();
+  } else {
+    result.spawn_log = local_launcher.spawns();
+    result.spawns = result.spawn_log.size();
   }
   return result;
 }
@@ -145,6 +151,19 @@ std::string CheckParity(const Scenario& scenario) {
   if (scenario.writes && loopback.writes == 0) {
     return scenario.name +
            ": the loopback gate saw no write, so the project's writes did not go through it";
+  }
+  if (loopback.spawns > local.spawns) {
+    std::string logs = "\n  local spawns:";
+    for (const std::string& spawn : local.spawn_log) {
+      logs += "\n    " + spawn;
+    }
+    logs += "\n  loopback spawns:";
+    for (const std::string& spawn : loopback.spawn_log) {
+      logs += "\n    " + spawn;
+    }
+    return scenario.name + ": the non-local run started more processes than the local one (" +
+           std::to_string(loopback.spawns) + " vs " + std::to_string(local.spawns) +
+           ") -- each is a round trip to the host" + logs;
   }
   if (local.lines != loopback.lines) {
     std::string spawn_log;

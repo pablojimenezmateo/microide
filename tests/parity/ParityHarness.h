@@ -55,7 +55,7 @@ struct Scenario {
 
 struct RunResult {
   std::vector<std::string> lines;  // normalized and sorted
-  std::size_t spawns = 0;          // loopback only
+  std::size_t spawns = 0;          // processes the project's launcher started
   std::size_t writes = 0;          // loopback only
   std::vector<std::string> spawn_log;
 };

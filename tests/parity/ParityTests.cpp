@@ -575,6 +575,25 @@ return ide.plugin({
     Expect(parity::CheckParity(unwired).find("saw no spawn") != std::string::npos,
            "a spawning scenario with no loopback spawn must fail as vacuous");
   });
+  AddTest(tests, "Parity/Control/ExtraRoundTripsFail", [] {
+    // Right answer, more processes: the run spawns once more when non-local.
+    const Scenario chatty{
+        .name = "Parity/Control/ExtraRoundTrips",
+        .build = [](const std::filesystem::path& root, bool) { WriteFile(root / "a.txt", "a\n"); },
+        .run =
+            [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
+              const auto& launcher = WorkspaceShellTestAccess::ProjectLauncher(shell);
+              (void)launcher.Run({"true"}, {});
+              if (tree.locality == parity::Locality::kLoopback) {
+                (void)launcher.Run({"true"}, {});
+              }
+              outcome.Add("k", "", "v");
+            },
+        .spawns = true,
+    };
+    Expect(parity::CheckParity(chatty).find("more processes") != std::string::npos,
+           "a non-local run that spawns more than the local one must fail");
+  });
   AddTest(tests, "Parity/Control/EmptyOutcomeFails", [] {
     const Scenario empty{
         .name = "Parity/Control/EmptyOutcome",
