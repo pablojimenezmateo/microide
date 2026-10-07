@@ -10,6 +10,7 @@
 // machines without a language server installed. Set MICROIDE_TEST_LSP_CLANGD to a
 // clangd path to force a specific binary.
 #include "TestSupport.h"
+#include "parity/LoopbackLocality.h"
 
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
@@ -187,9 +188,113 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
 #endif
 }
 
+struct ClangdDefinitionResult {
+  bool initialized = false;
+  bool definition_answered = false;
+  std::string definition_path;          // empty when there was no location
+  bool include_not_found = false;       // a diagnostic said the header is missing
+};
+
+// didOpen main.cpp, then go-to-definition on the call to a function declared in a
+// header that exists only where clangd runs. `root`, `main` are what the EDITOR
+// would send; translation, if any, is the transport's.
+ClangdDefinitionResult RunClangdDefinition(const std::string& clangd,
+                                           const platform::ProcessLauncher& launcher,
+                                           const std::filesystem::path& root,
+                                           const std::filesystem::path& main,
+                                           const std::string& main_text) {
+  ClangdDefinitionResult result;
+  LspClient client;
+  if (!client.Start(launcher, {clangd, "--log=error", "--background-index=false"},
+                    workspace::FileUriForPath(root), "cpp", root.string())) {
+    return result;
+  }
+  result.initialized = PumpUntil(client, [&] { return client.IsInitialized(); }, 15000);
+  if (!result.initialized) {
+    client.Shutdown();
+    return result;
+  }
+  const std::string uri = workspace::FileUriForPath(main);
+  bool got_diagnostics = false;
+  client.SetDiagnosticsCallback([&](std::string diag_uri, std::vector<LspClient::Diagnostic> diags) {
+    if (diag_uri != uri) {
+      return;
+    }
+    got_diagnostics = true;
+    for (const auto& diagnostic : diags) {
+      result.include_not_found =
+          result.include_not_found || diagnostic.message.find("not found") != std::string::npos;
+    }
+  });
+  client.DidOpen(uri, "cpp", main_text);
+  (void)PumpUntil(client, [&] { return got_diagnostics; }, 15000);
+  client.RequestGoToDefinitionAsync(uri, LspClient::Position{1, 22},
+                                    [&](LspResult<std::vector<LspClient::Location>> locations) {
+                                      result.definition_answered = true;
+                                      if (locations.has_value() && !locations->empty()) {
+                                        if (const auto path = workspace::PathFromFileUri(
+                                                locations->front().uri)) {
+                                          result.definition_path = path->lexically_normal().string();
+                                        }
+                                      }
+                                    });
+  (void)PumpUntil(client, [&] { return result.definition_answered; }, 10000);
+  client.Shutdown();
+  return result;
+}
+
+// A language server runs on the host and reads the HOST's files. A header
+// generated into a gitignored build directory exists only there -- the mirror
+// never holds ignored files (dev-docs/design/remote-projects.md § 6.2). With the
+// transport translating paths, clangd works in the host tree, finds the header,
+// and go-to-definition comes back as the mirror's path for it. Without it, clangd
+// is told about the mirror's file, the include is not found, and there is no
+// definition. The skip is decided by a local reference run against the host tree.
+void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  const std::string clangd = LocateClangd();
+  if (clangd.empty()) {
+    std::fprintf(stderr, "[lsp-e2e] SKIP: no clangd on PATH\n");
+    return;
+  }
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path host = temp_dir.path() / "host" / "project";
+  const std::filesystem::path mirror = temp_dir.path() / "mirror" / "project";
+  const std::string main_text =
+      "#include \"build/gen/generated.h\"\n"
+      "int main() { return generated_value(); }\n";
+  WriteFile(host / "main.cpp", main_text);
+  WriteFile(mirror / "main.cpp", main_text);
+  WriteFile(host / "build" / "gen" / "generated.h", "int generated_value();\n");
+
+  const ClangdDefinitionResult reference =
+      RunClangdDefinition(clangd, platform::LocalProcessLauncher(), host, host / "main.cpp", main_text);
+  if (!reference.initialized || reference.definition_path.empty()) {
+    std::fprintf(stderr, "[lsp-e2e] SKIP: clangd could not resolve the reference definition\n");
+    return;
+  }
+
+  const tests::parity::LoopbackProcessLauncher launcher(
+      tests::parity::LoopbackPathMap(mirror, host));
+  const ClangdDefinitionResult remote =
+      RunClangdDefinition(clangd, launcher, mirror, mirror / "main.cpp", main_text);
+  Expect(remote.initialized, "clangd starts through the loopback host");
+  Expect(!remote.include_not_found,
+         "clangd works in the HOST tree, where the generated header exists");
+  Expect(remote.definition_path ==
+             (mirror / "build" / "gen" / "generated.h").lexically_normal().string(),
+         "go-to-definition into the host-only header comes back as the mirror's path; got '" +
+             remote.definition_path + "'");
+#endif
+}
+
 }  // namespace
 
 void RegisterLspRealServerE2ETests(std::vector<TestCase>& tests) {
+  AddTest(tests, "LspRealServer/ClangdSeesHostOnlyFilesThroughALoopbackHost",
+          TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost);
   AddTest(tests, "LspRealServer/ClangdDrivesFullFeatureSet",
           TestLspRealServerClangdDrivesFullFeatureSet);
 }

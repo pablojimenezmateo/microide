@@ -64,8 +64,10 @@ processes than the local one; local runs are counted too), and a real-gdb row
 (`DapRealAdapter/GdbStopsInTheMirrorThroughALoopbackHost`: a breakpoint on the
 mirror's file stops the host-built binary and the stop comes back as the mirror's
 file; its skip is decided by a local reference run, because deciding it from the
-loopback run let it pass with translation switched off). Still to do in G11: a
-real-clangd row,
+loopback run let it pass with translation switched off), and a real-clangd row
+(`LspRealServer/ClangdSeesHostOnlyFilesThroughALoopbackHost`: a header generated
+into a gitignored build directory exists only on the host; clangd finds it and
+go-to-definition returns the mirror's path for it). Still to do in G11:
 the count budgets, the control-channel transcript diff and the `parity` lane.
 
 One measurement worth carrying: opening a 1 MB file to first paint is 1.48 ms
