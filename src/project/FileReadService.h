@@ -58,6 +58,11 @@ class FileReadService {
   FileReadService(const FileReadService&) = delete;
   FileReadService& operator=(const FileReadService&) = delete;
 
+  // Cancels every outstanding read, so a large one stops at its next chunk instead
+  // of holding destruction for the rest of the file; the worker is then joined
+  // by `executor_`'s own destructor, before any other member goes.
+  ~FileReadService();
+
   void SetWakeChannel(util::WakeChannel channel) { mailbox_.SetWakeChannel(channel); }
 
   struct Request {
@@ -131,14 +136,20 @@ class FileReadService {
   std::shared_ptr<std::atomic<bool>> TrackRequest(std::uint64_t id);
   void ForgetRequest(std::uint64_t id);
 
-  // One worker. See the class comment: the workload is one file at a time, and a
-  // second thread would only let two reads compete for the same disk.
-  util::TaskExecutor executor_{1};
   util::MainThreadMailbox mailbox_;
   std::atomic<int> pending_{0};
   std::atomic<std::uint64_t> next_id_{0};
   mutable std::mutex requests_mutex_;
   std::vector<InFlightRead> requests_;
+  // One worker. See the class comment: the workload is one file at a time, and a
+  // second thread would only let two reads compete for the same disk.
+  //
+  // DECLARED LAST, so it is destroyed -- and its worker joined -- FIRST. A task
+  // still running at destruction calls ForgetRequest and posts to the mailbox;
+  // declared first, the executor outlived `requests_` and `mailbox_`, and a
+  // shell torn down with a load in flight had its worker write into a freed
+  // vector (ASAN, 2026-10-07).
+  util::TaskExecutor executor_{1};
 };
 
 }  // namespace microide::project

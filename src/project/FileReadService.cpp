@@ -24,6 +24,13 @@ std::shared_ptr<std::atomic<bool>> FileReadService::TrackRequest(std::uint64_t i
   return cancelled;
 }
 
+FileReadService::~FileReadService() {
+  const std::lock_guard<std::mutex> lock(requests_mutex_);
+  for (const InFlightRead& read : requests_) {
+    read.cancelled->store(true, std::memory_order_release);
+  }
+}
+
 void FileReadService::ForgetRequest(std::uint64_t id) {
   const std::lock_guard<std::mutex> lock(requests_mutex_);
   const auto it = std::find_if(requests_.begin(), requests_.end(),

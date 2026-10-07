@@ -37,8 +37,7 @@ std::string BranchLabel(const project::GitRepositoryState& state) {
   return "HEAD";
 }
 
-std::string IncomingRefLabel(const std::filesystem::path& project_root,
-                             const project::GitRepositoryState& repository_state) {
+std::string IncomingRefLabel(const project::GitRepositoryState& repository_state) {
   // MERGE_HEAD as the background refresh read it. This runs on the shell thread
   // (FinalizeGitMergeTab), which first forked `git rev-parse --short MERGE_HEAD`
   // (up to kGitReadTimeoutMs on a wedged git, for a pane caption) and then read
@@ -67,7 +66,7 @@ MergeResolverLabels BuildMergeResolverLabels(const std::filesystem::path& projec
                                              const std::filesystem::path& output_path,
                                              const project::GitRepositoryState& repository_state) {
   const std::string current_ref = BranchLabel(repository_state);
-  const std::string incoming_ref = IncomingRefLabel(project_root, repository_state);
+  const std::string incoming_ref = IncomingRefLabel(repository_state);
   const std::string path_label = RelativePathLabel(project_root, output_path);
   return MergeResolverLabels{
       .incoming_label = PaneLabel("Incoming", incoming_ref),
