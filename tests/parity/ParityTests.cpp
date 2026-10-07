@@ -4,6 +4,7 @@
 // would see must be equal. A row that cannot be equal yet is in ParityKnownGaps.h
 // with what removes it.
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -225,6 +226,164 @@ Scenario LanguageServerSeesTheHostTree() {
   };
 }
 
+// "relative/path d|f" for every entry under `root` except `.git`, sorted.
+std::vector<std::string> ListTree(const std::filesystem::path& root) {
+  std::vector<std::string> out;
+  std::error_code ec;
+  for (auto it = std::filesystem::recursive_directory_iterator(root, ec);
+       !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+    const std::filesystem::path relative = it->path().lexically_relative(root);
+    if (!relative.empty() && *relative.begin() == ".git") {
+      it.disable_recursion_pending();
+      continue;
+    }
+    out.push_back(relative.generic_string() + (it->is_directory() ? " d" : " f"));
+  }
+  std::sort(out.begin(), out.end());
+  return out;
+}
+
+// The sidebar's create-file, create-folder and rename land in BOTH trees -- the
+// editor's and the one the project's processes see -- through the project's gate.
+Scenario FileOperationsReachTheTree() {
+  return Scenario{
+      .name = "Parity/FileOperationsReachTheTree",
+      .build =
+          [](const std::filesystem::path& root, bool) {
+            WriteFile(root / "a.txt", "a\n");
+            std::filesystem::create_directories(root / "src");
+          },
+      .run =
+          [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
+            using Action = workspace::PromptSurfaceState::Action;
+            using Kind = workspace::PromptSurfaceState::Kind;
+            const auto apply = [&shell](Action action, const std::filesystem::path& path,
+                                        std::string input) {
+              WorkspaceShellTestAccess::OpenPromptSurfaceForTest(shell, action, Kind::TextInput,
+                                                                 path, "", std::move(input));
+              WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+            };
+            apply(Action::CreateFile, tree.root, "src/new.txt");
+            outcome.Add("opened-after-create", "",
+                        WorkspaceShellTestAccess::ActiveEditor(shell).path().generic_string());
+            apply(Action::CreateDirectory, tree.root, "docs");
+            apply(Action::RenamePath, tree.root / "a.txt", "b.txt");
+            for (const std::string& entry : ListTree(tree.root)) {
+              outcome.Add("editor-tree", "", entry);
+            }
+            for (const std::string& entry : ListTree(tree.host_root)) {
+              outcome.Add("host-tree", "", entry);
+            }
+            if (tree.locality == parity::Locality::kLocal) {
+              const std::vector<std::string> expected = {"b.txt f", "docs d", "src d",
+                                                         "src/new.txt f"};
+              Expect(ListTree(tree.root) == expected,
+                     "parity reference: create, create-folder and rename all landed locally");
+            }
+          },
+      .writes = true,
+  };
+}
+
+// The contributed formatter runs where the project runs, and the formatted save
+// reaches the host's bytes.
+Scenario FormatOnSaveReachesTheTree() {
+  return Scenario{
+      .name = "Parity/FormatOnSaveReachesTheTree",
+      .build = [](const std::filesystem::path& root,
+                  bool) { WriteFile(root / "list.todo", "seed\n"); },
+      .run =
+          [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
+            const std::filesystem::path file = tree.root / "list.todo";
+            WorkspaceShellTestAccess::OpenFile(shell, file);
+            auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+            editor.SelectAll();
+            editor.InsertText("alpha\n");
+            const bool saved = WorkspaceShellTestAccess::SaveTab(
+                shell, WorkspaceShellTestAccess::ActiveTabIndex(shell));
+            outcome.Add("save", "ok", saved ? "yes" : "no");
+            outcome.Add("bytes", "list.todo", ReadFile(tree.host_root / "list.todo"));
+            if (tree.locality == parity::Locality::kLocal) {
+              Expect(ReadFile(tree.root / "list.todo") == "ALPHA\n",
+                     "parity reference: the local save ran the formatter, got: " +
+                         ReadFile(tree.root / "list.todo"));
+            }
+            outcome.Add("editor", "dirty", editor.dirty() ? "yes" : "no");
+          },
+      .spawns = true,
+      .writes = true,
+  };
+}
+
+// A plugin's tool runs in the project's tree (where `git` sees the repository
+// only the HOST has), and a plugin's write lands in the host's bytes.
+Scenario PluginToolsFollowTheProject() {
+  return Scenario{
+      .name = "Parity/PluginToolsFollowTheProject",
+      .build =
+          [](const std::filesystem::path& root, bool is_mirror) {
+            if (!is_mirror) {
+              InitializeGitRepo(root);
+            }
+            WriteFile(root / "README.md", "readme\n");
+          },
+      .run =
+          [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
+            WorkspaceShellTestAccess::ClearPluginMessages(shell);
+            Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "parity.tools"),
+                   "the plugin command runs");
+            for (const std::string& message : WorkspaceShellTestAccess::PluginMessages(shell)) {
+              outcome.Add("plugin-log", "", message);
+            }
+            outcome.Add("bytes", "plugin.txt", ReadFile(tree.host_root / "plugin.txt"));
+            if (tree.locality == parity::Locality::kLocal) {
+              const auto& messages = WorkspaceShellTestAccess::PluginMessages(shell);
+              Expect(std::find(messages.begin(), messages.end(),
+                               "parity-tools: git:0:true\n") != messages.end(),
+                     "parity reference: the local plugin tool ran git inside the repository; log: " +
+                         [&] {
+                           std::string all;
+                           for (const auto& m : messages) all += "[" + m + "]";
+                           return all;
+                         }());
+            }
+          },
+      .spawns = true,
+      .writes = true,
+  };
+}
+
+// One plugin for the format-on-save and plugin-tool rows: a `todo` filetype with
+// an uppercasing formatter, and a command that runs git and writes a file.
+void WriteParityToolsPlugin(const std::filesystem::path& config_home) {
+  const std::filesystem::path plugin = config_home / "microide" / "plugins" / "parity-tools";
+  WriteFile(plugin / "init.lua", R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "parity-tools",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.formatters.add({
+      id = "todo-uppercase",
+      language_id = "todo",
+      label = "TODO Uppercase",
+      command = { "sh", "-c", "tr '[:lower:]' '[:upper:]'" },
+    })
+    ctx.commands.add("parity.tools", function(ctx, args)
+      local git = ctx.process.run({ "git", "rev-parse", "--is-inside-work-tree" }, { cwd = "." })
+      ctx.log("git:" .. tostring(git.exit_code) .. ":" .. (git.stdout or "") .. (git.stderr or ""))
+      ctx.log("wrote:" .. tostring(ctx.files.write_text("plugin.txt", "from plugin\n")))
+    end)
+  end
+})
+)lua");
+  WriteFile(plugin / "syntax" / "todo.lua", R"lua(return {
+  filetype = "todo",
+  files = { "\\.todo$" },
+  rules = { { pattern = "\\b[A-Z_]+\\b", group = "keyword" } }
+}
+)lua");
+}
+
 }  // namespace
 
 void RegisterParityTests(std::vector<TestCase>& tests) {
@@ -232,6 +391,26 @@ void RegisterParityTests(std::vector<TestCase>& tests) {
           [] { parity::ExpectParity(SaveReachesTheTree()); });
   AddTest(tests, "Parity/GitSidebarShowsTheWorkingTree",
           [] { parity::ExpectParity(GitSidebarShowsTheWorkingTree()); });
+  AddTest(tests, "Parity/FileOperationsReachTheTree",
+          [] { parity::ExpectParity(FileOperationsReachTheTree()); });
+  AddTest(tests, "Parity/FormatOnSaveReachesTheTree", [] {
+#if !MICROIDE_HAS_LUA_PLUGINS
+    return;
+#endif
+    TemporaryDirectory support_dir;
+    WriteParityToolsPlugin(support_dir.path());
+    ScopedPluginConfigHomeEnv scoped_config(support_dir.path());
+    parity::ExpectParity(FormatOnSaveReachesTheTree());
+  });
+  AddTest(tests, "Parity/PluginToolsFollowTheProject", [] {
+#if !MICROIDE_HAS_LUA_PLUGINS
+    return;
+#endif
+    TemporaryDirectory support_dir;
+    WriteParityToolsPlugin(support_dir.path());
+    ScopedPluginConfigHomeEnv scoped_config(support_dir.path());
+    parity::ExpectParity(PluginToolsFollowTheProject());
+  });
   AddTest(tests, "Parity/LanguageServerSeesTheHostTree", [] {
 #if !MICROIDE_HAS_LUA_PLUGINS
     return;
