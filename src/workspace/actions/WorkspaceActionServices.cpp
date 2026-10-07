@@ -282,6 +282,40 @@ bool WorkspaceActionContext::CloseActiveTerminal() {
   return operations_.close_active_terminal && operations_.close_active_terminal();
 }
 
+bool WorkspaceActionContext::SplitTerminal() {
+  return operations_.split_terminal && operations_.split_terminal();
+}
+
+bool WorkspaceActionContext::FocusTerminalPane(int delta) {
+  return operations_.focus_terminal_pane && operations_.focus_terminal_pane(delta);
+}
+
+bool WorkspaceActionContext::CycleTerminal(int delta) {
+  return operations_.cycle_terminal && operations_.cycle_terminal(delta);
+}
+
+bool WorkspaceActionContext::RelaunchTerminal() {
+  return operations_.relaunch_terminal && operations_.relaunch_terminal();
+}
+
+void WorkspaceActionContext::ToggleTerminal() {
+  if (operations_.toggle_terminal) {
+    operations_.toggle_terminal();
+  }
+}
+
+void WorkspaceActionContext::TogglePanel() {
+  if (operations_.toggle_panel) {
+    operations_.toggle_panel();
+  }
+}
+
+void WorkspaceActionContext::TogglePanelMaximized() {
+  if (operations_.toggle_panel_maximized) {
+    operations_.toggle_panel_maximized();
+  }
+}
+
 bool WorkspaceActionContext::OpenTerminalFind(std::string query) {
   return operations_.open_terminal_find(std::move(query));
 }
@@ -1197,7 +1231,7 @@ void WorkspaceActionContext::PasteClipboard() {
       *clipboard_text == project_catalog_.line_clipboard_text &&
       clipboard_text->back() == '\n' &&
       !(state_.surface.focus == FocusTarget::Panel &&
-        operations_.active_terminal_tab() != nullptr) &&
+        operations_.active_terminal_pane() != nullptr) &&
       !operations_.has_active_single_line_text_surface();
   if (line_paste) {
     if (auto* viewport = operations_.active_editable_viewport();
@@ -1223,7 +1257,7 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
   if (text.size() > kMaxInsertBytes) {
     text.resize(util::PreviousUtf8Boundary(text, kMaxInsertBytes));
   }
-  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_tab() != nullptr) {
+  if (state_.surface.focus == FocusTarget::Panel && operations_.active_terminal_pane() != nullptr) {
     operations_.paste_text_into_terminal(std::move(text));
     return;
   }
@@ -1491,7 +1525,7 @@ bool WorkspaceActionContext::Focus(FocusRequestTarget target) {
       state_.surface.focus = FocusTarget::Editor;
       return true;
     case FocusRequestTarget::Panel:
-      if (operations_.active_terminal_tab() != nullptr) {
+      if (operations_.active_terminal_pane() != nullptr) {
         state_.surface.focus = FocusTarget::Panel;
         return true;
       }

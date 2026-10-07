@@ -18,7 +18,7 @@
 // tests never exercise — stop during heavy output, stop on the alternate
 // screen, stop racing (and after) child exit, many concurrent sessions torn
 // down while streaming, and rapid start/stop reuse of one session object.
-// Closing a terminal tab in the shell just destroys its TerminalTabState, whose
+// Closing a terminal tab in the shell just destroys its TerminalPaneState, whose
 // TerminalSession destructor runs the same Stop() path, so these session-level
 // cases cover the tab-close-during-output/exit lifecycle directly. The child
 // shutdown ladder (SIGHUP -> SIGTERM -> SIGKILL) is bounded (~325ms worst
@@ -136,7 +136,7 @@ void TestTerminalStressOpenCloseLoopRacesChildExit() {
 
 // Many concurrent flooding sessions torn down together: half via explicit
 // Stop(), half straight through the destructor (the shell's tab-close path,
-// which destroys TerminalTabState without a prior Stop call).
+// which destroys TerminalPaneState without a prior Stop call).
 void TestTerminalStressMultiTerminalShutdown() {
   TemporaryDirectory temp;
   constexpr std::size_t kSessions = 6;

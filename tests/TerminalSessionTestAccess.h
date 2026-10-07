@@ -71,6 +71,14 @@ struct TerminalSessionTestAccess {
     session.launch_label_ = session.default_launch_label_;
   }
 
+  // Arm the "output arrived since the last drain" flag the shell's update loop
+  // consumes, the way the reader thread's on_output callback does after an
+  // AppendOutput. AppendOutput alone leaves it clear.
+  static void MarkOutputArrived(microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    session.wake_event_pending_ = true;
+  }
+
   static void SetRunning(microide::terminal::TerminalSession& session, bool running) {
     std::scoped_lock lock(session.mutex_);
     session.running_ = running;

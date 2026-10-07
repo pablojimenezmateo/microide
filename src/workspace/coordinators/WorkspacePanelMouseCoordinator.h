@@ -56,6 +56,15 @@ class PanelMouseCoordinator {
     // host's validated command runner (the same path code-lens clicks use).
     std::function<const editor::SurfaceContent*()> active_plugin_surface;
     std::function<void(const std::string&)> execute_command;
+    // Terminal panes (TerminalPanelService): the pane under a point, the divider
+    // under a point, and the divider edits a drag performs.
+    std::function<TerminalPaneState*(const WorkspaceLayout&, float, float)> terminal_pane_at;
+    std::function<bool(const WorkspaceLayout&, float, float)> activate_terminal_pane_at;
+    std::function<std::optional<TerminalPaneDividerRect>(const WorkspaceLayout&, float, float)>
+        terminal_pane_divider_at;
+    std::function<TerminalPaneRectsLayout(const WorkspaceLayout&)> terminal_pane_rects;
+    std::function<bool(std::size_t, float)> resize_terminal_pane_divider;
+    std::function<bool(std::size_t)> reset_terminal_pane_divider;
   };
 
   PanelMouseCoordinator(ProjectWorkspaceState& state,
@@ -85,9 +94,9 @@ class PanelMouseCoordinator {
   bool HandleMouseCaptureButton(const SDL_Event& event, bool pressed);
   // Active terminal tab when the bottom panel is showing a terminal, else null.
   // Consolidates the "panel is a terminal AND a live tab exists" guard and routes
-  // it through the bounds-checked ProjectWorkspaceState::active_terminal_tab()
+  // it through the bounds-checked ProjectWorkspaceState::active_terminal_pane()
   // accessor so no caller indexes terminal_tabs by a possibly-stale index.
-  TerminalTabState* ActivePanelTerminalTab();
+  TerminalPaneState* ActivePanelTerminalPane();
 
   ProjectWorkspaceState& state_;
   InteractionState& interaction_state_;

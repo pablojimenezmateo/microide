@@ -341,7 +341,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (context_.interaction_state.drag_target == DragTarget::OverlayScrollbar &&
         context_.current_project_state.overlay.visible) {
-      const SDL_FRect overlay = ComputeOverlayRect(drag_layout.editor_area);
+      const SDL_FRect overlay = ComputeOverlayRect(drag_layout.overlay_anchor);
       const auto list_layout = ComputeOverlayListLayout(overlay);
       if (!list_layout.scrollbar.has_value()) {
         ClearDragState();
@@ -678,7 +678,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
     if (BottomPanelVisible() && terminal_find_service_.visible()) {
       hover_visual_changed =
-          find_widget_hover_changed(ComputeFindWidgetLayout(BottomPanelContentRect(layout),
+          find_widget_hover_changed(ComputeFindWidgetLayout(ActiveTerminalBodyRect(layout),
                                                             /*replace_mode=*/false,
                                                             kTerminalFindToggleCount)) ||
           hover_visual_changed;
@@ -785,7 +785,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   // the editor or sidebar underneath. Scrolling tracks whole entries.
   if (settings_overlay_service_.Visible()) {
     if (vertical_ticks != 0) {
-      const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.editor_area);
+      const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor);
       if (Contains(overlay_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
         // Both modes resolve their (variable-height) row geometry in the builder,
         // so the exact max scroll comes from the view model. Help/About used to

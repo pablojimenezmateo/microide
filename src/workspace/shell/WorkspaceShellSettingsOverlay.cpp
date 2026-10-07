@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/services/TerminalPanelService.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -390,12 +392,19 @@ void WorkspaceShell::ApplyLiveSettings() {
   }
   // Push terminal scrollback to live sessions only when the resolved cap changes
   // (this hook runs every frame, so avoid touching every terminal's mutex).
-  if (const int scrollback = static_cast<int>(TerminalScrollbackLines());
+  if (const int scrollback =
+          std::clamp(util::ParseIntOr(GetSettingValue("terminal.scrollback_lines"), 2000), 200,
+                     100000);
       scrollback != last_applied_terminal_scrollback_) {
     last_applied_terminal_scrollback_ = scrollback;
     for (auto& tab : context_.current_project_state.terminal_tabs) {
-      if (tab != nullptr) {
-        tab->session.SetMaxScrollbackLines(static_cast<std::size_t>(scrollback));
+      if (tab == nullptr) {
+        continue;
+      }
+      for (auto& pane : tab->panes) {
+        if (pane != nullptr) {
+          pane->session.SetMaxScrollbackLines(static_cast<std::size_t>(scrollback));
+        }
       }
     }
   }

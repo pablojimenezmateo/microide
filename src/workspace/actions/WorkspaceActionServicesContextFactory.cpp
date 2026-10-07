@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/services/TerminalPanelService.h"
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -481,21 +483,28 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 return found;
               },
-          .open_terminal = [this](std::string command) { OpenTerminal(std::move(command)); },
-          .close_active_terminal =
-              [this]() {
-                auto& state = context_.current_project_state;
-                if (state.active_terminal_tab() == nullptr) {
-                  return false;
-                }
-                CloseTerminalTab(state.active_terminal_tab_index);
-                return true;
+          .open_terminal =
+              [this](std::string command) {
+                MakeTerminalPanelService().OpenTerminal(std::move(command));
               },
+          // "Close Terminal" closes the active PANE (VS Code's kill terminal kills
+          // the active instance); the tab goes with its last pane.
+          .close_active_terminal = [this]() { return MakeTerminalPanelService().CloseActivePane(); },
+          .split_terminal = [this]() { return MakeTerminalPanelService().SplitActivePane(); },
+          .focus_terminal_pane =
+              [this](int delta) { return MakeTerminalPanelService().FocusPaneInDirection(delta); },
+          .cycle_terminal =
+              [this](int delta) { return MakeTerminalPanelService().CycleTerminalTab(delta); },
+          .relaunch_terminal = [this]() { return MakeTerminalPanelService().RelaunchActivePane(); },
+          .toggle_terminal = [this]() { MakeTerminalPanelService().ToggleTerminal(); },
+          .toggle_panel = [this]() { MakeTerminalPanelService().TogglePanel(); },
+          .toggle_panel_maximized =
+              [this]() { MakeTerminalPanelService().TogglePanelMaximized(); },
           .open_terminal_find =
               [this](std::string query) {
                 // A seedless invocation preloads the terminal selection, matching
                 // "Ctrl+F with something selected" everywhere else in the shell.
-                if (!BottomPanelShowsTerminal() || ActiveTerminalTab() == nullptr) {
+                if (!BottomPanelShowsTerminal() || ActiveTerminalPane() == nullptr) {
                   return false;
                 }
                 if (query.empty() && TerminalHasSelection()) {
@@ -507,7 +516,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   }
                 }
                 context_.current_project_state.surface.focus = FocusTarget::Panel;
-                terminal_find_service_.Open(ActiveTerminalTab(), query);
+                terminal_find_service_.Open(ActiveTerminalPane(), query);
                 RequestBottomPanelContentRedraw();
                 return true;
               },
@@ -810,7 +819,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
-          .active_terminal_tab = [this]() { return ActiveTerminalTab(); },
+          .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
           .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
           .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },

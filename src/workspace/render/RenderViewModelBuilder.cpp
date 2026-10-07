@@ -1932,7 +1932,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   SettingsOverlayViewModel vm;
   vm.visible = service.Visible();
   vm.mode = service.Mode();
-  vm.rect = ComputeSettingsOverlaySurfaceRect(layout.editor_area);
+  vm.rect = ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor);
   vm.header_rect = MakeRect(vm.rect.x, vm.rect.y, vm.rect.w, kSettingsHeaderH);
   vm.scroll_row = service.ScrollRow();
   vm.focused_pane = service.FocusedPane();

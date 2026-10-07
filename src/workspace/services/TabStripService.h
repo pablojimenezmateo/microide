@@ -27,6 +27,8 @@ struct VisibleStripTab {
   std::string badge_text;
   SDL_Color badge_color{};
   bool show_badge = false;
+  // Terminal strip only: output arrived in this tab while it was not on screen.
+  bool activity_dot = false;
 };
 
 struct TabStripOverflowControls {
@@ -51,6 +53,8 @@ struct BottomPanelTabModel {
   std::string surface_id;
   std::string label;
   std::string tooltip_label;
+  // Terminal tabs: unseen output, see TerminalTabState::has_unseen_output.
+  bool activity = false;
 };
 
 struct ProjectTabBadgeStyle {
@@ -148,6 +152,9 @@ class TabStripService {
   bool ScrollBottomPanelTabStrip(ProjectWorkspaceState& state,
                                  int direction,
                                  std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
+  // Header buttons, right-aligned: the maximize/restore toggle at the far right
+  // and the new-terminal plus to its left. Both size with the header.
+  SDL_FRect BottomPanelMaximizeButtonRect(LayoutMode mode, const SDL_FRect& panel_header) const;
   SDL_FRect BottomPanelTerminalNewTabRect(LayoutMode mode, const SDL_FRect& panel_header) const;
 
  private:

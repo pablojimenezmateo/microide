@@ -1,90 +1,94 @@
-#include "platform/ProcessLauncher.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
 
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
-#include "workspace/TabReorder.h"
+#include "workspace/services/TerminalPanelService.h"
 
 namespace microide::workspace {
 
-std::size_t WorkspaceShell::TerminalScrollbackLines() const {
-  const int parsed = util::ParseIntOr(GetSettingValue("terminal.scrollback_lines"), 2000);
+// The terminal strip's tab, pane and panel verbs live on TerminalPanelService;
+// this TU keeps only what needs the shell itself — the session launch (project
+// launcher, settings, wake channel), the focus-event sync and the per-tick
+// session drain that also owns the clipboard and notification side effects.
+
+namespace {
+
+std::size_t ResolvedScrollbackLines(const std::optional<std::string>& setting) {
+  const int parsed = util::ParseIntOr(setting, 2000);
   return static_cast<std::size_t>(std::clamp(parsed, 200, 100000));
 }
 
-void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool log_feedback) {
-  (void) log_feedback;
-  if (context_.current_project_state.root.empty()) {
-    return;
-  }
-  const bool bottom_panel_was_visible = BottomPanelVisible();
-  const bool panel_already_showing_terminal =
-      context_.current_project_state.panel.content == PanelContentKind::Terminal;
-  const std::filesystem::path working_directory = context_.current_project_state.root;
-  auto terminal_tab = std::make_unique<TerminalTabState>();
-  if (terminal_event_type_ != 0) {
-    terminal_tab->session.SetWakeChannel(terminal_event_type_);
-  }
-  terminal_tab->session.SetMaxScrollbackLines(TerminalScrollbackLines());
-  const bool started =
-      terminal::UsePlaceholderTerminalsForTesting()
-          ? terminal_tab->session.StartPlaceholderForTesting(working_directory, command)
-          // The project's launcher: a remote project's terminal is this same call,
-          // and its shell runs on the host (TD-2026-09-22-301).
-          : terminal_tab->session.Start(context_.current_project_state.launcher(),
-                                        working_directory,
-                                        command,
-                                        GetSettingValue("terminal.shell").value_or(""));
-  if (!started) {
-    return;
-  }
+}  // namespace
 
-  context_.current_project_state.terminal_tabs.push_back(std::move(terminal_tab));
-  context_.current_project_state.active_terminal_tab_index = context_.current_project_state.terminal_tabs.size() - 1;
-  if (focus_terminal || panel_already_showing_terminal) {
-    context_.current_project_state.panel.content = PanelContentKind::Terminal;
+TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
+  if (glue_->terminal_panel_service != nullptr) {
+    return *glue_->terminal_panel_service;
   }
-  if (focus_terminal) {
-    context_.current_project_state.surface.focus = FocusTarget::Panel;
-  }
-
-  NoteLayoutInputsChanged();
-  if (BottomPanelVisible() != bottom_panel_was_visible) {
-    RequestWindowRedraw();
-  } else {
-    RequestBottomPanelRedraw();
-  }
+  // Starts a session the way every terminal in this project starts: the
+  // project's launcher (a remote project's terminal is this same call and its
+  // shell runs on the host, TD-2026-09-22-301), the project's `terminal.shell`,
+  // the scrollback cap and the shell's wake channel.
+  const auto start_pane = [this](TerminalPaneState& pane, const std::filesystem::path& cwd,
+                                 const std::string& command) {
+    if (terminal_event_type_ != 0) {
+      pane.session.SetWakeChannel(terminal_event_type_);
+    }
+    pane.session.SetMaxScrollbackLines(
+        ResolvedScrollbackLines(GetSettingValue("terminal.scrollback_lines")));
+    pane.launch_working_directory = cwd;
+    pane.launch_command = command;
+    return terminal::UsePlaceholderTerminalsForTesting()
+               ? pane.session.StartPlaceholderForTesting(cwd, command)
+               : pane.session.Start(context_.current_project_state.launcher(), cwd, command,
+                                    GetSettingValue("terminal.shell").value_or(""));
+  };
+  glue_->terminal_panel_service = std::make_unique<TerminalPanelService>(
+      context_.current_project_state,
+      TerminalPanelService::Operations{
+          .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
+          .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
+          .append_terminal_pending_input =
+              [this](std::string_view input) { AppendTerminalPendingInput(input); },
+          .terminal_url_at_point = [this](float x, float y) { return TerminalUrlAtPoint(x, y); },
+          .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
+          .sync_primary_selection_with_terminal_selection =
+              [this]() { SyncPrimarySelectionWithTerminalSelection(); },
+          .make_started_pane =
+              [this, start_pane](std::string command) -> std::unique_ptr<TerminalPaneState> {
+                if (context_.current_project_state.root.empty()) {
+                  return nullptr;
+                }
+                auto pane = std::make_unique<TerminalPaneState>();
+                if (!start_pane(*pane, context_.current_project_state.root, command)) {
+                  return nullptr;
+                }
+                return pane;
+              },
+          .relaunch_pane =
+              [start_pane](TerminalPaneState& pane) {
+                return start_pane(pane, pane.launch_working_directory, pane.launch_command);
+              },
+          .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
+          .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+      });
+  return *glue_->terminal_panel_service;
 }
 
-void WorkspaceShell::OpenDefaultTerminalForProjectInit() {
-  if (terminal::UsePlaceholderTerminalsForTesting()) {
-    // Test mode: install a bare, unstarted terminal tab — no real shell spawn.
-    context_.current_project_state.terminal_tabs.push_back(
-        std::make_unique<TerminalTabState>());
-    context_.current_project_state.active_terminal_tab_index =
-        context_.current_project_state.terminal_tabs.size() - 1;
-    context_.current_project_state.panel.content = PanelContentKind::Terminal;
-    context_.current_project_state.surface.focus = FocusTarget::Panel;
-  } else {
-    OpenTerminal({}, true, false);
-  }
+WorkspaceShell::TerminalPaneState* WorkspaceShell::ActiveTerminalPane() {
+  return context_.current_project_state.active_terminal_pane();
 }
 
-WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() {
-  return context_.current_project_state.active_terminal_tab();
-}
-
-const WorkspaceShell::TerminalTabState* WorkspaceShell::ActiveTerminalTab() const {
-  return context_.current_project_state.active_terminal_tab();
+const WorkspaceShell::TerminalPaneState* WorkspaceShell::ActiveTerminalPane() const {
+  return context_.current_project_state.active_terminal_pane();
 }
 
 std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {
   if (!context_.interaction_state.window_has_input_focus ||
       CurrentTextInputSurface() != TextInputSurface::Terminal ||
-      context_.current_project_state.active_terminal_tab_index >= context_.current_project_state.terminal_tabs.size() ||
-      context_.current_project_state.terminal_tabs[context_.current_project_state.active_terminal_tab_index] == nullptr) {
+      context_.current_project_state.active_terminal_pane() == nullptr) {
     return std::nullopt;
   }
   return context_.current_project_state.active_terminal_tab_index;
@@ -92,59 +96,27 @@ std::optional<std::size_t> WorkspaceShell::FocusedTerminalTabIndex() const {
 
 void WorkspaceShell::SyncTerminalFocusState() {
   const std::optional<std::size_t> focused_index = FocusedTerminalTabIndex();
-  for (std::size_t index = 0; index < context_.current_project_state.terminal_tabs.size(); ++index) {
-    auto* terminal_tab = context_.current_project_state.terminal_tabs[index].get();
-    if (terminal_tab == nullptr) {
+  const auto& tabs = context_.current_project_state.terminal_tabs;
+  for (std::size_t index = 0; index < tabs.size(); ++index) {
+    const TerminalTabState* tab = tabs[index].get();
+    if (tab == nullptr) {
       continue;
     }
-
-    const bool should_focus = focused_index.has_value() && *focused_index == index &&
-                              terminal_tab->session.WantsFocusEvents();
-    if (terminal_tab->focus_events_active == should_focus) {
-      continue;
+    for (std::size_t pane_index = 0; pane_index < tab->panes.size(); ++pane_index) {
+      TerminalPaneState* pane = tab->panes[pane_index].get();
+      if (pane == nullptr) {
+        continue;
+      }
+      // Only the active pane of the focused tab has the keyboard.
+      const bool should_focus = focused_index.has_value() && *focused_index == index &&
+                                pane_index == tab->active_pane && pane->session.WantsFocusEvents();
+      if (pane->focus_events_active == should_focus) {
+        continue;
+      }
+      pane->session.SendFocusEvent(should_focus);
+      pane->focus_events_active = should_focus;
     }
-
-    terminal_tab->session.SendFocusEvent(should_focus);
-    terminal_tab->focus_events_active = should_focus;
   }
-}
-
-bool WorkspaceShell::MoveActiveTerminalTabTo(std::size_t index) {
-  if (!ReorderActive(context_.current_project_state.terminal_tabs,
-                     context_.current_project_state.active_terminal_tab_index, index)) {
-    return false;
-  }
-  context_.current_project_state.surface.focus = FocusTarget::Panel;
-  return true;
-}
-
-void WorkspaceShell::CloseTerminalTab(std::size_t index) {
-  if (index >= context_.current_project_state.terminal_tabs.size()) {
-    return;
-  }
-
-  const bool panel_visible_before = BottomPanelVisible();
-  context_.current_project_state.terminal_tabs.erase(context_.current_project_state.terminal_tabs.begin() + static_cast<std::ptrdiff_t>(index));
-  if (context_.current_project_state.terminal_tabs.empty()) {
-    context_.current_project_state.active_terminal_tab_index = 0;
-    ClearTerminalSelection();
-    if (context_.current_project_state.panel.content == PanelContentKind::Terminal) {
-      context_.current_project_state.panel.content = PanelContentKind::None;
-    }
-    if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-      context_.current_project_state.surface.focus = FocusTarget::Editor;
-    }
-    if (BottomPanelVisible() != panel_visible_before) {
-      NoteLayoutInputsChanged();
-      RequestWindowRedraw();
-    }
-    return;
-  }
-
-  context_.current_project_state.active_terminal_tab_index =
-      std::min(context_.current_project_state.active_terminal_tab_index > index ? context_.current_project_state.active_terminal_tab_index - 1
-                                                  : context_.current_project_state.active_terminal_tab_index,
-               context_.current_project_state.terminal_tabs.size() - 1);
 }
 
 void WorkspaceShell::ConsumeTerminalSessionUpdates() {
@@ -157,31 +129,50 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   // is still drained either way so it can't accumulate.
   const bool allow_osc52_clipboard =
       SettingFlagEnabled(GetSettingValue("terminal.osc52_clipboard_write"), false);
-  for (const auto& terminal_tab : context_.current_project_state.terminal_tabs) {
-    if (terminal_tab == nullptr) {
+  const bool terminal_on_screen =
+      context_.current_project_state.panel.content == PanelContentKind::Terminal;
+  const std::size_t active_index = context_.current_project_state.active_terminal_tab_index;
+  bool badge_changed = false;
+  const auto& tabs = context_.current_project_state.terminal_tabs;
+  for (std::size_t index = 0; index < tabs.size(); ++index) {
+    TerminalTabState* tab = tabs[index].get();
+    if (tab == nullptr) {
       continue;
     }
-    terminal_tab->session.ConsumeWakeEvent();
-    if (terminal_tab->session.ConsumeOversizedOsc52Dropped()) {
-      // An OSC 52 clipboard write that overran the escape-sequence buffer was
-      // dropped. Surface it rather than fail silently so the user knows their
-      // (too-large) clipboard write did not land.
-      Notify(NotificationService::Tone::Info,
-             "A terminal program tried to set the clipboard (OSC 52), but the payload "
-             "was too large and was ignored.");
-    }
-    const std::optional<std::string> clipboard_text =
-        terminal_tab->session.ConsumePendingClipboardText();
-    if (clipboard_text.has_value()) {
-      if (allow_osc52_clipboard) {
-        WriteClipboardText(*clipboard_text);
-      } else {
-        // Surface every blocked write so it is not a silent regression for users
-        // who rely on OSC 52 yank-to-clipboard (tmux/vim over SSH). The toast
-        // service coalesces/expires duplicates, so this cannot flood the UI.
+    const bool tab_on_screen = terminal_on_screen && index == active_index;
+    for (const auto& pane : tab->panes) {
+      if (pane == nullptr) {
+        continue;
+      }
+      const bool output_arrived = pane->session.ConsumeWakeEvent();
+      // Output in a tab the user cannot see lights its strip tab up, so an agent
+      // finishing in a background tab (or behind a hidden panel) is visible
+      // without switching to it. The frame that shows the tab clears it.
+      if (output_arrived && !tab_on_screen && !tab->has_unseen_output) {
+        tab->has_unseen_output = true;
+        badge_changed = true;
+      }
+      if (pane->session.ConsumeOversizedOsc52Dropped()) {
+        // An OSC 52 clipboard write that overran the escape-sequence buffer was
+        // dropped. Surface it rather than fail silently so the user knows their
+        // (too-large) clipboard write did not land.
         Notify(NotificationService::Tone::Info,
-               "A terminal program tried to set the clipboard (OSC 52). Enable "
-               "\"Allow Terminal Clipboard Writes (OSC 52)\" in Settings to permit it.");
+               "A terminal program tried to set the clipboard (OSC 52), but the payload "
+               "was too large and was ignored.");
+      }
+      const std::optional<std::string> clipboard_text =
+          pane->session.ConsumePendingClipboardText();
+      if (clipboard_text.has_value()) {
+        if (allow_osc52_clipboard) {
+          WriteClipboardText(*clipboard_text);
+        } else {
+          // Surface every blocked write so it is not a silent regression for users
+          // who rely on OSC 52 yank-to-clipboard (tmux/vim over SSH). The toast
+          // service coalesces/expires duplicates, so this cannot flood the UI.
+          Notify(NotificationService::Tone::Info,
+                 "A terminal program tried to set the clipboard (OSC 52). Enable "
+                 "\"Allow Terminal Clipboard Writes (OSC 52)\" in Settings to permit it.");
+        }
       }
     }
   }
@@ -195,13 +186,17 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       RequestAutomaticGitSidebarRefresh();
     }
   }
-  if (BottomPanelVisible() != panel_visible_before || context_.current_project_state.terminal_tabs.size() != tab_count_before) {
+  if (BottomPanelVisible() != panel_visible_before ||
+      context_.current_project_state.terminal_tabs.size() != tab_count_before) {
     if (BottomPanelVisible() != panel_visible_before) {
       NoteLayoutInputsChanged();
     }
     RequestWindowRedraw();
   } else if (panel_visible_before) {
     RequestBottomPanelRedraw();
+  } else if (badge_changed) {
+    // The panel is hidden, so there is no strip to repaint; the badge shows the
+    // next time it is. Nothing to do now.
   }
 }
 

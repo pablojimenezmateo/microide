@@ -51,7 +51,7 @@ void WorkspaceShell::MoveFileFinderSelection(int delta) {
     if (!layout.has_value()) {
       return;
     }
-    RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+    RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
   }
   RequestOverlayRedraw();
 }
@@ -168,7 +168,7 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr) {
+    if (BottomPanelShowsTerminal() && ActiveTerminalPane() != nullptr) {
       // The find bar floats over a live terminal; it only takes typing while it
       // holds focus, the same rule the in-file find widget follows above.
       return terminal_find_service_.focused() ? TextInputSurface::TerminalFind

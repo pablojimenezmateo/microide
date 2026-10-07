@@ -518,7 +518,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item,
       return context_.current_project_state.sidebar.visible;
     }
     if (item.args[0] == "panel") {
-      return ActiveTerminalTab() != nullptr;
+      return ActiveTerminalPane() != nullptr;
     }
     return true;
   }
@@ -552,6 +552,12 @@ bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {
   }
   if (item.action == ActionId::ToggleStatusBar) {
     return layout_mode_service_.StatusBarVisible();
+  }
+  if (item.action == ActionId::PanelToggle) {
+    return BottomPanelVisible();
+  }
+  if (item.action == ActionId::PanelToggleMaximized) {
+    return BottomPanelVisible() && context_.current_project_state.panel.maximized;
   }
   if (item.action == ActionId::ToggleLayoutMode) {
     return layout_mode_service_.CurrentMode() == LayoutMode::Compact;

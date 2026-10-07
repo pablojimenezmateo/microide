@@ -119,7 +119,7 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
   }
 
   if (context_.current_project_state.surface.focus == FocusTarget::Panel) {
-    return BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr;
+    return BottomPanelShowsTerminal() && ActiveTerminalPane() != nullptr;
   }
 
   return false;
@@ -206,7 +206,7 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(
 
 std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(
     const WorkspaceLayout& layout) const {
-  const auto* terminal_tab = ActiveTerminalTab();
+  const auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return std::nullopt;
   }

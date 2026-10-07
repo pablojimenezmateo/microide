@@ -35,6 +35,49 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
         return reject("No terminal to close");
       }
       return DispatchResult::Handled;
+    case ActionId::TerminalSplit:
+      if (!context_.SplitTerminal()) {
+        return reject("No terminal to split");
+      }
+      return DispatchResult::Handled;
+    case ActionId::TerminalFocusPaneLeft:
+    case ActionId::TerminalFocusPaneRight:
+      // Declined SILENTLY (empty feedback) when there is no pane that way: from
+      // the Alt+Left/Right shortcut the key then falls through to the shell, so a
+      // single-pane terminal keeps the chord for its own programs.
+      if (!context_.FocusTerminalPane(id == ActionId::TerminalFocusPaneLeft ? -1 : 1)) {
+        return reject("");
+      }
+      return DispatchResult::Handled;
+    case ActionId::TerminalNext:
+    case ActionId::TerminalPrev:
+      if (!context_.CycleTerminal(id == ActionId::TerminalNext ? 1 : -1)) {
+        return reject("No other terminal");
+      }
+      return DispatchResult::Handled;
+    case ActionId::TerminalRelaunch:
+      if (!context_.RelaunchTerminal()) {
+        return reject("The terminal is still running");
+      }
+      return DispatchResult::Handled;
+    case ActionId::TerminalToggle:
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      context_.ToggleTerminal();
+      return DispatchResult::Handled;
+    case ActionId::PanelToggle:
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      context_.TogglePanel();
+      return DispatchResult::Handled;
+    case ActionId::PanelToggleMaximized:
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      context_.TogglePanelMaximized();
+      return DispatchResult::Handled;
     case ActionId::TerminalFind:
       if (!context_.OpenTerminalFind(JoinCommandArguments(args, 0))) {
         return reject("No terminal to search");

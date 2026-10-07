@@ -391,7 +391,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         return true;
       }
     case TextInputSurface::Terminal:
-      if (auto* terminal_tab = operations_.active_terminal_tab(); terminal_tab != nullptr) {
+      if (auto* terminal_tab = operations_.active_terminal_pane(); terminal_tab != nullptr) {
         operations_.clear_terminal_selection();
         terminal_tab->follow_tail = true;
         operations_.append_terminal_pending_input(input);

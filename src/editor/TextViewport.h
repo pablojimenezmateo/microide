@@ -1302,6 +1302,9 @@ class TextViewport {
   bool save_trim_trailing_whitespace_ = false;
   bool save_ensure_final_newline_ = false;
   std::optional<LineEnding> save_line_ending_override_;
+  // Declared before `lc_view_` because both the copy and the move constructor
+  // initialize it there; clang's -Wreorder-ctor rejects the other order.
+  bool read_only_ = false;
   // Shared, not owned: see SetLanguageContractView. Null ⇒ no contract.
   std::shared_ptr<const LanguageContractView> lc_view_;
   // language_id() memo. Keyed on document identity + content revision + path +
@@ -1310,7 +1313,6 @@ class TextViewport {
   mutable std::string language_id_;
   mutable const void* language_id_document_ = nullptr;
   mutable std::filesystem::path language_id_path_;
-  bool read_only_ = false;
   mutable std::uint64_t language_id_content_revision_ = 0;
   mutable std::size_t language_id_registry_revision_ = 0;
   mutable bool language_id_valid_ = false;

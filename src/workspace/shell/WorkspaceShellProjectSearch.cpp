@@ -269,7 +269,7 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
   if (context_.current_project_state.overlay.visible && context_.current_project_state.overlay.mode == OverlayMode::ProjectSearch) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-      RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+      RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
     }
   }
   RequestSidebarRedraw();
@@ -716,7 +716,7 @@ void WorkspaceShell::MoveProjectSearchSelection(int delta) {
           RevealScrollableListIndex(list_layout, selected_line);
     }
     if (context_.current_project_state.overlay.visible) {
-      RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+      RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
     }
   }
   RequestSidebarRedraw();

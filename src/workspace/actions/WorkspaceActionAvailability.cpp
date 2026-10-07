@@ -45,7 +45,7 @@ TreeContextTargetKind ActionAvailability::ActiveTreeTargetKind() const {
 bool ActionAvailability::IsEnabled(ActionId id) const {
   const editor::TextViewport* active_viewport = operations_.active_navigable_viewport();
   const editor::TextViewport* active_editable_viewport = operations_.active_editable_viewport();
-  const TerminalTabState* active_terminal_tab = operations_.active_terminal_tab();
+  const TerminalPaneState* active_terminal_pane = operations_.active_terminal_pane();
   const TextInputSurface text_input_surface = operations_.current_text_input_surface();
   const bool active_single_line_selection = operations_.active_single_line_text_has_selection();
   switch (id) {
@@ -342,9 +342,24 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::TreeRefresh:
       return !context_.current_project_state.root.empty();
     case ActionId::TermClose:
-      return active_terminal_tab != nullptr;
+    case ActionId::TerminalSplit:
+    case ActionId::TerminalFocusPaneLeft:
+    case ActionId::TerminalFocusPaneRight:
+      return active_terminal_pane != nullptr;
+    case ActionId::TerminalNext:
+    case ActionId::TerminalPrev:
+      return context_.current_project_state.terminal_tabs.size() > 1;
+    case ActionId::TerminalRelaunch:
+      // Only a pane the host launched and whose process has since gone can be
+      // brought back; a live shell has nothing to relaunch.
+      return active_terminal_pane != nullptr && !active_terminal_pane->session.running() &&
+             !active_terminal_pane->launch_working_directory.empty();
+    case ActionId::TerminalToggle:
+    case ActionId::PanelToggle:
+    case ActionId::PanelToggleMaximized:
+      return !context_.current_project_state.root.empty();
     case ActionId::CopyLastTerminalCommand:
-      return active_terminal_tab != nullptr && operations_.has_last_terminal_command();
+      return active_terminal_pane != nullptr && operations_.has_last_terminal_command();
     case ActionId::CopySelectionWithContext:
       return active_viewport != nullptr;
     case ActionId::CopySelection:
@@ -367,7 +382,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_editable_viewport != nullptr ||
              IsSingleLineTextInputSurface(text_input_surface) ||
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
-              active_terminal_tab != nullptr);
+              active_terminal_pane != nullptr);
     case ActionId::Goto:
     case ActionId::Jump:
     case ActionId::ReplaceInBuffer:

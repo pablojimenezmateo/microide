@@ -4,6 +4,7 @@
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/services/CompareMergeService.h"
 #include "workspace/services/EditorTabService.h"
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"

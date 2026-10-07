@@ -90,13 +90,25 @@ standing rules, not a task list:
 
 ### 3. Terminal hardening
 
-The emulator covers the full-screen and shell workflows exercised so far.
+The emulator covers the full-screen and shell workflows exercised so far. As of
+2026-10-06 the panel around it is agent-shaped: a tab is a group of up to six
+side-by-side panes, the panel maximizes into an immersive mode that leaves only
+the menu bar and project strip (and restores itself the moment another surface
+takes focus), background tabs carry an activity dot, and an exited pane relaunches
+in place with Enter (the dropped-ssh case). All of it lives on
+`TerminalPanelService`; the shell's declaration surface is at its lint cap, so
+new terminal behaviour lands there.
 
 - broaden validation with actual terminal programs rather than extending escape
   coverage from guesswork
 - fill remaining ANSI gaps only where real usage justifies them
 - keep resize, redraw, scrollback, and wake behaviour robust under long-running
   output
+- open on the pane model: an inactive pane's URL hover and selection (only the
+  active pane links and selects today), a persisted `panel.maximized` and pane
+  layout across sessions (terminals themselves are not restored, so the flag
+  would come back over a fresh default terminal), and a bell indicator next to
+  the activity dot (BEL is parsed but not surfaced)
 
 ### 4. Editor correctness and scale
 

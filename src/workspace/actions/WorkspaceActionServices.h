@@ -97,6 +97,14 @@ class WorkspaceActionContext {
     std::function<bool(const std::filesystem::path&)> reveal_path_in_tree;
     std::function<void(std::string)> open_terminal;
     std::function<bool()> close_active_terminal;
+    // Terminal panes and the panel (TerminalPanelService).
+    std::function<bool()> split_terminal;
+    std::function<bool(int)> focus_terminal_pane;
+    std::function<bool(int)> cycle_terminal;
+    std::function<bool()> relaunch_terminal;
+    std::function<void()> toggle_terminal;
+    std::function<void()> toggle_panel;
+    std::function<void()> toggle_panel_maximized;
     // Opens/refocuses the terminal find bar; false when no terminal is showing.
     std::function<bool(std::string)> open_terminal_find;
     std::function<void(OverlayMode)> show_overlay;
@@ -224,7 +232,7 @@ class WorkspaceActionContext {
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
     std::function<void()> request_toggle_fullscreen;
-    std::function<TerminalTabState*()> active_terminal_tab;
+    std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<bool()> plugin_runtime_enabled;
     std::function<void()> reload_plugins_for_current_project;
     std::function<std::string()> plugin_runtime_reload_summary;
@@ -372,6 +380,17 @@ class WorkspaceActionContext {
   // Closes the active terminal tab. False when there is none — the terminal
   // strip was the one tab strip whose tabs could only be closed by mouse.
   bool CloseActiveTerminal();
+  // Split the active terminal tab (a new pane right of the active one).
+  bool SplitTerminal();
+  // Move the active pane left (-1) / right (+1); false when there is none that way.
+  bool FocusTerminalPane(int delta);
+  // Activate the terminal tab `delta` steps away; false with fewer than two.
+  bool CycleTerminal(int delta);
+  // Restart the active pane's exited session in place.
+  bool RelaunchTerminal();
+  void ToggleTerminal();
+  void TogglePanel();
+  void TogglePanelMaximized();
   bool OpenTerminalFind(std::string query);
   void ShowFileFinderWithQuery(std::string query);
   void ShowFileFinder();

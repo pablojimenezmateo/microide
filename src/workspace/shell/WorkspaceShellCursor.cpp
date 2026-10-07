@@ -153,6 +153,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     case DragTarget::SidebarDivider:
     case DragTarget::RightPaneDivider:
     case DragTarget::EditorSplitDivider:
+    case DragTarget::TerminalPaneDivider:
     case DragTarget::CompareDivider:
     case DragTarget::MergeLeftDivider:
     case DragTarget::MergeRightDivider:
@@ -356,7 +357,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       // Off the widget: continue to the editor / chrome cursor logic below.
     } else {
-      const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
+      const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
       if (!Contains(overlay, x, y)) {
         return CursorKind::Default;
       }
@@ -670,6 +671,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     if (Contains(panel_header, x, y)) {
       if (Contains(tab_strip_service_.BottomPanelTerminalNewTabRect(
                        layout_mode_service_.CurrentMode(), panel_header),
+                   x, y) ||
+          Contains(tab_strip_service_.BottomPanelMaximizeButtonRect(
+                       layout_mode_service_.CurrentMode(), panel_header),
                    x, y)) {
         return CursorKind::Pointer;
       }
@@ -702,8 +706,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Default;
     }
     const std::size_t line_count =
-        BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr
-            ? ActiveTerminalTab()->session.LineCount()
+        BottomPanelShowsTerminal() && ActiveTerminalPane() != nullptr
+            ? ActiveTerminalPane()->session.LineCount()
             : BottomPanelShowsOutput()
                 ? (OutputChannelEntries(context_.current_project_state.panel.output.channel_id) != nullptr
                        ? OutputChannelEntries(context_.current_project_state.panel.output.channel_id)->size()
@@ -729,8 +733,17 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         }
       }
     }
-    if (BottomPanelShowsTerminal() && ActiveTerminalTab() != nullptr &&
+    if (BottomPanelShowsTerminal() && ActiveTerminalPane() != nullptr &&
         y >= layout.bottom_panel.y + kWorkspaceBottomPanelHeaderHeight) {
+      if (const TerminalTabState* tab = context_.current_project_state.active_terminal_tab();
+          tab != nullptr && tab->pane_count() > 1) {
+        for (const TerminalPaneDividerRect& divider :
+             tab->PaneRects(BottomPanelContentRect(layout)).dividers) {
+          if (Contains(divider.rect, x, y)) {
+            return CursorKind::EwResize;
+          }
+        }
+      }
       if (TerminalUrlAtPoint(x, y).has_value()) {
         return CursorKind::Pointer;
       }
@@ -1060,7 +1073,7 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
   if (context_.current_project_state.overlay.visible) {
     const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
     if (overlay_mode != OverlayMode::BufferSearch && overlay_mode != OverlayMode::BufferReplace) {
-      const SDL_FRect overlay = ComputeOverlayRect(layout.editor_area);
+      const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
       if (Contains(overlay, x, y)) {
         const auto list_layout = ComputeOverlayListLayout(overlay);
         if (const auto idx = ScrollableListIndexAtY(list_layout, y);

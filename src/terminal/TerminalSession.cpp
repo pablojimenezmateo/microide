@@ -190,9 +190,11 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
                                                 ? ShellProgramName(DefaultShellPath())
                                                 : std::string(command));
     // The two differences from the real Start(): there is no backend to publish,
-    // and the captured-output buffer that stands in for one starts empty.
+    // and the captured-output buffer that stands in for one starts empty. It
+    // reports running like a real shell would; a test ends it with SetRunning.
     backend_.reset();
     test_sent_bytes_.clear();
+    running_ = true;
   }
   PushWakeEvent();
   return true;

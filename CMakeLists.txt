@@ -546,6 +546,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspacePathMutationCoordinatorTabs.cpp
   src/workspace/coordinators/WorkspaceLifecycleCoordinator.cpp
   src/workspace/EditorSplitTree.cpp
+  src/workspace/TerminalPaneLayout.cpp
   src/workspace/WorkspaceLayout.cpp
   src/workspace/render/OverviewRuler.cpp
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
@@ -1068,6 +1069,7 @@ add_executable(microide_tests
   tests/FilesystemTests.cpp
   tests/GlobMatchTests.cpp
   tests/EditorSplitTreeTests.cpp
+  tests/TerminalPaneLayoutTests.cpp
   tests/GitBranchOperationsTests.cpp
   tests/IgnoreMatcherTests.cpp
   tests/ProjectTraversalFilterTests.cpp

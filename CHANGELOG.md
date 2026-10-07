@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [Unreleased]
+
+### Added
+
+- **Terminal split panes.** A terminal tab is now a group of up to six sessions
+  side by side (VS Code's terminal group): `Ctrl+Shift+\` with the terminal
+  focused, Terminal ▸ Split Terminal, or the tab's context menu puts a new pane
+  to the right of the active one and gives it the keyboard; the split pane is
+  halved rather than squeezing the whole row. `Alt+Left` / `Alt+Right` move
+  between panes (with a single pane the chord still reaches the shell, so Alt+arrow
+  programs keep working), a press in another pane activates it, the divider drags
+  with double-click resetting it, and the wheel scrolls whichever pane is under
+  the pointer so an agent's output can be read in one pane while typing in
+  another. Close Terminal closes the active pane; the tab goes with its last pane.
+  Every pane is gridded to its own slice of the body and shares the panel's row
+  count; the selection, the find bar and the blinking caret belong to the active
+  pane, the others paint plainly with an outline caret.
+- **Immersive (maximized) panel.** `Ctrl+Shift+J`, the chevron button at the right
+  of the panel header, View ▸ Maximize Panel or the terminal's context menu gives
+  the panel the whole window below the menu bar and project strip: the editor
+  column, the sidebar, the debug pane and the status bar collapse to nothing and
+  the stored panel height is untouched, so restoring is exact. It restores itself
+  the moment the editor, sidebar or debug pane takes focus (a file opened from a
+  terminal link, Ctrl+P, Ctrl+Tab), so it never traps the user; a hidden panel
+  keeps the flag and comes back maximized. Centred overlays (quick open, command
+  palette, Settings) anchor to the panel while it is maximized, so `Ctrl+P` works
+  in immersive mode.
+- **Terminal panel verbs.** `` Ctrl+` `` toggles the terminal (show and focus it, or
+  hide the panel when the terminal already has the keyboard), `` Ctrl+Shift+` ``
+  opens a new terminal, `Ctrl+J` hides and shows the panel with the content it
+  had, and `Ctrl+PageUp` / `Ctrl+PageDown` walk the terminal tabs while one is
+  focused. All of them are commands (`term-toggle`, `term-split`, `term-pane-left`,
+  `term-pane-right`, `term-next`, `term-prev`, `term-relaunch`, `panel-toggle`,
+  `panel-maximize`) and menu items, with the header buttons carrying tooltips.
+- **Activity dot on terminal tabs.** Output in a tab that is not on screen (another
+  tab is active, or the panel is hidden) lights an accent dot on its strip tab,
+  cleared the first frame the tab is shown — an agent finishing in a background
+  terminal is visible without switching to it.
+- **Relaunch an exited terminal in place.** `Enter` in a pane whose process has
+  exited (a dropped ssh link, a killed shell), or Terminal ▸ Relaunch Terminal,
+  restarts the session under the same cwd and command in the same tab and pane,
+  keeping its position in the strip. A pane the host did not launch (a test
+  placeholder) keeps sending the key to its session.
+
+### Changed
+
+- The bottom panel's terminal tab, pane and panel logic moved from `WorkspaceShell`
+  onto `TerminalPanelService`, which owns the state edits; the shell supplies only
+  session launch, redraw requests and the clipboard/selection glue. The per-session
+  state is `TerminalPaneState`; `TerminalTabState` is the strip tab that owns its
+  panes and their weights (`TerminalPaneLayout` holds the pure weight and rect
+  arithmetic). Placeholder terminal sessions in tests now report `running()` like a
+  live shell until a test ends them.
+
 ## [2.12.0] - 2026-09-20
 
 This cycle is a multi-caret, soft-wrap and word-selection correctness pass —

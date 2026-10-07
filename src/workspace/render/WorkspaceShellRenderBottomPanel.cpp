@@ -30,11 +30,6 @@ using namespace detail;
 
 namespace {
 
-const std::vector<terminal::TerminalLine>& EmptyTerminalLines() {
-  static const std::vector<terminal::TerminalLine> empty_lines;
-  return empty_lines;
-}
-
 // Paint a decoded raster surface (scaled to fit, clipped to `rect`), or a muted
 // "Rendering…" placeholder while its decode is still in flight. Split out of
 // RenderPluginSurfaceInto so the display-list and raster paths stay independently
@@ -64,8 +59,7 @@ void RenderRasterSurfaceInto(SDL_Renderer* renderer, const SDL_FRect& rect,
 }  // namespace
 
 void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
-                                              const WorkspaceLayout& layout,
-                                              std::size_t terminal_line_count) {
+                                              const WorkspaceLayout& layout) {
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   if (panel_vm.content == PanelContentKind::None) {
     return;
@@ -143,7 +137,13 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const terminal::TerminalSearchMatch* row_matches = nullptr;
   std::size_t row_match_count = 0;
   std::size_t row_current_match = std::numeric_limits<std::size_t>::max();
+  // Set per pane before its rows paint: only the active pane carries the
+  // selection and the find highlights; the others paint their cells plainly.
+  bool pane_emphasis_enabled = true;
   const auto cell_emphasis = [&](std::size_t row_index, std::size_t column) {
+    if (!pane_emphasis_enabled) {
+      return CellEmphasis::None;
+    }
     if (TerminalCellSelected(row_index, column)) {
       return CellEmphasis::Selection;
     }
@@ -350,6 +350,15 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                             tab.active ? panel_tab_palette.active_glyph
                                        : panel_tab_palette.inactive_glyph,
                             panel_tab_palette.active_text);
+      if (tab.activity_dot) {
+        // Unseen output in a background terminal: a small accent square just
+        // left of the close glyph, where the eye already goes for tab state.
+        const float dot = 6.0f;
+        DrawFilledRect(renderer,
+                       MakeRect(close_rect.x - dot - 6.0f,
+                                std::floor(rect.y + (rect.h - dot) * 0.5f), dot, dot),
+                       theme_.accent);
+      }
     }
     const SDL_FRect new_tab_rect = tab_strip_service_.BottomPanelTerminalNewTabRect(
         layout_mode_service_.CurrentMode(), panel_header);
@@ -405,6 +414,30 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                         theme_.chrome_background, header_label);
   }
 
+  // Maximize / restore, at the header's right edge for every content kind. An
+  // up chevron offers the immersive panel, a down chevron offers the way back —
+  // VS Code's pair, so the glyph never needs a label.
+  {
+    const SDL_FRect maximize_rect = tab_strip_service_.BottomPanelMaximizeButtonRect(
+        layout_mode_service_.CurrentMode(), panel_header);
+    const bool hovered =
+        last_mouse_position_valid_ && Contains(maximize_rect, last_mouse_x_, last_mouse_y_);
+    DrawButtonCentered(text_renderer_, renderer, theme_, maximize_rect, "", ButtonTone::Neutral,
+                       ButtonVisualState{.enabled = true, .hovered = hovered, .active = false});
+    const SDL_Color glyph = hovered ? theme_.text_primary : theme_.text_secondary;
+    const float cx = std::floor(maximize_rect.x + maximize_rect.w * 0.5f);
+    const float cy = std::floor(maximize_rect.y + maximize_rect.h * 0.5f);
+    const float arm = 3.0f;
+    render::SetDrawColor(renderer, glyph);
+    if (layout.panel_maximized) {
+      SDL_RenderLine(renderer, cx - arm, cy - 1.0f, cx, cy + arm - 1.0f);
+      SDL_RenderLine(renderer, cx, cy + arm - 1.0f, cx + arm, cy - 1.0f);
+    } else {
+      SDL_RenderLine(renderer, cx - arm, cy + 1.0f, cx, cy - arm + 1.0f);
+      SDL_RenderLine(renderer, cx, cy - arm + 1.0f, cx + arm, cy + 1.0f);
+    }
+  }
+
   // Phase E0: a plugin content surface replaces the terminal/output body. The
   // host owns scroll + clipping; the plugin only supplied data (display list or
   // raster handle). The surface content pointer is resolved by the builder.
@@ -434,60 +467,197 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     return;
   }
 
-  const std::vector<std::string>* output_entries =
-      output_panel ? OutputChannelEntries(panel_vm.output_channel_id)
-                   : nullptr;
-  std::optional<std::filesystem::path> current_reference_path;
-  const std::size_t panel_line_count =
-      terminal_panel ? terminal_line_count
-                     : output_panel ? (output_entries != nullptr ? output_entries->size() : 0)
-                     : 0;
+  // Paints every pane of the tab on screen into its own slice of the panel body,
+  // then the dividers between them. The active pane carries the selection, the
+  // find highlights and the blinking caret; the others paint plainly with a
+  // steady outline caret.
+  const auto render_terminal_panes = [&]() {
+    TerminalTabState* tab = panel_vm.terminal_tab;
+    if (tab == nullptr || tab->panes.empty()) {
+      // A Terminal panel with no live session: the builder's hint over an empty body.
+      const LogSurfaceLayout empty_layout = ComputeBottomPanelLogLayout(layout, 0);
+      if (!panel_vm.empty_label.empty()) {
+        DrawWrappedPlaceholder(text_renderer_, renderer, empty_layout.text_x, empty_layout.text_y,
+                               empty_layout.text_width, theme_.text_muted, theme_.surface_background,
+                               panel_vm.empty_label);
+      }
+      return;
+    }
+    // Rebase the active pane's absolute-row mirrors for any scrollback trimmed since
+    // the last frame BEFORE the layout reads scroll_row, so a scrolled-up view /
+    // selection tracks the same content instead of jumping forward by the trimmed batch.
+    RebaseActiveTerminalForScrollbackTrim();
+
+    const TerminalPaneRectsLayout& rects = panel_vm.terminal_panes;
+    const float panel_height = layout.bottom_panel.h;
+    for (std::size_t pane_index = 0; pane_index < tab->panes.size() && pane_index < rects.panes.size();
+         ++pane_index) {
+      TerminalPaneState* pane = tab->panes[pane_index].get();
+      if (pane == nullptr) {
+        continue;
+      }
+      const bool is_active = pane_index == tab->active_pane;
+      pane_emphasis_enabled = is_active;
+      const SDL_FRect& body = rects.panes[pane_index];
+      const std::size_t line_count = pane->session.LineCount();
+      const LogSurfaceLayout pane_layout =
+          ComputeTerminalPaneLogLayout(body, panel_height, *pane, line_count);
+      // Persist the clamped scroll the same way the single-pane path always did, so
+      // the stored row never points past the content.
+      if (is_active) {
+        SetBottomPanelScrollRow(pane_layout.scroll.vertical_scroll, line_count,
+                                pane_layout.scroll.visible_rows);
+      } else {
+        pane->scroll_row = pane_layout.scroll.vertical_scroll;
+        pane->follow_tail =
+            pane_layout.scroll.vertical_scroll >= pane_layout.scroll.max_vertical_scroll;
+      }
+
+      const std::size_t first_row =
+          static_cast<std::size_t>(std::max(0, pane_layout.scroll.vertical_scroll));
+      const std::size_t visible_rows =
+          static_cast<std::size_t>(std::max(0, pane_layout.scroll.visible_rows));
+      const bool same_visible_range = pane->visible_lines_first_row == first_row &&
+                                      pane->visible_lines_max_rows == visible_rows;
+      const std::uint64_t previous_generation =
+          same_visible_range ? pane->visible_lines_snapshot.generation : 0;
+      pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
+                                               &pane->visible_lines_snapshot);
+      pane->visible_lines_first_row = first_row;
+      pane->visible_lines_max_rows = visible_rows;
+      const std::vector<terminal::TerminalLine>& terminal_lines = pane->visible_lines_snapshot.lines;
+
+      // Find highlights (active pane only): the match list is (row, column)-ordered,
+      // so seek once to the first hit at or after the top visible row and then walk
+      // forward with the row loop, instead of searching the whole list per row.
+      const std::vector<terminal::TerminalSearchMatch>* find_matches =
+          is_active ? panel_vm.find_matches : nullptr;
+      std::size_t find_cursor = 0;
+      if (find_matches != nullptr && !find_matches->empty()) {
+        find_cursor = static_cast<std::size_t>(
+            std::lower_bound(find_matches->begin(), find_matches->end(), first_row,
+                             [](const terminal::TerminalSearchMatch& match, std::size_t row) {
+                               return match.row < row;
+                             }) -
+            find_matches->begin());
+      }
+
+      for (int row = 0; row < pane_layout.scroll.visible_rows; ++row) {
+        const int index = pane_layout.scroll.vertical_scroll + row;
+        if (index >= static_cast<int>(line_count)) {
+          break;
+        }
+        const float line_y = pane_layout.text_y + static_cast<float>(row) * pane_layout.line_height;
+        // Narrow the shared match slice to this row before painting it.
+        row_matches = nullptr;
+        row_match_count = 0;
+        row_current_match = std::numeric_limits<std::size_t>::max();
+        if (find_matches != nullptr) {
+          const auto absolute_row = static_cast<std::size_t>(index);
+          while (find_cursor < find_matches->size() &&
+                 (*find_matches)[find_cursor].row < absolute_row) {
+            ++find_cursor;
+          }
+          std::size_t row_end = find_cursor;
+          while (row_end < find_matches->size() && (*find_matches)[row_end].row == absolute_row) {
+            ++row_end;
+          }
+          if (row_end > find_cursor) {
+            row_matches = find_matches->data() + find_cursor;
+            row_match_count = row_end - find_cursor;
+            if (panel_vm.find_selected_index >= find_cursor &&
+                panel_vm.find_selected_index < row_end) {
+              row_current_match = panel_vm.find_selected_index - find_cursor;
+            }
+          }
+        }
+        // line_count comes from `session.LineCount()` sampled outside the session
+        // mutex, while `terminal_lines` is the locked snapshot. They can disagree
+        // when scrollback is trimmed between the two calls — the snapshot is the
+        // source of truth for what to draw. Guard against that skew before indexing.
+        const std::size_t snapshot_index = static_cast<std::size_t>(index) - first_row;
+        if (snapshot_index >= terminal_lines.size()) {
+          break;
+        }
+        draw_terminal_line(pane_layout.text_x, line_y, pane_layout.text_width, terminal_lines[snapshot_index],
+                  static_cast<std::size_t>(index));
+      }
+
+      if (line_count == 0 && is_active && !panel_vm.empty_label.empty()) {
+        DrawWrappedPlaceholder(text_renderer_, renderer, pane_layout.text_x, pane_layout.text_y,
+                               pane_layout.text_width, theme_.text_muted, theme_.surface_background,
+                               panel_vm.empty_label);
+      }
+
+      const terminal::TerminalCursorSnapshot cursor = pane->session.CursorSnapshot();
+      // Same rect the blink invalidation asks for (TerminalCaretRectIn), so the
+      // dirty region and the painted caret cannot disagree.
+      const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(pane_layout, cursor);
+      if (caret_rect.has_value()) {
+        if (!is_active) {
+          // An unfocused pane shows where its cursor is without claiming the keyboard:
+          // a steady outline, the way every terminal multiplexer draws it.
+          DrawRect(renderer, *caret_rect, theme_.cursor);
+        } else if (panel_vm.focus != FocusTarget::Panel || CaretVisibleNow()) {
+          DrawFilledRect(renderer, *caret_rect, theme_.cursor);
+          if (cursor.row >= first_row && cursor.row - first_row < terminal_lines.size()) {
+            const auto& line = terminal_lines[cursor.row - first_row];
+            if (cursor.column < line.cells.size()) {
+              const auto& cell = line.cells[cursor.column];
+              const auto display_text = cell.DisplayText();
+              if (!display_text.empty()) {
+                const SDL_Color cursor_foreground =
+                    resolve_terminal_colors(cell.style, CellEmphasis::None).second;
+                // The glyph is drawn at the caret's own origin; the rect carries a
+                // 1px lift, so undo it here to keep the text on the row baseline.
+                terminal_text_renderer_.DrawString(renderer, caret_rect->x, caret_rect->y + 1.0f,
+                                                   cursor_foreground, display_text);
+              }
+            }
+          }
+        }
+      }
+
+      if (pane_layout.scroll.vertical_scrollbar.has_value()) {
+        DrawScrollbar(renderer, theme_, pane_layout.scroll.vertical_scrollbar->track,
+                      pane_layout.scroll.vertical_scrollbar->thumb,
+                      is_active &&
+                          context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
+      }
+    }
+    pane_emphasis_enabled = true;
+
+    for (const TerminalPaneDividerRect& divider : rects.dividers) {
+      const bool divider_active =
+          context_.interaction_state.drag_target == DragTarget::TerminalPaneDivider &&
+          divider.boundary == context_.interaction_state.drag_terminal_pane_boundary;
+      DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
+    }
+  };
 
   if (terminal_panel) {
-    // Rebase the terminal's absolute-row mirrors for any scrollback trimmed since the
-    // last frame BEFORE the layout reads scroll_row, so a scrolled-up view / selection
-    // tracks the same content instead of jumping forward by the trimmed batch.
-    RebaseActiveTerminalForScrollbackTrim();
+    render_terminal_panes();
+    // The find bar floats above the active pane (and above its scrollbar), the
+    // same compact card the in-file find widget uses.
+    if (panel_vm.find_visible) {
+      RenderFindWidget(renderer, panel_vm.find);
+    }
+    if (panel_vm.focus == FocusTarget::Panel) {
+      DrawSurfaceFocusRing(renderer, layout.bottom_panel);
+    }
+    return;
   }
+
+  const std::vector<std::string>* output_entries =
+      output_panel ? OutputChannelEntries(panel_vm.output_channel_id) : nullptr;
+  std::optional<std::filesystem::path> current_reference_path;
+  const std::size_t panel_line_count =
+      output_panel ? (output_entries != nullptr ? output_entries->size() : 0) : 0;
+
   const LogSurfaceLayout panel_layout =
       ComputeBottomPanelLogLayout(layout, panel_line_count);
   SetBottomPanelScrollRow(panel_layout.scroll.vertical_scroll, panel_line_count,
                           panel_layout.scroll.visible_rows);
-
-  const std::size_t first_row =
-      static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
-  const std::vector<terminal::TerminalLine>* terminal_lines = &EmptyTerminalLines();
-  if (terminal_panel) {
-    if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
-      const std::size_t visible_rows =
-          static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows));
-      const bool same_visible_range =
-          terminal_tab->visible_lines_first_row == first_row &&
-          terminal_tab->visible_lines_max_rows == visible_rows;
-      const std::uint64_t previous_generation =
-          same_visible_range ? terminal_tab->visible_lines_snapshot.generation : 0;
-      terminal_tab->session.SnapshotLineRangeIfChanged(
-          first_row, visible_rows, previous_generation, &terminal_tab->visible_lines_snapshot);
-      terminal_tab->visible_lines_first_row = first_row;
-      terminal_tab->visible_lines_max_rows = visible_rows;
-      terminal_lines = &terminal_tab->visible_lines_snapshot.lines;
-    }
-  }
-
-  // Find highlights: the match list is (row, column)-ordered, so seek once to the
-  // first hit at or after the top visible row and then walk forward with the row
-  // loop, instead of searching the whole list per row.
-  const std::vector<terminal::TerminalSearchMatch>* find_matches =
-      terminal_panel ? panel_vm.find_matches : nullptr;
-  std::size_t find_cursor = 0;
-  if (find_matches != nullptr && !find_matches->empty()) {
-    find_cursor = static_cast<std::size_t>(
-        std::lower_bound(find_matches->begin(), find_matches->end(), first_row,
-                         [](const terminal::TerminalSearchMatch& match, std::size_t row) {
-                           return match.row < row;
-                         }) -
-        find_matches->begin());
-  }
 
   for (int row = 0; row < panel_layout.scroll.visible_rows; ++row) {
     const int index = panel_layout.scroll.vertical_scroll + row;
@@ -495,44 +665,6 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       break;
     }
     const float line_y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height;
-    if (terminal_panel) {
-      // Narrow the shared match slice to this row before painting it.
-      row_matches = nullptr;
-      row_match_count = 0;
-      row_current_match = std::numeric_limits<std::size_t>::max();
-      if (find_matches != nullptr) {
-        const auto absolute_row = static_cast<std::size_t>(index);
-        while (find_cursor < find_matches->size() &&
-               (*find_matches)[find_cursor].row < absolute_row) {
-          ++find_cursor;
-        }
-        std::size_t row_end = find_cursor;
-        while (row_end < find_matches->size() && (*find_matches)[row_end].row == absolute_row) {
-          ++row_end;
-        }
-        if (row_end > find_cursor) {
-          row_matches = find_matches->data() + find_cursor;
-          row_match_count = row_end - find_cursor;
-          if (panel_vm.find_selected_index >= find_cursor &&
-              panel_vm.find_selected_index < row_end) {
-            row_current_match = panel_vm.find_selected_index - find_cursor;
-          }
-        }
-      }
-      // panel_line_count comes from `session.LineCount()` sampled outside the
-      // session mutex, while `terminal_lines` is the locked snapshot. They can
-      // disagree when scrollback is trimmed between the two calls — the
-      // snapshot is the source of truth for what to draw. Guard against that
-      // skew before indexing (round-4 Finding 3 follow-on).
-      const std::size_t snapshot_index = static_cast<std::size_t>(index) - first_row;
-      if (snapshot_index >= terminal_lines->size()) {
-        break;
-      }
-      draw_terminal_line(panel_layout.text_x, line_y, panel_layout.text_width,
-                         (*terminal_lines)[snapshot_index],
-                         static_cast<std::size_t>(index));
-      continue;
-    }
     if (output_panel && output_entries != nullptr) {
       const std::size_t output_index = static_cast<std::size_t>(index);
       const std::string& output_line = (*output_entries)[output_index];
@@ -605,49 +737,16 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                            panel_vm.empty_label);
   }
 
-  if (terminal_panel) {
-    if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
-      const terminal::TerminalCursorSnapshot cursor = active_terminal->session.CursorSnapshot();
-      // Same rect the blink invalidation asks for (TerminalCaretRectIn), so the
-      // dirty region and the painted caret cannot disagree.
-      const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(panel_layout, cursor);
-      if (caret_rect.has_value() &&
-          (panel_vm.focus != FocusTarget::Panel || CaretVisibleNow())) {
-        DrawFilledRect(renderer, *caret_rect, theme_.cursor);
-        if (cursor.row >= first_row && cursor.row - first_row < terminal_lines->size()) {
-          const auto& line = (*terminal_lines)[cursor.row - first_row];
-          if (cursor.column < line.cells.size()) {
-            const auto& cell = line.cells[cursor.column];
-            const auto display_text = cell.DisplayText();
-            if (!display_text.empty()) {
-              const SDL_Color cursor_foreground =
-                  resolve_terminal_colors(cell.style, CellEmphasis::None).second;
-              // The glyph is drawn at the caret's own origin; the rect carries a
-              // 1px lift, so undo it here to keep the text on the row baseline.
-              // DrawString takes std::string_view; pass the view directly without copying.
-              terminal_text_renderer_.DrawString(renderer, caret_rect->x, caret_rect->y + 1.0f,
-                                                 cursor_foreground, display_text);
-            }
-          }
-        }
-      }
-    }
-  }
-
   if (panel_layout.scroll.vertical_scrollbar.has_value()) {
     DrawScrollbar(renderer, theme_, panel_layout.scroll.vertical_scrollbar->track,
                   panel_layout.scroll.vertical_scrollbar->thumb,
                   context_.interaction_state.drag_target == DragTarget::BottomPanelScrollbar);
   }
-  // The find bar floats above the terminal body (and above the scrollbar), the
-  // same compact card the in-file find widget uses.
-  if (panel_vm.find_visible) {
-    RenderFindWidget(renderer, panel_vm.find);
-  }
   if (panel_vm.focus == FocusTarget::Panel) {
     DrawSurfaceFocusRing(renderer, layout.bottom_panel);
   }
 }
+
 
 // Host-owned painter for a single plugin content surface, shared by the bottom
 // preview panel (E0) and inline insets (E1). The surface carries only data (a

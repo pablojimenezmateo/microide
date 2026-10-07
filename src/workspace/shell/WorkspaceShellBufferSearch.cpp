@@ -274,7 +274,7 @@ void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
   buffer_search.selected_index = selected;
   RevealBufferSearchMatch(buffer_search.matches[selected]);
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-    RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+    RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
   }
   RequestEditorSurfaceRedraw();
 }
@@ -294,7 +294,7 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
   RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
   if (context_.current_project_state.overlay.visible) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
-      RevealOverlaySelection(ComputeOverlayRect(layout->editor_area));
+      RevealOverlaySelection(ComputeOverlayRect(layout->overlay_anchor));
     }
   }
   RequestEditorSurfaceRedraw();

@@ -229,6 +229,13 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   const std::size_t focused_group_index = FocusedEditorGroupIndex();
   for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
     const SDL_FRect group_tab_strip = editor_group_rects.groups[gi].tab_strip;
+    // A collapsed strip (the maximized panel owns the window) paints nothing: not
+    // its tabs, not the "Welcome" placeholder an empty strip otherwise shows, not
+    // its overflow chevrons. They all size off a floor and would land over the
+    // panel header.
+    if (group_tab_strip.h <= 0.0f) {
+      continue;
+    }
     // A single pane is always the focused one; only a split can hold a stale tab.
     const StripTabPalette& group_tab_palette =
         (editor_group_rects.groups.size() > 1 && gi != focused_group_index)
