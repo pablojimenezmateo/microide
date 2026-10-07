@@ -155,6 +155,37 @@ class UnknownHostLauncher final : public platform::ProcessLauncher,
   }
 };
 
+// TD-2026-10-07-322: a placeholder resolved per locality, because a path spliced
+// into argv is one a launcher cannot recognise.
+void TestWorkspaceFolderExpandsToTheHostRoot() {
+  const ScriptedProcessLauncher local;
+  const std::vector<std::string> plain = {"clangd", "--log=error"};
+  Expect(platform::ExpandWorkspaceFolder(plain, "/m/p", local) == plain,
+         "an argv with no placeholder is untouched");
+  Expect(platform::ExpandWorkspaceFolder({"tool", "--root=${workspaceFolder}/build",
+                                          "${workspaceFolder}"},
+                                         "/m/p", local) ==
+             std::vector<std::string>{"tool", "--root=/m/p/build", "/m/p"},
+         "every occurrence expands, locally to the project root");
+
+  class HostLauncher final : public platform::ProcessLauncher {
+   public:
+    std::vector<std::string> ResolveArgv(std::vector<std::string> a) const override { return a; }
+    std::filesystem::path ResolveWorkingDirectory(std::filesystem::path p) const override {
+      return p == "/m/p" ? std::filesystem::path("/h/p") : p;
+    }
+    std::filesystem::path LocalPathFromHost(std::filesystem::path p) const override { return p; }
+    platform::SubprocessResult Run(std::vector<std::string>, platform::SubprocessOptions) const override {
+      return {};
+    }
+    bool is_local() const override { return false; }
+    std::string_view description() const override { return "host"; }
+  } host;
+  Expect(platform::ExpandWorkspaceFolder({"--root=${workspaceFolder}"}, "/m/p", host) ==
+             std::vector<std::string>{"--root=/h/p"},
+         "and remotely to the root as the host sees it");
+}
+
 void TestGitMetadataComesFromTheLaunchersHost() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -470,6 +501,8 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestCompareServiceRunsThroughTheLauncherItIsGiven);
   AddTest(tests, "ProcessLauncher/WriteSideRunsThroughTheLauncherItIsGiven",
           TestWriteSideRunsThroughTheLauncherItIsGiven);
+  AddTest(tests, "ProcessLauncher/WorkspaceFolderExpandsToTheHostRoot",
+          TestWorkspaceFolderExpandsToTheHostRoot);
   AddTest(tests, "ProcessLauncher/GitMetadataComesFromTheLaunchersHost",
           TestGitMetadataComesFromTheLaunchersHost);
   AddTest(tests, "ProcessLauncher/StatusRefreshRecordsThePendingMergeHead",

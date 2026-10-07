@@ -647,7 +647,20 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
-### TD-2026-10-07-322 — a path inside a host process's ARGV is not translated. [OPEN]
+### TD-2026-10-07-322 — a path inside a host process's ARGV is not translated. [RESOLVED 2026-10-07]
+
+**Resolution.** `platform::ExpandWorkspaceFolder(argv, root, launcher)` replaces
+`${workspaceFolder}` with the root as the launcher's machine sees it, as VS Code's
+launch and task configurations do. It is applied to every plugin-contributed
+language-server and debug-adapter command and to plugin `process.run` argv. The
+one argument the editor splices in itself, clangd's `--compile-commands-dir`, is
+mapped through the launcher. The parity row's fake server now takes
+`--root=${workspaceFolder}` and refuses a root that is not its host's; it fails
+without the expansion. Residue for Phase 2b: `DiscoverCompileCommandsDir` searches
+the MIRROR, and build directories are gitignored and so not mirrored (§ 6.2), so a
+remote clangd gets no flag until discovery asks the host.
+
+Original entry:
 
 Found while adding `HostPathTranslator` (design § 6.5). Paths in LSP and DAP
 MESSAGES are translated at the transport; paths in the COMMAND that starts the

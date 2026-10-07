@@ -62,7 +62,8 @@ bool IsVirtualDocumentUri(std::string_view text) {
 // degrading. Only clangd understands the flag, so gate on the program name and
 // skip when the plugin already set it. Returns the (possibly augmented) command.
 std::vector<std::string> AugmentClangdWithCompileCommandsDir(
-    std::vector<std::string> command, const std::filesystem::path& project_root) {
+    std::vector<std::string> command, const std::filesystem::path& project_root,
+    const platform::ProcessLauncher& launcher) {
   if (command.empty()) {
     return command;
   }
@@ -83,7 +84,10 @@ std::vector<std::string> AugmentClangdWithCompileCommandsDir(
             project_root.generic_string().c_str());
     return command;
   }
-  command.push_back("--compile-commands-dir=" + dir->generic_string());
+  // As clangd -- running where the project's launcher runs it -- sees the
+  // directory, not as this machine's copy of the tree does (TD-2026-10-07-322).
+  command.push_back("--compile-commands-dir=" +
+                    launcher.ResolveWorkingDirectory(*dir).generic_string());
   SDL_Log("cpp-lsp: pointing clangd at compile_commands.json in %s",
           dir->generic_string().c_str());
   return command;
@@ -702,8 +706,11 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
       for (const auto& language_id : language_server.language_ids) {
         active_language_servers.insert(language_id);
       }
+      const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
       std::vector<std::string> command = AugmentClangdWithCompileCommandsDir(
-          language_server.command, context_.current_project_state.root);
+          platform::ExpandWorkspaceFolder(language_server.command,
+                                          context_.current_project_state.root, launcher),
+          context_.current_project_state.root, launcher);
       CurrentLspManager().RegisterServer(language_server.language_ids,
                                          context_.current_project_state.launcher(), command,
                                          // Percent-encode the rootUri the same way
@@ -731,8 +738,11 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
         continue;
       }
       active_debug_adapter_types.insert(adapter.type);
-      CurrentDapManager().RegisterAdapter(adapter.type, context_.current_project_state.launcher(),
-                                          adapter.command, adapter.sandbox);
+      CurrentDapManager().RegisterAdapter(
+          adapter.type, context_.current_project_state.launcher(),
+          platform::ExpandWorkspaceFolder(adapter.command, context_.current_project_state.root,
+                                          context_.current_project_state.launcher()),
+          adapter.sandbox);
     }
     CurrentDapManager().RetainAdaptersIn(active_debug_adapter_types);
 

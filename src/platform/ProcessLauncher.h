@@ -74,4 +74,14 @@ class ProcessLauncher {
 // otherwise.
 const ProcessLauncher& LocalProcessLauncher();
 
+// Replace every `${workspaceFolder}` in `argv` with `project_root` as the machine
+// that runs the process sees it (`launcher.ResolveWorkingDirectory`), as VS Code's
+// launch and task configurations do. A path the editor computes and splices into a
+// command is the MIRROR's path in a remote project, and a launcher cannot recognise
+// it inside argv (Run's contract); a placeholder resolved per locality can be
+// (TD-2026-10-07-322). An argv with no `${` is returned untouched.
+std::vector<std::string> ExpandWorkspaceFolder(std::vector<std::string> argv,
+                                               const std::filesystem::path& project_root,
+                                               const ProcessLauncher& launcher);
+
 }  // namespace microide::platform

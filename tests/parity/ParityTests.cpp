@@ -116,6 +116,9 @@ constexpr std::string_view kHostConfinedLspServer = R"py(import json, os, sys
 from urllib.parse import quote, unquote
 
 host = os.path.realpath(os.getcwd())
+# The root it was GIVEN on its command line (`--root=${workspaceFolder}`): a path
+# spliced into argv is one no launcher can map, so it must arrive already the host's.
+argv_root = next((a[len("--root="):] for a in sys.argv[1:] if a.startswith("--root=")), None)
 
 def uri_to_path(u):
     return unquote(u[len("file://"):]) if u.startswith("file://") else u
@@ -163,7 +166,9 @@ while True:
     elif method == "textDocument/didOpen":
         uri = m["params"]["textDocument"]["uri"]
         path = uri_to_path(uri)
-        if on_host(path) and os.path.isfile(path):
+        if argv_root is not None and os.path.realpath(argv_root) != host:
+            diags = [{"range": rng(0), "message": "argv root is not the host", "severity": 1}]
+        elif on_host(path) and os.path.isfile(path):
             with open(path) as f:
                 diags = [{"range": rng(i), "message": "todo", "severity": 2}
                          for i, l in enumerate(f.read().split("\n")) if "TODO" in l]
@@ -486,7 +491,7 @@ return ide.plugin({
   capabilities = { process = { exec = true } },
   setup = function(ctx)
     ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "python3", ")lua" +
-                        server.generic_string() + R"lua(" } })
+                        server.generic_string() + R"lua(", "--root=${workspaceFolder}" } })
   end
 })
 )lua");

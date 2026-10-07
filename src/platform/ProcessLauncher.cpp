@@ -1,5 +1,6 @@
 #include "platform/ProcessLauncher.h"
 
+#include <string_view>
 #include <utility>
 
 namespace microide::platform {
@@ -31,6 +32,23 @@ class LocalLauncher final : public ProcessLauncher {
 };
 
 }  // namespace
+
+std::vector<std::string> ExpandWorkspaceFolder(std::vector<std::string> argv,
+                                               const std::filesystem::path& project_root,
+                                               const ProcessLauncher& launcher) {
+  constexpr std::string_view kPlaceholder = "${workspaceFolder}";
+  std::string host_root;
+  for (std::string& arg : argv) {
+    for (std::size_t at = arg.find(kPlaceholder); at != std::string::npos;
+         at = arg.find(kPlaceholder, at + host_root.size())) {
+      if (host_root.empty()) {
+        host_root = launcher.ResolveWorkingDirectory(project_root).string();
+      }
+      arg.replace(at, kPlaceholder.size(), host_root);
+    }
+  }
+  return argv;
+}
 
 const ProcessLauncher& LocalProcessLauncher() {
   static const LocalLauncher launcher;

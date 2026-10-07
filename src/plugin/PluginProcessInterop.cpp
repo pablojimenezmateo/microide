@@ -274,8 +274,10 @@ static platform::SubprocessResult RunPluginSubprocess(const PluginFsContext& fs,
   // where the project does (the host, for a remote one), and one run in the plugin's
   // own data directory runs here (TD-2026-10-06-318). The sandbox stays attached to
   // the options because it is a property of the CHILD, not of where the child runs.
-  return fs.LauncherFor(parsed.cwd).Run(
-      parsed.argv, platform::SubprocessOptions{
+  const platform::ProcessLauncher& launcher = fs.LauncherFor(parsed.cwd);
+  return launcher.Run(
+      platform::ExpandWorkspaceFolder(parsed.argv, fs.project_root, launcher),
+      platform::SubprocessOptions{
                        .cwd = parsed.cwd,
                        .stdin_text = parsed.stdin_text,
                        .environment_overrides = std::move(parsed.environment_overrides),
