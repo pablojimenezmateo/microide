@@ -46,7 +46,7 @@ std::uint64_t SaveFormatterService::Begin(std::string coalesce_key,
                      // copy the whole captured stream.
                      platform::SubprocessResult result = launcher.Run(
                          request.command, platform::SubprocessOptions{
-                                              .cwd = launcher.ResolveWorkingDirectory(request.cwd),
+                                              .cwd = request.cwd,  // the launcher maps it (ProcessLauncher::Run)
                                               .stdin_text = std::move(request.text),
                                               .environment_overrides = {},
                                               .timeout_ms = request.timeout_ms,
@@ -86,7 +86,7 @@ SaveFormatterService::Completion SaveFormatterService::RunBlocking(
     // Non-const for the same reason as the deferred path above: stderr is moved.
     platform::SubprocessResult result =
         launcher.Run(request.command, platform::SubprocessOptions{
-                                          .cwd = launcher.ResolveWorkingDirectory(request.cwd),
+                                          .cwd = request.cwd,  // the launcher maps it (ProcessLauncher::Run)
                                           .stdin_text = request.text,
                                           .environment_overrides = {},
                                           .timeout_ms = request.timeout_ms,

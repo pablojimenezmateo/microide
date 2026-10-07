@@ -362,6 +362,12 @@
   static void SetProjectWriteGate(WorkspaceShell& shell, microide::project::FileWriteGate& gate) {
     shell.context_.current_project_state.file_write_gate = &gate;
   }
+  // The launcher's twin of SetProjectWriteGate, with the same set-after-open rule:
+  // the parity suite's loopback locality (tests/parity) installs both.
+  static void SetProjectLauncher(WorkspaceShell& shell,
+                                 const microide::platform::ProcessLauncher& launcher) {
+    shell.context_.current_project_state.process_launcher = &launcher;
+  }
   // The watcher's reload of a clean buffer whose file changed on disk — the path
   // that replaces the editor's viewport wholesale.
   static void ReloadCleanEditorTabsForPath(WorkspaceShell& shell,

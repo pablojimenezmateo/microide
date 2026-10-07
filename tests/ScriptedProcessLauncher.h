@@ -40,6 +40,8 @@ class ScriptedProcessLauncher final : public platform::ProcessLauncher {
   // about the argv a caller BUILDS are otherwise only observable by running the
   // real program and inspecting its side effects.
   mutable std::vector<std::vector<std::string>> runs;
+  // The working directory each `runs` entry was asked for, in the same order.
+  mutable std::vector<std::filesystem::path> run_cwds;
 
   // Every argv resolved through this launcher. A long-lived spawn (a language
   // server, a debug adapter) does not go through `Run`: it resolves its argv here
@@ -74,8 +76,9 @@ class ScriptedProcessLauncher final : public platform::ProcessLauncher {
     return cwd;
   }
   platform::SubprocessResult Run(std::vector<std::string> argv,
-                                 platform::SubprocessOptions) const override {
+                                 platform::SubprocessOptions options) const override {
     runs.push_back(std::move(argv));
+    run_cwds.push_back(std::move(options.cwd));
     Response response = standing_response;
     if (!queued_responses.empty()) {
       response = queued_responses.front();

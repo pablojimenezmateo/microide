@@ -739,6 +739,13 @@ construction site, which is why it was not folded into the launcher slices; it
 should land as G9's first slice, ahead of consolidating the status-bar readers,
 because it is the part that would make a remote project silently git-less.
 
+**Now measured, not inferred (2026-10-07).** The parity suite's
+`Parity/GitSidebarShowsTheWorkingTree` row runs the git sidebar against a
+non-local project whose mirror has no `.git` and records "Git refresh failed: not
+a git repository" with ZERO spawns through the project's launcher. It is listed in
+`tests/parity/ParityKnownGaps.h` against this entry, and the runner fails once it
+starts matching, so resolving this entry is also what removes that row.
+
 ### TD-2026-10-06-318 — the plugin host knows the project's root, not its launcher or write gate. [RESOLVED 2026-10-06]
 
 Every other writer into a project tree and every other spawn now take their

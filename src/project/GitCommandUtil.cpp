@@ -329,12 +329,14 @@ CommandResult ReadGitCommandOutputWithStdin(const platform::ProcessLauncher& lau
   // could stage/discard/blame/diff/history the wrong path. No git call in this
   // codebase intentionally uses pathspec magic, so this is a pure safety gate.
   command.emplace_back("--literal-pathspecs");
-  command.emplace_back("-C");
-  command.push_back(root.lexically_normal().string());
   for (std::string& argument : arguments) {
     command.push_back(std::move(argument));
   }
   platform::SubprocessOptions options;
+  // The repository is the working directory, not `-C <root>`: a launcher maps a
+  // working directory onto the machine that runs git, and cannot see a path
+  // inside argv (ProcessLauncher::Run). Locally the two are the same chdir.
+  options.cwd = root.lexically_normal();
   // Never let git block on an interactive credential/passphrase prompt. The child
   // inherits our stdio, so a git launched from a terminal can read a password from
   // a tty the user is not looking at and simply hang until the wall-clock cap kills

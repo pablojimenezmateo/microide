@@ -41,7 +41,18 @@ Shipped from the groundwork so far, on `main`:
 | **G5** (part) | `SaveFormatterService` runs the formatter on a worker. An interactive save DEFERS — it returns without writing and its completion applies the formatter's output, guarded on the buffer's content revision — while a save whose caller acts on completion blocks. Flushes at tab close, project switch/close and quit keep an in-flight save from being dropped. The lint's spawn allowlist is now the service alone, plus a second half confining the one remaining shell-thread wait. | the blocking callers still wait (TD-2026-09-28-304); participants are still on the shell thread; compare/merge saves are still blocking |
 | **G4** (part) | `editor::AsyncBufferWork` is the guarded completion — an operation id the tab holds (so a completion finds its tab, and finds none if it was closed) plus the `content_revision` it was posted against — and the format-on-save path was moved onto it, so there is one copy of that rule rather than three. `project::FileReadService` is the dedicated reader: one thread, not the serial `ProjectBackgroundExecutor`, with cancellation checked between 1 MiB chunks so closing a tab stops the I/O. `EditorTabState::needs_restore` became `Content{Ready, Deferred, Loading, Failed}`, so the ~40 existing guards ask `content_pending()` and cover a state added later by construction. Files ≥ 4 MiB open off-thread; the WHOLE load runs on the reader's thread through the request's `on_worker` hook — the classification (hash, encoding, line endings, CRLF rewrite) and the buffer build, with a complete `TextViewport` constructed there and moved into the tab by the completion. One file is one read however many panes wait for it: the completion hands its view to every other tab waiting on that path, sharing the buffer. `TextViewport` gained a read-only mode, refused at both edit choke points and at `Save()`, because a keystroke into a tab whose bytes have not arrived would otherwise become a buffer that shadows the file and can be saved over it. A sticky notification reports a read above 48 MiB. | compare/merge still read their sides on the shell thread (TD-2026-09-29-312); the threshold is a size, so a small file on a stalled mount still blocks (TD-2026-09-29-313); — the disk-content hash (G6) is off the shell thread for the watcher sweep, leaving only the save path's own conflict check, which must decide before it writes (TD-2026-09-29-309) |
 
-Not started: **G7** notification actions, **G8** `ProjectId`, **G11** the local/remote parity harness (§ 10.1).
+Not started: **G7** notification actions, **G8** `ProjectId`.
+
+**G11** (part, 2026-10-07): the parity harness exists — `tests/parity/` holds the
+loopback launcher and gate, the runner with its normalizer, vacuity guards,
+positive controls and the shrink-only known-gaps list, and the first two rows (an
+editor save reaching the host's bytes; the git sidebar, a known gap on
+TD-2026-10-06-319). Its first run found two things: git named its tree as
+`-C <root>` in argv, which no launcher can map (now the working directory, and
+`ProcessLauncher::Run` owns the mapping for every caller), and a real local bug in
+the git sidebar's refresh state machine. Still to do in G11: parameterize the
+LSP, formatter, plugin-tool, tree-op, terminal and real-server tests over locality,
+the count budgets, the control-channel transcript diff and the `parity` lane.
 
 One measurement worth carrying: opening a 1 MB file to first paint is 1.48 ms
 (`tests/perf/baselines/large_file_open_first_paint.json`). G4's local case is
@@ -2126,9 +2137,9 @@ Each phase is independently useful and independently measurable.
 
   11. **Build the local/remote parity harness before there is a remote to compare.**
      § 10.1 in full; the groundwork half is the part that needs no server. A
-     test-only `LoopbackProcessLauncher` that reports `is_local() == false`, runs the
-     real command through a recording shim, and maps the working directory from the
-     mirror root to a SEPARATE host root; a parity runner that runs one scenario
+     test-only `LoopbackProcessLauncher` that reports `is_local() == false`, records
+     and runs the real command, and maps the working directory from the mirror root
+     to a SEPARATE host root, with a `LoopbackWriteGate` replicating writes to it; a parity runner that runs one scenario
      under the local launcher and under the loopback one and asserts the two
      normalized outcomes are equal; and the scenario catalog, which is the existing
      git, LSP, formatter, plugin-tool, write-gate, terminal and real-server tests
@@ -2542,7 +2553,7 @@ normalized outcomes must be equal.**
 | locality | what runs the processes | available |
 | --- | --- | --- |
 | `local` | `LocalProcessLauncher`, one root | today |
-| `loopback` | `LoopbackProcessLauncher` (tests only): `is_local() == false`, argv resolved through a recording shim that runs the real command on this machine, working directory mapped from the mirror root to a separate host root | Groundwork G11 |
+| `loopback` | `LoopbackProcessLauncher` and `LoopbackWriteGate` (`tests/parity/`): `is_local() == false`, every spawn recorded and run for real on this machine with the working directory mapped from the mirror root to a separate host root; argv untouched, as a remote launcher must leave it. Writes land in the mirror and are replicated to the host synchronously — a perfect sync engine, so a parity failure is never the stand-in's lag | Groundwork G11 — **shipped 2026-10-07** |
 | `server` | the real `microide-server`, attached over a pipe (§ 10, first bullet), its own host root | Phase 2a for terminals and `proc/spawn`, 2b for everything |
 
 **Split roots, always.** The fixture tree is materialized twice, as `host/` and

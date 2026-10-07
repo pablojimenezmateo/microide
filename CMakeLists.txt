@@ -1128,6 +1128,9 @@ add_executable(microide_tests
   tests/TestRunnerCliTests.cpp
   tests/TestSupport.cpp
   tests/AssistServiceTests.cpp
+  tests/parity/LoopbackLocality.cpp
+  tests/parity/ParityHarness.cpp
+  tests/parity/ParityTests.cpp
   tests/PluginHostTests.cpp
   tests/PluginPureHelperTests.cpp
   tests/PluginSurfaceCoverageTests.cpp

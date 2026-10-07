@@ -44,6 +44,14 @@ class ProcessLauncher {
   virtual std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const = 0;
 
   // Run to completion. Every synchronous spawn in the tree goes through here.
+  //
+  // `options.cwd` is a path on the EDITOR's side of the project -- the project root
+  // or a directory under it, which for a remote project is the mirror -- and the
+  // launcher maps it, exactly as ResolveWorkingDirectory would. Callers never
+  // pre-resolve: half of them did and half did not, which is a contract nobody can
+  // implement a remote launcher against. Likewise a caller names its tree through
+  // the working directory, never as a path in `argv`, because a launcher maps the
+  // one and cannot see the other (git used to pass its root as `-C <root>`).
   virtual SubprocessResult Run(std::vector<std::string> argv,
                                          SubprocessOptions options) const = 0;
 

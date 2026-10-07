@@ -53,7 +53,13 @@ void TestScriptedLauncherDrivesGitWithoutAGitBinary() {
   Expect(has("--no-optional-locks"),
          "every git command suppresses the optional index refresh");
   Expect(has("--literal-pathspecs"), "every git command forces literal pathspecs");
-  Expect(has("-C"), "the repository root is passed with -C rather than a chdir");
+  // The root travels as the working directory, which a launcher maps onto the
+  // machine that runs git; a `-C <root>` in argv is invisible to it and would name
+  // the editor's copy of the tree on the host.
+  Expect(!has("-C"), "the repository root is not a path inside argv");
+  Expect(launcher.run_cwds.size() == 1 &&
+             launcher.run_cwds.front() == std::filesystem::path("/nonexistent/project"),
+         "the repository root is the working directory the launcher is asked for");
   Expect(argv.back() == "HEAD" && argv[argv.size() - 2] == "--verify",
          "the caller's arguments come last, in order");
 }
