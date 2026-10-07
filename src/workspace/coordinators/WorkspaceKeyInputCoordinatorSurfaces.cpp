@@ -213,7 +213,7 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     // address the list rather than a text caret.
     const bool is_completion = state_.overlay.mode == OverlayMode::Completion;
     const std::size_t item_count = is_completion
-                                       ? state_.overlay.workflow.completion.items.size()
+                                       ? state_.overlay.workflow.completion.VisibleCount()
                                        : state_.overlay.workflow.code_actions.items.size();
     std::size_t& selected_index = is_completion
                                       ? state_.overlay.workflow.completion.selected_index
@@ -237,7 +237,32 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
                                event.key == SDLK_HOME ? -to_end : to_end);
       return true;
     }
-    return false;
+    if (!is_completion) {
+      return false;
+    }
+    // Tab accepts, as Enter does (VS Code's default); without this it would
+    // reach the editor below and insert a tab under the open list.
+    if (event.key == SDLK_TAB && (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT)) == 0) {
+      operations_.activate_overlay_selection();
+      return true;
+    }
+    // The completion list never owns the caret: every other key -- Backspace,
+    // Delete, Left/Right, word motions -- belongs to the editor underneath, and
+    // the list follows what it did (narrows, or closes once the caret leaves the
+    // word). Typed characters take the same route through the text-input event.
+    bool handled = false;
+    if (operations_.active_tab_is_compare()) {
+      handled = HandleCompareKeyDown(event, modifiers);
+    } else if (operations_.active_tab_is_merge()) {
+      handled = HandleMergeKeyDown(event, modifiers);
+    } else {
+      handled = HandleDefaultEditorKeyDown(event, modifiers);
+    }
+    if (handled) {
+      operations_.request_focused_editor_redraw();
+      operations_.follow_completion_caret();
+    }
+    return handled;
   }
 
   // File finder (the default overlay list).

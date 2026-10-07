@@ -340,6 +340,7 @@ set(MICROIDE_KERNEL_SOURCES
 # needs a window, plus the editor and render value types the window paints with.
 set(MICROIDE_CORE_SOURCES
   src/app/SdlWaker.cpp
+  src/editor/CompletionFilter.cpp
   src/editor/BracketScanner.cpp
   src/editor/BreakpointRender.cpp
   src/editor/BreakpointStore.cpp

@@ -159,7 +159,7 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
     case OverlayMode::ProjectSearch:
       return context_.current_project_state.overlay.workflow.project_search.results.size();
     case OverlayMode::Completion:
-      return context_.current_project_state.overlay.workflow.completion.items.size();
+      return context_.current_project_state.overlay.workflow.completion.VisibleCount();
     case OverlayMode::CodeActions:
       return context_.current_project_state.overlay.workflow.code_actions.items.size();
     case OverlayMode::FileFinder:

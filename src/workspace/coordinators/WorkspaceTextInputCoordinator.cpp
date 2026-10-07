@@ -353,8 +353,17 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         if (viewport == nullptr) {
           return false;
         }
+        // The completion list narrows by what was just typed, or closes when it
+        // ended the word. A no-op when the list is not up.
+        const auto follow_completion = [this] {
+          if (state_.overlay.visible && state_.overlay.mode == OverlayMode::Completion &&
+              operations_.follow_completion_caret) {
+            operations_.follow_completion_caret();
+          }
+        };
         if (operations_.try_editor_snippet_insert_text &&
             operations_.try_editor_snippet_insert_text(viewport, input)) {
+          follow_completion();
           return true;
         }
         const bool was_dirty = viewport->dirty();
@@ -388,6 +397,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
                                                                         viewport->cursor_line());
           operations_.request_tab_strip_redraw();
         }
+        follow_completion();
         return true;
       }
     case TextInputSurface::Terminal:

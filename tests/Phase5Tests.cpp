@@ -253,7 +253,9 @@ while True:
             "id": msg["id"],
             "result": [
                 {
-                    "label": "lsp-item",
+                    # Matches the word at the caret (`alpha`): the list is
+                    # filtered by the word being completed, as VS Code's is.
+                    "label": "alpha-item",
                     "detail": "detail",
                     "documentation": "docs",
                     "insertText": "lsp_insert()",

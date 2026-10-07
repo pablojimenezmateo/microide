@@ -179,6 +179,7 @@ void TestBuildOverlaySurfaceComposesProjectSearchAndCompletion() {
       .label = "push_back",
       .detail = "void(T&&)",
   });
+  completion.visible = {0};
   completion.error = "server offline";
   context.current_project_state.overlay.mode = microide::workspace::OverlayMode::Completion;
   builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);

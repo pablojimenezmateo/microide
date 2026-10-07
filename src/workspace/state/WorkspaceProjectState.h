@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <string_view>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -368,6 +369,9 @@ struct CompletionAdditionalEdit {
 
 struct CompletionSessionItem {
   std::string label;
+  // What the typed word is matched against (LSP `filterText`, a snippet's
+  // prefix). Empty means the label; see FilterText().
+  std::string filter_text;
   std::string detail;
   std::string documentation;
   std::string insert_text;
@@ -378,14 +382,35 @@ struct CompletionSessionItem {
   // overwriting it.
   std::optional<editor::SelectionRange> replacement_range;
   std::vector<CompletionAdditionalEdit> additional_edits;
+
+  std::string_view FilterText() const { return filter_text.empty() ? label : filter_text; }
 };
 
+// The completion list follows the typing, as VS Code's does: the editor keeps the
+// caret, every keystroke narrows `items` locally into `visible`, and the sources
+// are asked again only when the language server said its list was incomplete.
 struct CompletionSessionState {
+  // Every candidate the sources returned for this word, in merged rank order.
   std::vector<CompletionSessionItem> items;
+  // The rows shown: indices into `items`, best match for the typed word first.
+  // `selected_index` indexes THIS, never `items`.
+  std::vector<std::uint32_t> visible;
   std::size_t selected_index = 0;
+  // start = where the word being completed begins (fixed while the list is up);
+  // end = the caret, extended as the user types.
   editor::SelectionRange replacement_range{};
+  // Caret column on the anchor line when `items` were requested. A server's
+  // per-item range ends there, so typing since then shifts its end by the
+  // difference when the item is accepted.
+  std::size_t request_column = 0;
+  // The language server said `isIncomplete`: the next keystroke re-asks instead of
+  // only refiltering.
+  bool is_incomplete = false;
   std::string source;
   std::string error;
+
+  std::size_t VisibleCount() const { return visible.size(); }
+  const CompletionSessionItem& VisibleItem(std::size_t row) const { return items[visible[row]]; }
 };
 
 // One resolved text edit from a code action's inline WorkspaceEdit. Coordinates

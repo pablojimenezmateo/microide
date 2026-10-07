@@ -156,9 +156,9 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
   bool completion_done = false;
   std::size_t completion_count = 0;
   client.RequestCompletionAsync(uri, LspClient::Position{1, 22},
-                                [&](LspResult<std::vector<LspClient::CompletionItem>> items) {
+                                [&](LspResult<LspClient::CompletionList> list) {
                                   completion_done = true;
-                                  completion_count = items.has_value() ? items->size() : 0;
+                                  completion_count = list.has_value() ? list->items.size() : 0;
                                 });
   Expect(PumpUntil(client, [&] { return completion_done; }, 10000),
          "clangd completion request should deliver a response");

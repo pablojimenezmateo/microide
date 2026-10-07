@@ -183,6 +183,9 @@ class LspClient {
     // list. Empty when the server omitted it; see
     // SortCompletionItemsByServerRank for what the client does with it.
     std::string sort_text;
+    // LSP `filterText`: what the client matches the typed prefix against. Empty
+    // when the server omitted it, which per the spec means the label.
+    std::string filter_text;
     // LSP InsertTextFormat: 1=PlainText, 2=Snippet
     int insert_text_format = 1;
     // Server-provided replacement range (0-based, in the server's negotiated
@@ -197,6 +200,24 @@ class LspClient {
     // the auto-import / `#include` line clangd, pyright and tsserver attach to a
     // symbol from another file. Same (range, newText) shape as formatting edits.
     std::vector<std::pair<Range, std::string>> additional_text_edits;
+  };
+
+  // A `textDocument/completion` answer. `is_incomplete` is the server's
+  // `CompletionList.isIncomplete`: false (and always for a bare `CompletionItem[]`)
+  // means the list is COMPLETE for this word, so typing further refilters it
+  // locally instead of asking again -- one request per word, not per keystroke,
+  // which is the difference between completion that keeps up with typing over a
+  // far link and completion that lags it.
+  struct CompletionList {
+    std::vector<CompletionItem> items;
+    bool is_incomplete = false;
+  };
+
+  // LSP CompletionTriggerKind, sent as `context.triggerKind`.
+  enum class CompletionTrigger : std::uint8_t {
+    kInvoked = 1,
+    kTriggerCharacter = 2,
+    kIncomplete = 3,
   };
 
   struct WorkspaceEdit {
@@ -356,7 +377,7 @@ class LspClient {
   // delivers an LspResult<T> so callers can distinguish an authoritative empty
   // answer from a transport failure (timeout / server-gone / protocol error).
   using HoverCallback = std::function<void(LspResult<util::JsonValue>)>;
-  using CompletionCallback = std::function<void(LspResult<std::vector<CompletionItem>>)>;
+  using CompletionCallback = std::function<void(LspResult<CompletionList>)>;
   using CodeActionCallback = std::function<void(LspResult<std::vector<CodeAction>>)>;
   // Formatting returns the full TextEdit[] (whole-document reformats commonly come
   // back as many edits); the caller applies them together.
@@ -503,8 +524,11 @@ class LspClient {
   // Async textDocument/hover.
   void RequestHoverAsync(std::string uri, Position pos, HoverCallback callback);
 
-  // Async textDocument/completion.
-  void RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback);
+  // Async textDocument/completion. `trigger` is sent as `context.triggerKind`;
+  // a re-request for a list the server called incomplete says so, which is how
+  // a server knows to widen rather than start over.
+  void RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback,
+                              CompletionTrigger trigger = CompletionTrigger::kInvoked);
 
   // Order a parsed completion list the way the LSP spec and VS Code do: by
   // `sortText` (case-insensitively, and only when BOTH items carry one), then
@@ -651,7 +675,7 @@ class LspClient {
   // Unit tests: feed a canned rename response (a WorkspaceEdit).
   void SetTestRenameHandler(
       std::function<void(std::string uri, std::string new_name, RenameCallback cb)> handler);
-  // Unit tests: feed a canned completion response (a CompletionItem[]).
+  // Unit tests: feed a canned completion response (a CompletionList).
   void SetTestCompletionHandler(
       std::function<void(std::string uri, Position pos, CompletionCallback cb)> handler);
   // Unit tests: feed a canned signature-help response.

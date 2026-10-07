@@ -964,6 +964,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .accept_inline_completion = [this]() { return AcceptGhostText(); },
           .dismiss_inline_completion = [this]() { DismissGhostText(); },
+          .follow_completion_caret = [this]() { assist_service_.FollowCompletionCaret(); },
           .try_snippet_tab_in_editor =
               [this](bool shift_tab) { return assist_service_.TrySnippetTabInEditor(shift_tab); },
           .try_snippet_escape_in_editor = [this]() { return assist_service_.TrySnippetEscapeInEditor(); },

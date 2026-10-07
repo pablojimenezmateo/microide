@@ -43,23 +43,36 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
       [](const util::JsonValue& result) { return std::optional<util::JsonValue>(result); });
 }
 
-void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback) {
+void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback,
+                                       CompletionTrigger trigger) {
   if (!callback) return;
   if (impl_->DispatchTestStub(impl_->test_handlers.completion, callback, std::move(uri), pos)) {
     return;
   }
+  util::JsonObject params;
+  params["textDocument"] = lsp_protocol::MakeTextDocumentIdentifier(uri);
+  params["position"] = lsp_protocol::MakePosition(pos);
+  {
+    util::JsonObject context;
+    context["triggerKind"] = util::JsonValue(static_cast<std::int64_t>(trigger));
+    params["context"] = util::JsonValue(std::move(context));
+  }
   impl_->DispatchResultRequest(
-      "textDocument/completion", lsp_protocol::MakeTextDocumentPositionParams(uri, pos),
-      std::move(callback),
-      [](util::JsonValue& result) -> std::optional<std::vector<CompletionItem>> {
-        std::vector<CompletionItem> items;
-        // Accept either a bare CompletionItem[] or a CompletionList{items:[...]}.
+      "textDocument/completion", util::JsonValue(std::move(params)), std::move(callback),
+      [](util::JsonValue& result) -> std::optional<CompletionList> {
+        CompletionList list;
+        std::vector<CompletionItem>& items = list.items;
+        // Accept either a bare CompletionItem[] (complete by definition) or a
+        // CompletionList{isIncomplete, items:[...]}.
         util::JsonArray* arr = result.MutableArray();
         if (arr == nullptr) {
-          if (util::JsonValue* list = result.MutableAt("items")) arr = list->MutableArray();
+          list.is_incomplete = result["isIncomplete"].AsBool(false);
+          if (util::JsonValue* items_json = result.MutableAt("items")) {
+            arr = items_json->MutableArray();
+          }
         }
         if (arr == nullptr) {
-          return items;
+          return list;
         }
         // Move each string field out of the owned response instead of copying: this
         // list is materialized again in the AssistService session on the main thread
@@ -89,6 +102,9 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
         };
         for (util::JsonValue& item : *arr) {
           if (items.size() >= kMaxCompletionItems) {
+            // A truncated list is not the server's complete answer: refiltering
+            // it locally would hide every item past the cap for the whole word.
+            list.is_incomplete = true;
             break;
           }
           CompletionItem ci;
@@ -98,6 +114,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.documentation = lsp_protocol::StripMarkdownFences(take_markup(item, "documentation"));
           ci.insert_text = take(item, "insertText");
           ci.sort_text = take(item, "sortText");
+          ci.filter_text = take(item, "filterText");
           ci.insert_text_format = static_cast<int>(item["insertTextFormat"].AsInt(1));
           // Prefer the server's textEdit: its range is authoritative (it knows the
           // token being completed, so a member/path completion extends the
@@ -123,7 +140,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           items.push_back(std::move(ci));
         }
         SortCompletionItemsByServerRank(items);
-        return items;
+        return list;
       });
 }
 

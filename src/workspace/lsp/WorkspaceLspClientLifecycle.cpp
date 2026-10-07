@@ -70,6 +70,9 @@ void LspClient::Impl::DoInitializeBlocking() {
   JsonObject completion_caps;
   completion_caps["dynamicRegistration"] = JsonValue(false);
   completion_caps["completionItem"] = JsonValue(std::move(completion_item_caps));
+  // The request carries `context.triggerKind`, so a re-request for an incomplete
+  // list is announced as one (TriggerForIncompleteCompletions).
+  completion_caps["contextSupport"] = JsonValue(true);
 
   JsonObject hover_caps;
   hover_caps["dynamicRegistration"] = JsonValue(false);

@@ -11,6 +11,7 @@
 #include "workspace/lsp/WorkspaceLspManager.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include <functional>
 #include <memory>
 
 #include <algorithm>
@@ -1990,7 +1991,7 @@ void TestWorkspaceShellCompletionMergesPluginAndLspSources() {
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
   const std::filesystem::path project = temp_dir.path() / "proj";
   const std::filesystem::path md_file = project / "notes.md";
-  WriteFile(md_file, "alpha\n");
+  WriteFile(md_file, "alpha\n\n");
 
   // The plugin registers a markdown completion provider AND a markdown server.
   // The provider returns one shared label ("common") plus a plugin-only label.
@@ -2037,14 +2038,16 @@ return ide.plugin({
         common.insert_text = "common";
         items.push_back(std::move(lsp_one));
         items.push_back(std::move(common));
-        cb(std::move(items));
+        cb(workspace::LspClient::CompletionList{std::move(items)});
       });
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
              .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
          "fixture should attach a stub markdown client");
 
   WorkspaceShellTestAccess::OpenFile(shell, md_file);
-  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 5);
+  // At the end of `alpha` the list would be filtered by that word and match
+  // nothing; an empty word shows every candidate, which is what this test is about.
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
 
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
          "completion command should execute");
@@ -2053,7 +2056,7 @@ return ide.plugin({
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
   const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
-  Expect(session.items.size() == 3,
+  Expect(session.items.size() == 3 && session.VisibleCount() == 3,
          "the merged overlay should contain the union of both sources with the shared label "
          "de-duplicated (lsp_one, common, plug_only)");
   Expect(session.items[0].label == "lsp_one",
@@ -2121,7 +2124,7 @@ return ide.plugin({
         item.additional_text_edits.push_back(
             {workspace::LspClient::Range{{0, 0}, {0, 0}}, "import vector\n"});
         items.push_back(std::move(item));
-        cb(std::move(items));
+        cb(workspace::LspClient::CompletionList{std::move(items)});
       });
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
              .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
@@ -2149,6 +2152,203 @@ return ide.plugin({
   Expect(editor.Undo(), "undo reverts");
   Expect(editor.lines().size() == 3 && editor.lines()[0] == "first" && editor.lines()[1] == "x = ve",
          "one undo step removes both the import line and the insertion");
+}
+
+// Fixture for the completion-follows-typing tests: a markdown buffer served by a
+// stub language server whose completion handler the test supplies, with the caret
+// placed and `body` run against the open shell. Skips (returns) where Lua plugins
+// or a POSIX host are unavailable, like its neighbours.
+void WithMarkdownCompletionServer(
+    const std::string& content, std::size_t caret_line, std::size_t caret_column,
+    std::function<void(std::string, workspace::LspClient::Position,
+                       workspace::LspClient::CompletionCallback)>
+        handler,
+    const std::function<void(WorkspaceShell&, editor::TextViewport&)>& body) {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, content);
+  WritePluginInit(
+      plugins_root, "mdlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture should open the project");
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestCompletionHandler(std::move(handler));
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(caret_line, caret_column);
+  body(shell, editor);
+}
+
+workspace::LspClient::CompletionItem PlainCompletionItem(std::string label) {
+  workspace::LspClient::CompletionItem item;
+  item.insert_text = label;
+  item.label = std::move(label);
+  return item;
+}
+
+bool CompletionListUp(const WorkspaceShell& shell) {
+  return WorkspaceShellTestAccess::OverlayVisible(shell) &&
+         WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+             WorkspaceShell::OverlayMode::Completion;
+}
+
+// TD-2026-10-07-320. Typing into an open completion list goes to the editor and
+// narrows the list LOCALLY: a server that called its list complete is asked once
+// for the word, however many characters follow. The assertion that can fail is the
+// request count; "the list changed" passes just as well with a request per key.
+// Before this the list swallowed every typed character (the text input surface was
+// None while it was up), so the only way to narrow it was to close it and ask again.
+void TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord() {
+  int requests = 0;
+  WithMarkdownCompletionServer(
+      "x = \n", 0, 4,
+      [&requests](std::string, workspace::LspClient::Position,
+                  workspace::LspClient::CompletionCallback cb) {
+        ++requests;
+        std::vector<workspace::LspClient::CompletionItem> items;
+        items.push_back(PlainCompletionItem("alpha_one"));
+        items.push_back(PlainCompletionItem("beta"));
+        items.push_back(PlainCompletionItem("alpha_two"));
+        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
+               "completion command should execute");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
+        Expect(session.VisibleCount() == 3, "an empty word shows every candidate");
+
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "a"), "typing reaches the editor");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(editor.lines()[0] == "x = a",
+               "the typed character lands in the buffer under the open list, got: " +
+                   std::string(editor.lines()[0]));
+        Expect(CompletionListUp(shell), "the list stays up while the caret is in the word");
+        Expect(session.VisibleCount() == 2 && session.VisibleItem(0).label == "alpha_one" &&
+                   session.VisibleItem(1).label == "alpha_two",
+               "the list narrows to the candidates the word matches, in the server's order");
+
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "l"), "second character");
+        Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+               "backspace reaches the editor under the list");
+        Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+               "backspace to the word's start");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(editor.lines()[0] == "x = ", "both characters were erased");
+        Expect(CompletionListUp(shell) && session.VisibleCount() == 3,
+               "erasing back to the word's start widens the list again");
+        Expect(requests == 1,
+               "a complete list is requested once for the word, not per keystroke; requests=" +
+                   std::to_string(requests));
+
+        Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+               "backspace past the word's start");
+        Expect(!CompletionListUp(shell), "the caret left the word, so the list closes");
+        Expect(editor.lines()[0] == "x =", "and the backspace still edited the buffer");
+      });
+}
+
+// An `isIncomplete` list is the server saying "ask me again as the word grows".
+// Each keystroke re-asks (as TriggerForIncompleteCompletions) until an answer is
+// complete, after which typing refilters locally again.
+void TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete() {
+  int requests = 0;
+  std::vector<std::uint32_t> request_columns;
+  WithMarkdownCompletionServer(
+      "x = \n", 0, 4,
+      [&](std::string, workspace::LspClient::Position pos,
+          workspace::LspClient::CompletionCallback cb) {
+        ++requests;
+        request_columns.push_back(static_cast<std::uint32_t>(pos.character));
+        std::vector<workspace::LspClient::CompletionItem> items;
+        items.push_back(PlainCompletionItem("also"));
+        items.push_back(PlainCompletionItem("alpine"));
+        // Only the first answer is incomplete.
+        cb(workspace::LspClient::CompletionList{std::move(items), requests == 1});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport&) {
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
+               "completion command should execute");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "a"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(requests == 2, "an incomplete list is re-asked on the next keystroke; requests=" +
+                                  std::to_string(requests));
+        Expect(request_columns.size() == 2 && request_columns[1] == 5,
+               "the re-ask is made at the caret as it is now");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "l"), "type");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "p"), "type");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(requests == 2, "once an answer is complete, typing refilters locally; requests=" +
+                                  std::to_string(requests));
+        const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
+        Expect(CompletionListUp(shell) && session.VisibleCount() == 1 &&
+                   session.VisibleItem(0).label == "alpine",
+               "`alp` narrows to the one candidate it matches");
+      });
+}
+
+// A server's per-item range ends where the caret was when the list was requested.
+// Accepting after typing more must replace what was typed since, or `ve` + accept
+// `vector` leaves `vectorve`... the shape every client that keeps a list open while
+// typing has to get right. Also: a space ends the word and closes the list.
+void TestWorkspaceShellCompletionAcceptAfterTypingReplacesTheTypedWord() {
+  const auto handler = [](std::string, workspace::LspClient::Position pos,
+                          workspace::LspClient::CompletionCallback cb) {
+    std::vector<workspace::LspClient::CompletionItem> items;
+    auto item = PlainCompletionItem("vector");
+    item.replace_range = workspace::LspClient::Range{{0, 4}, pos};
+    items.push_back(std::move(item));
+    cb(workspace::LspClient::CompletionList{std::move(items)});
+  };
+  WithMarkdownCompletionServer("x = \n", 0, 4, handler,
+                               [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "open the list");
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "v"), "type");
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "e"), "type");
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+           "Tab accepts the selected item");
+    Expect(editor.lines()[0] == "x = vector",
+           "the server's range is extended over the typed `ve`, got: " +
+               std::string(editor.lines()[0]));
+    Expect(!CompletionListUp(shell), "accepting closes the list");
+  });
+  WithMarkdownCompletionServer("x = \n", 0, 4, handler,
+                               [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+    Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "open the list");
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "v"), "type");
+    Expect(CompletionListUp(shell), "`v` keeps the list up");
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, " "), "type a space");
+    Expect(!CompletionListUp(shell), "a space ends the word and closes the list");
+    Expect(editor.lines()[0] == "x = v ", "and the space was typed, not swallowed");
+  });
 }
 
 // Signature help is LSP-primary: when a server serves the language, its result is
@@ -5954,6 +6154,12 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
   AddTest(tests, "WorkspaceShell/CompletionAppliesAdditionalTextEdits",
           TestWorkspaceShellCompletionAppliesAdditionalTextEdits);
+  AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
+          TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
+  AddTest(tests, "WorkspaceShell/CompletionReRequestsOnlyWhileIncomplete",
+          TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete);
+  AddTest(tests, "WorkspaceShell/CompletionAcceptAfterTypingReplacesTheTypedWord",
+          TestWorkspaceShellCompletionAcceptAfterTypingReplacesTheTypedWord);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
   AddTest(tests, "WorkspaceShell/InlayHintsPublishMidLineDecorations",

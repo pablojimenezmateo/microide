@@ -647,7 +647,50 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
-### TD-2026-10-07-320 — completion re-requests on every keystroke because the client never reads `isIncomplete`. [OPEN]
+### TD-2026-10-07-321 — completion never opens by itself: no quick suggestions, no trigger characters. [OPEN]
+
+Found while resolving TD-2026-10-07-320. The completion list opens only from the
+`completion` command (Ctrl+Space). VS Code opens it as the user types an identifier
+(`editor.quickSuggestions`, on by default for code) and on the server's
+`completionProvider.triggerCharacters` (`.`, `->`, `::`, `/` …). The client
+never reads `triggerCharacters` from the server's capabilities, and a typed
+non-word character closes an open list instead of re-triggering it. Now that the
+list follows typing and asks once per word (TD-320), auto-opening costs one request
+per word rather than one per keystroke, which is what makes it affordable over a
+remote link. Needs: parse and store `triggerCharacters` per client; open on a
+trigger character (trigger kind 2) and on the first identifier character after a
+debounce (VS Code's `quickSuggestionsDelay`, 10 ms); a registered
+`editor.quickSuggestions` setting; and a test that counts requests for a typed
+word (one) and for `obj.` (one, as a trigger character).
+
+### TD-2026-10-07-320 — completion re-requests on every keystroke because the client never reads `isIncomplete`. [RESOLVED 2026-10-07]
+
+**Resolution (2026-10-07).** The premise below was half wrong, and the real gap was
+larger. The list did not re-request per keystroke: it could not be typed into at
+all. While it was up the text-input surface was `None` and every unbound key was
+swallowed, so narrowing it meant closing it and asking again — one request per
+character, by hand. Now the list follows the typing, as VS Code's suggest widget
+does: typed text and every key the list does not use (Backspace, Delete,
+Left/Right, word motions) go to the editor underneath, and
+`AssistService::FollowCompletionCaret` narrows the list locally
+(`editor/CompletionFilter`: word-start subsequence match, contiguity and exact case
+score, ties keep the server's sortText order) or closes it once the caret leaves
+the word. The session keeps every candidate (`items`) and shows an index view
+(`visible`), so a keystroke refilters without copying a string. `isIncomplete` is
+parsed (and a list truncated at the 5,000-item cap counts as incomplete); only then
+does a keystroke re-ask, announced as `TriggerForIncompleteCompletions` with
+`contextSupport` advertised. `filterText` is parsed and matched. Tab accepts, and
+a server's per-item range is extended by what was typed since the request, so
+accepting after typing does not leave the typed tail behind. Tests:
+`WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord` asserts the request
+COUNT (vacuity-checked: it fails with five requests when every keystroke re-asks),
+`CompletionReRequestsOnlyWhileIncomplete`, `CompletionAcceptAfterTypingReplacesTheTypedWord`,
+and the `CompletionFilter/*` unit tests. Still not done: the list does not open by
+itself on typing or on a server trigger character (VS Code's quick suggestions);
+see TD-2026-10-07-321.
+
+Original entry:
+
 
 Found while reviewing `dev-docs/design/remote-projects.md` for what still pays a
 round trip once the mirror makes editing local. `WorkspaceLspClientRequests.cpp`

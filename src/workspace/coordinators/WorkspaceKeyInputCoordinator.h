@@ -186,6 +186,8 @@ class KeyInputCoordinator {
     std::function<void()> reveal_active_compare_selection;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
+    // A key reached the editor while the completion list is up.
+    std::function<void()> follow_completion_caret;
     std::function<bool(bool)> try_snippet_tab_in_editor;
     std::function<bool()> try_snippet_escape_in_editor;
     std::function<bool(editor::TextViewport*)> try_snippet_backspace_in_editor;

@@ -124,6 +124,10 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
       case OverlayMode::CommandPalette:
         return TextInputSurface::CommandPalette;
       case OverlayMode::Completion:
+        // Typing goes to the editor under the list, which follows it (see
+        // AssistService::FollowCompletionCaret).
+        return ActiveEditableViewport() != nullptr ? TextInputSurface::Editor
+                                                   : TextInputSurface::None;
       case OverlayMode::CodeActions:
         return TextInputSurface::None;
       case OverlayMode::FileFinder:

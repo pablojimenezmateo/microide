@@ -873,7 +873,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       case OverlayMode::ProjectSearch:
         return overlay.workflow.project_search.results.size();
       case OverlayMode::Completion:
-        return overlay.workflow.completion.items.size();
+        return overlay.workflow.completion.VisibleCount();
       case OverlayMode::CodeActions:
         return overlay.workflow.code_actions.items.size();
       case OverlayMode::FileFinder:
@@ -1082,7 +1082,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       // gutter when the list overflows), matching every other single-column mode
       // — the card-relative width would let a long label run under the scrollbar.
       for_visible([&](std::size_t item_index) {
-        const CompletionSessionItem& item = completion.items[item_index];
+        const CompletionSessionItem& item = completion.VisibleItem(item_index);
         OverlayRowRef row_ref;
         if (item.detail.empty()) {
           row_ref.primary =

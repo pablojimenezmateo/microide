@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "editor/CompletionFilter.h"
 #include "editor/TextViewport.h"
 #include "workspace/AssistProviderMerge.h"
 #include "workspace/services/AssistService.h"
@@ -173,6 +174,63 @@ void RegisterAssistServiceTests(std::vector<TestCase>& tests) {
                                              /*lsp_has=*/false, /*plugin_pending=*/false,
                                              /*plugin_has=*/true) == NavChoice::UsePlugin,
                             "with no server the plugin result is used immediately");
+                   }});
+
+  // The completion list's local filter (editor/CompletionFilter): what lets a
+  // keystroke narrow the list without asking the server again.
+  tests.push_back({"CompletionFilter/FirstCharacterMustStartAWord", [] {
+                     using editor::CompletionMatchScore;
+                     using editor::kNoCompletionMatch;
+                     Expect(CompletionMatchScore("getString", "gs") != kNoCompletionMatch,
+                            "a camelCase hump is a word start");
+                     Expect(CompletionMatchScore("get_size", "gs") != kNoCompletionMatch,
+                            "an underscore starts a word");
+                     Expect(CompletionMatchScore("index", "x") == kNoCompletionMatch,
+                            "a query starting mid-word is noise, not a match");
+                     Expect(CompletionMatchScore("index", "dx") == kNoCompletionMatch,
+                            "a subsequence whose first byte is not a word start is rejected");
+                     Expect(CompletionMatchScore("abc", "abcd") == kNoCompletionMatch,
+                            "a query longer than the candidate cannot match");
+                     Expect(CompletionMatchScore("anything", "") == 0,
+                            "the empty query matches everything at the neutral score");
+                   }});
+
+  tests.push_back({"CompletionFilter/ScoresTheBestWordStartNotTheFirst", [] {
+                     // `vector` is a scattered subsequence from the leading `V` and a
+                     // contiguous one from the second word; the score is the second's,
+                     // the same as a label holding only that word at a non-zero start.
+                     Expect(editor::CompletionMatchScore("Vec_vector", "vector") ==
+                                editor::CompletionMatchScore("x_vector", "vector"),
+                            "the score is the best alignment, not the first one found");
+                   }});
+
+  tests.push_back({"CompletionFilter/RanksPrefixAndContiguityFirstAndIsStable", [] {
+                     const std::vector<std::string> labels = {
+                         "getSomethingElseString", "beta", "getString", "GetString", "gs_x",
+                         "getstring_tail"};
+                     std::vector<std::pair<int, std::uint32_t>> scratch;
+                     std::vector<std::uint32_t> out;
+                     editor::RankCompletionCandidates(
+                         labels.size(), "getStr",
+                         [&](std::size_t i) { return std::string_view(labels[i]); }, scratch, out);
+                     Expect(!out.empty() && labels[out[0]] == "getString",
+                            "the exact-case contiguous prefix ranks first");
+                     bool has_beta = false;
+                     for (const std::uint32_t i : out) has_beta = has_beta || labels[i] == "beta";
+                     Expect(!has_beta, "a non-matching candidate is filtered out");
+                     std::size_t pos_tight = 0, pos_loose = 0;
+                     for (std::size_t r = 0; r < out.size(); ++r) {
+                       if (labels[out[r]] == "getstring_tail") pos_tight = r;
+                       if (labels[out[r]] == "getSomethingElseString") pos_loose = r;
+                     }
+                     Expect(pos_tight < pos_loose,
+                            "a contiguous match outranks one that skips most of the label");
+
+                     editor::RankCompletionCandidates(
+                         labels.size(), "",
+                         [&](std::size_t i) { return std::string_view(labels[i]); }, scratch, out);
+                     Expect(out.size() == labels.size() && out[0] == 0 && out[5] == 5,
+                            "an empty word keeps every candidate in the sources' order");
                    }});
 }
 

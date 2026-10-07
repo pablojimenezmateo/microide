@@ -116,6 +116,12 @@ class AssistService {
 
   bool EditorSnippetsSettingEnabled() const;
   bool ShowCompletionOverlay(std::string* error_message = nullptr);
+  // The editor took a keystroke while the completion list is up (the list never
+  // owns the caret; see CompletionSessionState). Extends the word, refilters the
+  // list locally, re-asks the sources only when the server called its list
+  // incomplete, and closes the list once the caret has left the word -- a
+  // non-word character, a backspace past its start, another line, a selection.
+  void FollowCompletionCaret();
   bool ApplySelectedCompletion();
   bool ShowInsertSnippetOverlay(std::string* error_message = nullptr);
   bool TrySnippetTabInEditor(bool shift_tab);
@@ -200,6 +206,10 @@ class AssistService {
     // Request generation: a callback for an OLDER request (slower to return) must not
     // overwrite the items a newer same-file request already published. (TD-16-65.)
     std::uint64_t generation = 0;
+    // The server's `isIncomplete` for `lsp_items`.
+    bool lsp_incomplete = false;
+    // Caret column the request was made at (CompletionSessionState::request_column).
+    std::size_t request_column = 0;
   };
   struct CodeActionMerge {
     assist_merge::TwoSourceState sources;
@@ -241,8 +251,14 @@ class AssistService {
   std::vector<CompletionSessionItem> TransformPluginCompletions(
       const std::vector<plugin::PluginHost::CompletionCandidate>& items) const;
   std::vector<CompletionSessionItem> TransformLspCompletions(
-      const LspResult<std::vector<LspClient::CompletionItem>>& items,
+      const std::vector<LspClient::CompletionItem>& items,
       lsp_encoding::PositionEncoding encoding) const;
+  // Query both completion sources for the word at the caret. `refresh` keeps the
+  // list on screen (a re-ask for an incomplete list) instead of opening it empty.
+  void RequestCompletions(editor::TextViewport& viewport, bool refresh);
+  // Narrow `session.items` into `session.visible` by the word between the anchor
+  // and the caret. Returns false when the caret is no longer in that word.
+  bool RefilterCompletion(CompletionSessionState& session, const editor::TextViewport& viewport);
   std::vector<CodeActionSessionItem> TransformPluginCodeActions(
       const std::vector<plugin::PluginHost::CodeActionCandidate>& items) const;
 
@@ -333,6 +349,9 @@ class AssistService {
   // newer request has since superseded it, so a slower older same-file request cannot
   // overwrite or apply against newer state. (TD-2026-07-16-65.)
   std::uint64_t completion_request_generation_ = 0;
+  // RankCompletionCandidates' (score, index) buffer, kept so a keystroke's
+  // refilter reuses it instead of allocating.
+  std::vector<std::pair<int, std::uint32_t>> completion_rank_scratch_;
   std::uint64_t code_action_request_generation_ = 0;
   // Cursor-jump navigation (definition / type-def / impl / declaration): one
   // counter, since the user only ever jumps once — any new navigation supersedes a

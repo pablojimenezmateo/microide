@@ -1951,8 +1951,9 @@ while True:
   Expect(started, "completion fixture should start");
 
   std::optional<std::vector<LspClient::CompletionItem>> received;
-  client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0},
-                                [&](auto items) { received = std::move(items.value); });
+  client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0}, [&](auto list) {
+    if (list.has_value()) received = std::move(list->items);
+  });
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline && !received.has_value()) {
@@ -2043,8 +2044,9 @@ while True:
   Expect(started, "float-id fixture should start");
 
   std::optional<std::vector<LspClient::CompletionItem>> received;
-  client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0},
-                                [&](auto items) { received = std::move(items.value); });
+  client.RequestCompletionAsync("file:///tmp/s.py", LspClient::Position{0, 0}, [&](auto list) {
+    if (list.has_value()) received = std::move(list->items);
+  });
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
   while (std::chrono::steady_clock::now() < deadline && !received.has_value()) {
