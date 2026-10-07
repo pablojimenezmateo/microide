@@ -463,6 +463,10 @@
   }
 
   static void ConfirmPromptSurface(WorkspaceShell& shell) { shell.ConfirmPromptSurface(); }
+  // As the dirty prompt does after its Save / Discard choice.
+  static void ConfirmPromptSurfaceSavingDirtyBuffers(WorkspaceShell& shell) {
+    shell.ConfirmPromptSurface(DirtyPathResolution::Save);
+  }
   static void ConfirmPromptSurface(WorkspaceShell& shell, int selected_button) {
     shell.context_.prompts.surface.selected_button = selected_button;
     shell.ConfirmPromptSurface();

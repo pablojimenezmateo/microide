@@ -428,6 +428,10 @@ struct EditorTabState {
   // posts one formatter run each, and they complete in whatever order the worker
   // finishes them.
   bool close_after_save = false;
+  // The rename or delete of this file is waiting on this tab's deferred save
+  // (PromptState::deferred_path_mutation); the formatter completion resumes it
+  // once the write lands, exactly as `close_after_save` resumes a close.
+  bool path_mutation_after_save = false;
   // Per-tab fold-region model. Lazily computed by the renderer / fold action
   // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
   // close; rekeyed implicitly through its `(layout_revision, tab_size,

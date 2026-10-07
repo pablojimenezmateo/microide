@@ -1,6 +1,8 @@
 #include <memory>
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
+#include "workspace/services/PromptSurfaceService.h"
 
 #include "workspace/SettingFlags.h"
 
@@ -293,6 +295,8 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       // and cannot post another run.
       const bool close_after_save = editor_state.close_after_save;
       editor_state.close_after_save = false;
+      const bool path_mutation_after_save = editor_state.path_mutation_after_save;
+      editor_state.path_mutation_after_save = false;
       editor_state.skip_formatter_once = true;
       const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::Blocking);
       // The tab was closed with unsaved edits and the user chose Save, so the
@@ -301,6 +305,12 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       // leaves the tab open with its contents intact.
       if (close_after_save && saved) {
         MakeEditorTabService().CloseGroupTab(group_index, tab_index);
+      }
+      // A rename/delete was waiting on this write (TD-2026-09-28-304).
+      if (path_mutation_after_save) {
+        EditorTabService& editor_tabs = MakeEditorTabService();
+        PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+        MakePathMutationCoordinator(editor_tabs, prompt_surfaces).ResumeDeferredPathMutation(saved);
       }
       return;
     }

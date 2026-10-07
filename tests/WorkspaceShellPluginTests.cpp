@@ -2137,6 +2137,67 @@ return ide.plugin({
          "one undo step removes both the import line and the insertion");
 }
 
+// TD-2026-09-28-304: renaming a file with unsaved edits and choosing "Save" used
+// to run its format-on-save formatter on the shell thread, freezing the window for
+// up to the formatter's timeout -- remotely, a round trip on top. The save now
+// defers like an interactive one, and the rename runs when the write lands: the
+// path must not move before the formatted bytes are on disk.
+void TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugin = config_home / "microide" / "plugins" / "fmt";
+  WriteFile(plugin / "init.lua", R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "fmt",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.formatters.add({ id = "up", language_id = "todo", label = "Up",
+                         command = { "sh", "-c", "tr '[:lower:]' '[:upper:]'" } })
+  end
+})
+)lua");
+  WriteFile(plugin / "syntax" / "todo.lua", R"lua(return {
+  filetype = "todo", files = { "\\.todo$" },
+  rules = { { pattern = "\\b[A-Z_]+\\b", group = "keyword" } }
+}
+)lua");
+  ScopedPluginConfigHomeEnv scoped(config_home);
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  WriteFile(project / "a.todo", "seed\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "open project");
+  WorkspaceShellTestAccess::OpenFile(shell, project / "a.todo");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SelectAll();
+  editor.InsertText("alpha\n");
+
+  WorkspaceShellTestAccess::OpenPromptSurfaceForTest(
+      shell, workspace::PromptSurfaceState::Action::RenamePath,
+      workspace::PromptSurfaceState::Kind::TextInput,
+      project / "a.todo", "", "b.todo");
+  WorkspaceShellTestAccess::ConfirmPromptSurfaceSavingDirtyBuffers(shell);
+  Expect(WorkspaceShellTestAccess::PendingSaveFormatterCount(shell) == 1,
+         "the save's formatter runs off the shell thread");
+  Expect(std::filesystem::exists(project / "a.todo") && !std::filesystem::exists(project / "b.todo"),
+         "and the rename waits for its write");
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "the prompt is closed: the user's decision is made");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  Expect(!std::filesystem::exists(project / "a.todo") &&
+             ReadFile(project / "b.todo") == "ALPHA\n",
+         "once the formatted write lands, the file is renamed with its formatted bytes");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == project / "b.todo",
+         "and the tab follows it");
+}
+
 // Fixture for the completion-follows-typing tests: a markdown buffer served by a
 // stub language server whose completion handler the test supplies, with the caret
 // placed and `body` run against the open shell. Skips (returns) where Lua plugins
@@ -6235,6 +6296,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
   AddTest(tests, "WorkspaceShell/CompletionAppliesAdditionalTextEdits",
           TestWorkspaceShellCompletionAppliesAdditionalTextEdits);
+  AddTest(tests, "WorkspaceShell/RenameOfDirtyFileWaitsForTheFormatterNotTheWindow",
+          TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow);
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
   AddTest(tests, "WorkspaceShell/CompletionReRequestsOnlyWhileIncomplete",

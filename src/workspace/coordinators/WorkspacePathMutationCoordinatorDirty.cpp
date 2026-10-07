@@ -154,6 +154,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
 
   if (resolution == DirtyPathResolution::Save) {
     bool saved_any = false;
+    bool deferred_any = false;
     for (const DirtyPathTarget& target : dirty_targets) {
       if (target.group_index >= state.editor_groups.size() ||
           target.tab_index >= state.editor_groups[target.group_index].open_tabs.size()) {
@@ -210,8 +211,15 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       // to overwrite a file that changed on disk, surfacing the external-change banner
       // instead of clobbering it silently. The merge branch above already went this
       // way; the editor branch did not.
-      if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index)) {
+      // Deferred: a format-on-save formatter runs off the shell thread, and the
+      // mutation waits for it instead of the window (TD-2026-09-28-304).
+      if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index, SaveMode::Deferred)) {
         return false;
+      }
+      if (editor_state.pending_format_save.armed()) {
+        editor_state.path_mutation_after_save = true;
+        deferred_any = true;
+        continue;
       }
       saved_any = true;
 
@@ -228,9 +236,68 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         operations_.request_automatic_git_sidebar_refresh();
       }
     }
+    if (deferred_any) {
+      // The user's decision is made: close both prompts and park the mutation
+      // until the last formatter run lands (ResumeDeferredPathMutation).
+      context_.prompts.deferred_path_mutation = context_.prompts.surface;
+      if (context_.prompts.dirty_visible) {
+        prompt_surfaces_.DismissDirtyPrompt(false);
+      }
+      prompt_surfaces_.DismissPromptSurface(false);
+      return false;
+    }
   }
 
   return true;
+}
+
+void PathMutationCoordinator::ResumeDeferredPathMutation(bool saved) {
+  if (!context_.prompts.deferred_path_mutation.has_value()) {
+    return;
+  }
+  auto& state = CurrentProjectState();
+  if (!saved) {
+    // The write did not land, so the path must not move: renaming a file whose
+    // save failed would carry the user's edits nowhere. Every other waiting tab
+    // keeps its own save; only the mutation is dropped.
+    for (EditorGroup& group : state.editor_groups) {
+      for (TabEntry& tab : group.open_tabs) {
+        if (tab.editor_state.has_value()) {
+          tab.editor_state->path_mutation_after_save = false;
+        }
+      }
+    }
+    context_.prompts.deferred_path_mutation.reset();
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Tone::Warning,
+                         "The save did not complete, so the rename/delete was not applied");
+    }
+    return;
+  }
+  for (const EditorGroup& group : state.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.editor_state.has_value() && tab.editor_state->path_mutation_after_save) {
+        return;  // another buffer of this path is still being formatted
+      }
+    }
+  }
+  PromptSurfaceState pending = std::move(*context_.prompts.deferred_path_mutation);
+  context_.prompts.deferred_path_mutation.reset();
+  if (context_.prompts.surface_visible || context_.prompts.dirty_visible) {
+    // Another prompt owns the screen now; replaying through it would answer a
+    // question the user is in the middle of. Say so rather than guess.
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Tone::Warning,
+                         "Saved; the rename/delete was not applied because another prompt "
+                         "is open -- run it again");
+    }
+    return;
+  }
+  context_.prompts.surface = std::move(pending);
+  context_.prompts.surface_visible = true;
+  // RequirePrompt, not Discard: a buffer the user typed into while the formatter
+  // ran is dirty again, and must be asked about rather than thrown away.
+  ConfirmPromptSurface(DirtyPathResolution::RequirePrompt);
 }
 
 void PathMutationCoordinator::RefreshDiagnosticsAfterMutation() {

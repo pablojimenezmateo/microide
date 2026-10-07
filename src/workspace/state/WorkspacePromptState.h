@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -113,6 +115,10 @@ struct PromptState {
   bool surface_visible = false;
   FocusTarget surface_previous_focus = FocusTarget::Editor;
   PromptSurfaceState surface;
+  // A confirmed rename/delete whose dirty buffers chose "Save", parked while
+  // their formatter runs off the shell thread (TD-2026-09-28-304). The path must
+  // not move before the write lands, so the mutation waits rather than the window.
+  std::optional<PromptSurfaceState> deferred_path_mutation;
 };
 
 }  // namespace microide::workspace

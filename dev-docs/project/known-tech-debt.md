@@ -1211,6 +1211,17 @@ completion, and therefore still blocks:
   an id-less prompt keeps the blocking path, because the close pass cannot then
   tell a tab whose write is in flight from a clean one.
 
+  **Rename and delete are done (2026-10-07)**, the same way: the dirty prompt's
+  "Save" defers each buffer's save and marks it `path_mutation_after_save`; the
+  confirmed prompt is parked in `PromptState::deferred_path_mutation`, both
+  prompts close, and the formatter completion calls
+  `PathMutationCoordinator::ResumeDeferredPathMutation`. When the last waiting
+  write lands the mutation replays with `RequirePrompt` -- a buffer typed into
+  while the formatter ran is asked about again, never discarded -- and a failed
+  save cancels it with a notification, since moving a path whose write did not
+  land carries the edits nowhere. Test
+  `WorkspaceShell/RenameOfDirtyFileWaitsForTheFormatterNotTheWindow`.
+
   The remaining callers are each harder for one specific reason: **quit** must
   not exit until every save lands (there is no continuation to run afterwards —
   the process is gone); **close-project** tears down the state the completion
