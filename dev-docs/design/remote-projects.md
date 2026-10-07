@@ -1,6 +1,29 @@
 # Remote Projects Over SSH
 
-Last revised 2026-09-22. **Status: groundwork started (§ 8). No remote code yet.**
+Last revised 2026-10-07. **Status: groundwork roughly 60% shipped (§ 8). No remote code yet.**
+
+**Terminology.** This document talks about two different things that were both
+called "agent" until this revision. The **server** is `microide-server`, the
+headless daemon this design puts on the host (formerly `microide-agent`; the
+protocol prefix `server/` was `agent/`). **Agents**, plural or as "coding
+agents", are the LLM-driven processes that write the host's tree and are the
+workload § 1 designs for. The rename is not cosmetic: "the agent writes the file"
+meant two unrelated things depending on the paragraph.
+
+**Revision 2026-10-07**, from two design reviews, each decision recorded in § 11:
+a new § 1 constraint — a regular ssh login as an unprivileged user, and a server
+you can drop on any Ubuntu box, run, and use from another machine — and its
+consequences; every remote process spawns **through the server** rather than
+through a shell string on its own ssh channel (§ 6.4, § 6.5), so builds, debuggees
+and tasks survive a dropped link, nothing is ever shell-quoted, and `MaxSessions`
+stops being a ceiling; the server is one daemon per user serving many roots
+(§ 6.12), installs itself under the user's home when missing (§ 6.6), and never
+depends on `/run/user/<uid>` or on logind linger (§ 6.12); the terminal gains
+mosh-style predictive echo (§ 6.5), reversing an earlier decision; link death is
+detected by an application heartbeat in seconds rather than by ssh in tens of
+seconds (§ 6.4); the git sidebar's status is pushed by the server rather than
+polled (§ 6.5); and Phase 1 is gone, folded into a Phase 2a that ships surviving
+remote terminals as a feature on its own (§ 8).
 
 Shipped from the groundwork so far, on `main`:
 
@@ -59,13 +82,34 @@ Constraints that scope every decision:
   (§ 6.3, and it is why remote search runs on the host, § 6.11); and remote-change
   events arrive at a rate no per-file notification can survive (§ 6.3, § 7.6).
 
+- **A regular ssh login, as an unprivileged user.** The host is whatever the
+  user was given: a login over the stock `sshd`, no root, no say over
+  `sshd_config`, `logind.conf` or the firewall. Everything here must work over
+  one outbound ssh connection against the server's defaults — `MaxSessions 10`,
+  `AllowTcpForwarding` possibly off, no inbound port, `/run/user/<uid>` removed
+  at logout, no linger. Four decisions follow and are made in § 6.4, § 6.6 and
+  § 6.12: one ssh channel per project is enough, the server installs itself under
+  `$HOME`, the server's socket does not live in the runtime directory, and
+  nothing uses UDP.
+- **The server is a drop-in.** Copy one static binary to any Linux box (Ubuntu
+  is the reference), run it, and open the box from another machine. No package,
+  no unit file, no configuration on the host, and nothing to run at all if the
+  client is allowed to install it (§ 6.6). A server started by hand stays up
+  until stopped; one the client started on demand exits when idle. § 6.12.
+- **Latency is hidden wherever it can be, and shown where it cannot.** The
+  mirror makes editing, navigation and saving zero round trips. The terminal
+  predicts echo mosh-style and corrects within a round trip (§ 6.5). Git status
+  is pushed, not asked for. What remains — a cold file open, a completion, a
+  debugger step — is one round trip, drawn as in-progress state rather than as a
+  frozen frame. "Feels native" is a set of budgets in § 9, not a hope.
+
 ## 2. What the code already decided
 
 | finding | where | consequence |
 | --- | --- | --- |
-| **226 I/O-performing `std::filesystem` calls in 63 files.** Counting every `std::filesystem::` token instead gives 3,195 in 393 and is meaningless — almost all are path arithmetic (`/`, `filename()`, the type name) and do no I/O. Of the 63 files, 13 are `src/project`, 9 `src/platform`, 4 `src/util`; the 27 under `src/workspace` hold 1–5 calls each, mostly `exists()` guards. Raw stream opens outside `util/` are ten. | `rg` over `src/` for the I/O-performing names only: `exists`, `is_regular_file`, `status`, `directory_iterator`, `last_write_time`, `file_size`, `read_symlink`, `canonical`, `create_directories`, `rename`, `remove`, `copy` and their siblings | The objection to routing file I/O over the wire is not that there are too many sites to audit. It is that those sites are *synchronous*, most on the shell thread, and correct locally because a stat is microseconds. Making them tolerate a 200 ms round trip is not an audit, it is an async rewrite with a loading state at every site. That is what rules out an agent-backed VFS as the primary mode, and what makes a local mirror the right shape: it leaves every one of those sites alone. |
+| **226 I/O-performing `std::filesystem` calls in 63 files.** Counting every `std::filesystem::` token instead gives 3,195 in 393 and is meaningless — almost all are path arithmetic (`/`, `filename()`, the type name) and do no I/O. Of the 63 files, 13 are `src/project`, 9 `src/platform`, 4 `src/util`; the 27 under `src/workspace` hold 1–5 calls each, mostly `exists()` guards. Raw stream opens outside `util/` are ten. | `rg` over `src/` for the I/O-performing names only: `exists`, `is_regular_file`, `status`, `directory_iterator`, `last_write_time`, `file_size`, `read_symlink`, `canonical`, `create_directories`, `rename`, `remove`, `copy` and their siblings | The objection to routing file I/O over the wire is not that there are too many sites to audit. It is that those sites are *synchronous*, most on the shell thread, and correct locally because a stat is microseconds. Making them tolerate a 200 ms round trip is not an audit, it is an async rewrite with a loading state at every site. That is what rules out a server-backed VFS as the primary mode, and what makes a local mirror the right shape: it leaves every one of those sites alone. |
 | `util/TextFileIO.h` is the whole-file read/write chokepoint (`ReadTextFile`, `ReadTextFileClassified`, `WriteTextFileAtomically`, `ReadFileLineWindow`, `StatFileSignature`) | `src/util/TextFileIO.h`, `editor/TextViewportFileIO.cpp` | The editor opens a file with one synchronous `ReadTextFile` on the shell thread (`TextViewport::OpenFile`). On a local mirror that stays exactly as fast as today. |
-| `platform::CaptureTreeSnapshot` already produces `(path, type, size, mtime)` for every file under a root, filtered, budgeted — **which is a sync manifest** | `platform/Filesystem.h` | The agent's manifest is a serialization of an existing structure, and the local side already knows how to diff two of them (`FileIndexWatcher`'s poll re-walk). |
+| `platform::CaptureTreeSnapshot` already produces `(path, type, size, mtime)` for every file under a root, filtered, budgeted — **which is a sync manifest** | `platform/Filesystem.h` | The server's manifest is a serialization of an existing structure, and the local side already knows how to diff two of them (`FileIndexWatcher`'s poll re-walk). |
 | The editor detects external changes by `mtime+size` (`FileSignature`) and **refuses a save when the disk changed underneath** (`request_external_change_banner`) | `EditorTabService`, `WorkspaceTabCoordinator.h` | A mirror written atomically (temp + rename) is indistinguishable from any other external writer. The conflict banner exists; remote conflicts reuse it with one extra choice. |
 | `util::Sha256FileHex` exists | `util/Sha256.h` | Content identity for compare-and-swap on save, without trusting cross-machine clocks. |
 | The heavy subsystems are **pipe-shaped** | `project/GitCommandUtil.h` (`ReadGitCommandOutput`), `platform/AsyncSubprocess.h` | Prefixing an argv with `ssh -S <ctl> <host> --` makes git, LSP and DAP remote with no protocol work. |
@@ -73,10 +117,10 @@ Constraints that scope every decision:
 | The terminal is **not** argv-shaped: it `execl`s `shell_path -i` or `shell_path -lc <cmd>` on a local pty | `platform/TerminalBackend.cpp`, `TerminalStartRequest` | `terminal.shell = "ssh host"` fails (`-i` is ssh's identity flag). The remote terminal is a launch-path change, not a setting. § 6.5. |
 | Path ↔ URI conversion funnels through `FileUriForPath` / `PathFromFileUri` (12 caller files; all but one are LSP and DAP — `WorkspaceToolDownloader` decodes a download URL, not a workspace URI) | `workspace/FileUri.h` | The single place where the editor's (mirror) paths meet a process that runs on the server. One mapper, injected there, translates both directions. |
 | Project identity is `std::filesystem::path` everywhere (`project_roots`, `recent_project_roots`, the per-project state directory name in `WorkspaceProjectPresentation.cpp`, breakpoints keyed by file) | `services/ProjectCatalogService.h`, `persistence/WorkspacePersistenceFormat.h`, `WorkspaceProjectPresentation.cpp:38` | The mirror `tree/` is still the filesystem root every I/O site sees, so those ~170 `.root` uses in `src/workspace` stay paths. What *names* the project becomes a `ProjectId` (Groundwork G8), and the persisted format changes deliberately. § 6.8. |
-| Git deliberately reads `.git` directly in places (`ReadPendingMergeHeadId`, `ResolveGitDirectory`, `GitRepositoryMetadataTracker`, `StatusBarModelService::read_head_branch`) | `src/project/Git*`, `services/StatusBarModelService.h` | `.git` is not mirrored (§ 6.2), so these need a data source: the agent pushes `git/metadata`. They must not read the mirror's (absent) `.git` and conclude "not a repo". |
-| Project search reads real bytes off disk per candidate (`ReadFileForTextSearch(absolute_root / relative_path, buffer)`) with no content-version check | `project/ProjectSearchService.cpp:382` | Search over a mirror whose content is behind the host does not degrade, it **lies**: it reports matches from bytes the host no longer has and misses matches in bytes it has not pulled. With agents writing continuously that is the normal case, not the edge case, and there is no in-band signal that the answer is wrong. This single fact is why remote search runs on the agent (§ 6.11) rather than over the mirror. |
+| Git deliberately reads `.git` directly in places (`ReadPendingMergeHeadId`, `ResolveGitDirectory`, `GitRepositoryMetadataTracker`, `StatusBarModelService::read_head_branch`) | `src/project/Git*`, `services/StatusBarModelService.h` | `.git` is not mirrored (§ 6.2), so these need a data source: the server pushes `git/metadata`. They must not read the mirror's (absent) `.git` and conclude "not a repo". |
+| Project search reads real bytes off disk per candidate (`ReadFileForTextSearch(absolute_root / relative_path, buffer)`) with no content-version check | `project/ProjectSearchService.cpp:382` | Search over a mirror whose content is behind the host does not degrade, it **lies**: it reports matches from bytes the host no longer has and misses matches in bytes it has not pulled. With agents writing continuously that is the normal case, not the edge case, and there is no in-band signal that the answer is wrong. This single fact is why remote search runs on the server (§ 6.11) rather than over the mirror. |
 | `ProjectChangeCoalescer` merges a change batch and hands back one ready batch with a generation counter; `FileIndexWatcher` already carries a "tree shape changed in a way `changes` cannot describe" escape hatch for a resync after dropped events | `project/ProjectChangeCoalescer.h`, `platform/FileIndexWatcher.h` | Both halves of agent churn already have a local vocabulary: coalesce the ordinary burst, and fall back to a full re-diff when the burst is a branch switch. § 6.3 reuses both rather than inventing a remote-specific path. |
-| Watching is inotify with a poll fallback and a 50k-entry budget | `platform/FileWatcher.h` | Remote watching is real inotify on the agent; locally, the mirror is a normal directory and the existing watcher sees the sync engine's writes like any other change. |
+| Watching is inotify with a poll fallback and a 50k-entry budget | `platform/FileWatcher.h` | Remote watching is real inotify on the server; locally, the mirror is a normal directory and the existing watcher sees the sync engine's writes like any other change. |
 | The app runs headless on Xvfb with the software renderer and paints through clip rects; the control channel drives it as JSONL | `tools/capture-media/lib.sh`, `dev-docs/control/control-channel.md` | Display forwarding is a real tier-0. Headless `--control` is also how every remote UI flow in this design gets tested without a display. |
 | The welcome surface, status bar, notifications, prompt surfaces and quick-open overlays are host-owned, view-model-rendered, and registry-backed | `editor/WelcomeView.h`, `services/StatusBarModelService.h`, `services/NotificationService.h`, `services/PromptSurfaceService.h`, `OverlayIsQuickOpen` | Every UI surface § 7 needs has a home. None of it is new chrome. |
 
@@ -158,40 +202,49 @@ docs will say so.
 | --- | --- | --- |
 | **Display forwarding** (`xpra`, `waypipe`, `ssh -X`) | **tier-0, supported now.** | Zero code and total parity, because nothing is remote. Costs an RTT per keystroke echo. `xpra` specifically: it survives a dropped link and reattaches. Agents on the server can drive the same instance via `microide --control`. |
 | **sshfs mount** | **out.** | § 4. |
-| **Agent-backed VFS, no local copy** (every project I/O is an RPC with a cache in front) | **not the primary mode; a later on-demand tier only if a tree is too big to mirror.** | It is the "correct" endgame in the abstract and the wrong one under this codebase's constraints: it converts ~60 synchronous sites into async ones with a loading state each, pays a round trip on every uncached tree expansion and file open, and needs a local journal of dirty buffers anyway to survive a dropped link, which is a mirror of the files that matter, built ad hoc. |
-| **Local mirror + remote agent + remote processes** | **chosen.** § 6. | The editor, tree, search, watcher, index and every unaudited filesystem site work on a real local directory at local speed. The agent keeps that directory equal to the remote tree and performs the writes. Processes run where the toolchain is. A dropped link degrades to offline editing, not to a hang, and nothing is lost because everything is on local disk. |
-| **No IDE change**: agents push branches, the human pulls | the baseline every option must beat | Wins when the human only reviews. Loses the moment you run or debug what the agent wrote. |
+| **mosh-style UDP transport** | **out.** | Needs an inbound UDP port, a firewall rule and our own encryption — none of which an unprivileged user over stock ssh can provide (§ 1). The server gives the durable half of mosh (nothing on the host notices a dropped link); `link/ping` gives most of the fast half (§ 6.4). |
+| **Server-backed VFS, no local copy** (every project I/O is an RPC with a cache in front) | **not the primary mode; a later on-demand tier only if a tree is too big to mirror.** | It is the "correct" endgame in the abstract and the wrong one under this codebase's constraints: it converts ~60 synchronous sites into async ones with a loading state each, pays a round trip on every uncached tree expansion and file open, and needs a local journal of dirty buffers anyway to survive a dropped link, which is a mirror of the files that matter, built ad hoc. |
+| **Local mirror + remote server + remote processes** | **chosen.** § 6. | The editor, tree, search, watcher, index and every unaudited filesystem site work on a real local directory at local speed. The server keeps that directory equal to the remote tree and performs the writes. Processes run where the toolchain is. A dropped link degrades to offline editing, not to a hang, and nothing is lost because everything is on local disk. |
+| **No IDE change**: agents push branches, the human pulls | the baseline every option must beat | Wins when the human only reviews. Loses the moment you run or debug what the server wrote. |
 
-## 6. Architecture: local mirror, remote agent, remote processes
+## 6. Architecture: local mirror, remote server, remote processes
 
 ```
- local machine                                      server
- ┌──────────────────────────────────────────┐       ┌─────────────────────────────┐
- │ microide (window)                        │  ssh  │                             │
- │  editor / tree / search / watch / index  │ ctl   │  microide-agent              │
- │        ▲ local disk, unchanged           │ master│   manifest, read, write(CAS)│
- │        │                                 │◀─────▶│   inotify → watch/changed   │
- │  ~/.local/share/microide/remote/<host>/  │       │   git → git/metadata        │
- │      <slug>/tree/   ◀── MirrorSyncEngine │       │                             │
- │      <slug>/meta/   (journal, manifest)  │       │  git / clangd / gdb / $SHELL│
- │                                          │◀─────▶│   spawned via the same      │
- │  RemotePathMap: mirror ⇄ remote          │       │   ControlMaster connection  │
- └──────────────────────────────────────────┘       └─────────────────────────────┘
+ local machine                                      host
+ ┌──────────────────────────────────────────┐       ┌──────────────────────────────┐
+ │ microide (window)                        │  ssh  │ microide-server (daemon,     │
+ │  editor / tree / search / watch / index  │ one   │  one per user, many roots)   │
+ │        ▲ local disk, unchanged           │ chan- │   manifest, fetch, write(CAS)│
+ │        │                                 │ nel ──▶   inotify → watch/changed   │
+ │  ~/.local/share/microide/remote/<host>/  │◀──────│   git → git/metadata+status  │
+ │      <slug>/tree/   ◀── MirrorSyncEngine │       │   proc/spawn → git, clangd,  │
+ │      <slug>/meta/   (journal, objects)   │       │     gdb, formatter, tasks    │
+ │                                          │       │   term/* → ptys + terminal   │
+ │  RemotePathMap: mirror ⇄ remote          │       │     model + scrollback rings │
+ │  TerminalPredictionOverlay               │       │  ~/.local/state/microide/    │
+ └──────────────────────────────────────────┘       │     server/<uid>.sock        │
+                                                    └──────────────────────────────┘
 ```
+
+Every process the project runs — git, the language server, the debug adapter,
+the formatter, tasks, the shells — is a child of the server, started by a
+`proc/spawn` or `term/open` request on the one connection. Nothing on the host is
+a child of ssh except the relay that carries that connection, so nothing on the
+host notices when the link drops.
 
 ### 6.1 Components (all host-owned, none in the shell)
 
 | component | lives in | owns |
 | --- | --- | --- |
-| `RemoteHostSession` | `src/project/remote/` | One host's connection state machine (§ 6.6), the `ssh` ControlMaster lifecycle, reconnect backoff, the auth handoff to a terminal tab. |
-| `RemoteAgentClient` | `src/project/remote/` | The protocol peer: the binary framing of § 6.4 over an `AsyncSubprocess` whose argv is `ssh -S <ctl> <host> -- microide-agent --root <remote_root> --attach`, reusing `StdioJsonRpcClientTransport`'s queue and I/O-thread discipline with its codec replaced. Typed request/notification wrappers for § 6.4. |
-| `RemoteTerminalChannel` | `src/project/remote/` | A **second** agent connection on the same ControlMaster carrying only `term/*`, so a bulk file transfer cannot head-of-line block keystroke echo (§ 6.5). Owns handle bookkeeping and the trim-total resume offset per terminal (§ 6.12). |
-| `MirrorSyncEngine` | `src/project/remote/` | Its own thread. Manifest diff, prioritized pull queue, push queue with compare-and-swap, the persisted journal, the object store and its GC, atomic writes into `tree/`. Publishes progress and conflicts to the shell thread through the existing SDL wake pattern (`ControlChannelService` shape). |
-| `MirrorWriteGate` | `src/project/remote/` | The **single** door every local write into `tree/` goes through — the editor's save, the plugin file API, LSP resource ops and workspace edits, replace-in-project, the merge writer, the sidebar's file operations, and the sync engine's own pulls. Records the write against the path's base version, enqueues the push, returns the post-write hash so the caller never re-stats the file, and holds the per-path lock that keeps a pull and a save from racing on the same file. In a local project it is a pass-through. § 6.3, Groundwork G10. |
-| `RemotePathMap` | `src/project/remote/` | Pure value type: `(mirror_root, remote_root)` and two **partial** functions `ToRemote(path)` / `ToMirror(path)`, each returning `nullopt` for a path outside its side's root. Injected wherever a mirror path leaves the process or a remote path enters it (§ 6.5). |
-| `RemoteProcessLauncher` | `src/project/remote/` | Turns a local `argv + cwd` into `ssh -S <ctl> <host> -- cd <remote_cwd> && exec <argv>`. Used by git, LSP, DAP, tasks and (with `-tt`) the terminal. |
+| `RemoteHostSession` | `src/project/remote/` | One host's connection state machine (§ 6.6), the `ssh` ControlMaster lifecycle, the application heartbeat and reconnect backoff, the auth handoff to a terminal tab, and installing or upgrading the server on the host when `server/hello` says it is missing or too old. |
+| `RemoteServerClient` | `src/project/remote/` | The protocol peer: § 6.4's binary framing over an `AsyncSubprocess` whose argv is `ssh -S <ctl> -- <host> <server_command> attach`, reusing `StdioJsonRpcClientTransport`'s queue and I/O-thread discipline with its codec replaced. Typed request/notification wrappers, request ids, and the two priority lanes (§ 6.4). |
+| `MirrorSyncEngine` | `src/project/remote/` | Its own thread. Manifest diff, prioritized pull queue, push queue with compare-and-swap, the persisted journal, the object store and its GC, atomic writes into `tree/`. Publishes progress and conflicts to the shell thread through the existing wake pattern (`ControlChannelService` shape). |
+| `MirrorWriteGate` | `src/project/remote/` | The **single** door every local write into `tree/` goes through — the `project::FileWriteGate` a remote `ProjectWorkspaceState::write_gate()` returns. Records the write against the path's base version, enqueues the push, returns the post-write signature so neither the caller nor the local watcher re-reads the file, and holds the per-path lock that keeps a pull and a save from racing on the same file. § 6.3. |
+| `RemotePathMap` | `src/project/remote/` | Pure value type: `(mirror_root, remote_root)` and two **partial** functions `ToRemote(path)` / `ToMirror(path)`, each returning `nullopt` for a path outside its side's root. Injected at the LSP and DAP protocol seams (§ 6.5). |
+| `RemoteProcessLauncher` | `src/project/remote/` | The `platform::ProcessLauncher` a remote `ProjectWorkspaceState::launcher()` returns. `Run` is a `proc/spawn` request with argv **as an array** and the cwd translated by `RemotePathMap`, followed by the process's stdio and exit status over `proc/*`; `ResolveArgv` is the identity. It never builds a shell command line, so there is no quoting and no dependency on the user's login shell. Asynchronous consumers (the language server, the debug adapter, the formatter) issue the same request and read the stdio stream. § 6.5. |
+| `RemoteTerminalView` | `src/project/remote/` | The local half of a host terminal: the screen and scrollback it was given, the trim-total resume offset (§ 6.12), semantic input with sequence numbers, and `TerminalPredictionOverlay` — the mosh-style predicted-echo layer that paints a typed glyph in the same frame and validates it against the next confirmed screen (§ 6.5). Selection, find and rendering operate on this view. |
 | `RemoteProjectService` | `src/workspace/services/` | The workspace boundary: opens/closes remote projects, owns the per-project `RemoteHostSession`, exposes state to `RenderViewModelBuilder`, `StatusBarModelService` and the actions. Coordinators take this service, never the session. |
-| `microide-agent` | `src/agent/` | A separate, SDL-free binary (Groundwork G1), not a flag on the GUI executable. Headless **daemon** on the server, keyed to `(uid, remote_root)`, outliving any one connection (§ 6.12). No SDL, no window. Accepts clients on an AF_UNIX socket via `platform::ControlSocketServer`, and relays stdio when launched with `--attach`. Runs `CaptureTreeSnapshot`, `FileTreeWatcher`, `ReadTextFile`/`WriteTextFileAtomically`, `FileOperationService`, `GitRepositoryMetadataTracker` and `ProjectSearchService` **in-process on the server**. Owns the host ptys and their authoritative scrollback rings. Confines every path to `--root`. |
+| `microide-server` | `src/server/` | A separate, SDL-free, statically linked binary (Groundwork G1), not a flag on the GUI executable. **One daemon per user** on the host, serving any number of roots, each as a *workspace* with its own watcher, content set, hash cache, git tracker and budgets (§ 6.12). Started by hand (`microide-server start`) or on demand by a connecting client; accepts clients on an owner-verified AF_UNIX socket via `platform::ControlSocketServer`, and `microide-server attach` relays a client's stdio to it. Runs `CaptureTreeSnapshot`, `FileTreeWatcher`, `ReadTextFile`/`WriteTextFileAtomically`, the write gate's tree ops, `GitRepositoryMetadataTracker`, `git status` and `ProjectSearchService` **in-process on the host**. Owns every project process (`proc/spawn`) and every pty and scrollback ring (`term/*`). Confines every write to the workspace root. |
 
 ### 6.2 The mirror
 
@@ -237,7 +290,7 @@ docs will say so.
   repository with submodules is a supported project with an unsupported subtree,
   and the tree says so on the gitlink row. **`.gitignore` is part of the content
   set, not just of the tree**: an agent editing it changes membership with no
-  other file changing, so the agent treats a write to any `.gitignore` or
+  other file changing, so the server treats a write to any `.gitignore` or
   `.git/info/exclude` as a content-set invalidation and re-runs the set command,
   taking the § 6.3 resync path if the membership diff is large. Without that
   rule, files silently enter or leave the project and nothing reports it.
@@ -251,14 +304,14 @@ docs will say so.
   from the manifest is indistinguishable from a file that does not exist, so the
   tree is wrong with no `absent` marker to show for it. Therefore
   `remote.max_manifest_files` (default 50,000, matching the watch budget) is a
-  hard limit: exceeding it fails the connection at `agent/hello` with the count
+  hard limit: exceeding it fails the connection at `server/hello` with the count
   and the limit, and points at Phase 4's on-demand tier. `truncated` from the
   snapshot is an error, never a shrug. The manifest itself is already chunked as
   `tree/rows` notifications, so the 64 MiB frame ceiling applies per chunk and
   the row count is not what bounds it.
 - **`.git` is not mirrored.** Git runs on the server against the real
   repository; the mirror is the editor's working copy, not a second clone. Every
-  local reader of `.git` (§ 2) takes `git/metadata` from the agent instead, and
+  local reader of `.git` (§ 2) takes `git/metadata` from the server instead, and
   `is_git_repo_valid` answers from the host record, not from a stat. A mirror
   with `.git` would let a local `git commit` diverge from the truth, and its
   object store churns in ways a sync engine should not chase.
@@ -346,30 +399,35 @@ docs will say so.
 - **A stale file fetches a delta, not a file.** An agent rewriting one function in
   a 200 KiB source file is the single most common remote change in this workload,
   and re-pulling the whole file for it is the design's largest avoidable cost.
-  Because the mirror has the previous object, the agent sends a `zstd --patch-from`
+  Because the mirror has the previous object, the server sends a `zstd --patch-from`
   delta against it and the client reconstructs. Whole-file transfer stays as the
   fallback when the base object is missing or the delta is not smaller.
 
   **This is a new third-party dependency on both sides and it is linked, not
   shelled.** `third_party/` holds one vendored library today (`stb`), so zstd and
-  blake3 are both additions. Both ends need zstd — the agent to produce a delta, the client to reconstruct — so it is vendored
+  blake3 are both additions. Both ends need zstd — the server to produce a delta, the client to reconstruct — so it is vendored
   and linked into `microide_kernel` alongside blake3, not invoked as a `zstd`
   binary: a subprocess per delta is a fork per changed file on the hot churn path,
-  it makes the agent's install "one static binary **and** a zstd new enough for
+  it makes the server's install "one static binary **and** a zstd new enough for
   `--patch-from`", and the CLI's window-size flags become a correctness detail on
   files larger than the default window. Linking it makes the window an argument.
   Both libraries are built from their portable C sources with compiler-intrinsic
-  dispatch, not from the per-architecture assembly files, so the static agent build
+  dispatch, not from the per-architecture assembly files, so the static server build
   does not pick up an assembler dependency per target.
 - **Manifest rows** carry `(relative_path, kind, size, mode_bits, mtime_ns,
   content_hash)`. The hash is **blake3** (Groundwork G6), it is the object's
   address in `meta/objects/`, it is what a push presents for compare-and-swap, and
   it is the same hash the local external-change check uses — one hash, not a
   cross-machine one and a local one that resemble each other. mtimes are never
-  compared across machines. Hashing 26 MiB on the server is a fraction of a second
-  and runs once per manifest, incrementally after that (the watcher rehashes only
-  what changed); blake3 rather than sha256 matters because manifest construction
-  sits on the connect critical path (§ 9).
+  compared across machines. Hashing 26 MiB on the host is a fraction of a second,
+  but a 50,000-file tree is seconds, and a server that was just started has no
+  hashes. So the server keeps a **persisted hash cache** per workspace, keyed by
+  `(device, inode, size, mtime_ns, ctime_ns)` and stored beside its socket under
+  `~/.local/state/microide/`; a manifest hashes only the files whose key changed,
+  which after a restart is what the agents touched since, not the tree. The
+  watcher keeps it current. blake3 rather than sha256 matters because manifest
+  construction sits on the connect critical path (§ 9) and the cache cannot help a
+  host that has never been connected to.
 - **Symlinks** are reported in the manifest with their target; a link inside the
   root is recreated as a link, a link outside the root becomes a regular file
   holding the target's content (read-only; a save to it is refused with a clear
@@ -379,10 +437,10 @@ docs will say so.
   **The local writer resolves before it writes.** Validating the manifest row's
   path string against the mirror root is not sufficient once in-root symlinks are
   recreated as symlinks: a later row naming a path *through* one escapes the root
-  on temp+rename, writing agent-supplied bytes outside the mirror. Pull writes
+  on temp+rename, writing server-supplied bytes outside the mirror. Pull writes
   therefore open with `O_NOFOLLOW` on the final component and verify the resolved
-  parent is still under `tree/`, on the local side, in addition to the agent's own
-  server-side confinement (§ 6.9). The agent is semi-trusted and its output is
+  parent is still under `tree/`, on the local side, in addition to the server's own
+  server-side confinement (§ 6.9). The server is semi-trusted and its output is
   already treated as untrusted data everywhere else in this design; this is the
   one place where a string check reads as if it were a path check.
 - **Exec bits** are preserved on pull and on push. Ownership is not transferred.
@@ -390,7 +448,7 @@ docs will say so.
 ### 6.3 Sync semantics
 
 - **The remote tree is the truth.** The mirror is a replica the user edits.
-- **Remote → local, metadata.** The agent's `FileTreeWatcher` (real inotify)
+- **Remote → local, metadata.** The server's `FileTreeWatcher` (real inotify)
   coalesces through `ProjectChangeCoalescer` and sends `watch/changed` batches of
   manifest rows plus deletes. Rows are cheap and always applied in full: the tree,
   the index and quick-open are never behind. A row whose hash differs from the
@@ -435,7 +493,7 @@ docs will say so.
   churn control). The causes are mundane: the remote root on an unmounted
   network filesystem, a `git ls-files` that failed and returned nothing, a root
   that was moved or reimaged. So there are two guards and both are required. The
-  **agent** never reports an empty or shrunken content set as a success — it
+  **server** never reports an empty or shrunken content set as a success — it
   distinguishes "root unreadable / content-set command failed" from "root is empty"
   and fails the request in the first case, because an error that reads as "zero
   files" is how this ends badly. And the **client** refuses to apply a diff that
@@ -460,7 +518,7 @@ docs will say so.
   is a per-**user** kernel limit, the shared build box this design targets is where
   agents and several daemons are already consuming it, and the fallback is a
   periodic re-stat of a 50,000-file tree that something is rewriting continuously.
-  So the agent reports which mode it is in at `agent/hello` and on transition, the
+  So the server reports which mode it is in at `server/hello` and on transition, the
   status segment says `watch: polling` with the interval, and the failure names
   `max_user_watches` rather than presenting degraded freshness as normal. A polling
   agent still works; a user who cannot tell it is polling cannot explain why a
@@ -478,7 +536,7 @@ docs will say so.
 - **Local → remote.** A save lands on local disk first, synchronously, at local
   speed, so the buffer is safe before anything crosses the wire. The engine then
   sends `file/write {path, content, expect}` where `expect` is the known remote
-  version's hash. The agent writes atomically **only if** the current remote hash
+  version's hash. The server writes atomically **only if** the current remote hash
   equals `expect`, and returns the new hash, which becomes the known version.
   Tree operations (create, rename, trash, delete, from the sidebar) take the same
   route as `fs/op` requests with the same precondition where one applies.
@@ -537,7 +595,7 @@ docs will say so.
   UI, it destroys bytes rather than parking a conflict, and it is the only such
   path in this design. So `file/write` and `fs/op` both take `expect` as a
   three-valued field — a hash, `absent`, or `any` — `absent` is what a create
-  sends, the agent implements it with `O_EXCL`, and a violated `absent` returns
+  sends, the server implements it with `O_EXCL`, and a violated `absent` returns
   the same `conflict {current_hash}` an update's would. `any` exists for the
   Overwrite choice in § 6.3's conflict flow and is never a default.
 
@@ -577,7 +635,7 @@ docs will say so.
   saves, which pushes). Nothing is done automatically; both sides' content exist
   until the user chooses.
 - **Ordering with LSP.** `textDocument/didSave` is sent after the push is acked,
-  not after the local write, or a server that re-reads from disk on save sees the
+  not after the local write, or a language server that re-reads from disk on save sees the
   previous content.
 - **Journal.** Every parked or in-flight push, and every local tree operation not
   yet acked, is appended to `meta/journal` (through `PersistedRecordWriter`, the
@@ -604,7 +662,7 @@ docs will say so.
   (the last content wins locally, which is what the user sees). Remote batches
   arrive already coalesced.
 - **Your own push comes back at you as a remote change, and content addressing is
-  what makes that harmless.** The agent's watcher sees the write it just performed
+  what makes that harmless.** The server's watcher sees the write it just performed
   on your behalf and reports it in the next `watch/changed` batch. Under a
   mtime-and-size model that would be an echo needing suppression, a request id to
   correlate, and a race when a real remote write lands in the same window. Under
@@ -612,6 +670,16 @@ docs will say so.
   `current` and nothing happens. It is worth stating rather than leaving to be
   rediscovered: the echo is expected traffic, it is not filtered, and the reason it
   needs no filter is the same reason `object/fetch` is hash-keyed.
+- **The engine's own writes into `tree/` are not external changes locally
+  either.** A pull is a temp+rename into the mirror, and the local
+  `FileIndexWatcher` and the editor's external-change sweep see it like any other
+  write — which is the point, and also double work: a 500-file pull would otherwise
+  cost 500 off-thread hash confirmations (G6) of bytes the engine itself just
+  wrote. The pull goes through `MirrorWriteGate` like every writer, the gate
+  returns the post-write signature, and the engine records it as the path's known
+  signature before the watcher fires, so the sweep's stat matches and nothing is
+  re-read. The tab still reloads, because the content did change; what is skipped
+  is confirming that it did.
 - **Format-on-save runs before the push, not after it.** `editor.format_on_save`
   is a shipped setting, and § 6.5 says everything that runs a command runs on the
   host — which, taken naively, makes a save into: write locally, push, the host
@@ -656,97 +724,129 @@ docs will say so.
 
 ### 6.4 Transport and protocol
 
-- One `ssh -o ControlMaster=auto -o ControlPersist=10m -o ServerAliveInterval=15
-  -S <ctl>` per host. The agent is one channel on it; every process spawn is
-  another channel on the same master, so a spawn costs milliseconds, not a
-  handshake. `<ctl>` is `$XDG_RUNTIME_DIR/microide/ssh-<hash>` — short, because
-  AF_UNIX paths cap at 108 bytes and a long path fails silently, which the control
-  channel already learned the hard way.
+- **One ssh connection per host, one channel per project, and that channel is
+  enough.** `ssh -o ControlMaster=auto -o ControlPersist=10m -o ServerAliveInterval=15
+  -S <ctl> -- <host>` is the master; the project's server connection is one
+  channel on it. The host's `sshd` defaults to `MaxSessions 10` per connection and
+  the user cannot raise it (§ 1), so the earlier shape — a channel per spawned
+  process, a second one for terminals — ran out of channels on an ordinary
+  afternoon and fell back to a second TCP connection and a second authentication.
+  Every process now spawns through the server (§ 6.5), so the count is fixed at
+  one per open project whatever runs, and a hardened host with `MaxSessions 1`
+  still works. `<ctl>` is `$XDG_RUNTIME_DIR/microide/ssh-<hash>` when that
+  directory exists and `~/.local/state/microide/ssh-<hash>` otherwise — short,
+  because AF_UNIX paths cap at 108 bytes and a long path fails silently, which the
+  control channel already learned the hard way. The `--` before the host is not
+  decoration: a host string that begins with `-` would otherwise be parsed as an
+  ssh option, and `-oProxyCommand=` is remote code execution from a
+  recent-projects entry. Host and user strings are validated against
+  `[A-Za-z0-9._-]` and may not start with `-` before they reach an argv at all.
+
+- **Two priority lanes on the one channel, and an application-level bound on
+  bytes in flight.** The earlier design gave terminals their own ssh channel so a
+  bulk transfer could not head-of-line block keystroke echo. Both channels share
+  one TCP connection, and ssh's per-channel window is about 2 MiB, so a bulk
+  channel can still have most of a second of bytes queued ahead of an echo on a
+  20 Mbit/s link; the second channel bought less than it claimed. What actually
+  bounds the delay is how many bulk bytes may be unacknowledged, so that is the
+  mechanism: frames carry a lane (`interactive` or `bulk`), the sender on each
+  side always drains interactive first, and bulk may have at most
+  `remote.backfill_inflight_bytes` outstanding — **adaptive**, defaulting to
+  about 100 ms of the bandwidth measured on the last transfer, floored at 64 KiB
+  and capped at 1 MiB, so a fast link is not throttled to a slow link's constant
+  and a slow one is not flooded. `object/fetch` backfill, `tree/rows` and
+  `term/lines` are bulk; `term/input`, `term/screen`, `proc/*` stdio, the
+  interactive `object/fetch` for the file the user just clicked, and `link/ping`
+  are interactive. `op/cancel` covers the rest: an in-flight request whose reason
+  has gone away (the tab closed, the query changed) is cancelled rather than
+  waited out.
+
+- **Link death is detected by the protocol, in seconds.** `ServerAliveInterval=15`
+  with ssh's default `ServerAliveCountMax=3` is 45 s to notice a dead link, and a
+  laptop that woke up on a new network sits that long with every terminal frozen.
+  So the client sends `link/ping` every 2 s on the interactive lane and the server
+  answers; three misses declares the link dead, the client kills the channel and
+  goes to Reconnecting (§ 6.6), which is attach-with-resume (§ 6.12). The ping
+  carries the sender's clock so both sides keep a running RTT estimate, which the
+  terminal's prediction engine (§ 6.5) and the adaptive bulk bound read. This is
+  the trade against mosh's UDP transport, stated: mosh resumes in zero seconds
+  after a roam and this design in about six; mosh needs an inbound UDP port, a
+  firewall rule and its own encryption, and this design needs nothing the user
+  cannot provide (§ 1).
+
 - **Framing is length-prefixed binary, not JSON-RPC.** Reusing
   `JsonRpcMessageFraming` and `StdioJsonRpcClientTransport` is the right instinct
   for a control protocol and the wrong one for a bulk one. This protocol's traffic
-  is not requests: it is file content, manifest rows and terminal output, and JSON
-  charges for all three — every file
-  body is an escaped string or base64 (+33%), a 50,000-row manifest is about 6 MB
-  of JSON with 64-character hex hashes, and terminal payloads pay base64 on the one
-  path where latency is felt directly. So a frame is a small fixed header
-  (`length`, `type`, `id`) followed by raw payload bytes: control messages carry a
-  JSON body, content messages carry the bytes themselves, and a hash is 32 bytes
-  rather than 64 characters. The manifest is a packed columnar blob, streamed as
-  `tree/rows` chunks exactly as before.
+  is not requests: it is file content, manifest rows, process stdio and terminal
+  state, and JSON charges for all of them — every body is an escaped string or
+  base64 (+33%), a 50,000-row manifest is about 6 MB of JSON with 64-character hex
+  hashes, and terminal payloads pay base64 on the one path where latency is felt
+  directly. So a frame is a small fixed header (`length`, `type`, `lane`, `id`)
+  followed by raw payload bytes: control messages carry a JSON body, content
+  messages carry the bytes themselves, and a hash is 32 bytes rather than 64
+  characters. The manifest is a packed columnar blob, streamed as `tree/rows`
+  chunks.
 
   The hardened parts of the existing stack are kept rather than rewritten: the
   bounded queues, the poll-based I/O thread, the wedged-peer teardown and the perf
   counters are transport behaviour, not codec behaviour, and `AsyncSubprocess`
   underneath is unchanged. What is replaced is the codec, and the 64 MiB ceiling
   stays as the per-frame bound.
-- **File and terminal content travels as raw bytes in a content frame**, with no
-  encoding step at all — no JSON string escaping, no base64, no `+33%`. It is worth
-  recording the hazard that a text codec would carry, because any return to one
-  reintroduces it: a terminal is a raw byte stream
-  (`TerminalSession::SendBytes(std::string_view)`) chunked at whatever boundary the
-  read returned, so a multi-byte UTF-8 sequence or an escape sequence splits across
-  two messages routinely under load, and each half is individually invalid UTF-8
-  that no JSON string can carry, so a text codec would need unconditional base64 on
-  the one path where latency is felt directly. A binary one simply moves the bytes.
+
+- **File, process and terminal content travels as raw bytes in a content frame**,
+  with no encoding step at all. The hazard a text codec would carry is worth
+  recording, because any return to one reintroduces it: a terminal or a process's
+  stdout is a raw byte stream chunked at whatever boundary the read returned, so a
+  multi-byte UTF-8 sequence or an escape sequence splits across two messages
+  routinely under load, and each half is individually invalid UTF-8 that no JSON
+  string can carry. A binary frame simply moves the bytes.
+
 - **The scrollback line stream still has flow control.** Shipping screen state
   rather than bytes (§ 6.5) bounds the *visible* half of terminal traffic by
   construction, but the lines scrolling off the top are unbounded: `yes` or a
   verbose build produces completed scrollback lines faster than a far link drains
-  them. The transport's bounded queues and wedged-peer teardown are what make it
-  hardened, and they are exactly what would turn that into a **teardown that also
-  kills file sync and every other terminal** — one careless command in one tab
-  ending the whole session. `remote.host_scrollback_budget` does not help: it
-  bounds host memory, not the wire. So the host applies a per-handle credit window
-  (`remote.term_credit_bytes`, default 256 KiB outstanding, replenished as the
-  client acknowledges) to the line stream, and lines produced beyond it are dropped
-  at the ring with the same visible gap rule § 6.12 uses for overflow — a rule and
-  a count, never a silent loss. The screen itself is never dropped, because the
-  screen is what the user is looking at. Dropping backlog from a runaway command is
-  correct behaviour; a user who wants all of it redirects to a file, which is a
-  host-side operation and costs nothing on the wire.
-- **The file channel needs the same head-of-line answer the terminal got.** § 6.5
-  gives terminals their own ssh channel so a bulk transfer cannot block keystroke
-  echo, and then the file channel is left carrying both the idle backfill and the
-  file the user just clicked. Batching backfill in "~1 MiB or 64 files" (§ 6.2)
-  bounds the *request*, not the delay: a 1 MiB batch already in flight on an 80 ms,
-  20 Mbit/s link is most of a second the interactive fetch waits behind, and
-  priority in a local queue cannot reorder bytes already on the wire. So the bound
-  is **outstanding bytes, not batch size** — `remote.backfill_inflight_bytes`
-  (default 256 KiB, the same shape as the terminal's credit window) caps what
-  backfill may have unacknowledged, which is what makes the § 6.2 priority order
-  mean anything. Interactive fetches are exempt from it and are what the backfill
-  yields to. `op/cancel` covers the rest: an in-flight request whose reason has gone
-  away (the tab closed, the query changed) is cancelled rather than waited out.
-- **The protocol version is its own small integer, not the app version.** § 12
-  worries about drift between a client and an agent someone copied to a host once,
-  and tying the handshake to the release version answers it by forbidding drift
-  entirely — which turns "copy one static binary" into "copy it again on every
-  release, to every host, before you can open anything". A protocol version with a
-  minimum-accepted floor on both sides lets a 2.14 client talk to a 2.12 agent for
+  them, and the transport's bounded queues and wedged-peer teardown would turn that
+  into a **teardown that also kills file sync and every other terminal**. So the
+  host applies a per-handle credit window (`remote.term_credit_bytes`, default
+  256 KiB outstanding, replenished as the client acknowledges) to the line stream,
+  and lines produced beyond it are dropped at the ring with the same visible gap
+  rule § 6.12 uses for overflow — a rule and a count, never a silent loss. The
+  screen itself is never dropped, because the screen is what the user is looking
+  at. A user who wants all of a runaway command's output redirects it to a file,
+  which is a host-side operation and costs nothing on the wire. Process stdio
+  (`proc/*`) has the same credit window per handle, because a `git log` of a
+  large repository is the same stream under a different name.
+
+- **The protocol version is its own small integer, not the app version.** A
+  minimum-accepted floor on both sides lets a 2.14 client talk to a 2.12 server for
   as long as the wire has not actually changed, and fails loudly and specifically
-  when it has. The version a mismatch message names is still the agent's release
-  version, because that is what the user has to act on.
+  when it has. When it has, the client installs a matching server (§ 6.6) rather
+  than asking the user to; the version a mismatch message names is still the
+  server's release version, because that is what the user sees.
+
 - Methods (requests unless marked as notifications):
 
 | method | direction | purpose |
 | --- | --- | --- |
-| `agent/hello` | → | **protocol** version (a small integer of its own, not the app version) plus a minimum the peer accepts, agent version, root, capabilities (`git`, `watch`, `search`), a `daemon_epoch` unique to this daemon process, and the content-set size. An out-of-range protocol version fails here naming both; so does a content set over `remote.max_manifest_files` (§ 6.2). |
+| `server/hello` | → | **protocol** version plus a minimum the peer accepts, the client's release version, the workspace root to open, the client's values for the settings the server consumes (§ 6.12), and its RTT estimate. The reply carries the server's release version, a `daemon_epoch` unique to this server process, capabilities (`git`, `watch`, `search`, `trash`), the workspace's content-set size, the watch mode (inotify or polling), the host's **session-survival** report (§ 6.12: `kill_user_processes`, `linger`), and the effective settings. An out-of-range protocol version fails here naming both; so does a content set over `remote.max_manifest_files` (§ 6.2). |
+| `link/ping` | ↔ | 2 s heartbeat carrying the sender's clock; three misses is a dead link. Interactive lane. |
 | `tree/manifest` | → then ← `tree/rows` (notifications, chunked) | the full content set with hashes; the last chunk carries `complete: true` and a `manifest_id`. |
-| `object/fetch` | → | batch of content hashes → object bytes, or a zstd delta against a base hash the client says it holds (§ 6.2). The client asks for content it lacks, not for a path whose content might have moved on. Bounded by outstanding bytes, not by batch count (below). |
+| `object/fetch` | → | batch of content hashes → object bytes, or a zstd delta against a base hash the client says it holds (§ 6.2). Carries a lane: the file the user opened is interactive; backfill is bulk and bounded by outstanding bytes. |
 | `file/read` | → | one **path** → `{hash, content}`, read-only, for a file the manifest does not carry: a header under an ignored `build/`, a dependency's source, a system include a stack frame names. Not root-confined, and § 6.9 says why that is not the boundary it looks like. Never writes, and what it returns lands outside `tree/`. § 6.5. |
-| `op/cancel` | → (notification) | cancels an in-flight `search/run` or `object/fetch` by id. A far link plus a big tree makes an uncancellable request a stall the user can see and cannot stop; typing a new search query is the ordinary way to produce one. |
+| `op/cancel` | → (notification) | cancels an in-flight `search/run`, `object/fetch` or `proc/spawn` by id. A far link plus a big tree makes an uncancellable request a stall the user can see and cannot stop. |
 | `file/write` | → | `path, content, mode, expect` → the new `content_hash`, or `conflict {current_hash}`. `expect` is a hash, `absent` (create, `O_EXCL`) or `any` (the user's explicit Overwrite); there is no unconditional default. § 6.3. |
-| `fs/op` | → | `mkdir`, `rename` (with `expect` on the source and `expect: absent` on the destination, `RENAME_NOREPLACE`), `trash`, `delete`. Carries the same three-valued `expect` as `file/write`. `trash` on a headless server usually has no XDG trash directory to move into, so the agent reports the capability in `agent/hello` and the sidebar's Move to Trash becomes Delete, named as such, rather than silently deleting under a label that promises recovery. |
+| `fs/op` | → | `mkdir`, `rename` (with `expect` on the source and `expect: absent` on the destination, `RENAME_NOREPLACE`), `trash`, `delete`. Carries the same three-valued `expect` as `file/write`. `trash` on a headless host usually has no XDG trash directory to move into, so the server reports the capability in `server/hello` and the sidebar's Move to Trash becomes Delete, named as such, rather than silently deleting under a label that promises recovery. |
 | `watch/subscribe` | → then ← `watch/changed` (notification) | coalesced batches of manifest rows plus deletes. |
 | `git/metadata` | ← (notification, on change) | branch, HEAD id, detached flag, pending merge/rebase state, upstream ahead/behind. Replaces every local `.git` read. |
-| `search/run` | → then ← `search/results` (notifications) | the default path for project search and replace: the agent runs `ProjectSearchService` against the real tree and streams matches. § 6.11. |
-| `agent/attach` | → | reattach to a running daemon with the client's last `manifest_id`; returns what changed since plus live terminal handles. § 6.12. |
-| `term/open`, `term/screen`, `term/lines`, `term/input`, `term/event`, `term/resize`, `term/close` | ↔ | host-side pty and terminal-model lifecycle, on their own ssh channel. `term/screen` carries screen deltas, `term/lines` the completed scrollback lines (credit-windowed), `term/input` **semantic key and mouse events** rather than encoded bytes (§ 6.5), `term/event` the model's outward signals — OSC 52 clipboard, OSC 7 cwd, title, bell. § 6.4, § 6.5. |
+| `git/status` | ← (notification, on change) | the porcelain working-tree status, run by the server on its own inotify batches (debounced 500 ms, coalesced with `git/metadata`), so the git sidebar renders from local state with zero round trips and never asks. A client may request it explicitly after its own push acks. § 6.5. |
+| `proc/spawn` | → then ↔ `proc/stdin`, `proc/stdout`, `proc/stderr`, `proc/signal`, ← `proc/exit` | run a process on the host as a child of the server: `argv` as an **array**, `cwd` (a host path, already translated), environment additions, and `keep_on_detach`. stdio is raw content frames with a per-handle credit window and a byte offset per stream for resume; `proc/exit` carries the status. Every spawn in a remote project — git, the language server, the debug adapter, the formatter, tasks, plugin tools — is one of these (§ 6.5). |
+| `search/run` | → then ← `search/results` (notifications) | the default path for project search and replace: the server runs `ProjectSearchService` against the real tree and streams matches. § 6.11. |
+| `server/attach` | → | reattach to a running server with the client's last `manifest_id` and per-handle offsets; returns what changed since plus the live terminal and process handles. § 6.12. |
+| `term/open`, `term/screen`, `term/lines`, `term/input`, `term/event`, `term/resize`, `term/close` | ↔ | host-side pty and terminal-model lifecycle. `term/screen` carries screen deltas, the capture bits (§ 6.5) and `echo_ack`, the highest `input_seq` the host believes the frame reflects; `term/lines` the completed scrollback lines (credit-windowed); `term/input` **semantic key, paste and mouse events** with an `input_seq`, rather than encoded bytes (§ 6.5); `term/event` the model's outward signals — OSC 52 clipboard, OSC 7 cwd, title, bell. |
 | `term/scrollback` | → | older history for a handle from a given trim-total offset, for attach prefetch and for lazy backfill on scroll-up. § 6.12. |
-| `agent/shutdown` | → | stops the daemon and its terminals; the transport's wedged-peer teardown covers the unclean case. Detaching a client is not a shutdown. |
+| `server/shutdown` | → | stops the server and everything it owns; the transport's wedged-peer teardown covers the unclean case. Detaching a client is not a shutdown. |
 
-Everything the agent returns is untrusted data: paths are validated to stay under
+Everything the server returns is untrusted data: paths are validated to stay under
 the mirror root before any write, sizes are bounded by the frame ceiling and
 `remote.max_file_bytes`, and the decoder is a fuzz target (§ 10).
 
@@ -760,12 +860,13 @@ number, a stack frame is a line number, a rename is a byte range, and every one 
 them is computed against the host's copy of a file the mirror may hold at an older
 version or not at all.
 
-This is the same objection § 8 raises against shipping Phase 1 — *diagnostics land
-on lines the buffer does not have, the debugger stops at a line number that means
-something else in your copy, and `git status` describes a tree you are not looking
-at* — and it applies here whenever a file is `stale`. The difference, and the whole
-reason this is fixable while Phase 1 is not, is that there **is** a relation between
-local and host bytes: the manifest hash. So:
+This is the objection that removed the old "remote processes over a local
+checkout" phase (§ 8) — *diagnostics land on lines the buffer does not have, the
+debugger stops at a line number that means something else in your copy, and `git
+status` describes a tree you are not looking at* — and it applies here whenever a
+file is `stale`. The difference, and the whole reason this is fixable where that
+phase was not, is that there **is** a relation between local and host bytes: the
+manifest hash. So:
 
 - **Every host-computed position carries the hash it was computed against.** The
   LSP and DAP adapters on the host already know which file they read; the mapper
@@ -790,11 +891,27 @@ local and host bytes: the manifest hash. So:
 
 - **Git.** `ReadGitCommandOutput` (`GitCommandUtil.cpp:324`) is the funnel. Its
   spawn goes through the project's launcher (Groundwork G2), which in a remote
-  project is `RemoteProcessLauncher`, and the cwd is translated with
-  `RemotePathMap::ToRemote`. Paths in git's output (`status --porcelain`,
-  `diff`, `blame`) are relative to the repo root and need no translation; the
-  few absolute ones (`rev-parse --show-toplevel`, worktree lists) go through
-  `ToMirror`.
+  project is `RemoteProcessLauncher`: one `proc/spawn` with git's argv as an
+  array and the cwd translated with `RemotePathMap::ToRemote`, no shell in
+  between. Paths in git's output (`status --porcelain`, `diff`, `blame`) are
+  relative to the repo root and need no translation; the few absolute ones
+  (`rev-parse --show-toplevel`, worktree lists) go through `ToMirror`. The three
+  validity probes that stat a local `.git` today — `GitRepository::IsValid`, the
+  blame service's marker check and `DetectGitOperationState`
+  (TD-2026-10-06-319) — answer from the host record instead, or a remote project
+  is silently git-less before any of this runs.
+
+  **The sidebar's status is pushed, not polled.** Locally `git status` runs on
+  the background executor when the sidebar asks; remotely that is a round trip
+  per refresh, serialized behind every other git call on the same single-thread
+  executor. The server already watches the tree, so it runs `git status
+  --porcelain` itself on its own inotify batches and pushes `git/status` with
+  `git/metadata`; opening the sidebar reads local state. What the executor's
+  serial queue still serializes — blame, log, a diff — is one round trip each and
+  off the shell thread; if a measured sidebar refresh exceeds two round trips,
+  read-only git requests move to a small pool on the remote launcher (Phase 3,
+  § 9), since the serial queue is a shell-thread guard and not a throughput
+  decision.
 
   **Git describes the host's working tree, which is not what is on screen while a
   push is queued.** `git status` runs on the host, so a save that is
@@ -809,7 +926,7 @@ local and host bytes: the manifest hash. So:
   its push acks. This is § 6.11's rule applied to git — the answer is computed from
   bytes the client knows are not the ones on screen, so it says so rather than
   presenting it as the truth.
-- **LSP.** The server runs on the host, so `rootUri`, every `textDocument` URI
+- **LSP.** The language server runs on the host, so `rootUri`, every `textDocument` URI
   and every `workspace/didChangeWatchedFiles` event name **remote** paths, and
   every URI in a reply names a remote path the editor must map back. The **12**
   files that call `FileUriForPath` / `PathFromFileUri` route through a
@@ -858,31 +975,35 @@ local and host bytes: the manifest hash. So:
   Losing a 40-minute build to a lid close is not an acceptable failure mode for a
   remote-first editor.
 
-  Instead the **agent owns the pty and the terminal model**. It already has the
+  Instead the **server owns the pty and the terminal model**. It already has the
   code: `TerminalBackend`'s `posix_openpt` + `O_CLOEXEC` path and `TerminalSession`
-  itself compile into the same binary once Groundwork G1 has taken SDL out of the
-  terminal's data types. A terminal tab becomes `term/open {cwd, shell, rows,
-  cols}` → a handle; `term/resize` replaces relying on ssh's window-change
-  propagation; `term/close` replaces `RequestTerminalChildShutdown`.
+  itself are in `microide_kernel` (Groundwork G1). A terminal tab becomes
+  `term/open {cwd, shell, rows, cols}` → a handle; `term/resize` replaces relying
+  on ssh's window-change propagation; `term/close` replaces
+  `RequestTerminalChildShutdown`.
 
   **The host ships screen state, not bytes, and this is where the remote terminal
-  stops feeling remote.** Host-owned pty with a local parser would mean parsing the
-  stream twice and crossing the link with raw output — the full 10 MB/s of a noisy
-  compile, every byte of which the local parser throws away as it scrolls past. With
-  the model on the host, the wire carries **screen deltas plus completed scrollback
-  lines**: a screen has a few thousand cells and a bounded update rate
-  no matter how loudly the program writes to it. A build that emits a megabyte a
-  second costs the host one parse and the link a few kilobytes of visible change.
+  stops feeling remote.** This is mosh's architecture, chosen for mosh's reason.
+  Host-owned pty with a local parser would mean parsing the stream twice and
+  crossing the link with raw output — the full 10 MB/s of a noisy compile, every
+  byte of which the local parser throws away as it scrolls past. With the model on
+  the host, the wire carries **screen deltas plus completed scrollback lines**: a
+  screen has a few thousand cells and a bounded update rate no matter how loudly
+  the program writes to it. The rate is a number, not a hope: the host coalesces
+  screen deltas to at most one per 16 ms, and to one per 33 ms while the handle's
+  credit window is more than half full. A build that emits a megabyte a second
+  costs the host one parse and the link a few kilobytes of visible change.
 
   Three things fall out rather than needing to be designed. Reattach becomes a
   screen snapshot instead of a replay. Full-screen programs — `vim`, `htop` — are
   *exactly* a screen delta, so they need no special case. And the credit window
-  below is not load-bearing for output volume, because a screen cannot outrun
-  itself; it bounds the scrollback line stream, which is the part that is genuinely
+  is not load-bearing for output volume, because a screen cannot outrun itself;
+  it bounds the scrollback line stream, which is the part that is genuinely
   unbounded.
 
   The local side keeps selection, find and rendering, operating on the scrollback
-  lines and screen it is given.
+  lines and screen it is given (`RemoteTerminalView`). A selection that reaches
+  into history not yet backfilled fetches it (`term/scrollback`) before copying.
 
   **Input cannot be raw bytes.** Keystrokes travel as bytes while the model is
   local, because the thing that turns a key press into bytes *is* the model. Moving
@@ -901,44 +1022,80 @@ local and host bytes: the manifest hash. So:
   against a mode set that is one round trip old sends the wrong bytes at exactly
   the moment the modes change — press an arrow as `vim` exits and it goes out in
   application-cursor form to a shell that reads it as an escape and a letter; paste
-  as a program clears 2004 and the bracket markers arrive as literal text. Shipping
-  the modes down with each screen delta does not fix it either, because the race is
-  the round trip itself, not the absence of the data.
+  as a program clears 2004 and the bracket markers arrive as literal text.
+  Shipping the modes down with each screen delta does not fix it either, because
+  the race is the round trip itself, not the absence of the data.
 
   So `term/input` carries **semantic events** — a key press as keysym plus
-  modifiers, a mouse event as button, action and cell coordinates — and the host,
-  which owns the modes and is the only side that can be sure of them, encodes. The
-  payload is smaller than the bytes it replaces, ordering is unchanged, and the
-  latency is identical: this costs nothing and removes a whole class of
-  wrong-at-the-boundary bugs. It is protocol shape, so it is free to decide now and
-  a break to change later.
+  modifiers, a paste as text, a mouse event as button, action and cell coordinates
+  — each with an `input_seq`, and the host, which owns the modes and is the only
+  side that can be sure of them, encodes. The payload is smaller than the bytes it
+  replaces, ordering is unchanged, and the latency is identical: this costs nothing
+  and removes a whole class of wrong-at-the-boundary bugs.
+
+  **A few bits of mode state do cross to the client, and they are stated as
+  stale.** The local side has to decide whether a mouse press is a selection or is
+  forwarded to the program, whether motion is forwarded, whether focus events are
+  wanted, and what cursor to draw — `WantsMouseCapture`, `WantsMouseMotionCapture`,
+  `WantsFocusEvents`, the cursor shape and visibility. Those ride in every
+  `term/screen`, are one round trip old by construction, and are used only for
+  that local decision; a press forwarded as `vim` exited is one wrong click, not a
+  wrong byte stream, and it is the same race a local terminal has between frames.
 
   **The model's outward signals need a channel back, and OSC 7 is not the only
-  one.** Besides `reported_working_directory()`, the parser on the host produces the window/tab title, the bell, and OSC 52
-  clipboard writes (`TerminalOscClipboard.h`) — and a clipboard write whose whole
-  purpose is to reach the user's clipboard is useless on the server. `term/event`
-  carries all four. OSC 52 specifically arrives as a *request* the local side
-  applies under the same policy a local terminal uses, because a remote program
-  writing your clipboard is a capability worth keeping deliberate.
+  one.** Besides `reported_working_directory()`, the parser on the host produces
+  the window/tab title, the bell, and OSC 52 clipboard writes
+  (`TerminalOscClipboard.h`) — and a clipboard write whose whole purpose is to reach
+  the user's clipboard is useless on the host. `term/event` carries all four. OSC
+  52 specifically arrives as a *request* the local side applies under the same
+  policy a local terminal uses, because a remote program writing your clipboard is a
+  capability worth keeping deliberate.
 
-  **There is no local echo prediction.** § 1 says nothing that pays a round trip
-  per keystroke can be the primary mode, and the remote terminal pays exactly that:
-  keystroke to echo is 1 RTT, and § 9 budgets it as such. That constraint is about
-  the *editor*, where a per-keystroke round trip would make the product unusable and
-  where the mirror removes it entirely. A terminal is different in kind — it is
-  already a remote conversation, and every ssh user accepts this latency — but the
-  asymmetry is stated here so it does not read as an oversight. Predicting echo
-  locally, mosh-style, would mean a second terminal model on the client guessing at
-  the host's, which is the duplication shipping screen state removed.
+  **Echo is predicted locally, mosh-style, and this reverses an earlier
+  decision.** The previous revision refused local echo prediction on the grounds
+  that it "would mean a second terminal model on the client guessing at the
+  host's". That overstates what mosh does. Its prediction engine is an **overlay**
+  of about a thousand lines, not an emulator: it predicts a printable character
+  appearing at the cursor and the cursor advancing, and a backspace erasing one,
+  draws the prediction in a distinct style, and validates every prediction against
+  the next confirmed frame. It predicts nothing for control sequences, nothing at
+  the right margin, nothing while the cursor is hidden or on the alternate screen
+  unless the program has proven to echo, and it turns itself off after a
+  contradicted prediction until predictions agree again. Inside a full-screen
+  program it predicts and is corrected a round trip later, which is why `vim`
+  under mosh still works.
 
-  **Terminal I/O gets its own ssh channel**, a second `microide-agent --terminals`
-  on the same ControlMaster. Sharing one channel with manifest pulls and file reads
-  would let a multi-megabyte transfer head-of-line block keystroke echo, which is
-  the one latency a user feels directly. A separate channel on an existing master
-  costs milliseconds to open and removes the coupling entirely.
+  `TerminalPredictionOverlay` is that engine: a pure value type over the
+  `TerminalLine` snapshot the local side already renders, with three inputs — the
+  semantic events the user typed (each with its `input_seq`), the confirmed
+  screens as they arrive (each with its `echo_ack`), and the RTT estimate from
+  `link/ping`. A prediction is **confirmed** when a frame with `echo_ack ≥ seq`
+  shows the predicted cell, **contradicted** when such a frame shows something
+  else, and **pending** until then; only pending predictions are drawn, underlined,
+  and a contradicted one is gone within one round trip. The host sets `echo_ack`
+  the way mosh does: to the latest input it has written to the pty once the pty has
+  produced output since that write, or after 50 ms if it has not, so a frame never
+  claims to reflect input the program has not yet seen. `remote.predict` is
+  `adaptive` by default — predict only while the RTT estimate exceeds 30 ms, so on
+  a LAN the overlay is never visible — with `always` and `never` for people who
+  want one or the other. The budget in § 9 says what this buys: a typed glyph
+  paints in the same frame as the keystroke, and a wrong one is corrected within a
+  round trip.
+
+  **Terminal I/O rides the interactive lane of the one connection** (§ 6.4). The
+  earlier design gave it a second ssh channel; the lane plus the bound on
+  outstanding bulk bytes is what actually keeps a transfer from delaying an echo,
+  and channels are the scarce resource on a stock `sshd` (§ 1).
+
+  **Two attached clients and one pty** (§ 6.12) can disagree about size. The pty
+  takes the **smaller** of the attached sizes in each dimension, as tmux does, and
+  each client draws the unused margin as such; the alternative, resizing on every
+  client's whim, makes full-screen programs redraw every time either user touches
+  a window edge.
 
   `remote.shell` (project scope) overrides the remote login shell. A dropped link
   no longer ends the session; see § 6.12.
+
 - **OSC 7** cwd reports from a remote shell name server paths. The first consumer
   of `reported_working_directory()` (reveal-in-tree, open-terminal-here) maps
   through `ToMirror` or it resolves a server path against the local disk.
@@ -949,60 +1106,113 @@ local and host bytes: the manifest hash. So:
   tabs' `build-box · zsh`, so the two are never confused. Every other path to a new
   terminal in a remote project is remote.
 - **Everything that runs a command takes the same route** — tasks, `launch_label`
-  paths, formatter and tool invocations — or a session silently splits across two
-  machines.
+  paths, formatter and tool invocations, the language server, the debug adapter —
+  which is `proc/spawn` on the server (§ 6.4). Two things this buys beyond "one
+  machine". There is **no shell string anywhere**: argv is an array end to end, so
+  a path with a space or a quote is not a quoting bug and the user's login shell
+  being `fish` is not a compatibility matrix. And every one of these processes is
+  a child of the server, not of ssh, so **a dropped link stops none of them**: the
+  build keeps building, the debuggee keeps running under its adapter, the
+  formatter finishes. What happens to each on detach and reattach is a per-kind
+  policy in § 6.7, carried by `keep_on_detach`.
 
-### 6.6 Connection lifecycle and authentication
+### 6.6 Connection lifecycle, authentication and installation
 
 ```
- Disconnected ─▶ Connecting ─▶ StartingAgent ─▶ Syncing ─▶ Ready
-       ▲             │                              ▲         │
-       │             ▼ (ssh exits 255 / auth)       │         ▼ (link lost)
-       │        NeedsAuth ──(terminal tab: ssh -N)──┘     Reconnecting ─▶ Offline
-       └────────────────────── user: Disconnect ◀─────────────┴───────────┘
+ Disconnected ─▶ Connecting ─▶ StartingServer ─▶ Syncing ─▶ Ready
+       ▲             │              │   ▲                      │
+       │             ▼ (auth)       ▼   │ (missing / too old)  ▼ (3 pings missed, or ssh exits)
+       │        NeedsAuth        Installing ┘             Reconnecting ─▶ Offline
+       │        (terminal tab: ssh -N)                         │
+       └────────────────────── user: Disconnect ◀──────────────┴──────────────┘
 ```
 
 - **Connecting** runs `ssh -o BatchMode=yes -S <ctl> -o ControlMaster=auto
-  -o ControlPersist=10m -fN <host>`. `BatchMode` makes a passphrase, password or
-  2FA prompt fail fast instead of hanging on a TTY nobody can see.
+  -o ControlPersist=10m -fN -- <host>`. `BatchMode` makes a passphrase, password or
+  2FA prompt fail fast instead of hanging on a TTY nobody can see. Nothing else is
+  asked of the host: no inbound port, no forwarding, no `sshd_config` change, no
+  root (§ 1).
 - **NeedsAuth** opens a terminal tab in the panel running the same command
   *without* `BatchMode` and *with* a pty: the user answers the prompt in the
-  terminal they already have. The session watches for `<ctl>` to appear and
-  continues; the tab reads "connected, you can close this". No password field
-  ever exists in microide; no credential is stored.
-- **StartingAgent** attaches to the host daemon if one is running for this root,
-  and starts one if not (§ 6.12), then completes `agent/hello` / `agent/attach`.
-  A reattach here is the common case, not the exception: it is what reopening a
-  laptop does. `ssh: command not found` or a version mismatch is a terminal
-  error for this attempt with the install hint (the `.deb` name and
-  `remote.agent_command` to point at a non-PATH binary).
+  terminal they already have, including an unknown host key. The session watches
+  for `<ctl>` to appear and continues; the tab reads "connected, you can close
+  this". No password field ever exists in microide; no credential is stored.
+- **StartingServer** runs `ssh -S <ctl> -- <host> <server_command> attach` and
+  reads the first frame. Three outcomes. The relay found a running server for this
+  user, or started one, and `server/hello` succeeds — the common path, and what
+  reopening a laptop does. The command is not found, or `server/hello` reports a
+  protocol version outside the client's range — **Installing**. Or ssh itself
+  failed, which is a terminal error for this attempt with the exact command to
+  reproduce it.
+
+  `<server_command>` is `remote.server_command` when set, else
+  `~/.local/share/microide/server/microide-server`, else `microide-server` on
+  `PATH` — in that order, so a user who installed it by hand anywhere wins, and a
+  user who did nothing gets the self-installed one.
+- **Installing** copies the server over the connection it already has. The client
+  ships the static `microide-server` matching its own protocol version (bundled
+  with the client, or fetched once by `WorkspaceToolDownloader` under its sha256
+  manifest check) through
+
+  ```
+  ssh -S <ctl> -- <host> sh -c 'umask 077 && mkdir -p "$0" && cat > "$0/.microide-server.tmp" \
+    && chmod 700 "$0/.microide-server.tmp" && mv -f "$0/.microide-server.tmp" "$0/microide-server"' \
+    <install_dir>
+  ```
+
+  then returns to StartingServer. That is the **only** shell command this design
+  ever sends; its one variable is a directory the client chose, it travels as
+  `$0` rather than being spliced into the script, and the directory string is
+  validated to the same character set as a host. No `.deb`, no `PATH` edit, no
+  root, no per-release visit to every host: a version mismatch installs the
+  matching version beside the running one and asks before restarting a server
+  that has live terminals (§ 6.12). `remote.server_install = off` turns this into
+  the error message with the copy command instead, for a user who wants to manage
+  the binary.
+
+  The binary is **statically linked against musl**, built from the SDL-free kernel
+  (Groundwork G1), so it runs on an older distribution than the client was built
+  on and needs no shared library on the host; a glibc-static build would still
+  pull in NSS at `getpwuid`, which the server avoids by reading `$HOME` and
+  `getuid()` only. The install directory is created 0700 and the binary 0700.
 - **Syncing** is § 6.2's population; the project is usable from the manifest on.
-- **Reconnecting** applies exponential backoff from 1 s to 30 s while the tree
-  stays editable; **Offline** is the user-visible name after the first failed
-  retry, and after `Disconnect`. Reconnect is automatic unless `remote.reconnect`
-  is off.
+- **Reconnecting** begins when three `link/ping`s in a row go unanswered (§ 6.4)
+  or ssh exits — about six seconds after a link actually dies — and applies
+  exponential backoff from 1 s to 30 s while the tree stays editable. Every
+  reconnect is `server/attach` with the resume offsets (§ 6.12). **Offline** is
+  the user-visible name after the first failed retry, and after `Disconnect`.
+  Reconnect is automatic unless `remote.reconnect` is off.
 - **Session restore with the host down** opens the project from the mirror
   immediately, in Offline, with every tab restored. Startup never waits on the
   network; connection is attempted after the first frame.
 
-### 6.7 Offline behavior
+### 6.7 Offline behavior, and what survives a dropped link
 
-Offline is a property of the *link*, not of the host: the daemon, its watch and
-its terminals keep running on the server (§ 6.12), and reconnecting picks them up.
-Locally, everything that reads or writes the tree works: open, edit, save,
-quick-open and compare between local files. **Search falls back to the local mirror and says so**
-— its header names the fallback and the last sync time, because offline results
-come from whatever bytes were pulled before the link dropped (§ 6.11). Files that
-were `stale` or `absent` at disconnect stay that way and are marked in the tree, and
-a `dirty` one keeps the user's bytes and is never pulled over on reconnect (§ 6.3);
-opening one reports that its content is not available offline rather than showing
-an older version as if it were current. Saves queue in the journal and the status
-segment counts them. Terminal tabs stop updating and are marked **detached**
-rather than closed — their shells are alive on the host and their output is
-buffered for reattach; LSP and DAP sessions end and their status shows
-disconnected; git actions are
-disabled with a tooltip naming the state; the remote-derived git metadata stays
-at its last value with a stale marker. On reconnect the queue flushes (§ 6.3).
+Offline is a property of the *link*, not of the host: the server, its watch, its
+terminals and every process it spawned keep running (§ 6.12), and reconnecting
+picks them up. Locally, everything that reads or writes the tree works: open,
+edit, save, quick-open and compare between local files. **Search falls back to the
+local mirror and says so** — its header names the fallback and the last sync time,
+because offline results come from whatever bytes were pulled before the link
+dropped (§ 6.11). Files that were `stale` or `absent` at disconnect stay that way
+and are marked in the tree, and a `dirty` one keeps the user's bytes and is never
+pulled over on reconnect (§ 6.3); opening one reports that its content is not
+available offline rather than showing an older version as if it were current.
+Saves queue in the journal and the status segment counts them. The remote-derived
+git metadata and status stay at their last values with a stale marker, and git
+actions are disabled with a tooltip naming the state. On reconnect the queue
+flushes (§ 6.3).
+
+What happens to each kind of host process is a stated policy, not a side effect of
+who its parent was:
+
+| process | while detached | on reattach |
+| --- | --- | --- |
+| **terminal shells** and everything started in them | keep running; output goes to the host scrollback ring; the tab is drawn dimmed with a `detached` badge | the screen and tail arrive (§ 6.12); a shell that exited shows its exit line |
+| **tasks** (`launch_label`, build and run commands) | keep running (`keep_on_detach`); stdio buffered under the credit window, overflow marked | output resumes from the offset the client had; a finished task shows its exit status |
+| **debug adapter** and its debuggee | the adapter and the program keep running; the client's debug-session UI ends | the client does not resume a DAP session, because DAP has no resume; it reports *"a debug session was still running: gdb pid 4242 on `./build/app`"* with **Stop** and **Leave running**, so a lid close never kills a program the user was in the middle of, and never silently leaves one either |
+| **language server** | ended by the server on detach (`keep_on_detach: false`): it holds no state the client cannot rebuild from its open buffers, and an idle clangd is memory the host would rather have back | restarted on first need, as a local one is after a crash |
+| **formatter**, plugin tools and other short-lived spawns | run to completion; the result is delivered on reattach if the handle is still wanted, otherwise discarded | a save whose format completed while detached applies under the same revision guard as always (G5) |
 
 ### 6.8 Identity and persistence
 
@@ -1036,38 +1246,57 @@ at its last value with a stale marker. On reconnect the queue flushes (§ 6.3).
 
 ### 6.9 Security posture
 
-- The agent refuses any **write** to a path that does not resolve (after symlink
-  resolution on the server) under `--root`; `..` and absolute paths in write
-  requests are rejected before any I/O. Every mutating method — `file/write`,
-  every `fs/op` — is confined, without exception.
+- **Only ssh is on the network.** No port is opened on either side, no UDP, no
+  forwarding, no credential handled by microide; host-key verification, agent
+  forwarding, identities and jump hosts are ssh's. `remote.ssh_options` (User
+  scope only, never Project — a repository's config must not be able to add
+  `-oProxyCommand=`) appends to the command line and `~/.ssh/config` is honored by
+  construction. microide never disables `StrictHostKeyChecking`. Host and user
+  strings from `ssh://`, the scp form, recents and the control channel are
+  validated before they reach an argv and always follow `--` (§ 6.4).
+- **No shell command carries user data.** Every process on the host is a
+  `proc/spawn` with argv as an array, so there is nothing to quote and no login
+  shell whose quoting rules matter. The one shell command this design sends is the
+  installer's (§ 6.6), whose only variable is a directory the client chose and
+  validated.
+- The server refuses any **write** to a path that does not resolve (after symlink
+  resolution on the host) under the workspace root; `..` and absolute paths in
+  write requests are rejected before any I/O. Every mutating method — `file/write`,
+  every `fs/op` — is confined, without exception. `proc/spawn`'s `cwd` is confined
+  the same way; its argv is not, because a process can `cd` anywhere the user can.
 - **`file/read` is deliberately not confined, because read confinement is not a
   boundary here.** § 6.5 needs to open a system header a stack frame named and a
   generated file under an ignored directory, so a blanket "confine every path" makes
-  go-to-definition fail on exactly the files it is most often used for. Confinement
-  is worth keeping for writes and is theatre for reads: the same authenticated ssh connection carries `RemoteProcessLauncher`, and
-  the user has a shell on that host in a terminal tab, so anything `file/read` could
-  return is already one `cat` away. What it must not do is let a *read* become a
-  write or a foothold, so it never follows a path into a write, its results are
-  materialized under `meta/external/` and never inside `tree/`, they are opened
-  read-only, and they never enter a manifest or a push. The agent still refuses to
-  read a path the client did not receive from the host in a reply of its own.
+  go-to-definition fail on exactly the files it is most often used for. The same
+  authenticated connection carries `proc/spawn`, and the user has a shell on that
+  host in a terminal tab, so anything `file/read` could return is already one `cat`
+  away. What it must not do is let a *read* become a write or a foothold: it never
+  follows a path into a write, its results are materialized under `meta/external/`
+  and never inside `tree/`, they are opened read-only, and they never enter a
+  manifest or a push.
 - Remote execution is **unsandboxed**: `SubprocessSandbox` confines the local
-  `ssh` and nothing on the server. `SECURITY.md` states this, and the plugin
-  trust model states that a plugin-issued command in a remote project runs on
-  the host with the user's remote privileges.
-- Host-key verification, agent forwarding, identities and jump hosts are ssh's:
-  `remote.ssh_options` appends to the command line and `~/.ssh/config` is
-  honored by construction. microide never disables `StrictHostKeyChecking`.
-- `<ctl>` lives in a 0700 directory under `$XDG_RUNTIME_DIR`; the mirror is 0700.
-- **The agent socket refuses a world-writable parent rather than falling back to
-  one.** See § 6.12: on a host with no `$XDG_RUNTIME_DIR` the tempting fallback is
-  `/tmp`, and a predictable socket path under a world-writable directory on a
-  shared build box is a hijack, not a leak.
+  `ssh` and nothing on the host. `SECURITY.md` states this, and the plugin trust
+  model states that a plugin-issued command in a remote project runs on the host
+  with the user's remote privileges. `remote.shell` and `terminal.shell` are
+  Project-scoped, so a repository's config chooses a command that runs on the host
+  when a terminal opens — the same exposure a local project has today, stated.
+- **The server's socket lives in a directory it owns and verifies**, never in a
+  world-writable one (§ 6.12). The socket is 0600, the directory 0700, and the
+  server refuses to adopt a socket or a directory it did not create or whose owner
+  or mode is wrong. A predictable socket path under a directory another user can
+  write to is a hijack of an authenticated channel, not a leak. Any process of the
+  same uid may connect, as with tmux; that is the user's own trust domain.
 - **Local pull writes resolve before writing** (§ 6.2), so a recreated in-root
-  symlink cannot be used to land agent-supplied bytes outside the mirror. The
-  agent's server-side confinement and the client's local check are both required;
-  neither is a substitute for the other.
-- The agent's stdin is a hostile-input surface and is fuzzed (§ 10).
+  symlink cannot be used to land server-supplied bytes outside the mirror: the
+  engine opens with `openat2(RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS)` relative to
+  an `O_PATH` descriptor for `tree/` where the kernel has it (5.6+), and falls back
+  to `O_NOFOLLOW` on the final component plus a resolved-parent check. The server's
+  host-side confinement and the client's local check are both required; neither is
+  a substitute for the other.
+- The mirror is 0700; it holds source code that lived behind ssh, now at rest on
+  the user's disk, and `Remote: Remove Mirror` is how it leaves.
+- The server's stdin and the client's frame decoder are hostile-input surfaces and
+  are fuzzed (§ 10).
 
 ### 6.10 Thread discipline
 
@@ -1076,8 +1305,16 @@ the shell thread through the SDL wake used by `ControlChannelService` and the
 LSP client. `platform::RunSubprocess` stays banned in workspace units; the ssh
 spawns for git go through `ProjectBackgroundExecutor` exactly as local git does,
 and the RTT they now carry is why that invariant matters more, not less. The
-perf harness gets a scenario with a stalled fake agent asserting that no shell-
+perf harness gets a scenario with a stalled fake server asserting that no shell-
 thread frame exceeds 16 ms while the engine waits (§ 9).
+
+The remote launcher's `Run` blocks its caller's thread on a `proc/spawn` round
+trip exactly as the local one blocks on `waitpid`, so the existing rule — git on
+the background executor, never on the shell thread — is what keeps the RTT off
+the frame. The executor is a single serial queue per project; remotely that makes
+two git calls two round trips in sequence, which is why `git/status` is pushed
+(§ 6.5) and why read-only git requests are the first thing to move to a small
+pool if § 9's sidebar-refresh gate is missed.
 
 ### 6.11 Search runs on the host
 
@@ -1094,8 +1331,8 @@ misses in files never fetched. Under continuous agent writes that is the ordinar
 state of the mirror, so "search the mirror and warn when it is incomplete" is not
 good enough — the warning would be permanent and therefore ignored.
 
-Therefore, for a remote project in the Ready state, **`search/run` on the agent is
-the default**, not a Phase 3 optimization for big trees. The agent runs the
+Therefore, for a remote project in the Ready state, **`search/run` on the server is
+the default**, not a Phase 3 optimization for big trees. The server runs the
 existing `ProjectSearchService` in-process against the real tree and streams
 `search/results`; the local side renders them through the existing panel, mapping
 paths with `RemotePathMap`. This is also simply faster: no bytes cross the wire
@@ -1103,18 +1340,18 @@ except the matches.
 
 Two fallbacks, both explicit in the UI:
 
-- **Offline.** The agent is unreachable, so search runs locally over the mirror
+- **Offline.** The server is unreachable, so search runs locally over the mirror
   and the panel header says *"offline — searching your local copy, last synced
   14:02"*. Results are labelled, not silently served.
 - **`remote.search = local`.** For someone who wants offline-style search always.
   The same header label applies whenever it is in effect.
 
-**The host's search scope is the content set, not the host's tree.** The agent
+**The host's search scope is the content set, not the host's tree.** The server
 runs `ProjectSearchService` in-process against a real directory, and that directory
 contains everything the content set excludes: `build/`, `node_modules/`, `.venv/`,
 `.git`. Left alone, remote search returns hits in files the mirror has no row for
 and no path to, so opening a result is the `ToMirror` failure of § 6.5 reached
-through the most ordinary action in the panel. The agent therefore filters
+through the most ordinary action in the panel. The server therefore filters
 `search/run` to the content set by construction, and a hit outside it — which can
 only come from `remote.include` or from a path the user reached through § 6.5's
 read-only fetch — is returned labelled, opening read-only rather than pretending to
@@ -1135,96 +1372,120 @@ anything. A file an agent changed between the search and the replace then become
 conflict rather than a clobber, which is what the old sentence promised and the
 pull-first ordering is what makes true.
 
-### 6.12 The agent is persistent: detach and reattach
+### 6.12 The server is persistent: detach, reattach, and a server you can just run
 
 A laptop closes. A VPN drops. A user goes home and opens the same project from a
 different machine. In all three the work on the host — a build, a test run, an
 agent mid-refactor — must still be running, and reconnecting must show it rather
-than restart it. That requires the agent to **outlive the ssh connection**, which
-an agent spawned as a child of ssh does not: it dies with the connection.
+than restart it. That requires the server to **outlive the ssh connection**, which
+a process spawned as a child of ssh does not: it dies with the connection.
 
-- **The agent is a daemon keyed to `(uid, remote_root)`**, not a child of a
-  connection. It binds an AF_UNIX socket at
-  `$XDG_RUNTIME_DIR/microide/agent-<hash>.sock` on the host and keeps running when
-  the connection goes away.
-- **`$XDG_RUNTIME_DIR` is frequently unset on exactly the connection this design
-  uses, and the fallback must not be `/tmp`.** It is set by the session manager
-  for a login session; a non-login, non-interactive `ssh host -- command` — which
-  is every connection here — often does not have it. This tree already met the
-  problem and its answer is a warning, not a precedent to copy:
-  `ControlChannelService` falls back to `/tmp`, records that the parent is then
-  **world-writable** (`ControlChannelService.cpp:258`), and treats every descriptor
-  found there as untrusted input (`:32`). For the control channel that is a
-  containable risk. For the agent it is not: the socket path is derived from a
-  hash of the root, so it is *predictable*, and a shared build server — precisely
-  where agents run as a service user — lets any local user pre-create that path,
-  accept the attach, and receive read and write access inside the project root
-  over a connection the user authenticated. So the agent resolves its runtime
-  directory in order — `$XDG_RUNTIME_DIR`, then `/run/user/<uid>` if it exists and
-  is owned by the uid and mode 0700 — and if neither is available it **refuses to
-  start**, reporting that the host has no per-user runtime directory and naming
-  `remote.agent_socket_dir` as the override for a host where the administrator has
-  provided one elsewhere. Before binding it verifies the parent's owner and mode,
-  and it never adopts an existing socket it did not create. Failing to start is a
-  legible error; starting on a hijackable path is a silent compromise.
+- **One server per user, serving many roots.** `microide-server` is a daemon keyed
+  to the **uid**, not to a root: it binds one socket and opens each root a client
+  asks for as a *workspace* with its own watcher, content set, hash cache, git
+  tracker and budgets. The earlier design ran one daemon per `(uid, root)` so one
+  project's watch budget and scrollback memory could not be at another's mercy;
+  that isolation is kept as per-workspace accounting inside one process, because
+  the requirement in § 1 — run one thing and use the box — wants one thing. A
+  workspace closes when its last client detaches, its idle timer expires **and** it
+  has no live terminal or kept process; the server as a whole exits when it has no
+  workspaces and was started on demand. **A server started by hand never
+  idle-exits.** `microide-server start` daemonizes and stays until
+  `microide-server stop`, the user's `Remote: Stop Host Server`, or the box
+  reboots; `microide-server status` prints the socket, the workspaces, their
+  terminals and processes. That is the drop-in: copy, run, connect — and if the
+  client is allowed to install (§ 6.6), skip the first two.
+- **The socket is under `$HOME`, and `/run/user/<uid>` is not required.** The
+  earlier revision put the socket in `$XDG_RUNTIME_DIR` and refused to start
+  without it. On a systemd host that directory is created by `pam_systemd` for a
+  login session and **removed when the user's last session ends** unless lingering
+  is enabled — and every connection here is a non-login `ssh host -- command`, so
+  the first disconnect with no other session removes the directory from under a
+  server that is still running. The next connect finds no socket, starts a second
+  server, which cannot bind either. Enabling linger for oneself from an ssh
+  session needs admin authentication under default polkit rules, so "run
+  `loginctl enable-linger`" is not advice an unprivileged user can take (§ 1). So
+  the socket directory is `~/.local/state/microide/server/`, created 0700 and
+  **verified on every bind** — owned by the uid, mode 0700, not a symlink, each
+  component opened with `O_PATH | O_NOFOLLOW` and checked — exactly as tmux
+  verifies `/tmp/tmux-<uid>/`; a directory that fails the check is refused with
+  the reason, never adopted. The earlier worry about a predictable path was about
+  a **world-writable parent**; a home directory is not one, and a host where
+  `$HOME` is group- or world-writable has larger problems than this socket, which
+  the check still reports. `remote.server_socket_dir` overrides it for a host
+  whose home is on a filesystem without AF_UNIX support (some network homes);
+  `$XDG_RUNTIME_DIR` is used only when the user points that override at it. The
+  108-byte AF_UNIX path cap applies, which is why the socket is named by uid, not
+  by root.
+- **Whether the host lets anything survive is reported, not assumed.** Two logind
+  settings decide it and the user controls neither. `KillUserProcesses=yes` kills
+  the session's cgroup at logout, server included, and no unprivileged process can
+  leave that cgroup without a user manager that itself dies at logout. The server
+  reads `/etc/systemd/logind.conf` and its drop-ins at start, reports
+  `session_survival: {kill_user_processes, linger}` in `server/hello`, and the
+  client shows a sticky row — *"build-box kills user processes at logout:
+  terminals will not survive a disconnect; ask an administrator for
+  `KillUserProcesses=no` or `loginctl enable-linger $USER`"* — so the limitation is
+  learned at connect rather than by losing a build. Ubuntu, Debian and RHEL default
+  to `no`, so the common host survives. `RemoveIPC=yes`, the other default that
+  bites long-running user processes, removes SysV IPC and POSIX shared memory at
+  logout; the server uses neither.
 - **This machinery already exists and is hardened.** `platform::ControlSocketServer`
   is an AF_UNIX server with one poll-based I/O thread, per-client fd management, a
   socket created 0600, stale-socket removal on bind, and recovery for the case
-  where `$XDG_RUNTIME_DIR` is cleaned out underneath a live process. It was written
-  for the control channel; the agent is the second user. The 108-byte AF_UNIX path
-  cap that bit the control channel applies here too, which is why the socket name
-  is a hash rather than the root path.
-- **Connecting is attach-or-start.** `ssh -S <ctl> <host> -- microide-agent
-  --root <path> --attach` connects to the existing socket and relays stdio to it;
-  if no agent is running it starts one, daemonizes it and relays to that. The local
-  side does not care which happened, beyond what `agent/hello` reports.
+  where the socket file is removed under a live process. It was written for the
+  control channel; the server is the second user, and the directory ownership
+  check above is the one addition.
+- **Connecting is attach-or-start.** `ssh -S <ctl> -- <host> microide-server attach`
+  connects to the socket and relays stdio to it; if no server is running it starts
+  one, daemonizes it and relays to that. The local side does not care which
+  happened, beyond what `server/hello` reports. `attach` is the only non-daemon
+  mode of the binary and it is small: a relay loop and the start logic.
 - **Daemonizing detaches stdio explicitly, or the connection that started it never
   returns.** `ssh -- command` does not exit while any process holds the inherited
   stdout or stderr open, so a daemon that forks and keeps them — the default if
   nobody thinks about it — leaves the starting `ssh` alive forever and
-  `StartingAgent` waiting on a handshake that already succeeded. The failure looks
-  like a hang in connection setup and has nothing to do with the protocol. So the
-  started daemon closes and reopens 0, 1 and 2 on `/dev/null` (its diagnostics go
-  to a log file under its runtime directory) and `setsid`s before the relay client
-  reports success, and the relay distinguishes *started* from *still holding my
+  `StartingServer` waiting on a handshake that already succeeded. So the started
+  daemon closes and reopens 0, 1 and 2 on `/dev/null` (its diagnostics go to a
+  size-capped log file beside its socket) and `setsid`s before the relay reports
+  success, and the relay distinguishes *started* from *still holding my
   descriptors* by waiting on the socket becoming connectable, never on the spawn
   exiting. This is the same descriptor discipline `CheckDescriptorCreationIsCloseOnExec`
   enforces locally, applied to the one process this design starts on a machine the
   lint cannot see.
-- **`agent/attach` carries the last `manifest_id`.** A reattaching client says what
-  it already knows and gets back only what changed since, plus the set of live
-  terminal handles. A cold client omits it and gets a full manifest. Designing this
-  in from the start matters: an agent protocol that assumes a fresh start per
-  connection cannot be retrofitted with resume without a protocol break, because
-  the server has no reason to have kept the state.
+- **`server/attach` carries the last `manifest_id`.** A reattaching client says
+  what it already knows and gets back only what changed since, plus the set of live
+  terminal and process handles. A cold client omits it and gets a full manifest.
+  Designing this in from the start matters: a protocol that assumes a fresh start
+  per connection cannot be retrofitted with resume without a protocol break,
+  because the server has no reason to have kept the state.
 
-  **A `manifest_id` is scoped to a daemon instance, not to a tree.** The resume
+  **A `manifest_id` is scoped to a server instance, not to a tree.** The resume
   token means "send me what changed since", which only a process that *watched*
-  the interval can answer. A daemon that idle-exited and was restarted by the next
-  connection — the ordinary case after 30 minutes, and § 6.6 says reattach is the
-  common path — has watched nothing, and an id derived from tree content would let
-  it accept a token whose interval it cannot account for and reply "nothing
-  changed". That is a resume that silently skips every change made while nobody was
+  the interval can answer. A server that exited and was restarted by the next
+  connection has watched nothing, and an id derived from tree content would let it
+  accept a token whose interval it cannot account for and reply "nothing changed".
+  That is a resume that silently skips every change made while nobody was
   attached, and it looks exactly like a working reattach. So the id is
-  `(daemon_epoch, sequence)` with `daemon_epoch` unique per daemon process
-  (§ 6.4's `agent/hello`), an id from a different epoch is refused rather than
+  `(daemon_epoch, sequence)` with `daemon_epoch` unique per server process
+  (§ 6.4's `server/hello`), an id from a different epoch is refused rather than
   interpreted, and the client falls back to the full manifest diff it would have
   done cold. That diff is cheap — it is why the mirror survives a week away — so
   the conservative answer costs nothing and the optimistic one is a correctness
   hole.
 - **Terminals survive, and so does their history.** The shells are children of the
-  daemon, holding host ptys, so a dropped link is invisible to them.
+  server, holding host ptys, so a dropped link is invisible to them.
 
   **The host holds the authoritative scrollback**, not just the bytes produced
   while nobody was attached. Buffering only the detached window would be enough
   for the same client reconnecting — it still has its own scrollback in memory —
-  but it is wrong for the two cases § 6.12 exists to support: attaching from a
-  *different machine*, and reopening after restarting microide. Both have an empty
-  local buffer, and a live terminal showing no history is not a reattached session.
-  So there is **one** scrollback per terminal, it lives with the pty on the host,
-  it is sized by the existing `terminal.scrollback_lines` (default 2,000, up to
-  100,000), and the local terminal renders a view of it. This is the same rule the
-  mirror already follows: the side that owns the thing is the truth.
+  but it is wrong for the two cases this section exists to support: attaching from
+  a *different machine*, and reopening after restarting microide. Both have an
+  empty local buffer, and a live terminal showing no history is not a reattached
+  session. So there is **one** scrollback per terminal, it lives with the pty on
+  the host, it is sized by the existing `terminal.scrollback_lines` (default
+  2,000, up to 100,000), and the local terminal renders a view of it. This is the
+  same rule the mirror already follows: the side that owns the thing is the truth.
 
   **Resume carries an offset, and the primitive already exists.**
   `TerminalSession::ScrollbackTrimTotal()` is a monotonic count of lines trimmed
@@ -1232,7 +1493,8 @@ an agent spawned as a child of ssh does not: it dies with the connection.
   so a reader can resume across a concurrent trim. The protocol carries that same
   counter per handle: a client says which line it has through, and the host sends
   from there. Nothing is re-sent and nothing is duplicated, which is exactly the
-  role `manifest_id` plays for files.
+  role `manifest_id` plays for files. Process handles (`proc/*`) carry a byte
+  offset per stream for the same reason.
 
   **What arrives on attach is the tail, not the archive.** The visible screen plus
   `remote.scrollback_prefetch_lines` (default 500) comes immediately so the tab
@@ -1248,42 +1510,44 @@ an agent spawned as a child of ssh does not: it dies with the connection.
   **Full-screen programs need no special case.** The alternate screen has no
   scrollback by construction, so reattaching to `vim` or `htop` wants the current
   screen and nothing else — which, now that the host ships screen state rather than
-  bytes (§ 6.5), is simply what a `term/screen` message already is. Under a
-  byte-replay model this would be an exception to name; here it is the ordinary
-  path, and the scrollback prefetch below is what is exceptional.
+  bytes (§ 6.5), is simply what a `term/screen` message already is.
 
   **Overflow is marked, never silent.** A verbose build that outran the ring while
   detached drops the oldest lines and the tab shows a rule saying so, with the
   count. A gap the user can see is recoverable; one they cannot is a bug report.
 - **Two clients may attach at once**, which is what "open it from the other
-  machine" means. Both get the same events; terminal handles are shared and their
-  output fans out to both. This is a deliberate small amount of collaboration
-  falling out of the daemon model, not a collaboration feature — there is no shared
-  cursor and no shared buffer state, because each client has its own mirror.
-- **Settings the daemon consumes arrive at attach, and the value that protects the
+  machine" means. Both get the same events; terminal handles are shared, their
+  output fans out to both, and the pty takes the smaller of the two sizes
+  (§ 6.5). This is a deliberate small amount of collaboration falling out of the
+  daemon model, not a collaboration feature — there is no shared cursor and no
+  shared buffer state, because each client has its own mirror.
+- **Settings the server consumes arrive at attach, and the value that protects the
   host wins.** `terminal.scrollback_lines`, `remote.host_scrollback_budget`,
   `remote.max_manifest_files`, `remote.term_credit_bytes` and
-  `remote.agent_idle_timeout` are read on the host by a process that has no settings
-  registry and may be serving two clients with different values. Each client sends
-  its values in `agent/hello` / `agent/attach`. The daemon applies, per setting, the
-  **minimum** of any memory budget or cap and the **maximum** of any timeout or
-  history size, and reports the effective values in the reply, so a client whose
-  request was overridden can show that in `Remote: Show Status` rather than
-  wondering why its scrollback is shorter than it asked for.
-- **Lifetime.** The daemon exits after `remote.agent_idle_timeout` (default 30
-  minutes) with no attached client **and** no live terminal handle; a running
-  terminal keeps it alive indefinitely, because that is the whole point. `Remote:
-  Stop Host Agent` ends it explicitly. A version mismatch between a reattaching
-  client and a running daemon is reported with both versions and offers to restart
-  the daemon, which ends its terminals — stated plainly, because it is the one
-  routine action that loses running work.
+  `remote.server_idle_timeout` are read on the host by a process that has no
+  settings registry and may be serving two clients with different values. Each
+  client sends its values in `server/hello` / `server/attach`. The server applies,
+  per setting, the **minimum** of any memory budget or cap and the **maximum** of
+  any timeout or history size, and reports the effective values in the reply, so a
+  client whose request was overridden can show that in `Remote: Show Status`
+  rather than wondering why its scrollback is shorter than it asked for.
+- **Lifetime.** A workspace closes after `remote.server_idle_timeout` (default 30
+  minutes) with no attached client **and** no live terminal or kept process; a
+  running terminal keeps it open indefinitely, because that is the whole point. A
+  server started on demand exits with its last workspace; one started by hand does
+  not. `Remote: Stop Host Server` ends it explicitly. A protocol mismatch between a
+  reattaching client and a running server installs the matching binary (§ 6.6)
+  and offers to restart the server, which ends its terminals and processes —
+  stated plainly, because it is the one routine action that loses running work.
+  Phase 3 looks at a restart that hands its ptys and processes to the new binary
+  over the socket with `SCM_RIGHTS`, which would make it lose nothing.
 - **The mirror is unaffected either way.** It is local, on disk, and journaled, so
   a client that reattaches after a week is a manifest diff, not a re-clone.
 
 What this does **not** do is move the editing session to the host. Tabs, layout,
 cursors and undo stay local, in the mirror's project state, and restore from there
 as they do for any local project. The thing that reattaches is the host-side work:
-the file state, the watch, and the terminals.
+the file state, the watch, the processes and the terminals.
 
 ### 6.13 Local and remote projects side by side
 
@@ -1348,16 +1612,16 @@ where the compare is opened, not inside it. The conflict Compare in § 7.7 was
 always correct, because it explicitly fetches the remote content; this makes the
 general case behave the same way.
 
-The cost is worth stating, and the two halves of it are keyed differently on
-purpose. The **daemon** is per `(uid, remote_root)`, so two remote projects on the
-same host get two, deliberately: sharing one across roots would put one project's
-watch budget and scrollback memory at the mercy of another's. The **ControlMaster**
-is per `(user, host, port)` and is therefore *shared* by both — multiplexing many
-channels over one authenticated connection is the entire reason ssh has masters,
-and one master per project would pay a second handshake and a second
-`ControlPersist` lifetime to obtain nothing. The
-master is reference-counted across the projects using it and torn down when the
-last one closes.
+The cost is worth stating. The **server** is one per user on the host and two
+remote projects on it are two workspaces inside it, each with its own watch budget,
+scrollback budget and hash cache, so one project's churn cannot starve another's
+(§ 6.12). The **ControlMaster** is per `(user, host, port)` and is *shared* by both
+— multiplexing channels over one authenticated connection is the entire reason ssh
+has masters, and one master per project would pay a second handshake and a second
+`ControlPersist` lifetime to obtain nothing. Each open project is one channel on it
+(§ 6.4), so two projects use two of the host's ten sessions, not twenty. The master
+is reference-counted across the projects using it and torn down when the last one
+closes.
 
 ## 7. UI
 
@@ -1371,7 +1635,7 @@ plugin-owned or render-TU product logic.
 | --- | --- |
 | Welcome (no project) | An **Open Remote Folder…** action beside Open Folder… (`WelcomeHitRegion::Kind::OpenRemote`). Remote entries in the recents list show a host badge (`host:/path`, never the mirror path). |
 | File menu | **Open Remote Folder…** under Open Folder…, `ActionId::ProjectOpenRemote`. |
-| Command palette | `Remote: Open Folder…`, `Remote: Reconnect`, `Remote: Disconnect`, `Remote: Resync (full manifest)`, `Remote: Show Status`, `Remote: Open Terminal on Host`, `Remote: Remove Mirror`. Availability follows connection state (`WorkspaceActionAvailability`). |
+| Command palette | `Remote: Open Folder…`, `Remote: Open Terminal on Host…` (Phase 2a: a host's terminals with no project, § 8), `Remote: Reconnect`, `Remote: Disconnect`, `Remote: Resync (full manifest)`, `Remote: Show Status`, `Remote: Open Terminal on Host`, `Remote: Open Local Terminal`, `Remote: Reinstall Server on Host`, `Remote: Stop Host Server`, `Remote: Remove Mirror`. Availability follows connection state (`WorkspaceActionAvailability`). |
 | Command line / control channel | `project-open ssh://[user@]host/abs/path` and `project-open-remote [user@]host:/abs/path`. The `ssh://` form is canonical; the scp form is accepted when the string is not an existing local path. This is also what the headless tests drive. |
 | CLI | `microide ssh://host/path` opens straight into a remote project. |
 
@@ -1401,13 +1665,13 @@ sidebar appear **immediately** and the editor area shows the project home with a
 
 ```
   build-box:/srv/work/microide
-  ✓ connected            ✓ agent 2.12.0        ● syncing 1,204 / 4,258 files · 6.1 MiB   00:07
+  ✓ connected            ✓ server 2.12.0        ● syncing 1,204 / 4,258 files · 6.1 MiB   00:07
                                                                        [Cancel]  [Details]
 ```
 
 - Rows advance through § 6.6's states; a failed stage shows the reason and the
-  exact command to reproduce it in a terminal (`ssh -o BatchMode=yes host
-  microide-agent --version`), plus a **Retry** and, for auth, **Open Terminal**.
+  exact command to reproduce it in a terminal (`ssh -o BatchMode=yes -- host
+  microide-server --version`), plus a **Retry** and, for auth, **Open Terminal**.
 - The sidebar tree renders from the manifest after the first round trip; rows
   whose content is pending are drawn dimmed. Opening one puts it at the front of
   the queue; the tab shows a one-line "fetching from host…" placeholder until the
@@ -1459,7 +1723,10 @@ Through `NotificationService`, each with the one action that matters:
 | link lost, working offline | warning | Reconnect |
 | `path` changed on host while you have local changes | warning | Compare |
 | host switched to branch `x`, resyncing N files | info | — |
-| agent not found or version mismatch | error | Copy install command |
+| installing or upgrading the server on the host (progress) | info, sticky | — |
+| server could not be installed (`remote.server_install` off, or the copy failed) | error | Copy install command |
+| host kills user processes at logout, or cannot keep a session (§ 6.12) | warning, sticky | Show |
+| a debug session was still running on reattach (§ 6.7) | warning | Stop / Leave running |
 | authentication required | warning | Open Terminal |
 | initial sync complete (only if it took over 5 s) | info | — |
 
@@ -1519,28 +1786,29 @@ true.
 | `remote.exclude` | Project | globs | empty | paths never mirrored, on top of git's ignore rules and `project.files_exclude` |
 | `remote.include` | Project | globs | empty | ignored paths to mirror anyway — indexed, searchable and editable; reaching one read-only needs no setting (§ 6.5) |
 | `remote.max_file_bytes` | User | int | 8 MiB | above this a file is listed and fetched on demand only |
-| `remote.ssh_options` | User | string | empty | appended to every ssh argv |
-| `remote.agent_command` | User | string | `microide-agent` | for a non-PATH install |
+| `remote.ssh_options` | User | string | empty | appended to every ssh argv; User scope only, because a repository's config must not choose ssh options (§ 6.9) |
+| `remote.server_command` | User | string | empty | the server command on the host; empty means `~/.local/share/microide/server/microide-server`, then `microide-server` on `PATH` (§ 6.6) |
+| `remote.server_install` | User | enum `auto`/`off` | `auto` | install or upgrade the server over the connection when `server/hello` says it is missing or too old; `off` shows the copy command instead (§ 6.6) |
 | `remote.shell` | Project | string | empty (= remote `$SHELL`) | remote login shell |
+| `remote.predict` | User | enum `adaptive`/`always`/`never` | `adaptive` | mosh-style predicted echo in remote terminals; `adaptive` predicts only while the RTT estimate exceeds 30 ms (§ 6.5) |
 | `remote.reconnect` | User | bool | on | automatic reconnect |
 | `remote.search` | Project | enum `host`/`local` | `host` | where project search runs (§ 6.11) |
 | `remote.resync_threshold` | User | int | 2000 | change-batch size above which the engine re-diffs a full manifest instead of applying rows |
 | `remote.pull_concurrency` | User | int | 4 | content fetches in flight |
-| `remote.agent_idle_timeout` | User | int (min) | 30 | daemon exit delay with no client and no live terminal (§ 6.12) |
+| `remote.server_idle_timeout` | User | int (min) | 30 | workspace close delay with no client and no live terminal or kept process; a server started by hand never idle-exits (§ 6.12) |
 | `remote.scrollback_prefetch_lines` | User | int | 500 | scrollback sent on attach before lazy backfill (§ 6.12) |
-| `remote.host_scrollback_budget` | User | int | 64 MiB | total host memory across all terminal rings for one daemon; the oldest lines of the least-recently-active terminal are dropped first |
+| `remote.host_scrollback_budget` | User | int | 64 MiB | total host memory across all terminal rings for one server; the oldest lines of the least-recently-active terminal are dropped first |
 | `remote.max_manifest_files` | User | int | 50000 | hard cap on the content set; exceeding it fails the connection rather than truncating the manifest (§ 6.2) |
-| `remote.term_credit_bytes` | User | int | 256 KiB | per-terminal outstanding output before the host drops with a marked gap (§ 6.4) |
-| `remote.agent_socket_dir` | User | path | empty | override for a host with no per-user runtime directory; empty means resolve `$XDG_RUNTIME_DIR` then `/run/user/<uid>`, and refuse if neither qualifies (§ 6.12) |
+| `remote.term_credit_bytes` | User | int | 256 KiB | per-terminal and per-process outstanding output before the host drops with a marked gap (§ 6.4) |
+| `remote.server_socket_dir` | User | path | empty | override for the server's socket directory; empty means `~/.local/state/microide/server/`, owner-verified on every bind (§ 6.12) |
 | `remote.mass_delete_threshold` | User | percent | 25 | share of the manifest a single diff may delete before it prompts instead of applying; floor of 100 rows (§ 6.3) |
 | `remote.object_store_budget` | User | int | 2 GiB | per-mirror cap on `meta/objects/`; unreachable objects are swept oldest-first down to it (§ 6.2) |
-| `remote.backfill_inflight_bytes` | User | int | 256 KiB | unacknowledged bytes idle backfill may have outstanding, so an interactive fetch is never queued behind a bulk one (§ 6.4) |
-| `remote.experimental_link_local` | User | bool | off | Phase 1's link-a-local-checkout mode; off, undocumented in the overlay, removed when Phase 2 lands (§ 8) |
+| `remote.backfill_inflight_bytes` | User | int | 0 (= adaptive) | unacknowledged bytes bulk traffic may have outstanding; 0 means about 100 ms of measured bandwidth, floored at 64 KiB and capped at 1 MiB (§ 6.4) |
 
 All registered in `WorkspaceSettingsRegistry` (the `CheckSettingsReadAreRegistered`
 lint makes an unregistered one fail the build). Project-scoped values persist in
 the project's state directory, keyed by `ProjectId` (§ 6.8), like any other project
-setting. The five the daemon consumes travel to the host at attach (§ 6.12).
+setting. The five the server consumes travel to the host at attach (§ 6.12).
 
 ### 7.9 Changed on Host
 
@@ -1568,7 +1836,7 @@ Each phase is independently useful and independently measurable.
 
 - **Groundwork — now, in the local tree, no remote code.** Ten changes that are
   worth making on their own merits and that happen to be exactly the seams the
-  rest of this design plugs into. Doing them now means Phase 1 is wiring rather
+  rest of this design plugs into. Doing them now means Phase 2 is wiring rather
   than refactoring, and if remote projects never ship, the tree is still better
   for every one of them.
 
@@ -1583,18 +1851,18 @@ Each phase is independently useful and independently measurable.
 
   1. **Split an SDL-free kernel out of the tree.** `microide_core` links SDL3
      (`CMakeLists.txt:38`) and puts `<SDL3/SDL.h>` into every core TU's precompiled
-     header (`CMakeLists.txt:20`), so every service the agent needs on the server
+     header (`CMakeLists.txt:20`), so every service the server needs on the host
      drags SDL, SDL_ttf and fontconfig with it. The coupling inside the kernel
      directories is narrow, but it is more than two things, and each needs a named
      home or the lint fails on day one:
 
      | coupling | where | replacement |
      | --- | --- | --- |
-     | the cross-thread wake: `SetWakeEventType(Uint32)` and `util::PushSdlWake` | `util/SdlWake.h`, `util/MainThreadMailbox`, and every producer that wakes the UI loop — over 40 files across `project`, `terminal`, `platform`, `plugin`, `workspace` and `app` | a `Waker` interface held by `MainThreadMailbox`: an SDL waker in the shell, an eventfd waker in the agent. `MainThreadMailbox` carries owed-wake and retry semantics (`HasUndeliveredWake`, `RetryWakeIfPending`) because `SDL_PushEvent` rejects on a full queue; the interface keeps that contract for the SDL implementation and lets the eventfd one report that it cannot fail. This is the bulk of G1's lines. |
+     | the cross-thread wake: `SetWakeEventType(Uint32)` and `util::PushSdlWake` | `util/SdlWake.h`, `util/MainThreadMailbox`, and every producer that wakes the UI loop — over 40 files across `project`, `terminal`, `platform`, `plugin`, `workspace` and `app` | a `Waker` interface held by `MainThreadMailbox`: an SDL waker in the shell, an eventfd waker in the server. `MainThreadMailbox` carries owed-wake and retry semantics (`HasUndeliveredWake`, `RetryWakeIfPending`) because `SDL_PushEvent` rejects on a full queue; the interface keeps that contract for the SDL implementation and lets the eventfd one report that it cannot fail. This is the bulk of G1's lines. |
      | SDL types in terminal data: `SDL_Color` in `TerminalCell`, `SDL_Keymod` in `TerminalSession`'s input API, `TerminalAnsiColors`' whole surface, `TerminalMouseEncoder`'s modifiers | `terminal/TerminalCell.h:43`, `TerminalSession.h:200,204`, `TerminalAnsiColors.h`, `TerminalMouseEncoder.h:36` | a plain `Rgba8` and a plain modifier bitmask, converted at the SDL boundary only |
      | `SDL_Log` | `platform/FileIndexWatcher.cpp:861,1719` | a kernel log sink in `util/`, which the shell binds to SDL's logger |
      | `SDL_getenv_unsafe`, `SDL_GetBasePath` | `platform/RuntimePaths.cpp:21,27` | `getenv` and `/proc/self/exe` |
-     | `SDL_OpenURL` | `platform/HostIntegration.cpp:74` | host integration moves to the shell layer; it is desktop-only by nature and the agent never opens a URL |
+     | `SDL_OpenURL` | `platform/HostIntegration.cpp:74` | host integration moves to the shell layer; it is desktop-only by nature and the server never opens a URL |
      | `Uint8` / `Uint32` | throughout the kernel directories | `std::uint8_t` / `std::uint32_t` |
 
      **The kernel is a CMake source list, not a set of directories.** `terminal/`
@@ -1615,8 +1883,8 @@ Each phase is independently useful and independently measurable.
 
      Three payoffs that have nothing to do with remote. The data model stops depending
      on the windowing library, which is a layering the tree half-has and never states.
-     A `microide-agent` binary becomes a couple of MB instead of thirty, which turns
-     install into "copy one static binary" and closes § 12's agent-install question.
+     A `microide-server` binary becomes a couple of MB instead of thirty, which turns
+     install into "copy one static binary" and closes § 12's server-install question.
      And the kernel's tests can run without SDL — **which requires a second test
      executable**, `microide_kernel_tests`, registered with the same sharding, added to
      `tools/run-checks.sh` (which builds and names `microide_tests`), the coverage lane
@@ -1805,7 +2073,7 @@ Each phase is independently useful and independently measurable.
      The local implementation is never unknown; the remote one is unknown from open
      until the first `git/metadata` arrives a round trip later, and the status bar
      and `is_git_repo_valid` render that as unknown rather than as "not a
-     repository". Designing the third state in now is what makes the agent's
+     repository". Designing the third state in now is what makes the server's
      `git/metadata` a drop-in implementation instead of a retrofit.
 
   10. **Route every write into a project tree through one gate.** Six subsystems
@@ -1865,7 +2133,7 @@ Each phase is independently useful and independently measurable.
   **What is deliberately *not* groundwork.** The two protocol-level decisions —
   content-addressed objects with binary framing (§ 6.4) and shipping terminal
   screen state rather than bytes (§ 6.5) — are Phase 2 work, not groundwork, because neither has a local consumer and neither can be exercised
-  without an agent to talk to. G1 is their precondition and that is the whole of
+  without a server to talk to. G1 is their precondition and that is the whole of
   their relationship to this phase.
 
   **One hard constraint on all remote work, worth stating before anyone starts:**
@@ -1878,66 +2146,57 @@ Each phase is independently useful and independently measurable.
 - **Phase 0 — no product code.** Document display forwarding as tier-0; ship
   `tools/remote-session.sh` (`xpra` attach/reattach) and a remote-shell wrapper for
   `terminal.shell`. Days.
-- **Phase 1 — remote processes for a local tree.** `RemoteHostSession` (ControlMaster,
-  state machine, auth via terminal tab), `RemotePathMap`, `RemoteProcessLauncher`,
-  `ProjectUriMapper` at the `FileUri` seam, remote git/LSP/DAP, the `remote.*`
-  settings, the status segment and notifications. A project opened from a **local
-  checkout** can declare a host and remote root (`Remote: Link This Project to a
-  Host…`) and get a remote toolchain over it — useful on its own for anyone who
-  syncs with git, and it lands the whole translation layer with every file I/O
-  still local. Best value per line in the design.
-
-  **Phase 1 is a development stepping stone, and § 12 no longer asks whether it
-  ships as a user feature — it does not.** With a local checkout and no mirror
-  there is no manifest and no hash, so *nothing relates the bytes on screen to the
-  host bytes that git, LSP and DAP are reporting on*. Diagnostics land on lines
-  the buffer does not have, the debugger stops at a line number that means
-  something else in your copy, and `git status` describes a tree you are not
-  looking at. That is § 6.11's argument with the detection removed: mirror search
-  is silently wrong and at least has a hash that could in principle say so, while
-  Phase 1 has no in-band signal of divergence at all. "The user keeps them in sync
-  with git" is a real workflow and an unenforced invariant, and an editor that
-  reports confidently from an unenforced invariant is the failure this design
-  exists to avoid. So Phase 1 ships behind `remote.experimental_link_local` (off,
-  User scope, undocumented in the Settings overlay), exists to land and exercise
-  the translation layer against a real host before Phase 2 depends on it, and is
-  deleted as a user-reachable mode when Phase 2 lands. Its value is that Phase 2
-  is then wiring; its value is not a shipped feature.
-
-  **The Phase 1 terminal is `ssh -tt` with a local pty, and it is interim.** There
-  is no daemon yet to own a host pty, so the shells are children of the connection
-  and die with it — the exact failure § 6.5 rejects. It ships anyway, for two
-  reasons: a phase that can build remotely but not run anything is not worth
-  testing, and after the groundwork's argv change the whole thing is *a different
-  argv*, not a feature. It is deleted in Phase 2 rather than migrated. The terminal
-  tab says so in its status line, because a limitation the user discovers by losing
-  a build is a bug report.
-- **Phase 2 — `microide-agent`, the mirror, the Open Remote flow.** The agent
-  as a **persistent daemon** with attach-or-start and host-side ptys (§ 6.5,
-  § 6.12) — both are protocol shape, so neither can be retrofitted cheaply —
-  plus manifest, read, write with CAS, fs ops, watch, git metadata and
-  **`search/run`**,
-  `MirrorSyncEngine` with journal, priority pulls, churn control and reconnect, the
-  `remote_hosts` record, the Open Remote overlay, the connecting block, dimmed
-  pending rows, the conflict Compare, offline mode. This is the product.
+- **Phase 1 is gone.** The previous revision had a "remote processes for a local
+  tree" phase of ~2,600 lines, shipped behind an experimental flag and deleted when
+  the mirror landed. Its stated value was exercising the translation layer against
+  a real host before Phase 2 depended on it. Two things changed under it: the
+  groundwork already made the launcher, the write gate and the URI seams
+  project-owned, so the "translation layer" is now the remote implementations of
+  three existing interfaces rather than a layer; and § 10's loopback server — the
+  real binary, over a pipe, with injected delay — exercises every one of them with
+  no host at all. Its interim `ssh -tt` terminal was the exact failure § 6.5
+  rejects. Throwaway code that is a sixth of the production estimate is not a
+  stepping stone.
+- **Phase 2a — the server, the terminals, reattach.** The protocol frame and
+  lanes, `link/ping`, `server/hello` and `server/attach`, the daemon with its
+  socket ownership checks and session-survival report, attach-or-start,
+  self-install, `proc/spawn` with the remote launcher on top of it, host-side ptys
+  with screen deltas, semantic input with `input_seq`/`echo_ack`,
+  `TerminalPredictionOverlay`, scrollback rings with resume offsets and the credit
+  window, the status segment, notifications and `Remote: Show Status`. **No mirror
+  yet**: this phase opens no remote *project*. It ships as a user-visible feature
+  on its own — *a host's terminals in microide, that survive a dropped link and
+  reattach, with predicted echo* — reached through `Remote: Open Terminal on
+  Host…`, and that is why it is first: it is where every protocol-shape decision
+  lives, it is the smaller of the two high-risk components (§ 8.1), and it is
+  useful to a user who syncs with git and wants nothing else. Remote git over
+  `proc/spawn` for a *local* checkout is deliberately **not** in it: that is the
+  old Phase 1's silent divergence, and it waits for the hashes.
+- **Phase 2b — the mirror and the Open Remote flow.** Manifest, fetch, write with
+  CAS, fs ops, watch, `git/metadata` and `git/status`, **`search/run`**,
+  `MirrorSyncEngine` with journal, priority pulls, churn control and reconnect,
+  `MirrorWriteGate`, the host-computed-position hash guard, the `remote_hosts`
+  record, the Open Remote overlay, the connecting block, dimmed pending rows, the
+  conflict Compare, offline mode. This is the product.
 
   Eight things in this phase look deferrable and are not: the four-state content
   model with base tracking, the `local-only` membership state, the mass-deletion
   guard, the object-store sweep, the hash guard on every host-computed position and
-  edit (§ 6.5), the read-only out-of-content-set fetch, semantic terminal input with
-  `term/event`, and the backfill in-flight bound. None is polish. Each is a case
-  where the phase without it ships a silent wrong answer or loses bytes, and each is
-  cheaper now than once a protocol and an on-disk layout exist to be compatible
-  with.
-  Host-side search is **in this phase, not deferred**: without it, search over a
-  content-stale mirror is silently wrong from the first agent write (§ 6.11), so
-  shipping the mirror without it ships a bug.
-- **Phase 3 — scale and polish.** Incremental hashing on the agent, the branch-switch
-  resync path tuned against a real multi-agent host, the **Changed on Host** view
-  (§ 7.9), perf gates in the harness, an `agent install` helper that copies the
-  running binary's `.deb` to the host, and **submodule content sets** — running the
-  content-set command per submodule root so a submodule is a mirrored subtree
-  rather than an empty gitlink row (§ 6.2).
+  edit (§ 6.5), the read-only out-of-content-set fetch, the persisted host hash
+  cache, and the adaptive bulk bound. None is polish. Each is a case where the
+  phase without it ships a silent wrong answer, loses bytes, or stalls on connect,
+  and each is cheaper now than once a protocol and an on-disk layout exist to be
+  compatible with. Host-side search is **in this phase, not deferred**: without it,
+  search over a content-stale mirror is silently wrong from the first agent write
+  (§ 6.11), so shipping the mirror without it ships a bug.
+- **Phase 3 — scale and polish.** The branch-switch resync path tuned against a
+  real multi-agent host, the **Changed on Host** view (§ 7.9), perf gates in the
+  harness, a read-only git request pool if § 9's sidebar gate is missed, a server
+  restart that hands its ptys to the new binary (§ 6.12), **submodule content
+  sets** — running the content-set command per submodule root so a submodule is a
+  mirrored subtree rather than an empty gitlink row (§ 6.2) — and the completion
+  list's local refiltering (TD-2026-10-07-320), a local win that remote makes
+  urgent because every keystroke in a completion is otherwise a round trip.
 - **Phase 4 — on-demand tier.** Only if measurements show a tree too big to
   mirror: a per-directory lazy mode where the manifest is fetched but content is
   never pre-pulled. The existing lazy population is most of it already.
@@ -1953,10 +2212,10 @@ plus its socket server 2,398, and git 3,704.
 | --- | --- | --- |
 | Groundwork (§ 8, local tree, ships with or without remote) | ~4,200 | ~3,800 |
 | Phase 0 (scripts and docs, no product code) | ~100 | — |
-| Phase 1 (remote processes over a local tree) | ~2,600 | ~2,200 |
-| Phase 2 (daemon, host terminal model, mirror, Open Remote flow) | ~9,000 | ~9,500 |
-| Phase 3 (scale and polish) | ~1,700 | ~1,450 |
-| **total** | **~17,600** | **~16,950** |
+| Phase 2a (server daemon, `proc/spawn`, self-install, host terminal model, prediction, reattach) | ~4,200 | ~4,400 |
+| Phase 2b (mirror, Open Remote flow, host search, hash guards) | ~6,000 | ~6,300 |
+| Phase 3 (scale and polish) | ~2,000 | ~1,700 |
+| **total** | **~16,500** | **~16,200** |
 
 Groundwork by item, since it is now the phase most likely to be scheduled on its
 own: G1 SDL-free kernel ~1,000 (mechanical across 40+ wake sites, plus the `Waker`
@@ -1970,14 +2229,18 @@ lint), G2 owned launcher ~400 across its eight spawn sites, G5 async save pipeli
 the lifetime, G6 content hashes ~250 (excluding vendored blake3), G3 argv-shaped
 terminal ~150.
 
-The heaviest single items, so a schedule can see where the mass is:
-`MirrorSyncEngine`'s four-state model with base tracking and the
+The heaviest single items, so a schedule can see where the mass is: the terminal
+prediction overlay with its validation and adaptive mode (~800), `proc/spawn` with
+per-handle stdio credit and the remote launcher over it (~300), self-install with
+the bundled static binary (~150), the session-survival report and socket-directory
+verification (~150), the lanes and the adaptive bulk bound (~120), `link/ping`
+(~60), `MirrorSyncEngine`'s four-state model with base tracking and the
 pull-never-over-dirty rule (~250), the host-computed-position hash guard across
 LSP, DAP and git (~250), semantic terminal input with host-side encoding and
 `term/event` (~250), the object-store sweep and the `ENOSPC` path (~200), the
 read-only out-of-content-set fetch and its external cache (~200), the `local-only`
 membership state and its persistence (~150), the credit window and gap marking for
-terminal output (~150), the mass-deletion guard with its prompt and the agent's
+terminal output (~150), the mass-deletion guard with its prompt and the server's
 root-health reporting (~120), the backfill in-flight bound and `op/cancel` (~120),
 runtime-directory resolution and socket ownership checks (~120), compare's pull
 promotion (~100), format-on-save sequencing (~100), local symlink-resolving writes
@@ -1996,12 +2259,12 @@ freeze it either, one door for every write into a project tree, notifications th
 can carry an action, and a project identity that cannot leak a cache path into the
 window title.
 
-Treat production as a band of 11,000–17,600 across roughly 35 new files: about 10%
+Treat production as a band of 11,000–16,500 across roughly 38 new files: about 10%
 growth on the source tree, and about the combined size of the four subsystems
 listed above. The largest single pieces are `MirrorSyncEngine` (~2,400 — it carries
 the base tracking, the membership states, the sweep and the deletion guard), the
-agent daemon (~1,700 plus ~800 for pty ownership, input encoding and the scrollback
-rings), `RemoteHostSession` (~800), `RemoteAgentClient` (~600) and the write gate
+server daemon (~1,700 plus ~800 for pty ownership, input encoding and the scrollback
+rings, plus ~300 for `proc/spawn`), `RemoteHostSession` (~800), `RemoteServerClient` (~600) and the write gate
 (~450, in Groundwork). Everything else is under 500 apiece.
 
 It is not larger because roughly 4,800 lines of exactly the needed machinery
@@ -2009,12 +2272,15 @@ already exist and are hardened: the stdio transport's queue and I/O-thread
 discipline (§ 6.4 reuses the behaviour and replaces only the codec),
 `AsyncSubprocess`, `ControlSocketServer`, the file scanner, the file index, both watchers, the change
 coalescer, `ProjectSearchService`, `TextFileIO`, and the persisted-record writer.
-The agent is mostly a dispatch loop over services this binary already runs.
+The server is mostly a dispatch loop over services this binary already runs.
 
 **Nearly all the correctness risk is in two components.** `MirrorSyncEngine` owns a
 thread, the four-state content model with its base tracking, compare-and-swap, the
 write gate's per-path locking, journal replay and the churn paths; the daemon owns process lifetime, pty multiplexing and scrollback
-resume. Those two carry the test weight and are where a schedule slips. The other
+resume. Those two carry the test weight and are where a schedule slips.
+`TerminalPredictionOverlay` is a distant third: pure and unit-testable against
+recorded frames, but every wrong prediction is a glyph the user saw and did not
+type. The other
 ~9,500 lines are wiring with a settled shape.
 
 Every design review of this plan has found its problems inside those same two
@@ -2026,8 +2292,8 @@ reassuring about the schedule for those two files.
 
 ## 9. Performance gates
 
-Measured in the perf harness against a local `microide-agent` with injected
-latency (`--agent-delay-ms`), so they run without a server:
+Measured in the perf harness against a local `microide-server` with injected
+latency (`--server-delay-ms`), so they run without a host:
 
 | gate | budget |
 | --- | --- |
@@ -2041,13 +2307,21 @@ latency (`--agent-delay-ms`), so they run without a server:
 | remote change → content visible in an open tab | ≤ 1 RTT + 250 ms + size / bandwidth |
 | 500-file agent burst on the host → tree consistent | ≤ 2 RTT; user-clicked file still opens within its own budget throughout |
 | branch switch on the host (1,800 files) → tree consistent | ≤ 3 RTT + manifest transfer |
-| shell-thread frame while the agent is stalled | never > 16 ms |
+| shell-thread frame while the server is stalled | never > 16 ms |
 | shell-thread frame during a 500-file burst | never > 16 ms |
 | project search, remote, warm | ≤ 1 RTT + host search time (no mirror bytes read) |
 | pull a stale file an agent edited in one place | delta transfer, ≤ 1 RTT + the delta, not the file |
 | branch switch where most files exist in both branches | objects already held transfer nothing; only the genuinely new content moves |
 | terminal on host → first prompt | ≤ 1 RTT + shell startup |
-| terminal keystroke → echo | ≤ 1 RTT + 5 ms, and unaffected by a concurrent bulk file transfer |
+| terminal keystroke → predicted glyph on screen (`remote.predict` active) | same frame as the keystroke; the confirmed frame replaces it with no visible change when the prediction was right |
+| terminal keystroke → confirmed echo | ≤ 1 RTT + 5 ms, and unaffected by a concurrent bulk transfer on the same channel — the gate is the lane plus the adaptive in-flight bound, so assert the delay with a 50 MiB backfill running |
+| a contradicted prediction | gone within 1 RTT of the keystroke; the engine predicts nothing further until the next confirmed frame agrees |
+| link dies (cable pulled, laptop roams) → Reconnecting | ≤ 6 s, by `link/ping`, not by ssh's keepalive |
+| warm reconnect to a server started by hand yesterday | ≤ 1 RTT + 500 ms; no install, no restart, every terminal resumes from its offset |
+| first connect to a host with no server installed | ≤ 2 RTT + binary size / bandwidth, with the Installing row visible throughout |
+| open the git sidebar in a Ready remote project | 0 RTT: rendered from the pushed `git/status` |
+| sidebar refresh after a push acks (status, log, blame) | ≤ 2 RTT on the serial executor; above that, read-only git moves to a pool (Phase 3) |
+| a `MaxSessions 1` host with one project, three terminals, a build task, clangd and gdb | works; one ssh channel, no second TCP connection, no second authentication |
 | terminal running a build that emits 10 MB/s | wire carries screen deltas plus credit-windowed lines, never the raw stream; frame time unaffected |
 | reattach to a daemon with 3 live terminals | ≤ 2 RTT to first repaint, visible screen + 500 lines each |
 | scroll back into un-backfilled history | ≤ 1 RTT per page, and never blocks the shell thread |
@@ -2062,7 +2336,7 @@ latency (`--agent-delay-ms`), so they run without a server:
 | manifest diff that deletes > 25% of the mirror | nothing in `tree/` is touched before the user answers |
 | terminal keystroke across a mode change (entering and leaving a full-screen program) | the bytes the pty receives are byte-identical to a local session's; the gate exists because the client no longer encodes |
 
-**Groundwork has gates of its own**, run in the existing harness with no agent and no
+**Groundwork has gates of its own**, run in the existing harness with no server and no
 network, because speed is this repo's first priority and a phase that only prepares
 for remote must not pay for it locally:
 
@@ -2072,15 +2346,15 @@ for remote must not pay for it locally:
 | save with a formatter that takes 5 s (G5) | shell-thread frame never > 16 ms; the tab shows a saving state; a keystroke during the wait is kept and the format result is dropped |
 | save an unchanged 100 MB file (G6) | zero bytes hashed — the stat prefilter is what the gate asserts |
 | watcher reports a change to an open 100 MB file (G6) | the hash runs off the shell thread; frame never > 16 ms |
-| `microide-agent` binary (G1) | static, ≤ 5 MB stripped, and links no SDL — asserted by the kernel include lint and by reading the dynamic section |
+| `microide-server` binary (G1) | static against musl, ≤ 6 MB stripped, links no SDL and no shared library — asserted by the kernel include lint and by `readelf -d` showing no `NEEDED` entry |
 | `microide_kernel_tests` (G1) | runs with no display and no SDL initialization |
 | `settings_change_many_tabs` (existing) | unchanged by G8; the state-directory memo still hits |
 | a save from every `viewport.Save()` entry point (G10) | one write, one hash, no re-stat |
 
 ## 10. Test strategy
 
-- **The agent is testable with no ssh.** `RemoteAgentClient` takes an argv, so a
-  test runs `microide-agent --root <fixture>` over a pipe with a delay flag;
+- **The server is testable with no ssh.** `RemoteServerClient` takes an argv, so a
+  test runs `microide-server attach --root <fixture> --server-delay-ms <n>` over a pipe, so every test runs against the real binary with injected latency;
   ssh is never a test dependency. A `remote.ssh_command` test seam (like the
   dialog `launcher` seams) points `RemoteHostSession` at a shim for lifecycle
   tests.
@@ -2090,7 +2364,7 @@ for remote must not pay for it locally:
   trailing-slash cases, `~/.ssh/config` parsing, `ssh://` and scp-form parsing,
   ControlPath length.
 - **Churn coverage, because the many-agents case is the product's normal state.**
-  A fixture that mutates the agent's tree from a second process while assertions
+  A fixture that mutates the server's tree from a second process while assertions
   run: a 500-file burst does not stall the user's file open; repeated writes to one
   path collapse to one pull; a batch over `remote.resync_threshold` takes the
   manifest path; a simulated `git checkout` (mass change + HEAD move) reports as
@@ -2098,13 +2372,13 @@ for remote must not pay for it locally:
   local save's local write and its push produces a conflict, never a clobber; and
   a file left `stale` is never served to search or shown in a tab without a pull.
   This is also where a vacuous pass is easiest to get: assert the number of
-  `object/fetch` requests the agent received, not just the final tree state, or a
+  `object/fetch` requests the server received, not just the final tree state, or a
   test that "passes" by pulling everything eagerly looks identical to one that
   prioritizes correctly.
 - Headless `--control` drives the UI flows (`project-open ssh://…` against the
-  local agent) and asserts status text, notifications and the connecting block
+  local server) and asserts status text, notifications and the connecting block
   through the existing view-model tests.
-- Fuzz: the agent's request decoder and the client's `tree/rows` / `watch/changed`
+- Fuzz: the server's request decoder and the client's `tree/rows` / `watch/changed`
   decoders, in the `PersistedRecordReaderFuzz` pattern.
 - **Detach/reattach coverage**, which is where a green suite is easiest to fake:
   kill the transport mid-session and assert the host shells are still alive and
@@ -2128,7 +2402,7 @@ for remote must not pay for it locally:
   block unrelated queued saves; an object delivered across two content frames
   reassembles byte-exactly when a multi-byte UTF-8 sequence **straddles the frame
   boundary** (a test that sends whole sequences cannot fail); a terminal producing faster than the link drains marks a
-  gap and leaves the transport and its sibling terminals alive; the agent refuses
+  gap and leaves the transport and its sibling terminals alive; the server refuses
   to start when no per-user runtime directory qualifies, and refuses to adopt a
   pre-existing socket it did not create; a pull whose manifest row names a path
   through a recreated in-root symlink does not write outside `tree/`; a content set
@@ -2138,9 +2412,9 @@ for remote must not pay for it locally:
   rather than a push followed by a remote-change reload.
 - **Coverage for the write-path and staleness failures.** Three of these destroy
   data, so each asserts the *bytes*, not the status: a plugin `files.write_text`, an LSP resource op, a replace-in-project and
-  a sidebar rename in a remote project each produce a push (assert the agent
+  a sidebar rename in a remote project each produce a push (assert the server
   received it) and survive a subsequent pull of that path; a path that is `dirty` is
-  never overwritten by a pull, asserted by parking a conflict, letting the agent
+  never overwritten by a pull, asserted by parking a conflict, letting the server
   write the file again, and checking the local bytes are still the user's; a pull
   and a local save racing on one path leave the mirror holding one of the two whole
   versions and the journal holding the other, never a mix; a file created under an
@@ -2148,7 +2422,7 @@ for remote must not pay for it locally:
   that fails without it is "create `debug.log`, resync, assert it is still there");
   an empty directory created in the sidebar survives the same; a manifest diff
   deleting more than the threshold leaves `tree/` untouched until answered, and the
-  agent reports a failed content-set command as an error rather than as an empty
+  server reports a failed content-set command as an error rather than as an empty
   set — assert the client never saw a delete; a diagnostic, a breakpoint and a stack
   frame naming a `stale` file are held and the file pulled, rather than drawn at the
   wrong lines (assert the rendered line, since "a diagnostic appeared" passes
@@ -2178,11 +2452,36 @@ for remote must not pay for it locally:
   or a shell header fails the include lint (with a positive fixture, per
   `validation-traps.md`); and `terminal.shell` set only in the user layer is still
   the shell a new terminal runs after the scope move.
+- **Prediction coverage**, against recorded frame sequences so it needs no pty: a
+  printable key produces a pending predicted cell in the same tick; a frame with
+  `echo_ack ≥ seq` showing that glyph confirms it with no visible change; one
+  showing another glyph removes it and suppresses further predictions until a frame
+  agrees; a key at the right margin, a control key, and a key while the cursor is
+  hidden predict nothing; `adaptive` predicts nothing while the RTT estimate is
+  under the threshold; and a mode change *during* a predicted burst (the host
+  enters the alternate screen between two keys) leaves the screen equal to the
+  confirmed frame, byte for byte.
+- **Link and lifecycle coverage** with the loopback server: three missed pings go
+  to Reconnecting within the budget and the reattach resumes every handle from its
+  offset; a server missing on the host is installed through the fixture's `sh` and
+  the retry succeeds; a protocol mismatch installs beside the running binary and
+  does not restart it while a terminal is live; a `proc/spawn` with an argv
+  containing spaces, quotes, `$HOME` and a newline reaches the child byte-identical
+  (the test that cannot fail is the one with plain words); a task running when the
+  client detaches is still running on reattach and its output resumes from the
+  offset with nothing duplicated; a debug adapter running at detach is still
+  running at reattach and the client reports it rather than resuming or killing
+  it; a socket directory with the wrong owner, the wrong mode or a symlink
+  component is refused with the reason; `server/hello` reports
+  `kill_user_processes` from a fixture `logind.conf` and the sticky row appears; a
+  host string beginning with `-` is rejected before any argv is built; and a
+  server started with `start` ignores the idle timeout while one started on demand
+  honours it.
 - TSAN over the engine thread and transport thread, and specifically over the
   gate's per-path lock with a pull and a save contending on one path; ASAN/UBSAN
-  over the agent.
+  over the server.
 - The perf scenarios in § 9, each in its own child process like every other
-  scenario, with a stalled-agent case for the frame-time gate.
+  scenario, with a stalled-server case for the frame-time gate.
 
 ## 11. Decisions (every open question, answered)
 
@@ -2192,9 +2491,9 @@ for remote must not pay for it locally:
 | Session restore when the host is down | Opens from the mirror instantly, Offline, all tabs; connects after first frame. § 6.6. |
 | Disconnect mid-edit | Cannot lose work: saves are local first, then journaled until acked. § 6.3. |
 | Credentials / passphrase prompt | `BatchMode` first; on failure the prompt is answered in a terminal tab running ssh. Nothing stored. § 6.6. |
-| Security posture | Remote execution unsandboxed and stated; agent confines paths; ssh owns host keys. § 6.9. |
+| Security posture | Remote execution unsandboxed and stated; the server confines writes; no shell command ever carries user data; only ssh is on the network; ssh owns host keys. § 6.9. |
 | Thread discipline | Engine + transport threads wait; shell thread never does; `RunSubprocess` ban stands. § 6.10. |
-| Where processes run | Always on the host, always via the same ControlMaster. The terminal's pty is on the host too, owned by the daemon; only the parser, scrollback view and input handling stay local. § 6.5, § 6.12. |
+| Where processes run | Always on the host, always as children of the server through `proc/spawn` with argv as an array — never a shell string, never a child of ssh. The terminal's pty is on the host too; only the view, the prediction overlay and input handling stay local. § 6.5, § 6.12. |
 | Who decides the content set | The server, with git's ignore rules; `.git` excluded. § 6.2. |
 | Cross-machine mtimes | Never compared. Hashes carry identity. § 6.2. |
 | Content encoding on the wire | Raw bytes in a length-prefixed binary content frame — no JSON string escaping and no base64. The hazard a text codec would carry, split UTF-8 sequences in a chunked terminal stream, is recorded in § 6.4 so a return to one does not reintroduce it. § 6.4. |
@@ -2203,23 +2502,23 @@ for remote must not pay for it locally:
 | Per-file attribution to a specific agent | Not offered. inotify reports paths, not processes. Git is the attribution surface; **Changed on Host** (§ 7.9) covers the gap between commits. § 6.3. |
 | Automatic merge of concurrent edits | Never. Conflicts are surfaced and resolved by the user. § 6.3. |
 | Agent awareness (soft locks, "an agent is editing this", who-holds-what) | **No.** It would need the agents to cooperate through a channel that does not exist, and inventing one reintroduces exactly the protocol this design exists to avoid. Compare-and-swap (§ 6.3) already makes concurrent writes lossless, and **Changed on Host** (§ 7.9) already answers what moved. |
-| Where the terminal pty lives | On the **host**, owned by the agent daemon, with terminal I/O on its own ssh channel. The local-pty-plus-`ssh -tt` shortcut loses every running remote process on a dropped link. § 6.5. |
-| Detach and reattach | Supported, and the reason the agent is a daemon keyed to `(uid, remote_root)` rather than a child of the connection. Terminals survive; output is buffered while detached; the editing session itself stays local. § 6.12. |
+| Where the terminal pty lives | On the **host**, owned by the server, with terminal I/O on the interactive lane of the one channel. The local-pty-plus-`ssh -tt` shortcut loses every running remote process on a dropped link. § 6.5. |
+| Detach and reattach | Supported, and the reason the server is a daemon keyed to the uid rather than a child of the connection. Terminals, tasks and debuggees survive; output is buffered while detached; the editing session itself stays local. § 6.12, § 6.7. |
 | Terminal scrollback ownership | The **host** holds the authoritative scrollback, sized by the existing `terminal.scrollback_lines`; the local terminal renders a view of it, resumes by trim-total offset, and backfills older history lazily. § 6.12. |
 | Mixing local and remote projects in one window | Supported, and free: per-project isolation already covers terminals, LSP, DAP, index, tree and search. A single *project* is never half-remote. § 6.13. |
 | Local terminals in a remote project | Available through an explicit command and labelled `local · …`; never the default. § 6.5. |
 | Churn tuning constants | Settled as defaults, not left open: 250 ms coalesce window, `remote.resync_threshold` 2,000 rows, `remote.pull_concurrency` 4. All three are settings, so a host that disagrees is a config change rather than a redesign; § 13 measures them when a multi-agent host is available. |
-| Does Phase 1 ship as a user feature | **No.** Development stepping stone behind `remote.experimental_link_local`, removed when Phase 2 lands. Nothing relates the local bytes to the host bytes that git, LSP and DAP report on, and unlike mirror search there is not even a hash that could detect the divergence. § 8. |
+| Does Phase 1 exist | **No.** Folded into Phase 2 on 2026-10-07: the groundwork made the translation layer three interface implementations, and the loopback server exercises them without a host. Phase 2a — the server, surviving terminals with prediction, reattach — is the first user-visible slice instead, and it opens no remote project. § 8. |
 | Compare over a stale mirror | Pulls both sides first. The two-file pull is one round trip, so § 6.11's rule is satisfied by fetching rather than by relocating. `CompareMergeService` stays remote-unaware. § 6.13. |
 | Precondition for creating a file | `expect: absent`, implemented with `O_EXCL`. Without it a locally-`absent` file created through the sidebar or Save As overwrites host content the user never saw — the only path in this design that destroys bytes rather than parking a conflict. § 6.3. |
 | Journal replay order | The journal's own sequence, strictly. Pushes and tree ops interleave and are not independent; a conflict parks that path's remaining entries, not the whole journal. § 6.3. |
 | Runaway terminal output | Per-handle credit window; output beyond it is dropped at the ring with a visible gap. Without it the transport's bounded queues turn one runaway command into a teardown of file sync and every other terminal. § 6.4. |
-| Host with no `$XDG_RUNTIME_DIR` | Resolve `$XDG_RUNTIME_DIR`, then a qualifying `/run/user/<uid>`, else **refuse to start**. Never `/tmp`: the socket path is hash-derived and therefore predictable, so a world-writable parent on a shared host is a hijack of an authenticated channel, not a leak. § 6.12, § 6.9. |
-| Daemon stdio | Closed and reopened on `/dev/null` with `setsid` before the relay reports success; readiness is the socket becoming connectable, never the spawn exiting. Otherwise `ssh` never returns and `StartingAgent` hangs on a handshake that already succeeded. § 6.12. |
+| Where the server's socket lives | `~/.local/state/microide/server/`, created 0700 and owner-, mode- and symlink-verified on every bind — the tmux model. Never `$XDG_RUNTIME_DIR` by default: `/run/user/<uid>` is removed when the user's last session ends unless linger is on, and an unprivileged user cannot turn linger on. Never `/tmp`. § 6.12, § 6.9. |
+| Daemon stdio | Closed and reopened on `/dev/null` with `setsid` before the relay reports success; readiness is the socket becoming connectable, never the spawn exiting. Otherwise `ssh` never returns and `StartingServer` hangs on a handshake that already succeeded. § 6.12. |
 | Tree completeness vs the content set | The content set is files, non-ignored, one repository deep: no empty directories, no ignored directories, no submodule contents until Phase 3. Stated as a limitation in the docs rather than implied away by "the tree is never behind". Two are softened rather than absolute: an ignored path is not *listed* but is still openable through § 6.5's read-only fetch, and an empty directory the **user** creates is kept as `local-only` (§ 6.3) though one the host already had is invisible. § 6.2. |
-| A tree too large to mirror | Fails at `agent/hello` against `remote.max_manifest_files`. A truncated manifest is the one state the content-state model cannot express, since a missing row is indistinguishable from a missing file. § 6.2. |
-| Should groundwork stay cheap and non-disruptive | **No.** Compatibility breaks are allowed, so groundwork is ten items and ~4,200 lines rather than three and ~450. All ten stand alone if remote never ships, which is the test each had to pass to be in that phase rather than in Phase 1. § 8. |
-| Does the agent link SDL | No. Groundwork G1 splits an SDL-free kernel, so the agent is a small separate binary. The coupling is only the cross-thread wake and SDL types in terminal data. This also closes the agent-install question: copy one static binary. § 8. |
+| A tree too large to mirror | Fails at `server/hello` against `remote.max_manifest_files`. A truncated manifest is the one state the content-state model cannot express, since a missing row is indistinguishable from a missing file. § 6.2. |
+| Should groundwork stay cheap and non-disruptive | **No.** Compatibility breaks are allowed, so groundwork is ten items and ~4,200 lines rather than three and ~450. All ten stand alone if remote never ships, which is the test each had to pass to be in that phase rather than in Phase 2. § 8. |
+| Does the server link SDL | No. Groundwork G1 splits an SDL-free kernel, so the server is a small separate binary. The coupling is only the cross-thread wake and SDL types in terminal data. This also closes the server-install question: copy one static binary. § 8. |
 | Wire format | Length-prefixed binary frames, not JSON-RPC. The traffic is content, manifests and terminal state, and JSON charges +33% on bodies, ~6 MB on a large manifest, and base64 on the latency path. The hardened transport behaviour is kept; only the codec changes. § 6.4. |
 | What the mirror stores | An object store addressed by content hash, with `tree/` materialized from it. Gives near-free branch switches, a journal that references immutable content, and `zstd --patch-from` deltas for the one-function-edit case that dominates this workload. § 6.2. |
 | Content hash | blake3, used for the manifest, the object address, compare-and-swap **and** local external-change detection — one hash rather than a cross-machine one beside a local mtime+size check. § 6.2, § 8. |
@@ -2229,40 +2528,41 @@ for remote must not pay for it locally:
 | Format-on-save in a remote project | Formats before the push, not after. Observing the host formatter's write as a remote change reformats the buffer a round trip after the save and can raise the conflict banner against the user's own formatter. § 6.3. |
 | How many local writers into the mirror there are | Six subsystems — the editor's save, the plugin file API, LSP resource ops, LSP rename's open-and-save, replace-in-project, the merge writer and the sidebar's file operations — and the editor's save has six further entry points that bypass the formatter and save participants today by calling `viewport.Save()` directly. All route through the gate (Groundwork G10): `TextViewport::Save` takes the writer, so no entry point can skip it, and a lint bans the raw filesystem calls outside the gate TU. § 6.3, § 8. |
 | How many content states a file has | **Four.** `current`, `stale`, `dirty`, `absent`. Three states was a two-way comparison over three inputs and could not tell "the host moved ahead" from "we moved ahead", so it resolved every out-of-band local write by pulling over it. The base is already in the object store. § 6.2. |
-| May a pull overwrite local bytes | **Never when the path is `dirty`.** It parks as a conflict. Without the rule, a parked conflict plus one more agent write silently replaces the user's saved work with the agent's, through a clean buffer, with nothing reporting it. § 6.2, § 6.3. |
+| May a pull overwrite local bytes | **Never when the path is `dirty`.** It parks as a conflict. Without the rule, a parked conflict plus one more agent write silently replaces the user's saved work with the server's, through a clean buffer, with nothing reporting it. § 6.2, § 6.3. |
 | A user-created file the content set does not list | Recorded `local-only` and excluded from the deletion half of every manifest diff. Otherwise creating `debug.log`, a `.env`, anything ignored, or any empty directory is an action that undoes itself on the next resync. § 6.3. |
-| A manifest diff that deletes most of the mirror | Refused and prompted, above `remote.mass_delete_threshold` (25%, floor 100 rows), and the agent never reports a failed content-set command as an empty set. The causes are mundane — an unmounted root, a failed `git ls-files` — and the outcome without the guard is the sync-product disaster. § 6.3. |
-| Host-computed positions and edits against a stale mirror | Every one carries the hash it was computed against; a mismatch holds or pulls, and a host-computed *edit* is refused whole rather than adapted. This is § 6.11's rule applied to LSP, DAP and git, and it is § 8's argument against Phase 1 applied inside Phase 2, where it bites whenever a file is `stale`. § 6.5. |
+| A manifest diff that deletes most of the mirror | Refused and prompted, above `remote.mass_delete_threshold` (25%, floor 100 rows), and the server never reports a failed content-set command as an empty set. The causes are mundane — an unmounted root, a failed `git ls-files` — and the outcome without the guard is the sync-product disaster. § 6.3. |
+| Host-computed positions and edits against a stale mirror | Every one carries the hash it was computed against; a mismatch holds or pulls, and a host-computed *edit* is refused whole rather than adapted. This is § 6.11's rule applied to LSP, DAP and git, and it is the argument that removed the old Phase 1 (§ 8) applied inside Phase 2b, where it bites whenever a file is `stale`. § 6.5. |
 | Git surfaces while pushes are queued | Gated on the journal. `git status` describes the host's tree, so staging or committing a file with an unacked push would commit the host's version and drop the user's edit. Those actions are disabled with a reason until the push acks. § 6.5. |
 | Paths outside the content set (go to definition, step into, stack frames) | Fetched read-only with `file/read` into `meta/external/`, opened read-only, never pushed, never in a manifest. § 12's "should ignored directories stay navigable" was framed as browsing preference; it is go-to-definition, so it is decided rather than deferred. § 6.5, § 6.9. |
 | Is `ToMirror` total | **No, both directions are partial.** The host names paths outside the root constantly and the previous "two total functions" hid the case rather than handling it. § 6.1, § 6.5. |
 | Is `file/read` root-confined | No, and writes always are. The user has a shell on that host over the same connection, so read confinement is theatre; write confinement is the actual boundary. Results land outside `tree/`, read-only. § 6.9. |
 | Terminal input encoding | **Semantic key and mouse events**, encoded on the host. The local encoder reads seven pieces of mode state the host owns (`TerminalSessionInputEncoding.h`, `TerminalMouseEncoder.h`) and they flip as programs start and exit, so a client encoding one round trip behind sends wrong bytes at exactly the boundary. Smaller payload, same latency, and protocol shape. § 6.5. |
-| Local echo prediction in the remote terminal | **No.** 1 RTT to echo is accepted and budgeted. § 1's no-round-trip-per-keystroke rule is about the editor, where the mirror removes it; predicting echo locally would mean a second terminal model guessing at the host's, which is what shipping screen state removed. Stated so the asymmetry does not read as an oversight. § 6.5, § 9. |
+| Local echo prediction in the remote terminal | **Yes, mosh-style, adaptive by default.** Reversed 2026-10-07: mosh's engine is a ~1,000-line overlay that predicts printable characters and backspace and validates each against the next confirmed frame — not a second emulator. `input_seq` on `term/input` and `echo_ack` on `term/screen` are protocol shape and ship in Phase 2a. A typed glyph paints in the same frame; a wrong one is gone within a round trip. § 6.5. |
 | Object store growth | Swept. Reachable = a manifest hash, a base, or a journal reference; everything else goes, oldest first, down to `remote.object_store_budget`. The mirror is ≥ 2× the tree before history, in a directory declared data rather than cache, so "it grows" was not a survivable answer. § 6.2. |
 | Running out of local disk | A first-class failure: sweep, then suspend sync loudly and keep every journaled push. Discarding a journaled object to make room loses exactly the bytes the journal exists to hold. § 6.2. |
 | Backfill vs. the file the user just clicked | Bounded by outstanding **bytes** (`remote.backfill_inflight_bytes`), not by batch size, plus `op/cancel`. Priority in a local queue cannot reorder bytes already on the wire — the same head-of-line problem the terminal got its own channel for. § 6.4. |
-| Protocol version | Its own small integer with a minimum-accepted floor, not the app version. Tying it to the release forbids drift instead of handling it, which turns "copy one static binary" into copying it to every host on every release. § 6.4. |
+| Protocol version | Its own small integer with a minimum-accepted floor, not the app version. A mismatch installs the matching server over the connection rather than asking the user to copy a binary to every host on every release. § 6.4, § 6.6. |
 | `manifest_id` across a daemon restart | Scoped to a `daemon_epoch`. A restarted daemon has watched nothing, so accepting a resume token it cannot account for answers "nothing changed" and silently skips everything that happened while nobody was attached. § 6.12. |
-| ControlMaster keying | Per `(user, host, port)` and shared between projects, reference-counted; the daemon stays per `(uid, remote_root)`. Multiplexing is what masters are for. § 6.13. |
-| zstd | Vendored and linked, like blake3 — not the `zstd` binary. A subprocess per delta is a fork per changed file on the churn path, and it would make the agent's install "one binary and a new enough zstd". § 6.2. |
+| ControlMaster keying | Per `(user, host, port)` and shared between projects, reference-counted; the server is one per uid, serving each root as a workspace with its own budgets. One channel per open project, so `MaxSessions 10` is not a ceiling. § 6.13, § 6.4. |
+| zstd | Vendored and linked, like blake3 — not the `zstd` binary. A subprocess per delta is a fork per changed file on the churn path, and it would make the server's install "one binary and a new enough zstd". § 6.2. |
 | Should git itself be the transport for the cold sync | **Not in Phase 2; revisit in Phase 3 as an optimization for cold population only.** The object store, blake3 addressing, delta transfer and near-free branch switches are git's model rebuilt by hand, and `git fetch` over the same ControlMaster would deliver the committed tree as one delta-compressed packfile instead of ~30 `object/fetch` batches. Two things stop it being the answer rather than an accelerator: it moves only *committed* content, and uncommitted agent output between commits is precisely the churn this design exists for; and git addresses blobs by its own hash, so every fetched object still has to be blake3-hashed to enter the store, which costs the "one hash everywhere" property § 6.2 bought deliberately. Worth measuring against a real cold sync before building. § 6.2. |
 | Precondition for renaming onto a path | `expect: absent` on the destination, `RENAME_NOREPLACE`. Without it a rename onto a locally-`absent` path clobbers host bytes the user never saw — the same hole the create precondition closes. § 6.3. |
 | Settings the daemon consumes | Sent by each client at attach. The daemon takes the minimum of any budget or cap and the maximum of any timeout or history size, and reports the effective values back; it has no settings registry and may be serving two clients. § 6.12. |
 | What the kernel is | An explicit CMake source list with its own PCH and a transitive-include lint, not a set of directories: `terminal/` includes `render/AnsiPalette.h`, `project/` includes `compare/` and `editor/SingleLineEditor.h`, and `editor/` includes upward into `workspace/`. § 8 G1. |
 | Where the async completion guard lives | Once, in `editor/`, introduced by G4 and consumed by G5 and G6: a completion carries the tab identity and content revision it was posted against and applies only if both still match. § 8 G4. |
 | Project identity versus filesystem root | Two fields. `ProjectId` names the project — persistence keys, presentation, the state-directory key. `ProjectWorkspaceState::root` stays a path, the mirror's `tree/`, for every I/O site. § 6.8, § 8 G8. |
-| Does Groundwork have performance gates | Yes, § 9: large-file open and slow-formatter save never exceed the frame budget, an unchanged file is never hashed, the agent binary is small and SDL-free. Speed is the first priority and a preparatory phase must not pay for it locally. |
+| A mosh-style UDP transport | **No.** It needs an inbound port, a firewall rule and our own encryption, none of which an unprivileged user over stock ssh can provide (§ 1). The durable half of mosh — nothing on the host notices a dropped link — comes from the server; the fast half comes from `link/ping`: about six seconds to a reattached terminal instead of zero, stated as the trade. § 6.4. |
+| How the server gets onto the host | The client installs it over the connection it has, into `~/.local/share/microide/server/`, as a static musl binary, when `server/hello` says it is missing or too old. No root, no package, no `PATH`. `remote.server_install = off` turns it into the copy command. § 6.6. |
+| What the user must be able to do on the host | Log in over stock `sshd` as themselves. Nothing else: no `sshd_config`, no `logind.conf`, no firewall, no root, no linger. Hosts that cannot keep user processes alive are detected and reported, not assumed away. § 1, § 6.12. |
+| One daemon per root or per user | Per **user**, with per-workspace budgets inside it. The drop-in requirement wants one thing to run; the isolation the per-root choice bought is accounting, not process boundaries. § 6.12. |
+| How many ssh channels a project uses | One. Two priority lanes on it and an adaptive bound on outstanding bulk bytes replace the per-process channels and the second terminal channel, which collided with `MaxSessions 10` and bought less head-of-line protection than claimed. § 6.4. |
+| Which host processes survive a dropped link | All of them, because all are children of the server; what differs is policy on reattach: terminals and tasks resume, a debug session is reported with Stop / Leave running, a language server is restarted. § 6.7. |
+| Git status in the sidebar | Pushed by the server on its inotify batches (`git/status`): zero round trips to open. § 6.5. |
+| Cold-start hashing on the host | A persisted per-workspace hash cache keyed by inode, size, mtime and ctime, so a restarted server hashes what changed, not the tree. § 6.2. |
+| Does Groundwork have performance gates | Yes, § 9: large-file open and slow-formatter save never exceed the frame budget, an unchanged file is never hashed, the server binary is small and SDL-free. Speed is the first priority and a preparatory phase must not pay for it locally. |
 
 ## 12. Still open
 
-- Version drift between the client and a manually installed agent. The install
-  question itself is **closed** — Groundwork G1 makes `microide-agent` a small
-  SDL-free binary, so installing it is copying one file rather than shipping a
-  `.deb` and its dependency chain. What remains is what happens when someone copies
-  it once and never again: `agent/hello` reports both versions and § 6.12 offers to
-  restart the daemon, which is a report, not a policy. Phase 3 decides whether the
-  client should offer to push a matching binary.
 - Whether ignored directories should be *navigable as a tree*, rather than merely
   readable. § 6.5 closed the half that mattered: any host path the mirror does not
   carry is fetched read-only on demand, so go to definition, step into and a stack
@@ -2273,10 +2573,17 @@ for remote must not pay for it locally:
 - Whether `git fetch` should carry the cold sync (§ 11). It is measurable rather
   than arguable: run one cold sync of this repo both ways over a delayed loopback
   link and compare. § 13 already needs that harness.
+- Whether a server restart can hand its ptys and processes to the new binary
+  (§ 6.12, Phase 3). `SCM_RIGHTS` over the socket makes it mechanically possible;
+  whether the terminal model's state serializes cleanly enough to be worth it is
+  the question.
+- The prediction threshold (30 ms) and the host's 50 ms `echo_ack` fallback are
+  mosh's numbers, adopted rather than measured. § 13's harness measures them.
 
 Everything else that once looked open — agent awareness, the churn tuning
-constants, whether Phase 1 ships as a user feature, whether files outside the
-content set are reachable — is decided in § 11.
+constants, Phase 1, whether files outside the content set are reachable, version
+drift between client and server, how the server is installed and where its socket
+lives — is decided in § 11.
 
 ## 13. What was not measured
 
@@ -2284,10 +2591,12 @@ The empirical latency table (native vs mirror vs xpra at 20/80/200 ms of injecte
 delay) has not been produced; this machine has no `sshd`, `xpra` or `waypipe`.
 The § 3 syscall counts and tree sizes are measured; the § 9 budgets are targets
 derived from them. To complete it: install `openssh-server` and `xpra`, run
-`microide-agent` over loopback ssh, inject delay with
+`microide-server` over loopback ssh, inject delay with
 `sudo tc qdisc add dev lo root netem delay 80ms` (remove with `tc qdisc del dev
 lo root`), and measure project open to tree, to Ready, file open, save-to-ack,
-search, git status refresh, terminal-to-prompt and keystroke-to-echo under xpra.
+search, git status refresh, terminal-to-prompt, keystroke-to-confirmed-echo, the
+prediction overlay's hit and miss rates at each delay, and time-to-Reconnecting
+after `ip link set lo down` — natively and under xpra.
 The scan harness from § 3 is a `strace -f -tt` wrapper around a headless
 `--control` launch on Xvfb; it is a dozen lines and should be rewritten rather
 than recovered.

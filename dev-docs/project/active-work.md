@@ -291,11 +291,16 @@ local mirror equal to the remote tree through a persistent `microide-agent` daem
 over ssh, with every process (git, LSP, DAP, terminal) running on the host. The wire
 is length-prefixed binary frames over a content-addressed object store with
 `zstd --patch-from` deltas; the terminal model runs on the host and ships screen
-state, with input as semantic events encoded there; the daemon outlives the
-connection, so terminals and their scrollback survive a dropped link and reattach.
-No FUSE mount at any phase. Local and remote project tabs coexist. Phase 1 (link a
-local checkout to a host) is a development stepping stone behind an experimental
-flag, not a shipped mode.
+state, with input as semantic events encoded there and mosh-style predicted echo
+locally; one `microide-server` daemon per user outlives the connection, every host
+process (git, LSP, DAP, tasks, shells) is its child, so terminals, builds and their
+scrollback survive a dropped link and reattach; the server installs itself under
+the user's home over the same ssh connection and needs nothing from the host but a
+stock `sshd` login (revised 2026-10-07 after two design reviews; § 11 of the design
+records each decision). No FUSE mount at any phase. Local and remote project tabs
+coexist. Phase 1 was folded into Phase 2 on 2026-10-07; Phase 2a — the server,
+surviving remote terminals, reattach — is the first user-visible slice and opens no
+remote project.
 
 **Groundwork is ten local-tree changes, each of which stands on its own if remote
 projects are never built.** Four are fully shipped (the design's own table at the top of
@@ -466,5 +471,5 @@ that disagree are worse than one. This file is the only one now.
 - `dev-docs/performance/startup-tracing.md`, `runtime-profiling.md` — profiling workflows
 - `dev-docs/plugins/plugin-runtime-research.md` — plugin architecture notes
 - `dev-docs/design/text-surface-unification.md` — text-input interaction contract
-- `dev-docs/design/remote-projects.md` — remote-project design exploration (not started)
+- `dev-docs/design/remote-projects.md` — remote-project design (groundwork shipping, feature not started; revised 2026-10-07)
 - `SECURITY.md` — trust model, safe mode, reporting

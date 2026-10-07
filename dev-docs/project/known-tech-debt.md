@@ -1,5 +1,10 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-07 (§ TD-2026-10-07-320 for the remote-projects design review:
+the completion client re-requests on every keystroke because it never reads
+`isIncomplete`, which is a local inefficiency today and a round trip per keystroke
+over a far link).
+
 Reviewed 2026-09-29 (§ TD-2026-09-29-305 for the write-gate pass: the gate covers
 content writes, and the two tree-operation writers it deliberately does not).
 
@@ -641,6 +646,29 @@ The process lesson is the actionable part: never pipe a validation run through
 `dev-docs/project/validation-traps.md` already says a green rerun is not evidence
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
+
+### TD-2026-10-07-320 — completion re-requests on every keystroke because the client never reads `isIncomplete`. [OPEN]
+
+Found while reviewing `dev-docs/design/remote-projects.md` for what still pays a
+round trip once the mirror makes editing local. `WorkspaceLspClientRequests.cpp`
+sends `textDocument/completion` and renders the list, and nothing in
+`src/workspace/lsp/` names `isIncomplete`: the server's statement that the list it
+returned is COMPLETE for the current prefix is discarded, so the next keystroke
+sends another request instead of filtering the list already in hand. Locally that
+is a 20–100 ms server round trip per keystroke that the editor could skip, plus
+the allocation of a fresh result set. Remotely (design § 1, § 6.5) it is one
+network round trip per keystroke in the one editor interaction the mirror cannot
+make local, and it is the difference between completion that feels native and
+completion that visibly lags the typing.
+
+The fix is the standard one every LSP client ships: when a response carries
+`isIncomplete: false`, keep the items and refilter them locally against the
+widened prefix on subsequent keystrokes (the server's `filterText`/`sortText`
+rules, which the renderer already applies), and re-request only when the prefix
+shrinks past the request's anchor, a trigger character fires, or the response
+said `isIncomplete: true`. The test that cannot fail is one that types a second
+character and asserts the list changed; the one that can asserts the request
+COUNT the scripted server received is one for the word.
 
 ### TD-2026-10-06-319 — the git layer's own validity probes read a LOCAL `.git`, which a mirror does not have. [OPEN]
 
