@@ -66,6 +66,7 @@ void TestReviewCommitOpensCompareTabsPerChangedFile() {
   TestAccess::SetProjectRoot(shell, repo_path);
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2,
          "review-commit opens a compare tab for each file in the last commit");
   Expect(HasCompareTabFor(shell, repo_path / "a.txt"), "modified file gets a compare tab");
@@ -73,6 +74,7 @@ void TestReviewCommitOpensCompareTabsPerChangedFile() {
 
   // Rerun: dedup, no duplicate tabs.
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit rerun should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2,
          "rerunning review-commit reuses the existing compare tabs (no duplicates)");
 }
@@ -98,6 +100,7 @@ void TestReviewBranchOpensAndCleansCompareTabs() {
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-branch feature"),
          "review-branch should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 2,
          "review-branch opens a compare tab per differing file");
   Expect(HasCompareTabFor(shell, repo_path / "a.txt"), "a.txt differs from feature");
@@ -107,10 +110,38 @@ void TestReviewBranchOpensAndCleansCompareTabs() {
   WriteFile(repo_path / "b.txt", "b2\n");
   Expect(TestAccess::ExecuteCommandLine(shell, "review-branch feature"),
          "review-branch rerun should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 1,
          "the no-longer-differing file's stale compare tab is closed on rerun");
   Expect(HasCompareTabFor(shell, repo_path / "a.txt"), "still-differing file's tab is kept");
   Expect(!HasCompareTabFor(shell, repo_path / "b.txt"), "stale compare tab was cleaned up");
+}
+
+// TD-2026-10-07-323: a review's git work -- the changed-file list and the bulk
+// blob read -- runs on the file reader, not the shell thread; the tabs and the
+// summary land with the completion.
+void TestReviewRunsItsGitOffTheShellThread() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "a.txt", "a1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "first", "first commit");
+  WriteFile(repo_path / "a.txt", "a2\n");
+  CommitAll(repo_path, "second", "second commit");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  const std::uint64_t posted_before = TestAccess::PostedFileReadCount(shell);
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "the command is accepted");
+  Expect(TestAccess::PostedFileReadCount(shell) == posted_before + 1 &&
+             CountTabsOfKind(shell, TabEntry::Kind::Compare) == 0,
+         "the git work is posted to the reader; no tab is built on the shell thread yet");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == 1,
+         "the compare tab opens when the git work lands");
+  Expect(TestAccess::CommandFeedbackText(shell).find("review-commit HEAD: opened 1") !=
+             std::string::npos,
+         "and the summary is reported then: " + TestAccess::CommandFeedbackText(shell));
 }
 
 // Opening one conflicted file (the git sidebar's click) reads its three index
@@ -170,12 +201,14 @@ void TestReviewConflictsOpensMergeTabsPerConflict() {
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-conflicts"),
          "review-conflicts should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Merge) == 1,
          "review-conflicts opens a merge tab for the conflicted file");
   Expect(HasMergeTabFor(shell, repo_path / "conflict.txt"), "conflicted file gets a merge tab");
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-conflicts"),
          "review-conflicts rerun should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Merge) == 1,
          "rerunning review-conflicts reuses the existing merge tab (no duplicates)");
 }
@@ -205,6 +238,7 @@ void TestReviewCommitCapsOpenedTabs() {
 
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"),
          "review-commit should succeed even for a huge changed-file set");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
   Expect(CountTabsOfKind(shell, TabEntry::Kind::Compare) == cap,
          "review opens at most kMaxReviewSessionOpenTabs compare tabs");
   Expect(TestAccess::CommandFeedbackText(shell).find("not opened") != std::string::npos,
@@ -235,6 +269,7 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
   WorkspaceShell shell;
   TestAccess::SetProjectRoot(shell, repo_path);
   Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit should succeed");
+  TestAccess::FlushPendingFileReads(shell);  // the review's git work runs off-thread
 
   std::size_t compare_tabs = 0;
   std::vector<std::size_t> indices;
@@ -262,6 +297,8 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
 }
 
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ReviewSession/ReviewRunsItsGitOffTheShellThread",
+          TestReviewRunsItsGitOffTheShellThread);
   AddTest(tests, "ReviewSession/ConflictMergeOpensOffTheShellThread",
           TestConflictMergeOpensOffTheShellThread);
   AddTest(tests, "ReviewSession/CommitCapsOpenedTabs",

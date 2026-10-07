@@ -647,7 +647,18 @@ The process lesson is the actionable part: never pipe a validation run through
 about the red run. This entry stays open until either the failure recurs with its
 output, or enough loaded runs have gone green to retire it.
 
-### TD-2026-10-07-323 — review sessions run git on the shell thread. [OPEN]
+### TD-2026-10-07-323 — review sessions run git on the shell thread. [RESOLVED 2026-10-07]
+
+**Resolution.** Each review verb is a GATHER (the file list, the base-ref
+resolution for review-branch, and the bulk blob prefetch -- now over the targets
+capped at twice the open cap, since the shell has not yet said which have tabs)
+that runs on the file reader with nothing shell-owned in reach, and an APPLY on the
+shell thread that plans, closes and opens tabs through a coordinator rebuilt from
+the dispatching one's handles. The command returns a `pending` outcome;
+`report_outcome` sets the feedback and notification when the work lands, and a
+project switch drops it. Test `ReviewSession/ReviewRunsItsGitOffTheShellThread`.
+
+Original entry:
 
 Split from TD-2026-09-29-312. `review-conflicts`, `review-commit` and
 `review-branch` (`ReviewSessionCoordinator`) collect their file lists with a git

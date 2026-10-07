@@ -26,6 +26,15 @@ class ReviewSessionCoordinator {
     std::function<void()> show_git_sidebar;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<bool(std::size_t)> tab_is_dirty;
+    // Run `gather` off the shell thread, then `apply` on it -- dropped if the
+    // project changed meanwhile (TD-2026-10-07-323). A review's git work (the file
+    // list, then a blob prefetch for every file it opens) is one or two spawns
+    // locally and as many round trips for a remote project, and it ran on the
+    // shell thread before the first tab appeared. Unset: both run inline.
+    std::function<void(std::function<void()> gather, std::function<void()> apply)>
+        run_off_shell_thread;
+    // Report an outcome that lands after the command returned.
+    std::function<void(ReviewOpenOutcome)> report_outcome;
   };
 
   ReviewSessionCoordinator(ProjectWorkspaceState& state,
@@ -45,17 +54,18 @@ class ReviewSessionCoordinator {
   ReviewOpenOutcome OpenCommitReview(const std::string& ref);
 
  private:
-  // `prefetch` runs once the reconciliation has decided which files will actually
-  // be opened (dedup and the open cap applied), so the bulk blob read asks git for
-  // exactly that set and nothing more. Optional: with no prefetch every side is
-  // read by its own git spawn, which is what the non-batch callers do.
   ReviewOpenOutcome RunReviewSession(
       std::string_view verb,
       const std::vector<std::filesystem::path>& targets,
       const std::function<std::optional<std::filesystem::path>(const TabEntry&)>& scoped_path_of,
       const std::function<bool(const std::filesystem::path&)>& open_one,
-      std::string_view empty_message,
-      const std::function<void(const std::vector<std::filesystem::path>&)>& prefetch = {});
+      std::string_view empty_message);
+
+  // `gather` does the git work and touches nothing shell-owned; `apply` runs on
+  // the shell thread through a coordinator rebuilt from this one's handles (this
+  // one is a per-use value, long gone by then) and returns the outcome.
+  ReviewOpenOutcome Dispatch(std::function<void()> gather,
+                             std::function<ReviewOpenOutcome(ReviewSessionCoordinator&)> apply);
 
   ProjectWorkspaceState& state_;
   CompareMergeService compare_merge_;

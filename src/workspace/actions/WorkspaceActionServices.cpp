@@ -760,6 +760,9 @@ namespace {
 ReviewOpenOutcome FinishReviewOutcome(ProjectWorkspaceState& state,
                                       const WorkspaceActionContext::Operations& operations,
                                       ReviewOpenOutcome outcome) {
+  if (outcome.pending) {
+    return outcome;  // reported, feedback included, when the git work lands
+  }
   // Always surface the summary as command feedback so the control channel
   // reports it (as feedback on success, as error on failure).
   state.panel.feedback.text = outcome.message;

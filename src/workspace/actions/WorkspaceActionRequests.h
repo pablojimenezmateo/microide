@@ -75,6 +75,9 @@ std::optional<CompareFilesRequest> BuildCompareFilesRequest(
 struct ReviewOpenOutcome {
   bool ok = false;
   std::string message;
+  // The review's git work is still running off the shell thread; the real outcome
+  // is reported when it lands (ReviewSessionCoordinator::Operations::report_outcome).
+  bool pending = false;
 };
 
 struct OpenPathRequest {

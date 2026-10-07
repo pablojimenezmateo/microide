@@ -367,6 +367,37 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   RequestCloseTabs(std::move(indices));
                 },
             .tab_is_dirty = [this](std::size_t index) { return TabIsDirty(index); },
+            // The file reader's thread, with "read nothing": the shape a branch
+            // compare's blob load and a conflict merge's stage read already use.
+            .run_off_shell_thread =
+                [this](std::function<void()> gather, std::function<void()> apply) {
+                  const std::filesystem::path root = context_.current_project_state.root;
+                  (void)file_read_service_.Begin({
+                      .path = root,
+                      .on_worker = [gather = std::move(gather)](std::string&) { gather(); },
+                      .on_complete =
+                          [this, root, apply = std::move(apply)](
+                              project::FileReadService::Completion completion) {
+                            if (completion.status !=
+                                    project::FileReadService::Status::Cancelled &&
+                                context_.current_project_state.root == root) {
+                              apply();
+                            }
+                          },
+                      .read_path = false,
+                  });
+                },
+            .report_outcome =
+                [this](ReviewOpenOutcome outcome) {
+                  // As FinishReviewOutcome does for a synchronous one: command
+                  // feedback for the control channel, and a notification.
+                  context_.current_project_state.panel.feedback.text = outcome.message;
+                  if (!outcome.message.empty()) {
+                    Notify(outcome.ok ? NotificationService::Tone::Info
+                                      : NotificationService::Tone::Warning,
+                           outcome.message);
+                  }
+                },
         });
   };
   glue_->action_context = std::make_unique<WorkspaceActionContext>(
