@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "support/GitSidebarWait.h"
 
 namespace microide::tests {
 namespace {
@@ -358,12 +359,7 @@ void TestWorkspaceShellDiscardAllGitPromptDiscardsWorkingTreeChanges() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   {
-    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < git_deadline &&
-           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    (void)SettleGitSidebarRefresh(shell);
   }
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
 
@@ -406,12 +402,7 @@ void TestWorkspaceShellDiscardAllGitPromptBlocksDirtyEditors() {
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
   {
-    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < git_deadline &&
-           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    (void)SettleGitSidebarRefresh(shell);
   }
 
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
@@ -453,12 +444,7 @@ void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
 
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   {
-    const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (std::chrono::steady_clock::now() < git_deadline &&
-           WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
+    (void)SettleGitSidebarRefresh(shell);
   }
   WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);

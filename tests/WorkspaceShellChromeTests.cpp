@@ -17,6 +17,7 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "support/GitSidebarWait.h"
 
 namespace microide::tests {
 namespace {
@@ -26,20 +27,6 @@ using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess
 using microide::workspace::ActionId;
 using microide::workspace::TreeContextTargetKind;
 using microide::workspace::WorkspaceTreeContextMenuItems;
-
-bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    if (WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count &&
-        !WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-      return true;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-  return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count;
-}
 
 SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {
   Uint8 r = 0;
@@ -1577,12 +1564,7 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
-  const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < git_deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
 
   const auto top_action_rects = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell);
   (void)SendMouseMotion(

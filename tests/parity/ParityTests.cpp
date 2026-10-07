@@ -10,6 +10,7 @@
 
 #include "TestSupport.h"
 #include "parity/ParityHarness.h"
+#include "support/GitSidebarWait.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -79,11 +80,7 @@ Scenario GitSidebarShowsTheWorkingTree() {
       .run =
           [](WorkspaceShell& shell, const Tree& tree, Outcome& outcome) {
             WorkspaceShellTestAccess::ShowGitSidebar(shell);
-            // Content is asserted, not timing: the deadline only bounds a hang.
-            (void)WaitUntil(
-                [&shell] { return !WorkspaceShellTestAccess::GitSidebarRefreshing(shell); },
-                std::chrono::seconds(10), std::chrono::milliseconds(10),
-                [&shell] { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
+            (void)SettleGitSidebarRefresh(shell);
             // The local run is the reference, so it must be RIGHT on its own: while
             // this row is a known gap, a broken local run would still "differ" and
             // read as the expected gap.

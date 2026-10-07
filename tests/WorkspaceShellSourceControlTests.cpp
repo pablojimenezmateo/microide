@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "support/GitSidebarWait.h"
 
 namespace microide::tests {
 namespace {
@@ -32,16 +33,6 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOver
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   return WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
-}
-
-bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
-  return WaitUntil(
-      [&shell, expected_count]() {
-        return WorkspaceShellTestAccess::GitSidebarEntries(shell).size() == expected_count &&
-               !WorkspaceShellTestAccess::GitSidebarRefreshing(shell);
-      },
-      std::chrono::seconds(2), std::chrono::milliseconds(10),
-      [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
 }
 
 // A refresh requested while another is in flight is parked and run when the first

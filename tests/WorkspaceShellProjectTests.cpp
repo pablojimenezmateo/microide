@@ -19,6 +19,7 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "support/GitSidebarWait.h"
 #include "EditorSplitTreeInvariants.h"
 
 #include <random>
@@ -393,12 +394,7 @@ void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
   WorkspaceShellTestAccess::OnFramePresented(shell);
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "first paint should dispatch async tree git badge refresh");
-  const auto git_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < git_deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
   Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "tree git badge refresh should complete after first paint");
   const auto refreshed_src_entry = std::find_if(
@@ -412,12 +408,7 @@ void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "showing git sidebar should enter the refreshing state immediately");
-  const auto sidebar_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < sidebar_deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
   Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "git sidebar should leave refreshing state once async status arrives");
   const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
@@ -446,12 +437,7 @@ void TestWorkspaceShellAutomaticGitRefreshKeepsTreeBadgesClean() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "automatic git refresh fixture should open");
   WorkspaceShellTestAccess::RequestAutomaticGitSidebarRefresh(shell);
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
   Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "automatic git refresh should complete");
   Expect(!WorkspaceShellTestAccess::GitSidebarEntries(shell).empty(),
@@ -511,12 +497,7 @@ void TestWorkspaceShellTerminalWakeRefreshesStatusBarAfterCommit() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "git metadata refresh fixture should open");
   WorkspaceShellTestAccess::RefreshGitSidebar(shell);
-  const auto dirty_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < dirty_deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
   Expect(WorkspaceShellTestAccess::StatusBarSegmentText(
              shell, microide::workspace::StatusBarSegmentId::Project)
@@ -560,12 +541,7 @@ void TestWorkspaceShellTerminalWakeClearsTreeGitBadgesAfterCommit() {
          "terminal wake tree badge fixture should open");
 
   WorkspaceShellTestAccess::OnFramePresented(shell);
-  const auto dirty_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
-  while (std::chrono::steady_clock::now() < dirty_deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
 
   const auto dirty_src_entry = std::find_if(
       WorkspaceShellTestAccess::TreeEntries(shell).begin(),
@@ -732,12 +708,7 @@ void TestWorkspaceShellProjectSwitchDiscardsStaleGitSidebarRefreshResult() {
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "new project git sidebar should also enter refreshing state");
 
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-  while (std::chrono::steady_clock::now() < deadline &&
-         WorkspaceShellTestAccess::GitSidebarRefreshing(shell)) {
-    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
+  (void)SettleGitSidebarRefresh(shell);
   Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "new project git sidebar refresh should settle after project switch");
 
