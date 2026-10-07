@@ -32,12 +32,6 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-void WritePluginInit(const std::filesystem::path& root,
-                     std::string_view directory_name,
-                     std::string_view content) {
-  WriteFile(root / directory_name / "init.lua", std::string(content));
-}
-
 void WritePluginSyntax(const std::filesystem::path& root,
                        std::string_view directory_name,
                        std::string_view file_name,
@@ -52,17 +46,6 @@ std::filesystem::path RepoPluginsRoot() {
 void CopyRepoPlugin(const std::filesystem::path& root, std::string_view directory_name) {
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
 }
-
-class ScopedPluginConfigHomeEnv {
- public:
-  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
-      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
-        appdata_("APPDATA", config_home.string()) {}
-
- private:
-  ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar appdata_;
-};
 
 #if defined(_WIN32)
 void WriteWindowsCmdWrapper(const std::filesystem::path& root_script_path,

@@ -29,12 +29,6 @@ namespace {
 
 using microide::plugin::PluginHost;
 
-void WritePluginInit(const std::filesystem::path& root,
-                     std::string_view directory_name,
-                     std::string_view content) {
-  WriteFile(root / directory_name / "init.lua", std::string(content));
-}
-
 std::filesystem::path RepoPluginsRoot() {
   return TestRoot().parent_path() / "plugins";
 }
@@ -59,17 +53,6 @@ PluginHost::Callbacks MakePluginHostCallbacks() {
       .show_notification = {},
   };
 }
-
-class ScopedPluginConfigHomeEnv {
- public:
-  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
-      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
-        appdata_("APPDATA", config_home.string()) {}
-
- private:
-  ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar appdata_;
-};
 
 void TestPluginHostLoadsPluginsAndDispatchesLifecycle() {
 #if !MICROIDE_HAS_LUA_PLUGINS

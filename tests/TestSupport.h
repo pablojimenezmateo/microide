@@ -81,6 +81,24 @@ class ScopedEnvVar {
   std::string previous_value_;
 };
 
+// Points the plugin host's config lookup (XDG_CONFIG_HOME, APPDATA) at a fixture
+// directory for the lifetime of the object. Six test files used to carry their
+// own copy of this and of WritePluginInit.
+class ScopedPluginConfigHomeEnv {
+ public:
+  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
+      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
+        appdata_("APPDATA", config_home.string()) {}
+
+ private:
+  ScopedEnvVar xdg_config_home_;
+  ScopedEnvVar appdata_;
+};
+
+// Write `<root>/<directory_name>/init.lua`.
+void WritePluginInit(const std::filesystem::path& root, std::string_view directory_name,
+                     std::string_view content);
+
 // Scope the app config/state homes so persistence is test-local on every
 // platform (XDG on Linux, *APPDATA on Windows). Two test files carried a
 // byte-identical private copy of this; a persistence test that forgets one of

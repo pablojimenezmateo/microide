@@ -22,23 +22,6 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
-class ScopedPluginConfigHomeEnv {
- public:
-  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_root)
-      : xdg_config_home_("XDG_CONFIG_HOME", config_root.string()),
-        appdata_("APPDATA", config_root.string()) {}
-
- private:
-  ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar appdata_;
-};
-
-void WritePluginInit(const std::filesystem::path& root,
-                     std::string_view directory_name,
-                     std::string_view content) {
-  WriteFile(root / directory_name / "init.lua", std::string(content));
-}
-
 template <typename Predicate>
 bool WaitForLspCondition(WorkspaceShell& shell, Predicate&& ready, int timeout_ms = 2000) {
   return WaitUntil([&ready]() { return ready(); },

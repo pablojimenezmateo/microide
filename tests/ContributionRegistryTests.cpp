@@ -57,17 +57,6 @@ using microide::workspace::WorkspaceThemeRegistry;
 using microide::workspace::SettingType;
 using microide::workspace::SidebarViewPolicy;
 
-class ScopedPluginConfigHomeEnv {
- public:
-  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_root)
-      : xdg_config_home_("XDG_CONFIG_HOME", config_root.string()),
-        appdata_("APPDATA", config_root.string()) {}
-
- private:
-  ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar appdata_;
-};
-
 // ---------------------------------------------------------------------------
 // Keybinding registry – built-ins
 // ---------------------------------------------------------------------------

@@ -215,6 +215,11 @@ void CommitAll(const std::filesystem::path& repo_path,
                            std::string(context) + " commit");
 }
 
+void WritePluginInit(const std::filesystem::path& root, std::string_view directory_name,
+                     std::string_view content) {
+  WriteFile(root / directory_name / "init.lua", std::string(content));
+}
+
 TemporaryDirectory::TemporaryDirectory() {
   static std::atomic<unsigned long long> counter{0};
   const auto base = std::filesystem::temp_directory_path();

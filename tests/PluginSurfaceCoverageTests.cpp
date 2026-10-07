@@ -31,23 +31,6 @@ namespace {
 
 using microide::plugin::PluginHost;
 
-void WritePluginInit(const std::filesystem::path& root,
-                     std::string_view directory_name,
-                     std::string_view content) {
-  WriteFile(root / directory_name / "init.lua", std::string(content));
-}
-
-class ScopedPluginConfigHomeEnv {
- public:
-  explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
-      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
-        appdata_("APPDATA", config_home.string()) {}
-
- private:
-  ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar appdata_;
-};
-
 // One plugin, every surface. Registration uses the same idioms the dogfood plugins
 // and the existing tests use; the language providers share the synthetic language
 // id "qa-cov" so the Query* calls below match them deterministically (no dependence
