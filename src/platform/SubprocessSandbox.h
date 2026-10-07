@@ -22,6 +22,10 @@ struct SubprocessResourceLimits {
 struct SubprocessSandbox {
   bool enabled = false;
   std::vector<std::filesystem::path> read_roots;
+  // Single FILES the child may read (and nothing beside them), for the few that
+  // live in a directory the child must not otherwise see -- the user's git
+  // configuration in $HOME. A directory here grants nothing.
+  std::vector<std::filesystem::path> read_files;
   std::vector<std::filesystem::path> write_roots;
   bool allow_network = true;
   SubprocessResourceLimits limits;
@@ -35,6 +39,15 @@ struct SubprocessSandbox {
 // gate remains the primary boundary and this layer is defense-in-depth. Safe to call with
 // `enabled == false` (no-op).
 void ApplyChildSandbox(const SubprocessSandbox& sandbox);
+
+// The user's git configuration, which git -- and every tool that shells out to it --
+// reads on start and treats as FATAL when it exists but cannot be read ("unable to
+// access ~/.gitconfig: Permission denied"). Configuration, not credentials:
+// ~/.git-credentials and ~/.ssh are deliberately not here. Appends the global config
+// file to `read_files` and the XDG git directory to `read_roots`; a path that does
+// not exist is simply never granted. Reads HOME and XDG_CONFIG_HOME, so call it in
+// the PARENT when building the sandbox, never in the forked child.
+void AllowUserGitConfiguration(SubprocessSandbox& sandbox);
 
 // Parent-side, read-only snapshot of whether the kernel-confinement layers used by
 // ApplyChildSandbox are actually usable on this host. Because that confinement is fail-open and

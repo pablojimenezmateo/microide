@@ -1,5 +1,7 @@
 #include "platform/SubprocessSandbox.h"
 
+#include <cstdlib>
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
 #endif
@@ -112,6 +114,7 @@ bool AddRule(int ruleset_fd, const char* path, __u64 access) {
 // and executable. The handled-access set covers read+write; any path not granted a given access is
 // denied it. Returns without restricting (fail-open) when the kernel lacks Landlock support.
 void ApplyLandlock(const std::vector<std::filesystem::path>& read_roots,
+                   const std::vector<std::filesystem::path>& read_files,
                    const std::vector<std::filesystem::path>& write_roots) {
   const int abi = LandlockCreateRuleset(nullptr, 0, LANDLOCK_CREATE_RULESET_VERSION);
   if (abi < 1) {
@@ -147,6 +150,13 @@ void ApplyLandlock(const std::vector<std::filesystem::path>& read_roots,
   for (const std::filesystem::path& root : write_roots) {
     if (!root.empty()) {
       AddRule(ruleset_fd, root.c_str(), write_access);
+    }
+  }
+  // A rule on a FILE may carry only file rights; READ_DIR or EXECUTE on one makes the
+  // kernel reject the rule outright.
+  for (const std::filesystem::path& file : read_files) {
+    if (!file.empty()) {
+      AddRule(ruleset_fd, file.c_str(), LANDLOCK_ACCESS_FS_READ_FILE);
     }
   }
 
@@ -208,7 +218,7 @@ void ApplyChildSandbox(const SubprocessSandbox& sandbox) {
     return;
   }
 #if defined(MICROIDE_HAS_LANDLOCK)
-  ApplyLandlock(sandbox.read_roots, sandbox.write_roots);
+  ApplyLandlock(sandbox.read_roots, sandbox.read_files, sandbox.write_roots);
 #endif
 #if defined(MICROIDE_HAS_SECCOMP)
   if (!sandbox.allow_network) {
@@ -237,6 +247,19 @@ SandboxSupport ProbeSandboxSupport() {
   support.seccomp_runtime_available = prctl(PR_GET_SECCOMP, 0, 0, 0, 0) >= 0;
 #endif
   return support;
+}
+
+void AllowUserGitConfiguration(SubprocessSandbox& sandbox) {
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && home[0] != '\0') {
+    sandbox.read_files.push_back(std::filesystem::path(home) / ".gitconfig");
+  }
+  const char* xdg = std::getenv("XDG_CONFIG_HOME");
+  if (xdg != nullptr && xdg[0] != '\0') {
+    sandbox.read_roots.push_back(std::filesystem::path(xdg) / "git");
+  } else if (home != nullptr && home[0] != '\0') {
+    sandbox.read_roots.push_back(std::filesystem::path(home) / ".config" / "git");
+  }
 }
 
 }  // namespace microide::platform

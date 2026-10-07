@@ -522,11 +522,49 @@ void TestSandboxProbeReportsConsistentSupport() {
          "repeated sandbox probes must be stable (no host-process side effects)");
 }
 
+#if defined(__linux__)
+// A `read_files` entry grants that one file and nothing beside it -- the shape the
+// plugin sandbox uses for ~/.gitconfig. The fixture lives under the build tree,
+// not /tmp: every sandboxed child may read /tmp, so a probe there proves nothing.
+void TestSandboxReadFilesGrantsOnlyThatFile() {
+  if (!microide::platform::ProbeSandboxSupport().landlock_runtime_available) {
+    return;  // the layer is fail-open on kernels without Landlock
+  }
+  const std::filesystem::path dir =
+      std::filesystem::current_path() / ("sandbox-read-files-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  WriteFile(dir / "allowed.txt", "allowed\n");
+  WriteFile(dir / "neighbour.txt", "neighbour\n");
+  microide::platform::SubprocessSandbox sandbox;
+  sandbox.enabled = true;
+  sandbox.read_files.push_back(dir / "allowed.txt");
+  const auto run = [&sandbox](const std::filesystem::path& file) {
+    microide::platform::SubprocessOptions options;
+    options.capture_stdout = true;
+    options.capture_stderr = true;
+    options.sandbox = sandbox;
+    return RunSubprocess({"cat", file.string()}, options);
+  };
+  const auto allowed = run(dir / "allowed.txt");
+  const auto neighbour = run(dir / "neighbour.txt");
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  Expect(allowed.exit_code == 0 && allowed.stdout_text == "allowed\n",
+         "the granted file is readable under the sandbox");
+  Expect(neighbour.exit_code != 0,
+         "its neighbour in the same directory is not: the grant is the file, not the directory");
+}
+#endif
+
 }  // namespace
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Subprocess/SandboxProbeReportsConsistentSupport",
           TestSandboxProbeReportsConsistentSupport);
+#if defined(__linux__)
+  AddTest(tests, "Subprocess/SandboxReadFilesGrantsOnlyThatFile",
+          TestSandboxReadFilesGrantsOnlyThatFile);
+#endif
   AddTest(tests, "Subprocess/CapturesStdoutAndStdin", TestSubprocessCapturesStdoutAndStdin);
   AddTest(tests, "Subprocess/CapturesStderrAndCwd", TestSubprocessCapturesStderrAndCwd);
 #if defined(__unix__) || defined(__APPLE__)

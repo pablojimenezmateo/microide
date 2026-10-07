@@ -236,6 +236,10 @@ platform::SubprocessSandbox MakeSandbox(const PluginFsContext& fs) {
   };
   add_roots_for_level(fs.caps.fs_read, sandbox.read_roots);
   add_roots_for_level(fs.caps.fs_write, sandbox.write_roots);
+  // A plugin allowed to spawn git must be able to run it: git aborts on an
+  // unreadable ~/.gitconfig rather than skipping it, so without this every
+  // plugin's git call failed on any machine whose user had ever set user.name.
+  platform::AllowUserGitConfiguration(sandbox);
   return sandbox;
 }
 
