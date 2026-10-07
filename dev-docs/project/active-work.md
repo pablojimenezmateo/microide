@@ -302,7 +302,7 @@ coexist. Phase 1 was folded into Phase 2 on 2026-10-07; Phase 2a — the server,
 surviving remote terminals, reattach — is the first user-visible slice and opens no
 remote project.
 
-**Groundwork is ten local-tree changes, each of which stands on its own if remote
+**Groundwork is eleven local-tree changes, each of which stands on its own if remote
 projects are never built.** Four are fully shipped (the design's own table at the top of
 that file says exactly what, and what each one left):
 
@@ -406,7 +406,11 @@ that file says exactly what, and what each one left):
 Open: the rest of **G4** (working-tree and branch/commit compares load
 off-thread as of 2026-10-06; the conflict merge still reads its stages on the
 shell thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the
-**actions** half of **G7**, **G8** `ProjectId`; the rest of **G9** (the four readers now share their primitives and
+**actions** half of **G7**, **G8** `ProjectId`; **G11**, the local/remote
+parity harness that makes end-to-end QA "the same scenario under a local and a
+non-local launcher, with split host and mirror roots, compared on what the user
+sees and on round-trip counts" (design § 10.1; test code only, ~800 lines, lands
+before Phase 2a); the rest of **G9** (the four readers now share their primitives and
 the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); and the rest of **G5**
 (TD-2026-09-28-304). Groundwork carries its own perf gates (design

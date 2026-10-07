@@ -1,6 +1,6 @@
 # Remote Projects Over SSH
 
-Last revised 2026-10-07. **Status: groundwork roughly 60% shipped (§ 8). No remote code yet.**
+Last revised 2026-10-07. **Status: groundwork roughly 55% shipped (§ 8; G11 added 2026-10-07). No remote code yet.**
 
 **Terminology.** This document talks about two different things that were both
 called "agent" until this revision. The **server** is `microide-server`, the
@@ -23,7 +23,10 @@ mosh-style predictive echo (§ 6.5), reversing an earlier decision; link death i
 detected by an application heartbeat in seconds rather than by ssh in tens of
 seconds (§ 6.4); the git sidebar's status is pushed by the server rather than
 polled (§ 6.5); and Phase 1 is gone, folded into a Phase 2a that ships surviving
-remote terminals as a feature on its own (§ 8).
+remote terminals as a feature on its own (§ 8). The same day, end-to-end QA became
+**local/remote parity** (§ 10.1): the same scenarios run under a local and a
+non-local launcher with split host and mirror roots, compared on what the user sees
+and on round-trip counts, with a groundwork half (G11) that needs no server.
 
 Shipped from the groundwork so far, on `main`:
 
@@ -38,7 +41,7 @@ Shipped from the groundwork so far, on `main`:
 | **G5** (part) | `SaveFormatterService` runs the formatter on a worker. An interactive save DEFERS — it returns without writing and its completion applies the formatter's output, guarded on the buffer's content revision — while a save whose caller acts on completion blocks. Flushes at tab close, project switch/close and quit keep an in-flight save from being dropped. The lint's spawn allowlist is now the service alone, plus a second half confining the one remaining shell-thread wait. | the blocking callers still wait (TD-2026-09-28-304); participants are still on the shell thread; compare/merge saves are still blocking |
 | **G4** (part) | `editor::AsyncBufferWork` is the guarded completion — an operation id the tab holds (so a completion finds its tab, and finds none if it was closed) plus the `content_revision` it was posted against — and the format-on-save path was moved onto it, so there is one copy of that rule rather than three. `project::FileReadService` is the dedicated reader: one thread, not the serial `ProjectBackgroundExecutor`, with cancellation checked between 1 MiB chunks so closing a tab stops the I/O. `EditorTabState::needs_restore` became `Content{Ready, Deferred, Loading, Failed}`, so the ~40 existing guards ask `content_pending()` and cover a state added later by construction. Files ≥ 4 MiB open off-thread; the WHOLE load runs on the reader's thread through the request's `on_worker` hook — the classification (hash, encoding, line endings, CRLF rewrite) and the buffer build, with a complete `TextViewport` constructed there and moved into the tab by the completion. One file is one read however many panes wait for it: the completion hands its view to every other tab waiting on that path, sharing the buffer. `TextViewport` gained a read-only mode, refused at both edit choke points and at `Save()`, because a keystroke into a tab whose bytes have not arrived would otherwise become a buffer that shadows the file and can be saved over it. A sticky notification reports a read above 48 MiB. | compare/merge still read their sides on the shell thread (TD-2026-09-29-312); the threshold is a size, so a small file on a stalled mount still blocks (TD-2026-09-29-313); — the disk-content hash (G6) is off the shell thread for the watcher sweep, leaving only the save path's own conflict check, which must decide before it writes (TD-2026-09-29-309) |
 
-Not started: **G7** notification actions, **G8** `ProjectId`.
+Not started: **G7** notification actions, **G8** `ProjectId`, **G11** the local/remote parity harness (§ 10.1).
 
 One measurement worth carrying: opening a 1 MB file to first paint is 1.48 ms
 (`tests/perf/baselines/large_file_open_first_paint.json`). G4's local case is
@@ -1834,7 +1837,7 @@ into a terminal to see the same failure. "Connection failed" alone is a bug.
 
 Each phase is independently useful and independently measurable.
 
-- **Groundwork — now, in the local tree, no remote code.** Ten changes that are
+- **Groundwork — now, in the local tree, no remote code.** Eleven changes that are
   worth making on their own merits and that happen to be exactly the seams the
   rest of this design plugs into. Doing them now means Phase 2 is wiring rather
   than refactoring, and if remote projects never ship, the tree is still better
@@ -1844,7 +1847,7 @@ Each phase is independently useful and independently measurable.
   Persisted formats, setting scopes, the save contract and project identity are all
   allowed to change, and several of the items below are worth doing *only* if they
   are allowed to. Held to non-disruptive refactors this phase would be three items
-  and ~450 lines instead of ten and ~4,200; the return on the larger one is that the
+  and ~450 lines instead of eleven and ~4,200; the return on the larger one is that the
   two phases after it get smaller and the tree gets a layering it does not currently
   have. Ordered by what unblocks what: G1 and G2 are preconditions for most of the
   rest, and G10 — the write gate — is a precondition for § 6.3 being true at all.
@@ -2121,10 +2124,30 @@ Each phase is independently useful and independently measurable.
      these sites must not happen concurrently with building the thing that depends
      on them.
 
+  11. **Build the local/remote parity harness before there is a remote to compare.**
+     § 10.1 in full; the groundwork half is the part that needs no server. A
+     test-only `LoopbackProcessLauncher` that reports `is_local() == false`, runs the
+     real command through a recording shim, and maps the working directory from the
+     mirror root to a SEPARATE host root; a parity runner that runs one scenario
+     under the local launcher and under the loopback one and asserts the two
+     normalized outcomes are equal; and the scenario catalog, which is the existing
+     git, LSP, formatter, plugin-tool, write-gate, terminal and real-server tests
+     taking the locality as a parameter instead of naming the local launcher. It
+     earns its place in this phase on local merit alone: it is the test that every
+     spawn really goes through the project's launcher (a spawn that bypasses it is
+     absent from the shim's log, and its result differs), which G2's lint can only
+     check by name, and the split roots find every place a path a child process
+     printed reaches the user unmapped — today, which is when they are cheap to fix.
+     What cannot pass yet (LSP URIs and DAP frames need `RemotePathMap`) is listed in
+     a checked-in known-gaps file that may only shrink, so Phase 2 starts with its
+     translation work enumerated rather than discovered.
+
   **Order.** G1 first, because it is mechanical and touches the most files. Then
   G10, because G5 and G4 both sit on the save and open paths it owns. Then G4, then
   G5 and G6 on top of G4's completion guard. G2, G3, G7, G8 and G9 are independent
-  of each other and of that chain.
+  of each other and of that chain. G11 needs only G2 and G10 (shipped) and should
+  land before Phase 2a starts, so the first remote code is written against a gate
+  that already exists.
 
   **Groundwork has its own performance gates and its own coverage**, in § 9 and
   § 10, because speed is this repo's first priority and a phase that only prepares
@@ -2169,7 +2192,9 @@ Each phase is independently useful and independently measurable.
   reattach, with predicted echo* — reached through `Remote: Open Terminal on
   Host…`, and that is why it is first: it is where every protocol-shape decision
   lives, it is the smaller of the two high-risk components (§ 8.1), and it is
-  useful to a user who syncs with git and wants nothing else. Remote git over
+  useful to a user who syncs with git and wants nothing else. Its exit gate
+  includes the § 10.1 terminal and `proc/spawn` parity rows against the real
+  server. Remote git over
   `proc/spawn` for a *local* checkout is deliberately **not** in it: that is the
   old Phase 1's silent divergence, and it waits for the hashes.
 - **Phase 2b — the mirror and the Open Remote flow.** Manifest, fetch, write with
@@ -2188,7 +2213,10 @@ Each phase is independently useful and independently measurable.
   and each is cheaper now than once a protocol and an on-disk layout exist to be
   compatible with. Host-side search is **in this phase, not deferred**: without it,
   search over a content-stale mirror is silently wrong from the first agent write
-  (§ 6.11), so shipping the mirror without it ships a bug.
+  (§ 6.11), so shipping the mirror without it ships a bug. The phase's exit gate is
+  § 10.1's matrix run against the real server binary with an **empty** known-gaps
+  file: a remote project that answers differently from the same tree opened
+  locally is not shipped, whichever side is wrong.
 - **Phase 3 — scale and polish.** The branch-switch resync path tuned against a
   real multi-agent host, the **Changed on Host** view (§ 7.9), perf gates in the
   harness, a read-only git request pool if § 9's sidebar gate is missed, a server
@@ -2210,12 +2238,12 @@ plus its socket server 2,398, and git 3,704.
 
 | phase | production | tests |
 | --- | --- | --- |
-| Groundwork (§ 8, local tree, ships with or without remote) | ~4,200 | ~3,800 |
+| Groundwork (§ 8, local tree, ships with or without remote) | ~4,200 | ~4,600 |
 | Phase 0 (scripts and docs, no product code) | ~100 | — |
-| Phase 2a (server daemon, `proc/spawn`, self-install, host terminal model, prediction, reattach) | ~4,200 | ~4,400 |
-| Phase 2b (mirror, Open Remote flow, host search, hash guards) | ~6,000 | ~6,300 |
+| Phase 2a (server daemon, `proc/spawn`, self-install, host terminal model, prediction, reattach) | ~4,200 | ~4,700 |
+| Phase 2b (mirror, Open Remote flow, host search, hash guards) | ~6,000 | ~6,800 |
 | Phase 3 (scale and polish) | ~2,000 | ~1,700 |
-| **total** | **~16,500** | **~16,200** |
+| **total** | **~16,500** | **~17,800** |
 
 Groundwork by item, since it is now the phase most likely to be scheduled on its
 own: G1 SDL-free kernel ~1,000 (mechanical across 40+ wake sites, plus the `Waker`
@@ -2227,7 +2255,12 @@ the six subsystem writers, the six direct `viewport.Save()` entry points, the
 lint), G2 owned launcher ~400 across its eight spawn sites, G5 async save pipeline
 ~300, G9 `.git` readers with the unknown state ~300, G7 notifications ~300 including
 the lifetime, G6 content hashes ~250 (excluding vendored blake3), G3 argv-shaped
-terminal ~150.
+terminal ~150. G11, the parity harness, is ~800 lines and all of it is test code —
+the loopback launcher and its shim (~200), the runner with its normalizer,
+known-gaps ratchet and positive control (~300), the control-channel transcript
+differ (~150), and parameterizing the existing scenarios (~150) — so it moves the
+tests column, not production. Phase 2a adds ~300 test lines of terminal and
+`proc/spawn` parity, Phase 2b ~500 for the full matrix against the server.
 
 The heaviest single items, so a schedule can see where the mass is: the terminal
 prediction overlay with its validation and adaptive mode (~800), `proc/spawn` with
@@ -2292,6 +2325,12 @@ reassuring about the schedule for those two files.
 
 ## 9. Performance gates
 
+These are the TIME budgets, and they run only in the perf harness, each scenario
+in its own process. The suite's local/remote parity checks (§ 10.1) budget
+round trips by COUNT instead, so they are deterministic and run in the ordinary
+sharded suite on a loaded machine; a regression that adds a round trip fails
+there first, before any wall clock is read.
+
 Measured in the perf harness against a local `microide-server` with injected
 latency (`--server-delay-ms`), so they run without a host:
 
@@ -2353,6 +2392,10 @@ for remote must not pay for it locally:
 
 ## 10. Test strategy
 
+- **The end-to-end gate is parity with local, not remote on its own** (§ 10.1).
+  Every bullet below tests a remote mechanism; § 10.1 tests the product claim — a
+  remote project behaves like the same tree opened locally — by running the same
+  scenarios under both localities and comparing what the user would see.
 - **The server is testable with no ssh.** `RemoteServerClient` takes an argv, so a
   test runs `microide-server attach --root <fixture> --server-delay-ms <n>` over a pipe, so every test runs against the real binary with injected latency;
   ssh is never a test dependency. A `remote.ssh_command` test seam (like the
@@ -2483,6 +2526,102 @@ for remote must not pay for it locally:
 - The perf scenarios in § 9, each in its own child process like every other
   scenario, with a stalled-server case for the frame-time gate.
 
+### 10.1 Local/remote parity: the end-to-end QA gate
+
+The tests above each pin a remote mechanism. None of them would notice a remote
+project that is internally consistent and simply *different* from the same tree
+opened locally — a diagnostic on the wrong line, a completion list missing the
+items a local server returns, a stack frame naming a host path, a rename that
+edits four files instead of five. Those are what a user experiences as "remote is
+flaky", and asserting each locality on its own lets both drift together. So
+parity is asserted directly: **one scenario, run under each locality, and the two
+normalized outcomes must be equal.**
+
+**Localities.** Three, added as they become real:
+
+| locality | what runs the processes | available |
+| --- | --- | --- |
+| `local` | `LocalProcessLauncher`, one root | today |
+| `loopback` | `LoopbackProcessLauncher` (tests only): `is_local() == false`, argv resolved through a recording shim that runs the real command on this machine, working directory mapped from the mirror root to a separate host root | Groundwork G11 |
+| `server` | the real `microide-server`, attached over a pipe (§ 10, first bullet), its own host root | Phase 2a for terminals and `proc/spawn`, 2b for everything |
+
+**Split roots, always.** The fixture tree is materialized twice, as `host/` and
+`mirror/`, and a non-local run opens `mirror/`. A non-local run with one shared root
+is forbidden by the runner, because it is the configuration in which every path
+translation bug passes: the unmapped path is also a correct path. With split roots
+anything a host process printed — an LSP URI, a compiler diagnostic, a git path, a
+DAP stack frame — names `host/` until something maps it, and the normalizer
+deliberately does NOT map `host/`, so a leak compares unequal.
+
+**What is compared.** What reaches the user, not the protocol: each scenario emits
+an outcome record of `(kind, key, value)` lines, sorted, with the project root
+rewritten to `<root>`, durations and ids stripped, and nothing else touched.
+Sources are the same ones the user sees — session and view-model state through
+`WorkspaceShellTestAccess`, the bytes on disk after a write, and the control
+channel's query verbs. Two records that differ produce a line diff in the
+failure, which is the bug report.
+
+**The catalog** starts as tests that already exist, parameterized over locality
+rather than rewritten:
+
+- git: status, stage, commit, blame, working-tree and branch compare, conflict merge;
+- LSP against the in-tree Python fake server and, when installed, clangd
+  (`LspRealServerE2ETests`): diagnostics with their rendered lines, completion
+  items, hover, definition, references, rename (bytes of every touched file),
+  formatting;
+- every write path through the gate: editor save with format-on-save, the plugin
+  file API, replace-in-project, sidebar create/rename/delete, merge result —
+  compared as bytes on disk;
+- plugin tools and the formatter: argv as received by the child, output as shown;
+- terminal: a scripted session's transcript after normalization (Phase 2a adds the
+  prediction overlay's confirmed screen and reattach mid-command);
+- debugger, when gdb is installed (`DapRealAdapterE2ETests`): stop line,
+  stack-frame paths, variables;
+- project search hits (Phase 2b: host-side search against mirror search on a
+  current mirror, and the stale case labelled rather than equal).
+
+**Round trips are compared too, by count.** The shim logs every invocation and
+the server counts requests by verb. A scenario records both, and parity requires
+the non-local count not to exceed the budget pinned for it in a checked-in budget
+file that ratchets down only. That is what catches a remote that is correct and
+slow — completion that re-asks per keystroke is the standing example
+(TD-2026-10-07-320's test counts requests for exactly this reason). Counts, never
+milliseconds: these tests are deterministic and run in the ordinary sharded suite,
+while time budgets stay in § 9's harness.
+
+**Known gaps ratchet.** A row that cannot pass yet — in Groundwork, everything that
+needs `RemotePathMap` — is listed in a checked-in known-gaps file with the TD or
+phase that removes it. The runner fails on an unlisted mismatch **and on a listed
+gap that now matches**, so the file can only shrink and nobody has to remember to
+prune it. Phase 2b ships with it empty.
+
+**Vacuity guards**, because a parity test that compares two empty records, or two
+runs that both silently went local, is green and worthless
+(`dev-docs/project/validation-traps.md`):
+
+- a scenario whose outcome record is empty fails;
+- a non-local run of a scenario that spawns anything must show a non-empty shim
+  log or server request count, or the loopback was never wired and both sides ran
+  local;
+- a positive-control fixture — a launcher that leaks one `host/` path into one
+  outcome line — must make the runner fail, in the same style as the
+  architecture lint's rule fixtures.
+
+**Headless parity.** The same `--control-spec` scenario runs against
+`microide --control` with a local project and with a non-local one (a test-only
+startup option selects the loopback launcher in Groundwork; `ssh://` against the
+loopback server from Phase 2b), drives it through the agent query verbs —
+`editor`, `commands`, `terminals`, `terminal-output`, plus status and
+notifications — and diffs the two normalized JSONL transcripts. This is the full
+binary end to end, including startup, persistence and the status bar, on Xvfb like
+the media capture.
+
+**Where it runs.** The parity cases are ordinary `microide_tests` cases under
+`Parity/*`, so the `tests` lane runs them. A `tools/run-checks.sh parity` lane adds
+the headless transcript diff (it needs the app binary and Xvfb) and, once it
+exists, the server binary under ASAN, so the daemon is sanitized by the same runs
+that check it agrees with local.
+
 ## 11. Decisions (every open question, answered)
 
 | question | decision |
@@ -2517,7 +2656,8 @@ for remote must not pay for it locally:
 | Daemon stdio | Closed and reopened on `/dev/null` with `setsid` before the relay reports success; readiness is the socket becoming connectable, never the spawn exiting. Otherwise `ssh` never returns and `StartingServer` hangs on a handshake that already succeeded. § 6.12. |
 | Tree completeness vs the content set | The content set is files, non-ignored, one repository deep: no empty directories, no ignored directories, no submodule contents until Phase 3. Stated as a limitation in the docs rather than implied away by "the tree is never behind". Two are softened rather than absolute: an ignored path is not *listed* but is still openable through § 6.5's read-only fetch, and an empty directory the **user** creates is kept as `local-only` (§ 6.3) though one the host already had is invisible. § 6.2. |
 | A tree too large to mirror | Fails at `server/hello` against `remote.max_manifest_files`. A truncated manifest is the one state the content-state model cannot express, since a missing row is indistinguishable from a missing file. § 6.2. |
-| Should groundwork stay cheap and non-disruptive | **No.** Compatibility breaks are allowed, so groundwork is ten items and ~4,200 lines rather than three and ~450. All ten stand alone if remote never ships, which is the test each had to pass to be in that phase rather than in Phase 2. § 8. |
+| Should groundwork stay cheap and non-disruptive | **No.** Compatibility breaks are allowed, so groundwork is eleven items and ~4,200 production lines rather than three and ~450. All eleven stand alone if remote never ships, which is the test each had to pass to be in that phase rather than in Phase 2. § 8. |
+| How remote is tested end to end | By **parity with local**: one scenario under the local launcher, a loopback non-local launcher and later the real server, with split host and mirror roots, comparing what the user sees and the round-trip count. Equality, not two independent assertions, because two independent assertions drift together. A known-gaps file that may only shrink; Phase 2b ships with it empty. The groundwork half (G11) needs no server and lands first. § 10.1, § 8. |
 | Does the server link SDL | No. Groundwork G1 splits an SDL-free kernel, so the server is a small separate binary. The coupling is only the cross-thread wake and SDL types in terminal data. This also closes the server-install question: copy one static binary. § 8. |
 | Wire format | Length-prefixed binary frames, not JSON-RPC. The traffic is content, manifests and terminal state, and JSON charges +33% on bodies, ~6 MB on a large manifest, and base64 on the latency path. The hardened transport behaviour is kept; only the codec changes. § 6.4. |
 | What the mirror stores | An object store addressed by content hash, with `tree/` materialized from it. Gives near-free branch switches, a journal that references immutable content, and `zstd --patch-from` deltas for the one-function-edit case that dominates this workload. § 6.2. |
