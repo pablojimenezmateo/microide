@@ -44,6 +44,28 @@ bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_cou
       [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
 }
 
+// A refresh requested while another is in flight is parked and run when the first
+// finishes. When the first is SUPERSEDED (which the second request makes it), the
+// parked one used to run under the generation it was copied with, superseded
+// itself, and left the sidebar refreshing forever with no entries -- what pressing
+// Refresh right after opening the git view did.
+void TestWorkspaceShellGitRefreshDuringInFlightRefreshPublishes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "in-flight refresh fixture");
+  WriteFile(root / "a.txt", "two\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);  // starts a refresh
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);  // parked behind it
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "the parked refresh publishes once the superseded one finishes");
+  Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell), "and the sidebar leaves refreshing");
+}
+
 // The outgoing-base ref picker now runs its branch/commit git queries on the
 // background executor; drive the mailbox drain until it leaves the loading state.
 bool SettleComparePicker(WorkspaceShell& shell) {
@@ -1382,6 +1404,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitStashActionsRoundTrip);
   AddTest(tests, "WorkspaceShell/GitBranchPickerSwitchesBranch",
           TestWorkspaceShellGitBranchPickerSwitchesBranch);
+  AddTest(tests, "WorkspaceShell/GitRefreshDuringInFlightRefreshPublishes",
+          TestWorkspaceShellGitRefreshDuringInFlightRefreshPublishes);
   AddTest(tests, "WorkspaceShell/GitSidebarBranchRowIsClickable",
           TestWorkspaceShellGitSidebarBranchRowIsClickable);
   AddTest(tests, "WorkspaceShell/GitSidebarRefreshPreservesActiveEditorBlameCache",

@@ -230,6 +230,13 @@ void GitRepositoryService::HandleSupersededRefresh() {
       deferred_follow_up = *deferred_refresh_;
       deferred_refresh_.reset();
       follow_up_refresh_pending_ = false;
+      // A fresh generation, as PublishSnapshot's follow-up takes. The parked
+      // request was copied before RequestRefresh stamped it, so running it under
+      // its own (zero) generation made it supersede itself: nothing published,
+      // `refreshing` stuck true, and the sidebar read "Open a Git repository"
+      // until the next unrelated refresh -- every time Refresh was pressed while
+      // the refresh that showing the view started was still running.
+      deferred_follow_up->generation = ++refresh_generation_;
       refresh_in_flight_ = true;
       current_state_.refreshing = true;
     }
