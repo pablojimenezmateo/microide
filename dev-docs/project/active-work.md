@@ -1,6 +1,12 @@
 # MicroIDE Active Work
 
-Reviewed 2026-09-29 (remote-projects groundwork G4: the asynchronous open, the
+Reviewed 2026-10-07 (remote-projects groundwork: the G11 parity harness with ten
+local/remote rows including real gdb and clangd, LSP/DAP path translation at the
+transport, `${workspaceFolder}` in host commands, the project's locality fixed at
+open, git metadata asked of the host, and every git/formatter wait the parity
+counts exposed moved off the shell thread; completion that follows typing and
+opens itself, once per word; see § 7 and `known-tech-debt.md` § TD-2026-10-07-320
+through 323). Previously reviewed 2026-09-29 (remote-projects groundwork G4: the asynchronous open, the
 guarded completion every off-thread buffer operation shares, and the dedicated
 reader; see § 7 and `known-tech-debt.md` § TD-2026-09-29-312 through 316).
 Previously reviewed 2026-09-22 (groundwork G1, G2, G3 and part of G9; see
@@ -403,9 +409,33 @@ that file says exactly what, and what each one left):
   writes over it. And writing the tests found a real bug in the split path: a
   pane cloned while its file was loading was left empty and read-only forever.
 
-Open: the rest of **G4** (working-tree and branch/commit compares load
-off-thread as of 2026-10-06; the conflict merge still reads its stages on the
-shell thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), the
+**Shipped 2026-10-07, all remote-shaped:**
+
+- **G11 parity harness** (`tests/parity/`): the same scenario runs against a local
+  project and a loopback non-local one with split host and mirror trees, compared
+  on what the user sees AND on how many processes each started (a remote may not
+  take more round trips than local). Rows: save, file operations, format-on-save,
+  plugin tools, git sidebar, terminal, language server, plus real gdb and clangd
+  through the loopback host. The known-gaps list may only shrink, and is empty.
+- **Path translation** for language servers and debug adapters at the shared
+  transport (`workspace/HostPathTranslator`), keyed by field name, inactive for a
+  local project; `${workspaceFolder}` in server, adapter and plugin-tool argv.
+- **Locality is identity**: `project::ProjectLocality` (launcher + write gate) is
+  fixed at `OpenProjectTab` and survives the project-state reset.
+- **Git asks the host**: `project::GitMetadataSource` via `GitMetadataFor(launcher)`
+  (TD-319); git passes its root as the working directory, never `-C`; the outgoing
+  base resolves in two processes instead of up to six.
+- **Off the shell thread**: the conflict merge's three stage reads (TD-312), the
+  review commands' git work (TD-323), and a rename/delete's formatter wait (part
+  of TD-304).
+- **Completion**: the list follows typing and refilters locally, re-asking only an
+  incomplete server (TD-320), and opens itself on trigger characters and quick
+  suggestions, once per word (TD-321).
+- **Bugs found on the way**: the git sidebar could stick "refreshing" forever after
+  a refresh during a refresh; a sandboxed plugin could not run git.
+
+Open: the rest of **G4** (the async-open threshold is a size,
+TD-2026-09-29-313), the
 **actions** half of **G7**, **G8** `ProjectId`; **G11**, the local/remote
 parity harness that makes end-to-end QA "the same scenario under a local and a
 non-local launcher, with split host and mirror roots, compared on what the user
