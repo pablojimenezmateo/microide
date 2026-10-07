@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "parity/LoopbackLocality.h"
 
 #include "platform/ProcessLauncher.h"
 
@@ -366,6 +367,57 @@ void TestRecentCommitsOnUnbornBranchIsEmpty() {
 
   const auto recent = CollectGitRecentCommits(repo_path, platform::LocalProcessLauncher(), 10);
   Expect(recent.empty(), "recent-commit collection on an unborn branch must be empty");
+}
+
+// The base reference is one `for-each-ref` plus the gh-merge-base config probe --
+// it was up to six git processes, every one a round trip for a remote project.
+// Also covers the two rules no other test reached: origin/HEAD, and the current
+// branch's upstream when there is no main/master.
+void TestGitBaseReferenceRulesInTwoProcesses() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "a.txt", "a\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base");
+
+  {
+    const tests::parity::RecordingLocalLauncher launcher;
+    const auto base_ref = ResolveGitBaseReference(repo_path, launcher);
+    Expect(base_ref.has_value() && base_ref->ref == "refs/heads/main",
+           "with no remote, the local main is the base");
+    Expect(launcher.spawns().size() == 2,
+           "one for-each-ref and one config probe; got " +
+               std::to_string(launcher.spawns().size()));
+  }
+
+  RequireGitCommandSuccess(repo_path, {"update-ref", "refs/remotes/origin/develop", "HEAD"},
+                           "fake a remote branch");
+  RequireGitCommandSuccess(repo_path,
+                           {"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"},
+                           "point origin/HEAD at it");
+  {
+    const auto base_ref = ResolveGitBaseReference(repo_path, platform::LocalProcessLauncher());
+    Expect(base_ref.has_value() && base_ref->ref == "refs/remotes/origin/develop" &&
+               base_ref->label == "origin/develop",
+           "origin/HEAD outranks the local main");
+  }
+
+  RequireGitCommandSuccess(repo_path, {"symbolic-ref", "--delete", "refs/remotes/origin/HEAD"},
+                           "drop origin/HEAD");
+  RequireGitCommandSuccess(repo_path, {"branch", "-m", "main", "trunk"}, "no main/master");
+  RequireGitCommandSuccess(repo_path, {"update-ref", "refs/remotes/up/trunk", "HEAD"},
+                           "an upstream ref");
+  RequireGitCommandSuccess(repo_path, {"config", "branch.trunk.remote", "up"}, "upstream remote");
+  RequireGitCommandSuccess(repo_path, {"config", "branch.trunk.merge", "refs/heads/trunk"},
+                           "upstream merge");
+  RequireGitCommandSuccess(repo_path, {"config", "remote.up.fetch", "+refs/heads/*:refs/remotes/up/*"},
+                           "upstream fetch spec");
+  {
+    const auto base_ref = ResolveGitBaseReference(repo_path, platform::LocalProcessLauncher());
+    Expect(base_ref.has_value() && base_ref->ref == "up/trunk",
+           "with no origin/HEAD and no main/master, the upstream is the base; got " +
+               (base_ref.has_value() ? base_ref->ref : std::string("none")));
+  }
 }
 
 void TestGitResolvePrBaseReferenceFromGhMergeBase() {
@@ -1367,6 +1419,7 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
 }
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Git/BaseReferenceRulesInTwoProcesses", TestGitBaseReferenceRulesInTwoProcesses);
   AddTest(tests, "Git/ReadFileAtRevisionSurfacesTruncation",
           TestGitReadFileAtRevisionSurfacesTruncation);
   AddTest(tests, "Git/ExplicitRevisionArgsUseEndOfOptions",

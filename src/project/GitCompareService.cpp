@@ -334,70 +334,98 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
 
 std::optional<GitBranchReference> ResolveGitBaseReference(
     const std::filesystem::path& root, const platform::ProcessLauncher& launcher) {
-  // Chains up to six git subprocesses (symbolic-ref, config, config, symbolic-ref,
-  // show-ref, rev-parse) to answer one question. Scoped because that is ~8 ms of
-  // spawn cost whose thread and call count are the whole story -- the ranking
-  // showed the cluster as five separate RunSubprocess rows with no owner.
+  // This chained up to SIX git subprocesses (symbolic-ref, config, config,
+  // symbolic-ref, show-ref, rev-parse) to answer one question, on every first
+  // git-sidebar refresh -- six round trips for a remote project. One
+  // `for-each-ref` answers every rule but the first: which branch HEAD is on (the
+  // `*`), whether main/master exist, where origin/HEAD points, and the current
+  // branch's upstream. The first rule (a `gh pr checkout` base) needs one config
+  // read, and only when it applies does it pay its own lookups.
   util::PerformanceTrace::Scope perf_scope("git::ResolveBaseReference");
   const GitRepository repo(root, launcher);
   if (!repo.IsValid()) {
     return std::nullopt;
   }
 
-  const std::optional<std::string> current_branch =
-      ReadTrimmedGitValue(repo, {"symbolic-ref", "--quiet", "--short", "HEAD"});
-  if (current_branch.has_value()) {
-    const std::string merge_base_key = "branch." + *current_branch + ".gh-merge-base";
-    const std::optional<std::string> pr_base =
-        ReadTrimmedGitValue(repo, {"config", "--get", merge_base_key});
+  const auto refs = repo.Execute({"for-each-ref",
+                                  "--format=%(HEAD)%09%(refname)%09%(symref)%09%(upstream:short)",
+                                  "refs/heads", "refs/remotes/origin/HEAD"});
+  if (!refs.success()) {
+    return std::nullopt;
+  }
+  std::string current_branch;
+  std::string current_upstream;
+  std::string origin_head;
+  bool has_main = false;
+  bool has_master = false;
+  std::string_view output = refs.output;
+  while (!output.empty()) {
+    const std::size_t newline = output.find('\n');
+    const std::string_view line = output.substr(0, newline);
+    output = newline == std::string_view::npos ? std::string_view{} : output.substr(newline + 1);
+    std::array<std::string_view, 4> fields{};
+    std::string_view rest = line;
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+      const std::size_t tab = rest.find('\t');
+      fields[i] = rest.substr(0, tab);
+      rest = tab == std::string_view::npos ? std::string_view{} : rest.substr(tab + 1);
+    }
+    const std::string_view head_mark = fields[0];
+    const std::string_view refname = fields[1];
+    if (refname == "refs/remotes/origin/HEAD") {
+      origin_head = std::string(fields[2]);
+      continue;
+    }
+    constexpr std::string_view kHeads = "refs/heads/";
+    if (!refname.starts_with(kHeads)) {
+      continue;
+    }
+    const std::string_view branch = refname.substr(kHeads.size());
+    has_main = has_main || branch == "main";
+    has_master = has_master || branch == "master";
+    if (head_mark == "*") {
+      current_branch = std::string(branch);
+      current_upstream = std::string(fields[3]);
+    }
+  }
+
+  if (!current_branch.empty()) {
+    const std::optional<std::string> pr_base = ReadTrimmedGitValue(
+        repo, {"config", "--get", "branch." + current_branch + ".gh-merge-base"});
     if (pr_base.has_value()) {
-      const std::string remote_key = "branch." + *current_branch + ".remote";
-      const std::optional<std::string> branch_remote =
-          ReadTrimmedGitValue(repo, {"config", "--get", remote_key});
-      if (const auto pr_base_ref =
-              ResolveNamedBranchReference(repo, *pr_base,
-                                          branch_remote.value_or(std::string{}));
+      const std::optional<std::string> branch_remote = ReadTrimmedGitValue(
+          repo, {"config", "--get", "branch." + current_branch + ".remote"});
+      if (const auto pr_base_ref = ResolveNamedBranchReference(
+              repo, *pr_base, branch_remote.value_or(std::string{}));
           pr_base_ref.has_value()) {
         return pr_base_ref;
       }
     }
   }
 
-  const auto origin_head_result =
-      repo.Execute({"symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"});
-  const std::string origin_head = util::TrimAsciiWhitespace(origin_head_result.output);
-  if (origin_head_result.success() && !origin_head.empty()) {
+  if (!origin_head.empty()) {
     return GitBranchReference{
         .ref = origin_head,
         .label = ShortRefLabel(origin_head),
     };
   }
 
-  const std::array<std::string_view, 2> local_defaults = {"main", "master"};
-  for (std::string_view candidate : local_defaults) {
-    std::string full_ref = "refs/heads/" + std::string(candidate);
-    const auto exists_result =
-        repo.Execute({"show-ref", "--verify", "--quiet", full_ref});
-    if (exists_result.success()) {
-      // Keep the FULL ref (refs/heads/main) as identity, not the bare short name.
-      // The identity flows into `git diff <ref>...HEAD`, where a tag or other object
-      // also named "main"/"master" would otherwise win over the verified local
-      // branch (TD-2026-07-17A-025). Match the other GitBranchReference builders,
-      // which keep the short form only as the label.
-      return GitBranchReference{
-          .ref = std::move(full_ref),
-          .label = std::string(candidate),
-      };
-    }
+  // Keep the FULL ref (refs/heads/main) as identity, not the bare short name. The
+  // identity flows into `git diff <ref>...HEAD`, where a tag or other object also
+  // named "main"/"master" would otherwise win over the verified local branch
+  // (TD-2026-07-17A-025). Match the other GitBranchReference builders, which keep
+  // the short form only as the label.
+  if (has_main) {
+    return GitBranchReference{.ref = "refs/heads/main", .label = "main"};
+  }
+  if (has_master) {
+    return GitBranchReference{.ref = "refs/heads/master", .label = "master"};
   }
 
-  const auto upstream_result =
-      repo.Execute({"rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"});
-  const std::string upstream = util::TrimAsciiWhitespace(upstream_result.output);
-  if (upstream_result.success() && !upstream.empty()) {
+  if (!current_upstream.empty()) {
     return GitBranchReference{
-        .ref = upstream,
-        .label = ShortRefLabel(upstream),
+        .ref = current_upstream,
+        .label = ShortRefLabel(current_upstream),
     };
   }
 
