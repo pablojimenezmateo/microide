@@ -2309,6 +2309,32 @@ void TestFoldingRefreshLanguageChangeRebuilds() {
 //   * the LineSpan form equals the whole-line form on every shape, including
 //     indents that cross the 256-byte chunk boundary with tabs on both sides, and
 //   * asking a piece-tree line that spans pieces reads none of it past the indent.
+void TestIndentGuidesDepthIsBoundedOnPathologicalIndent() {
+  using microide::editor::ComputeIndentGuides;
+  using microide::editor::IndentGuideRun;
+  // A generated file can open a line with hundreds of thousands of spaces. The
+  // guide sweep walks one column per indent step, so without a bound this line
+  // alone cost ~100k column iterations and ~100k runs per frame.
+  std::vector<std::string> lines = {
+      "a",
+      std::string(400000, ' ') + "x",
+      "    b();",
+  };
+  std::vector<std::size_t> visible_rows{0, 1, 2};
+  std::vector<IndentGuideRun> runs;
+  ComputeIndentGuides(lines, visible_rows, /*tab_size=*/4, /*indent_width=*/4,
+                      /*caret_line=*/SIZE_MAX, /*caret_leading=*/0, &runs);
+  Expect(!runs.empty(), "a deeply indented line still draws guides");
+  std::size_t deepest = 0;
+  for (const IndentGuideRun& run : runs) {
+    deepest = std::max(deepest, run.column);
+  }
+  Expect(deepest <= 512, "guides stop at the fixed maximum visual column");
+  Expect(runs.size() <= 512 / 4 + 1, "the run count is bounded by the cap, not the indent");
+  Expect(microide::editor::LeadingVisualIndent(lines[1], 4) == 400000,
+         "the indent measure itself still reports the true indent");
+}
+
 void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
   using microide::editor::LeadingVisualIndent;
   constexpr std::size_t kTabSize = 3;  // does not divide the chunk, so the
@@ -2477,6 +2503,8 @@ void TestBracketScannerAgreesWithStackReference() {
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorEssentials/IndentGuides/BracketScannerAgreesWithStackReference",
           TestBracketScannerAgreesWithStackReference);
+  AddTest(tests, "EditorEssentials/IndentGuides/DepthIsBoundedOnPathologicalIndent",
+          TestIndentGuidesDepthIsBoundedOnPathologicalIndent);
   AddTest(tests, "EditorEssentials/IndentGuides/LeadingIndentScanIsBoundedAndMatchesTheWholeLineForm",
           TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm);
   AddTest(tests, "EditorEssentials/BracketScanner/ForwardMatch",
