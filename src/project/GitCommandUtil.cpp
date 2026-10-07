@@ -1,5 +1,7 @@
 #include "project/GitCommandUtil.h"
 
+#include "project/GitMetadataSource.h"
+
 #include <fstream>
 #include <algorithm>
 #include <array>
@@ -262,8 +264,9 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
   return (git_dir.is_absolute() ? git_dir : root / git_dir).lexically_normal();
 }
 
-std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root) {
-  const std::optional<std::filesystem::path> git_dir = ResolveGitDirectory(root);
+std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root,
+                                                  const GitMetadataSource& metadata) {
+  const std::optional<std::filesystem::path> git_dir = metadata.ReadableGitDirectory(root);
   if (!git_dir.has_value()) {
     return std::nullopt;
   }

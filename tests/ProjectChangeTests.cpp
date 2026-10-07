@@ -3,6 +3,7 @@
 #include "project/ProjectChangeNormalizer.h"
 #include "platform/FileIndexWatcher.h"
 #include "TestSupport.h"
+#include "project/GitMetadataSource.h"
 
 #include <algorithm>
 #include <chrono>
@@ -352,20 +353,20 @@ void TestReadHeadBranchNameResolvesLayouts() {
   const std::filesystem::path plain = temp_dir.path() / "plain";
   std::filesystem::create_directories(plain / ".git");
   WriteFile(plain / ".git" / "HEAD", "ref: refs/heads/main\n");
-  Expect(project::ReadHeadBranchName(plain).value_or("") == "main",
+  Expect(project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).value_or("") == "main",
          "an ordinary checkout should report its branch");
 
   // git's short name drops the `refs/heads/` namespace and keeps the slashes
   // (`# branch.head feature/stable-sort`); the label must not change when the
   // first snapshot replaces this fallback.
   WriteFile(plain / ".git" / "HEAD", "ref: refs/heads/feature/stable-sort\n");
-  Expect(project::ReadHeadBranchName(plain).value_or("") == "feature/stable-sort",
+  Expect(project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).value_or("") == "feature/stable-sort",
          "a namespaced branch should report git's short name, slashes included");
 
   // Detached HEAD: a raw object id, no branch to name.
   WriteFile(plain / ".git" / "HEAD",
             "9f2c1b7a4e6d8c0f1a2b3c4d5e6f708192a3b4c5\n");
-  Expect(!project::ReadHeadBranchName(plain).has_value(),
+  Expect(!project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).has_value(),
          "a detached HEAD has no branch name");
 
   // A linked worktree's `.git` is a FILE pointing at the real gitdir.
@@ -375,18 +376,18 @@ void TestReadHeadBranchNameResolvesLayouts() {
   std::filesystem::create_directories(real_gitdir);
   WriteFile(real_gitdir / "HEAD", "ref: refs/heads/wt-branch\n");
   WriteFile(worktree / ".git", "gitdir: " + real_gitdir.string() + "\n");
-  Expect(project::ReadHeadBranchName(worktree).value_or("") == "wt-branch",
+  Expect(project::ReadHeadBranchName(worktree, project::LocalGitMetadataSource()).value_or("") == "wt-branch",
          "a linked worktree should resolve its own gitdir's HEAD");
 
   // Not a repository at all.
   const std::filesystem::path bare = temp_dir.path() / "bare";
   std::filesystem::create_directories(bare);
-  Expect(!project::ReadHeadBranchName(bare).has_value(),
+  Expect(!project::ReadHeadBranchName(bare, project::LocalGitMetadataSource()).has_value(),
          "a directory outside any repository has no branch");
 
   // An unsafe symbolic ref must not resolve (same guard the tracker applies).
   WriteFile(plain / ".git" / "HEAD", "ref: ../../../etc/passwd\n");
-  Expect(!project::ReadHeadBranchName(plain).has_value(),
+  Expect(!project::ReadHeadBranchName(plain, project::LocalGitMetadataSource()).has_value(),
          "an escaping symbolic ref must be refused");
 }
 

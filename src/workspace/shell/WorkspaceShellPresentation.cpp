@@ -5,6 +5,7 @@
 #include <string>
 
 #include "project/GitRepositoryMetadataTracker.h"
+#include "project/GitMetadataSource.h"
 #include "util/PathMatch.h"
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -241,18 +242,19 @@ void WorkspaceShell::RefreshStatusBar() {
   status_bar_model_service_.Refresh(
       status_bar_service_,
       StatusBarModelService::Operations{
+          // Both through the project's metadata source: the LOCAL one is never
+          // Unknown (`.git` is there or it is not), a remote one is Unknown until
+          // the host's first git/metadata lands (TD-2026-10-06-319).
           .git_availability =
-              [](const std::filesystem::path& project_root) {
-                // The LOCAL source is never Unknown: `.git` is either there or it
-                // is not, and the probe is a stat. A remote project's source is
-                // unknown until the host's first git/metadata lands.
-                return GitRepositoryService::IsGitRepoValid(project_root)
-                           ? project::GitAvailability::Repository
-                           : project::GitAvailability::NotARepository;
+              [this](const std::filesystem::path& project_root) {
+                return project::GitMetadataFor(context_.current_project_state.launcher())
+                    .Availability(project_root);
               },
           .read_head_branch =
-              [](const std::filesystem::path& project_root) {
-                return project::ReadHeadBranchName(project_root);
+              [this](const std::filesystem::path& project_root) {
+                return project::ReadHeadBranchName(
+                    project_root,
+                    project::GitMetadataFor(context_.current_project_state.launcher()));
               },
           .active_lsp_status_strings =
               [this](bool ensure_started, std::string& text, std::string& tooltip,

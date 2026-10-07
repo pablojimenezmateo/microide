@@ -39,15 +39,13 @@ std::string BranchLabel(const project::GitRepositoryState& state) {
 
 std::string IncomingRefLabel(const std::filesystem::path& project_root,
                              const project::GitRepositoryState& repository_state) {
-  // Read `<gitdir>/MERGE_HEAD` directly instead of forking `git rev-parse
-  // --short MERGE_HEAD`. This runs on the shell thread (FinalizeGitMergeTab), so
-  // the subprocess it replaced could stall the UI for up to kGitReadTimeoutMs
-  // (60 s) on a wedged git — for a pane caption. Abbreviating to 7 characters
-  // matches BranchLabel's own detached-HEAD abbreviation above.
-  if (const std::optional<std::string> merge_head =
-          project::internal::ReadPendingMergeHeadId(project_root);
-      merge_head.has_value()) {
-    return merge_head->substr(0, 7);
+  // MERGE_HEAD as the background refresh read it. This runs on the shell thread
+  // (FinalizeGitMergeTab), which first forked `git rev-parse --short MERGE_HEAD`
+  // (up to kGitReadTimeoutMs on a wedged git, for a pane caption) and then read
+  // the git directory itself -- a `.git` a remote project's mirror does not have
+  // (TD-2026-10-06-319). Abbreviated to 7 characters like BranchLabel above.
+  if (!repository_state.pending_merge_head.empty()) {
+    return repository_state.pending_merge_head.substr(0, 7);
   }
   if (repository_state.operation_state == project::GitOperationStateKind::Rebase ||
       repository_state.operation_state == project::GitOperationStateKind::CherryPick) {

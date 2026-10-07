@@ -1,5 +1,7 @@
 #include "project/GitRepositoryState.h"
 
+#include "project/GitMetadataSource.h"
+
 #include <sstream>
 #include <system_error>
 
@@ -103,9 +105,10 @@ GitFileStatus StatusFromPorcelainV2XY(std::string_view xy, bool conflicted) {
   return GitPorcelainParser::StatusFromChangeCodeChars(xy);
 }
 
-GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root) {
+GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root,
+                                              const GitMetadataSource& metadata) {
   const std::optional<std::filesystem::path> git_dir =
-      internal::ResolveGitDirectory(repository_root);
+      metadata.ReadableGitDirectory(repository_root);
   if (!git_dir.has_value()) {
     return GitOperationStateKind::None;
   }

@@ -13,6 +13,8 @@
 
 namespace microide::project {
 
+class GitMetadataSource;
+
 enum class GitRepositoryEntryKind {
   Ordinary,
   Renamed,
@@ -132,6 +134,10 @@ struct GitRepositoryState {
   SharedGitTreeStatusMap tree_git_statuses{};
   GitRepositoryRefreshError refresh_error{};
   GitOperationStateKind operation_state = GitOperationStateKind::None;
+  // The first id in MERGE_HEAD while a merge is in progress, read by the
+  // background refresh so the merge resolver's "Incoming" caption need not read
+  // the git directory on the shell thread. Empty otherwise.
+  std::string pending_merge_head;
   std::uint64_t generation = 0;
   std::uint64_t refreshed_at_ms = 0;
   bool stale = false;
@@ -145,7 +151,9 @@ struct GitRepositoryState {
 // `git` invocation. `GitRepositoryState::operation_state` was declared but never
 // written by anything, which left the merge resolver's rebase/cherry-pick
 // "upstream" label unreachable.
-GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root);
+// Reads the git directory through `metadata` (the host's, for a remote project).
+GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root,
+                                              const GitMetadataSource& metadata);
 
 // `relative_path` is the generic text git already emits, so the common case is one
 // string move and a UTF-8 scan; only an unnormalized spelling pays a path round-trip.

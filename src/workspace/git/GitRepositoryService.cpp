@@ -1,5 +1,7 @@
 #include "workspace/git/GitRepositoryService.h"
 
+#include "project/GitMetadataSource.h"
+
 #include <SDL3/SDL_timer.h>
 
 #include <unordered_set>
@@ -106,12 +108,12 @@ void GitRepositoryService::MarkStale() {
   current_state_.stale = true;
 }
 
-bool GitRepositoryService::IsGitRepoValid(const std::filesystem::path& project_root) {
-  // The marker probe directly, not through a GitRepository: constructing one
-  // copies the path and runs lexically_normal() on it (~12 allocations), and the
-  // status bar calls this once per painted frame for any project with no git
-  // snapshot yet. `exists()` does not care whether the path is normalized.
-  return project::internal::HasGitMarker(project_root);
+bool GitRepositoryService::IsGitRepoValid(const std::filesystem::path& project_root,
+                                          const platform::ProcessLauncher& launcher) {
+  // The source directly, not through a GitRepository: constructing one copies the
+  // path and runs lexically_normal() on it (~12 allocations), and the status bar
+  // calls this once per painted frame for any project with no git snapshot yet.
+  return project::GitMetadataFor(launcher).IsRepository(project_root);
 }
 
 void GitRepositoryService::SetRepositoryStateProviderForTesting(

@@ -713,7 +713,27 @@ said `isIncomplete: true`. The test that cannot fail is one that types a second
 character and asserts the list changed; the one that can asserts the request
 COUNT the scripted server received is one for the word.
 
-### TD-2026-10-06-319 — the git layer's own validity probes read a LOCAL `.git`, which a mirror does not have. [OPEN]
+### TD-2026-10-06-319 — the git layer's own validity probes read a LOCAL `.git`, which a mirror does not have. [RESOLVED 2026-10-07]
+
+**Resolution.** `project::GitMetadataSource` answers "is this a repository"
+(three-valued) and "where is the git directory I can read", and
+`GitMetadataFor(launcher)` resolves it from the launcher every git function
+already receives: a launcher that runs processes somewhere whose `.git` this
+machine cannot stat implements the interface too, and the local launcher does
+not, so a local stat is the answer. That kept the fix off the ~40 git signatures
+the entry expected to grow a third parameter. Converted: `GitRepository::IsValid`,
+blame's eligibility probe, `DetectGitOperationState`, `ReadPendingMergeHeadId`,
+`GitRepositoryService::IsGitRepoValid`, and the status bar's availability and
+branch readers. The merge resolver's "Incoming" caption no longer reads
+MERGE_HEAD on the shell thread at all: the background refresh records it in
+`GitRepositoryState::pending_merge_head`. Lint `CheckGitMetadataIsAskedOfTheHost`
+(fixtures included) bans the two primitives outside the source. Remaining, as the
+rest of G9: the metadata tracker's HEAD/ref SAMPLING still watches the local git
+directory, which is right locally and is replaced by pushed `git/metadata` for a
+remote project. The parity row `Parity/GitSidebarShowsTheWorkingTree` went from a
+known gap to passing, and the runner made removing it from the list mandatory.
+
+Original entry:
 
 Found while scoping G9 (`GitMetadataSource`). The design lists four direct `.git`
 readers to consolidate — `ResolveGitDirectory`, `ReadPendingMergeHeadId`, the

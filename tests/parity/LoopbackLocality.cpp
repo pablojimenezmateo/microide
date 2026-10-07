@@ -69,6 +69,20 @@ platform::SubprocessResult LoopbackProcessLauncher::Run(std::vector<std::string>
   return platform::LocalProcessLauncher().Run(std::move(argv), std::move(options));
 }
 
+project::GitAvailability LoopbackProcessLauncher::Availability(
+    const std::filesystem::path& root) const {
+  const auto host = map_.ToHost(root);
+  return host.has_value() ? project::LocalGitMetadataSource().Availability(*host)
+                          : project::GitAvailability::NotARepository;
+}
+
+std::optional<std::filesystem::path> LoopbackProcessLauncher::ReadableGitDirectory(
+    const std::filesystem::path& root) const {
+  const auto host = map_.ToHost(root);
+  return host.has_value() ? project::LocalGitMetadataSource().ReadableGitDirectory(*host)
+                          : std::nullopt;
+}
+
 std::vector<std::string> LoopbackProcessLauncher::spawns() const {
   std::lock_guard lock(mutex_);
   return spawns_;

@@ -1,5 +1,7 @@
 #include "project/GitRepositoryMetadataTracker.h"
 
+#include "project/GitMetadataSource.h"
+
 #include <string>
 #include <system_error>
 
@@ -76,8 +78,9 @@ std::optional<std::string> SymbolicRefFromHeadLine(const std::optional<std::stri
 
 }  // namespace
 
-std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& project_root) {
-  const std::optional<std::filesystem::path> git_dir = internal::ResolveGitDirectory(project_root);
+std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& project_root,
+                                              const GitMetadataSource& metadata) {
+  const std::optional<std::filesystem::path> git_dir = metadata.ReadableGitDirectory(project_root);
   if (!git_dir.has_value()) {
     return std::nullopt;
   }

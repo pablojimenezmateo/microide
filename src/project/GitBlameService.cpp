@@ -1,5 +1,7 @@
 #include "project/GitBlameService.h"
 
+#include "project/GitMetadataSource.h"
+
 #include "platform/Filesystem.h"
 
 #include <algorithm>
@@ -643,7 +645,7 @@ struct GitBlameService::Impl {
     // Discarding them -- what the plain RequestStillCurrent early-return did --
     // meant a continuous scroll never wrote a cache entry, so the re-validation
     // throttle had nothing to hit and every window re-spawned `git rev-parse`.
-    if (!gitutil::HasGitMarker(request.request.root)) {
+    if (!GitMetadataFor(*request.request.launcher).IsRepository(request.request.root)) {
       changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {},
                                   /*require_latest_request=*/false);
       if (changed) {

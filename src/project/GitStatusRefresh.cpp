@@ -1,5 +1,7 @@
 #include "project/GitStatusRefresh.h"
 
+#include "project/GitMetadataSource.h"
+
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -74,7 +76,11 @@ GitRepositoryState BuildGitRepositoryStateFromStatus(const GitRepository& repo,
   // not report the in-flight operation, and nothing else wrote this field, so it
   // stayed None forever and the merge resolver's rebase/cherry-pick label was
   // unreachable.
-  state.operation_state = DetectGitOperationState(project_root);
+  const GitMetadataSource& metadata = GitMetadataFor(repo.launcher());
+  state.operation_state = DetectGitOperationState(project_root, metadata);
+  if (state.operation_state == GitOperationStateKind::Merge) {
+    state.pending_merge_head = internal::ReadPendingMergeHeadId(project_root, metadata).value_or("");
+  }
   // D/F (file-vs-directory) conflicts are the one conflict shape porcelain v2
   // cannot express, so probe the worktree here — background thread, and only for
   // the handful of conflicted entries, so a clean repo does no extra I/O.

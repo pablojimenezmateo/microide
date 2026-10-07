@@ -276,6 +276,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/GitBlameService.cpp
   src/project/GitBranchOperations.cpp
   src/project/GitCommandUtil.cpp
+  src/project/GitMetadataSource.cpp
   src/project/GitCommitExecutor.cpp
   src/project/GitCompareService.cpp
   src/project/GitPatchApply.cpp
@@ -1404,6 +1405,8 @@ if(MICROIDE_FUZZ)
     src/project/GitPorcelainV2Parser.cpp
     src/project/GitRepositoryState.cpp
     src/project/GitCommandUtil.cpp
+    src/project/GitMetadataSource.cpp
+  src/project/GitMetadataSource.cpp
     src/util/TextFileIO.cpp
     src/util/DurableFile.cpp
     src/platform/Subprocess.cpp
@@ -1703,6 +1706,7 @@ add_executable(microide_diff_bench
   src/platform/ProcessLauncher.cpp
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp
+  src/project/GitMetadataSource.cpp
   src/project/GitPorcelainParser.cpp
   src/project/GitPorcelainV2Parser.cpp
   src/project/GitRepository.cpp

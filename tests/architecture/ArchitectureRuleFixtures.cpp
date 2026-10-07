@@ -1164,6 +1164,40 @@ void RunGitLayerLocalityRuleFixtures() {
          "git-locality rule must report a scope with no GitRepository construction");
 }
 
+void RunGitMetadataRuleFixtures() {
+  TemporaryDirectory dir;
+  const std::filesystem::path& root = dir.path();
+  std::filesystem::create_directories(root / "src/project");
+  std::filesystem::create_directories(root / "src/workspace");
+  // The rule reports a missing target unless the local source still wraps the probe.
+  WriteFile(root / "src/project/GitMetadataSource.cpp",
+            "bool A(const P& r){ return internal::HasGitMarker(r); }\n");
+
+  // Negative control: a workspace unit and a project unit statting `.git` themselves.
+  WriteFile(root / "src/workspace/Probe.cpp",
+            "bool F(const P& r){ return project::internal::HasGitMarker(r); }\n");
+  WriteFile(root / "src/project/GitThing.cpp",
+            "auto G(const P& r){ return internal::ResolveGitDirectory(r); }\n");
+  const RuleResult flagged = CheckGitMetadataIsAskedOfTheHost(root);
+  Expect(flagged.violations.size() == 2,
+         "git-metadata rule must flag a local .git probe outside the metadata source");
+  Expect(flagged.missing_targets.empty(), "and the local source still counts as its target");
+
+  // Positive control: the same units asking the project's source; prose is ignored.
+  WriteFile(root / "src/workspace/Probe.cpp",
+            "// used to call HasGitMarker(root) here\n"
+            "bool F(const P& r, const L& l){ return GitMetadataFor(l).IsRepository(r); }\n");
+  WriteFile(root / "src/project/GitThing.cpp",
+            "auto G(const P& r, const L& l){ return GitMetadataFor(l).ReadableGitDirectory(r); }\n");
+  Expect(CheckGitMetadataIsAskedOfTheHost(root).violations.empty(),
+         "git-metadata rule must accept probes routed through GitMetadataFor and comments");
+
+  // Loud-missing-target: the local source no longer wraps either primitive.
+  WriteFile(root / "src/project/GitMetadataSource.cpp", "bool A(){ return true; }\n");
+  Expect(!CheckGitMetadataIsAskedOfTheHost(root).missing_targets.empty(),
+         "git-metadata rule must report a local source that no longer probes");
+}
+
 void RunProcessLauncherRuleFixtures() {
   TemporaryDirectory launcher_dir;
   const std::filesystem::path& root = launcher_dir.path();
@@ -1352,6 +1386,7 @@ void RunAllRuleFixtures() {
   RunHintSeparatorRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();
   RunProcessLauncherRuleFixtures();
+  RunGitMetadataRuleFixtures();
   RunGitLayerLocalityRuleFixtures();
   RunWriteGateRuleFixtures();
 }

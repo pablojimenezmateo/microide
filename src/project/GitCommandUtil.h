@@ -23,6 +23,8 @@ namespace microide::project {
 // invisible in a two-state world — the code simply takes the "no" branch.
 enum class GitAvailability { Unknown, Repository, NotARepository };
 
+class GitMetadataSource;
+
 }  // namespace microide::project
 
 namespace microide::project::internal {
@@ -98,7 +100,8 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
 // This exists so a shell-thread caller can label the incoming pane without
 // forking git: the subprocess it replaced was bounded only by kGitReadTimeoutMs
 // (60 s), so a stuck git stalled the UI for a cosmetic string.
-std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root);
+std::optional<std::string> ReadPendingMergeHeadId(const std::filesystem::path& root,
+                                                  const GitMetadataSource& metadata);
 // Every git invocation in the app funnels through these. `launcher` decides WHERE
 // git runs — in a remote project it is the project's transport-prefixed launcher, so
 // `git status` describes the tree the buffers came from rather than a local one that

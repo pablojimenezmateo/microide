@@ -466,7 +466,8 @@ void WorkspaceShell::MaybeRequestTreeGitBadgesAfterFirstPaint() {
     return;
   }
   pending_tree_git_badge_refresh_after_paint_ = false;
-  if (!GitRepositoryService::IsGitRepoValid(context_.current_project_state.root)) {
+  if (!GitRepositoryService::IsGitRepoValid(context_.current_project_state.root,
+                                            context_.current_project_state.launcher())) {
     return;
   }
   context_.current_project_state.sidebar.git.tree_git_badges_materialized = true;

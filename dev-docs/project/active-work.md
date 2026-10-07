@@ -410,8 +410,11 @@ shell thread, TD-2026-09-29-312; the threshold is a size, TD-2026-09-29-313), th
 parity harness that makes end-to-end QA "the same scenario under a local and a
 non-local launcher, with split host and mirror roots, compared on what the user
 sees and on round-trip counts" (design § 10.1; test code only, ~800 lines, lands
-before Phase 2a); the rest of **G9** (the four readers now share their primitives and
-the tri-state, but not yet one `GitMetadataSource` object); the persisted cross-machine
+before Phase 2a; the harness and its first rows shipped 2026-10-07, see the design's
+G11 note); the rest of **G9** (every validity probe, the
+operation-state and MERGE_HEAD readers and the status bar now ask one
+`GitMetadataSource` resolved from the project's launcher, 2026-10-07; only the
+metadata tracker's HEAD/ref sampling still watches a local git directory); the persisted cross-machine
 digest the manifest needs (blake3, the rest of **G6**); and the rest of **G5**
 (TD-2026-09-28-304). Groundwork carries its own perf gates (design
 § 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;

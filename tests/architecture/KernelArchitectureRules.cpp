@@ -616,11 +616,67 @@ RuleResult CheckGitLayerDoesNotChooseLocality(const std::filesystem::path& repo_
   return result;
 }
 
+RuleResult CheckGitMetadataIsAskedOfTheHost(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "a .git probe asks the project's GitMetadataSource, not this machine";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!RequireRuleTarget(result, src_dir)) {
+    return result;
+  }
+  // TD-2026-10-06-319: every place that decided "is this a repository?" or "where is
+  // the git directory?" did it by statting `.git` under the project root on THIS
+  // machine. A remote project's root is a mirror with no `.git`, so each of those
+  // answered "not a repository" and the git call it guarded never reached the host.
+  // They now ask GitMetadataFor(launcher). The two primitives stay legal where they
+  // are defined, in the local source that wraps them, and in the metadata tracker's
+  // change sampling (a watcher of the LOCAL git directory, which a remote project
+  // replaces with pushed metadata -- the rest of G9).
+  const std::regex probe(R"(\b(HasGitMarker|ResolveGitDirectory)\s*\()");
+  constexpr std::string_view kAllowed[] = {
+      "project/GitCommandUtil.cpp",
+      "project/GitCommandUtil.h",
+      "project/GitMetadataSource.cpp",
+      "project/GitRepositoryMetadataTracker.cpp",
+  };
+  bool saw_local_source_probe = false;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    const std::string extension = entry.path().extension().string();
+    if (!entry.is_regular_file() || (extension != ".cpp" && extension != ".h")) {
+      continue;
+    }
+    const std::string key = entry.path().lexically_relative(src_dir).generic_string();
+    const std::string text = ReadText(entry.path());
+    if (key == "project/GitMetadataSource.cpp") {
+      saw_local_source_probe = CodeMaskedPatternAppears(text, probe);
+    }
+    if (std::find(std::begin(kAllowed), std::end(kAllowed), key) != std::end(kAllowed)) {
+      continue;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), text, probe,
+        "ask project::GitMetadataFor(launcher) -- the host's .git -- instead of statting "
+        "one under the root on this machine: a remote project's root is a mirror with no "
+        ".git, so a local probe answers 'not a repository' and git is never asked");
+  }
+  if (!saw_local_source_probe) {
+    result.missing_targets.push_back(Violation{
+        .path = src_dir / "project" / "GitMetadataSource.cpp",
+        .line = 1,
+        .message = "the local metadata source no longer calls HasGitMarker/ResolveGitDirectory; "
+                   "the primitives were renamed or moved and this rule scans for a call form "
+                   "the tree no longer uses (repoint it)",
+    });
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
       {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
       {"CheckGitLayerDoesNotChooseLocality", CheckGitLayerDoesNotChooseLocality},
+      {"CheckGitMetadataIsAskedOfTheHost", CheckGitMetadataIsAskedOfTheHost},
       {"CheckEveryUserSaveRunsTheSamePreparation", CheckEveryUserSaveRunsTheSamePreparation},
       {"CheckProjectWritesGoThroughTheWriteGate", CheckProjectWritesGoThroughTheWriteGate},
   };

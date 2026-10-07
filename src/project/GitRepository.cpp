@@ -1,5 +1,7 @@
 #include "project/GitRepository.h"
 
+#include "project/GitMetadataSource.h"
+
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
 #include "util/Parse.h"
@@ -35,7 +37,8 @@ GitRepository::GitRepository(std::filesystem::path root, const platform::Process
 }
 
 bool GitRepository::IsValid() const {
-  return gitutil::HasGitMarker(root_);
+  // Asked of the host, not of this machine's copy of the tree (TD-2026-10-06-319).
+  return GitMetadataFor(*launcher_).IsRepository(root_);
 }
 
 std::optional<std::filesystem::path> GitRepository::ToRelative(

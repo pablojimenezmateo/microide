@@ -12,6 +12,7 @@
 
 #include "platform/ProcessLauncher.h"
 #include "project/FileWriteGate.h"
+#include "project/GitMetadataSource.h"
 
 namespace microide::tests::parity {
 
@@ -43,7 +44,13 @@ class LoopbackPathMap {
 // passed through untouched -- exactly what a remote launcher can do, since it
 // cannot see which words of an argv are paths (ProcessLauncher::Run), so a caller
 // that names its tree inside argv shows up here as a process working on the mirror.
-class LoopbackProcessLauncher final : public platform::ProcessLauncher {
+//
+// It is also the project's git metadata source (project/GitMetadataSource.h), as a
+// remote launcher is: availability and the git directory are answered from the
+// HOST tree -- what the server's `git/metadata` reports -- because the mirror has
+// no `.git` to stat.
+class LoopbackProcessLauncher final : public platform::ProcessLauncher,
+                                      public project::GitMetadataSource {
  public:
   explicit LoopbackProcessLauncher(LoopbackPathMap map) : map_(std::move(map)) {}
 
@@ -53,6 +60,10 @@ class LoopbackProcessLauncher final : public platform::ProcessLauncher {
                                  platform::SubprocessOptions options) const override;
   bool is_local() const override { return false; }
   std::string_view description() const override { return "loopback"; }
+
+  project::GitAvailability Availability(const std::filesystem::path& root) const override;
+  std::optional<std::filesystem::path> ReadableGitDirectory(
+      const std::filesystem::path& root) const override;
 
   // Every spawn this launcher saw, synchronous (Run) or long-lived (ResolveArgv,
   // which a language server, a debug adapter and a terminal resolve through

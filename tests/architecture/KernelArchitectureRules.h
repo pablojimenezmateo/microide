@@ -19,6 +19,7 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
 // The git layer (src/project/Git*, Commit*, PatchApply*) never chooses where git
 // runs: every entry point takes the caller's launcher (TD-2026-09-22-301).
 RuleResult CheckGitLayerDoesNotChooseLocality(const std::filesystem::path& repo_root);
+RuleResult CheckGitMetadataIsAskedOfTheHost(const std::filesystem::path& repo_root);
 
 // A user-initiated save runs the same save participants and format-on-save wherever
 // it was triggered from, and refuses the same disk conflicts. See the rule body.

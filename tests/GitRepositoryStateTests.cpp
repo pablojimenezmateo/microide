@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "project/GitMetadataSource.h"
 
 #include <filesystem>
 #include <fstream>
@@ -410,25 +411,25 @@ void TestReadPendingMergeHeadId() {
   const std::filesystem::path root = temp_dir.path() / "repo";
   std::filesystem::create_directories(root / ".git");
 
-  Expect(!gitutil::ReadPendingMergeHeadId(root).has_value(),
+  Expect(!gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()).has_value(),
          "no MERGE_HEAD means no pending merge");
 
   const std::string oid = "0123456789abcdef0123456789abcdef01234567";
   WriteFile(root / ".git/MERGE_HEAD", oid + "\n");
-  Expect(gitutil::ReadPendingMergeHeadId(root) == oid, "a plain MERGE_HEAD id is read verbatim");
+  Expect(gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()) == oid, "a plain MERGE_HEAD id is read verbatim");
 
   // Octopus merge: one id per line, first wins (matches `git rev-parse MERGE_HEAD`).
   const std::string second = "89abcdef0123456789abcdef0123456789abcdef";
   WriteFile(root / ".git/MERGE_HEAD", oid + "\n" + second + "\n");
-  Expect(gitutil::ReadPendingMergeHeadId(root) == oid, "an octopus merge reports the first id");
+  Expect(gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()) == oid, "an octopus merge reports the first id");
 
   // CRLF and trailing blanks must not leak into the label.
   WriteFile(root / ".git/MERGE_HEAD", oid + "  \r\n");
-  Expect(gitutil::ReadPendingMergeHeadId(root) == oid, "trailing whitespace/CR is trimmed");
+  Expect(gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()) == oid, "trailing whitespace/CR is trimmed");
 
   for (const std::string_view junk : {"ref: refs/heads/topic", "not-hex-at-all-xxxxx", "abc", ""}) {
     WriteFile(root / ".git/MERGE_HEAD", std::string(junk) + "\n");
-    Expect(!gitutil::ReadPendingMergeHeadId(root).has_value(),
+    Expect(!gitutil::ReadPendingMergeHeadId(root, project::LocalGitMetadataSource()).has_value(),
            "a MERGE_HEAD that is not a plain object id is rejected");
   }
 
@@ -439,7 +440,7 @@ void TestReadPendingMergeHeadId() {
   std::filesystem::create_directories(linked_gitdir);
   WriteFile(worktree / ".git", "gitdir: " + linked_gitdir.string() + "\n");
   WriteFile(linked_gitdir / "MERGE_HEAD", oid + "\n");
-  Expect(gitutil::ReadPendingMergeHeadId(worktree) == oid,
+  Expect(gitutil::ReadPendingMergeHeadId(worktree, project::LocalGitMetadataSource()) == oid,
          "a `.git` file indirection resolves to the linked git directory");
   Expect(gitutil::ResolveGitDirectory(worktree) == linked_gitdir,
          "ResolveGitDirectory follows the gitdir: pointer");
@@ -449,7 +450,7 @@ void TestReadPendingMergeHeadId() {
   std::filesystem::create_directories(relative_worktree / "store");
   WriteFile(relative_worktree / ".git", "gitdir: store\n");
   WriteFile(relative_worktree / "store/MERGE_HEAD", oid + "\n");
-  Expect(gitutil::ReadPendingMergeHeadId(relative_worktree) == oid,
+  Expect(gitutil::ReadPendingMergeHeadId(relative_worktree, project::LocalGitMetadataSource()) == oid,
          "a relative gitdir: pointer resolves against the worktree root");
 
   WriteFile(relative_worktree / ".git", "not a gitdir pointer\n");
@@ -467,9 +468,9 @@ void TestDetectGitOperationState() {
   const std::filesystem::path root = temp_dir.path() / "repo";
   std::filesystem::create_directories(root / ".git");
 
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::None,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::None,
          "a clean repository reports no in-flight operation");
-  Expect(DetectGitOperationState(temp_dir.path() / "missing") == GitOperationStateKind::None,
+  Expect(DetectGitOperationState(temp_dir.path() / "missing", project::LocalGitMetadataSource()) == GitOperationStateKind::None,
          "a path with no git directory reports no in-flight operation");
 
   // Real git leaves AUTO_MERGE and MERGE_MSG behind during a rebase, revert AND
@@ -477,29 +478,29 @@ void TestDetectGitOperationState() {
   // which is why MERGE_HEAD (and not those) is the merge marker.
   WriteFile(root / ".git/AUTO_MERGE", "0123456789abcdef0123456789abcdef01234567\n");
   WriteFile(root / ".git/MERGE_MSG", "Merge branch 'side'\n");
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::None,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::None,
          "AUTO_MERGE/MERGE_MSG alone are not an in-flight merge");
 
   WriteFile(root / ".git/BISECT_LOG", "log\n");
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::Bisect,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::Bisect,
          "BISECT_LOG reports a bisect");
   WriteFile(root / ".git/REVERT_HEAD", "0123456789abcdef0123456789abcdef01234567\n");
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::Revert,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::Revert,
          "REVERT_HEAD outranks BISECT_LOG");
   WriteFile(root / ".git/CHERRY_PICK_HEAD", "0123456789abcdef0123456789abcdef01234567\n");
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::CherryPick,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::CherryPick,
          "CHERRY_PICK_HEAD outranks REVERT_HEAD");
   std::filesystem::create_directories(root / ".git/rebase-merge");
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::Rebase,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::Rebase,
          "a rebase state directory outranks the sequencer heads");
   WriteFile(root / ".git/MERGE_HEAD", "0123456789abcdef0123456789abcdef01234567\n");
-  Expect(DetectGitOperationState(root) == GitOperationStateKind::Merge,
+  Expect(DetectGitOperationState(root, project::LocalGitMetadataSource()) == GitOperationStateKind::Merge,
          "MERGE_HEAD outranks every other marker, matching git's own precedence");
 
   // `rebase-apply` (the am-based rebase layout) counts too.
   const std::filesystem::path apply_root = temp_dir.path() / "apply";
   std::filesystem::create_directories(apply_root / ".git/rebase-apply");
-  Expect(DetectGitOperationState(apply_root) == GitOperationStateKind::Rebase,
+  Expect(DetectGitOperationState(apply_root, project::LocalGitMetadataSource()) == GitOperationStateKind::Rebase,
          "rebase-apply also reports a rebase");
 }
 

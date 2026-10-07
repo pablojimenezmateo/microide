@@ -91,7 +91,10 @@ class GitRepositoryService {
     return outgoing_base_resolve_count_;
   }
 
-  static bool IsGitRepoValid(const std::filesystem::path& project_root);
+  // Through the project's launcher: the host's `.git`, not this machine's copy of
+  // the tree (TD-2026-10-06-319).
+  static bool IsGitRepoValid(const std::filesystem::path& project_root,
+                             const platform::ProcessLauncher& launcher);
 
  private:
   struct RefreshRequest {

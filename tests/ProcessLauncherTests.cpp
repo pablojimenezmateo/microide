@@ -1,4 +1,6 @@
 #include "TestSupport.h"
+#include "workspace/git/MergeResolverContext.h"
+#include "project/GitMetadataSource.h"
 
 #include "ScriptedProcessLauncher.h"
 
@@ -127,6 +129,72 @@ void TestTruncatedStatusIsNotACompleteChangeList() {
 const ScriptedProcessLauncher& clean_launcher_probe() {
   static const ScriptedProcessLauncher launcher;
   return launcher;
+}
+
+// A launcher that runs processes somewhere whose `.git` this machine cannot stat
+// is also the project's git metadata source (TD-2026-10-06-319). Without that,
+// every validity probe stats the local copy of the tree -- a mirror, with no
+// `.git` -- and answers "not a repository" before git is ever asked.
+class UnknownHostLauncher final : public platform::ProcessLauncher,
+                                  public project::GitMetadataSource {
+ public:
+  std::vector<std::string> ResolveArgv(std::vector<std::string> argv) const override { return argv; }
+  std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override { return cwd; }
+  platform::SubprocessResult Run(std::vector<std::string>, platform::SubprocessOptions) const override {
+    return {};
+  }
+  bool is_local() const override { return false; }
+  std::string_view description() const override { return "unknown-host"; }
+  project::GitAvailability Availability(const std::filesystem::path&) const override {
+    return project::GitAvailability::Unknown;
+  }
+  std::optional<std::filesystem::path> ReadableGitDirectory(
+      const std::filesystem::path&) const override {
+    return std::nullopt;
+  }
+};
+
+void TestGitMetadataComesFromTheLaunchersHost() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+
+  Expect(&project::GitMetadataFor(platform::LocalProcessLauncher()) ==
+             &project::LocalGitMetadataSource(),
+         "the local launcher's trees are answered by a local stat");
+  Expect(project::GitRepository(root, platform::LocalProcessLauncher()).IsValid(),
+         "a local tree with a .git is a repository");
+
+  const UnknownHostLauncher host;
+  Expect(&project::GitMetadataFor(host) == static_cast<const project::GitMetadataSource*>(&host),
+         "a launcher that is a metadata source answers for its own trees");
+  Expect(!project::GitRepository(root, host).IsValid(),
+         "a LOCAL .git says nothing about a remote host: its source, still Unknown, decides");
+  Expect(project::GitMetadataFor(host).Availability(root) == project::GitAvailability::Unknown,
+         "and unknown is reported as unknown, not as not-a-repository");
+}
+
+// The merge resolver's "Incoming" caption used to read MERGE_HEAD on the shell
+// thread; the refresh records it instead, through the same source.
+void TestStatusRefreshRecordsThePendingMergeHead() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / ".git");
+  const std::string oid = "0123456789abcdef0123456789abcdef01234567";
+  WriteFile(root / ".git" / "MERGE_HEAD", oid + "\n");
+  ScriptedProcessLauncher clean;
+  clean.standing_response.exit_code = 0;
+  const project::GitRepository repo(root, clean);
+  const project::GitRepositoryState state =
+      project::BuildGitRepositoryStateFromStatus(repo, root, 1, 1);
+  Expect(state.operation_state == project::GitOperationStateKind::Merge,
+         "MERGE_HEAD marks a merge in progress");
+  Expect(state.pending_merge_head == oid, "and the refresh records its id");
+  const workspace::MergeResolverLabels labels =
+      workspace::BuildMergeResolverLabels(root, root / "a.txt", state);
+  Expect(labels.incoming_label.find("0123456") != std::string::npos,
+         "the Incoming caption shows the abbreviated merge head from the state, got: " +
+             labels.incoming_label);
 }
 
 void TestStatusRefreshDistinguishesItsFailures() {
@@ -401,6 +469,10 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestCompareServiceRunsThroughTheLauncherItIsGiven);
   AddTest(tests, "ProcessLauncher/WriteSideRunsThroughTheLauncherItIsGiven",
           TestWriteSideRunsThroughTheLauncherItIsGiven);
+  AddTest(tests, "ProcessLauncher/GitMetadataComesFromTheLaunchersHost",
+          TestGitMetadataComesFromTheLaunchersHost);
+  AddTest(tests, "ProcessLauncher/StatusRefreshRecordsThePendingMergeHead",
+          TestStatusRefreshRecordsThePendingMergeHead);
   AddTest(tests, "ProcessLauncher/BlameRunsThroughTheRequestsLauncher",
           TestBlameRunsThroughTheRequestsLauncher);
   AddTest(tests, "ProcessLauncher/LanguageServerStartsThroughTheProjectsLauncher",
