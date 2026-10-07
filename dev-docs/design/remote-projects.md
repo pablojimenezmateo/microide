@@ -59,8 +59,13 @@ because the open is what registers servers and loads plugins. Then the file
 operations, format-on-save and plugin-tool rows, all matching local; the plugin
 row's local reference found that a sandboxed plugin could not run git at all (an
 unreadable `~/.gitconfig` is fatal to git), fixed with a file-level sandbox grant.
-Seven rows in all. Still to do in G11: the terminal and real-server (clangd, gdb)
-rows,
+Then the terminal row, a round-trip check (a non-local run may not start more
+processes than the local one; local runs are counted too), and a real-gdb row
+(`DapRealAdapter/GdbStopsInTheMirrorThroughALoopbackHost`: a breakpoint on the
+mirror's file stops the host-built binary and the stop comes back as the mirror's
+file; its skip is decided by a local reference run, because deciding it from the
+loopback run let it pass with translation switched off). Still to do in G11: a
+real-clangd row,
 the count budgets, the control-channel transcript diff and the `parity` lane.
 
 One measurement worth carrying: opening a 1 MB file to first paint is 1.48 ms

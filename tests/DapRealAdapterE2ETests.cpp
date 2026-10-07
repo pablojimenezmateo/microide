@@ -13,6 +13,7 @@
 // $MICROIDE_TEST_DAP_GDB to force a specific binary. gdb only grew `--interpreter=dap`
 // in 14.x, so an older gdb on PATH also skips rather than failing.
 #include "TestSupport.h"
+#include "parity/LoopbackLocality.h"
 
 #include "platform/Subprocess.h"
 #include "util/JsonValue.h"
@@ -229,6 +230,144 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
 // gdb start an inferior at all. That is reported as a skip, but ONLY when the
 // adapter says so -- once a `stopped` event arrives every assertion is
 // unconditional, so a regression fails rather than quietly skipping.
+// A debug adapter runs on the host and names the HOST's files; the editor works in
+// the mirror. The transport's path translation (workspace/HostPathTranslator) must
+// carry the breakpoint's source and the launch program to the host, and bring the
+// stopped frame's source back as the mirror's file -- or the breakpoint never binds
+// and the editor would open the host's copy at the stop. Same real gdb as above,
+// driven through the parity suite's loopback locality with split host and mirror
+// trees; the binary is built in the HOST tree, so its debug info names host paths.
+struct GdbCycleResult {
+  bool started = false;
+  bool stopped = false;
+  std::string frame_path;
+  std::int64_t frame_line = 0;
+};
+
+// setBreakpoints(source, line 2) -> launch(program) -> configurationDone -> stopped
+// -> stackTrace, through `launcher`. What the caller passes is what the EDITOR
+// would send; translation, if any, is the transport's.
+GdbCycleResult RunGdbBreakpointCycle(const std::string& gdb,
+                                     const platform::ProcessLauncher& launcher,
+                                     const std::filesystem::path& cwd,
+                                     const std::filesystem::path& source,
+                                     const std::filesystem::path& program) {
+  GdbCycleResult result;
+  DapClient client;
+  client.SetWakeChannel(0);
+  std::mutex event_mutex;
+  bool saw_stopped = false;
+  client.SetEventCallback([&](const std::string& event, const util::JsonValue&) {
+    std::lock_guard lock(event_mutex);
+    saw_stopped = saw_stopped || event == "stopped";
+  });
+  if (!client.Start(launcher, {gdb, "--interpreter=dap"}, "gdb", cwd.string()) ||
+      !PumpUntil(client, [&]() { return client.IsInitialized() || !client.IsRunning(); }, 15000) ||
+      !client.IsInitialized()) {
+    client.Shutdown();
+    return result;
+  }
+  result.started = true;
+  util::JsonObject breakpoint_line;
+  breakpoint_line["line"] = util::JsonValue(static_cast<std::int64_t>(2));
+  util::JsonObject source_ref;
+  source_ref["path"] = util::JsonValue(source.string());
+  util::JsonObject set_breakpoints_args;
+  set_breakpoints_args["source"] = util::JsonValue(std::move(source_ref));
+  set_breakpoints_args["breakpoints"] =
+      util::JsonValue(util::JsonArray{util::JsonValue(std::move(breakpoint_line))});
+  bool breakpoints_answered = false;
+  (void)client.SendRequestAsync("setBreakpoints", util::JsonValue(std::move(set_breakpoints_args)),
+                                [&](const dap_protocol::DapResponse&) { breakpoints_answered = true; });
+  (void)PumpUntil(client, [&]() { return breakpoints_answered; }, 10000);
+  util::JsonObject launch_args;
+  launch_args["program"] = util::JsonValue(program.string());
+  (void)client.SendRequestAsync("launch", util::JsonValue(std::move(launch_args)), {});
+  bool configuration_done_answered = false;
+  (void)client.SendRequestAsync("configurationDone", util::JsonValue(nullptr),
+                                [&](const dap_protocol::DapResponse&) {
+                                  configuration_done_answered = true;
+                                });
+  (void)PumpUntil(client, [&]() { return configuration_done_answered; }, 20000);
+  (void)PumpUntil(client, [&]() { return saw_stopped || !client.IsRunning(); }, 30000);
+  result.stopped = saw_stopped;
+  if (result.stopped) {
+    util::JsonObject stack_args;
+    stack_args["threadId"] = util::JsonValue(static_cast<std::int64_t>(1));
+    bool stack_answered = false;
+    (void)client.SendRequestAsync("stackTrace", util::JsonValue(std::move(stack_args)),
+                                  [&](const dap_protocol::DapResponse& response) {
+                                    stack_answered = true;
+                                    const util::JsonValue& frames = response.body["stackFrames"];
+                                    if (frames.IsArray() && !frames.AsArray().empty()) {
+                                      result.frame_path =
+                                          frames[std::size_t{0}]["source"]["path"].AsString();
+                                      result.frame_line = frames[std::size_t{0}]["line"].AsInt();
+                                    }
+                                  });
+    (void)PumpUntil(client, [&]() { return stack_answered; }, 10000);
+  }
+  client.Shutdown();
+  return result;
+}
+
+// A debug adapter runs on the host and names the HOST's files; the editor works in
+// the mirror. The transport's path translation (workspace/HostPathTranslator) must
+// carry the breakpoint's source and the launch program to the host, and bring the
+// stopped frame's source back as the mirror's file -- or the program is not found,
+// the breakpoint never binds, and the editor would open the host's copy at the
+// stop. The binary is built in the HOST tree, so its debug info names host paths.
+//
+// The skip is decided by a LOCAL run of the same cycle against the host tree: only
+// a machine where gdb cannot stop an inferior at all skips. Once that works, the
+// loopback run not stopping is a failure -- deciding the skip from the loopback run
+// itself is how this test first passed with translation switched off.
+void TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  const std::string gdb = LocateGdb();
+  const std::string compiler = LocateCCompiler();
+  if (gdb.empty() || compiler.empty()) {
+    std::fprintf(stderr, "[dap-e2e] SKIP: gdb or a C compiler is missing\n");
+    return;
+  }
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path host = temp_dir.path() / "host" / "project";
+  const std::filesystem::path mirror = temp_dir.path() / "mirror" / "project";
+  const std::string source_text =
+      "#include <stdio.h>\n"
+      "int add(int a, int b) { int sum = a + b; return sum; }\n"
+      "int main(void) { printf(\"%d\\n\", add(2, 3)); return 0; }\n";
+  WriteFile(host / "debuggee.c", source_text);
+  WriteFile(mirror / "debuggee.c", source_text);
+  if (!CompileDebuggee(compiler, host / "debuggee.c", host / "debuggee")) {
+    std::fprintf(stderr, "[dap-e2e] SKIP: could not compile the debuggee with -g\n");
+    return;
+  }
+
+  const GdbCycleResult reference = RunGdbBreakpointCycle(
+      gdb, platform::LocalProcessLauncher(), host, host / "debuggee.c", host / "debuggee");
+  if (!reference.stopped) {
+    std::fprintf(stderr, "[dap-e2e] SKIP: gdb cannot stop an inferior here (ptrace?)\n");
+    return;
+  }
+
+  const tests::parity::LoopbackProcessLauncher launcher(
+      tests::parity::LoopbackPathMap(mirror, host));
+  const GdbCycleResult remote = RunGdbBreakpointCycle(gdb, launcher, mirror,
+                                                      mirror / "debuggee.c", mirror / "debuggee");
+  Expect(remote.started, "gdb starts through the loopback host");
+  Expect(remote.stopped,
+         "the MIRROR's program and breakpoint reach the host's binary, and it stops there");
+  Expect(std::filesystem::path(remote.frame_path).lexically_normal() ==
+                 (mirror / "debuggee.c").lexically_normal() &&
+             remote.frame_line == 2,
+         "the stop is reported in the MIRROR's file, on the breakpoint's line; got " +
+             remote.frame_path + ":" + std::to_string(remote.frame_line));
+#endif
+}
+
 void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -453,6 +592,8 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
 void RegisterDapRealAdapterE2ETests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapRealAdapter/GdbHandshakeAndShutdown",
           TestDapRealAdapterGdbHandshakeAndShutdown);
+  AddTest(tests, "DapRealAdapter/GdbStopsInTheMirrorThroughALoopbackHost",
+          TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost);
   AddTest(tests, "DapRealAdapter/GdbLaunchBreakpointStopCycle",
           TestDapRealAdapterGdbLaunchBreakpointStopCycle);
 }
