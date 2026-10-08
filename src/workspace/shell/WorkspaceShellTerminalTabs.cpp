@@ -133,6 +133,14 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
                        ? std::string()
                        : std::string("the comparison did not open");
           },
+      .project_reconnected =
+          [this](const std::filesystem::path& root) {
+            // A git refresh that failed while the link was down left a stale or
+            // failed snapshot; nothing else would ask again until a file changes.
+            if (context_.current_project_state.root == root) {
+              RequestGitSidebarRefresh();
+            }
+          },
       .show_output =
           [this](std::string_view id, std::string_view label, std::string_view text) {
             output_channels_.Clear(id);

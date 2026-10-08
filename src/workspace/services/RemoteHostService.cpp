@@ -219,7 +219,11 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   remote::RemoteProject& project = *entry.project;
   const remote::RemoteHostSession::Status status = project.session().status();
   const remote::MirrorSyncEngine::Status sync = project.engine().status();
+  const bool came_back = status.state == State::Ready && entry.status.state != State::Ready;
   entry.status = status;
+  if (came_back && operations_.project_reconnected) {
+    operations_.project_reconnected(tree);
+  }
   const remote::RemoteProjectRecord record = project.record();
   const std::string label = record.host + ":" + record.host_root;
   const std::string key = "remote.project." + tree.string();

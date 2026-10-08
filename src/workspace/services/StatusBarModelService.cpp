@@ -55,7 +55,14 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project::GitAvailability availability = repo_available
                                                 ? project::GitAvailability::Repository
                                                 : project::GitAvailability::Unknown;
-    if (!repo_available) {
+    // A refresh that FAILED (a remote project whose link is down) answered
+    // nothing: its empty snapshot is not "clean" and its placeholder branch is not
+    // the branch. Say unknown until a refresh succeeds.
+    const bool refresh_failed = !git_state.refresh_error.empty();
+    if (refresh_failed) {
+      availability = project::GitAvailability::Unknown;
+      repo_available = false;
+    } else if (!repo_available) {
       // is_git_repo_valid is a `.git` stat (not a subprocess), but this refresh
       // runs from PrepareFrameOnce, so "cheap" was still one syscall per painted
       // frame — 120 a second, forever, for any project git has not answered for
@@ -86,7 +93,8 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
         availability == project::GitAvailability::Unknown
             ? "scm-unknown"
             : (repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm");
-    std::string_view branch_label = project_state.sidebar.git.branch_label;
+    std::string_view branch_label =
+        refresh_failed ? std::string_view() : std::string_view(project_state.sidebar.git.branch_label);
     if (branch_label.empty() && repo_available) {
       branch_label = git_state.base_label;
     }

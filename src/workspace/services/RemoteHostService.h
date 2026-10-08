@@ -60,6 +60,9 @@ class RemoteHostService {
     std::function<std::string(const std::filesystem::path& left, std::string left_label,
                               const std::filesystem::path& right, std::string right_label)>
         compare_files;
+    // The remote project at `root` (re)gained its connection: whatever the editor
+    // asked of the host while it was down (git above all) is worth asking again.
+    std::function<void(const std::filesystem::path& root)> project_reconnected;
     // Replace output channel `id`'s lines with `text`'s and show it.
     std::function<void(std::string_view id, std::string_view label, std::string_view text)>
         show_output;

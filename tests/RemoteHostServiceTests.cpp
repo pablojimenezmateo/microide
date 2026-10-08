@@ -9,6 +9,7 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -171,6 +172,13 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "app";
   WriteFile(host_root / "main.c", "int main(void) { return 0; }\n");
+  // A repository, so git on the host has something to answer once it can.
+  Expect(std::system(("git -C '" + host_root.string() +
+                      "' init -q && git -C '" + host_root.string() +
+                      "' -c user.name=t -c user.email=t@t add -A && git -C '" + host_root.string() +
+                      "' -c user.name=t -c user.email=t@t commit -qm init")
+                         .c_str()) == 0,
+         "the host folder is a repository");
   const std::string target = "dev@fake-open-" + std::to_string(::getpid());
   std::filesystem::path mirror;
   {
@@ -289,6 +297,31 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(60), std::chrono::milliseconds(10)),
          "and comes back: '" + segment() + "'");
+
+  // Git while the link is down answers nothing — the status bar says unknown, not
+  // a made-up clean HEAD — and the reconnect asks git again by itself.
+  // Pump() also consumes terminal updates, which request a (throttled) git refresh
+  // of their own — an idle session does not, so this section must not either.
+  const auto pump_quietly = [&] { (void)WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); };
+  const auto settle_git = [&] {
+    pump_quietly();
+    WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    WorkspaceShellTestAccess::RefreshStatusBar(shell);
+    return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Project);
+  };
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnect again");
+  Expect(WaitUntil([&] { pump_quietly(); return segment().find("disconnected") != std::string::npos; },
+                   std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "down again");
+  (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-refresh");
+  Expect(WaitUntil([&] { return settle_git().find("scm-unknown") != std::string::npos; },
+                   std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "a git refresh that could not reach the host reads as unknown: '" + settle_git() + "'");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
+  Expect(WaitUntil([&] { return settle_git().find("scm-unknown") == std::string::npos; },
+                   std::chrono::seconds(60), std::chrono::milliseconds(10)),
+         "and the reconnect refreshes git by itself: '" + settle_git() + "'");
 
   // The host server's log, in an output channel.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-show-log " + target),
