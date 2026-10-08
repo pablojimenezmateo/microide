@@ -687,7 +687,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-stop-server [host]`
 - `remote-disconnect [host]`
 - `remote-reconnect <host>`
-- `remote-copy-command <host> <ssh|install>`
+- `remote-copy-command <host> <ssh|install|linger>`
 - `cancel-save-wait <id>`
 - `colorscheme [name|list]`
 - `toggle-theme`

@@ -543,8 +543,8 @@ Phase 2a task 7.4 left three pieces of the host-terminal protocol:
 ### TD-2026-10-08-325 — remote host UI remainders. [OPEN]
 
 From Phase 2a group 8: no **Show Log** action (the server's log beside its socket
-is not fetched), no **session-survival warning row** (the hello reports
-`KillUserProcesses`/linger and nothing shows it), `remote.server_socket_dir` and
+is not fetched), ~~no session-survival warning row~~ (done 2026-10-08: a warning
+row once per host with a Copy Fix Command button for `loginctl enable-linger`), `remote.server_socket_dir` and
 `remote.backfill_inflight_bytes` are not registered because nothing reads them
 yet, the hello does not echo the effective settings (task 4.5), BEL from a host
 terminal is not surfaced (nor from a local one, active-work § 3), and a LOCAL

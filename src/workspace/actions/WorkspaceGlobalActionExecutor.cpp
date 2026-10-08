@@ -275,7 +275,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         }
         case ActionId::RemoteCopyCommand: {
           if (args.size() < 2) {
-            return reject("usage: remote-copy-command <host> <ssh|install>");
+            return reject("usage: remote-copy-command <host> <ssh|install|linger>");
           }
           const std::optional<std::string> text = hosts->CommandText(args[0], args[1]);
           if (!text.has_value() || !context_.WriteClipboardText(*text)) {

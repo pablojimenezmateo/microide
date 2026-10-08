@@ -298,6 +298,10 @@ std::string RemoteHostSession::SshCommandText() const {
   return JoinForDisplay(InteractiveMasterArgv());
 }
 
+std::string RemoteHostSession::LingerCommandText() const {
+  return JoinForDisplay(RemoteArgv("loginctl enable-linger"));
+}
+
 std::string RemoteHostSession::InstallCommandText() const {
   return JoinForDisplay(RemoteArgv(ShellCommand(kInstallScript, kInstallDirectory))) + " < " +
          (config_.server_binary.empty() ? std::string("microide-server")

@@ -38,7 +38,7 @@ enum class ActionId {
   RemoteStopServer,   // `remote-stop-server [host]`; the sole host when omitted
   RemoteDisconnect,   // `remote-disconnect [host]`; every host when omitted
   RemoteReconnect,    // `remote-reconnect <host>`: the Reconnect button
-  // `remote-copy-command <host> <ssh|install>`: the Copy buttons on a failure row.
+  // `remote-copy-command <host> <ssh|install|linger>`: the Copy buttons on a failure row.
   RemoteCopyCommand,
   // The Cancel button of a quit / close-project that is waiting for formatter
   // saves: `cancel-save-wait <id>` (the id rides on the button). The quit or close

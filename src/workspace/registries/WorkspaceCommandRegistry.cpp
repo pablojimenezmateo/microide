@@ -38,7 +38,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::RemoteReconnect, "remote-reconnect", "remote-reconnect <host>",
                  "Remote: Reconnect", ""},
       ActionSpec{ActionId::RemoteCopyCommand, "remote-copy-command",
-                 "remote-copy-command <host> <ssh|install>", "Remote: Copy Command", ""},
+                 "remote-copy-command <host> <ssh|install|linger>", "Remote: Copy Command", ""},
       ActionSpec{ActionId::CancelSaveWait, "cancel-save-wait", "cancel-save-wait <id>",
                  "Cancel Saving Before Quit/Close", ""},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",

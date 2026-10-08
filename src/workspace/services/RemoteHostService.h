@@ -138,12 +138,17 @@ class RemoteHostService {
   void Apply(const std::string& host, const project::remote::RemoteHostSession::Status& status);
   void OpenPendingTerminals(const std::string& host, Host& entry);
   void PublishStatusSegment();
+  // Once per host: warn when its processes end at logout (the hello's
+  // session-survival report), which makes "terminals survive a disconnect" false.
+  void WarnIfSessionsEndAtLogout(const std::string& host,
+                                 const project::remote::RemoteHostSession& session);
 
   Operations operations_;
   std::map<std::string, Host, std::less<>> hosts_;
   // By mirror tree. Kept until the service goes: a project state may still hold
   // their launcher and gate (ProjectLocality's lifetime rule).
   std::map<std::filesystem::path, Project> projects_;
+  std::vector<std::string> survival_warned_;  // hosts already warned
   std::vector<std::thread> workers_;  // Stop Host Server runs, joined on destruction
   // Last: its queued closures name `this`, and it must drop them before the
   // sessions that post them are gone — sessions are destroyed explicitly first.

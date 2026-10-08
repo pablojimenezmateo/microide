@@ -262,6 +262,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       break;
     case State::Ready:
       entry.auth_terminal_opened = false;
+      WarnIfSessionsEndAtLogout(record.host, project.session());
       if (!sync.error.empty()) {
         row(Tone::Error, "Sync with " + label + " failed: " + sync.error);
       } else if (sync.held_deletes > 0) {
@@ -535,6 +536,9 @@ std::optional<std::string> RemoteHostService::CommandText(std::string_view host,
   if (session == nullptr) {
     return std::nullopt;
   }
+  if (which == "linger") {
+    return session->LingerCommandText();
+  }
   return which == "install" ? session->InstallCommandText() : session->SshCommandText();
 }
 
@@ -620,6 +624,7 @@ void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostS
         operations_.notify(NotificationService::Request{.tone = Tone::Info,
                                                         .message = "Connected to " + host});
       }
+      WarnIfSessionsEndAtLogout(host, *entry->session);
       OpenPendingTerminals(host, *entry);
       break;
     case State::Reconnecting:
@@ -660,6 +665,32 @@ void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostS
   if (operations_.request_redraw) {
     operations_.request_redraw();
   }
+}
+
+void RemoteHostService::WarnIfSessionsEndAtLogout(const std::string& host,
+                                                  const remote::RemoteHostSession& session) {
+  if (std::find(survival_warned_.begin(), survival_warned_.end(), host) != survival_warned_.end()) {
+    return;
+  }
+  const auto client = session.connection()->client();
+  if (client == nullptr) {
+    return;
+  }
+  survival_warned_.push_back(host);
+  const remote::SessionSurvival survival = client->hello().session_survival;
+  if (!survival.kill_user_processes || survival.linger || !operations_.notify) {
+    return;
+  }
+  operations_.notify(NotificationService::Request{
+      .tone = NotificationService::Tone::Warning,
+      .key = "remote.survival." + host,
+      .message = host + " ends your processes when you log out (systemd KillUserProcesses, "
+                        "no linger): host terminals and builds will not survive a disconnect",
+      .actions = {NotificationAction{.label = "Copy Fix Command",
+                                     .id = ActionId::RemoteCopyCommand,
+                                     .args = {host, "linger"},
+                                     .keep_open = true}},
+  });
 }
 
 void RemoteHostService::PublishStatusSegment() {

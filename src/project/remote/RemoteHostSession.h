@@ -107,6 +107,9 @@ class RemoteHostSession {
   // What "Copy ssh Command" and "Copy Install Command" put on the clipboard.
   std::string SshCommandText() const;
   std::string InstallCommandText() const;
+  // `loginctl enable-linger` on the host: what keeps its processes alive past a
+  // logout where systemd's KillUserProcesses would end them.
+  std::string LingerCommandText() const;
   // `microide-server stop` on the host (Remote: Stop Host Server). Blocking.
   bool StopServer(std::string* error);
 
