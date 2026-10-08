@@ -1305,7 +1305,23 @@ covering, the fix is to make the decision a property of the project's filesystem
 (a locality flag on the project, set by whatever owns the mount) rather than a
 size — not to lower the threshold.
 
-### TD-2026-09-29-314 — a tab that exists before its content does has two representations. [OPEN]
+### TD-2026-09-29-314 — a tab that exists before its content does has two representations. [RESOLVED 2026-10-08]
+
+Resolved by giving them one description and one hydration path, keeping the
+cheap storage form. `EditorTabState` holds its restore target AS a
+`DeferredTabHandle` (`restore`, which brings the selection the handle already
+carried to the async-restore path too — it used to be dropped), and a tab with
+no editor state — a handle-only session tab, or a bare entry naming its path —
+becomes a `Deferred` editor state at activation and loads through
+`RestoreEditorTab`, the only hydrator. The removed copy had diverged: it opened
+with a plain `OpenFile`, so a restored background tab of a file already live in
+another pane got a second, independent buffer
+(`WorkspaceShell/RestoredBackgroundTabSharesALiveBuffer`). Unifying also showed
+`SyncActiveEditorTabMetadata` reading a pending editor state's empty stand-in
+path; it asks `editor_view_path` now, which a deleted-before-activation tab
+needs (`ActivatingDeletedDeferredTabPreservesIdentity`).
+
+Original report:
 
 `EditorTabState::Content::Deferred` (with `restored_path` and the four
 `restored_*` fields) and `TabEntry::deferred_handle` (a `DeferredTabHandle` with

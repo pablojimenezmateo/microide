@@ -130,7 +130,7 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
         const auto& view = *tab.editor_state;
         const std::filesystem::path path =
-            (view.content_pending() ? view.restored_path : view.viewport.path()).lexically_normal();
+            (view.content_pending() ? view.restore.path : view.viewport.path()).lexically_normal();
         if (!path.empty()) {
           if (view.content_pending()) {
             callback(path, nullptr);

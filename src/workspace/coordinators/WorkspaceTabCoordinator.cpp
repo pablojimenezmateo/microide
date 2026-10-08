@@ -408,11 +408,11 @@ void TabCoordinator::SyncActiveEditorTab() {
     tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
     return;
   }
-  editor_state.restored_path = editor_state.viewport.path().lexically_normal();
-  editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
-  editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
-  editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
-  editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
+  editor_state.restore.path = editor_state.viewport.path().lexically_normal();
+  editor_state.restore.cursor_line = editor_state.viewport.cursor_line();
+  editor_state.restore.cursor_column = editor_state.viewport.cursor_column();
+  editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
+  editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
   if (state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
       &tab == &state_.focused_group().open_tabs[state_.focused_group().active_tab_index]) {
     SyncActiveEditorTabMetadata();
@@ -464,7 +464,15 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
   }
 
   std::filesystem::path active_path;
-  if (tab.editor_state.has_value()) {
+  if (tab.editor_state.has_value() && tab.editor_state->content_pending()) {
+    // Not loaded (yet, or ever: a file deleted between restore and activation):
+    // its identity is the restore target, not the empty stand-in's.
+    active_path = operations_.editor_view_path(*tab.editor_state);
+    if (!active_path.empty()) {
+      tab.path = active_path;
+      tab.title = active_path.filename().string();
+    }
+  } else if (tab.editor_state.has_value()) {
     const editor::TextViewport& viewport = tab.editor_state->viewport;
     active_path = viewport.path().lexically_normal();
     tab.path = active_path;
@@ -626,11 +634,11 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
       // statement later. Read the restored fields back off the tab's own
       // viewport, which is where they live now.
       editor_state.viewport = std::move(restored_view);
-      editor_state.restored_path = normalized_path;
-      editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
-      editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
-      editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
-      editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
+      editor_state.restore.path = normalized_path;
+      editor_state.restore.cursor_line = editor_state.viewport.cursor_line();
+      editor_state.restore.cursor_column = editor_state.viewport.cursor_column();
+      editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
+      editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
       editor_state.content = EditorTabState::Content::Ready;
       editor_state.folding_model->Clear();
       if (is_focused_group && i == group.active_tab_index) {
@@ -794,7 +802,7 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
     TabEntry::EditorTabState& editor_state =
         *state_.focused_group().open_tabs.back().editor_state;
     editor_state.content = EditorTabState::Content::Loading;
-    editor_state.restored_path = normalized_path;
+    editor_state.restore.path = normalized_path;
     editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
   }
   state_.focused_group().active_tab_index = state_.focused_group().open_tabs.size() - 1;

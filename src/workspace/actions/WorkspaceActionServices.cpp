@@ -1011,9 +1011,9 @@ bool WorkspaceActionContext::RevealPathAtLine(const std::filesystem::path& path,
   if (TabEntry::EditorTabState* editor_tab =
           operations_.active_editor_tab ? operations_.active_editor_tab() : nullptr;
       editor_tab != nullptr && editor_tab->content_pending()) {
-    editor_tab->restored_cursor_line = line;
-    editor_tab->restored_cursor_column = request.column > 0 ? request.column - 1 : 0;
-    editor_tab->restored_scroll_line = line;
+    editor_tab->restore.cursor_line = line;
+    editor_tab->restore.cursor_column = request.column > 0 ? request.column - 1 : 0;
+    editor_tab->restore.scroll_line = line;
     editor_tab->center_cursor_on_load = true;
     state_.surface.focus = FocusTarget::Editor;
     return true;

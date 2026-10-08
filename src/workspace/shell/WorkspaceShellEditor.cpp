@@ -361,11 +361,11 @@ WorkspaceShell::TabEntry::EditorTabState WorkspaceShell::MakeEditorTabState(
     const editor::TextViewport& view) {
   TabEntry::EditorTabState state;
   state.viewport = view;
-  state.restored_path = view.path().lexically_normal();
-  state.restored_cursor_line = view.cursor_line();
-  state.restored_cursor_column = view.cursor_column();
-  state.restored_scroll_line = view.scroll_line();
-  state.restored_horizontal_scroll = view.horizontal_scroll();
+  state.restore.path = view.path().lexically_normal();
+  state.restore.cursor_line = view.cursor_line();
+  state.restore.cursor_column = view.cursor_column();
+  state.restore.scroll_line = view.scroll_line();
+  state.restore.horizontal_scroll = view.horizontal_scroll();
   state.content = EditorTabState::Content::Ready;
   return state;
 }
@@ -376,7 +376,7 @@ void WorkspaceShell::SyncActiveEditorTabMetadata() {
 
 std::filesystem::path WorkspaceShell::EditorViewPath(
     const TabEntry::EditorTabState& editor_state) const {
-  return editor_state.content_pending() ? editor_state.restored_path.lexically_normal()
+  return editor_state.content_pending() ? editor_state.restore.path.lexically_normal()
                                         : editor_state.viewport.path().lexically_normal();
 }
 
@@ -397,7 +397,7 @@ bool WorkspaceShell::ReplaceActiveEditorView(const editor::TextViewport& viewpor
   const std::filesystem::path old_path = editor_tab->viewport.path().lexically_normal();
   editor_tab->viewport = configured_view;
   editor_tab->content = EditorTabState::Content::Ready;
-  editor_tab->restored_path = configured_view.path().lexically_normal();
+  editor_tab->restore.path = configured_view.path().lexically_normal();
   editor_tab->folding_model->Clear();
   const std::filesystem::path new_path = configured_view.path().lexically_normal();
   if (!old_path.empty() && old_path != new_path && CountOpenBufferViews(old_path) == 0) {
@@ -543,7 +543,7 @@ namespace {
 std::optional<std::filesystem::path> OpenBufferViewPath(const TabEntry& tab) {
   if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
     std::filesystem::path view_path =
-        (tab.editor_state->content_pending() ? tab.editor_state->restored_path
+        (tab.editor_state->content_pending() ? tab.editor_state->restore.path
                                              : tab.editor_state->viewport.path())
             .lexically_normal();
     if (view_path.empty()) {

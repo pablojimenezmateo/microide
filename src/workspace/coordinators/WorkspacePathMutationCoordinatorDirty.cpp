@@ -222,11 +222,11 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       }
       saved_any = true;
 
-      editor_state.restored_path = util::NormalizedPath(viewport->path());
-      editor_state.restored_cursor_line = viewport->cursor_line();
-      editor_state.restored_cursor_column = viewport->cursor_column();
-      editor_state.restored_scroll_line = viewport->scroll_line();
-      editor_state.restored_horizontal_scroll = viewport->horizontal_scroll();
+      editor_state.restore.path = util::NormalizedPath(viewport->path());
+      editor_state.restore.cursor_line = viewport->cursor_line();
+      editor_state.restore.cursor_column = viewport->cursor_column();
+      editor_state.restore.scroll_line = viewport->scroll_line();
+      editor_state.restore.horizontal_scroll = viewport->horizontal_scroll();
       editor_state.content = EditorTabState::Content::Ready;
     }
     if (saved_any) {

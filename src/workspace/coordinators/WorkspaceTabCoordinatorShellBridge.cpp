@@ -432,10 +432,7 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
       ApplyDetectedIndentOnOpen(editor_state.viewport);
       // View state last: preferences re-run EnsureCursorVisible, which would snap
       // scroll back onto the caret if it ran after the restore.
-      editor_state.viewport.ApplyRestoredViewState(editor_state.restored_cursor_line,
-                                                   editor_state.restored_cursor_column,
-                                                   editor_state.restored_scroll_line,
-                                                   editor_state.restored_horizontal_scroll);
+      editor_state.restore.ApplyViewStateTo(editor_state.viewport);
       if (editor_state.center_cursor_on_load) {
         editor_state.center_cursor_on_load = false;
         editor_state.viewport.CenterLine(editor_state.viewport.cursor_line());
@@ -471,7 +468,7 @@ void WorkspaceShell::ShareLoadedBufferWithWaitingTabs(const std::filesystem::pat
       }
       auto& waiting = *tab.editor_state;
       if (!waiting.content_pending() || &waiting.viewport == &loaded ||
-          waiting.restored_path.lexically_normal() != path) {
+          waiting.restore.path.lexically_normal() != path) {
         continue;
       }
       // Its own read, if it posted one, is now pointless work on a file already
@@ -481,10 +478,7 @@ void WorkspaceShell::ShareLoadedBufferWithWaitingTabs(const std::filesystem::pat
         waiting.pending_load.Disarm();
       }
       waiting.viewport = loaded;  // shares the DocumentState; view state is its own
-      waiting.viewport.ApplyRestoredViewState(waiting.restored_cursor_line,
-                                              waiting.restored_cursor_column,
-                                              waiting.restored_scroll_line,
-                                              waiting.restored_horizontal_scroll);
+      waiting.restore.ApplyViewStateTo(waiting.viewport);
       waiting.content = TabEntry::EditorTabState::Content::Ready;
       waiting.folding_model->Clear();
     }

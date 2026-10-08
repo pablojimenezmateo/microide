@@ -28,12 +28,12 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   if (editor_state.content == TabEntry::EditorTabState::Content::Failed) {
     return false;
   }
-  if (editor_state.restored_path.empty()) {
+  if (editor_state.restore.path.empty()) {
     return false;
   }
-  if (ShouldOpenOffThread(editor_state.restored_path)) {
+  if (ShouldOpenOffThread(editor_state.restore.path)) {
     editor::TextViewport loading_view;
-    const std::uint64_t read_id = BeginOffThreadOpen(editor_state.restored_path, loading_view);
+    const std::uint64_t read_id = BeginOffThreadOpen(editor_state.restore.path, loading_view);
     if (read_id != 0) {
       editor_state.viewport = std::move(loading_view);
       editor_state.content = TabEntry::EditorTabState::Content::Loading;
@@ -51,14 +51,11 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
     // internally re-run EnsureCursorVisible, so they come BEFORE the view-state
     // restore — otherwise they snap scroll back onto the caret (the "reopen
     // lands on line 1 after scrolling" bug).
-    if (!OpenEditorViewForPath(editor_state.restored_path, loaded_view)) {
+    if (!OpenEditorViewForPath(editor_state.restore.path, loaded_view)) {
       return false;
     }
   }
-  loaded_view.ApplyRestoredViewState(editor_state.restored_cursor_line,
-                                     editor_state.restored_cursor_column,
-                                     editor_state.restored_scroll_line,
-                                     editor_state.restored_horizontal_scroll);
+  editor_state.restore.ApplyViewStateTo(loaded_view);
   editor_state.viewport = std::move(loaded_view);
   editor_state.content = EditorTabState::Content::Ready;
   return true;
@@ -71,7 +68,7 @@ void TabCoordinator::RetryFailedOpen(const std::filesystem::path& path) {
     for (TabEntry& tab : group.open_tabs) {
       if (!tab.editor_state.has_value() ||
           tab.editor_state->content != EditorTabState::Content::Failed ||
-          tab.editor_state->restored_path.lexically_normal() != normalized) {
+          tab.editor_state->restore.path.lexically_normal() != normalized) {
         continue;
       }
       EditorTabState& editor_state = *tab.editor_state;
@@ -119,66 +116,24 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
     }
     return true;
   }
-  if (tab.deferred_handle.has_value()) {
-    editor::TextViewport loaded_view;
-    const std::filesystem::path deferred_path = tab.deferred_handle->path.lexically_normal();
-    if (deferred_path.empty()) {
-      return false;
-    }
-    if (ShouldOpenOffThread(deferred_path)) {
-      editor::TextViewport loading_view;
-      const std::uint64_t read_id = BeginOffThreadOpen(deferred_path, loading_view);
-      if (read_id != 0) {
-        tab.editor_state = operations_.make_editor_tab_state(loading_view);
-        TabEntry::EditorTabState& editor_state = *tab.editor_state;
-        editor_state.content = TabEntry::EditorTabState::Content::Loading;
-        editor_state.restored_path = deferred_path;
-        editor_state.restored_cursor_line = tab.deferred_handle->cursor_line;
-        editor_state.restored_cursor_column = tab.deferred_handle->cursor_column;
-        editor_state.restored_scroll_line = tab.deferred_handle->scroll_line;
-        editor_state.restored_horizontal_scroll = tab.deferred_handle->horizontal_scroll;
-        editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
-        tab.deferred_handle.reset();
-        return true;
-      }
-    }
-    if (!loaded_view.OpenFile(deferred_path)) {
-      return false;
-    }
-    operations_.apply_editor_preferences(loaded_view);
-    operations_.apply_detected_indent_on_open(loaded_view);
-    // View state last: scroll stays authoritative even when a restored selection
-    // would otherwise drag scroll back onto the caret.
-    loaded_view.ApplyRestoredViewState(tab.deferred_handle->cursor_line,
-                                       tab.deferred_handle->cursor_column,
-                                       tab.deferred_handle->scroll_line,
-                                       tab.deferred_handle->horizontal_scroll,
-                                       tab.deferred_handle->selection);
-    tab.editor_state = operations_.make_editor_tab_state(loaded_view);
-    tab.deferred_handle.reset();
-    return true;
-  }
-  const std::filesystem::path tab_path = tab.path.lexically_normal();
-  if (ShouldOpenOffThread(tab_path)) {
-    editor::TextViewport loading_view;
-    const std::uint64_t read_id = BeginOffThreadOpen(tab_path, loading_view);
-    if (read_id != 0) {
-      tab.editor_state = operations_.make_editor_tab_state(loading_view);
-      TabEntry::EditorTabState& editor_state = *tab.editor_state;
-      editor_state.content = TabEntry::EditorTabState::Content::Loading;
-      editor_state.restored_path = tab_path;
-      editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
-      return true;
-    }
-  }
-  editor::TextViewport loaded_view;
-  if (!loaded_view.OpenFile(tab.path)) {
+  // Not materialized yet: a session tab that only ever carried its handle, or a
+  // bare tab entry naming its path. Both become a Deferred editor state and load
+  // through RestoreEditorTab, the one hydration path — which decides on- or
+  // off-thread, and shares a buffer another pane already has live (one file is
+  // one buffer). This branch used to repeat that logic with a plain OpenFile, so
+  // a restored background tab of a file open elsewhere got a second, independent
+  // buffer (TD-2026-09-29-314).
+  DeferredTabHandle handle = tab.deferred_handle.has_value() ? std::move(*tab.deferred_handle)
+                                                             : DeferredTabHandle{.path = tab.path};
+  handle.path = handle.path.lexically_normal();
+  if (handle.path.empty()) {
     return false;
   }
-  operations_.apply_editor_preferences(loaded_view);
-  operations_.apply_detected_indent_on_open(loaded_view);
-  tab.editor_state = operations_.make_editor_tab_state(loaded_view);
-  return true;
+  tab.deferred_handle.reset();
+  tab.editor_state = operations_.make_editor_tab_state(editor::TextViewport{});
+  tab.editor_state->content = EditorTabState::Content::Deferred;
+  tab.editor_state->restore = std::move(handle);
+  return EnsureEditorTabLoaded(tab);
 }
 
 std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view specifier,

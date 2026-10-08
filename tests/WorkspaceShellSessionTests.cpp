@@ -1302,6 +1302,62 @@ void TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity() {
          "a deleted deferred tab must keep its filename title, not 'Welcome'");
 }
 
+// One file is one buffer, however its tab was restored. A session tab that was
+// never activated carries only a handle, and hydrating it used to repeat the
+// restore logic with a plain OpenFile — so if the file was meanwhile live in
+// another pane, activating the restored tab created a second, independent buffer
+// of it, and the two saved over each other (TD-2026-09-29-314).
+void TestWorkspaceShellRestoredBackgroundTabSharesALiveBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.txt";
+  const std::filesystem::path file_b = root / "beta.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "beta\n");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b);
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "the session restores");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  std::size_t beta_index = 0;
+  {
+    const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+    beta_index = tabs.size();
+    for (std::size_t i = 0; i < tabs.size(); ++i) {
+      if (tabs[i].path == file_b.lexically_normal()) beta_index = i;
+    }
+    Expect(beta_index < tabs.size() && !tabs[beta_index].editor_state.has_value(),
+           "beta comes back as a handle, never hydrated");
+  }
+
+  // beta goes live in a second pane first.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             restored, microide::workspace::EditorSplitOrientation::Vertical),
+         "split");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(restored, file_b), "beta opens in the new pane");
+  const microide::editor::TextViewport& live = WorkspaceShellTestAccess::ActiveEditor(restored);
+
+  WorkspaceShellTestAccess::FocusEditorGroup(restored, 0);
+  WorkspaceShellTestAccess::ActivateTab(restored, beta_index);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(restored).SharesDocumentWith(live),
+         "the restored tab shares the live buffer instead of reading a second one");
+}
+
 // Expanded folders + the selected node survive a session round-trip.
 void TestWorkspaceShellRestoreSessionPreservesTreeExpansion() {
   TemporaryDirectory temp_dir;
@@ -3084,6 +3140,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreSessionPreservesTreeExpansion);
   AddTest(tests, "WorkspaceShell/ActivatingDeletedDeferredTabPreservesIdentity",
           TestWorkspaceShellActivatingDeletedDeferredTabPreservesIdentity);
+  AddTest(tests, "WorkspaceShell/RestoredBackgroundTabSharesALiveBuffer",
+          TestWorkspaceShellRestoredBackgroundTabSharesALiveBuffer);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesDirtyUntitledBufferContent",
           TestWorkspaceShellRestoreSessionPreservesDirtyUntitledBufferContent);
   AddTest(tests, "WorkspaceShell/QuitShutdownPersistsDirtyEditorBuffers",

@@ -186,11 +186,11 @@ TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
     // buffer) while keeping an independent scroll/cursor/selection. The folding
     // model is non-copyable and view-local, so the clone gets a fresh one.
     editor_state.viewport = tab.editor_state->viewport;
-    editor_state.restored_path = tab.editor_state->restored_path;
-    editor_state.restored_cursor_line = tab.editor_state->restored_cursor_line;
-    editor_state.restored_cursor_column = tab.editor_state->restored_cursor_column;
-    editor_state.restored_scroll_line = tab.editor_state->restored_scroll_line;
-    editor_state.restored_horizontal_scroll = tab.editor_state->restored_horizontal_scroll;
+    editor_state.restore.path = tab.editor_state->restore.path;
+    editor_state.restore.cursor_line = tab.editor_state->restore.cursor_line;
+    editor_state.restore.cursor_column = tab.editor_state->restore.cursor_column;
+    editor_state.restore.scroll_line = tab.editor_state->restore.scroll_line;
+    editor_state.restore.horizontal_scroll = tab.editor_state->restore.horizontal_scroll;
     // The clone gets no read of its own — `pending_load` names ONE tab, and the
     // completion hydrates the tab that holds the id. Copying `Loading` across
     // would leave the clone waiting for a completion that can never find it:

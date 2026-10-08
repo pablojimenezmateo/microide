@@ -357,6 +357,24 @@ struct MergeTabState {
   bool persistable = true;
 };
 
+// What to read and where to put the caret once it is read: a tab that exists
+// before its content does.
+struct DeferredTabHandle {
+  std::filesystem::path path;
+  std::size_t cursor_line = 0;
+  std::size_t cursor_column = 0;
+  std::size_t scroll_line = 0;
+  std::size_t horizontal_scroll = 0;
+  std::optional<editor::SelectionRange> selection;
+
+  // Last, after preferences and indent detection: those re-run
+  // EnsureCursorVisible, which would snap scroll back onto the caret.
+  void ApplyViewStateTo(editor::TextViewport& view) const {
+    view.ApplyRestoredViewState(cursor_line, cursor_column, scroll_line, horizontal_scroll,
+                                selection);
+  }
+};
+
 // Namespace scope, NOT nested in `TabEntry`, and it must stay that way: a class
 // with a default member initializer that is nested inside the class holding an
 // `std::optional` of it is not `is_constructible` at the point the optional is
@@ -396,14 +414,13 @@ struct EditorTabState {
   // Deferred-restore metadata: while `content_pending()` the viewport is empty
   // and these fields carry the real on-disk path + caret/scroll so the tab can
   // be hydrated lazily (session restore / background open).
-  std::filesystem::path restored_path;
+  // The same handle a never-materialized session tab carries
+  // (`TabEntry::deferred_handle`), so the two forms of "not loaded yet" hold one
+  // description of what to read and where to put the caret (TD-2026-09-29-314).
+  DeferredTabHandle restore;
   // `reveal` targeted this tab while its content was still loading: centre the
   // restored caret line once the load lands (the placeholder had no real size).
   bool center_cursor_on_load = false;
-  std::size_t restored_cursor_line = 0;
-  std::size_t restored_cursor_column = 0;
-  std::size_t restored_scroll_line = 0;
-  std::size_t restored_horizontal_scroll = 0;
 
   // Format-on-save runs off the shell thread, so a save can be in flight for this
   // tab with nothing written yet. Armed while that is true, with the
@@ -439,15 +456,6 @@ struct EditorTabState {
 // Namespace scope for the same reason as `EditorTabState` above: it has no NSDMI
 // today, but a nested type reachable through an `optional` member of its own
 // enclosing class is the landmine, not the initializer.
-struct DeferredTabHandle {
-  std::filesystem::path path;
-  std::size_t cursor_line = 0;
-  std::size_t cursor_column = 0;
-  std::size_t scroll_line = 0;
-  std::size_t horizontal_scroll = 0;
-  std::optional<editor::SelectionRange> selection;
-};
-
 // Whether a clean reload must re-establish for itself that the file actually
 // changed. The guard is not free — settling a moved mtime on an unchanged file
 // costs a read — and a caller that has already settled it would otherwise pay for
@@ -673,14 +681,14 @@ struct EditorPreferences {
 // The path an editor tab's view is showing, without materializing it.
 //
 // A deferred-restore tab has not opened its viewport yet, so its identity lives
-// in `restored_path`; every other tab's is the viewport's own. Both are stored
+// in `restore.path`; every other tab's is the viewport's own. Both are stored
 // normalized, which is why this can hand back a reference: the callers that need
 // a normalized `std::filesystem::path` value used to build one per tab per scan,
 // and a path copy is roughly as expensive as `lexically_normal()` (a fresh
 // pathname string plus a component list with a path per component).
 [[nodiscard]] inline const std::filesystem::path& EditorViewPathRef(
     const TabEntry::EditorTabState& editor_state) {
-  return editor_state.content_pending() ? editor_state.restored_path
+  return editor_state.content_pending() ? editor_state.restore.path
                                         : editor_state.viewport.path();
 }
 

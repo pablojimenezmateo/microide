@@ -199,12 +199,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         }
 
         if (!close_tab) {
-          editor_state.restored_path = updated_path;
+          editor_state.restore.path = updated_path;
           if (!editor_state.content_pending()) {
-            editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
-            editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
-            editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
-            editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
+            editor_state.restore.cursor_line = editor_state.viewport.cursor_line();
+            editor_state.restore.cursor_column = editor_state.viewport.cursor_column();
+            editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
+            editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
             editor_state.content = EditorTabState::Content::Ready;
           }
           retargeted = true;
@@ -291,12 +291,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       auto& editor_state = *tab.editor_state;
       if (editor_state.content_pending()) {
         // Restore-pending tab: fix the deferred-open target path.
-        if (!editor_state.restored_path.empty() &&
-            util::PathEqualsOrWithinNormalized(editor_state.restored_path, old_path)) {
-          editor_state.restored_path =
-              util::ReplacePathPrefix(editor_state.restored_path, old_path, new_path)
+        if (!editor_state.restore.path.empty() &&
+            util::PathEqualsOrWithinNormalized(editor_state.restore.path, old_path)) {
+          editor_state.restore.path =
+              util::ReplacePathPrefix(editor_state.restore.path, old_path, new_path)
                   .lexically_normal();
-          tab.path = editor_state.restored_path;
+          tab.path = editor_state.restore.path;
           tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
         }
         continue;
@@ -334,11 +334,11 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       } else {
         editor_state.viewport.SetPath(updated_path);
       }
-      editor_state.restored_path = updated_path;
-      editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
-      editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
-      editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
-      editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
+      editor_state.restore.path = updated_path;
+      editor_state.restore.cursor_line = editor_state.viewport.cursor_line();
+      editor_state.restore.cursor_column = editor_state.viewport.cursor_column();
+      editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
+      editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
       tab.path = updated_path;
       tab.title = updated_path.filename().string();
     }

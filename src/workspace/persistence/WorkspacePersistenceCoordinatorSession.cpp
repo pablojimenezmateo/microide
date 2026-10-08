@@ -411,11 +411,11 @@ bool PersistenceCoordinator::RestoreSessionState() {
     view_path = view_path.lexically_normal();
 
     TabEntry::EditorTabState editor_state;
-    editor_state.restored_path = view_path;
-    editor_state.restored_cursor_line = persisted_tab.cursor_line;
-    editor_state.restored_cursor_column = persisted_tab.cursor_column;
-    editor_state.restored_scroll_line = persisted_tab.scroll_line;
-    editor_state.restored_horizontal_scroll = persisted_tab.horizontal_scroll;
+    editor_state.restore.path = view_path;
+    editor_state.restore.cursor_line = persisted_tab.cursor_line;
+    editor_state.restore.cursor_column = persisted_tab.cursor_column;
+    editor_state.restore.scroll_line = persisted_tab.scroll_line;
+    editor_state.restore.horizontal_scroll = persisted_tab.horizontal_scroll;
 
     if (persisted_tab.dirty_snapshot) {
       editor::TextViewport restored_view;
@@ -471,10 +471,10 @@ bool PersistenceCoordinator::RestoreSessionState() {
       }
       restored_tab.deferred_handle = TabEntry::DeferredTabHandle{
           .path = tab_path,
-          .cursor_line = editor_state.restored_cursor_line,
-          .cursor_column = editor_state.restored_cursor_column,
-          .scroll_line = editor_state.restored_scroll_line,
-          .horizontal_scroll = editor_state.restored_horizontal_scroll,
+          .cursor_line = editor_state.restore.cursor_line,
+          .cursor_column = editor_state.restore.cursor_column,
+          .scroll_line = editor_state.restore.scroll_line,
+          .horizontal_scroll = editor_state.restore.horizontal_scroll,
           .selection = selection,
       };
     }
@@ -760,7 +760,7 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   // ~12 allocations even when it changes nothing -- once per open tab of every
   // group, on every session save (TD-2026-08-10-174).
   const std::filesystem::path& source_path =
-      editor_state.content_pending() ? editor_state.restored_path : persisted_viewport->path();
+      editor_state.content_pending() ? editor_state.restore.path : persisted_viewport->path();
   const std::filesystem::path normalized_path =
       util::PathTextNeedsNormalizing(source_path.native()) ? source_path.lexically_normal()
                                                            : source_path;
@@ -795,16 +795,16 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
     return std::nullopt;
   }
   const std::size_t cursor_line =
-      editor_state.content_pending() ? editor_state.restored_cursor_line
+      editor_state.content_pending() ? editor_state.restore.cursor_line
                                      : persisted_viewport->cursor_line();
   const std::size_t cursor_column =
-      editor_state.content_pending() ? editor_state.restored_cursor_column
+      editor_state.content_pending() ? editor_state.restore.cursor_column
                                      : persisted_viewport->cursor_column();
   const std::size_t scroll_line =
-      editor_state.content_pending() ? editor_state.restored_scroll_line
+      editor_state.content_pending() ? editor_state.restore.scroll_line
                                      : persisted_viewport->scroll_line();
   const std::size_t horizontal_scroll =
-      editor_state.content_pending() ? editor_state.restored_horizontal_scroll
+      editor_state.content_pending() ? editor_state.restore.horizontal_scroll
                                      : persisted_viewport->horizontal_scroll();
 
   PersistedEditorTabState persisted_tab;

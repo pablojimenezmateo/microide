@@ -661,9 +661,9 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
     }
   } else if (tab.editor_state.has_value()) {
     object["loading"] = util::JsonValue(true);
-    object["cursorLine"] = one_based(tab.editor_state->restored_cursor_line);
-    object["cursorColumn"] = one_based(tab.editor_state->restored_cursor_column);
-    object["scrollLine"] = one_based(tab.editor_state->restored_scroll_line);
+    object["cursorLine"] = one_based(tab.editor_state->restore.cursor_line);
+    object["cursorColumn"] = one_based(tab.editor_state->restore.cursor_column);
+    object["scrollLine"] = one_based(tab.editor_state->restore.scroll_line);
   } else if (tab.deferred_handle.has_value()) {
     object["cursorLine"] = one_based(tab.deferred_handle->cursor_line);
     object["cursorColumn"] = one_based(tab.deferred_handle->cursor_column);

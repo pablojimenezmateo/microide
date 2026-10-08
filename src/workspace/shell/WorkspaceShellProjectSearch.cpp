@@ -621,11 +621,11 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
         }
         auto& editor_state = *tab.editor_state;
         editor_state.viewport = *reopened_view;
-        editor_state.restored_path = change.absolute_path;
-        editor_state.restored_cursor_line = reopened_view->cursor_line();
-        editor_state.restored_cursor_column = reopened_view->cursor_column();
-        editor_state.restored_scroll_line = reopened_view->scroll_line();
-        editor_state.restored_horizontal_scroll = reopened_view->horizontal_scroll();
+        editor_state.restore.path = change.absolute_path;
+        editor_state.restore.cursor_line = reopened_view->cursor_line();
+        editor_state.restore.cursor_column = reopened_view->cursor_column();
+        editor_state.restore.scroll_line = reopened_view->scroll_line();
+        editor_state.restore.horizontal_scroll = reopened_view->horizontal_scroll();
         editor_state.content = EditorTabState::Content::Ready;
         if (is_focused_group && i == group.active_tab_index) {
           SyncActiveEditorTabMetadata();
