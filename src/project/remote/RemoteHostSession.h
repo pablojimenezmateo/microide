@@ -73,6 +73,9 @@ class RemoteHostSession {
     bool install = true;                   // `remote.server_install`
     std::filesystem::path server_binary;   // the local server to install ("" = none)
     std::string release;
+    // The host directory this connection serves as its workspace (server/hello's
+    // root): a remote project's channel. Empty for a terminal-only session.
+    std::string workspace_root;
     std::chrono::milliseconds min_backoff{1000};
     std::chrono::milliseconds max_backoff{30000};
     std::chrono::milliseconds auth_poll{500};

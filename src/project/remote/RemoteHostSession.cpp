@@ -369,7 +369,9 @@ std::shared_ptr<RemoteServerClient> RemoteHostSession::StartServer(bool* not_ins
     }
   });
   if (client->ConnectCommand(RemoteArgv(AttachCommand()),
-                             HelloRequest{.release = config_.release}, error)) {
+                             HelloRequest{.release = config_.release,
+                                          .root = config_.workspace_root},
+                             error)) {
     return client;
   }
   *incompatible = client->incompatible();

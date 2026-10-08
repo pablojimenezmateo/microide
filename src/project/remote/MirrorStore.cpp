@@ -77,8 +77,10 @@ LocalStat StatNoFollow(const std::filesystem::path& path) {
 
 }  // namespace
 
-MirrorStore::MirrorStore(std::filesystem::path directory)
-    : directory_(std::move(directory)), tree_(directory_ / "tree"), meta_(directory_ / "meta") {}
+MirrorStore::MirrorStore(std::filesystem::path directory, std::string_view tree_name)
+    : directory_(std::move(directory)),
+      tree_(directory_ / Component(tree_name == "meta" ? "meta_" : tree_name)),
+      meta_(directory_ / "meta") {}
 
 std::filesystem::path MirrorStore::DefaultDirectory(std::string_view host,
                                                     std::string_view host_root) {

@@ -59,7 +59,9 @@ class MirrorStore {
     Differs,      // holds something else (or there is no base to match)
   };
 
-  explicit MirrorStore(std::filesystem::path directory);
+  // `tree_name` is the materialized tree's directory name: the host root's own
+  // basename, so the project the editor opens is called what it is called there.
+  explicit MirrorStore(std::filesystem::path directory, std::string_view tree_name = "tree");
 
   // `$XDG_DATA_HOME/microide/remote/<host>/<basename>-<hash12>`: the basename for a
   // human, a hash of the whole host path so two roots with one basename differ.
@@ -67,6 +69,7 @@ class MirrorStore {
 
   const std::filesystem::path& directory() const { return directory_; }
   const std::filesystem::path& tree() const { return tree_; }
+  const std::filesystem::path& meta() const { return meta_; }
   std::filesystem::path state_path() const { return meta_ / "state"; }
 
   // Create tree/ and meta/ (0700) and read meta/state. A missing state file is an
