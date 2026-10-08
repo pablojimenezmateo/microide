@@ -420,6 +420,71 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-08-328 — Phase 2b remainders: what the first remote-project slices left. [OPEN]
+
+Phase 2b (`openspec/changes/remote-projects-phase-2b/`) opens a host folder as a
+mirrored project end to end — manifest, objects, CAS writes, tree ops, the watch,
+the journal, Open Folder on Host — and leaves these, each a known gap rather than a
+silent one:
+
+- **No zstd deltas** (§ 6.2): a stale file transfers whole. zstd is not vendored.
+- **The portable BLAKE3 only** (~0.94 GB/s here, against ~0.44 for SHA-256). The
+  upstream SIMD backends (several GB/s) were downloaded at the pinned 1.5.4 tag but
+  building them was refused by the session's permission policy for external code;
+  vendoring them needs the maintainer's explicit go-ahead. `util/ContentHash.h`'s
+  interface is the seam: only `ContentHash.cpp` changes.
+- **A watch batch rebuilds the whole manifest** (`git ls-files` plus a stat per
+  file, hashes only for what moved). Correct by construction — it covers a
+  `.gitignore` membership change and a branch switch — but O(tree) per agent burst.
+  Per-path rows from the inotify events, with the full rebuild kept for membership
+  changes, is Phase 3's churn work.
+- **The watch's directory filter is the scanner's**: a TRACKED file under a
+  directory the default skip list prunes (`build/`, `out/`, …) does not wake the
+  watch; its change arrives with the next batch something else triggers, or the
+  next reconnect.
+- **Tree operations are not journaled across a restart.** A content push is (the
+  `push_pending` flag plus the local bytes), but a rename or delete made while the
+  link was down and not replayed before the editor exits is lost: the next sync
+  pulls the deleted file back, and a renamed file's new path is left untracked
+  locally (never pushed, never lost).
+- **No object store**: the mirror keeps each path's base HASH, not its bytes, so
+  there is no delta base, no three-way view of a conflict, and a branch switch
+  re-fetches files the mirror once had. Correctness does not depend on it.
+- **`meta/state` is rewritten whole on every push** — O(paths) bytes per save;
+  an append-only journal would make it O(1).
+- **Paths travel in JSON** in `object/fetch`, `file/write` and `fs/op`, so a host
+  file name that is not valid UTF-8 cannot be fetched or written (the manifest
+  itself is binary and carries it).
+- **A remote project is never released**: its session, engine and launcher live
+  until the window closes (closing the project tab keeps them, because a project
+  state may still point at the locality).
+- Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
+  through the launcher meanwhile, a host process per refresh), host-side
+  `search/run` (search reads the mirror, which is complete once synced but
+  briefly stale under churn), the Compare choice of the conflict flow, absent
+  files in the tree before their first pull, presentation (`host:/path` in the
+  title and recents), and the parity rows against the real server with a mirror.
+
+### TD-2026-10-08-329 — local external-change detection trusts a racily clean stat. [OPEN]
+
+Found while fixing the same bug in the remote hash cache (see the 2026-10-08
+`fix(remote): never trust a racily clean stat signature` commit). `FileSignature`
+compares mtime and size, and `DiskContentUnchanged` confirms a stat MISMATCH with
+the content hash but believes a stat MATCH. A same-size external rewrite within one
+coarse kernel timestamp tick of the editor's own read or save (an agent or a
+formatter rewriting one line right after a save) therefore leaves the buffer
+showing the old bytes with no banner, and a later save overwrites the external
+edit. Fix shape, as in `project/remote`: record the signature's ctime too, and
+treat a signature recorded within ~2 s of its own mtime/ctime as racy — confirm it
+with the content hash on the next check instead of believing the stat.
+
+### TD-2026-10-08-330 — `DebugService/SessionReconciledWhenAdapterDiesSilently` is intermittent. [OPEN]
+
+Failed once in eight parallel full-suite runs on 2026-10-08 ("a non-terminal
+session is not prunable on its own"); passes alone and on rerun. Not investigated
+yet: the assertion reads session state that an adapter-exit path settles
+asynchronously, which is the usual shape of a timing flake under `ctest -j`.
+
 ### TD-2026-10-08-327 — a host's language server and debug adapter do not survive a reconnect. [RESOLVED 2026-10-08]
 
 Resolved the same day: StartAsync spawns kept; `RemoteAsyncProcess` is a
