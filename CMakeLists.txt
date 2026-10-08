@@ -831,6 +831,7 @@ add_executable(microide-server
   src/server/RemoteServer.cpp
   src/server/ServerMain.cpp
   src/server/TerminalTable.cpp
+  src/server/WorkspaceTree.cpp
   $<TARGET_OBJECTS:microide_kernel>
 )
 target_include_directories(microide-server PRIVATE src)
@@ -1361,6 +1362,8 @@ add_executable(microide_kernel_tests
   tests/KernelTestMain.cpp
   tests/RemoteFrameTests.cpp
   tests/RemoteManifestTests.cpp
+  tests/WorkspaceTreeTests.cpp
+  src/server/WorkspaceTree.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
