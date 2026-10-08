@@ -113,7 +113,8 @@ bool RemoteProject::Open(std::string* error) {
   gate_ = std::make_unique<MirrorWriteGate>(*store_, *engine_);
   launcher_ = std::make_shared<RemoteProcessLauncher>(
       session_->connection(), RemotePathMap(store_->tree(), config_.session.workspace_root),
-      RemoteProcessLauncher::Options{.description = "ssh " + mine.host});
+      RemoteProcessLauncher::Options{.description = "ssh " + mine.host,
+                                     .host_file_cache = host_file_cache()});
   session_->Connect();
   return true;
 }

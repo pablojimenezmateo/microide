@@ -247,6 +247,37 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
 #endif
 }
 
+FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
+                          const std::function<void(std::string_view chunk)>& sink) {
+#if defined(__unix__) || defined(__APPLE__)
+  const std::string text(path);
+  if (text.empty() || text.front() != '/' || text.find('\0') != std::string::npos) {
+    return Error("not an absolute path");
+  }
+  const Fd fd(::open(text.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
+  if (fd.get() < 0) {
+    return errno == ENOENT ? Conflict(std::nullopt) : Error(Errno("cannot open " + text));
+  }
+  struct stat info {};
+  if (::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode)) {
+    return Error(text + " is not a regular file on the host");
+  }
+  if (static_cast<std::uint64_t>(info.st_size) > max_bytes) {
+    return Error(text + " is over the " + std::to_string(max_bytes) + "-byte limit");
+  }
+  const auto hash = util::HashFileDescriptor(fd.get(), nullptr, sink);
+  if (!hash.has_value()) {
+    return Error(Errno("cannot read " + text));
+  }
+  return Ok(hash);
+#else
+  (void)path;
+  (void)max_bytes;
+  (void)sink;
+  return FileOpResult{};
+#endif
+}
+
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode,

@@ -183,24 +183,42 @@ bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_de
 
 std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane lane,
                                             FetchDone done, std::uint64_t max_bytes) {
-  struct State {
-    std::vector<FetchedObject> objects;
-    bool malformed = false;
-  };
-  auto state = std::make_shared<State>();
   util::JsonArray requested;
-  state->objects.resize(paths.size());
-  for (std::size_t i = 0; i < paths.size(); ++i) {
+  for (const std::string& path : paths) {
     util::JsonObject object;
-    object["path"] = util::JsonValue(paths[i]);
+    object["path"] = util::JsonValue(path);
     requested.push_back(util::JsonValue(std::move(object)));
-    state->objects[i].path = std::move(paths[i]);
   }
   util::JsonObject params;
   params["objects"] = util::JsonValue(std::move(requested));
   params["bulk"] = util::JsonValue(lane == Lane::Bulk);
   if (max_bytes > 0) {
     params["max_bytes"] = util::JsonValue(static_cast<std::int64_t>(max_bytes));
+  }
+  return StreamObjects(method::kObjectFetch, util::JsonValue(std::move(params)), std::move(paths),
+                       lane, std::move(done));
+}
+
+std::uint64_t RemoteWorkspace::ReadHostFile(std::string host_path, FetchDone done) {
+  util::JsonObject params;
+  params["path"] = util::JsonValue(host_path);
+  std::vector<std::string> names;
+  names.push_back(std::move(host_path));
+  return StreamObjects(method::kFileRead, util::JsonValue(std::move(params)), std::move(names),
+                       Lane::Interactive, std::move(done));
+}
+
+std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, util::JsonValue params,
+                                             std::vector<std::string> names, Lane lane,
+                                             FetchDone done) {
+  struct State {
+    std::vector<FetchedObject> objects;
+    bool malformed = false;
+  };
+  auto state = std::make_shared<State>();
+  state->objects.resize(names.size());
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    state->objects[i].path = std::move(names[i]);
   }
   const std::shared_ptr<RemoteServerClient> client = Client();
   if (!client) {
@@ -209,7 +227,7 @@ std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane
   }
   RemoteServerClient* raw = client.get();
   const std::uint64_t id = client->RequestStream(
-      method::kObjectFetch, util::JsonValue(std::move(params)), lane,
+      stream_method, std::move(params), lane,
       [state, raw](FrameType, std::string bytes) {
         util::ByteReader in(bytes);
         const std::uint64_t index = in.Varint();

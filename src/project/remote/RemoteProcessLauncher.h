@@ -40,6 +40,10 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
     // (0 = the host's defaults).
     std::size_t terminal_credit_bytes = 0;
     std::size_t terminal_prefetch_lines = 0;
+    // Where host files OUTSIDE the project live on this side ("" = nowhere): a host
+    // path a language server or debugger names that the mirror does not hold maps to
+    // <cache>/<host path>, fetched read-only when the editor opens it (file/read).
+    std::filesystem::path host_file_cache;
   };
 
   // Over the host's current connection, which a reconnect replaces underneath.
@@ -54,6 +58,8 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
   }
   std::filesystem::path ResolveWorkingDirectory(std::filesystem::path cwd) const override;
   std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override;
+  // The host path a file in the out-of-project cache stands for, if it is one.
+  std::optional<std::filesystem::path> HostPathOfCached(const std::filesystem::path& local_path) const;
   platform::SubprocessResult Run(std::vector<std::string> argv,
                                  platform::SubprocessOptions options) const override;
   bool StartAsync(platform::AsyncSubprocess& process, const std::vector<std::string>& argv,

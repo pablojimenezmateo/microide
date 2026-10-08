@@ -44,6 +44,12 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
                                std::uint64_t max_bytes,
                                const std::function<void(std::string_view chunk)>& sink);
 
+// Read an ABSOLUTE path anywhere the user can read, following links (file/read: a
+// system header, a file in an ignored directory). Regular files only; over
+// `max_bytes` is an error; a missing file reads as a conflict with nothing there.
+FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
+                          const std::function<void(std::string_view chunk)>& sink);
+
 // Replace `path`'s content with `content` if `expect` holds: a temp file beside it,
 // fsynced, then renamed into place (RENAME_NOREPLACE for Absent). Missing parent
 // directories are created. `mode` (permission bits) applies when given; otherwise an

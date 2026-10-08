@@ -129,6 +129,9 @@ class MirrorSyncEngine {
   // the engine thread with the copy's path, or nullopt and why.
   using HostCopyDone = std::function<void(std::optional<std::filesystem::path> copy, std::string error)>;
   void FetchHostCopy(std::string path, HostCopyDone done);
+  // file/read: the host file at absolute `host_path`, outside the project, written
+  // read-only to `local_path` (the launcher's out-of-project cache). `done` as above.
+  void FetchHostFile(std::string host_path, std::filesystem::path local_path, HostCopyDone done);
   // Paths in conflict, sorted.
   std::vector<std::string> Conflicts() const;
   // Apply the held delete diff after all.

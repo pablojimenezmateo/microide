@@ -254,6 +254,46 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
   }
 }
 
+namespace {
+
+// Stream one file's bytes as ObjectData frames (varint `index`, then a piece) and
+// answer what object/fetch and file/read answer for it.
+template <typename Send, typename Read>
+util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& read) {
+  std::string prefix;
+  util::PutVarint(prefix, index);
+  std::string frame = prefix;
+  const auto flush = [&]() {
+    if (frame.size() > prefix.size()) {
+      send(frame);
+    }
+    frame = prefix;
+  };
+  const remote::FileOpResult result = read([&](std::string_view chunk) {
+    while (!chunk.empty()) {
+      const std::size_t room = remote::RemoteFrameTransport::kMaxBulkChunkBytes - frame.size();
+      const std::size_t take = std::min(room, chunk.size());
+      frame.append(chunk.substr(0, take));
+      chunk.remove_prefix(take);
+      if (frame.size() == remote::RemoteFrameTransport::kMaxBulkChunkBytes) {
+        flush();
+      }
+    }
+  });
+  flush();
+  util::JsonObject entry;
+  if (result.ok()) {
+    entry["hash"] = util::JsonValue(result.current->Hex());
+  } else if (result.status == remote::FileOpResult::Status::Conflict) {
+    entry["missing"] = util::JsonValue(true);
+  } else {
+    entry["error"] = util::JsonValue(result.error);
+  }
+  return util::JsonValue(std::move(entry));
+}
+
+}  // namespace
+
 void RemoteServer::InstallFileHandlers(Connection& connection) {
   remote::RemotePeer& peer = connection.peer;
   peer.OnRequest(remote::method::kObjectFetch, [this, &connection](std::uint64_t id,
@@ -289,41 +329,16 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
           });
           return;
         }
-        std::string prefix;
-        util::PutVarint(prefix, index);
-        std::string frame;
-        const auto flush = [&]() {
-          if (frame.size() > prefix.size()) {
-            WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-              peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
-            });
-          }
-          frame = prefix;
-        };
-        frame = prefix;
-        const remote::FileOpResult read = remote::ReadTreeFile(
-            tree->tree.root(), paths[index], max_bytes, [&](std::string_view chunk) {
-              while (!chunk.empty()) {
-                const std::size_t room =
-                    remote::RemoteFrameTransport::kMaxBulkChunkBytes - frame.size();
-                const std::size_t take = std::min(room, chunk.size());
-                frame.append(chunk.substr(0, take));
-                chunk.remove_prefix(take);
-                if (frame.size() == remote::RemoteFrameTransport::kMaxBulkChunkBytes) {
-                  flush();
-                }
-              }
-            });
-        flush();
-        util::JsonObject entry;
-        if (read.ok()) {
-          entry["hash"] = util::JsonValue(read.current->Hex());
-        } else if (read.status == remote::FileOpResult::Status::Conflict) {
-          entry["missing"] = util::JsonValue(true);
-        } else {
-          entry["error"] = util::JsonValue(read.error);
-        }
-        results.push_back(util::JsonValue(std::move(entry)));
+        results.push_back(StreamObject(
+            index,
+            [&](std::string_view frame) {
+              WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+                peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
+              });
+            },
+            [&](const std::function<void(std::string_view)>& sink) {
+              return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
+            }));
       }
       util::JsonObject reply;
       reply["objects"] = util::JsonValue(std::move(results));
@@ -333,6 +348,37 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     });
   });
 
+  peer.OnRequest(remote::method::kFileRead, [this, &connection](std::uint64_t id,
+                                                                const util::JsonValue& params) {
+    const std::shared_ptr<ServedTree> served = TreeOf(connection);
+    const util::JsonValue& path = params["path"];
+    if (!served || !path.IsString() || path.AsString().empty() || path.AsString().front() != '/') {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                 served ? "file/read needs an absolute path"
+                                        : "no workspace: send server/hello with a root");
+      return;
+    }
+    ServedTree* tree = served.get();
+    const std::uint64_t connection_id = connection.id;
+    tree->io_queue.Post([this, connection_id, id, path = path.AsString()]() {
+      util::JsonArray results;
+      results.push_back(StreamObject(
+          0,
+          [&](std::string_view frame) {
+            WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+              peer.SendContent(remote::FrameType::ObjectData, id, frame, remote::Lane::Interactive);
+            });
+          },
+          [&](const std::function<void(std::string_view)>& sink) {
+            return remote::ReadHostFile(path, kMaxObjectBytes, sink);
+          }));
+      util::JsonObject reply;
+      reply["objects"] = util::JsonValue(std::move(results));
+      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+        peer.Reply(id, util::JsonValue(std::move(reply)));
+      });
+    });
+  });
   peer.OnRequest(remote::method::kFileWrite, [this, &connection](std::uint64_t id,
                                                                  const util::JsonValue& params) {
     // Claim the content first, whatever the verdict, so a refused write cannot pin it.

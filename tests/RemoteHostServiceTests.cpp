@@ -289,6 +289,30 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the host's server log arrives in an output channel");
+
+  // A host file outside the project — what a language server's definition in a
+  // system header names — maps to the out-of-project cache, never to a same-named
+  // local path, and opening it fetches it read-only from the host first.
+  WriteFile(host.home / "include" / "outside.h", "#define FROM_THE_HOST 1\n");
+  const std::filesystem::path cached = WorkspaceShellTestAccess::ProjectLauncher(shell).LocalPathFromHost(
+      host.home / "include" / "outside.h");
+  Expect(cached != host.home / "include" / "outside.h" &&
+             cached.string().find("host-files") != std::string::npos,
+         "an out-of-project host path maps into the cache: " + cached.string());
+  Expect(WorkspaceShellTestAccess::ProjectLauncher(shell).ResolveWorkingDirectory(cached) ==
+             host.home / "include" / "outside.h",
+         "and maps back to the host path");
+  Expect(!WorkspaceShellTestAccess::OpenFileInNewTab(shell, cached),
+         "the open waits for the fetch");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+               return viewport != nullptr && viewport->path() == cached;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "then opens the host's file");
+  Expect(ReadFile(cached) == "#define FROM_THE_HOST 1\n", "with the host's bytes");
   }
   {
     // A later run opening the mirror as a plain folder.

@@ -373,6 +373,43 @@ bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool 
   return true;
 }
 
+bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
+                                        std::function<void(const std::filesystem::path&)> opened) {
+  std::error_code ec;
+  if (std::filesystem::exists(path, ec)) {
+    return false;
+  }
+  for (auto& [tree, entry] : projects_) {
+    (void)tree;
+    const std::optional<std::filesystem::path> host_path =
+        entry.project->launcher()->HostPathOfCached(path);
+    if (!host_path.has_value()) {
+      continue;
+    }
+    const std::string host = entry.project->record().host;
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Info,
+          .message = "Fetching " + host_path->string() + " from " + host + "…"});
+    }
+    entry.project->engine().FetchHostFile(
+        host_path->string(), path.lexically_normal(),
+        [this, opened = std::move(opened)](std::optional<std::filesystem::path> file, std::string error) {
+          mailbox_.Post([this, opened, file = std::move(file), error = std::move(error)]() {
+            if (file.has_value()) {
+              opened(*file);
+            } else if (operations_.notify) {
+              operations_.notify(NotificationService::Request{
+                  .tone = NotificationService::Tone::Error,
+                  .message = "Cannot open the host's file: " + error});
+            }
+          });
+        });
+    return true;
+  }
+  return false;
+}
+
 bool RemoteHostService::CompareConflict(const std::filesystem::path& path) {
   const auto [entry, relative] = ConflictOwner(path);
   if (entry == nullptr) {

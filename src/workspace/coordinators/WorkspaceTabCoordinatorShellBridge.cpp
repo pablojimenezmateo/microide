@@ -1,6 +1,8 @@
 #include <memory>
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
+#include "workspace/shell/ShellGlueCache.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/services/PromptSurfaceService.h"
@@ -882,6 +884,13 @@ std::size_t WorkspaceShell::EditorGroupCount() const {
 }
 
 bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
+  // A host file outside a remote project (a system header a language server named)
+  // is fetched first, read-only, off the UI thread; it opens when it arrives.
+  if (glue_->remote_host_service != nullptr &&
+      glue_->remote_host_service->OpenWhenFetched(
+          path, [this](const std::filesystem::path& fetched) { (void)OpenFileInNewTab(fetched); })) {
+    return false;
+  }
   const bool opened = MakeEditorTabService().OpenFileInNewTab(path);
   if (opened) {
     // Record into the recent-files MRU, scoped to the active project. Resolve to an

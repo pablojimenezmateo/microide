@@ -319,6 +319,54 @@ void MirrorSyncEngine::FetchHostCopy(std::string path, HostCopyDone done) {
   });
 }
 
+void MirrorSyncEngine::FetchHostFile(std::string host_path, std::filesystem::path local_path,
+                                     HostCopyDone done) {
+  queue_.PostFront([this, host_path = std::move(host_path), local_path = std::move(local_path),
+                    done = std::move(done)]() {
+    std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
+    std::string error;
+    struct Wait {
+      std::mutex mutex;
+      std::condition_variable cv;
+      bool finished = false;
+    } wait;
+    // Blocking on the engine's own worker (never the UI thread): one round trip.
+    workspace_.ReadHostFile(host_path, [&](std::optional<std::vector<RemoteWorkspace::FetchedObject>> got,
+                                           std::string why) {
+      std::lock_guard lock(wait.mutex);
+      objects = std::move(got);
+      error = std::move(why);
+      wait.finished = true;
+      wait.cv.notify_all();
+    });
+    {
+      std::unique_lock lock(wait.mutex);
+      if (!wait.cv.wait_for(lock, std::chrono::seconds(60), [&] { return wait.finished; })) {
+        done(std::nullopt, "the host did not answer");
+        return;
+      }
+    }
+    if (!objects.has_value() || objects->size() != 1) {
+      done(std::nullopt, error.empty() ? "the host did not answer" : error);
+      return;
+    }
+    RemoteWorkspace::FetchedObject& object = objects->front();
+    if (object.missing || !object.hash.has_value()) {
+      done(std::nullopt, object.missing ? host_path + " does not exist on the host" : object.error);
+      return;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(local_path.parent_path(), ec);
+    const FileOpResult written = WriteTreeFile(local_path.parent_path(), local_path.filename().string(),
+                                               object.content, Precondition::Anything(), 0444);
+    if (!written.ok()) {
+      done(std::nullopt, written.error);
+      return;
+    }
+    done(local_path, {});
+  });
+}
+
 std::vector<std::string> MirrorSyncEngine::Conflicts() const {
   std::lock_guard lock(mutex_);
   std::vector<std::string> paths;

@@ -92,6 +92,11 @@ class RemoteHostService {
   // Compare: fetch the host's bytes of the conflicted `path` and open them beside
   // the mirror's file. False when `path` is not a conflict of any remote project.
   bool CompareConflict(const std::filesystem::path& path);
+  // `path` is a host file outside a remote project (the launcher's out-of-project
+  // cache) not fetched yet: fetch it read-only and run `opened` with it on the UI
+  // thread. False when `path` is nothing of the kind (open it as usual).
+  bool OpenWhenFetched(const std::filesystem::path& path,
+                       std::function<void(const std::filesystem::path&)> opened);
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);

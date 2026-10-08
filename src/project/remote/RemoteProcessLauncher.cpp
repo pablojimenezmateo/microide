@@ -323,7 +323,13 @@ std::filesystem::path RemoteProcessLauncher::ResolveWorkingDirectory(
   if (cwd.empty()) {
     return map_.host_root();
   }
-  return map_.ToHost(cwd).value_or(cwd);
+  if (std::optional<std::filesystem::path> host = map_.ToHost(cwd)) {
+    return *host;
+  }
+  if (std::optional<std::filesystem::path> host = HostPathOfCached(cwd)) {
+    return *host;
+  }
+  return cwd;
 }
 
 std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTerminal(
@@ -354,7 +360,28 @@ std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTermin
 
 std::filesystem::path RemoteProcessLauncher::LocalPathFromHost(
     std::filesystem::path host_path) const {
-  return map_.ToLocal(host_path).value_or(host_path);
+  if (std::optional<std::filesystem::path> local = map_.ToLocal(host_path)) {
+    return *local;
+  }
+  // Outside the project: the host's file, never a same-named local one.
+  if (!options_.host_file_cache.empty() && host_path.is_absolute()) {
+    return options_.host_file_cache / host_path.lexically_normal().relative_path();
+  }
+  return host_path;
+}
+
+std::optional<std::filesystem::path> RemoteProcessLauncher::HostPathOfCached(
+    const std::filesystem::path& local_path) const {
+  if (options_.host_file_cache.empty()) {
+    return std::nullopt;
+  }
+  const std::filesystem::path relative =
+      local_path.lexically_normal().lexically_relative(options_.host_file_cache);
+  const std::string text = relative.generic_string();
+  if (text.empty() || text == "." || text.rfind("..", 0) == 0) {
+    return std::nullopt;
+  }
+  return std::filesystem::path("/") / relative;
 }
 
 platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> argv,

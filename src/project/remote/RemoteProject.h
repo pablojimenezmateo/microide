@@ -67,6 +67,9 @@ class RemoteProject {
   const std::filesystem::path& tree() const { return store_->tree(); }
   RemoteProjectRecord record() const;
   ProjectLocality locality() const;
+  // The out-of-project cache: host files outside the content set that a language
+  // server or debugger names map here (RemoteProcessLauncher::Options).
+  std::filesystem::path host_file_cache() const { return store_->meta() / "host-files"; }
   RemoteHostSession& session() { return *session_; }
   MirrorSyncEngine& engine() { return *engine_; }
   const std::shared_ptr<RemoteProcessLauncher>& launcher() const { return launcher_; }

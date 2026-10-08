@@ -73,6 +73,9 @@ class RemoteWorkspace {
       std::function<void(std::optional<std::vector<FetchedObject>> objects, std::string error)>;
   std::uint64_t FetchObjects(std::vector<std::string> paths, Lane lane, FetchDone done,
                              std::uint64_t max_bytes = 0);
+  // file/read: one ABSOLUTE host path outside the content set, read-only (a system
+  // header a language server names). `done` gets one FetchedObject, as above.
+  std::uint64_t ReadHostFile(std::string host_path, FetchDone done);
   std::optional<std::vector<FetchedObject>> FetchObjectsSync(
       std::vector<std::string> paths, Lane lane, std::string* error,
       std::chrono::milliseconds timeout = std::chrono::seconds(120));
@@ -106,6 +109,9 @@ class RemoteWorkspace {
 
  private:
   std::shared_ptr<RemoteServerClient> Client() const;
+  // object/fetch and file/read share the streaming and the checking.
+  std::uint64_t StreamObjects(std::string_view method, util::JsonValue params,
+                              std::vector<std::string> names, Lane lane, FetchDone done);
 
   std::shared_ptr<RemoteConnection> connection_;
 };

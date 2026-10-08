@@ -54,6 +54,11 @@ inline constexpr std::string_view kFsOp = "fs/op";
 // last sent. Subscribe first, then fetch the manifest: changes in between are in
 // the manifest, and nothing is sent before it.
 inline constexpr std::string_view kWatchSubscribe = "watch/subscribe";
+// file/read {path} -> ObjectData frames (index 0) then {objects: [one answer]}, as
+// object/fetch: a READ-ONLY read of an absolute host path outside the content set —
+// a system header a language server names, a file in an ignored build/ directory.
+// Not root-confined: it reads what the user could read on the host anyway (§ 6.9).
+inline constexpr std::string_view kFileRead = "file/read";
 // server/log {} -> {path, text}: the tail (at most 256 KiB) of the server's log
 // beside its socket; empty text for a server with no log (serve-stdio).
 inline constexpr std::string_view kServerLog = "server/log";
