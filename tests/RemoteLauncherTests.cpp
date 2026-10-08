@@ -95,7 +95,9 @@ void TestStartAsyncAdoptsAHostProcess() {
   platform::AsyncSubprocess sleeper;
   Expect(session.launcher->StartAsync(sleeper, {"sleep", "60"}, session.local, {}), "started");
   sleeper.Shutdown(1000);
-  Expect(!sleeper.IsRunning() && sleeper.exit_code() == 128 + SIGTERM, "Shutdown terminates it");
+  Expect(!sleeper.IsRunning() && sleeper.exit_code() == 128 + SIGTERM,
+         "Shutdown terminates it: running=" + std::to_string(sleeper.IsRunning()) +
+             " exit=" + std::to_string(sleeper.exit_code().value_or(-999)));
 }
 
 // Git metadata comes from the host (the mirror has no .git) and is cached: asking

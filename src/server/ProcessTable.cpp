@@ -250,6 +250,13 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
     ::execve(executable.c_str(), argv.data(), envp.data());
     ::_exit(errno == ENOENT ? 127 : 126);
   }
+  // The parent makes the group too (as shells do): every signal goes to the group
+  // (kill(-pid)), and one sent before the child reached its own setpgid would name
+  // a group that does not exist yet and be lost. After the child's exec this fails
+  // with EACCES, harmlessly: the child made the group itself by then.
+  if (pid > 0) {
+    ::setpgid(pid, pid);
+  }
   ::close(in_pipe[0]);
   ::close(out_pipe[1]);
   ::close(err_pipe[1]);
