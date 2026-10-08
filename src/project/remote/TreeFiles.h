@@ -49,9 +49,12 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
 // directories are created. `mode` (permission bits) applies when given; otherwise an
 // existing file keeps its mode and a new one gets 0644. A symlink at `path` is
 // refused rather than replaced.
+// `mtime_ns`, when given, is the written file's modification time (a pull keeps the
+// host's, which is what lets the mirror's recorded stat vouch for it at once).
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
-                                std::optional<std::uint32_t> mode);
+                                std::optional<std::uint32_t> mode,
+                                std::optional<std::int64_t> mtime_ns = std::nullopt);
 
 // Make `path` a symlink to `target`. Replaces only a link (never a file or a
 // directory: those are content); creates missing parents.

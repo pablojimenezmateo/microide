@@ -864,6 +864,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     std::lock_guard path_lock(store_.PathLock(object.path));
     Precondition expect;
     std::uint32_t mode = 0644;
+    std::optional<std::int64_t> mtime_ns;
     {
       std::lock_guard lock(mutex_);
       MirrorStore::Entry* entry = store_.Find(object.path);
@@ -878,9 +879,14 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       expect = local == LocalState::Missing ? Precondition::NotThere()
                                             : Precondition::Of(*entry->base);
       mode = entry->remote.mode != 0 ? entry->remote.mode : 0644;
+      // The host's mtime, when these bytes are the row's: never a time in the future.
+      if (entry->remote.hash == *object.hash && entry->remote.mtime_ns > 0 &&
+          entry->remote.mtime_ns < WallClockNowNs()) {
+        mtime_ns = entry->remote.mtime_ns;
+      }
     }
     const FileOpResult result =
-        WriteTreeFile(store_.tree(), object.path, object.content, expect, mode);
+        WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns);
     std::lock_guard lock(mutex_);
     MirrorStore::Entry* entry = store_.Find(object.path);
     if (entry == nullptr) {

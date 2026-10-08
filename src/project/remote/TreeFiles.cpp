@@ -249,7 +249,8 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
 
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
-                                std::optional<std::uint32_t> mode) {
+                                std::optional<std::uint32_t> mode,
+                                std::optional<std::int64_t> mtime_ns) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
@@ -291,6 +292,13 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
       }
       written += static_cast<std::size_t>(count);
     }
+    if (mtime_ns.has_value()) {
+      const struct timespec times[2] = {
+          {0, UTIME_OMIT},
+          {static_cast<time_t>(*mtime_ns / 1'000'000'000), static_cast<long>(*mtime_ns % 1'000'000'000)},
+      };
+      (void)::futimens(out.get(), times);  // best effort: only a fast path depends on it
+    }
     if (::fchmod(out.get(), final_mode) != 0 || ::fsync(out.get()) != 0) {
       const std::string why = Errno("cannot finish " + std::string(path));
       ::unlinkat(parent->dir.get(), temp.c_str(), 0);
@@ -321,6 +329,7 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
   (void)content;
   (void)expect;
   (void)mode;
+  (void)mtime_ns;
   return FileOpResult{};
 #endif
 }

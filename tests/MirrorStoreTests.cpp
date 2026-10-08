@@ -2,6 +2,7 @@
 
 #include "project/remote/MirrorStore.h"
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -110,6 +111,17 @@ void TestMirrorStoreCheckLocal() {
   Expect(!entry.local_known,
          "a stat seconds old does not vouch for the bytes (a same-size rewrite in the same "
          "tick would keep it): the next check hashes again");
+  // Backdated (what a pull does with the host's mtime), it does.
+  std::filesystem::last_write_time(store.tree() / "f.txt",
+                                   std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+  WriteFile(store.tree() / "g.txt", "base");
+  MirrorStore::Entry old_entry;
+  old_entry.base = util::HashContent("base");
+  std::filesystem::last_write_time(store.tree() / "g.txt",
+                                   std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+  Expect(store.CheckLocal("g.txt", old_entry) == MirrorStore::LocalState::MatchesBase &&
+             old_entry.local_known,
+         "an old mtime vouches once the bytes are confirmed");
   WriteFile(store.tree() / "f.txt", "edit");
   Expect(store.CheckLocal("f.txt", entry) == MirrorStore::LocalState::Differs, "an edit differs");
   MirrorStore::Entry no_base;

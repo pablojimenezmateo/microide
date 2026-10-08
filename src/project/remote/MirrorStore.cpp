@@ -19,8 +19,8 @@
 namespace microide::project::remote {
 namespace {
 
-// 2: the tree-operation journal follows the entries.
-constexpr std::uint64_t kStateVersion = 2;
+// 2: the tree-operation journal follows the entries. 3: entries record ctime.
+constexpr std::uint64_t kStateVersion = 3;
 
 enum EntryFlag : std::uint8_t {
   kHasRemote = 1u << 0,
@@ -59,9 +59,13 @@ struct LocalStat {
   std::int64_t mtime_ns = 0;
   std::int64_t ctime_ns = 0;
 
-  // Whether this stat may stand for the content from now on (see IsRacySignature).
+  // Whether this stat may stand for the content from now on. A rewrite moves the
+  // mtime (or, when a tool puts the mtime back, the ctime, which is also compared),
+  // so the only stat that cannot vouch is one whose MTIME is so recent that a
+  // same-size rewrite in the same timestamp tick would leave it as it is. A pull
+  // writes the host's (past) mtime, so the files it writes are trusted at once.
   bool Trustworthy() const {
-    return exists && regular && !IsRacySignature(mtime_ns, ctime_ns, WallClockNowNs());
+    return exists && regular && WallClockNowNs() - mtime_ns >= kRacySignatureWindowNs;
   }
 };
 
@@ -165,7 +169,7 @@ bool MirrorStore::Open(std::string* error) {
   const std::uint64_t version = in.Varint();
   manifest_id_ = in.Varint();
   const std::uint64_t count = in.Varint();
-  if (in.failed() || (version != 1 && version != kStateVersion) || count > body.size()) {
+  if (in.failed() || version < 1 || version > kStateVersion || count > body.size()) {
     *error = "the mirror's state file " + state_path().string() + " has an unknown format";
     return false;
   }
@@ -197,6 +201,11 @@ bool MirrorStore::Open(std::string* error) {
       entry.local_known = true;
       entry.local_size = in.Varint();
       entry.local_mtime_ns = UnZigZag(in.Varint());
+      if (version >= 3) {
+        entry.local_ctime_ns = UnZigZag(in.Varint());
+      } else {
+        entry.local_known = false;  // no ctime recorded: confirm once by hash
+      }
     }
     entry.push_pending = (flags & kPushPending) != 0;
     entry.conflict = (flags & kConflict) != 0;
@@ -311,6 +320,7 @@ bool MirrorStore::Save(std::string* error) const {
     if (entry.local_known) {
       util::PutVarint(body, entry.local_size);
       util::PutVarint(body, ZigZag(entry.local_mtime_ns));
+      util::PutVarint(body, ZigZag(entry.local_ctime_ns));
     }
   }
   EncodeTreeOps(pending_tree_ops_, body);
@@ -335,7 +345,8 @@ MirrorStore::LocalState MirrorStore::CheckLocal(std::string_view path, Entry& en
   if (!entry.base.has_value() || !now.regular) {
     return LocalState::Differs;
   }
-  if (entry.local_known && entry.local_size == now.size && entry.local_mtime_ns == now.mtime_ns) {
+  if (entry.local_known && entry.local_size == now.size && entry.local_mtime_ns == now.mtime_ns &&
+      entry.local_ctime_ns == now.ctime_ns) {
     return LocalState::MatchesBase;
   }
   std::uint64_t size = 0;
@@ -346,6 +357,7 @@ MirrorStore::LocalState MirrorStore::CheckLocal(std::string_view path, Entry& en
     entry.local_known = now.Trustworthy();
     entry.local_size = now.size;
     entry.local_mtime_ns = now.mtime_ns;
+    entry.local_ctime_ns = now.ctime_ns;
     return LocalState::MatchesBase;
   }
   return LocalState::Differs;
@@ -356,6 +368,7 @@ void MirrorStore::RecordLocal(std::string_view path, Entry& entry) const {
   entry.local_known = now.Trustworthy();
   entry.local_size = now.size;
   entry.local_mtime_ns = now.mtime_ns;
+  entry.local_ctime_ns = now.ctime_ns;
 }
 
 std::mutex& MirrorStore::PathLock(std::string_view path) {

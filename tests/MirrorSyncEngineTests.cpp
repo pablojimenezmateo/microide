@@ -98,6 +98,27 @@ void TestMirrorInitialSyncAndHostChanges() {
   Expect(session.engine->StateOf("doomed.txt") == ContentState::Unknown, "and the deleted one is gone");
 }
 
+// A pulled file keeps the host's mtime, so its recorded stat vouches for it at
+// once (no rehash on the next reconcile) — and a same-size rewrite in the mirror
+// still moves the stat and is caught.
+void TestMirrorPulledFilesAreTrustedAtOnce() {
+  MirrorSession session;
+  WriteFile(session.host / "old.txt", "four\n");
+  const auto an_hour_ago = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
+  std::filesystem::last_write_time(session.host / "old.txt", an_hour_ago);
+  session.Connect();
+  session.Sync();
+  const remote::MirrorStore::Entry* entry = session.store->Find("old.txt");
+  Expect(entry != nullptr && entry->local_known, "the pulled file's stat is recorded as trustworthy");
+  Expect(std::filesystem::last_write_time(session.Tree("old.txt")) ==
+             std::filesystem::last_write_time(session.host / "old.txt"),
+         "it carries the host's mtime");
+  WriteFile(session.Tree("old.txt"), "FOUR\n");  // same size, a tool's edit
+  session.Sync();
+  Expect(ReadFile(session.host / "old.txt") == "FOUR\n",
+         "a same-size rewrite in the mirror is still seen, and pushed");
+}
+
 void TestMirrorPushesLocalWritesUnderCompareAndSwap() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "host\n");
@@ -374,6 +395,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
+  AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);

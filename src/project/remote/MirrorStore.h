@@ -40,6 +40,9 @@ class MirrorStore {
     bool local_known = false;
     std::uint64_t local_size = 0;
     std::int64_t local_mtime_ns = 0;
+    // ctime too: a tool that rewrites a file and puts its mtime back (rsync -t,
+    // cp -p) cannot put the ctime back.
+    std::int64_t local_ctime_ns = 0;
     // Journal: the local bytes are newer than the base and not yet acked by the
     // host. Survives a crash and a dropped link; replayed on the next sync.
     bool push_pending = false;

@@ -92,10 +92,13 @@ void TestRemoteProjectBenchFirstSync() {
   }
   std::size_t files = 0;
   std::uintmax_t bytes = 0;
+  // A real host tree is mostly old: backdate it, as files edited an hour ago.
+  const auto an_hour_ago = std::filesystem::file_time_type::clock::now() - std::chrono::hours(1);
   for (const auto& entry : std::filesystem::recursive_directory_iterator(host_root)) {
     if (entry.is_regular_file()) {
       ++files;
       bytes += entry.file_size();
+      std::filesystem::last_write_time(entry.path(), an_hour_ago);
     }
   }
   remote::RemoteProject::Config config;
