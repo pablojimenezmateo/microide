@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
+
 namespace microide::tests {
 namespace {
 
@@ -177,6 +181,28 @@ void TestWorkspaceTreeCachePersists() {
          "a cache saved for another root is not used");
 }
 
+// A member that cannot be hashed (unreadable, or gone between the stat and the
+// read) is left out — and only it: the rows before it keep their paths. (The
+// compaction once self-moved them, emptying their paths into a manifest the
+// client rejected, which dropped the connection.)
+void TestWorkspaceTreeDropsOnlyWhatItCannotHash() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "plain";
+  WriteFile(root / "a.txt", "a");
+  WriteFile(root / "b.txt", "b");
+  WriteFile(root / "c.txt", "c");
+  std::filesystem::permissions(root / "c.txt", std::filesystem::perms::none);
+  if (::access((root / "c.txt").c_str(), R_OK) == 0) {
+    return;  // root reads everything
+  }
+  WorkspaceTree tree(root);
+  std::string error;
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value() && Paths(*manifest) == std::vector<std::string>{"a.txt", "b.txt"},
+         "the unreadable file is out, the others intact");
+  std::filesystem::permissions(root / "c.txt", std::filesystem::perms::owner_all);
+}
+
 // A failure to decide the set is an error, never an empty manifest.
 void TestWorkspaceTreeFailsLoudly() {
   TemporaryDirectory temp;
@@ -232,6 +258,7 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
+  AddTest(tests, "WorkspaceTree/DropsOnlyWhatItCannotHash", TestWorkspaceTreeDropsOnlyWhatItCannotHash);
   AddTest(tests, "WorkspaceTree/CachePersists", TestWorkspaceTreeCachePersists);
   AddTest(tests, "WorkspaceTree/IncrementalUpdateMatchesAFullBuild",
           TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild);

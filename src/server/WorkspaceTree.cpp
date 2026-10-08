@@ -390,10 +390,15 @@ std::optional<std::vector<ManifestRow>> WorkspaceTree::RowsFor(
     }
   }
   if (std::find(drop.begin(), drop.end(), 1) != drop.end()) {
+    // Never `rows[i] = std::move(rows[i])`: a self-move leaves a std::string member
+    // unspecified (libstdc++ empties it), and an empty path is a malformed row.
     std::size_t out = 0;
     for (std::size_t i = 0; i < rows.size(); ++i) {
       if (drop[i] == 0) {
-        rows[out++] = std::move(rows[i]);
+        if (out != i) {
+          rows[out] = std::move(rows[i]);
+        }
+        ++out;
       }
     }
     rows.resize(out);
