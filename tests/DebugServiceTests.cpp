@@ -91,7 +91,7 @@ stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads",
 stale_stack = (mode == "stale_stack")
 deferred_stack_req = None
 running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
-# `die`: reach Running (respond to launch) then exit WITHOUT a terminated event, to
+# `die`: reach Running (answer configurationDone) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
 die_after_launch = (mode == "die")
 seq = 0
@@ -215,11 +215,6 @@ while True:
         respond(msg, {})
         if not supports_config_done:
             finish_launch()
-        elif die_after_launch:
-            # Now Running (launch acknowledged); exit abruptly with NO terminated
-            # event, simulating a crash / external kill / RLIMIT_AS cap.
-            sys.stdout.flush()
-            sys.exit(0)
     elif command == "configurationDone":
         # Spec-compliant adapters (gdb 17.2, lldb-dap, debugpy) defer the run to
         # configurationDone and reject it if no launch/attach is pending. Mirror
@@ -239,6 +234,15 @@ while True:
                 # intact (not fire on_resumed / flip to Running).
                 event("continued", {"threadId": 2, "allThreadsContinued": False})
                 event("output", {"category": "stdout", "output": "partial-continue-sent\n"})
+        elif die_after_launch:
+            # Now Running (the whole handshake answered); exit abruptly with NO
+            # terminated event, simulating a crash / external kill / RLIMIT_AS cap.
+            # Not at the launch response: the host pipelines setBreakpoints and
+            # configurationDone behind launch, so exiting there left a request
+            # pending some runs and not others, and a pending request failing on
+            # exit reconciles the session by itself (TD-2026-10-08-330).
+            sys.stdout.flush()
+            sys.exit(0)
         elif running_no_stop:
             pass  # stay running; the test will issue a pause
         else:
