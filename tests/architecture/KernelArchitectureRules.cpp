@@ -1,5 +1,6 @@
 #include "architecture/KernelArchitectureRules.h"
 
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <map>
@@ -25,8 +26,11 @@ namespace {
 // `workspace/`, so directory is not layer there — its two SDL-free members
 // (`SingleLineEditor`, `WordBoundary`) join the kernel by being named in the CMake
 // list, not by living anywhere in particular.
-constexpr std::array<std::string_view, 6> kKernelDirectories = {
-    "util/", "platform/", "project/", "compare/", "persistence/", "terminal/",
+//
+// `server/` is not kernel but is held to the same rule: microide-server links the
+// kernel and nothing else, and runs on hosts that have no display at all.
+constexpr std::array<std::string_view, 7> kKernelDirectories = {
+    "util/", "platform/", "project/", "compare/", "persistence/", "terminal/", "server/",
 };
 
 bool IsKernelDirectory(std::string_view relative) {
@@ -229,6 +233,55 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
                    "; the kernel must run in a process with no window (convert at the "
                    "shell boundary — util::Rgba8/util::KeyModifiers via render/SdlConvert.h, "
                    "util::WakeChannel via app/SdlWaker.h, util::Log for notices)",
+    });
+  }
+  return result;
+}
+
+// microide-server links microide_kernel and its own sources, nothing else
+// (CMakeLists.txt). A server TU that includes a shell header still COMPILES when the
+// header is inline-only, and then the server quietly depends on the shell's layer;
+// the link only catches the out-of-line half. So: a src/server file includes only
+// kernel directories and src/server itself.
+RuleResult CheckServerIncludesOnlyTheKernel(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "microide-server includes only the kernel";
+  result.hard_fail = true;
+  const std::filesystem::path server_dir = repo_root / "src" / "server";
+  if (!RequireRuleTarget(result, server_dir)) {
+    return result;
+  }
+  const std::regex local_include(R"RX(#\s*include\s*"([^"]+)")RX");
+  std::size_t scanned = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(server_dir)) {
+    if (!entry.is_regular_file() || !IsSourceExtension(entry.path())) {
+      continue;
+    }
+    ++scanned;
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), local_include), end; it != end; ++it) {
+      const std::size_t pos = static_cast<std::size_t>(it->position());
+      if (pos < is_code.size() && !is_code[pos]) {
+        continue;
+      }
+      const std::string included = (*it)[1].str();
+      if (IsKernelDirectory(included)) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = static_cast<std::size_t>(std::count(text.begin(), text.begin() + static_cast<std::ptrdiff_t>(pos), '\n')) + 1,
+          .message = "includes \"" + included +
+                     "\", outside the kernel; the server links microide_kernel only",
+      });
+    }
+  }
+  if (scanned == 0) {
+    result.missing_targets.push_back(Violation{
+        .path = server_dir,
+        .line = 1,
+        .message = "found no server sources; this rule is scanning nothing",
     });
   }
   return result;
@@ -674,6 +727,7 @@ RuleResult CheckGitMetadataIsAskedOfTheHost(const std::filesystem::path& repo_ro
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
+      {"CheckServerIncludesOnlyTheKernel", CheckServerIncludesOnlyTheKernel},
       {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
       {"CheckGitLayerDoesNotChooseLocality", CheckGitLayerDoesNotChooseLocality},
       {"CheckGitMetadataIsAskedOfTheHost", CheckGitMetadataIsAskedOfTheHost},

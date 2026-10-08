@@ -305,6 +305,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteProtocol.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/RemotePeer.cpp
+  src/project/remote/RemoteServerPaths.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalBase64.cpp
   src/terminal/TerminalCsiParser.cpp
@@ -806,6 +807,28 @@ target_link_libraries(microide_kernel_link_probe PRIVATE ${MICROIDE_PCRE2_TARGET
 # to `return 0` fails here rather than passing.
 add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 
+# The remote host's daemon (dev-docs/design/remote-projects.md § 6.6): the kernel
+# and its own sources, nothing else — the same link unit as the probe above plus a
+# protocol and a socket. No SDL, no fonts, no Lua; CheckServerStaysFreeOfTheShell
+# keeps the sources honest and this link line keeps the objects honest. Release
+# builds link it statically against musl (packaging); dev and sanitizer builds link
+# it normally so every lane covers it.
+add_executable(microide-server
+  src/server/RemoteServer.cpp
+  src/server/ServerMain.cpp
+  $<TARGET_OBJECTS:microide_kernel>
+)
+target_include_directories(microide-server PRIVATE src)
+target_precompile_headers(microide-server PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
+target_link_libraries(microide-server PRIVATE ${MICROIDE_PCRE2_TARGET})
+target_compile_definitions(microide-server PRIVATE MICROIDE_VERSION="${PROJECT_VERSION}")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide-server PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide-server PRIVATE -Werror)
+  endif()
+endif()
+
 
 
 add_executable(microide
@@ -1296,6 +1319,7 @@ add_executable(microide_kernel_tests
   tests/RemoteFrameTests.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp
+  tests/RemoteServerTests.cpp
   tests/TestRunner.cpp
   tests/TestRunnerCli.cpp
   tests/TestSupport.cpp
@@ -1364,7 +1388,10 @@ target_link_libraries(microide_kernel_tests PRIVATE ${MICROIDE_PCRE2_TARGET})
 target_compile_definitions(microide_kernel_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1
+  MICROIDE_SERVER_BINARY="$<TARGET_FILE:microide-server>"
 )
+# The daemon tests drive the real binary, so it must be current when they run.
+add_dependencies(microide_kernel_tests microide-server)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_kernel_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)

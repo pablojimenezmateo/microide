@@ -37,12 +37,12 @@
 
 ## 5. Server daemon skeleton
 
-- [ ] 5.1 CMake target `microide-server` from `microide_kernel` + `src/server/`; extend the windowing-free lint to `src/server/`; static musl only in release
-- [ ] 5.2 Subcommands `start`, `stop`, `status`, `attach`; `attach` speaks the protocol on stdio (relay to the socket, or serve directly for tests)
-- [ ] 5.3 Socket dir `~/.local/state/microide/server/` (override `remote.server_socket_dir`), verified on every bind (owner, 0700, no symlinked component, `O_PATH|O_NOFOLLOW`), reusing `ControlSocketServer`
-- [ ] 5.4 Daemonize: `setsid`, stdio to `/dev/null`, size-capped log beside the socket, success = socket connectable; every fd close-on-exec at creation
-- [ ] 5.5 One daemon per uid, workspaces per root, idle-exit rules (hand-started never idles out), session-survival report from logind config
-- [ ] 5.6 Tests: bind refusal on bad modes and symlinks, attach-or-start, the starter does not hold stdio, idle exit for on-demand only, `status` output
+- [x] 5.1 CMake target `microide-server` from `microide_kernel` + `src/server/`; extend the windowing-free lint to `src/server/`; static musl only in release — done 2026-10-08 except the static musl link, which belongs to the release packaging (8.3 bundles the binary); the lint is `CheckServerIncludesOnlyTheKernel` plus `server/` in the kernel SDL rule
+- [x] 5.2 Subcommands `start`, `stop`, `status`, `attach`; `attach` speaks the protocol on stdio (relay to the socket, or serve directly for tests)
+- [x] 5.3 Socket dir `~/.local/state/microide/server/` (override `remote.server_socket_dir`), verified on every bind (owner, 0700, no symlinked component, `O_PATH|O_NOFOLLOW`), reusing `ControlSocketServer`
+- [x] 5.4 Daemonize: `setsid`, stdio to `/dev/null`, size-capped log beside the socket, success = socket connectable; every fd close-on-exec at creation
+- [x] 5.5 One daemon per uid, workspaces per root, idle-exit rules (hand-started never idles out), session-survival report from logind config
+- [x] 5.6 Tests: bind refusal on bad modes and symlinks, attach-or-start, the starter does not hold stdio, idle exit for on-demand only, `status` output
 
 ## 6. proc/spawn and RemoteProcessLauncher (first vertical slice)
 
