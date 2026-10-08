@@ -316,7 +316,10 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalOscClipboard.cpp
   src/terminal/TerminalSearch.cpp
   src/terminal/TerminalSession.cpp
+  src/terminal/TerminalHostFrameBuilder.cpp
+  src/terminal/TerminalHostWire.cpp
   src/terminal/TerminalSessionCsi.cpp
+  src/terminal/TerminalSessionHost.cpp
   src/terminal/TerminalSessionInput.cpp
   src/terminal/TerminalSessionInputEncoding.cpp
   src/terminal/TerminalSessionModes.cpp
@@ -1381,6 +1384,7 @@ add_executable(microide_kernel_tests
   tests/TerminalInvariantSweepTests.cpp
   tests/TerminalLifecycleStressTests.cpp
   tests/TerminalSearchTests.cpp
+  tests/TerminalHostTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TestRunnerCliTests.cpp
   tests/TestSupportTests.cpp
@@ -1581,7 +1585,10 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalSession.cpp
     src/terminal/TerminalAnsiColors.cpp
     src/terminal/TerminalSessionOutput.cpp
-    src/terminal/TerminalSessionCsi.cpp
+    src/terminal/TerminalHostFrameBuilder.cpp
+  src/terminal/TerminalHostWire.cpp
+  src/terminal/TerminalSessionCsi.cpp
+  src/terminal/TerminalSessionHost.cpp
     src/terminal/TerminalSessionSgr.cpp
     src/terminal/TerminalSessionOsc.cpp
     src/terminal/TerminalSessionModes.cpp

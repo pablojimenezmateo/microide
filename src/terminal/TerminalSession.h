@@ -3,6 +3,9 @@
 #include "platform/ProcessLauncher.h"
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
+#include "terminal/TerminalHostChannel.h"
+#include "terminal/TerminalHostWire.h"
+#include "terminal/TerminalInput.h"
 #include "terminal/TerminalLineBufferPool.h"
 #include "terminal/TerminalSearch.h"
 #include "util/KeyModifiers.h"
@@ -12,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -37,61 +41,9 @@ bool UsePlaceholderTerminalsForTesting();
 
 class TerminalSession {
  public:
-  enum class MouseButton {
-    Left,
-    Middle,
-    Right,
-    None,
-    WheelUp,
-    WheelDown,
-  };
-
-  enum class CursorShape {
-    Block,
-    Underline,
-    Bar,
-  };
-
-  // A physical key press carrying its logical key plus active modifiers. The
-  // session encodes it per the negotiated keyboard protocol (legacy xterm or
-  // the Kitty keyboard protocol when an application has enabled it).
-  struct KeyPress {
-    enum class Key {
-      Char,
-      Enter,
-      Escape,
-      Backspace,
-      Tab,
-      Up,
-      Down,
-      Left,
-      Right,
-      Home,
-      End,
-      PageUp,
-      PageDown,
-      Insert,
-      Delete,
-      F1,
-      F2,
-      F3,
-      F4,
-      F5,
-      F6,
-      F7,
-      F8,
-      F9,
-      F10,
-      F11,
-      F12,
-    };
-    Key key = Key::Char;
-    char32_t codepoint = 0;  // Base-layout codepoint for Key::Char.
-    bool shift = false;
-    bool alt = false;
-    bool ctrl = false;
-    bool super = false;
-  };
+  using MouseButton = TerminalMouseButton;
+  using CursorShape = TerminalCursorShape;
+  using KeyPress = TerminalKeyPress;
 
   TerminalSession() = default;
   ~TerminalSession();
@@ -209,6 +161,40 @@ class TerminalSession {
                        std::size_t row,
                        std::size_t column,
                        util::KeyModifiers modifiers);
+
+  // ---- Host terminals (dev-docs/design/remote-projects.md § 6.5) ----
+  //
+  // A session is in HOST MODE when its launcher's shells run on another machine
+  // (HostTerminalsFor): it parses nothing, mirrors the host's buffer from frames
+  // (ApplyHostFrame), and turns every input call into a semantic event the host
+  // encodes. Every reader — snapshots, search, cursor, mode queries — is the
+  // same code over the same members, which is why the panel needs no remote path.
+  bool is_host_terminal() const;
+
+  // Client side: apply one frame from the host (on the connection's thread).
+  // `working_directory`, when present, is already mapped into the editor's tree.
+  // False when the frame is inconsistent with what this session holds (a Keep or
+  // Promote that names a line it does not have): the caller should re-attach.
+  bool ApplyHostFrame(TerminalHostFrame frame);
+  // The connection carrying this terminal went away (not the shell): it is shown
+  // as ended until it reattaches.
+  void HostConnectionLost(std::string_view reason);
+
+  // Server side. One consistent capture under the session lock: the frame header
+  // (flags, cursor, title, working directory; consumes a pending OSC 52 write and
+  // bell) plus the lines from host-absolute index `from` (clamped to what the
+  // buffer still holds, and to at most `max_lines_before_screen` above the
+  // screen) through the end of the buffer.
+  struct HostCapture {
+    TerminalHostFrame header;  // runs, keep bits and lines left empty
+    std::uint64_t first_line = 0;      // absolute index of lines[0]
+    std::vector<TerminalLine> lines;   // [first_line, end); the screen is the tail
+    std::uint64_t generation = 0;
+  };
+  void CaptureForHost(std::uint64_t from, std::size_t max_lines_before_screen, HostCapture& out);
+  // Called on the reader thread after each parsed output chunk and on exit, with
+  // no lock held. Set before Start; a host-side server drives its frames off it.
+  void SetOutputObserver(std::function<void()> observer);
 
  private:
   struct ScreenState {
@@ -424,6 +410,25 @@ class TerminalSession {
   // while holding mutex_. Capped so a query-flooding, non-draining child cannot
   // grow it without bound.
   std::string pending_reply_;
+
+  // Host mode (see is_host_terminal). Guarded by mutex_.
+  bool StartOnHost(const HostTerminalSource& source, const std::filesystem::path& working_directory,
+                   std::string_view command, std::vector<std::string> shell_argv);
+  // Send through the host channel when there is one; false when this session
+  // is local (the caller encodes).
+  bool SendToHost(TerminalInputEvent event);
+  bool SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton button, bool pressed,
+                       std::size_t row, std::size_t column, util::KeyModifiers modifiers);
+  std::shared_ptr<TerminalHostChannel> HostChannel() const;
+  std::shared_ptr<TerminalHostChannel> host_channel_;
+  std::uint64_t next_input_seq_ = 1;
+  std::uint64_t host_screen_top_ = 0;   // host-absolute index of the first screen line
+  std::size_t host_screen_lines_ = 0;   // screen lines at the tail of lines_
+  bool host_alternate_ = false;
+  // The primary buffer while the host shows its alternate screen.
+  std::deque<TerminalLine> host_primary_stash_;
+  std::size_t host_primary_stash_screen_lines_ = 0;
+  std::function<void()> output_observer_;
 
   friend struct ::microide::tests::TerminalSessionTestAccess;
 };

@@ -45,6 +45,9 @@ void TerminalSession::FlushPendingReply() {
 }
 
 bool TerminalSession::SendKeyPress(const KeyPress& press) {
+  if (SendToHost(TerminalInputEvent{.kind = TerminalInputEvent::Kind::Key, .key = press})) {
+    return true;
+  }
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);
@@ -70,6 +73,11 @@ void TerminalSession::PasteText(std::string_view text) {
   if (text.size() > kMaxTerminalPasteBytes) {
     text = text.substr(0, util::PreviousUtf8Boundary(text, kMaxTerminalPasteBytes));
   }
+  // On a host terminal the host brackets it: it knows whether 2004 is set now.
+  if (SendToHost(TerminalInputEvent{.kind = TerminalInputEvent::Kind::Paste,
+                                    .text = std::string(text)})) {
+    return;
+  }
 
   std::string bytes;
   {
@@ -79,11 +87,41 @@ void TerminalSession::PasteText(std::string_view text) {
   SendBytes(bytes);
 }
 
+// Forwarded only while the program asked for the mouse — by the mode bits of the
+// last frame, one round trip old by construction; the host re-checks against its
+// own modes when it encodes.
+bool TerminalSession::SendMouseToHost(TerminalInputEvent::Kind kind, MouseButton button,
+                                      bool pressed, std::size_t row, std::size_t column,
+                                      util::KeyModifiers modifiers) {
+  {
+    std::scoped_lock lock(mutex_);
+    if (host_channel_ == nullptr) {
+      return false;
+    }
+    const TerminalMouseTrackingMode mode = CurrentTerminalMouseTrackingMode(
+        mouse_tracking_any_, mouse_tracking_drag_, mouse_tracking_normal_);
+    if (mode == TerminalMouseTrackingMode::Disabled ||
+        (kind == TerminalInputEvent::Kind::MouseMotion && mode == TerminalMouseTrackingMode::Normal)) {
+      return true;  // handled: nothing to send
+    }
+  }
+  SendToHost(TerminalInputEvent{.kind = kind,
+                                .button = button,
+                                .pressed = pressed,
+                                .row = static_cast<std::uint32_t>(row),
+                                .column = static_cast<std::uint32_t>(column),
+                                .modifiers = modifiers});
+  return true;
+}
+
 bool TerminalSession::SendMouseButton(MouseButton button,
                                       bool pressed,
                                       std::size_t row,
                                       std::size_t column,
                                       util::KeyModifiers modifiers) {
+  if (SendMouseToHost(TerminalInputEvent::Kind::MouseButton, button, pressed, row, column, modifiers)) {
+    return true;
+  }
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);
@@ -106,6 +144,9 @@ bool TerminalSession::SendMouseMotion(MouseButton button,
                                       std::size_t row,
                                       std::size_t column,
                                       util::KeyModifiers modifiers) {
+  if (SendMouseToHost(TerminalInputEvent::Kind::MouseMotion, button, true, row, column, modifiers)) {
+    return true;
+  }
   std::string bytes;
   {
     std::scoped_lock lock(mutex_);

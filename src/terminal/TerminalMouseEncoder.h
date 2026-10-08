@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string>
 
+#include "terminal/TerminalInput.h"
 #include "util/KeyModifiers.h"
 
 namespace microide::terminal {
@@ -12,15 +13,6 @@ enum class TerminalMouseTrackingMode {
   Normal,
   Drag,
   Any,
-};
-
-enum class TerminalMouseButton {
-  Left,
-  Middle,
-  Right,
-  None,
-  WheelUp,
-  WheelDown,
 };
 
 struct TerminalMouseEncodeRequest {

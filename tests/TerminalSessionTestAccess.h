@@ -114,6 +114,18 @@ struct TerminalSessionTestAccess {
     session.mouse_tracking_any_ = any;
   }
 
+  // Put `session` in host mode over `channel`, as StartOnHost would after the
+  // source opened it, without a launcher.
+  static void EnterHostMode(microide::terminal::TerminalSession& session,
+                            std::shared_ptr<microide::terminal::TerminalHostChannel> channel) {
+    std::scoped_lock lock(session.mutex_);
+    session.host_channel_ = std::move(channel);
+    session.host_screen_top_ = 0;
+    session.host_screen_lines_ = session.lines_.size();
+    session.host_alternate_ = false;
+    session.running_ = true;
+  }
+
   static bool SynchronizedOutput(const microide::terminal::TerminalSession& session) {
     std::scoped_lock lock(session.mutex_);
     return session.synchronized_output_;

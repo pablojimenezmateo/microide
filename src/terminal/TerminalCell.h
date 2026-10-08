@@ -125,10 +125,37 @@ struct TerminalCell {
   }
 };
 
+// What a cell SHOWS: the glyph's bytes up to its length (the tail of `bytes` is
+// whatever a reused buffer held before) and the style.
+inline bool SameCell(const TerminalCell& a, const TerminalCell& b) {
+  if (a.length != b.length || a.style.attrs != b.style.attrs ||
+      a.style.foreground != b.style.foreground || a.style.background != b.style.background) {
+    return false;
+  }
+  for (std::uint8_t i = 0; i < a.length; ++i) {
+    if (a.bytes[i] != b.bytes[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 struct TerminalLine {
   std::vector<TerminalCell> cells;
   bool wrapped_from_previous = false;
 };
+
+inline bool SameLine(const TerminalLine& a, const TerminalLine& b) {
+  if (a.wrapped_from_previous != b.wrapped_from_previous || a.cells.size() != b.cells.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < a.cells.size(); ++i) {
+    if (!SameCell(a.cells[i], b.cells[i])) {
+      return false;
+    }
+  }
+  return true;
+}
 
 struct TerminalCursorSnapshot {
   std::size_t row = 0;

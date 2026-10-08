@@ -253,7 +253,7 @@ RuleResult CheckTerminalSessionSplitTranslationUnits(const std::filesystem::path
   RuleResult result;
   result.label = "TerminalSession split translation units stay named";
   result.hard_fail = true;
-  const std::array<std::string_view, 8> allowed = {
+  const std::array<std::string_view, 9> allowed = {
       "TerminalSessionOutput.cpp",
       // Escape handling is split by sequence family: CSI dispatch, SGR styling,
       // OSC, and DEC private/keyboard modes (was the monolithic
@@ -265,6 +265,9 @@ RuleResult CheckTerminalSessionSplitTranslationUnits(const std::filesystem::path
       "TerminalSessionInput.cpp",
       "TerminalSessionScreen.cpp",
       "TerminalSessionInputEncoding.cpp",
+      // Host mode (dev-docs/design/remote-projects.md § 6.5): the client's mirror
+      // of a host terminal and the host's capture for it.
+      "TerminalSessionHost.cpp",
   };
   for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/terminal")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {

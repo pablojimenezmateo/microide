@@ -105,6 +105,9 @@ bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
   // always said it was. Splitting here (rather than in the backend) keeps the
   // backend's request argv-shaped and the quoting rules in one place.
   std::vector<std::string> shell_argv = launcher.ResolveArgv(util::SplitCommandLine(shell));
+  if (const HostTerminalSource* host = HostTerminalsFor(launcher)) {
+    return StartOnHost(*host, working_directory, command, std::move(shell_argv));
+  }
   {
     std::scoped_lock lock(mutex_);
     ReseedForStartLocked(
@@ -128,10 +131,15 @@ bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
       .on_output =
           [this](std::string_view output) {
             bool wake = true;
+            std::function<void()> observer;
             {
               std::scoped_lock lock(mutex_);
               AppendOutputLocked(output);
               wake = ConsumeWakeDecisionLocked();
+              observer = output_observer_;
+            }
+            if (observer) {
+              observer();
             }
             // Flush query replies (DSR/DA/etc.) generated during parsing after
             // releasing mutex_, so the blocking PTY write() never runs under the
@@ -143,6 +151,7 @@ bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
           },
       .on_exit =
           [this]() {
+            std::function<void()> observer;
             {
               std::scoped_lock lock(mutex_);
               const bool emit_exit_marker = !stop_requested_;
@@ -151,6 +160,10 @@ bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
               if (emit_exit_marker) {
                 EmitProcessExitMarkerLocked();
               }
+              observer = output_observer_;
+            }
+            if (observer) {
+              observer();
             }
             PushWakeEvent();
           },
@@ -202,12 +215,21 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
 
 void TerminalSession::Stop() {
   std::shared_ptr<platform::TerminalBackend> backend;
+  std::shared_ptr<TerminalHostChannel> host_channel;
   int child_pid = -1;
   {
     std::scoped_lock lock(mutex_);
     stop_requested_ = true;
     backend = std::move(backend_);
     child_pid = child_pid_;
+    host_channel = host_channel_;
+  }
+  // Outside the lock: Close waits out a frame being applied, which takes it.
+  if (host_channel) {
+    host_channel->Close();
+    std::scoped_lock lock(mutex_);
+    host_channel_.reset();
+    host_primary_stash_.clear();
   }
   if (backend) {
     backend->Stop();
@@ -243,6 +265,11 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
   const std::size_t clamped_rows = std::max<std::size_t>(1, rows);
   const std::size_t clamped_columns = std::max<std::size_t>(1, columns);
 
+  if (const std::shared_ptr<TerminalHostChannel> host = HostChannel()) {
+    // The host owns the grid; the next frame carries the size it settled on.
+    host->Resize(clamped_rows, clamped_columns);
+    return;
+  }
   {
     std::scoped_lock lock(mutex_);
     const std::size_t old_rows = rows_;
@@ -321,7 +348,9 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
 }
 
 void TerminalSession::SendBytes(std::string_view bytes) {
-  if (bytes.empty()) {
+  if (bytes.empty() ||
+      SendToHost(TerminalInputEvent{.kind = TerminalInputEvent::Kind::Bytes,
+                                    .text = std::string(bytes)})) {
     return;
   }
   if (UsePlaceholderTerminalsForTesting()) {
@@ -593,6 +622,15 @@ bool TerminalSession::ConsumeOversizedOsc52Dropped() {
 }
 
 void TerminalSession::SendFocusEvent(bool focused) {
+  {
+    std::scoped_lock lock(mutex_);
+    if (!focus_event_mode_) {
+      return;
+    }
+  }
+  if (SendToHost(TerminalInputEvent{.kind = TerminalInputEvent::Kind::Focus, .pressed = focused})) {
+    return;
+  }
   {
     std::scoped_lock lock(mutex_);
     if (!focus_event_mode_) {

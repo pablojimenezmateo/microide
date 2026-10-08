@@ -258,29 +258,6 @@ bool EncodeTerminalSessionMouseEvent(bool mouse_tracking_any,
     return false;
   }
 
-  TerminalMouseButton encoded_button = TerminalMouseButton::None;
-  switch (button) {
-    case TerminalSession::MouseButton::Left:
-      encoded_button = TerminalMouseButton::Left;
-      break;
-    case TerminalSession::MouseButton::Middle:
-      encoded_button = TerminalMouseButton::Middle;
-      break;
-    case TerminalSession::MouseButton::Right:
-      encoded_button = TerminalMouseButton::Right;
-      break;
-    case TerminalSession::MouseButton::WheelUp:
-      encoded_button = TerminalMouseButton::WheelUp;
-      break;
-    case TerminalSession::MouseButton::WheelDown:
-      encoded_button = TerminalMouseButton::WheelDown;
-      break;
-    case TerminalSession::MouseButton::None:
-    default:
-      encoded_button = TerminalMouseButton::None;
-      break;
-  }
-
   return EncodeTerminalMouseEvent(
       TerminalMouseEncodeRequest{
           .tracking_mode = CurrentTerminalMouseTrackingMode(mouse_tracking_any,
@@ -289,7 +266,7 @@ bool EncodeTerminalSessionMouseEvent(bool mouse_tracking_any,
           .mouse_sgr_ext_mode = mouse_sgr_ext_mode,
           .rows = rows,
           .columns = columns,
-          .button = encoded_button,
+          .button = button,
           .pressed = pressed,
           .motion = motion,
           .row = row,

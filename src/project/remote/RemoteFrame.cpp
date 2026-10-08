@@ -1,23 +1,10 @@
 #include "project/remote/RemoteFrame.h"
 
+#include "util/ByteCodec.h"
+
 namespace microide::project::remote {
-namespace {
-
-void PutLe(std::string& out, std::uint64_t value, std::size_t bytes) {
-  for (std::size_t i = 0; i < bytes; ++i) {
-    out.push_back(static_cast<char>((value >> (8 * i)) & 0xffu));
-  }
-}
-
-std::uint64_t GetLe(std::string_view in, std::size_t offset, std::size_t bytes) {
-  std::uint64_t value = 0;
-  for (std::size_t i = 0; i < bytes; ++i) {
-    value |= static_cast<std::uint64_t>(static_cast<unsigned char>(in[offset + i])) << (8 * i);
-  }
-  return value;
-}
-
-}  // namespace
+using util::GetLe;
+using util::PutLe;
 
 bool IsKnownFrameType(std::uint16_t type) {
   switch (static_cast<FrameType>(type)) {
