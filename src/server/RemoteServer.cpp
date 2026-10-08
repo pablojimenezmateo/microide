@@ -66,17 +66,20 @@ void RemoteServer::WithPeer(std::uint64_t connection_id,
 }
 
 RemoteServer::~RemoteServer() {
-  // Stop their threads before the connections they send through go.
-  terminals_.reset();
-  processes_.reset();
+  // Connections first: a peer closing during teardown runs its closed handler,
+  // which detaches from the process and terminal tables — so they must still be
+  // there. Once connections_ is empty the tables' threads send to nobody
+  // (WithPeer finds no connection), so stopping them second is safe.
   std::vector<std::unique_ptr<Connection>> connections;
   {
     std::lock_guard lock(mutex_);
     connections.swap(connections_);
   }
   for (auto& connection : connections) {
-    connection->peer.Stop();
+    connection->peer.Stop();  // joins its I/O thread, and with it any closed handler
   }
+  terminals_.reset();
+  processes_.reset();
 }
 
 void RemoteServer::RequestShutdown() {
