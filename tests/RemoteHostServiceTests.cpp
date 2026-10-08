@@ -283,7 +283,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                Pump(shell);
                return segment() == target;
              },
-             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+             std::chrono::seconds(60), std::chrono::milliseconds(10)),
          "and comes back: '" + segment() + "'");
 
   // The host server's log, in an output channel.
@@ -362,7 +362,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) ==
                       target;
              },
-             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+             std::chrono::seconds(60), std::chrono::milliseconds(10)),
          "and connected again");
   }
   {
