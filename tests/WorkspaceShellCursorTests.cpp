@@ -952,6 +952,60 @@ void TestWorkspaceShellNotificationToastIsClickable() {
          "a click consumed by a toast must not fall through to the editor underneath");
 }
 
+
+// A toast's inline buttons (G7): composed in the view model, hit-tested through the
+// same view model, and a click runs the action through the action executor with its
+// arguments. Hovering keeps the toast up; the primary button sits in the corner.
+void TestWorkspaceShellNotificationActionButtonRunsItsAction() {
+  using microide::workspace::ActionId;
+  using microide::workspace::NotificationService;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::string body;
+  for (int i = 0; i < 400; ++i) {
+    body += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(source, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  NotificationService::Request request{.tone = NotificationService::Tone::Warning,
+                                       .message = "formatter failed"};
+  request.actions.push_back({.label = "Ignore", .id = ActionId::Goto, .args = {"7"}});
+  request.actions.push_back({.label = "Go to Line 42", .id = ActionId::Goto, .args = {"42"}});
+  WorkspaceShellTestAccess::ShowNotificationRequest(shell, std::move(request));
+
+  const SDL_FRect card = WorkspaceShellTestAccess::NotificationToastRect(shell, 0);
+  const SDL_FRect ignore = WorkspaceShellTestAccess::NotificationButtonRect(shell, 0, 0);
+  const SDL_FRect go = WorkspaceShellTestAccess::NotificationButtonRect(shell, 0, 1);
+  Expect(ignore.w > 0.0f && go.w > 0.0f && ignore.x + ignore.w <= go.x,
+         "buttons are laid out left to right without overlapping");
+  Expect(go.x + go.w <= card.x + card.w && ignore.x >= card.x && go.y >= card.y &&
+             go.y + go.h <= card.y + card.h,
+         "buttons sit inside the card");
+  Expect(card.x + card.w - (go.x + go.w) < 20.0f,
+         "the primary (last) button is right-aligned in the card's corner");
+
+  const float gx = go.x + go.w * 0.5f;
+  const float gy = go.y + go.h * 0.5f;
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, gx, gy),
+         "a button shows the pointer cursor");
+  (void)SendMouseMotion(shell, gx, gy, static_cast<SDL_MouseButtonFlags>(0));
+  const auto& rows = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(rows.size() == 1 && rows[0].hovered && rows[0].hovered_action == std::size_t{1},
+         "motion over a button marks the row and that button hovered");
+  Expect(!WorkspaceShellTestAccess::ExpireNotificationsAt(shell, 1'000'000),
+         "a hovered toast does not expire");
+
+  Expect(SendMouseDown(shell, gx, gy, SDL_BUTTON_LEFT), "a button click is handled");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == 41,
+         "the click ran Goto with the button's argument");
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).empty(),
+         "a transient toast is dismissed after its action runs");
+}
 }  // namespace
 
 // Ctrl+Left/Right and Ctrl+Backspace/Delete must reach the editor as WORD verbs.
@@ -1082,6 +1136,8 @@ void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
           TestWorkspaceShellNotificationToastIsClickable);
+  AddTest(tests, "WorkspaceShell/NotificationActionButtonRunsItsAction",
+          TestWorkspaceShellNotificationActionButtonRunsItsAction);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenBottomPanelHidesWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion);
   AddTest(tests, "WorkspaceShell/CursorRestoresAfterMouseLeave",

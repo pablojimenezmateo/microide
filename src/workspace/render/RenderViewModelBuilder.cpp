@@ -1681,19 +1681,87 @@ HoverTargetsViewModel RenderViewModelBuilder::BuildHoverTargets(bool debug_hover
 }
 
 NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
-    const NotificationService& service) const {
+    const NotificationService& service,
+    const SDL_FRect& status_bar,
+    const render::TextRenderer& text_renderer) const {
   NotificationsViewModel vm;
-  vm.entries.reserve(service.Active().size());
-  for (const NotificationService::Notification& notification : service.Active()) {
-    vm.entries.push_back(NotificationEntryViewModel{
+  const auto& active = service.Active();
+  const float line_height = text_renderer.LineHeight();
+  const float budget = NotificationToastTextBudget(status_bar.w);
+  float bottom = NotificationStackBottom(status_bar);
+  for (std::size_t stack_position = 0;
+       stack_position < active.size() && vm.entries.size() < vm.entries.capacity();
+       ++stack_position) {
+    const std::size_t index = active.size() - 1 - stack_position;
+    const NotificationService::Notification& notification = active[index];
+    NotificationEntryViewModel entry{
+        .index = index,
         .tone = notification.tone,
         .message = notification.message,
         .progress = notification.progress.has_value()
                         ? std::optional<float>(std::clamp(*notification.progress, 0.0f, 1.0f))
                         : std::nullopt,
-    });
+    };
+
+    // Buttons share the row evenly when their labels do not all fit, so one long
+    // label cannot push the others off the card; each keeps at least its padding.
+    const std::size_t button_count = notification.actions.size();
+    float buttons_width = 0.0f;
+    std::array<float, NotificationService::MaxActions()> label_widths{};
+    if (button_count > 0) {
+      const float gaps = kNotificationButtonGap * static_cast<float>(button_count - 1);
+      const float share = std::max(
+          0.0f, (budget - gaps) / static_cast<float>(button_count) - kNotificationButtonPadX * 2.0f);
+      for (std::size_t i = 0; i < button_count; ++i) {
+        label_widths[i] = std::min(text_renderer.MeasureWidth(notification.actions[i].label), share);
+        buttons_width += label_widths[i] + kNotificationButtonPadX * 2.0f;
+      }
+      buttons_width += gaps;
+    }
+    const float content_width =
+        std::max(text_renderer.MeasureWidth(notification.message), buttons_width);
+    entry.layout = NotificationToastLayoutAt(status_bar, line_height, bottom, content_width,
+                                             button_count > 0);
+
+    // Right-aligned, in the order the caller listed them (VS Code puts the primary
+    // action last, nearest the corner).
+    float x = entry.layout.buttons.x + entry.layout.buttons.w - buttons_width;
+    for (std::size_t i = 0; i < button_count; ++i) {
+      const float width = label_widths[i] + kNotificationButtonPadX * 2.0f;
+      entry.buttons.push_back(NotificationButtonViewModel{
+          .label = notification.actions[i].label,
+          .label_width = label_widths[i],
+          .rect = SDL_FRect{x, entry.layout.buttons.y, width, entry.layout.buttons.h},
+          .hovered = notification.hovered_action == i,
+      });
+      x += width + kNotificationButtonGap;
+    }
+
+    bottom = entry.layout.rect.y - kNotificationToastGap;
+    vm.entries.push_back(entry);
   }
   return vm;
+}
+
+std::optional<NotificationHit> NotificationHitAt(const NotificationsViewModel& vm, float x,
+                                                 float y) {
+  const auto contains = [x, y](const SDL_FRect& rect) {
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+  };
+  for (const NotificationEntryViewModel& entry : vm.entries) {
+    if (!contains(entry.layout.rect)) {
+      continue;
+    }
+    NotificationHit hit{.index = entry.index};
+    for (std::size_t i = 0; i < entry.buttons.size(); ++i) {
+      if (contains(entry.buttons[i].rect)) {
+        hit.action = i;
+        break;
+      }
+    }
+    return hit;
+  }
+  return std::nullopt;
 }
 
 namespace {

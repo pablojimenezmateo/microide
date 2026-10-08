@@ -80,25 +80,20 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
 
 void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
                                         const WorkspaceLayout& layout) const {
-  const NotificationsViewModel vm =
-      RenderViewModelBuilder(context_).BuildNotifications(notification_service_);
-  if (vm.entries.empty()) {
+  if (notification_service_.Empty()) {
     return;
   }
+  // Geometry — card, message line, button rects — is composed by the builder, and
+  // the click and hover paths hit-test the same view model, so a button can never
+  // be painted somewhere a click does not reach.
+  const NotificationsViewModel vm = RenderViewModelBuilder(context_).BuildNotifications(
+      notification_service_, layout.status_bar, text_renderer_);
 
-  // Stack upward from just above the status bar, newest toast at the bottom. The
-  // geometry lives in NotificationLayout.h because the click that dismisses a
-  // toast has to hit exactly the card that was painted.
-  std::size_t stack_position = 0;
-  for (auto it = vm.entries.rbegin(); it != vm.entries.rend(); ++it, ++stack_position) {
-    const std::string_view message = it->message;
-    const NotificationToastLayout toast =
-        NotificationToastLayoutAt(layout.status_bar, text_renderer_.LineHeight(), stack_position,
-                                  text_renderer_.MeasureWidth(message));
-
+  for (const NotificationEntryViewModel& entry : vm.entries) {
+    const NotificationToastLayout& toast = entry.layout;
     DrawCardFrame(renderer, theme_, toast.rect, CardStyle::Overlay);
     SDL_Color accent = theme_.diagnostic_info;
-    switch (it->tone) {
+    switch (entry.tone) {
       case NotificationService::Tone::Error:
         accent = theme_.diagnostic_error;
         break;
@@ -120,16 +115,26 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
       const render::ScopedRenderClip clip_scope(renderer, clip);
       DrawVCenteredTextOn(text_renderer_, renderer, toast.text, 0.0f, theme_.text_primary,
                           theme_.overlay_background,
-                          text_renderer_.TruncateToWidthEphemeralView(message, toast.text.w));
+                          text_renderer_.TruncateToWidthEphemeralView(entry.message, toast.text.w));
     }
 
-    if (it->progress.has_value()) {
+    // The last button is the primary one (VS Code's order), drawn in the accent.
+    for (std::size_t i = 0; i < entry.buttons.size(); ++i) {
+      const NotificationButtonViewModel& button = entry.buttons[i];
+      DrawButtonCentered(
+          text_renderer_, renderer, theme_, button.rect,
+          text_renderer_.TruncateToWidthEphemeralView(button.label, button.label_width),
+          i + 1 == entry.buttons.size() ? ButtonTone::Accent : ButtonTone::Neutral,
+          ButtonVisualState{.enabled = true, .hovered = button.hovered, .active = false});
+    }
+
+    if (entry.progress.has_value()) {
       // Track then fill, in the row's own tone: a progress row reports work that
       // is still running, so it is sticky and this is the only thing on the card
       // that changes between frames.
       DrawFilledRect(renderer, toast.progress_track, theme_.overlay_background);
       SDL_FRect fill = toast.progress_track;
-      fill.w = toast.progress_track.w * *it->progress;
+      fill.w = toast.progress_track.w * *entry.progress;
       DrawFilledRect(renderer, fill, accent);
     }
   }

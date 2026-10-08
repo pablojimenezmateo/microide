@@ -577,15 +577,23 @@
     shell.notification_service_.Show(tone, std::move(message), 0);
   }
   // Grab rect of the toast at `stack_position` (0 = newest, just above the status
-  // bar), resolved through the same NotificationLayout helper the painter uses.
+  // bar), resolved through the same view model the painter and hit-test use.
   static SDL_FRect NotificationToastRect(WorkspaceShell& shell, std::size_t stack_position) {
+    return NotificationsVm(shell).entries[stack_position].layout.rect;
+  }
+  // Rect of button `action` on the toast at `stack_position`.
+  static SDL_FRect NotificationButtonRect(WorkspaceShell& shell, std::size_t stack_position,
+                                          std::size_t action) {
+    return NotificationsVm(shell).entries[stack_position].buttons[action].rect;
+  }
+  static NotificationsViewModel NotificationsVm(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto& active = shell.notification_service_.Active();
-    const std::size_t index = active.size() - 1 - stack_position;
-    return NotificationToastLayoutAt(layout.status_bar, shell.text_renderer_.LineHeight(),
-                                     stack_position,
-                                     shell.text_renderer_.MeasureWidth(active[index].message))
-        .rect;
+    return RenderViewModelBuilder(shell.context_)
+        .BuildNotifications(shell.notification_service_, layout.status_bar, shell.text_renderer_);
+  }
+  static void ShowNotificationRequest(WorkspaceShell& shell, NotificationService::Request request,
+                                      std::uint64_t now_ms = 0) {
+    shell.notification_service_.Show(std::move(request), now_ms);
   }
   static void EnsureTerminalTab(WorkspaceShell& shell) {
     if (shell.context_.current_project_state.terminal_tabs.empty()) {

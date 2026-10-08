@@ -18,6 +18,23 @@ std::uint64_t TransientExpiry(std::uint64_t now_ms, std::uint64_t duration_ms) {
              : now_ms + duration_ms;
 }
 
+NotificationService::Actions CapActions(std::vector<NotificationService::Action>& requested) {
+  NotificationService::Actions actions;
+  for (NotificationService::Action& action : requested) {
+    if (actions.size() >= NotificationService::MaxActions()) {
+      break;
+    }
+    if (action.label.empty()) {
+      continue;  // a button with no label is a button nobody can find
+    }
+    if (util::TruncateUtf8ToByteBudget(action.label, NotificationService::MaxActionLabelBytes())) {
+      action.label += "…";
+    }
+    actions.push_back(std::move(action));
+  }
+  return actions;
+}
+
 }  // namespace
 
 NotificationService::Tone NotificationService::ToneFromLevel(std::string_view level) {
@@ -54,7 +71,9 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
   // key is a row nothing can ever dismiss, so it is posted transient instead —
   // silently leaking a permanent toast is the worse failure.
   const bool sticky = (request.sticky || request.progress.has_value()) && !request.key.empty();
-  const std::uint64_t expiry_ms = TransientExpiry(now_ms, DurationMs());
+  Actions actions = CapActions(request.actions);
+  const std::uint64_t expiry_ms =
+      TransientExpiry(now_ms, actions.empty() ? DurationMs() : ActionDurationMs());
 
   // Identity first: a keyed row replaces the one already on screen IN PLACE, so an
   // updating row keeps its stack position instead of walking to the top under the
@@ -68,6 +87,13 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
         existing.truncated = truncated;
         existing.sticky = sticky;
         existing.progress = request.progress;
+        // The button set is part of what the row says, so it is replaced with
+        // the text; a hovered button that no longer exists stops being hovered.
+        existing.actions = std::move(actions);
+        if (existing.hovered_action.has_value() &&
+            *existing.hovered_action >= existing.actions.size()) {
+          existing.hovered_action.reset();
+        }
         return;
       }
     }
@@ -104,6 +130,7 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
       .truncated = truncated,
       .sticky = sticky,
       .progress = request.progress,
+      .actions = std::move(actions),
   });
   TrimTransientOverflow();
 }
@@ -144,7 +171,8 @@ bool NotificationService::ExpireDue(std::uint64_t now_ms) {
   notifications_.erase(
       std::remove_if(notifications_.begin(), notifications_.end(),
                      [now_ms](const Notification& notification) {
-                       return !notification.sticky && notification.expiry_ms <= now_ms;
+                       return !notification.sticky && !notification.hovered &&
+                              notification.expiry_ms <= now_ms;
                      }),
       notifications_.end());
   return notifications_.size() != before;
@@ -153,8 +181,10 @@ bool NotificationService::ExpireDue(std::uint64_t now_ms) {
 std::optional<std::uint64_t> NotificationService::NextExpiryDelayMs(std::uint64_t now_ms) const {
   std::optional<std::uint64_t> earliest;
   for (const Notification& notification : notifications_) {
-    if (notification.sticky) {
-      continue;  // nothing to wake for: it ends when its owner says so
+    if (notification.sticky || notification.hovered) {
+      // Nothing to wake for: a sticky row ends when its owner says so, and a
+      // hovered one when the pointer leaves (SetHovered re-arms its expiry).
+      continue;
     }
     earliest = earliest.has_value() ? std::min(*earliest, notification.expiry_ms)
                                     : notification.expiry_ms;
@@ -163,6 +193,42 @@ std::optional<std::uint64_t> NotificationService::NextExpiryDelayMs(std::uint64_
     return std::nullopt;
   }
   return *earliest <= now_ms ? 0 : *earliest - now_ms;
+}
+
+bool NotificationService::SetHovered(std::optional<std::size_t> index,
+                                     std::optional<std::size_t> action,
+                                     std::uint64_t now_ms) {
+  bool changed = false;
+  for (std::size_t i = 0; i < notifications_.size(); ++i) {
+    Notification& notification = notifications_[i];
+    const bool hovered = index.has_value() && *index == i;
+    const std::optional<std::size_t> hovered_action =
+        hovered && action.has_value() && *action < notification.actions.size() ? action
+                                                                                : std::nullopt;
+    if (notification.hovered && !hovered && !notification.sticky) {
+      // Leaving a row that expired under the pointer: give the eye a moment to
+      // follow instead of removing it on the very motion event that left it.
+      notification.expiry_ms =
+          std::max(notification.expiry_ms, TransientExpiry(now_ms, HoverGraceMs()));
+    }
+    changed = changed || notification.hovered != hovered ||
+              notification.hovered_action != hovered_action;
+    notification.hovered = hovered;
+    notification.hovered_action = hovered_action;
+  }
+  return changed;
+}
+
+std::optional<NotificationService::Action> NotificationService::TakeAction(std::size_t index,
+                                                                           std::size_t action) {
+  if (index >= notifications_.size() || action >= notifications_[index].actions.size()) {
+    return std::nullopt;
+  }
+  Action taken = notifications_[index].actions[action];
+  if (!taken.keep_open && !notifications_[index].sticky) {
+    Dismiss(index);
+  }
+  return taken;
 }
 
 }  // namespace microide::workspace

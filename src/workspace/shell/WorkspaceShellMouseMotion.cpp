@@ -35,6 +35,31 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
   const WorkspaceLayout layout = *layout_state;
 
+  // Toasts: track which row (and button) is under the pointer, so a hovered toast
+  // does not expire out from under it and its button shows hover. Over a toast the
+  // motion stops here, as a click does — the surface underneath must not react to a
+  // pointer it cannot see. Not while a drag is in progress: a selection dragged
+  // across a toast keeps going.
+  if (context_.interaction_state.drag_target == DragTarget::None &&
+      !notification_service_.Empty()) {
+    const float x = static_cast<float>(event.motion.x);
+    const float y = static_cast<float>(event.motion.y);
+    const std::optional<NotificationHit> hit =
+        NotificationHitAt(RenderViewModelBuilder(context_).BuildNotifications(
+                              notification_service_, layout.status_bar, text_renderer_),
+                          x, y);
+    const bool changed = notification_service_.SetHovered(
+        hit.has_value() ? std::optional<std::size_t>(hit->index) : std::nullopt,
+        hit.has_value() ? hit->action : std::nullopt, SDL_GetTicks());
+    if (changed) {
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
+    }
+    if (hit.has_value()) {
+      UpdateMouseCursor(x, y, false);
+      return true;
+    }
+  }
+
   // Single-line input drag-select runs even when the modal prompt swallows other
   // motion handling, so the user can finish a selection started inside the prompt.
   if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {

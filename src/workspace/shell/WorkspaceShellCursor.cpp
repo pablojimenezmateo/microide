@@ -225,7 +225,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // to say so — probed ahead of the modal surfaces for the same reason it is
   // probed first on the click path.
   if (!notification_service_.Empty() &&
-      NotificationToastIndexAt(notification_service_, text_renderer_, layout.status_bar, x, y)
+      NotificationHitAt(RenderViewModelBuilder(context_).BuildNotifications(
+                            notification_service_, layout.status_bar, text_renderer_),
+                        x, y)
           .has_value()) {
     return CursorKind::Pointer;
   }
@@ -1010,6 +1012,9 @@ void WorkspaceShell::ClearMouseHoverState() {
   editor_hover_refresh_pending_ = false;
   cursor_kind_fingerprint_.valid = false;
   ++editor_hover_target_generation_;
+  // A toast held up by the pointer would otherwise stay up forever once the
+  // pointer leaves the window without crossing the toast's edge.
+  notification_service_.SetHovered(std::nullopt, std::nullopt, SDL_GetTicks());
 
   if (cursor_kind_ == CursorKind::Default) {
     return;

@@ -63,12 +63,24 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   // (over the editor, that moved the caret). They also auto-expire after four
   // seconds with no way to get rid of one sooner. A click now dismisses the toast
   // it lands on and stops there, which is what the card's own bounds imply.
-  if (event.button.button == SDL_BUTTON_LEFT) {
-    if (const auto toast = NotificationToastIndexAt(
-            notification_service_, text_renderer_, layout.status_bar,
-            static_cast<float>(event.button.x), static_cast<float>(event.button.y));
-        toast.has_value()) {
-      notification_service_.Dismiss(*toast);
+  //
+  // A click on one of the row's buttons runs that action instead, through the same
+  // executor a menu item uses; the service dismisses a transient row after its
+  // action unless the action keeps it open.
+  if (event.button.button == SDL_BUTTON_LEFT && !notification_service_.Empty()) {
+    const NotificationsViewModel toasts = RenderViewModelBuilder(context_).BuildNotifications(
+        notification_service_, layout.status_bar, text_renderer_);
+    if (const std::optional<NotificationHit> hit =
+            NotificationHitAt(toasts, static_cast<float>(event.button.x),
+                              static_cast<float>(event.button.y));
+        hit.has_value()) {
+      if (!hit->action.has_value()) {
+        notification_service_.Dismiss(hit->index);
+      } else if (const std::optional<NotificationService::Action> action =
+                     notification_service_.TakeAction(hit->index, *hit->action)) {
+        ActionCoordinator(MakeActionContext()).Execute(action->id, action->args,
+                                                       ActionSource::Command);
+      }
       EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }

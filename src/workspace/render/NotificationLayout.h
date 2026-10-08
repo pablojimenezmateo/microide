@@ -4,9 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <optional>
 
-#include "render/TextRenderer.h"
 #include "workspace/services/NotificationService.h"
 
 namespace microide::workspace {
@@ -26,10 +24,18 @@ inline constexpr float kNotificationToastMaxTextWidth = 640.0f;
 // precisely so chrome cannot end up painted and unclickable.
 inline constexpr float kNotificationToastProgressHeight = 3.0f;
 
+// Inline action buttons (VS Code-style): a row of them under the message, right
+// aligned, each a label in a padded pill.
+inline constexpr float kNotificationButtonPadX = 10.0f;
+inline constexpr float kNotificationButtonPadY = 3.0f;
+inline constexpr float kNotificationButtonGap = 6.0f;
+inline constexpr float kNotificationButtonRowGap = 6.0f;
+
 struct NotificationToastLayout {
   SDL_FRect rect{};
   SDL_FRect accent{};
-  SDL_FRect text{};
+  SDL_FRect text{};            // the message line
+  SDL_FRect buttons{};         // the button row; zero-height without actions
   SDL_FRect progress_track{};  // only drawn for a row that reports progress
 };
 
@@ -43,59 +49,56 @@ inline float NotificationToastTextBudget(float window_width) {
                     kNotificationToastMaxTextWidth);
 }
 
-// Width a toast takes for an already-measured message on a window this wide.
-inline float NotificationToastWidth(float measured_text_width, float window_width) {
+// Width a toast takes for already-measured content (the wider of the message and
+// the button row) on a window this wide.
+inline float NotificationToastWidth(float measured_content_width, float window_width) {
   return kNotificationToastAccentWidth + kNotificationToastPadding * 2.0f +
-         std::min(NotificationToastTextBudget(window_width), measured_text_width);
+         std::min(NotificationToastTextBudget(window_width), measured_content_width);
 }
 
-// Geometry for the toast at `stack_position`, counting 0 as the newest (the one
-// sitting just above the status bar); each older toast stacks upward from there.
+inline float NotificationButtonHeight(float line_height) {
+  return line_height + kNotificationButtonPadY * 2.0f;
+}
+
+inline float NotificationToastHeight(float line_height, bool has_actions) {
+  return line_height + kNotificationToastPadding * 2.0f +
+         (has_actions ? kNotificationButtonRowGap + NotificationButtonHeight(line_height) : 0.0f);
+}
+
+// Where the newest toast's bottom edge sits; each older toast stacks upward from
+// there, `kNotificationToastGap` above the previous one's top.
+inline float NotificationStackBottom(const SDL_FRect& status_bar) {
+  return status_bar.y - kNotificationToastMargin;
+}
+
+// Geometry for a toast whose bottom edge is at `bottom`. Toasts differ in height
+// (a row with buttons is taller), so the stack is walked by edges, not by index.
 inline NotificationToastLayout NotificationToastLayoutAt(const SDL_FRect& status_bar,
                                                          float line_height,
-                                                         std::size_t stack_position,
-                                                         float measured_text_width) {
-  const float height = line_height + kNotificationToastPadding * 2.0f;
-  const float width = NotificationToastWidth(measured_text_width, status_bar.w);
-  const float bottom = status_bar.y - kNotificationToastMargin -
-                       static_cast<float>(stack_position) * (height + kNotificationToastGap);
+                                                         float bottom,
+                                                         float measured_content_width,
+                                                         bool has_actions = false) {
+  const float height = NotificationToastHeight(line_height, has_actions);
+  const float width = NotificationToastWidth(measured_content_width, status_bar.w);
   const SDL_FRect rect{status_bar.x + status_bar.w - kNotificationToastMargin - width,
                        bottom - height, width, height};
+  const float content_x = rect.x + kNotificationToastAccentWidth + kNotificationToastPadding;
+  const float content_w =
+      width - kNotificationToastAccentWidth - kNotificationToastPadding * 2.0f;
+  const float message_h = line_height + kNotificationToastPadding * 2.0f;
   return NotificationToastLayout{
       .rect = rect,
       .accent = SDL_FRect{rect.x, rect.y, kNotificationToastAccentWidth, rect.h},
-      .text = SDL_FRect{rect.x + kNotificationToastAccentWidth + kNotificationToastPadding, rect.y,
-                        width - kNotificationToastAccentWidth - kNotificationToastPadding * 2.0f,
-                        rect.h},
+      .text = SDL_FRect{content_x, rect.y, content_w, message_h},
+      .buttons = has_actions ? SDL_FRect{content_x, rect.y + message_h - kNotificationToastPadding +
+                                                        kNotificationButtonRowGap,
+                                         content_w, NotificationButtonHeight(line_height)}
+                             : SDL_FRect{content_x, rect.y + message_h, content_w, 0.0f},
       .progress_track =
           SDL_FRect{rect.x + kNotificationToastAccentWidth,
                     rect.y + rect.h - kNotificationToastProgressHeight,
                     rect.w - kNotificationToastAccentWidth, kNotificationToastProgressHeight},
   };
-}
-
-// Index into `service.Active()` of the toast under (x, y), or nullopt. Walks the
-// stack in paint order (newest first) through the same layout the painter uses, so
-// a click can never land on a card that is not there.
-inline std::optional<std::size_t> NotificationToastIndexAt(
-    const NotificationService& service,
-    const render::TextRenderer& text_renderer,
-    const SDL_FRect& status_bar,
-    float x,
-    float y) {
-  const auto& active = service.Active();
-  const float line_height = text_renderer.LineHeight();
-  for (std::size_t stack_position = 0; stack_position < active.size(); ++stack_position) {
-    const std::size_t index = active.size() - 1 - stack_position;
-    const NotificationToastLayout toast = NotificationToastLayoutAt(
-        status_bar, line_height, stack_position,
-        text_renderer.MeasureWidth(active[index].message));
-    if (x >= toast.rect.x && x < toast.rect.x + toast.rect.w && y >= toast.rect.y &&
-        y < toast.rect.y + toast.rect.h) {
-      return index;
-    }
-  }
-  return std::nullopt;
 }
 
 }  // namespace microide::workspace

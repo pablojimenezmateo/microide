@@ -4,6 +4,7 @@
 #include "workspace/services/NotificationService.h"
 
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -165,7 +166,8 @@ void TestNotificationToastWidthScalesWithWindow() {
   // Whatever the budget, the card stays inside the window with its margin.
   for (const float window_width : {320.0f, 1440.0f, 4000.0f}) {
     const SDL_FRect status_bar{0.0f, 700.0f, window_width, 20.0f};
-    const auto toast = NotificationToastLayoutAt(status_bar, 16.0f, 0, 100000.0f);
+    const auto toast = NotificationToastLayoutAt(
+        status_bar, 16.0f, microide::workspace::NotificationStackBottom(status_bar), 100000.0f);
     Expect(toast.rect.x >= 0.0f, "a toast card must not start left of the window");
     Expect(toast.rect.x + toast.rect.w <= window_width - kNotificationToastMargin + 0.01f,
            "a toast card must stay inside the window margin");
@@ -191,8 +193,10 @@ void TestNotificationToastWidthScalesWithWindow() {
   // of them carries progress: the layout takes no progress argument, which is how
   // that stays true by construction rather than by two call sites agreeing.
   const SDL_FRect status_bar{0.0f, 700.0f, 1280.0f, 20.0f};
-  const auto plain = NotificationToastLayoutAt(status_bar, 16.0f, 0, 300.0f);
-  const auto second = NotificationToastLayoutAt(status_bar, 16.0f, 1, 300.0f);
+  const auto plain = NotificationToastLayoutAt(
+      status_bar, 16.0f, microide::workspace::NotificationStackBottom(status_bar), 300.0f);
+  const auto second = NotificationToastLayoutAt(
+      status_bar, 16.0f, plain.rect.y - microide::workspace::kNotificationToastGap, 300.0f);
   Expect(second.rect.y < plain.rect.y, "older toasts stack upward from the status bar");
   Expect(second.rect.h == plain.rect.h, "a progress row does not get a taller card");
 }
@@ -301,6 +305,98 @@ void TestNotificationServiceStickyStackIsBounded() {
   Expect(service.Active().front().key == "k0", "and the ones already there are kept");
 }
 
+// Actions are data on the row: capped at MaxActions, labels byte-capped, an empty
+// label dropped, and a row with buttons lives longer than a plain one.
+void TestNotificationServiceActionsAreCappedData() {
+  using microide::workspace::ActionId;
+  NotificationService service;
+  NotificationService::Request request{.message = "formatter failed"};
+  request.actions.push_back({.label = "", .id = ActionId::Goto});
+  for (int i = 0; i < 5; ++i) {
+    request.actions.push_back({.label = "Action " + std::to_string(i), .id = ActionId::Goto,
+                               .args = {std::to_string(i)}});
+  }
+  request.actions[1].label = std::string(200, 'x');
+  service.Show(std::move(request), 0);
+  const auto& row = service.Active().at(0);
+  Expect(row.actions.size() == NotificationService::MaxActions(),
+         "a row carries at most MaxActions buttons");
+  Expect(row.actions[0].label.size() <= NotificationService::MaxActionLabelBytes() + 3,
+         "a long label is byte-capped at ingress");
+  Expect(row.actions[1].label == "Action 1" && row.actions[1].args.at(0) == "1",
+         "an empty label is dropped and the next action keeps its arguments");
+  Expect(row.expiry_ms == NotificationService::ActionDurationMs(),
+         "a row with buttons gets the longer lifetime");
+  service.Show(NotificationService::Tone::Info, "plain", 0);
+  Expect(service.Active().at(1).expiry_ms == NotificationService::DurationMs(),
+         "a plain row keeps the short lifetime");
+}
+
+// Reposting a keyed row replaces its buttons in place, without moving the row.
+void TestNotificationServiceKeyedRowReplacesActionsInPlace() {
+  using microide::workspace::ActionId;
+  NotificationService service;
+  NotificationService::Request first{.key = "remote", .message = "Disconnected", .sticky = true};
+  first.actions.push_back({.label = "Reconnect", .id = ActionId::Goto});
+  first.actions.push_back({.label = "Show Log", .id = ActionId::Goto});
+  service.Show(std::move(first), 0);
+  service.Show(NotificationService::Tone::Info, "newer", 0);
+  Expect(service.SetHovered(0, 1, 0), "hovering the second button is a visible change");
+
+  NotificationService::Request second{.key = "remote", .message = "Reconnecting", .sticky = true};
+  second.actions.push_back({.label = "Cancel", .id = ActionId::Goto});
+  service.Show(std::move(second), 5);
+  Expect(service.Active().size() == 2, "a repost does not stack");
+  Expect(service.Active()[0].message == "Reconnecting" && service.Active()[0].actions.size() == 1 &&
+             service.Active()[0].actions[0].label == "Cancel",
+         "the keyed row's text and buttons are replaced in place");
+  Expect(!service.Active()[0].hovered_action.has_value(),
+         "a hovered button that no longer exists stops being hovered");
+}
+
+// Running an action dismisses a transient row unless the action keeps it open; a
+// sticky row reports a state and stays until its owner dismisses it.
+void TestNotificationServiceTakeActionDismissRules() {
+  using microide::workspace::ActionId;
+  NotificationService service;
+  NotificationService::Request transient{.message = "saved unformatted"};
+  transient.actions.push_back({.label = "Copy", .id = ActionId::Goto, .keep_open = true});
+  transient.actions.push_back({.label = "Show Output", .id = ActionId::Goto, .args = {"7"}});
+  service.Show(std::move(transient), 0);
+
+  auto kept = service.TakeAction(0, 0);
+  Expect(kept.has_value() && kept->label == "Copy", "the action is returned");
+  Expect(service.Active().size() == 1, "a keep_open action leaves the row up");
+  auto taken = service.TakeAction(0, 1);
+  Expect(taken.has_value() && taken->args.at(0) == "7", "the action carries its arguments");
+  Expect(service.Empty(), "a transient row is dismissed after its action runs");
+  Expect(!service.TakeAction(0, 0).has_value(), "a stale index resolves to nothing");
+
+  NotificationService::Request sticky{.key = "state", .message = "Offline", .sticky = true};
+  sticky.actions.push_back({.label = "Reconnect", .id = ActionId::Goto});
+  service.Show(std::move(sticky), 0);
+  Expect(service.TakeAction(0, 0).has_value() && service.Active().size() == 1,
+         "a sticky row survives its action");
+}
+
+// A hovered toast does not expire under the pointer, and leaving it grants a grace
+// period instead of removing it on the motion event that left.
+void TestNotificationServiceHoveredRowDoesNotExpire() {
+  NotificationService service;
+  service.Show(NotificationService::Tone::Info, "hold me", 0);
+  Expect(service.SetHovered(0, std::nullopt, 100), "entering a row is a change");
+  Expect(!service.SetHovered(0, std::nullopt, 200), "staying on it is not");
+  Expect(!service.ExpireDue(NotificationService::DurationMs() * 10),
+         "a hovered row does not expire");
+  Expect(!service.NextExpiryDelayMs(0).has_value(), "nothing to wake for while hovered");
+
+  const std::uint64_t left_at = NotificationService::DurationMs() * 10;
+  Expect(service.SetHovered(std::nullopt, std::nullopt, left_at), "leaving is a change");
+  Expect(!service.ExpireDue(left_at), "leaving an expired row does not remove it at once");
+  Expect(service.ExpireDue(left_at + NotificationService::HoverGraceMs()),
+         "it expires once the grace period passes");
+}
+
 }  // namespace
 
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
@@ -328,6 +424,14 @@ void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
           TestNotificationServiceProgressIsStickyAndOutsideTheVisibleCap);
   AddTest(tests, "NotificationService/StickyStackIsBounded",
           TestNotificationServiceStickyStackIsBounded);
+  AddTest(tests, "NotificationService/ActionsAreCappedData",
+          TestNotificationServiceActionsAreCappedData);
+  AddTest(tests, "NotificationService/KeyedRowReplacesActionsInPlace",
+          TestNotificationServiceKeyedRowReplacesActionsInPlace);
+  AddTest(tests, "NotificationService/TakeActionDismissRules",
+          TestNotificationServiceTakeActionDismissRules);
+  AddTest(tests, "NotificationService/HoveredRowDoesNotExpire",
+          TestNotificationServiceHoveredRowDoesNotExpire);
   AddTest(tests, "NotificationService/ToastWidthScalesWithWindow",
           TestNotificationToastWidthScalesWithWindow);
 }

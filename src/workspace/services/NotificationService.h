@@ -8,6 +8,9 @@
 #include <string_view>
 #include <vector>
 
+#include "util/InlineVector.h"
+#include "workspace/actions/WorkspaceActionTypes.h"
+
 namespace microide::workspace {
 
 // The sticky row reporting that the file index holds only a prefix of the
@@ -24,6 +27,19 @@ inline constexpr std::string_view kProjectIndexTruncatedNotificationKey =
 // as the one above — the posting and dismissing sites are different translation
 // units.
 inline constexpr std::string_view kFileOpenInProgressNotificationKey = "editor.open.reading";
+
+// One inline button on a notification row. At namespace scope rather than nested
+// in NotificationService because the service holds them in an InlineVector, which
+// needs the type complete (default member initializers included) at that point.
+struct NotificationAction {
+  std::string label;  // byte-capped at ingress (NotificationService::MaxActionLabelBytes)
+  ActionId id = ActionId::OpenCommandPalette;
+  std::vector<std::string> args;
+  // A transient row is dismissed once one of its actions runs (the toast has done
+  // its job). Set this for an action that should leave the row up — a "Copy" next
+  // to a message the user may still be reading.
+  bool keep_open = false;
+};
 
 // Host-owned notifications ("toasts"). Callers post a short message; the service
 // holds no timer of its own (callers pass the current time in SDL_GetTicks ms), so
@@ -46,9 +62,18 @@ inline constexpr std::string_view kFileOpenInProgressNotificationKey = "editor.o
 //  - **progress**. A fraction the row renders as a bar. A progress row is sticky by
 //    construction: it ends when the work does, and a progress bar that expires
 //    mid-progress is a bug rather than a design.
+//
+// A row may also carry ACTIONS, drawn as VS Code-style inline buttons. An action is
+// data — a label plus an ActionId and its arguments — never a closure: a keyed row
+// is reposted with a new action set, the control channel lists and invokes them by
+// label, and running one goes through the same action executor as a menu item.
 class NotificationService {
  public:
   enum class Tone { Info, Warning, Error };
+
+  using Action = NotificationAction;
+  static constexpr std::size_t MaxActions() { return 3; }
+  using Actions = util::InlineVector<Action, 3>;
 
   struct Notification {
     Tone tone = Tone::Info;
@@ -63,6 +88,11 @@ class NotificationService {
     bool sticky = false;
     // 0..1 when this row reports progress. Present implies sticky.
     std::optional<float> progress;
+    Actions actions;
+    // The pointer is over this row: it does not expire while it is (see SetHovered).
+    bool hovered = false;
+    // Index into `actions` of the button under the pointer.
+    std::optional<std::size_t> hovered_action;
   };
 
   // What a caller posts. The two-argument Show below covers the common case; this
@@ -77,6 +107,9 @@ class NotificationService {
     // dismiss it, so a keyless sticky request is treated as transient.
     bool sticky = false;
     std::optional<float> progress;  // implies sticky
+    // At most MaxActions(); extras are dropped. Reposting a keyed row replaces its
+    // actions in place along with its text.
+    std::vector<Action> actions;
   };
 
   // Map a plugin-supplied level string to a tone ("warning"/"warn" -> Warning,
@@ -106,6 +139,19 @@ class NotificationService {
   // row expires on its own.
   std::optional<std::uint64_t> NextExpiryDelayMs(std::uint64_t now_ms) const;
 
+  // Mark the row at `index` (nullopt: none) as under the pointer, and which of its
+  // buttons is. A hovered row does not expire; when the pointer leaves a row that
+  // is already past its expiry, the row gets HoverGraceMs() more rather than
+  // vanishing the instant the pointer moves off it. Returns true when anything a
+  // frame draws changed.
+  bool SetHovered(std::optional<std::size_t> index, std::optional<std::size_t> action,
+                  std::uint64_t now_ms);
+
+  // The action at (`index`, `action`), copied out because running it may post or
+  // dismiss rows. Dismisses a transient row unless the action keeps it open.
+  // nullopt for a stale index.
+  std::optional<Action> TakeAction(std::size_t index, std::size_t action);
+
   // Drop a single notification by its index in Active(). Out-of-range indices are
   // ignored, so a click resolved against a stale frame cannot corrupt the stack.
   void Dismiss(std::size_t index) {
@@ -119,6 +165,11 @@ class NotificationService {
   void Clear() { notifications_.clear(); }
 
   static constexpr std::uint64_t DurationMs() { return 4000; }
+  // A row with buttons asks the user to do something; four seconds is not long
+  // enough to read it and reach for the mouse.
+  static constexpr std::uint64_t ActionDurationMs() { return 10000; }
+  static constexpr std::uint64_t HoverGraceMs() { return 1500; }
+  static constexpr std::size_t MaxActionLabelBytes() { return 40; }
   // Transient rows on screen at once. Sticky rows do not count against this — they
   // report a state, and dropping one because three warnings arrived would hide the
   // state rather than the warnings.

@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 
+#include "util/InlineVector.h"
 #include "util/SmallVector.h"
 #include "editor/EditorInsetLayout.h"
 #include "editor/EditorViewModel.h"
@@ -11,6 +12,7 @@
 #include "editor/WelcomeView.h"
 #include "workspace/debug/DebugViewModel.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/render/NotificationLayout.h"
 #include "workspace/services/NotificationService.h"
 #include "workspace/services/TabStripService.h"
 #include "workspace/WorkspaceContext.h"
@@ -53,17 +55,47 @@ struct EditorBannerViewModel {
   std::string message;       // prebuilt here so render TUs never materialize it
 };
 
+struct NotificationButtonViewModel {
+  // A view into the service's row, which outlives the frame that reads it; the
+  // painter truncates to `label_width` with the ephemeral view, so the steady-state
+  // build and paint allocate nothing.
+  std::string_view label;
+  float label_width = 0.0f;  // already clamped to the button's share of the row
+  SDL_FRect rect{};
+  bool hovered = false;
+};
+
 struct NotificationEntryViewModel {
+  std::size_t index = 0;  // into NotificationService::Active()
   NotificationService::Tone tone = NotificationService::Tone::Info;
-  std::string message;  // prebuilt here so render TUs never materialize strings
+  std::string_view message;  // frame-stable view into the service's row
   // 0..1 when the row reports progress, already clamped here so the painter does
   // arithmetic on a fraction it can trust.
   std::optional<float> progress;
+  NotificationToastLayout layout{};
+  util::InlineVector<NotificationButtonViewModel, NotificationService::MaxActions()> buttons;
 };
 
+// Every row the service can hold at once: the transient cap plus the sticky cap.
+inline constexpr std::size_t kMaxNotificationRows =
+    NotificationService::MaxVisible() + NotificationService::MaxSticky();
+
 struct NotificationsViewModel {
-  std::vector<NotificationEntryViewModel> entries;  // oldest first; render bottom-up
+  // NEWEST first, which is paint and hit-test order: entry 0 sits just above the
+  // status bar and each later entry stacks above the one before. Geometry is
+  // composed once here, so the painter and the click/hover hit-test read the same
+  // rects rather than recomputing them.
+  util::InlineVector<NotificationEntryViewModel, kMaxNotificationRows> entries;
 };
+
+struct NotificationHit {
+  std::size_t index = 0;               // into NotificationService::Active()
+  std::optional<std::size_t> action;  // the button under the point, if any
+};
+
+// The toast (and button) under (x, y), or nullopt.
+std::optional<NotificationHit> NotificationHitAt(const NotificationsViewModel& vm, float x,
+                                                 float y);
 
 struct FrameSurfaceViewModel {
   struct CompareSurfaceViewModel {
@@ -566,7 +598,9 @@ class RenderViewModelBuilder {
   HoverTargetsViewModel BuildHoverTargets(bool debug_hover_enabled = false) const;
   StatusBarViewModel BuildStatusBar(const WorkspaceLayout& layout,
                                     const class StatusBarService& service) const;
-  NotificationsViewModel BuildNotifications(const NotificationService& service) const;
+  NotificationsViewModel BuildNotifications(const NotificationService& service,
+                                            const SDL_FRect& status_bar,
+                                            const render::TextRenderer& text_renderer) const;
   // Welcome / placeholder home surface. The variant is chosen from the live project
   // root (empty => NoProject cold-start home with recent projects + Open Folder; non-empty
   // => ProjectHome with this project's recent files + new/open/find actions). Recent
