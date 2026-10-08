@@ -257,6 +257,28 @@ excluded by the message itself.
   Pinning `MICROIDE_SEARCH_WORKER_LIMIT=1` is what exposes the exact-fill
   boundary with nothing left to mask it.
 
+### A sanitizer report from a SPAWNED process does not fail the test
+
+The remote tests start real `microide-server` daemons. On 2026-10-08 the tsan lane
+reported data races inside those daemons (their teardown reset two tables while
+connection threads still used them) and still finished green: the daemon's
+sanitizer killed the daemon, but the test that spawned it had already got what it
+asserted on, so the test passed and ctest reported success. ASAN saw the same
+defect as a SEGV and failed only because one test happened to depend on the
+daemon outliving it.
+
+- `check_sanitizer` in `tools/run-checks.sh` now fails a lane whose log holds ANY
+  sanitizer report (`WARNING: ThreadSanitizer`, `ERROR: …Sanitizer`, `runtime
+  error:`), whichever process wrote it. Do not loosen that to "only the test
+  binary's".
+- The same daemon had never run its destructor at all (`_exit` straight out of
+  the listener), which hid both the leak of its children and the teardown race.
+  Code that only runs at exit is code no green run has exercised until something
+  makes it run.
+- `tests/lsan.supp` exists for leaks in SYSTEM libraries only (fontconfig's
+  process-lifetime config parse on Ubuntu 26.04). A leak in `src/` is a bug to
+  fix, never an entry to add.
+
 ### A lane that runs a test binary directly gets none of ctest's fixture setup
 
 The `perf-canary` lane runs `microide_perf --scenarios=perf_gate_canary`

@@ -127,6 +127,16 @@ for what is actually measured, and what is not.
 - OSC 52 clipboard copy (opt-in, off by default), focus notifications, basic device/cursor query replies
 - Terminal text selection, copy, and paste shortcuts
 - Tab drag reordering; right-click for "Copy Last Command and Output"
+- **Terminals on a remote host**: `Remote: Open Terminal on Host…` (`remote-terminal
+  [user@]host[:port]`) runs the shell on the host over your own ssh configuration — no inbound
+  port, no root. The host owns the pty, so a closed laptop or a dropped link kills nothing: the
+  editor reconnects by itself and every terminal resumes with its scrollback, nothing repeated.
+  The first connect installs `microide-server` under `~/.local/share/microide/server`
+  (`remote.server_install`); a passphrase prompt is answered in a terminal tab. On a slow link
+  typed characters are drawn at once, underlined, and confirmed within a round trip
+  (`remote.predict`). A `Remote` status segment and a notification row per host (Reconnect,
+  Copy ssh Command, Copy Install Command) show the connection. Remote *projects* (a mirrored
+  tree) are not built yet
 
 ### Debugging
 - Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /

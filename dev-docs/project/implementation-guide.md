@@ -140,7 +140,16 @@ The codebase is organized by responsibility:
 - `src/project`: file indexing, ignore handling, project search, git services, and file operations
 - `src/editor`: text viewport, layout, syntax state, and editor rendering support
 - `src/compare`: side-by-side diff and merge models
-- `src/terminal`: PTY session and terminal screen state
+- `src/terminal`: PTY session and terminal screen state; also the host-terminal wire model
+  (`TerminalHostWire`, `TerminalHostFrameBuilder`), the session's *host mode* and the echo
+  `TerminalPredictionOverlay`
+- `src/project/remote`: the remote client — frame codec and transport, `RemotePeer`,
+  `RemoteServerClient`, `RemoteConnection` (the current client; a reconnect replaces it and
+  carries terminals and kept processes over), `RemoteProcessLauncher` (a `ProcessLauncher`, git
+  metadata source and host-terminal source), `RemoteTerminalChannel`, and `RemoteHostSession`
+  (ssh ControlMaster, NeedsAuth, attach-or-install, reconnect)
+- `src/server`: `microide-server`, the host daemon; links `microide_kernel` only
+  (`CheckServerIncludesOnlyTheKernel`). `ProcessTable` (`proc/*`) and `TerminalTable` (`term/*`)
 - `src/render`: themes and text-renderer backends
 
 `WorkspaceShell` is still the app-facing facade, but its core workspace state now lives under a
@@ -167,6 +176,16 @@ consume view-model structs built by `RenderViewModelBuilder`, and the architectu
 no-throwing-numeric-parse, and render-view-model-only invariants on every `ctest` run. New plugin
 runtime, project, terminal, compare, and rendering work should continue to move into narrower
 subsystems and services rather than accrete more logic on the shell or in one file.
+
+Remote hosts follow the same rule: `workspace/services/RemoteHostService` (built on first use in
+`ShellGlueCache`) owns one `RemoteHostSession` per host, the `Remote` status segment and the
+notification rows, and receives the sessions' reports through a mailbox drained at the
+project-file wake. A host terminal is NOT a separate view: `TerminalSession` picks *host mode*
+when its launcher implements `terminal::HostTerminalSource` (the `GitMetadataFor` pattern),
+mirrors the host's buffer from frames and turns input into semantic events, so the panel draws,
+selects and searches it with the local code. A terminal pane records its own launcher and title
+prefix, so a split or relaunch of a host terminal stays on the host. The design and what was
+built are in `dev-docs/design/remote-projects.md` ("Phase 2a as built").
 
 Within `src/editor`, `TextViewport` still owns viewport behavior, but the document's line storage
 lives behind `editor::TextBuffer` (`src/editor/TextBuffer.h`), and as of the large-file overhaul

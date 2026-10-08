@@ -78,6 +78,8 @@ project (see [README](README.md)); versions track meaningful shipped work.
   reload the buffer, so after a save that formatted anything Ctrl+Z reached neither
   the formatting nor anything typed before it. The output is now one edit: one undo
   takes the formatting back, and the history before it is intact.
+- `microide-server` cleans up when it stops or idles out: its terminal shells and kept processes
+  are ended instead of being left running on the host, and its connection threads are joined.
 - A theme file added or removed within the filesystem's timestamp granularity of
   the previous listing no longer stays missing (or listed) from the theme picker.
 

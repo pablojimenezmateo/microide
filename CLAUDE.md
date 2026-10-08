@@ -181,6 +181,8 @@ Sanitizer and fuzz workflows expected for risky changes:
 cmake --preset microide-asan && cmake --build build/microide-asan -j8 && ctest --test-dir build/microide-asan --output-on-failure
 cmake --preset microide-ubsan && cmake --build build/microide-ubsan -j8 && ctest --test-dir build/microide-ubsan --output-on-failure
 cmake --preset microide-tsan && cmake --build build/microide-tsan -j8
+# LSan reads tests/lsan.supp (system-library leaks only); run-checks.sh fails a lane on ANY
+# sanitizer report in its log, including one from a spawned microide-server.
 # No sudo: setarch -R clears ASLR for this process only. `sudo sysctl
 # vm.mmap_rnd_bits=28` is the machine-wide fallback if personality() is blocked.
 setarch -R env TSAN_OPTIONS=suppressions=tests/tsan.supp \
