@@ -453,9 +453,9 @@ silent one:
 - ~~The first reopen after a sync rehashes the mirror~~ — fixed 2026-10-08: a pull
   writes the host's (past) mtime, the mirror records ctime too, and only a recent
   MTIME makes a stat racy; reopen 200 → ~93 ms for this repository.
-- **Paths travel in JSON** in `object/fetch`, `file/write` and `fs/op`, so a host
-  file name that is not valid UTF-8 cannot be fetched or written (the manifest
-  itself is binary and carries it).
+- ~~Paths travel in JSON~~ — not a gap (checked 2026-10-08): the JSON layer carries
+  a string's bytes verbatim between the two ends, so a non-UTF-8 host name lists,
+  pulls and pushes (`MirrorSyncEngine/CarriesNonUtf8Names`).
 - **A remote project is never released**: its session, engine and launcher live
   until the window closes (closing the project tab keeps them, because a project
   state may still point at the locality).

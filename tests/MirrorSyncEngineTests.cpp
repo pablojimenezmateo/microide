@@ -119,6 +119,22 @@ void TestMirrorPulledFilesAreTrustedAtOnce() {
          "a same-size rewrite in the mirror is still seen, and pushed");
 }
 
+// A host file name that is not UTF-8 is still just bytes: it is listed, pulled
+// and pushed like any other (paths ride JSON strings, which carry bytes verbatim
+// between the two ends).
+void TestMirrorCarriesNonUtf8Names() {
+  MirrorSession session;
+  const std::string name("caf\xe9.txt");
+  WriteFile(session.host / name, "latin-1 name\n");
+  session.Connect();
+  session.Sync();
+  Expect(ReadFile(session.Tree(name)) == "latin-1 name\n", "pulled");
+  WriteFile(session.Tree(name), "edited\n");
+  session.engine->NotifyLocalWrite(name);
+  session.engine->Flush();
+  Expect(ReadFile(session.host / name) == "edited\n", "and pushed back");
+}
+
 void TestMirrorPushesLocalWritesUnderCompareAndSwap() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "host\n");
@@ -395,6 +411,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
+  AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
