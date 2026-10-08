@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "RemoteServerTestSupport.h"
 
+#include "platform/AsyncSubprocess.h"
 #include "platform/ProcessLauncher.h"
 #include "platform/Subprocess.h"
 #include "project/remote/RemoteHostSession.h"
@@ -180,6 +181,43 @@ void TestLinkDeathReconnectsAndTerminalsResume() {
   terminal.Stop();
 }
 
+// A language server or debug adapter on the host is a KEPT process: the link
+// dying does not end it, input written during the outage is held and delivered
+// after the reconnect, and its output keeps flowing — then a Disconnect ends it
+// rather than leaving it running on the host for nobody.
+void TestHostProcessSurvivesAReconnectAndEndsOnDisconnect() {
+  FakeHost host;
+  StateLog log;
+  RemoteHostSession session(host.Config(), log.Listener());
+  session.Connect();
+  Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
+  const remote::RemoteProcessLauncher launcher(session.connection(), remote::RemotePathMap({}, {}),
+                                               {.description = "fake-host"});
+  platform::AsyncSubprocess process;
+  Expect(launcher.StartAsync(process, {"cat"}, {}, {}), "a host process starts");
+  const auto read_line = [&](std::string_view expected) {
+    std::string got;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (got.find(expected) == std::string::npos && std::chrono::steady_clock::now() < deadline) {
+      if (auto chunk = process.Read(4096, 100)) {
+        got += *chunk;
+      }
+    }
+    return got.find(expected) != std::string::npos;
+  };
+  Expect(process.Write("one\n") && read_line("one"), "it echoes before the drop");
+  session.connection()->client()->peer().Fail("simulated link death");
+  Expect(WaitUntil([&] { return log.Saw(State::Reconnecting); }, std::chrono::seconds(10)),
+         "the link is down");
+  Expect(process.Write("two\n"), "the consumer can still write during the outage");
+  Expect(WaitForState(session, State::Ready), "ready again: " + log.Error());
+  Expect(read_line("two"), "what was written during the outage reached the same process");
+  Expect(process.IsRunning(), "the host process survived the reconnect");
+  session.Disconnect();
+  Expect(WaitUntil([&] { return !process.IsRunning(); }, std::chrono::seconds(10)),
+         "a Disconnect ends it");
+}
+
 // A server command that exits at once (a broken install, a wrong
 // remote.server_command) fails the attempt promptly, with a reason the user can
 // act on — not a hang, and not an empty error row.
@@ -215,6 +253,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestNeedsAuthWaitsForTheInteractiveMaster);
   AddTest(tests, "RemoteHostSession/LinkDeathReconnectsAndTerminalsResume",
           TestLinkDeathReconnectsAndTerminalsResume);
+  AddTest(tests, "RemoteHostSession/HostProcessSurvivesAReconnectAndEndsOnDisconnect",
+          TestHostProcessSurvivesAReconnectAndEndsOnDisconnect);
   AddTest(tests, "RemoteHostSession/ABrokenServerCommandFailsFastWithAReason",
           TestABrokenServerCommandFailsFastWithAReason);
 #endif

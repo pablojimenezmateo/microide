@@ -342,31 +342,4 @@ void RemoteTerminalChannel::Close() {
   }
 }
 
-void RemoteConnection::Replace(std::shared_ptr<RemoteServerClient> client) {
-  std::vector<std::shared_ptr<RemoteTerminalChannel>> live;
-  {
-    std::lock_guard lock(mutex_);
-    client_ = client;
-    std::erase_if(terminals_, [](const std::weak_ptr<RemoteTerminalChannel>& weak) {
-      return weak.expired();
-    });
-    for (const auto& weak : terminals_) {
-      if (auto channel = weak.lock()) {
-        live.push_back(std::move(channel));
-      }
-    }
-  }
-  for (const auto& channel : live) {
-    channel->Reattach(client);
-  }
-}
-
-void RemoteConnection::Track(const std::shared_ptr<RemoteTerminalChannel>& channel) {
-  std::lock_guard lock(mutex_);
-  std::erase_if(terminals_, [](const std::weak_ptr<RemoteTerminalChannel>& weak) {
-    return weak.expired();
-  });
-  terminals_.push_back(channel);
-}
-
 }  // namespace microide::project::remote

@@ -182,6 +182,11 @@ RemoteServerClient::Spawned RemoteServerClient::Spawn(
     return Spawned{.error = error.empty() ? "proc/spawn failed" : error};
   }
   const auto handle = static_cast<std::uint64_t>((*reply)["handle"].AsInt());
+  RegisterProcess(handle, std::move(events));
+  return Spawned{.handle = handle, .pid = static_cast<int>((*reply)["pid"].AsInt(-1))};
+}
+
+void RemoteServerClient::RegisterProcess(std::uint64_t handle, ProcessEvents events) {
   auto shared = std::make_shared<ProcessEvents>(std::move(events));
   Orphan held;
   {
@@ -200,7 +205,20 @@ RemoteServerClient::Spawned RemoteServerClient::Spawn(
   if (held.exit.has_value()) {
     DeliverExit(handle, *held.exit);
   }
-  return Spawned{.handle = handle, .pid = static_cast<int>((*reply)["pid"].AsInt(-1))};
+}
+
+bool RemoteServerClient::AttachProcess(std::uint64_t handle, std::uint64_t stdout_offset,
+                                       std::uint64_t stderr_offset, std::string* error) {
+  util::JsonObject params;
+  params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
+  params["stdout"] = util::JsonValue(static_cast<std::int64_t>(stdout_offset));
+  params["stderr"] = util::JsonValue(static_cast<std::int64_t>(stderr_offset));
+  std::string why;
+  const bool ok = Call("proc/attach", util::JsonValue(std::move(params)), &why).has_value();
+  if (!ok && error != nullptr) {
+    *error = why;
+  }
+  return ok;
 }
 
 void RemoteServerClient::Deliver(std::uint64_t handle, FrameType type, std::string bytes) {

@@ -7,7 +7,16 @@
 namespace microide::project::remote {
 
 class RemoteServerClient;
-class RemoteTerminalChannel;
+
+// Something bound to a host connection that carries on over the next one: a host
+// terminal (warm reattach from its resume point), a kept host process (proc/attach
+// from the bytes it received). A null client means the connection is gone for
+// good (Disconnect): end, rather than wait for a link that is not coming.
+class Reattachable {
+ public:
+  virtual ~Reattachable() = default;
+  virtual void Reattach(std::shared_ptr<RemoteServerClient> client) = 0;
+};
 
 // The CURRENT connection to one host (dev-docs/design/remote-projects.md § 6.6).
 // A dropped link is replaced by a new RemoteServerClient on reconnect; everything
@@ -26,16 +35,17 @@ class RemoteConnection {
     return client_;
   }
 
-  // Swap in a new client (a reconnect) and reattach every live terminal over it.
+  // Swap in a new client (a reconnect), or null (gone for good), and hand it to
+  // everything tracked.
   void Replace(std::shared_ptr<RemoteServerClient> client);
 
-  // A terminal opened over this connection, to reattach on Replace.
-  void Track(const std::shared_ptr<RemoteTerminalChannel>& channel);
+  // A terminal or process opened over this connection, to carry over on Replace.
+  void Track(const std::shared_ptr<Reattachable>& item);
 
  private:
   mutable std::mutex mutex_;
   std::shared_ptr<RemoteServerClient> client_;
-  std::vector<std::weak_ptr<RemoteTerminalChannel>> terminals_;
+  std::vector<std::weak_ptr<Reattachable>> items_;
 };
 
 }  // namespace microide::project::remote

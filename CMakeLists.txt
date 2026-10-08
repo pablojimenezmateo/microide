@@ -308,6 +308,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemotePeer.cpp
   src/project/remote/RemoteProcessLauncher.cpp
   src/project/remote/RemoteServerClient.cpp
+  src/project/remote/RemoteConnection.cpp
   src/project/remote/RemoteHostSession.cpp
   src/project/remote/RemoteServerPaths.cpp
   src/project/remote/RemoteTerminalChannel.cpp

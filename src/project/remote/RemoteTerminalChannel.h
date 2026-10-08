@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "project/remote/RemoteConnection.h"
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalSession.h"
 
@@ -26,6 +27,7 @@ class RemoteServerClient;
 // input and size changes made before the reply are queued and flushed when it
 // lands, and the session shows its first frame when that arrives.
 class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
+                                    public Reattachable,
                                     public std::enable_shared_from_this<RemoteTerminalChannel> {
  public:
   using HostToLocal = std::function<std::filesystem::path(const std::filesystem::path&)>;
@@ -49,7 +51,7 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
 
   // Carry on over `client` (a reconnect): a warm reattach from the session's own
   // resume point. Input typed meanwhile is held and sent once it is answered.
-  void Reattach(std::shared_ptr<RemoteServerClient> client);
+  void Reattach(std::shared_ptr<RemoteServerClient> client) override;
 
   RemoteTerminalChannel(std::shared_ptr<RemoteServerClient> client,
                         terminal::TerminalSession& session, HostToLocal host_to_local);

@@ -50,10 +50,54 @@ int ExitStatus(std::optional<int> code, std::optional<int> signal) {
 // pipe goes out as proc/stdin; proc/stdout is written into its stdout pipe, and is
 // acknowledged only once WRITTEN, so a consumer that stops reading stops the host
 // process through the credit window, end to end.
-class RemoteAsyncProcess final : public platform::AsyncProcessController {
+//
+// It is spawned KEPT, so a dropped link does not end it on the host: on a
+// reconnect (RemoteConnection::Replace) it proc/attaches from the bytes it has
+// received, and what the consumer wrote meanwhile is held and sent then. A
+// connection gone for good (Disconnect, a host that restarted) ends it.
+class RemoteAsyncProcess final : public platform::AsyncProcessController, public Reattachable {
  public:
   RemoteAsyncProcess(std::shared_ptr<RemoteServerClient> client) : client_(std::move(client)) {
     wake_.Open();
+  }
+
+  void Reattach(std::shared_ptr<RemoteServerClient> client) override {
+    std::shared_ptr<RemoteServerClient> previous;
+    std::uint64_t stdout_offset = 0;
+    std::uint64_t stderr_offset = 0;
+    {
+      std::lock_guard lock(mutex_);
+      if (exit_status_.has_value() || handle_ == 0) {
+        return;
+      }
+      previous = std::exchange(client_, client);
+      stdout_offset = stdout_delivered_ + pending_out_.size();
+      stderr_offset = stderr_received_;
+    }
+    if (client == nullptr) {
+      // Gone for good: do not leave it running on the host for nobody.
+      if (previous != nullptr) {
+        previous->Signal(handle_, "KILL");
+        previous->Release(handle_);
+      }
+      Ended();
+      return;
+    }
+    client->RegisterProcess(handle_, Events());
+    std::string error;
+    if (!client->AttachProcess(handle_, stdout_offset, stderr_offset, &error)) {
+      Ended();  // the host restarted: the consumer sees EOF and starts over
+      return;
+    }
+    std::string held;
+    {
+      std::lock_guard lock(mutex_);
+      held.swap(pending_stdin_);
+    }
+    if (!held.empty()) {
+      client->WriteStdin(handle_, held);
+    }
+    wake_.Wake();
   }
 
   ~RemoteAsyncProcess() override {
@@ -67,11 +111,12 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
         ::close(fd);
       }
     }
-    if (handle_ != 0) {
+    const std::shared_ptr<RemoteServerClient> client = Client();
+    if (handle_ != 0 && client != nullptr) {
       if (!exited()) {
-        client_->Signal(handle_, "KILL");
+        client->Signal(handle_, "KILL");
       }
-      client_->Release(handle_);
+      client->Release(handle_);
     }
   }
 
@@ -129,15 +174,16 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
   }
   int pid() const override { return pid_; }
   void Terminate(int timeout_ms) override {
-    if (exited()) {
+    const std::shared_ptr<RemoteServerClient> client = Client();
+    if (exited() || client == nullptr) {
       return;
     }
-    client_->Signal(handle_, "TERM");
+    client->Signal(handle_, "TERM");
     std::unique_lock lock(mutex_);
     if (!exited_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                              [&]() { return exit_status_.has_value(); })) {
       lock.unlock();
-      client_->Signal(handle_, "KILL");
+      client->Signal(handle_, "KILL");
       lock.lock();
       exited_cv_.wait_for(lock, std::chrono::seconds(2), [&]() { return exit_status_.has_value(); });
     }
@@ -147,6 +193,24 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
   bool exited() const {
     std::lock_guard lock(mutex_);
     return exit_status_.has_value();
+  }
+
+  std::shared_ptr<RemoteServerClient> Client() const {
+    std::lock_guard lock(mutex_);
+    return client_;
+  }
+
+  // The process is over as far as the consumer is concerned (EOF once its output
+  // is delivered), without the host having reported an exit.
+  void Ended() {
+    {
+      std::lock_guard lock(mutex_);
+      if (!exit_status_.has_value()) {
+        exit_status_ = 128 + 9;  // as a killed process reports
+      }
+    }
+    exited_cv_.notify_all();
+    wake_.Wake();
   }
 
   void Pump() {
@@ -176,11 +240,20 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
       if (stdin_read_ >= 0 && (fds[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
         const ssize_t n = ::read(stdin_read_, buffer, sizeof(buffer));
         if (n > 0) {
-          client_->WriteStdin(handle_, std::string_view(buffer, static_cast<std::size_t>(n)));
+          const std::string_view bytes(buffer, static_cast<std::size_t>(n));
+          // The link is down: hold it for the reconnect rather than lose a
+          // request the consumer will wait on forever.
+          const std::shared_ptr<RemoteServerClient> client = Client();
+          if (client != nullptr && !client->WriteStdin(handle_, bytes)) {
+            std::lock_guard lock(mutex_);
+            pending_stdin_.append(bytes);
+          }
         } else if (n == 0 || (errno != EAGAIN && errno != EINTR)) {
           ::close(stdin_read_);
           stdin_read_ = -1;
-          client_->CloseStdin(handle_);
+          if (const std::shared_ptr<RemoteServerClient> client = Client()) {
+            client->CloseStdin(handle_);
+          }
         }
       }
       std::uint64_t ack_out = 0;
@@ -206,12 +279,14 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
         }
       }
       if (ack) {
-        client_->Ack(handle_, ack_out, ack_err);
+        if (const std::shared_ptr<RemoteServerClient> client = Client()) {
+          client->Ack(handle_, ack_out, ack_err);
+        }
       }
     }
   }
 
-  std::shared_ptr<RemoteServerClient> client_;
+  std::shared_ptr<RemoteServerClient> client_;  // guarded by mutex_: a reconnect swaps it
   std::uint64_t handle_ = 0;
   int pid_ = -1;
   int stdin_read_ = -1;
@@ -223,6 +298,7 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
   mutable std::mutex mutex_;
   std::condition_variable exited_cv_;
   std::string pending_out_;
+  std::string pending_stdin_;  // written while the link was down
   std::uint64_t stdout_delivered_ = 0;
   std::uint64_t stderr_received_ = 0;
   bool ack_dirty_ = false;
@@ -406,7 +482,7 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
     return false;
   }
   const RemoteServerClient::Spawned spawned =
-      client->Spawn(argv, ResolveWorkingDirectory(cwd), {}, false, remote->Events());
+      client->Spawn(argv, ResolveWorkingDirectory(cwd), {}, /*keep_on_detach=*/true, remote->Events());
   if (spawned.handle == 0) {
     ::close(consumer->first);
     ::close(consumer->second);
@@ -414,6 +490,7 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
   }
   Record(argv);
   remote->Begin(spawned.handle, spawned.pid);
+  connection_->Track(remote);
   return process.Adopt(consumer->first, consumer->second, remote);
 #else
   (void)process;

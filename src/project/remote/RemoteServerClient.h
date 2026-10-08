@@ -82,6 +82,13 @@ class RemoteServerClient {
   Spawned Spawn(const std::vector<std::string>& argv, const std::filesystem::path& host_cwd,
                 const std::vector<std::pair<std::string, std::optional<std::string>>>& env,
                 bool keep_on_detach, ProcessEvents events);
+  // Route an existing handle's events here (a kept process taken over after a
+  // reconnect); output that arrived before this is replayed, as for Spawn.
+  void RegisterProcess(std::uint64_t handle, ProcessEvents events);
+  // proc/attach: resume a kept process from the byte offsets already received.
+  // False with *error when the host no longer has it (it restarted).
+  bool AttachProcess(std::uint64_t handle, std::uint64_t stdout_offset,
+                     std::uint64_t stderr_offset, std::string* error);
   bool WriteStdin(std::uint64_t handle, std::string_view bytes);
   bool CloseStdin(std::uint64_t handle);
   bool Signal(std::uint64_t handle, std::string_view signal);  // "TERM", "KILL", ...

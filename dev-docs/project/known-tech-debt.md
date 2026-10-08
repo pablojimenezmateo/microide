@@ -420,7 +420,18 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-08-327 — a host's language server and debug adapter do not survive a reconnect. [OPEN]
+### TD-2026-10-08-327 — a host's language server and debug adapter do not survive a reconnect. [RESOLVED 2026-10-08]
+
+Resolved the same day: StartAsync spawns kept; `RemoteAsyncProcess` is a
+`Reattachable` tracked by the `RemoteConnection`, re-`proc/attach`es from the
+bytes it received on Replace, holds stdin written during the outage, and is
+killed over the link on Disconnect (a host that restarted ends it: EOF, and the
+consumer starts over). Regression:
+`RemoteHostSession/HostProcessSurvivesAReconnectAndEndsOnDisconnect`. One edge
+stays: bytes the transport had queued at the instant the link died are lost with
+it; the LSP/DAP layers' own timeouts cover that.
+
+Original report:
 
 `RemoteProcessLauncher::StartAsync` (LSP, DAP) adopts a `RemoteAsyncProcess` bound
 to the client that was current at spawn, and spawns with `keep_on_detach = false`.

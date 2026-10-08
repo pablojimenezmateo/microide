@@ -478,11 +478,14 @@ void RemoteHostSession::Run() {
       }
       case Wake::Disconnect: {
         Report(State::Disconnected, "disconnected");
-        if (const auto client = connection_->client()) {
+        const auto client = connection_->client();
+        // Kept host processes are ended over the link while it still works,
+        // rather than left running on the host for nobody.
+        connection_->Replace(nullptr);
+        if (client != nullptr) {
           // Fail, not Stop: every host terminal is told the link is gone.
           client->peer().Fail("disconnected");
         }
-        connection_->Replace(nullptr);
         break;
       }
       case Wake::LinkDied: {
