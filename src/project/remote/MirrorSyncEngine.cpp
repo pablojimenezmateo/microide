@@ -573,7 +573,7 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan) {
   if (local == LocalState::Missing) {
     entry.base.reset();
     entry.local_known = false;
-    if (entry.remote.size <= options_.max_eager_file_bytes) {
+    if (entry.remote.size <= options_.max_file_bytes) {
       plan.pulls.push_back(PullItem{path, entry.remote.size});
     }
   } else if (local == LocalState::MatchesBase) {
@@ -764,7 +764,12 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   pipeline->on_drained = std::move(on_done);
   std::vector<PullItem> batch;
   std::uint64_t batch_bytes = 0;
+  std::vector<PullItem> large;
   for (PullItem& item : plan.pulls) {
+    if (item.size > options_.large_file_bytes) {
+      large.push_back(std::move(item));
+      continue;
+    }
     if (!batch.empty() && (batch.size() >= options_.pull_batch_files ||
                            batch_bytes + item.size > options_.pull_batch_bytes)) {
       pipeline->batches.push_back(std::move(batch));
@@ -777,6 +782,11 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   if (!batch.empty()) {
     pipeline->batches.push_back(std::move(batch));
   }
+  // Large files last, each alone: the tree is complete sooner, and at most one of
+  // them is in memory at a time.
+  for (PullItem& item : large) {
+    pipeline->batches.push_back({std::move(item)});
+  }
   LaunchPulls(pipeline);
 }
 
@@ -788,13 +798,20 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
     }
     return;
   }
-  while (pipeline->in_flight < kMaxPullsInFlight && !pipeline->batches.empty()) {
+  while (pipeline->in_flight < kMaxPullsInFlight && !pipeline->batches.empty() &&
+         !pipeline->large_in_flight) {
+    const std::vector<PullItem>& next = pipeline->batches.front();
+    const bool large = next.size() == 1 && next.front().size > options_.large_file_bytes;
+    if (large && pipeline->in_flight > 0) {
+      return;  // a large file goes alone, once the batches ahead of it are in
+    }
     std::vector<std::string> paths;
     for (PullItem& item : pipeline->batches.front()) {
       paths.push_back(std::move(item.path));
     }
     pipeline->batches.pop_front();
     ++pipeline->in_flight;
+    pipeline->large_in_flight = large;
     BeginExternalWork();
     workspace_.FetchObjects(
         std::move(paths), Lane::Bulk,
@@ -811,6 +828,7 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
                                error = std::move(error)]() mutable {
             engine->ApplyFetched(std::move(objects), error);
             --pipeline->in_flight;
+            pipeline->large_in_flight = false;
             engine->LaunchPulls(pipeline);
           });
           engine->EndExternalWork();

@@ -122,6 +122,34 @@ void TestMirrorPulledFilesAreTrustedAtOnce() {
 // A host file name that is not UTF-8 is still just bytes: it is listed, pulled
 // and pushed like any other (paths ride JSON strings, which carry bytes verbatim
 // between the two ends).
+// A large file is pulled too — after the small ones, on its own — so the tree is
+// complete; one over the per-file ceiling is not.
+void TestMirrorPullsLargeFilesLast() {
+  MirrorSession session;
+  const std::string big(9 * 1024 * 1024 + 3, 'L');
+  WriteFile(session.host / "big.bin", big);
+  WriteFile(session.host / "huge.bin", std::string(2 * 1024 * 1024, 'H'));
+  WriteFile(session.host / "small.txt", "s\n");
+  remote::MirrorSyncEngine::Options options;
+  options.max_file_bytes = 10 * 1024 * 1024;
+  options.large_file_bytes = 1024 * 1024;
+  session.Connect(options);
+  session.Sync();
+  Expect(ReadFile(session.Tree("small.txt")) == "s\n", "small files arrive");
+  Expect(std::filesystem::exists(session.Tree("big.bin")) &&
+             std::filesystem::file_size(session.Tree("big.bin")) == big.size(),
+         "a large file arrives too");
+  Expect(std::filesystem::exists(session.Tree("huge.bin")), "each large file, one after the other");
+  options.max_file_bytes = 4 * 1024 * 1024;
+  MirrorSession capped;
+  WriteFile(capped.host / "big.bin", big);
+  capped.Connect(options);
+  capped.Sync();
+  Expect(!std::filesystem::exists(capped.Tree("big.bin")) &&
+             capped.engine->StateOf("big.bin") == ContentState::Absent,
+         "a file over the ceiling stays absent, and says so");
+}
+
 void TestMirrorCarriesNonUtf8Names() {
   MirrorSession session;
   const std::string name("caf\xe9.txt");
@@ -412,6 +440,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
+  AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);

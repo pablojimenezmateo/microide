@@ -49,9 +49,12 @@ class MirrorSyncEngine {
     // Backfill batches: whichever limit comes first.
     std::size_t pull_batch_files = 64;
     std::uint64_t pull_batch_bytes = 1024 * 1024;
-    // Files over this are fetched only when something asks for them
-    // (remote.max_file_bytes).
-    std::uint64_t max_eager_file_bytes = 8 * 1024 * 1024;
+    // Files over this are pulled after the rest, one at a time (a few of them in
+    // flight would hold their bytes in memory together).
+    std::uint64_t large_file_bytes = 8 * 1024 * 1024;
+    // Files over this are not pulled at all (remote.max_file_bytes; the server's
+    // per-object ceiling is 64 MiB).
+    std::uint64_t max_file_bytes = 64 * 1024 * 1024;
   };
 
   // A path's content state, for presentation (dimmed absent rows, a conflict mark).
@@ -161,8 +164,9 @@ class MirrorSyncEngine {
   // `on_done` runs on the worker once every pull of the plan has landed.
   void Execute(Plan plan, std::function<void()> on_done);
   struct PullPipeline {  // worker thread only
-    std::deque<std::vector<PullItem>> batches;
+    std::deque<std::vector<PullItem>> batches;  // small files, batched, then large ones alone
     std::size_t in_flight = 0;
+    bool large_in_flight = false;
     std::function<void()> on_drained;
   };
   void LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline);
