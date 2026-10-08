@@ -450,6 +450,12 @@ silent one:
 - ~~`meta/state` is rewritten whole on every push~~ — fixed 2026-10-08: a small
   `meta/journal` (pending pushes, tree operations) is written before every attempt
   and the full state once per burst of engine work; Open lets the journal win.
+- **The first reopen after a sync rehashes the mirror.** Every pulled file's local
+  stat is recorded within 2 s of the write, so it is racy and not trusted
+  (IsRacySignature); the next reconcile confirms each by hash — 124 ms of a 200 ms
+  reopen for this repository (`RemoteProject/BenchFirstSync`), single-threaded and
+  under the engine's lock. Later reopens are stat-only. Settling those hashes in
+  idle time after the sync, or hashing in parallel, would take it off the reopen.
 - **Paths travel in JSON** in `object/fetch`, `file/write` and `fs/op`, so a host
   file name that is not valid UTF-8 cannot be fetched or written (the manifest
   itself is binary and carries it).

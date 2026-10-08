@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 #include <filesystem>
 #include <string>
 
@@ -105,19 +106,26 @@ void TestRemoteProjectBenchFirstSync() {
   config.session.release = "test";
   config.session.workspace_root = host_root.string();
   config.mirror_directory = host.dir.scratch() / "m";
-  const auto start = std::chrono::steady_clock::now();
-  remote::RemoteProject project(config, {});
-  std::string error;
-  Expect(project.Open(&error), "opens: " + error);
-  const bool synced = WaitUntil(
-      [&] { return project.engine().status().synced_once; }, std::chrono::seconds(120),
-      std::chrono::milliseconds(2));
-  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                      std::chrono::steady_clock::now() - start)
-                      .count();
-  Expect(synced, "synced: " + project.engine().status().error);
-  std::fprintf(stderr, "bench: %zu files, %.1f MiB, first sync in %lld ms (connect + install + manifest + pulls)\n",
-               files, static_cast<double>(bytes) / (1024.0 * 1024.0), static_cast<long long>(ms));
+  const auto sync_once = [&]() -> long long {
+    const auto start = std::chrono::steady_clock::now();
+    remote::RemoteProject project(config, {});
+    std::string error;
+    Expect(project.Open(&error), "opens: " + error);
+    const bool synced = WaitUntil(
+        [&] { return project.engine().status().synced_once; }, std::chrono::seconds(120),
+        std::chrono::milliseconds(2));
+    Expect(synced, "synced: " + project.engine().status().error);
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
+        .count();
+  };
+  const long long cold = sync_once();
+  // Past the racy window, so the recorded stats vouch for the mirror's bytes.
+  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+  const long long warm = sync_once();
+  std::fprintf(stderr,
+               "bench: %zu files, %.1f MiB: first sync %lld ms (connect + install + manifest + "
+               "pulls), reopen %lld ms\n",
+               files, static_cast<double>(bytes) / (1024.0 * 1024.0), cold, warm);
 }
 
 #endif
