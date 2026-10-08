@@ -251,6 +251,10 @@ void TestOpenFolderOnHostEditsTheHostTree() {
            for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
            return all;
          }());
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).left_label == "main.c (on " + target + ")" &&
+             WorkspaceShellTestAccess::ActiveCompare(shell).right_label == "main.c (yours)",
+         "each side says whose it is: '" + WorkspaceShellTestAccess::ActiveCompare(shell).left_label +
+             "' / '" + WorkspaceShellTestAccess::ActiveCompare(shell).right_label + "'");
   Expect(ReadFile(host_root / "main.c") == "// the agent's version\n" &&
              ReadFile(mirror / "main.c").rfind("// mine\n", 0) == 0,
          "and neither side was overwritten");
@@ -348,6 +352,27 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).read_only(), "the host file's copy is read-only");
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("typed");
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and typing does not change it");
+  {
+    // A real keystroke is refused out loud, not swallowed.
+    SDL_Event typed{};
+    typed.type = SDL_EVENT_TEXT_INPUT;
+    const std::string text = "x";
+    typed.text.text = text.c_str();
+    (void)shell.HandleEvent(typed);
+    bool said = false;
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      said = said || row.message == "Cannot edit in read-only editor";
+    }
+    Expect(said && !WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+           "typing into the read-only copy says so");
+    // However the copy's view is made — a restored session, a split — it is
+    // read-only: every view's content passes through the preferences.
+    editor::TextViewport restored;
+    restored.LoadContent("int restored;\n",
+                         WorkspaceShellTestAccess::ActiveEditor(shell).path());
+    WorkspaceShellTestAccess::ApplyEditorPreferences(shell, restored);
+    Expect(restored.read_only(), "a copy's view made any other way is read-only too");
+  }
   const std::filesystem::path other_copy =
       WorkspaceShellTestAccess::ProjectLauncher(shell).LocalPathFromHost(host.home / "include" / "other.h");
   std::filesystem::permissions(other_copy, std::filesystem::perms::owner_all);

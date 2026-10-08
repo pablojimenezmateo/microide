@@ -141,6 +141,9 @@
     return shell.DispatchDuePluginEditorEvents();
   }
 
+  static void ApplyEditorPreferences(WorkspaceShell& shell, editor::TextViewport& viewport) {
+    shell.ApplyEditorPreferences(viewport);
+  }
   static void ApplyEditorPreferencesToAllTabs(WorkspaceShell& shell) {
     shell.ApplyEditorPreferencesToAllTabs();
   }

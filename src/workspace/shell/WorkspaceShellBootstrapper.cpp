@@ -19,7 +19,18 @@ namespace microide::workspace {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
   const FocusTarget focus_before = context_.current_project_state.surface.focus;
+  // A keystroke a read-only view refused is said out loud (VS Code's "Cannot edit
+  // in read-only editor"), not swallowed.
+  const bool typing = event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT;
+  const editor::TextViewport* typed_into = typing ? ActiveEditorViewport() : nullptr;
+  const std::uint64_t refused_before = typed_into != nullptr ? typed_into->refused_edits() : 0;
   EventResult result = Bootstrapper(*this).BuildEventDispatcher().Handle(event);
+  if (typed_into != nullptr && ActiveEditorViewport() == typed_into &&
+      typed_into->refused_edits() > refused_before) {
+    Notify(NotificationService::Request{.tone = NotificationService::Tone::Info,
+                                        .key = "editor.read-only",
+                                        .message = "Cannot edit in read-only editor"});
+  }
   // The focus ring is drawn per-surface from each surface's render path. When focus moves
   // between surfaces, both the previously- and newly-focused surfaces must repaint so the
   // old ring is erased and the new one drawn. This is the single chokepoint for that

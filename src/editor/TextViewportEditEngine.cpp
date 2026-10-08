@@ -294,6 +294,7 @@ void TextViewport::DeleteForward() {
 
 bool TextViewport::ApplyHistoryStep(bool redo) {
   if (read_only_) {
+    ++refused_edits_;
     return false;
   }
   SyncCaretsIfDocumentChangedElsewhere();
@@ -1064,6 +1065,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   bool record_undo,
                                   CoalesceHint hint) {
   if (read_only_) {
+    ++refused_edits_;
     return false;
   }
   EnsureDocument();
@@ -1098,6 +1100,7 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
                                  LineBlob replacement,
                                  bool record_undo) {
   if (read_only_) {
+    ++refused_edits_;
     return false;
   }
   EnsureDocument();

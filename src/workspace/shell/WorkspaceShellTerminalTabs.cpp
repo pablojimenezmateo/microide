@@ -1,4 +1,6 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/CompareMergeService.h"
+#include "workspace/CompareInput.h"
 #include "workspace/services/RemoteHostService.h"
 
 #include <algorithm>
@@ -117,10 +119,17 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
           },
       .request_redraw = [this]() { RequestFullRedraw(); },
       .compare_files =
-          [this](const std::filesystem::path& left, const std::filesystem::path& right) {
-            return ActionCoordinator(MakeActionContext())
-                           .Execute(ActionId::CompareFiles, {left.string(), right.string()},
-                                    ActionSource::Shortcut)
+          [this](const std::filesystem::path& left, std::string left_label,
+                 const std::filesystem::path& right, std::string right_label) -> std::string {
+            std::optional<CompareInput> left_input = ReadFileCompareInput(left, /*editable=*/false);
+            std::optional<CompareInput> right_input = ReadFileCompareInput(right, /*editable=*/true);
+            if (!left_input.has_value() || !right_input.has_value()) {
+              return "cannot read " + (left_input.has_value() ? right : left).string();
+            }
+            left_input->label = std::move(left_label);
+            right_input->label = std::move(right_label);
+            return MakeCompareMergeService().OpenPlainComparison(std::move(*left_input),
+                                                                 std::move(*right_input))
                        ? std::string()
                        : std::string("the comparison did not open");
           },

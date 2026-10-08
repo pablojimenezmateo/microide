@@ -1,4 +1,6 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
+#include "workspace/shell/ShellGlueCache.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -41,6 +43,13 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
                                             bool include_contract,
                                             const EditorPreferenceSettings& settings) const {
+  // A copy of a host file outside a remote project (a system header behind go to
+  // definition) is not the project's to edit, however it was opened — the open
+  // funnel, a restored session, a split. Every view's content passes through here.
+  if (glue_->remote_host_service != nullptr && !viewport.path().empty() &&
+      glue_->remote_host_service->IsHostFileCopy(viewport.path())) {
+    viewport.SetReadOnly(true);
+  }
   // A `.editorconfig` in the repository is the project author's statement of how
   // its files are formatted, so it wins over our own settings for the properties
   // it names — matching VSCode, where EditorConfig overrides both the configured

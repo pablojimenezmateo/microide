@@ -634,6 +634,9 @@ class TextViewport {
   // deliberately NOT gated: they are how the content arrives.
   void SetReadOnly(bool read_only) { read_only_ = read_only; }
   [[nodiscard]] bool read_only() const { return read_only_; }
+  // Edits refused for read-only-ness so far: what lets the shell say "Cannot edit
+  // in read-only editor" instead of swallowing a keystroke without a word.
+  [[nodiscard]] std::uint64_t refused_edits() const { return refused_edits_; }
   std::vector<TextPosition> secondary_carets() const;
   // Full secondary carets, each carrying its selection anchor (empty for a plain
   // column caret). Shaping actions (move/indent line) use this so a ranged Ctrl-D
@@ -1327,6 +1330,7 @@ class TextViewport {
   // Declared before `lc_view_` because both the copy and the move constructor
   // initialize it there; clang's -Wreorder-ctor rejects the other order.
   bool read_only_ = false;
+  std::uint64_t refused_edits_ = 0;
   // Shared, not owned: see SetLanguageContractView. Null ⇒ no contract.
   std::shared_ptr<const LanguageContractView> lc_view_;
   // language_id() memo. Keyed on document identity + content revision + path +

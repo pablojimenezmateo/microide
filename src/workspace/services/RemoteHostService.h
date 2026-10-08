@@ -55,9 +55,10 @@ class RemoteHostService {
     std::function<std::optional<std::string>(std::string_view key)> setting;
     std::function<void(StatusBarSegmentValue)> set_status_segment;
     std::function<void()> request_redraw;
-    // Open a compare tab: `left` read-only, `right` editable. Empty string on
-    // success, else why not.
-    std::function<std::string(const std::filesystem::path& left, const std::filesystem::path& right)>
+    // Open a compare tab: `left` read-only, `right` editable, each side titled with
+    // its label. Empty string on success, else why not.
+    std::function<std::string(const std::filesystem::path& left, std::string left_label,
+                              const std::filesystem::path& right, std::string right_label)>
         compare_files;
     // Replace output channel `id`'s lines with `text`'s and show it.
     std::function<void(std::string_view id, std::string_view label, std::string_view text)>

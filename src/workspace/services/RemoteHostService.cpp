@@ -451,12 +451,15 @@ bool RemoteHostService::CompareConflict(const std::filesystem::path& path) {
     return false;
   }
   const std::filesystem::path mirror_file = path.lexically_normal();
+  const std::string host = entry->project->record().host;
   entry->project->engine().FetchHostCopy(
-      relative, [this, mirror_file](std::optional<std::filesystem::path> copy, std::string error) {
-        mailbox_.Post([this, mirror_file, copy = std::move(copy), error = std::move(error)]() {
+      relative, [this, mirror_file, host](std::optional<std::filesystem::path> copy, std::string error) {
+        mailbox_.Post([this, mirror_file, host, copy = std::move(copy), error = std::move(error)]() {
           std::string why = error;
           if (copy.has_value() && operations_.compare_files) {
-            why = operations_.compare_files(*copy, mirror_file);
+            const std::string name = mirror_file.filename().string();
+            why = operations_.compare_files(*copy, name + " (on " + host + ")", mirror_file,
+                                            name + " (yours)");
           }
           if (!why.empty() && operations_.notify) {
             operations_.notify(NotificationService::Request{
