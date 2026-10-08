@@ -1047,6 +1047,49 @@ void TestWorkspaceShellNotificationActionsReachableByKeyboard() {
   Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).empty(),
          "and the transient toast closed");
 }
+
+// The control channel presses the same button: `notification-action <row> <action>`
+// resolves the row by key or index and the button by label or index, then runs
+// the action through the executor a click uses.
+void TestWorkspaceShellNotificationActionCommandRunsTheButton() {
+  using microide::workspace::ActionId;
+  using microide::workspace::NotificationService;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::string body;
+  for (int i = 0; i < 100; ++i) {
+    body += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(source, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  NotificationService::Request request{.key = "remote.link", .message = "Connection lost",
+                                       .sticky = true};
+  request.actions.push_back({.label = "Show Log", .id = ActionId::Goto, .args = {"5"}});
+  request.actions.push_back({.label = "Reconnect", .id = ActionId::Goto, .args = {"30"}});
+  WorkspaceShellTestAccess::ShowNotificationRequest(shell, std::move(request));
+
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "notification-action nope Reconnect"),
+         "an unknown row is refused");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell,
+                                                       "notification-action remote.link Nope"),
+         "an unknown action is refused");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
+                                                      "notification-action remote.link reconnect"),
+         "a row by key and a button by (case-insensitive) label runs");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == 29,
+         "the button's action ran with its arguments");
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 1,
+         "a sticky row stays after its action, as on a click");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "notification-action 0 0"),
+         "a row and a button by index runs too");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == 4,
+         "the first button's action ran");
+}
 }  // namespace
 
 // Ctrl+Left/Right and Ctrl+Backspace/Delete must reach the editor as WORD verbs.
@@ -1181,6 +1224,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellNotificationActionButtonRunsItsAction);
   AddTest(tests, "WorkspaceShell/NotificationActionsReachableByKeyboard",
           TestWorkspaceShellNotificationActionsReachableByKeyboard);
+  AddTest(tests, "WorkspaceShell/NotificationActionCommandRunsTheButton",
+          TestWorkspaceShellNotificationActionCommandRunsTheButton);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenBottomPanelHidesWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion);
   AddTest(tests, "WorkspaceShell/CursorRestoresAfterMouseLeave",

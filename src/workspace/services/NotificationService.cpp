@@ -4,6 +4,7 @@
 #include <limits>
 #include <utility>
 
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -329,6 +330,49 @@ NotificationService::FocusKeyResult NotificationService::HandleFocusKey(FocusKey
       return {.changed = true};
   }
   return {};
+}
+
+std::optional<std::size_t> NotificationService::FindRow(std::string_view key_or_index) const {
+  if (key_or_index.empty()) {
+    return std::nullopt;
+  }
+  for (std::size_t i = 0; i < notifications_.size(); ++i) {
+    if (notifications_[i].key == key_or_index) {
+      return i;
+    }
+  }
+  const std::optional<std::size_t> index = util::ParseSize(key_or_index);
+  if (index.has_value() && *index < notifications_.size()) {
+    return index;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t> NotificationService::FindAction(std::size_t row,
+                                                           std::string_view label_or_index) const {
+  if (row >= notifications_.size() || label_or_index.empty()) {
+    return std::nullopt;
+  }
+  const Actions& actions = notifications_[row].actions;
+  for (std::size_t i = 0; i < actions.size(); ++i) {
+    if (actions[i].label == label_or_index) {
+      return i;
+    }
+  }
+  for (std::size_t i = 0; i < actions.size(); ++i) {
+    const std::string_view label = actions[i].label;
+    if (label.size() == label_or_index.size() &&
+        std::equal(label.begin(), label.end(), label_or_index.begin(), [](char a, char b) {
+          return util::ToLowerAsciiChar(a) == util::ToLowerAsciiChar(b);
+        })) {
+      return i;
+    }
+  }
+  const std::optional<std::size_t> index = util::ParseSize(label_or_index);
+  if (index.has_value() && *index < actions.size()) {
+    return index;
+  }
+  return std::nullopt;
 }
 
 }  // namespace microide::workspace

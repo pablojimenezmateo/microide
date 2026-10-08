@@ -8,6 +8,7 @@
 
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
+#include "workspace/services/NotificationService.h"
 
 namespace microide::workspace {
 
@@ -73,6 +74,9 @@ class ControlChannelService {
     // breakpoint-*/debug-* command so the channel never needs a separate
     // `set-setting debug.enabled true` prelude. Left null in tests.
     std::function<void()> ensure_debugger_enabled;
+    // The toast stack, for the `notifications` query. Null in tests that do not
+    // exercise it (the query then answers an empty list).
+    const NotificationService* notifications = nullptr;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,
@@ -137,6 +141,7 @@ class ControlChannelService {
   util::JsonValue BuildFunctionBreakpoints() const;
   util::JsonValue BuildExceptionFilters() const;
   util::JsonValue BuildTabs() const;
+  util::JsonValue BuildNotifications() const;
   // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
   // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;

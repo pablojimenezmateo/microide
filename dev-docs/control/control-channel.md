@@ -161,7 +161,16 @@ Newline-delimited JSON, one object per line.
 
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
-`editor`, `commands`, `terminals`, `terminal-output`.
+`editor`, `commands`, `terminals`, `terminal-output`, `notifications`.
+
+**Notification buttons.** `notifications` lists every toast oldest first:
+`{index, key, tone, message, sticky, progress?, actions}`, each action
+`{index, label, command, args}`. `notification-action <row> <action>` presses one
+exactly as a click does: the row by its `key` (else its index), the button by its
+label (exact, then case-insensitive; else its index). It runs through the same
+action executor, dismisses a transient row afterwards unless the action keeps it
+open, and leaves a sticky row to its owner. `focus-notifications` is the keyboard
+route (arrows, Enter, Delete, Escape) a person uses for the same buttons.
 
 The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
 `feat/editor-groups` control work, and made pane-aware):

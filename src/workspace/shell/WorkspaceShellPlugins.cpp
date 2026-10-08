@@ -363,6 +363,7 @@ WorkspaceShell::WorkspaceShell() {
                 return adapters;
               },
           .ensure_debugger_enabled = [this]() { EnsureDebuggerEnabledTransiently(); },
+          .notifications = &notification_service_,
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

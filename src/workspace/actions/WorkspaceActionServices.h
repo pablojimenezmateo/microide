@@ -233,6 +233,11 @@ class WorkspaceActionContext {
     std::function<void()> request_window_redraw;
     // Focus the notification stack; false when it is empty.
     std::function<bool()> focus_notifications;
+    // Resolve and take a notification row's action (see NotificationService::
+    // TakeAction); nullopt with *error naming what did not resolve.
+    std::function<std::optional<NotificationAction>(std::string_view, std::string_view,
+                                                    std::string*)>
+        take_notification_action;
     // Queue the host-level full-screen toggle. The window itself is owned by
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
@@ -632,6 +637,9 @@ class WorkspaceActionContext {
   void Notify(NotificationService::Tone tone, std::string message);
   // Focus the notification stack (see Operations::focus_notifications).
   bool FocusNotifications();
+  std::optional<NotificationAction> TakeNotificationAction(std::string_view row,
+                                                           std::string_view action,
+                                                           std::string* error);
   // Queue the host full-screen toggle (see Operations::request_toggle_fullscreen).
   // The shell only records it; Application owns the SDL window and applies the
   // request on its next ConsumeWindowAction poll.

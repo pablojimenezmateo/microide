@@ -151,6 +151,7 @@ Query verbs
   commands
   terminals
   terminal-output
+  notifications
 
 Commands
 --------
@@ -166,6 +167,10 @@ Edit a buffer headlessly (open -> navigate -> edit), e.g. the Moby Dick workout:
   type <text>            insert literal text at the caret (replaces selection)
   cut / copy / paste     clipboard edits at the caret/selection
   undo / redo            walk the edit history
+
+Notification buttons (the inline actions on a toast, as a click runs them):
+  --query notifications  every row: index, key, tone, message, sticky, actions
+  notification-action <row-key|row-index> <action-label|action-index>
 
 Breakpoint commands added for headless control:
   breakpoint-set <file> <line> [condition]
@@ -271,6 +276,7 @@ Every runnable command (also printed by
   rename-symbol [new-name]
   command-palette
   focus-notifications
+  notification-action <row-key|row-index> <action-label|action-index>
   colorscheme [name|list]
   toggle-theme
   toggle-fullscreen

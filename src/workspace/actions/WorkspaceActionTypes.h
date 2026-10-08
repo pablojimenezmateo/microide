@@ -17,6 +17,10 @@ enum class ActionId {
   // Toast"): arrows move between rows and buttons, Enter runs a button, Delete
   // dismisses a row, Escape gives focus back.
   FocusNotifications,
+  // Run one inline button of a notification row, as a click would:
+  // `notification-action <row-key|row-index> <action-label|action-index>`.
+  // The control channel's way to press Reconnect / Show Output.
+  NotificationAction,
   Colorscheme,
   ToggleColorTheme,
   ToggleFullscreen,

@@ -18,6 +18,9 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       // No default chord, as in VS Code (notifications.focusToasts is unbound).
       ActionSpec{ActionId::FocusNotifications, "focus-notifications", "focus-notifications",
                  "Focus Notifications", ""},
+      ActionSpec{ActionId::NotificationAction, "notification-action",
+                 "notification-action <row-key|row-index> <action-label|action-index>",
+                 "Run Notification Action", ""},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
                  "Colorscheme", ""},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",

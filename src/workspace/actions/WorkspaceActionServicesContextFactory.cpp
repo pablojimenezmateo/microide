@@ -864,6 +864,24 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 RequestWindowRedraw();
                 return true;
               },
+          .take_notification_action =
+              [this](std::string_view row, std::string_view action,
+                     std::string* error) -> std::optional<NotificationAction> {
+                const std::optional<std::size_t> row_index = notification_service_.FindRow(row);
+                if (!row_index.has_value()) {
+                  *error = "no notification \"" + std::string(row) + "\"";
+                  return std::nullopt;
+                }
+                const std::optional<std::size_t> action_index =
+                    notification_service_.FindAction(*row_index, action);
+                if (!action_index.has_value()) {
+                  *error = "notification \"" + std::string(row) + "\" has no action \"" +
+                           std::string(action) + "\"";
+                  return std::nullopt;
+                }
+                RequestWindowRedraw();
+                return notification_service_.TakeAction(*row_index, *action_index);
+              },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },

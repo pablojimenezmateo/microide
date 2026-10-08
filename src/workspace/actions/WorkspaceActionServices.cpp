@@ -1360,6 +1360,15 @@ bool WorkspaceActionContext::FocusNotifications() {
   return operations_.focus_notifications && operations_.focus_notifications();
 }
 
+std::optional<NotificationAction> WorkspaceActionContext::TakeNotificationAction(
+    std::string_view row, std::string_view action, std::string* error) {
+  if (!operations_.take_notification_action) {
+    *error = "notifications are not available";
+    return std::nullopt;
+  }
+  return operations_.take_notification_action(row, action, error);
+}
+
 void WorkspaceActionContext::ToggleWindowFullscreen() {
   if (operations_.request_toggle_fullscreen) {
     operations_.request_toggle_fullscreen();

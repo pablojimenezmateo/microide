@@ -188,6 +188,21 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("No notifications to focus");
       }
       return DispatchResult::Handled;
+    case ActionId::NotificationAction: {
+      if (args.size() < 2) {
+        return reject("usage: notification-action <row-key|row-index> <action-label|action-index>");
+      }
+      std::string error;
+      const std::optional<NotificationAction> action =
+          context_.TakeNotificationAction(args[0], args[1], &error);
+      if (!action.has_value()) {
+        return reject(error);
+      }
+      // Exactly what a click on the button runs. A rejection of the inner action is
+      // reported by that call; this one only has to say it did not succeed.
+      return Execute(action->id, action->args, source) ? DispatchResult::Handled
+                                                       : DispatchResult::Rejected;
+    }
     case ActionId::OpenSettings:
       context_.OpenSettingsOverlay();
       return DispatchResult::Handled;

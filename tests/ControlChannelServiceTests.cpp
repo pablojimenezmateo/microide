@@ -853,6 +853,74 @@ void TestDebugCommandAutoEnablesDebugger() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+
+// `--query notifications` lists every toast with its inline buttons, so an agent
+// can see "Reconnect" before pressing it with `notification-action`.
+void TestNotificationsQueryListsActions() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-notif-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::NotificationService notifications;
+  microide::workspace::NotificationService::Request request{
+      .tone = microide::workspace::NotificationService::Tone::Warning,
+      .key = "remote.link",
+      .message = "Connection lost",
+      .sticky = true};
+  request.actions.push_back(
+      {.label = "Reconnect", .id = microide::workspace::ActionId::Goto, .args = {"3"}});
+  notifications.Show(std::move(request), 0);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  microide::workspace::ControlChannelService service;
+  service.Configure(context,
+                    microide::workspace::ControlChannelService::Operations{
+                        .execute_command_line =
+                            [](const std::string&) {
+                              return microide::workspace::ControlChannelService::CommandOutcome{
+                                  .ok = true};
+                            },
+                        .notifications = &notifications,
+                    });
+  service.SetWakeChannel(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < connect_deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect to the control socket");
+
+  const auto json = util::ParseJson(ExchangeLine(service, fd, R"({"id":1,"query":"notifications"})"));
+  Expect(json.has_value() && (*json)["ok"].AsBool(), "the notifications query succeeds");
+  const util::JsonValue& rows = (*json)["result"];
+  Expect(rows.IsArray() && rows.AsArray().size() == 1, "one row");
+  const util::JsonValue& row = rows.AsArray()[0];
+  Expect(row["key"].AsString() == "remote.link" && row["tone"].AsString() == "warning" &&
+             row["sticky"].AsBool() && row["message"].AsString() == "Connection lost",
+         "the row's identity, tone and text are reported");
+  const util::JsonValue& actions = row["actions"];
+  Expect(actions.IsArray() && actions.AsArray().size() == 1 &&
+             actions.AsArray()[0]["label"].AsString() == "Reconnect" &&
+             actions.AsArray()[0]["command"].AsString() == "goto" &&
+             actions.AsArray()[0]["args"].AsArray().at(0).AsString() == "3",
+         "each button is reported with its label, command and arguments");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 #else
 
 void TestQueryAndCommandOverSocket() {}
@@ -863,6 +931,7 @@ void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
 void TestSocketRebindRehardensTheRuntimeDirectory() {}
 void TestDebugCommandAutoEnablesDebugger() {}
+void TestNotificationsQueryListsActions() {}
 void TestControlDiscoveryIgnoresForgedSocketAndPid() {}
 void TestControlListPrintsCanonicalSingleLineJson() {}
 void TestControlDiscoveryRejectsOversizedDescriptor() {}
@@ -1036,6 +1105,8 @@ void TestOverlongSocketPathSaysWhyItRefused() {
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlChannelService/OverlongSocketPathSaysWhyItRefused",
           TestOverlongSocketPathSaysWhyItRefused);
+  AddTest(tests, "ControlChannelService/NotificationsQueryListsActions",
+          TestNotificationsQueryListsActions);
   AddTest(tests, "ControlChannelService/QueryAndCommandOverSocket",
           TestQueryAndCommandOverSocket);
   AddTest(tests, "ControlChannelService/QueryResponseIsBounded",

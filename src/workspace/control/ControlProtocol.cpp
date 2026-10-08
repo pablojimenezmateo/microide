@@ -6,11 +6,11 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr std::array<std::string_view, 13> kQueryVerbs = {
+constexpr std::array<std::string_view, 14> kQueryVerbs = {
     "debug-state",          "breakpoints", "function-breakpoints", "exception-filters",
     "tabs",                 "projects",    "status",               "launch-configs",
     "adapters",             "editor",      "commands",             "terminals",
-    "terminal-output",
+    "terminal-output",      "notifications",
 };
 
 }  // namespace
@@ -193,6 +193,10 @@ std::string ControlChannelHelpText() {
       "  type <text>            insert literal text at the caret (replaces selection)\n"
       "  cut / copy / paste     clipboard edits at the caret/selection\n"
       "  undo / redo            walk the edit history\n"
+      "\n"
+      "Notification buttons (the inline actions on a toast, as a click runs them):\n"
+      "  --query notifications  every row: index, key, tone, message, sticky, actions\n"
+      "  notification-action <row-key|row-index> <action-label|action-index>\n"
       "\n"
       "Breakpoint commands added for headless control:\n"
       "  breakpoint-set <file> <line> [condition]\n"

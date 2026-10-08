@@ -459,6 +459,9 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "terminal-output") {
     return BuildTerminalOutput(args, ok, error);
   }
+  if (verb == "notifications") {
+    return BuildNotifications();
+  }
   *ok = false;
   *error = "unknown query \"" + verb + "\"";
   return util::JsonValue(nullptr);
@@ -742,6 +745,52 @@ util::JsonValue ControlChannelService::BuildCommands() const {
     commands.push_back(util::JsonValue(std::move(object)));
   }
   return util::JsonValue(std::move(commands));
+}
+
+util::JsonValue ControlChannelService::BuildNotifications() const {
+  util::JsonArray rows;
+  if (operations_.notifications == nullptr) {
+    return util::JsonValue(std::move(rows));
+  }
+  const auto tone_name = [](NotificationService::Tone tone) {
+    switch (tone) {
+      case NotificationService::Tone::Error: return "error";
+      case NotificationService::Tone::Warning: return "warning";
+      case NotificationService::Tone::Info: break;
+    }
+    return "info";
+  };
+  const auto& active = operations_.notifications->Active();
+  for (std::size_t i = 0; i < active.size(); ++i) {
+    const NotificationService::Notification& row = active[i];
+    util::JsonObject object;
+    object["index"] = util::JsonValue(static_cast<std::int64_t>(i));
+    object["key"] = util::JsonValue(row.key);
+    object["tone"] = util::JsonValue(tone_name(row.tone));
+    object["message"] = util::JsonValue(row.message);
+    object["sticky"] = util::JsonValue(row.sticky);
+    if (row.progress.has_value()) {
+      object["progress"] = util::JsonValue(static_cast<double>(*row.progress));
+    }
+    util::JsonArray actions;
+    for (std::size_t a = 0; a < row.actions.size(); ++a) {
+      util::JsonObject action;
+      action["index"] = util::JsonValue(static_cast<std::int64_t>(a));
+      action["label"] = util::JsonValue(row.actions[a].label);
+      const ActionSpec* spec = FindWorkspaceActionSpec(row.actions[a].id);
+      action["command"] =
+          util::JsonValue(spec != nullptr ? std::string(spec->command_name) : std::string());
+      util::JsonArray args;
+      for (const std::string& arg : row.actions[a].args) {
+        args.push_back(util::JsonValue(arg));
+      }
+      action["args"] = util::JsonValue(std::move(args));
+      actions.push_back(util::JsonValue(std::move(action)));
+    }
+    object["actions"] = util::JsonValue(std::move(actions));
+    rows.push_back(util::JsonValue(std::move(object)));
+  }
+  return util::JsonValue(std::move(rows));
 }
 
 util::JsonValue ControlChannelService::BuildTerminals() const {

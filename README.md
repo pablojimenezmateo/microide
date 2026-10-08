@@ -659,6 +659,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `rename-symbol [new-name]`
 - `command-palette`
 - `focus-notifications`
+- `notification-action <row-key|row-index> <action-label|action-index>`
 - `colorscheme [name|list]`
 - `toggle-theme`
 - `toggle-fullscreen`

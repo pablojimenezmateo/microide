@@ -172,6 +172,13 @@ class NotificationService {
   // nullopt for a stale index.
   std::optional<Action> TakeAction(std::size_t index, std::size_t action);
 
+  // Resolve a row by key, else by its index in Active() (oldest first) — the two
+  // ways an agent names a row through the control channel.
+  std::optional<std::size_t> FindRow(std::string_view key_or_index) const;
+  // Resolve one of that row's buttons by label (exact, then ASCII case-insensitive),
+  // else by index.
+  std::optional<std::size_t> FindAction(std::size_t row, std::string_view label_or_index) const;
+
   // Keyboard focus on the stack (VS Code's "Focus Notification Toast"): the newest
   // row, on its primary (last) button. False when there is nothing to focus.
   bool Focus();
