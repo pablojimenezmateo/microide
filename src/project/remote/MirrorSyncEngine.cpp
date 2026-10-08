@@ -724,6 +724,8 @@ void MirrorSyncEngine::SyncNow() {
     std::lock_guard lock(mutex_);
     const std::size_t previously_remote = RemoteCountLocked();
     held_deletes_.clear();  // a full manifest re-decides every delete
+    status_.unreadable = 0;  // and retries every unreadable file
+    status_.first_unreadable.clear();
     std::vector<std::string> listed;
     listed.reserve(manifest->rows.size());
     for (ManifestRow& row : manifest->rows) {
@@ -922,8 +924,11 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
   for (RemoteWorkspace::FetchedObject& object : *objects) {
     if (object.missing || !object.hash.has_value()) {
       if (!object.error.empty()) {
+        // One file the host cannot read is that file's problem, not the sync's.
         std::lock_guard lock(mutex_);
-        status_.error = object.error;
+        if (status_.unreadable++ == 0) {
+          status_.first_unreadable = object.path + ": " + object.error;
+        }
       }
       continue;  // gone since the manifest: the next sync deletes it
     }

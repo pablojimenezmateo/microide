@@ -79,6 +79,10 @@ class MirrorSyncEngine {
     std::size_t conflicts = 0;
     // A delete diff held for the user: how many paths it would remove.
     std::size_t held_deletes = 0;
+    // Files the host listed but could not read (permissions, a file that changed
+    // type): not pulled, and not a failure of the sync. Retried by the next full one.
+    std::size_t unreadable = 0;
+    std::string first_unreadable;  // "path: why"
   };
 
   struct Callbacks {

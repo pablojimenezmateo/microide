@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+#if defined(__unix__) || defined(__APPLE__)
+#include <unistd.h>
+#endif
+
 namespace microide::tests {
 namespace {
 
@@ -148,6 +152,28 @@ void TestMirrorPullsLargeFilesLast() {
   Expect(!std::filesystem::exists(capped.Tree("big.bin")) &&
              capped.engine->StateOf("big.bin") == ContentState::Absent,
          "a file over the ceiling stays absent, and says so");
+}
+
+// A file the host cannot read has no hash, so the host leaves it out; the sync
+// itself succeeds, everything else arrives, and it follows once it is readable.
+void TestMirrorSkipsAnUnreadableHostFile() {
+  MirrorSession session;
+  WriteFile(session.host / "ok.txt", "ok\n");
+  WriteFile(session.host / "secret.txt", "no\n");
+  std::filesystem::permissions(session.host / "secret.txt", std::filesystem::perms::none);
+  if (::access((session.host / "secret.txt").c_str(), R_OK) == 0) {
+    return;  // running as root: nothing is unreadable
+  }
+  session.Connect();
+  session.Sync();
+  const auto status = session.engine->status();
+  Expect(status.error.empty() && status.synced_once, "the sync succeeds: " + status.error);
+  Expect(!std::filesystem::exists(session.Tree("secret.txt")), "the unreadable file is not mirrored");
+  Expect(ReadFile(session.Tree("ok.txt")) == "ok\n", "everything else arrives");
+  std::filesystem::permissions(session.host / "secret.txt", std::filesystem::perms::owner_all);
+  session.Sync();
+  Expect(session.engine->status().unreadable == 0 && ReadFile(session.Tree("secret.txt")) == "no\n",
+         "made readable, the next sync pulls it");
 }
 
 void TestMirrorCarriesNonUtf8Names() {
@@ -440,6 +466,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
+  AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);

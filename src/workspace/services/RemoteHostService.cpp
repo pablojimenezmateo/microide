@@ -280,6 +280,10 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
         row(Tone::Warning, label + " would delete " + std::to_string(sync.held_deletes) +
                                " files from the mirror; the deletion is held (the host root "
                                "may be unmounted or empty)");
+      } else if (sync.unreadable > 0 && !sync.syncing) {
+        row(Tone::Warning, std::to_string(sync.unreadable) + (sync.unreadable == 1 ? " file" : " files") +
+                               " on " + record.host + " could not be read and are not in the mirror (" +
+                               sync.first_unreadable + ")");
       } else if (sync.syncing && !sync.synced_once) {
         row(Tone::Info, "Syncing " + label + "… (" + std::to_string(sync.absent) + " files to fetch)");
       } else {
