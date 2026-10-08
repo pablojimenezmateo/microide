@@ -83,6 +83,42 @@ LocalStat StatNoFollow(const std::filesystem::path& path) {
   return out;
 }
 
+void EncodeTreeOps(const std::deque<MirrorStore::PendingTreeOp>& ops, std::string& body) {
+  util::PutVarint(body, ops.size());
+  for (const MirrorStore::PendingTreeOp& op : ops) {
+    body.push_back(static_cast<char>(op.kind));
+    util::PutBytes(body, op.path);
+    util::PutBytes(body, op.new_path);
+  }
+}
+
+bool DecodeTreeOps(util::ByteReader& in, std::size_t limit, std::deque<MirrorStore::PendingTreeOp>& out) {
+  using Op = MirrorStore::PendingTreeOp;
+  const std::uint64_t count = in.Varint();
+  for (std::uint64_t i = 0; i < count && !in.failed(); ++i) {
+    if (i > limit) {
+      return false;
+    }
+    Op op;
+    const std::uint64_t kind = in.Le(1);
+    op.path = std::string(in.Bytes(kMaxManifestPathBytes));
+    op.new_path = std::string(in.Bytes(kMaxManifestPathBytes));
+    if (kind < 1 || kind > 3 || !IsSafeRelativePath(op.path) ||
+        (kind == 2 && !IsSafeRelativePath(op.new_path))) {
+      return false;
+    }
+    op.kind = static_cast<Op::Kind>(kind);
+    out.push_back(std::move(op));
+  }
+  return !in.failed();
+}
+
+bool WriteRecord(const std::filesystem::path& path, const std::string& body) {
+  return persistence::PersistedRecordWriter::WriteFile(
+      path, std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()),
+      0);
+}
+
 }  // namespace
 
 MirrorStore::MirrorStore(std::filesystem::path directory, std::string_view tree_name)
@@ -172,26 +208,72 @@ bool MirrorStore::Open(std::string* error) {
     entries_.emplace(std::move(path), std::move(entry));
   }
   pending_tree_ops_.clear();
-  if (version >= 2 && !in.failed()) {
-    const std::uint64_t ops = in.Varint();
-    for (std::uint64_t i = 0; i < ops && !in.failed() && i <= body.size(); ++i) {
-      PendingTreeOp op;
-      const std::uint64_t kind = in.Le(1);
-      op.path = std::string(in.Bytes(kMaxManifestPathBytes));
-      op.new_path = std::string(in.Bytes(kMaxManifestPathBytes));
-      if (kind < 1 || kind > 3 || !IsSafeRelativePath(op.path) ||
-          (kind == 2 && !IsSafeRelativePath(op.new_path))) {
-        in.Fail();
-        break;
-      }
-      op.kind = static_cast<PendingTreeOp::Kind>(kind);
-      pending_tree_ops_.push_back(std::move(op));
-    }
+  if (version >= 2 && !in.failed() && !DecodeTreeOps(in, body.size(), pending_tree_ops_)) {
+    in.Fail();
   }
   if (in.failed() || !in.at_end()) {
     entries_.clear();
     pending_tree_ops_.clear();
     *error = "the mirror's state file " + state_path().string() + " is truncated or corrupt";
+    return false;
+  }
+  // The journal is written before every push and tree operation, the state only
+  // lazily: where both exist, the journal's pending set is the newer truth.
+  const auto journal = persistence::PersistedRecordReader::ReadFile(journal_path());
+  if (journal.has_value()) {
+    const std::string_view jbody(reinterpret_cast<const char*>(journal->body.data()),
+                                 journal->body.size());
+    util::ByteReader jin(jbody);
+    std::vector<std::string> pending;
+    const bool version_ok = jin.Varint() == 1;
+    const std::uint64_t paths = jin.Varint();
+    for (std::uint64_t i = 0; version_ok && i < paths && !jin.failed() && i <= jbody.size(); ++i) {
+      std::string path(jin.Bytes(kMaxManifestPathBytes));
+      if (!IsSafeRelativePath(path)) {
+        jin.Fail();
+        break;
+      }
+      pending.push_back(std::move(path));
+    }
+    std::deque<PendingTreeOp> ops;
+    if (version_ok && !jin.failed() && DecodeTreeOps(jin, jbody.size(), ops) && jin.at_end()) {
+      for (auto& [path, entry] : entries_) {
+        (void)path;
+        entry.push_pending = false;
+      }
+      for (std::string& path : pending) {
+        Entry& entry = entries_[path];
+        if (!entry.has_remote) {
+          entry.remote.path = path;
+        }
+        entry.push_pending = true;
+      }
+      pending_tree_ops_ = std::move(ops);
+    } else {
+      *error = "the mirror's journal " + journal_path().string() + " is corrupt";
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MirrorStore::SaveJournal(std::string* error) const {
+  std::string body;
+  util::PutVarint(body, 1);
+  std::size_t pending = 0;
+  for (const auto& [path, entry] : entries_) {
+    (void)path;
+    pending += entry.push_pending ? 1 : 0;
+  }
+  util::PutVarint(body, pending);
+  for (const auto& [path, entry] : entries_) {
+    if (entry.push_pending) {
+      util::PutBytes(body, path);
+    }
+  }
+  EncodeTreeOps(pending_tree_ops_, body);
+  if (!WriteRecord(journal_path(), body)) {
+    *error = "cannot write the mirror's journal " + journal_path().string();
     return false;
   }
   return true;
@@ -231,21 +313,12 @@ bool MirrorStore::Save(std::string* error) const {
       util::PutVarint(body, ZigZag(entry.local_mtime_ns));
     }
   }
-  util::PutVarint(body, pending_tree_ops_.size());
-  for (const PendingTreeOp& op : pending_tree_ops_) {
-    body.push_back(static_cast<char>(op.kind));
-    util::PutBytes(body, op.path);
-    util::PutBytes(body, op.new_path);
-  }
-  persistence::PersistedRecordWriterError write_error = persistence::PersistedRecordWriterError::None;
-  if (!persistence::PersistedRecordWriter::WriteFile(
-          state_path(),
-          std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()),
-          0, &write_error)) {
+  EncodeTreeOps(pending_tree_ops_, body);
+  if (!WriteRecord(state_path(), body)) {
     *error = "cannot write the mirror's state file " + state_path().string();
     return false;
   }
-  return true;
+  return SaveJournal(error);
 }
 
 MirrorStore::Entry* MirrorStore::Find(std::string_view path) {

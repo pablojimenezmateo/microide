@@ -59,6 +59,31 @@ void TestMirrorStoreRoundTrips() {
          "a local-only entry survives");
 }
 
+// The state is written lazily, the journal at once: a reopened mirror takes the
+// pending pushes and tree operations from the journal when it is newer.
+void TestMirrorStoreJournalOverridesALaggingState() {
+  TemporaryDirectory temp;
+  std::string error;
+  {
+    MirrorStore store(temp.path() / "m");
+    Expect(store.Open(&error), "opens");
+    store.entries()["a.txt"].push_pending = true;
+    store.entries()["b.txt"];
+    Expect(store.Save(&error), "the full state (a.txt pending)");
+    store.entries()["a.txt"].push_pending = false;  // acknowledged
+    store.entries()["b.txt"].push_pending = true;   // a new save
+    store.pending_tree_ops().push_back(
+        MirrorStore::PendingTreeOp{MirrorStore::PendingTreeOp::Kind::Delete, "gone.txt", {}});
+    Expect(store.SaveJournal(&error), "only the journal after that");
+  }
+  MirrorStore reopened(temp.path() / "m");
+  Expect(reopened.Open(&error), "reopens: " + error);
+  Expect(!reopened.Find("a.txt")->push_pending && reopened.Find("b.txt")->push_pending,
+         "the journal's pending set wins over the older state");
+  Expect(reopened.pending_tree_ops().size() == 1 && reopened.pending_tree_ops()[0].path == "gone.txt",
+         "and its tree operations");
+}
+
 void TestMirrorStoreCorruptStateIsAnError() {
   TemporaryDirectory temp;
   std::string error;
@@ -106,6 +131,7 @@ void TestMirrorStoreDefaultDirectory() {
 void RegisterMirrorStoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorStore/RoundTrips", TestMirrorStoreRoundTrips);
   AddTest(tests, "MirrorStore/CorruptStateIsAnError", TestMirrorStoreCorruptStateIsAnError);
+  AddTest(tests, "MirrorStore/JournalOverridesALaggingState", TestMirrorStoreJournalOverridesALaggingState);
   AddTest(tests, "MirrorStore/CheckLocal", TestMirrorStoreCheckLocal);
   AddTest(tests, "MirrorStore/DefaultDirectory", TestMirrorStoreDefaultDirectory);
 }

@@ -447,8 +447,9 @@ silent one:
 - **No object store**: the mirror keeps each path's base HASH, not its bytes, so
   there is no delta base, no three-way view of a conflict, and a branch switch
   re-fetches files the mirror once had. Correctness does not depend on it.
-- **`meta/state` is rewritten whole on every push** — O(paths) bytes per save;
-  an append-only journal would make it O(1).
+- ~~`meta/state` is rewritten whole on every push~~ — fixed 2026-10-08: a small
+  `meta/journal` (pending pushes, tree operations) is written before every attempt
+  and the full state once per burst of engine work; Open lets the journal win.
 - **Paths travel in JSON** in `object/fetch`, `file/write` and `fs/op`, so a host
   file name that is not valid UTF-8 cannot be fetched or written (the manifest
   itself is binary and carries it).

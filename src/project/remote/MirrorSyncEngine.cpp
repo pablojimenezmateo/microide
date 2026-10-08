@@ -54,6 +54,11 @@ MirrorSyncEngine::~MirrorSyncEngine() {
     alive_->engine = nullptr;
   }
   queue_.Shutdown();
+  // A deferred state save the shutdown cancelled still lands.
+  std::lock_guard lock(mutex_);
+  if (state_save_queued_) {
+    SaveNowLocked();
+  }
 }
 
 void MirrorSyncEngine::Changed() {
@@ -475,8 +480,30 @@ void MirrorSyncEngine::RecountLocked() {
 }
 
 void MirrorSyncEngine::SaveLocked() {
+  // The whole state is O(paths) bytes: written once per burst of engine work, by a
+  // job at the back of the queue, rather than per push. Everything a crash must not
+  // lose is in the journal, which JournalLocked writes at once.
+  JournalLocked();
+  if (!state_save_queued_) {
+    state_save_queued_ = true;
+    queue_.Post([this]() {
+      std::lock_guard lock(mutex_);
+      state_save_queued_ = false;
+      SaveNowLocked();
+    });
+  }
+}
+
+void MirrorSyncEngine::SaveNowLocked() {
   std::string error;
   if (!store_.Save(&error)) {
+    status_.error = error;
+  }
+}
+
+void MirrorSyncEngine::JournalLocked() {
+  std::string error;
+  if (!store_.SaveJournal(&error)) {
     status_.error = error;
   }
 }
@@ -527,6 +554,11 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan) {
     } else {
       entry.conflict = true;
     }
+  } else if (util::HashFileContent(store_.tree() / path) == std::optional(entry.remote.hash)) {
+    // Both sides already hold the same bytes (a push whose acknowledgement the state
+    // file had not recorded yet, say): current, whatever the base said.
+    entry.base = entry.remote.hash;
+    store_.RecordLocal(path, entry);
   } else if (!host_moved) {
     // Edited in tree/ by something other than the editor's save: still ours.
     entry.push_pending = true;
@@ -890,6 +922,16 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         if (store_.CheckLocal(path, *entry) != LocalState::MatchesBase) {
           entry->push_pending = true;
           queue_.Post([this, path]() { PushNow(path); });
+        }
+      } else if (result.status == Status::Conflict &&
+                 result.hash == std::optional(util::HashContent(content))) {
+        // The host already holds exactly these bytes: a push replayed after its
+        // acknowledgement was lost. Done, not a conflict.
+        entry->base = result.hash;
+        entry->push_pending = false;
+        entry->conflict = false;
+        if (entry->has_remote) {
+          entry->remote.hash = *result.hash;
         }
       } else if (result.status == Status::Conflict) {
         entry->conflict = true;

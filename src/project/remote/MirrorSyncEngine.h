@@ -175,7 +175,10 @@ class MirrorSyncEngine {
   void DrainTreeOps();
   void ResolveNow(const std::string& path, Resolution resolution);
   void RecountLocked();
+  // Journal now, whole state at the end of the current burst.
   void SaveLocked();
+  void SaveNowLocked();
+  void JournalLocked();
   void Changed();
 
   RemoteWorkspace& workspace_;
@@ -186,6 +189,7 @@ class MirrorSyncEngine {
   mutable std::mutex mutex_;  // guards store_'s entries and the members below
   Status status_;
   std::vector<std::string> held_deletes_;
+  bool state_save_queued_ = false;
 
   // What an asynchronous completion holds instead of `this`.
   struct Alive {

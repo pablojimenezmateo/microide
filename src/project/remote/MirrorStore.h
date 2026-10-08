@@ -77,7 +77,13 @@ class MirrorStore {
   // empty mirror; a corrupt one is an error (never silently an empty mirror, which
   // would re-pull everything and forget every pending push).
   bool Open(std::string* error);
+  // The whole state, and with it the journal.
   bool Save(std::string* error) const;
+  // Only the journal (meta/journal): which paths have a push pending and the tree
+  // operations not yet acknowledged. Small, so it is written before every attempt;
+  // the full state can then be saved lazily, and Open lets the journal override it.
+  bool SaveJournal(std::string* error) const;
+  std::filesystem::path journal_path() const { return meta_ / "journal"; }
 
   // Tree operations applied to tree/ and not yet acknowledged by the host, in the
   // order they were made (a rename before a later push to its new path matters).
