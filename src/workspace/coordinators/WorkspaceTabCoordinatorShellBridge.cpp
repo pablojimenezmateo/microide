@@ -365,10 +365,14 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
         // failed open look like a click that did nothing.
         editor_state.content = TabEntry::EditorTabState::Content::Failed;
         const std::string name = path.empty() ? std::string("file") : path.filename().string();
-        Notify(NotificationService::Tone::Error,
-               completion.status == project::FileReadService::Status::TooLarge
-                   ? "Cannot open " + name + ": file is too large"
-                   : "Could not read " + name);
+        std::string reason = completion.status == project::FileReadService::Status::TooLarge
+                                 ? "Cannot open " + name + ": file is too large"
+                                 : "Could not read " + name;
+        Notify(NotificationService::Tone::Error, reason);
+        // The toast is gone in seconds; the banner stays on the tab, with a Retry
+        // (TD-2026-09-29-315).
+        SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::OpenFailed, path,
+                        std::move(reason));
         RequestEditorSurfaceRedraw();
         return;
       }

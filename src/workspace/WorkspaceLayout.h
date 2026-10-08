@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "compare/CompareModel.h"
@@ -317,15 +318,25 @@ inline constexpr float kWorkspaceLayoutCompactBreakpointDefault = 720.0f;
 inline constexpr float kWorkspaceLayoutCompactHysteresis = 12.0f;
 inline constexpr float kWorkspaceEditorBannerHeight = 30.0f;
 
-// Hit rects for the non-blocking editor banner. `reload`/`overwrite`/`keep` have
-// w == 0 for the informational `ReloadedNotice` banner; `dismiss` (the X) is
-// always present.
+// The non-blocking editor banner's buttons. Each banner kind names its own list
+// (see EditorBannerButtonsFor); the layout places them right to left before the
+// dismiss X, which every banner has. A list, not a fixed rect per verb: a kind
+// with one action (Retry) needs no slot for the four the external-change banner
+// carries.
+enum class EditorBannerAction { Compare, Reload, Overwrite, Keep, Retry };
+struct EditorBannerButton {
+  EditorBannerAction action = EditorBannerAction::Keep;
+  std::string_view label;
+  float width = 0.0f;
+  bool destructive = false;
+};
+inline constexpr std::size_t kMaxEditorBannerButtons = 4;
 struct EditorBannerButtonLayout {
-  SDL_FRect compare{};
-  SDL_FRect reload{};
-  SDL_FRect overwrite{};
-  SDL_FRect keep{};
+  std::span<const EditorBannerButton> buttons;  // static storage, in display order
+  std::array<SDL_FRect, kMaxEditorBannerButtons> rects{};  // rects[i] is buttons[i]
   SDL_FRect dismiss{};
+  // Left edge of the leftmost control: where the banner's message must stop.
+  [[nodiscard]] float controls_left() const { return buttons.empty() ? dismiss.x : rects[0].x; }
 };
 
 SDL_FRect MakeRect(float x, float y, float w, float h);
@@ -456,7 +467,8 @@ std::array<SDL_FRect, 3> ComputeDirtyPromptButtonRects(const SDL_FRect& dialog);
 // The banner strip occupies the top `kWorkspaceEditorBannerHeight` of the editor
 // surface; editor content is laid out below it (see ComputeEditorPaneLayouts).
 SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface);
-EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip, bool has_actions);
+EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
+                                                        std::span<const EditorBannerButton> buttons);
 SDL_FRect ComputePromptSurfaceRect(const SDL_FRect& full);
 std::vector<SDL_FRect> ComputePromptSurfaceButtonRects(const SDL_FRect& dialog,
                                                        int button_count = 2);

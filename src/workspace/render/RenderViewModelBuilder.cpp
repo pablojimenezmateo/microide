@@ -665,12 +665,17 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
       banner != nullptr) {
     const std::string name = banner->path.filename().string();
     EditorBannerViewModel view_model;
-    if (banner->kind == EditorBannerState::Kind::ExternalChange) {
-      view_model.has_actions = true;
-      view_model.message = name + " changed on disk - reload, overwrite, or keep editing?";
-    } else {
-      view_model.has_actions = false;
-      view_model.message = "Reloaded " + name + " from disk";
+    view_model.buttons = EditorBannerButtonsFor(banner->kind);
+    switch (banner->kind) {
+      case EditorBannerState::Kind::ExternalChange:
+        view_model.message = name + " changed on disk - reload, overwrite, or keep editing?";
+        break;
+      case EditorBannerState::Kind::ReloadedNotice:
+        view_model.message = "Reloaded " + name + " from disk";
+        break;
+      case EditorBannerState::Kind::OpenFailed:
+        view_model.message = banner->reason.empty() ? "Could not read " + name : banner->reason;
+        break;
     }
     editor_banner = std::move(view_model);
   }

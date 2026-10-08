@@ -13,6 +13,27 @@
 
 namespace microide::workspace {
 
+std::span<const EditorBannerButton> EditorBannerButtonsFor(EditorBannerState::Kind kind) {
+  static constexpr EditorBannerButton kExternalChange[] = {
+      {EditorBannerAction::Compare, "Compare", 72.0f},
+      {EditorBannerAction::Reload, "Reload", 64.0f},
+      {EditorBannerAction::Overwrite, "Overwrite", 78.0f, /*destructive=*/true},
+      {EditorBannerAction::Keep, "Keep", 54.0f},
+  };
+  static constexpr EditorBannerButton kOpenFailed[] = {
+      {EditorBannerAction::Retry, "Retry", 58.0f},
+  };
+  switch (kind) {
+    case EditorBannerState::Kind::ExternalChange:
+      return kExternalChange;
+    case EditorBannerState::Kind::OpenFailed:
+      return kOpenFailed;
+    case EditorBannerState::Kind::ReloadedNotice:
+      break;
+  }
+  return {};
+}
+
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state) {
   const EditorGroup& group = state.focused_group();
   if (state.editor_banners.empty() || !group.has_active_tab()) {
@@ -24,8 +45,12 @@ const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& s
   }
   const std::filesystem::path active_path =
       tab.editor_state->viewport.path().lexically_normal();
+  const bool failed = tab.editor_state->content == TabEntry::EditorTabState::Content::Failed;
   for (const EditorBannerState& banner : state.editor_banners) {
-    if (active_path == banner.path) {
+    // A failed open's banner describes the TAB's state, not the file's: once the
+    // tab has content (a retry, a reload, a reopen) it no longer applies.
+    if (active_path == banner.path &&
+        (banner.kind != EditorBannerState::Kind::OpenFailed || failed)) {
       return &banner;
     }
   }
@@ -33,7 +58,7 @@ const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& s
 }
 
 void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
-                     const std::filesystem::path& path) {
+                     const std::filesystem::path& path, std::string reason) {
   if (path.empty()) {
     return;
   }
@@ -41,10 +66,11 @@ void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
   for (EditorBannerState& banner : state.editor_banners) {
     if (banner.path == normalized) {
       banner.kind = kind;
+      banner.reason = std::move(reason);
       return;
     }
   }
-  state.editor_banners.push_back(EditorBannerState{kind, normalized});
+  state.editor_banners.push_back(EditorBannerState{kind, normalized, std::move(reason)});
 }
 
 bool DismissEditorBannerForPath(ProjectWorkspaceState& state, const std::filesystem::path& path) {
@@ -98,6 +124,16 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       break;
     case EditorBannerAction::Keep:
       break;
+    case EditorBannerAction::Retry: {
+      // Every tab still holding the failed read goes back to "not loaded yet" and
+      // is restored again — off the shell thread when the file is large, as the
+      // first try was. A failure lands back here through the completion.
+      MakeTabCoordinator().RetryFailedOpen(path);
+      SyncActiveEditorTabMetadata();
+      RequestEditorSurfaceRedraw();
+      RequestTabStripRedraw();
+      return;
+    }
   }
   DismissEditorBannerForPath(context_.current_project_state, path);
   RequestEditorSurfaceRedraw();

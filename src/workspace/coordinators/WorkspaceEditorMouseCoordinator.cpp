@@ -290,20 +290,20 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (const EditorBannerState* banner = ActiveEditorBannerForTab(state_); banner != nullptr) {
     const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
     if (Contains(strip, event.button.x, event.button.y)) {
-      const bool has_actions = banner->kind == EditorBannerState::Kind::ExternalChange;
-      const EditorBannerButtonLayout buttons = ComputeEditorBannerButtonRects(strip, has_actions);
+      const EditorBannerButtonLayout buttons =
+          ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));
       const std::filesystem::path path = banner->path;
       state_.surface.focus = FocusTarget::Editor;
       if (operations_.editor_banner_action) {
-        if (has_actions && Contains(buttons.compare, event.button.x, event.button.y)) {
-          operations_.editor_banner_action(EditorBannerAction::Compare, path);
-        } else if (has_actions && Contains(buttons.reload, event.button.x, event.button.y)) {
-          operations_.editor_banner_action(EditorBannerAction::Reload, path);
-        } else if (has_actions && Contains(buttons.overwrite, event.button.x, event.button.y)) {
-          operations_.editor_banner_action(EditorBannerAction::Overwrite, path);
-        } else if (Contains(buttons.dismiss, event.button.x, event.button.y) ||
-                   (has_actions && Contains(buttons.keep, event.button.x, event.button.y))) {
+        if (Contains(buttons.dismiss, event.button.x, event.button.y)) {
           operations_.editor_banner_action(EditorBannerAction::Keep, path);
+        } else {
+          for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
+            if (Contains(buttons.rects[i], event.button.x, event.button.y)) {
+              operations_.editor_banner_action(buttons.buttons[i].action, path);
+              break;
+            }
+          }
         }
       }
       // Consume any click on the strip so it does not fall through to content.

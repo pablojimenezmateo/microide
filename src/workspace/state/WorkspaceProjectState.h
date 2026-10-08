@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -590,16 +591,22 @@ struct WelcomeSurfaceState {
 // disk. `ExternalChange` is actionable (Reload / Overwrite / Keep) and appears
 // when the in-memory buffer has unsaved edits; `ReloadedNotice` is informational
 // and appears when a clean buffer was silently refreshed from disk.
+// `OpenFailed` stays on a tab whose off-thread read failed, with a Retry: the
+// error toast is gone a few seconds later, and the tab otherwise looks like an
+// empty file at that path.
 struct EditorBannerState {
   enum class Kind {
     ExternalChange,
     ReloadedNotice,
+    OpenFailed,
   };
   Kind kind = Kind::ExternalChange;
   std::filesystem::path path;  // normalized absolute path the banner pertains to
+  std::string reason;          // OpenFailed: why, as the toast said it
 };
 
-enum class EditorBannerAction { Compare, Reload, Overwrite, Keep };
+// The buttons a banner kind offers, in display order (static storage).
+std::span<const EditorBannerButton> EditorBannerButtonsFor(EditorBannerState::Kind kind);
 
 // Render-side resolved file-tree icons, parallel to DirectoryTree::entries().
 // Rebuilt lazily only when the tree entries change or plugin icon themes reload,
@@ -1052,7 +1059,7 @@ struct ProjectWorkspaceState {
 // WorkspaceShellEditorBanner.cpp.
 const EditorBannerState* ActiveEditorBannerForTab(const ProjectWorkspaceState& state);
 void SetEditorBanner(ProjectWorkspaceState& state, EditorBannerState::Kind kind,
-                     const std::filesystem::path& path);
+                     const std::filesystem::path& path, std::string reason = {});
 bool DismissEditorBannerForPath(ProjectWorkspaceState& state, const std::filesystem::path& path);
 
 struct ProjectCatalogState {

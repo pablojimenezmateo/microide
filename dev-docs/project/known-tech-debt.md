@@ -1288,7 +1288,19 @@ handle the only unhydrated form and teaching the `Content` states to live on
 to be written twice, which is how the `Loading` state could have ended up
 reachable from one path and not the other.
 
-### TD-2026-09-29-315 — a failed open explains itself once, in a toast. [OPEN]
+### TD-2026-09-29-315 — a failed open explains itself once, in a toast. [RESOLVED 2026-10-08]
+
+Resolved as proposed. The banner's buttons are a per-kind list now
+(`EditorBannerButtonsFor`, laid out right to left before the X by
+`ComputeEditorBannerButtonRects`; hit-test and paint walk the same list), so a
+kind with one action costs nothing. `EditorBannerState::Kind::OpenFailed`
+carries the toast's sentence and a Retry; it is shown only while the tab's
+content is still `Failed`, so a later reopen or reload never inherits it. Retry
+(`TabCoordinator::RetryFailedOpen`) puts every failed tab of that path back to
+Deferred and restores it — off-thread again when large. Regression: the tail of
+`AsyncFileOpen/AnUnopenableFileLeavesAFailedTab`.
+
+Original report:
 
 When an off-thread read fails the tab stays, which is right — dropping it makes
 the click look like a no-op — and its `Content` is `Failed`. But the only thing

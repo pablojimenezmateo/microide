@@ -51,8 +51,8 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       std::vector<std::size_t>& out_opener_lines);
 
 struct EditorBannerViewModel {
-  bool has_actions = false;  // ExternalChange => Reload/Overwrite/Keep; Notice => dismiss only
-  std::string message;       // prebuilt here so render TUs never materialize it
+  std::span<const EditorBannerButton> buttons;  // static storage; empty => dismiss only
+  std::string message;  // prebuilt here so render TUs never materialize it
 };
 
 struct NotificationButtonViewModel {

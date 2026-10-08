@@ -324,6 +324,10 @@ class TabCoordinator {
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
   bool ReopenActive();
+  // The failed-open banner's Retry: every tab whose read of `path` failed goes
+  // back to "not loaded yet" and is restored again (off-thread when large). One
+  // that fails synchronously is marked Failed again and keeps its banner.
+  void RetryFailedOpen(const std::filesystem::path& path);
 
   static bool TabStateIsDirty(const TabEntry& tab);
 

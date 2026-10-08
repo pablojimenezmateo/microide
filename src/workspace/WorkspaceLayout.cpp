@@ -597,7 +597,8 @@ SDL_FRect ComputeEditorBannerStripRect(const SDL_FRect& editor_surface) {
   return MakeRect(editor_surface.x, editor_surface.y, editor_surface.w, height);
 }
 
-EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip, bool has_actions) {
+EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip,
+                                                        std::span<const EditorBannerButton> buttons) {
   constexpr float kButtonHeight = 20.0f;
   constexpr float kButtonGap = 6.0f;
   constexpr float kEdgePad = 8.0f;
@@ -605,24 +606,14 @@ EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip, 
   const float y = strip.y + (strip.h - kButtonHeight) * 0.5f;
 
   EditorBannerButtonLayout layout;
+  layout.buttons = buttons.first(std::min(buttons.size(), kMaxEditorBannerButtons));
   layout.dismiss = MakeRect(strip.x + strip.w - kEdgePad - kDismissSize,
                             strip.y + (strip.h - kDismissSize) * 0.5f, kDismissSize, kDismissSize);
-  if (!has_actions) {
-    return layout;
+  float x = layout.dismiss.x;
+  for (std::size_t i = layout.buttons.size(); i-- > 0;) {
+    x -= kButtonGap + layout.buttons[i].width;
+    layout.rects[i] = MakeRect(x, y, layout.buttons[i].width, kButtonHeight);
   }
-
-  constexpr float kReloadWidth = 64.0f;
-  constexpr float kOverwriteWidth = 78.0f;
-  constexpr float kKeepWidth = 54.0f;
-  float x = layout.dismiss.x - kButtonGap - kKeepWidth;
-  layout.keep = MakeRect(x, y, kKeepWidth, kButtonHeight);
-  x -= kButtonGap + kOverwriteWidth;
-  layout.overwrite = MakeRect(x, y, kOverwriteWidth, kButtonHeight);
-  x -= kButtonGap + kReloadWidth;
-  layout.reload = MakeRect(x, y, kReloadWidth, kButtonHeight);
-  constexpr float kCompareWidth = 72.0f;
-  x -= kButtonGap + kCompareWidth;
-  layout.compare = MakeRect(x, y, kCompareWidth, kButtonHeight);
   return layout;
 }
 

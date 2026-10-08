@@ -64,6 +64,27 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   return true;
 }
 
+void TabCoordinator::RetryFailedOpen(const std::filesystem::path& path) {
+  const std::filesystem::path normalized = path.lexically_normal();
+  DismissEditorBannerForPath(state_, normalized);
+  for (EditorGroup& group : state_.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (!tab.editor_state.has_value() ||
+          tab.editor_state->content != EditorTabState::Content::Failed ||
+          tab.editor_state->restored_path.lexically_normal() != normalized) {
+        continue;
+      }
+      EditorTabState& editor_state = *tab.editor_state;
+      editor_state.content = EditorTabState::Content::Deferred;
+      if (!RestoreEditorTab(editor_state)) {
+        editor_state.content = EditorTabState::Content::Failed;
+        SetEditorBanner(state_, EditorBannerState::Kind::OpenFailed, normalized,
+                        "Could not read " + normalized.filename().string());
+      }
+    }
+  }
+}
+
 bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
   util::PerformanceTrace::Scope perf_scope("TabCoordinator::EnsureEditorTabLoaded");
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {

@@ -1097,9 +1097,8 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                    theme_.border);
     DrawFilledRect(renderer, MakeRect(strip.x, strip.y, 3.0f, strip.h), theme_.accent);
 
-    const EditorBannerButtonLayout buttons =
-        ComputeEditorBannerButtonRects(strip, banner_vm.has_actions);
-    const float message_right = banner_vm.has_actions ? buttons.compare.x : buttons.dismiss.x;
+    const EditorBannerButtonLayout buttons = ComputeEditorBannerButtonRects(strip, banner_vm.buttons);
+    const float message_right = buttons.controls_left();
     const SDL_FRect message_rect = MakeRect(strip.x + 12.0f, strip.y,
                                             std::max(0.0f, message_right - strip.x - 20.0f), strip.h);
     const SDL_Rect clip{static_cast<int>(message_rect.x), static_cast<int>(message_rect.y),
@@ -1123,11 +1122,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                              .active = false,
                          });
     };
-    if (banner_vm.has_actions) {
-      draw_banner_button(buttons.compare, "Compare", ButtonTone::Neutral);
-      draw_banner_button(buttons.reload, "Reload", ButtonTone::Neutral);
-      draw_banner_button(buttons.overwrite, "Overwrite", ButtonTone::Destructive);
-      draw_banner_button(buttons.keep, "Keep", ButtonTone::Neutral);
+    for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
+      draw_banner_button(buttons.rects[i], buttons.buttons[i].label,
+                         buttons.buttons[i].destructive ? ButtonTone::Destructive
+                                                        : ButtonTone::Neutral);
     }
     draw_banner_button(buttons.dismiss, "x", ButtonTone::Neutral);
   }

@@ -88,6 +88,7 @@
         description += ", ";
       }
       description += banner.kind == EditorBannerState::Kind::ExternalChange ? "external:"
+                     : banner.kind == EditorBannerState::Kind::OpenFailed   ? "open-failed:"
                                                                             : "reloaded:";
       description += banner.path.string();
     }
@@ -120,6 +121,13 @@
   }
   static void EditorBannerKeep(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.ActivateEditorBannerAction(EditorBannerAction::Keep, path);
+  }
+  static void EditorBannerRetry(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.ActivateEditorBannerAction(EditorBannerAction::Retry, path);
+  }
+  // The banner the active tab shows (what the frame paints), or nullptr.
+  static const EditorBannerState* ActiveEditorBanner(const WorkspaceShell& shell) {
+    return ActiveEditorBannerForTab(shell.context_.current_project_state);
   }
   // Prompt PAINT drivers. Every prompt action is reachable in production only
   // through the command or menu that raises it, so a paint test that wanted to
