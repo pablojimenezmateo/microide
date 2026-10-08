@@ -188,9 +188,23 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "a conflict row appears");
   const auto* row = find_row();
-  Expect(row != nullptr && row->actions.size() == 2 && row->actions[0].label == "Keep Mine" &&
-             row->actions[1].label == "Take Host's",
-         "with Keep Mine and Take Host's");
+  Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Compare" &&
+             row->actions[1].label == "Keep Mine" && row->actions[2].label == "Take Host's",
+         "with Compare, Keep Mine and Take Host's");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "remote-resolve " + (mirror / "main.c").string() + " compare"),
+         "Compare is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::ActiveTabIsCompare(shell);
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "a compare tab opens: the host's version beside the mirror's" + [&] {
+           std::string all;
+           for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
+           return all;
+         }());
   Expect(ReadFile(host_root / "main.c") == "// the agent's version\n" &&
              ReadFile(mirror / "main.c").rfind("// mine\n", 0) == 0,
          "and neither side was overwritten");

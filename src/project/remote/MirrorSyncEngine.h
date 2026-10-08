@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <deque>
 #include <map>
@@ -120,6 +121,11 @@ class MirrorSyncEngine {
   // none.
   enum class Resolution { KeepMine, TakeHost };
   void ResolveConflict(std::string path, Resolution resolution);
+  // The host's current bytes of `path`, written to a read-only copy outside tree/
+  // (meta/host-copies/<path>) for a Compare against the mirror's file. `done` runs on
+  // the engine thread with the copy's path, or nullopt and why.
+  using HostCopyDone = std::function<void(std::optional<std::filesystem::path> copy, std::string error)>;
+  void FetchHostCopy(std::string path, HostCopyDone done);
   // Paths in conflict, sorted.
   std::vector<std::string> Conflicts() const;
   // Apply the held delete diff after all.

@@ -6,6 +6,7 @@
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/services/TerminalPanelService.h"
+#include "workspace/actions/WorkspaceActionCoordinator.h"
 
 namespace microide::workspace {
 
@@ -115,6 +116,14 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             status_bar_service_.SetSegment(StatusBarSegmentId::Remote, std::move(value));
           },
       .request_redraw = [this]() { RequestFullRedraw(); },
+      .compare_files =
+          [this](const std::filesystem::path& left, const std::filesystem::path& right) {
+            return ActionCoordinator(MakeActionContext())
+                           .Execute(ActionId::CompareFiles, {left.string(), right.string()},
+                                    ActionSource::Shortcut)
+                       ? std::string()
+                       : std::string("the comparison did not open");
+          },
   });
   glue_->remote_host_service->SetWakeChannel(project_file_event_type_);
   return *glue_->remote_host_service;

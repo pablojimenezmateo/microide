@@ -317,6 +317,10 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
           .message = conflicts[i] + " changed on " + host + " and here",
           .sticky = true,
           .actions = {
+              NotificationAction{.label = "Compare",
+                                 .id = ActionId::RemoteResolveConflict,
+                                 .args = {absolute, "compare"},
+                                 .keep_open = true},
               NotificationAction{.label = "Keep Mine",
                                  .id = ActionId::RemoteResolveConflict,
                                  .args = {absolute, "mine"}},
@@ -340,23 +344,54 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
   }
 }
 
-bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool keep_mine) {
+std::pair<RemoteHostService::Project*, std::string> RemoteHostService::ConflictOwner(
+    const std::filesystem::path& path) {
   for (auto& [tree, entry] : projects_) {
-    const std::filesystem::path relative = path.lexically_normal().lexically_relative(tree);
-    const std::string text = relative.generic_string();
+    const std::string text = path.lexically_normal().lexically_relative(tree).generic_string();
     if (text.empty() || text.rfind("..", 0) == 0) {
       continue;
     }
     const std::vector<std::string> conflicts = entry.project->engine().Conflicts();
-    if (!std::binary_search(conflicts.begin(), conflicts.end(), text)) {
-      return false;
+    if (std::binary_search(conflicts.begin(), conflicts.end(), text)) {
+      return {&entry, text};
     }
-    entry.project->engine().ResolveConflict(
-        text, keep_mine ? remote::MirrorSyncEngine::Resolution::KeepMine
-                        : remote::MirrorSyncEngine::Resolution::TakeHost);
-    return true;
+    return {nullptr, {}};
   }
-  return false;
+  return {nullptr, {}};
+}
+
+bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool keep_mine) {
+  const auto [entry, relative] = ConflictOwner(path);
+  if (entry == nullptr) {
+    return false;
+  }
+  entry->project->engine().ResolveConflict(
+      relative, keep_mine ? remote::MirrorSyncEngine::Resolution::KeepMine
+                          : remote::MirrorSyncEngine::Resolution::TakeHost);
+  return true;
+}
+
+bool RemoteHostService::CompareConflict(const std::filesystem::path& path) {
+  const auto [entry, relative] = ConflictOwner(path);
+  if (entry == nullptr) {
+    return false;
+  }
+  const std::filesystem::path mirror_file = path.lexically_normal();
+  entry->project->engine().FetchHostCopy(
+      relative, [this, mirror_file](std::optional<std::filesystem::path> copy, std::string error) {
+        mailbox_.Post([this, mirror_file, copy = std::move(copy), error = std::move(error)]() {
+          std::string why = error;
+          if (copy.has_value() && operations_.compare_files) {
+            why = operations_.compare_files(*copy, mirror_file);
+          }
+          if (!why.empty() && operations_.notify) {
+            operations_.notify(NotificationService::Request{
+                .tone = NotificationService::Tone::Error,
+                .message = "Cannot compare with the host's version: " + why});
+          }
+        });
+      });
+  return true;
 }
 
 RemoteHostService::Host& RemoteHostService::Ensure(const remote::RemoteHostTarget& target) {

@@ -242,10 +242,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           return DispatchResult::Handled;
         }
         case ActionId::RemoteResolveConflict: {
-          if (args.size() < 2 || (args[1] != "mine" && args[1] != "host")) {
-            return reject("usage: remote-resolve <path> <mine|host>");
+          if (args.size() < 2 || (args[1] != "mine" && args[1] != "host" && args[1] != "compare")) {
+            return reject("usage: remote-resolve <path> <mine|host|compare>");
           }
-          if (!hosts->ResolveConflict(args[0], args[1] == "mine")) {
+          const bool known = args[1] == "compare" ? hosts->CompareConflict(args[0])
+                                                  : hosts->ResolveConflict(args[0], args[1] == "mine");
+          if (!known) {
             return reject("\"" + args[0] + "\" is not a conflict in a remote project");
           }
           return DispatchResult::Handled;

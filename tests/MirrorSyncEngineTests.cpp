@@ -158,6 +158,16 @@ void TestMirrorResolvesConflictsTheUsersWay() {
   Expect(session.engine->Conflicts() == std::vector<std::string>{"mine.txt", "theirs.txt"},
          "both are conflicts");
 
+  std::optional<std::filesystem::path> copy;
+  std::string copy_error;
+  session.engine->FetchHostCopy("theirs.txt", [&](std::optional<std::filesystem::path> path, std::string why) {
+    copy = std::move(path);
+    copy_error = std::move(why);
+  });
+  session.engine->Flush();
+  Expect(copy.has_value() && ReadFile(*copy) == "agent\n" &&
+             copy->string().find("/tree/") == std::string::npos,
+         "Compare's host copy holds the host's bytes, outside the tree: " + copy_error);
   session.engine->ResolveConflict("mine.txt", remote::MirrorSyncEngine::Resolution::KeepMine);
   session.engine->ResolveConflict("theirs.txt", remote::MirrorSyncEngine::Resolution::TakeHost);
   session.engine->Flush();

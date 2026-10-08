@@ -55,6 +55,10 @@ class RemoteHostService {
     std::function<std::optional<std::string>(std::string_view key)> setting;
     std::function<void(StatusBarSegmentValue)> set_status_segment;
     std::function<void()> request_redraw;
+    // Open a compare tab: `left` read-only, `right` editable. Empty string on
+    // success, else why not.
+    std::function<std::string(const std::filesystem::path& left, const std::filesystem::path& right)>
+        compare_files;
   };
 
   explicit RemoteHostService(Operations operations);
@@ -82,6 +86,9 @@ class RemoteHostService {
   // mirror's bytes over the host's, or take the host's. False when `path` is not a
   // conflict of any remote project.
   bool ResolveConflict(const std::filesystem::path& path, bool keep_mine);
+  // Compare: fetch the host's bytes of the conflicted `path` and open them beside
+  // the mirror's file. False when `path` is not a conflict of any remote project.
+  bool CompareConflict(const std::filesystem::path& path);
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);
@@ -123,6 +130,8 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
+  // The project and relative path a conflicted mirror path belongs to.
+  std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
   Host* Find(std::string_view host);
   const Host* Find(std::string_view host) const;
   Host& Ensure(const project::remote::RemoteHostTarget& target);

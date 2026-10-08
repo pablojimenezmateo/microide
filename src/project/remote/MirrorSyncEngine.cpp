@@ -284,6 +284,41 @@ void MirrorSyncEngine::ResolveConflict(std::string path, Resolution resolution) 
   });
 }
 
+void MirrorSyncEngine::FetchHostCopy(std::string path, HostCopyDone done) {
+  if (!IsSafeRelativePath(path)) {
+    done(std::nullopt, "not a path in the project");
+    return;
+  }
+  queue_.PostFront([this, path = std::move(path), done = std::move(done)]() {
+    std::string error;
+    std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
+        workspace_.FetchObjectsSync({path}, Lane::Interactive, &error);
+    if (!objects.has_value() || objects->size() != 1) {
+      done(std::nullopt, error.empty() ? "the host did not answer" : error);
+      return;
+    }
+    RemoteWorkspace::FetchedObject& object = objects->front();
+    if (object.missing) {
+      done(std::nullopt, path + " no longer exists on the host");
+      return;
+    }
+    if (!object.hash.has_value()) {
+      done(std::nullopt, object.error);
+      return;
+    }
+    const std::filesystem::path copies = store_.meta() / "host-copies";
+    std::error_code ec;
+    std::filesystem::create_directories(copies, ec);
+    const FileOpResult written =
+        WriteTreeFile(copies, path, object.content, Precondition::Anything(), 0444);
+    if (!written.ok()) {
+      done(std::nullopt, written.error);
+      return;
+    }
+    done(copies / path, {});
+  });
+}
+
 std::vector<std::string> MirrorSyncEngine::Conflicts() const {
   std::lock_guard lock(mutex_);
   std::vector<std::string> paths;
