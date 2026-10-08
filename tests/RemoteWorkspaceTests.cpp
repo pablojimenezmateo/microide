@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 
@@ -18,8 +19,8 @@ namespace remote = project::remote;
 
 // A real `microide-server serve-stdio` with a hello naming `root`.
 struct WorkspaceSession {
-  std::unique_ptr<remote::RemoteServerClient> client =
-      std::make_unique<remote::RemoteServerClient>();
+  std::shared_ptr<remote::RemoteServerClient> client =
+      std::make_shared<remote::RemoteServerClient>();
   std::unique_ptr<remote::RemoteWorkspace> workspace;
 
   explicit WorkspaceSession(const std::filesystem::path& root) {
@@ -28,7 +29,8 @@ struct WorkspaceSession {
                                   remote::HelloRequest{.release = "test", .root = root.string()},
                                   &error),
            "connects: " + error);
-    workspace = std::make_unique<remote::RemoteWorkspace>(*client);
+    workspace = std::make_unique<remote::RemoteWorkspace>(
+        std::make_shared<remote::RemoteConnection>(client));
   }
 };
 
@@ -74,12 +76,12 @@ void TestManifestFailureIsAnErrorNotAnEmptyTree() {
 }
 
 void TestManifestNeedsAWorkspace() {
-  remote::RemoteServerClient client;
+  auto client = std::make_shared<remote::RemoteServerClient>();
   std::string error;
-  Expect(client.ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                remote::HelloRequest{.release = "test", .root = ""}, &error),
          "connects without a root: " + error);
-  remote::RemoteWorkspace workspace(client);
+  remote::RemoteWorkspace workspace(std::make_shared<remote::RemoteConnection>(client));
   Expect(!workspace.FetchManifestSync(&error).has_value() &&
              error.find("no workspace") != std::string::npos,
          "a terminal-only connection has no tree: " + error);

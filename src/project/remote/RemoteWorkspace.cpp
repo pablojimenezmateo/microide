@@ -5,6 +5,7 @@
 #include <mutex>
 #include <utility>
 
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 #include "util/ByteCodec.h"
@@ -17,8 +18,8 @@ namespace {
 // request is cancelled and `on_timeout` returned; a late completion lands in the
 // shared state, never on a dead stack frame.
 template <typename Result, typename Start>
-Result Await(Start&& start, RemotePeer& peer, std::chrono::milliseconds timeout,
-             Result on_timeout) {
+Result Await(Start&& start, const std::shared_ptr<RemoteConnection>& connection,
+             std::chrono::milliseconds timeout, Result on_timeout) {
   struct Wait {
     std::mutex mutex;
     std::condition_variable cv;
@@ -33,8 +34,8 @@ Result Await(Start&& start, RemotePeer& peer, std::chrono::milliseconds timeout,
   std::unique_lock lock(wait->mutex);
   if (!wait->cv.wait_for(lock, timeout, [&] { return wait->result.has_value(); })) {
     lock.unlock();
-    if (id != 0) {
-      peer.Cancel(id);
+    if (const auto client = connection->client(); client && id != 0) {
+      client->peer().Cancel(id);
     }
     return on_timeout;
   }
@@ -64,7 +65,13 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
   return out;
 }
 
+constexpr const char* kNotConnected = "not connected to the host";
+
 }  // namespace
+
+std::shared_ptr<RemoteServerClient> RemoteWorkspace::Client() const {
+  return connection_ ? connection_->client() : nullptr;
+}
 
 std::uint64_t RemoteWorkspace::FetchManifest(ManifestDone done) {
   struct State {
@@ -72,17 +79,22 @@ std::uint64_t RemoteWorkspace::FetchManifest(ManifestDone done) {
     bool malformed = false;
   };
   auto state = std::make_shared<State>();
-  RemoteServerClient& client = client_;
-  const std::uint64_t id = client_.RequestStream(
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(std::nullopt, kNotConnected);
+    return 0;
+  }
+  RemoteServerClient* raw = client.get();  // the stream's own frames: it outlives them
+  const std::uint64_t id = client->RequestStream(
       method::kTreeManifest, util::JsonValue(util::JsonObject{}), Lane::Bulk,
-      [state, &client](FrameType, std::string bytes) {
+      [state, raw](FrameType, std::string bytes) {
         if (state->malformed) {
           return;
         }
         if (!DecodeManifestRows(bytes, state->manifest.rows) ||
             state->manifest.rows.size() > kMaxManifestRows) {
           state->malformed = true;
-          client.peer().Fail("the server sent malformed manifest rows");
+          raw->peer().Fail("the server sent malformed manifest rows");
         }
       },
       [state, done](std::optional<util::JsonValue> result,
@@ -126,7 +138,7 @@ std::optional<RemoteWorkspace::Manifest> RemoteWorkspace::FetchManifestSync(
           finish(Outcome(std::move(manifest), std::move(why)));
         });
       },
-      client_.peer(), timeout, Outcome(std::nullopt, "timed out waiting for the manifest"));
+      connection_, timeout, Outcome(std::nullopt, "timed out waiting for the manifest"));
   if (error != nullptr) {
     *error = std::move(outcome.second);
   }
@@ -135,20 +147,27 @@ std::optional<RemoteWorkspace::Manifest> RemoteWorkspace::FetchManifestSync(
 
 bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_delta, bool* native,
                                      std::string* error) {
-  RemoteServerClient& client = client_;
-  client_.SetWatchHandler([&client, on_delta = std::move(on_delta)](std::uint64_t manifest_id,
-                                                                    std::string bytes) {
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    if (error != nullptr) {
+      *error = kNotConnected;
+    }
+    return false;
+  }
+  RemoteServerClient* raw = client.get();  // its own handler: it outlives the calls
+  client->SetWatchHandler([raw, on_delta = std::move(on_delta)](std::uint64_t manifest_id,
+                                                                std::string bytes) {
     WatchDelta delta;
     delta.manifest_id = manifest_id;
     if (!DecodeWatchDelta(bytes, delta.deleted, delta.rows)) {
-      client.peer().Fail("the server sent a malformed watch delta");
+      raw->peer().Fail("the server sent a malformed watch delta");
       return;
     }
     on_delta(std::move(delta));
   });
   std::string why;
   const std::optional<util::JsonValue> result =
-      client_.Call(method::kWatchSubscribe, util::JsonValue(util::JsonObject{}), &why);
+      client->Call(method::kWatchSubscribe, util::JsonValue(util::JsonObject{}), &why);
   if (!result.has_value()) {
     if (error != nullptr) {
       *error = why;
@@ -182,16 +201,21 @@ std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane
   if (max_bytes > 0) {
     params["max_bytes"] = util::JsonValue(static_cast<std::int64_t>(max_bytes));
   }
-  RemoteServerClient& client = client_;
-  const std::uint64_t id = client_.RequestStream(
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(std::nullopt, kNotConnected);
+    return 0;
+  }
+  RemoteServerClient* raw = client.get();
+  const std::uint64_t id = client->RequestStream(
       method::kObjectFetch, util::JsonValue(std::move(params)), lane,
-      [state, &client](FrameType, std::string bytes) {
+      [state, raw](FrameType, std::string bytes) {
         util::ByteReader in(bytes);
         const std::uint64_t index = in.Varint();
         if (state->malformed || in.failed() || index >= state->objects.size()) {
           if (!state->malformed) {
             state->malformed = true;
-            client.peer().Fail("the server sent object data for no object");
+            raw->peer().Fail("the server sent object data for no object");
           }
           return;
         }
@@ -251,7 +275,7 @@ std::optional<std::vector<RemoteWorkspace::FetchedObject>> RemoteWorkspace::Fetc
                               finish(Outcome(std::move(objects), std::move(why)));
                             });
       },
-      client_.peer(), timeout, Outcome(std::nullopt, "timed out waiting for object/fetch"));
+      connection_, timeout, Outcome(std::nullopt, "timed out waiting for object/fetch"));
   if (error != nullptr) {
     *error = std::move(outcome.second);
   }
@@ -268,7 +292,12 @@ std::uint64_t RemoteWorkspace::WriteFile(std::string path, std::string_view cont
   if (mode.has_value()) {
     params["mode"] = util::JsonValue(static_cast<std::int64_t>(*mode));
   }
-  RemotePeer& peer = client_.peer();
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(WriteResult{.error = kNotConnected});
+    return 0;
+  }
+  RemotePeer& peer = client->peer();
   // The content goes first, on the request's lane, tagged with the request's id:
   // it is on the wire before the request that claims it.
   const std::uint64_t id = peer.Request(
@@ -298,7 +327,7 @@ RemoteWorkspace::WriteResult RemoteWorkspace::WriteFileSync(std::string path,
         return WriteFile(std::move(path), content, expect, mode, Lane::Interactive,
                          std::move(finish));
       },
-      client_.peer(), timeout, WriteResult{.error = "timed out waiting for file/write"});
+      connection_, timeout, WriteResult{.error = "timed out waiting for file/write"});
 }
 
 std::uint64_t RemoteWorkspace::ApplyTreeOp(TreeOp op, std::string path, std::string to,
@@ -312,7 +341,12 @@ std::uint64_t RemoteWorkspace::ApplyTreeOp(TreeOp op, std::string path, std::str
     params["to"] = util::JsonValue(std::move(to));
   }
   params["expect"] = ToJson(expect);
-  const std::uint64_t id = client_.peer().Request(
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(WriteResult{.error = kNotConnected});
+    return 0;
+  }
+  const std::uint64_t id = client->peer().Request(
       method::kFsOp, util::JsonValue(std::move(params)), Lane::Interactive,
       [done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
         done(WriteResultFrom(std::move(result), std::move(error)));
@@ -331,7 +365,7 @@ RemoteWorkspace::WriteResult RemoteWorkspace::ApplyTreeOpSync(TreeOp op, std::st
       [&](WriteDone finish) {
         return ApplyTreeOp(op, std::move(path), std::move(to), expect, std::move(finish));
       },
-      client_.peer(), timeout, WriteResult{.error = "timed out waiting for fs/op"});
+      connection_, timeout, WriteResult{.error = "timed out waiting for fs/op"});
 }
 
 }  // namespace microide::project::remote

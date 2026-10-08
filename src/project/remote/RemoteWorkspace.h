@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -13,12 +14,15 @@
 
 namespace microide::project::remote {
 
+class RemoteConnection;
 class RemoteServerClient;
 
 // The client's end of the workspace half of the protocol (dev-docs/design/
 // remote-projects.md § 6.2-6.4): the tree a connection's hello named as its root.
-// A thin, stateless facade over a RemoteServerClient; the mirror engine owns what
-// it does with the answers.
+// A thin, stateless facade over the host's CURRENT connection (a reconnect
+// replaces the client underneath, as for the launcher); the mirror engine owns
+// what it does with the answers. Every call fails fast with "not connected" while
+// there is no client.
 class RemoteWorkspace {
  public:
   // Ceiling on decoded rows, far over the server's remote.max_manifest_files: a
@@ -32,7 +36,8 @@ class RemoteWorkspace {
   };
   using ManifestDone = std::function<void(std::optional<Manifest> manifest, std::string error)>;
 
-  explicit RemoteWorkspace(RemoteServerClient& client) : client_(client) {}
+  explicit RemoteWorkspace(std::shared_ptr<RemoteConnection> connection)
+      : connection_(std::move(connection)) {}
 
   // tree/manifest. `done` runs once on the connection's I/O thread. Returns the
   // request id (cancellable through the peer), 0 when it could not be sent — then
@@ -97,7 +102,9 @@ class RemoteWorkspace {
                               std::chrono::milliseconds timeout = std::chrono::seconds(120));
 
  private:
-  RemoteServerClient& client_;
+  std::shared_ptr<RemoteServerClient> Client() const;
+
+  std::shared_ptr<RemoteConnection> connection_;
 };
 
 }  // namespace microide::project::remote

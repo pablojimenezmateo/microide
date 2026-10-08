@@ -3,6 +3,7 @@
 #include "project/remote/MirrorStore.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/MirrorWriteGate.h"
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 
@@ -28,7 +29,7 @@ struct MirrorSession {
   TemporaryDirectory temp;
   std::filesystem::path host = temp.path() / "host";
   std::filesystem::path mirror_dir = temp.path() / "mirror";
-  std::unique_ptr<remote::RemoteServerClient> client;
+  std::shared_ptr<remote::RemoteServerClient> client;
   std::unique_ptr<remote::RemoteWorkspace> workspace;
   std::unique_ptr<remote::MirrorStore> store;
   std::unique_ptr<remote::MirrorSyncEngine> engine;
@@ -38,13 +39,14 @@ struct MirrorSession {
 
   void Connect(remote::MirrorSyncEngine::Options options = {}) {
     engine.reset();
-    client = std::make_unique<remote::RemoteServerClient>();
+    client = std::make_shared<remote::RemoteServerClient>();
     std::string error;
     Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                   remote::HelloRequest{.release = "test", .root = host.string()},
                                   &error),
            "connects: " + error);
-    workspace = std::make_unique<remote::RemoteWorkspace>(*client);
+    workspace = std::make_unique<remote::RemoteWorkspace>(
+        std::make_shared<remote::RemoteConnection>(client));
     store = std::make_unique<remote::MirrorStore>(mirror_dir);
     Expect(store->Open(&error), "the mirror opens: " + error);
     engine = std::make_unique<remote::MirrorSyncEngine>(
