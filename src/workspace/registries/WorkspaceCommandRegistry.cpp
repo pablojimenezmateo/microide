@@ -21,6 +21,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::NotificationAction, "notification-action",
                  "notification-action <row-key|row-index> <action-label|action-index>",
                  "Run Notification Action", ""},
+      ActionSpec{ActionId::ShowOutput, "show-output", "show-output <channel-id>",
+                 "Show Output Channel…", ""},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
                  "Colorscheme", ""},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",

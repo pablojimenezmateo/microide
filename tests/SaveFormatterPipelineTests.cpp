@@ -151,6 +151,25 @@ void TestAFailingFormatterReportsWhatItSaid() {
     }
   }
   Expect(channel_has_the_error, "the channel holds the formatter's stderr");
+
+  // And the toast says where: a "Show Output" button that opens that channel.
+  const auto& rows = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  std::size_t row_index = rows.size();
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    if (rows[i].actions.size() == 1 && rows[i].actions[0].label == "Show Output") {
+      row_index = i;
+    }
+  }
+  Expect(row_index < rows.size(), "the formatter warning carries a Show Output button");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "notification-action " + std::to_string(row_index) + " 0"),
+         "pressing Show Output runs");
+  Expect(WorkspaceShellTestAccess::PanelContent(shell) == WorkspaceShell::PanelContentKind::Output &&
+             WorkspaceShellTestAccess::OutputChannelTabOrder(shell).size() >= 1 &&
+             WorkspaceShellTestAccess::OutputChannelTabOrder(shell).back() == "formatter",
+         "Show Output opens the formatter channel in the panel");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "show-output no-such-channel"),
+         "show-output refuses a channel that does not exist");
 }
 
 // Closing a tab must not drop a save that is still formatting. The flush is what

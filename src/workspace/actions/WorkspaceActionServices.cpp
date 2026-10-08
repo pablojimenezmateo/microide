@@ -1360,6 +1360,10 @@ bool WorkspaceActionContext::FocusNotifications() {
   return operations_.focus_notifications && operations_.focus_notifications();
 }
 
+bool WorkspaceActionContext::ShowOutputChannel(std::string_view channel_id) {
+  return operations_.show_output_channel && operations_.show_output_channel(channel_id);
+}
+
 std::optional<NotificationAction> WorkspaceActionContext::TakeNotificationAction(
     std::string_view row, std::string_view action, std::string* error) {
   if (!operations_.take_notification_action) {

@@ -251,7 +251,17 @@ void WorkspaceShell::ReportSaveFormatterFailure(
   if (!first_line.empty()) {
     message += " — " + first_line;
   }
-  Notify(NotificationService::Tone::Warning, std::move(message));
+  NotificationService::Request request{.tone = NotificationService::Tone::Warning,
+                                       .message = std::move(message)};
+  if (!completion.error_text.empty()) {
+    // The channel only exists when the formatter said something.
+    request.actions.push_back(NotificationAction{
+        .label = "Show Output",
+        .id = ActionId::ShowOutput,
+        .args = {std::string(kFormatterChannelId)},
+    });
+  }
+  Notify(std::move(request));
 }
 
 void WorkspaceShell::ApplyDeferredSaveFormat(

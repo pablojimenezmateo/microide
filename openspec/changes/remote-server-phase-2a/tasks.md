@@ -12,7 +12,7 @@
 - [x] 2.3 Hit-test and dispatch a click through the action executor; dismiss a transient row after its action unless the action opts out; keep a hovered row alive past expiry and give rows with actions a longer default lifetime
 - [x] 2.4 Keyboard: focus the notification stack and move between buttons; Enter invokes
 - [x] 2.5 Control channel: list a row's actions and invoke one by label or id (`dev-docs/control/control-channel.md`)
-- [ ] 2.6 First consumers: `Show Output` on formatter failures, `Compare` on the external-change banner row if it is a notification, `Reload` where a reload is offered
+- [x] 2.6 First consumers: `Show Output` on formatter failures, `Compare` on the external-change banner row if it is a notification, `Reload` where a reload is offered — done 2026-10-08: `Show Output` (new `show-output <channel-id>`) on formatter failures. No notification offers Compare or Reload today: the external-change prompt is an editor banner, not a toast, so those two consumers do not exist yet
 - [ ] 2.7 Tests: view-model tests for layout and truncation, a click-dispatch test, a control-channel invoke test, an allocation check in the perf-tests lane for the steady-state render
 
 ## 3. Save continuations (rest of TD-2026-09-28-304)

@@ -188,6 +188,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("No notifications to focus");
       }
       return DispatchResult::Handled;
+    case ActionId::ShowOutput:
+      if (args.empty()) {
+        return reject("usage: show-output <channel-id>");
+      }
+      if (!context_.ShowOutputChannel(args[0])) {
+        return reject("No output channel \"" + args[0] + "\"");
+      }
+      return DispatchResult::Handled;
     case ActionId::NotificationAction: {
       if (args.size() < 2) {
         return reject("usage: notification-action <row-key|row-index> <action-label|action-index>");

@@ -238,6 +238,8 @@ class WorkspaceActionContext {
     std::function<std::optional<NotificationAction>(std::string_view, std::string_view,
                                                     std::string*)>
         take_notification_action;
+    // Show an Output channel by id; false when no such channel exists.
+    std::function<bool(std::string_view)> show_output_channel;
     // Queue the host-level full-screen toggle. The window itself is owned by
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
@@ -637,6 +639,7 @@ class WorkspaceActionContext {
   void Notify(NotificationService::Tone tone, std::string message);
   // Focus the notification stack (see Operations::focus_notifications).
   bool FocusNotifications();
+  bool ShowOutputChannel(std::string_view channel_id);
   std::optional<NotificationAction> TakeNotificationAction(std::string_view row,
                                                            std::string_view action,
                                                            std::string* error);

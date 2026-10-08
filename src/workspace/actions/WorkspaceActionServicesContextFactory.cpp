@@ -882,6 +882,24 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 RequestWindowRedraw();
                 return notification_service_.TakeAction(*row_index, *action_index);
               },
+          .show_output_channel =
+              [this](std::string_view channel_id) {
+                const auto& channels = output_channels_.Channels();
+                if (std::none_of(channels.begin(), channels.end(), [&](const auto& channel) {
+                      return channel.id == channel_id;
+                    })) {
+                  return false;
+                }
+                // The debug console's recipe: open the tab, select it, follow the tail.
+                EnsureOutputChannelTabOpen(channel_id);
+                auto& panel = context_.current_project_state.panel;
+                panel.content = PanelContentKind::Output;
+                panel.output.channel_id = std::string(channel_id);
+                panel.output.follow_tail = true;
+                NoteLayoutInputsChanged();
+                RequestWindowRedraw();
+                return true;
+              },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },

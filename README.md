@@ -660,6 +660,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `command-palette`
 - `focus-notifications`
 - `notification-action <row-key|row-index> <action-label|action-index>`
+- `show-output <channel-id>`
 - `colorscheme [name|list]`
 - `toggle-theme`
 - `toggle-fullscreen`
