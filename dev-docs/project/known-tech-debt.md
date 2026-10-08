@@ -420,6 +420,24 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-08-324 — format-on-save throws away the buffer's undo history. [OPEN]
+
+A formatter's output is applied with `TextViewport::ReloadPreservingViewState`,
+which goes through `LoadContent` → `ResetMetadataAfterContent`, and that clears
+`undo_history`. So after a Ctrl+S that formatted anything, Ctrl+Z cannot reach a
+single edit made before the save — not the formatting, and not the user's own
+typing. VS Code applies a formatter's result as minimal edits that are one undo
+step, so "undo the formatting" and everything before it keep working.
+
+Fix shape: apply the output as one `ReplaceLines` over the differing middle (common
+prefix and suffix lines kept), inside one undo group, for both the deferred
+completion (`ApplyDeferredSaveFormat`) and the blocking `PrepareEditorViewportForSave`.
+Line-ending canonicalization and the UTF-8 BOM that `LoadContent` handles must be
+handled there too (the formatter sees `SerializeDocumentText`'s bytes). The disk
+baseline must stay untouched (931115b9 is why). Found 2026-10-08 while fixing that
+commit's bug; not done then because it is an editor-model change outside the
+remote work it was found in.
+
 ### TD-2026-09-29-306 — "a moved mtime is a changed file" is a pattern, not one bug. [RESOLVED 2026-09-29]
 
 Three places assumed a moved modification time meant changed content, and all three
