@@ -2715,7 +2715,17 @@ state explains none of it.
   member missing from `TextViewport`'s hand-written copy/move on the first run —
   that rule earned its keep.
 
-#### TD-2026-09-06-290a — `editor_toggle_comment_large_selection` allocates 32 more than its baseline. [OPEN — non-gating; the phase itself is cleared, see below]
+#### TD-2026-09-06-290a — `editor_toggle_comment_large_selection` allocates 32 more than its baseline. [RESOLVED 2026-10-08 — by measurement]
+
+Re-measured 2026-10-08: 722 against the 727 baseline (706 in a same-machine
+v2.12.0-vs-HEAD comparison where v2.12.0 read 744). The drift was in the
+scenario's setup, as traced below, and the open-path work of 2026-10-08
+(no whole-document passes at first paint, the per-open remote-path
+normalization gone) took it out. Note for anyone re-reading these counts:
+setup allocations depend on the checkout's PATH LENGTH (paths past the
+small-string buffer allocate), so compare two binaries from equally long paths.
+
+Original report:
 
 Real deterministic drift (727 -> 759, +4.4%) that passes its +10% gate, so it is
 not blocking. The phase's dominant site is `PieceTree::InsertText` under
