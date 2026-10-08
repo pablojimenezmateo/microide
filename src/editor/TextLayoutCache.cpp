@@ -955,15 +955,23 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
     } else {
       util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildStaleRevision);
     }
-    cached_visual_line_columns_.assign(lines.size(), PackedLineWidth{});
-    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthFullMeasures, lines.size());
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-      // One LineSpan read per line: `operator[]` goes through an indirect call
-      // into the piece tree, and this loop asked for the same line twice (once
-      // for the text, once for its length) on every line of the document.
-      cached_visual_line_columns_[index] =
-          PackedLineWidth::From(TextLayout::MeasureLineFacts(lines[index], tab_size));
+    if (parked_line_widths_.widths.has_value() && parked_line_widths_.tab_size == tab_size &&
+        parked_line_widths_.content_revision == content_revision &&
+        parked_line_widths_.widths->size() == lines.size()) {
+      // Measured at this size for this content before a tab-size round trip.
+      cached_visual_line_columns_.swap(*parked_line_widths_.widths);
+    } else {
+      cached_visual_line_columns_.assign(lines.size(), PackedLineWidth{});
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthFullMeasures, lines.size());
+      for (std::size_t index = 0; index < lines.size(); ++index) {
+        // One LineSpan read per line: `operator[]` goes through an indirect call
+        // into the piece tree, and this loop asked for the same line twice (once
+        // for the text, once for its length) on every line of the document.
+        cached_visual_line_columns_[index] =
+            PackedLineWidth::From(TextLayout::MeasureLineFacts(lines[index], tab_size));
+      }
     }
+    parked_line_widths_.Reset();
     RebuildVisualColumnBlockMaxima();
   }
 
@@ -1153,11 +1161,36 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
   cached_max_visual_columns_content_revision_ = content_revision;
 }
 
+void TextLayoutCache::ParkLineWidthsForTabSizeChange() {
+  // An empty table never displaces a parked one. Swapped, not moved: a moved-from
+  // libstdc++ deque re-allocates its map.
+  ParkedLineWidths parked;
+  parked.widths.swap(parked_line_widths_.widths);
+  parked.tab_size = parked_line_widths_.tab_size;
+  parked.content_revision = parked_line_widths_.content_revision;
+  if (!cached_visual_line_columns_.empty() && cached_max_visual_columns_tab_size_ != 0) {
+    if (!parked.widths.has_value()) {
+      parked.widths.emplace();
+    }
+    parked.widths->swap(cached_visual_line_columns_);
+    parked.tab_size = cached_max_visual_columns_tab_size_;
+    parked.content_revision = cached_max_visual_columns_content_revision_;
+  }
+  ClearVisibleLineAndMaxColumns();
+  parked_line_widths_.widths.swap(parked.widths);
+  parked_line_widths_.tab_size = parked.tab_size;
+  parked_line_widths_.content_revision = parked.content_revision;
+}
+
 void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   // The plain-ASCII prefix memo is keyed by (line, content revision), which
   // covers every edit -- but a viewport that is handed a DIFFERENT document can
   // see a revision number repeat, and this is the wipe that runs on that path.
   plain_prefix_memo_ = {};
+  // Every clear but a tab-size change drops the parked table too: this is also
+  // the wipe for a viewport handed a different document, whose revisions can
+  // repeat the parked one's.
+  parked_line_widths_.Reset();
   cached_max_visual_columns_.reset();
   cached_max_visual_columns_line_index_.reset();
   cached_visual_line_columns_.clear();

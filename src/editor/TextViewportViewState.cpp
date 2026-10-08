@@ -124,7 +124,7 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
     return;
   }
   tab_size_ = next_tab_size;
-  layout_cache_.ClearVisibleLineAndMaxColumns();
+  layout_cache_.ParkLineWidthsForTabSizeChange();
   if (document_ != nullptr) {
     InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
   }

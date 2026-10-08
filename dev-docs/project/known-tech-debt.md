@@ -1153,7 +1153,40 @@ remain as the local project, for the host's own tests.
 a project write, a data-dir write and a project-cwd tool run, and fails if the
 write goes through the wrong gate (probed).
 
-### TD-2026-09-29-317 — the asynchronous open has no perf gate, and it changed what three existing ones measure. [OPEN]
+### TD-2026-09-29-317 — the asynchronous open has no perf gate, and it changed what three existing ones measure. [RESOLVED 2026-10-08]
+
+Resolved, and writing the gate found the claim was false. `editor_open_large_file_async`
+(smoke, 64 MiB generated log) asserts the open call returns with the tab
+`Loading` (its allocations a gated phase), that no frame up to and including the
+one that applies the completion spends more than 12 ms of SHELL-THREAD CPU
+(thread CPU time, not wall: the harness pins a scenario to a core, so the
+reader preempting the frame read as a 31 ms wall "stall"), and that a tab
+closed mid-read applies nothing.
+
+That frame cost ~30 ms. Two whole-document passes ran on the shell thread at
+first paint, and both are gone:
+- `EnsureHighlightCaches` sized the per-line highlighter state chain to the
+  document — 40 bytes x 800k lines, a 32 MB zero-fill (~12 ms) and 32 MB
+  resident — for entries no reader trusts until the contiguous frontier reaches
+  them. The chain now grows with the frontier (`StoreLineHighlightState`, the
+  one writer; a write above the frontier was always dead and is dropped).
+- The per-line width table (horizontal extent) measured every line (~12 ms). It
+  is built on the reader thread now, at the tab size the completion settles on
+  (the same editorconfig/preference/indent-detection inputs, resolved on the
+  shell thread and copied in), and a tab-size change PARKS the table instead of
+  dropping it, so the completion's preference-then-detection flip round-trips
+  without re-measuring. The parked slot is an `optional`: a bare libstdc++ deque
+  member allocated twice per `TextViewport`, which `snippet_many_mirror_edit`
+  caught (+60/iteration).
+
+The completion frame is ~3.5 ms. And the other half of this entry:
+`OpenEditorEssentials50kCppOrThrow` now waits (bounded) for the 8.19 MB
+fixture's content to land, so the scenarios built on it measure a loaded
+buffer rather than racing the reader. Unit tests:
+`TextViewport/HighlightStatesGrowWithTheFrontier`,
+`TextViewport/TabSizeRoundTripKeepsTheWidthTable`.
+
+Original report:
 
 The design names the gate (§ 9): *"open a 100 MB local file (G4) — shell-thread
 frame never > 16 ms; the tab is `Loading` until the read lands; closing the tab

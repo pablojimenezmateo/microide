@@ -1403,6 +1403,9 @@ class TextViewport {
   // this vector) would otherwise jump the frontier over the still-stale gap below
   // it and falsely mark those pre-edit states valid.
   mutable std::size_t line_highlight_states_valid_through_ = 0;
+  // The one writer of line_highlight_states_: stores at or below the frontier,
+  // advances it on a contiguous write, drops a write above it.
+  void StoreLineHighlightState(std::size_t line, const SyntaxState& state) const;
   mutable std::vector<SyntaxState> highlight_checkpoints_;
   // Same lazy-invalidation pattern for the periodic checkpoint vector.
   mutable std::size_t highlight_checkpoints_valid_through_ = 0;

@@ -1592,9 +1592,6 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   // the same frame.
   StaleHighlightTokensFrom(safe_start);
 
-  if (line_highlight_states_.size() != document_->lines.size()) {
-    line_highlight_states_.resize(document_->lines.size());
-  }
   // Lazy invalidation: drop the validity cursor instead of looping
   // SyntaxState{} into ~50 000 entries on every keystroke.
   line_highlight_states_valid_through_ =

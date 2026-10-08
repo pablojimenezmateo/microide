@@ -209,6 +209,15 @@ class TextLayoutCache {
   // TextViewport::InvalidateVisualColumnCache (which despite its name also
   // wiped the wrapped-row table).
   void InvalidateAll();
+  // A tab-size change: the width table no longer describes the document at the
+  // NEW size, but it still does at the old one, so it is parked rather than
+  // dropped, and a later return to that size with no content change in between
+  // takes it back instead of re-measuring every line. The large-file open needs
+  // exactly that: the reader thread builds the table at the file's final tab
+  // size, and applying preferences then indent detection on the shell thread
+  // flips the size away and back (TD-2026-09-29-317). One slot; an empty table
+  // never displaces a parked one.
+  void ParkLineWidthsForTabSizeChange();
   // Drops just the visible-line LRU + max-columns cache (used by tab-size
   // changes, where the wrapped-row table is separately re-keyed via
   // layout_shape_revision and rebuilt lazily on the next access).
@@ -685,6 +694,22 @@ class TextLayoutCache {
   mutable std::vector<PackedLineWidth> inserted_columns_scratch_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
+  // See ParkLineWidthsForTabSizeChange. Adopted or released by the next rebuild.
+  // Optional, not a bare deque: a libstdc++ deque allocates when it is
+  // default-constructed, and every TextViewport (and every copy of one) owns a
+  // TextLayoutCache, so a bare member cost two allocations per viewport for a
+  // slot that is only ever filled by a tab-size change. Reset frees the table.
+  struct ParkedLineWidths {
+    std::optional<std::deque<PackedLineWidth>> widths;
+    std::size_t tab_size = 0;
+    std::uint64_t content_revision = 0;
+    void Reset() {
+      widths.reset();
+      tab_size = 0;
+      content_revision = 0;
+    }
+  };
+  mutable ParkedLineWidths parked_line_widths_;
 
   // Segmented maxima over `cached_visual_line_columns_`: the widest line of each
   // run of `kVisualColumnBlockLines`, so the document maximum is a walk of

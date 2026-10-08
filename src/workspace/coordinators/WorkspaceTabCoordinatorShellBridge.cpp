@@ -8,6 +8,8 @@
 #include "workspace/services/PromptSurfaceService.h"
 
 #include "workspace/SettingFlags.h"
+#include "workspace/EditorPreferenceSettings.h"
+#include "workspace/WorkspaceIndentDetectApply.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -156,11 +158,45 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                   });
                 }
                 auto loaded = std::make_shared<editor::TextViewport>();
+                // The per-line width table (the horizontal extent) measures every
+                // line of the file: ~12 ms on the shell thread for an 800k-line log
+                // in the first frame after the bytes land. Build it here instead, at
+                // the tab size the completion will settle on — the same inputs
+                // ApplyEditorPreferences and indent detection use, resolved now on
+                // the shell thread and copied in. A tab size that differs anyway
+                // (a setting changed meanwhile) just rebuilds it there, as before;
+                // the completion's own preference-then-detection flip round-trips
+                // through the layout cache's parked table rather than
+                // re-measuring (TD-2026-09-29-317).
+                const EditorPreferenceSettings settings = ResolveEditorPreferenceSettings(
+                    [this](std::string_view id) { return GetSettingValue(id); });
+                project::EditorConfigProperties editor_config;
+                if (settings.editorconfig_enabled) {
+                  context_.current_project_state.editor_config.EnsureProjectRoot(
+                      context_.current_project_state.root);
+                  editor_config = context_.current_project_state.editor_config.Resolve(path);
+                }
+                const EditorPreferences preferences = context_.current_project_state.editor_preferences;
+                std::optional<std::string> detect_on_open = GetSettingValue("editor.indent.detect_on_open");
                 return file_read_service_.Begin({
                     .path = path,
                     .on_worker =
-                        [loaded, path](std::string& bytes) {
-                          (void)loaded->AdoptFileContent(path, std::move(bytes));
+                        [loaded, path, editor_config = std::move(editor_config), preferences,
+                         detect_on_open = std::move(detect_on_open)](std::string& bytes) {
+                          if (!loaded->AdoptFileContent(path, std::move(bytes))) {
+                            return;
+                          }
+                          if (preferences.soft_wrap) {
+                            return;  // a wrapped view never reads the width table
+                          }
+                          loaded->SetTabSize(editor_config.tab_size.value_or(preferences.tab_size));
+                          loaded->SetIndentWidth(
+                              editor_config.indent_width.value_or(preferences.indent_width));
+                          loaded->SetSoftTabs(editor_config.soft_tabs.value_or(preferences.soft_tabs));
+                          ApplyDetectedIndentAfterPreferences(
+                              *loaded, [&](std::string_view) { return detect_on_open; },
+                              editor_config);
+                          (void)loaded->max_visual_columns();
                         },
                     .on_complete =
                         [this, loaded](project::FileReadService::Completion completion) {

@@ -944,8 +944,8 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
   Expect(warmed.layout_cache > empty.layout_cache,
          "warming the width table and the visible-line LRU must move layout_cache");
 
-  // Highlight token LRU and the per-line state chain, which is sized to the
-  // document rather than to the window.
+  // Highlight token LRU and the per-line state chain, which grows with the
+  // highlighted prefix (not the window, and no longer the whole document).
   for (std::size_t line = 0; line < 200; ++line) {
     (void)viewport.HighlightedLineTokens(line);
   }
@@ -953,7 +953,7 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
   Expect(highlighted.highlight_tokens > warmed.highlight_tokens,
          "highlighting lines must move highlight_tokens");
   Expect(highlighted.highlight_states > 0,
-         "the per-line highlighter state chain is sized to the document");
+         "the per-line highlighter state chain holds the highlighted prefix");
 
   // Undo history. It is the one component with a declared per-tab ceiling and
   // the one that grows with use rather than with document size.
@@ -969,6 +969,85 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
                                edited.undo_history,
          "total() must be the sum of every reported component, or a component "
          "that stops being counted disappears silently");
+}
+
+// TD-2026-09-29-317: the per-line highlighter state chain was resized to the
+// document on first paint — 40 bytes per line, a 32 MB zero-fill (~12 ms on the
+// shell thread) the moment an 800k-line file's off-thread open landed, for
+// entries no reader trusts until the contiguous frontier reaches them. It grows
+// with the frontier now. Painting the top of a large file must not cost the
+// whole file, and highlighting must still be exact after an edit and deep in
+// the file.
+void TestTextViewportHighlightStatesGrowWithTheFrontier() {
+  TextViewport viewport;
+  std::string content;
+  constexpr std::size_t kLines = 50'000;
+  for (std::size_t i = 0; i < kLines; ++i) {
+    content += i % 100 == 0 ? "/* a block\n" : i % 100 == 1 ? "   comment */\n" : "int x = 1;\n";
+  }
+  viewport.LoadContent(content, "/tmp/frontier.cpp");
+  viewport.SetViewportSize(40, 120);
+  for (std::size_t line = 0; line < 40; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+  const std::size_t bytes = viewport.DerivedCacheBytes().highlight_states;
+  Expect(bytes > 0, "painted lines record their states");
+  Expect(bytes < kLines * sizeof(microide::editor::SyntaxState) / 10,
+         "painting the top must not size the state chain to the document: " +
+             std::to_string(bytes) + " bytes");
+
+  // Deep and after an edit: the tokens must match a fresh viewport's.
+  viewport.MoveCursorTo(5, 0, false);
+  viewport.InsertText("/* opened ");
+  viewport.InsertText("*/");
+  const std::size_t deep = 30'001;
+  const auto deep_tokens = std::vector(viewport.HighlightedLineTokens(deep).begin(),
+                                       viewport.HighlightedLineTokens(deep).end());
+  TextViewport fresh;
+  fresh.LoadContent(viewport.SerializeDocumentText(), "/tmp/frontier.cpp");
+  fresh.SetViewportSize(40, 120);
+  const auto fresh_tokens = std::vector(fresh.HighlightedLineTokens(deep).begin(),
+                                        fresh.HighlightedLineTokens(deep).end());
+  Expect(deep_tokens == fresh_tokens, "deep highlighting after an edit matches a fresh buffer");
+}
+
+// A tab-size change parks the per-line width table instead of dropping it, so a
+// round trip back to the size it was built at re-measures nothing. The large-file
+// open builds the table on the reader thread at the final tab size, and the
+// completion's preference-then-detection flip goes away and back.
+void TestTextViewportTabSizeRoundTripKeepsTheWidthTable() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 2000; ++i) {
+    content += i == 700 ? "\t\t\twide with tabs\n" : "plain line\n";
+  }
+  viewport.LoadContent(content, "/tmp/tabs.txt");
+  viewport.SetTabSize(4);
+  const std::size_t at_four = viewport.max_visual_columns();
+
+  microide::util::ResetPerformanceCounters();
+  viewport.SetTabSize(8);
+  viewport.SetTabSize(4);
+  Expect(viewport.max_visual_columns() == at_four, "the round trip answers the same width");
+  Expect(microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::EditorLineWidthFullMeasures) == 0,
+         "and measures no line again");
+
+  // Control: a real change of size measures, and gets the new answer.
+  viewport.SetTabSize(8);
+  Expect(viewport.max_visual_columns() == at_four + 12, "three tabs widen by 4 columns each");
+  Expect(microide::util::ReadPerformanceCounter(
+             microide::util::PerfCounterId::EditorLineWidthFullMeasures) == viewport.line_count(),
+         "a new size measures every line once");
+
+  // An edit in between invalidates the parked table: no stale width comes back.
+  microide::util::ResetPerformanceCounters();
+  viewport.SetTabSize(4);
+  viewport.MoveCursorTo(700, 0, false);
+  viewport.InsertCharacter('\t');
+  viewport.SetTabSize(8);
+  viewport.SetTabSize(4);
+  Expect(viewport.max_visual_columns() == at_four + 4, "the edit's extra tab is measured");
+  microide::util::ResetPerformanceCounters();
 }
 
 void TestTextViewportNoOpRangeReplaceDoesNotDirty() {
@@ -6723,6 +6802,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportContentEditInvalidatesBracketAndHighlightCaches);
   AddTest(tests, "TextViewport/DerivedCacheBytesTracksEachCache",
           TestTextViewportDerivedCacheBytesTracksEachCache);
+  AddTest(tests, "TextViewport/HighlightStatesGrowWithTheFrontier",
+          TestTextViewportHighlightStatesGrowWithTheFrontier);
+  AddTest(tests, "TextViewport/TabSizeRoundTripKeepsTheWidthTable",
+          TestTextViewportTabSizeRoundTripKeepsTheWidthTable);
   AddTest(tests, "TextViewport/NoOpRangeReplaceDoesNotDirty",
           TestTextViewportNoOpRangeReplaceDoesNotDirty);
   AddTest(tests, "TextViewport/UndoRedoRoundTripRandomEdits",

@@ -18,8 +18,11 @@
 // baselines, matching the promotion path in dev-docs/performance/perf-harness.md.
 #include "perf/PerfHarness.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <ctime>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -49,6 +52,7 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
 #include "workspace/registries/WorkspaceSettingsRegistry.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "workspace/state/WorkspaceTabState.h"
 
 namespace microide::tests::perf {
@@ -248,6 +252,107 @@ void RunReferenceSnippetFileWindow(ScenarioContext& context) {
   });
 
   std::filesystem::remove_all(dir, ec);
+}
+
+// ---- TD-2026-09-29-317: the asynchronous open's latency claims -------------
+//
+// A file of at least 4 MiB is read, classified and built into a buffer on the
+// file reader's thread, and the tab shows an empty read-only stand-in until it
+// lands. Functional coverage lives in AsyncFileOpenTests; what nothing gated was
+// the reason the change exists — latency. Three claims, each asserted here:
+//
+//   1. the open call returns before the read: the tab is Loading when it does,
+//      and the call's allocations are a gated phase (a regression that read the
+//      file inline would show up as megabytes of allocation, not microseconds);
+//   2. no frame pumped while the read is outstanding — nor the one that applies
+//      the completion — spends a stall's worth of SHELL-THREAD CPU. The
+//      completion frame cost ~30 ms when this scenario was written: two
+//      whole-document passes (a 32 MB zero-fill of per-line highlight states,
+//      and measuring every line's width) ran on the shell thread at first
+//      paint. Both are gone (~3.5 ms on the reference box); 12 ms fails if
+//      either comes back. A synchronous read would be hundreds of ms;
+//   3. closing the tab mid-read applies nothing: no tab comes back, and nothing
+//      else ends up holding the file's buffer.
+double ThreadCpuMicros() {
+  timespec now{};
+  ::clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
+  return static_cast<double>(now.tv_sec) * 1e6 + static_cast<double>(now.tv_nsec) / 1e3;
+}
+
+void RunEditorOpenLargeFileAsync(ScenarioContext& context) {
+  using TA = workspace::WorkspaceShell::TestAccess;
+  using Content = workspace::TabEntry::EditorTabState::Content;
+  std::error_code ec;
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path(ec) / "microide_perf_async_open";
+  std::filesystem::create_directories(dir, ec);
+  const std::filesystem::path file = dir / "large.log";
+  constexpr std::uintmax_t kBytes = 64ull << 20;
+  if (std::filesystem::file_size(file, ec) != kBytes || ec) {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    const std::string line =
+        "2026-10-08T12:00:00Z INFO request served path=/api/v1/items status=200 bytes=1234\n";
+    std::uintmax_t written = 0;
+    while (written + line.size() <= kBytes) {
+      out << line;
+      written += line.size();
+    }
+    out << std::string(static_cast<std::size_t>(kBytes - written - 1), 'x') << '\n';
+  }
+  if (!context.Open(dir)) {
+    throw std::runtime_error("editor_open_large_file_async: project open failed");
+  }
+  context.PumpFrames(2);
+  workspace::WorkspaceShell& shell = context.Shell();
+
+  // 1. The open returns with the read still outstanding.
+  context.Measure("open_large_async.open_call", [&] { context.OpenTab(file); });
+  if (TA::ActiveTabContentState(shell) != Content::Loading) {
+    throw std::runtime_error("editor_open_large_file_async: a 64 MiB open did not go off-thread");
+  }
+
+  // 2. Frames while it is outstanding, through the one that applies it.
+  constexpr double kStallBudgetUs = 12'000.0;
+  double worst_us = 0.0;
+  std::size_t frames = 0;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  while (TA::ActiveTabContentState(shell) == Content::Loading &&
+         std::chrono::steady_clock::now() < deadline) {
+    // The SHELL THREAD's CPU time, not wall: the harness pins a scenario to a
+    // core, so the reader thread preempting the frame read as a 31 ms "stall"
+    // that the shell thread spent descheduled. The claim is that this thread
+    // does not do the read; its own CPU time is what says so.
+    const double t0 = ThreadCpuMicros();
+    context.PumpFrames(1);
+    worst_us = std::max(worst_us, ThreadCpuMicros() - t0);
+    ++frames;
+  }
+  if (TA::ActiveTabContentState(shell) != Content::Ready) {
+    throw std::runtime_error("editor_open_large_file_async: the read never landed");
+  }
+  if (TA::ActiveEditor(shell).line_count() < 100'000) {
+    throw std::runtime_error("editor_open_large_file_async: the tab holds " +
+                             std::to_string(TA::ActiveEditor(shell).line_count()) +
+                             " lines, not the file");
+  }
+  if (worst_us > kStallBudgetUs) {
+    throw std::runtime_error("editor_open_large_file_async: a frame used " +
+                             std::to_string(worst_us) + " us of shell-thread CPU while the read was outstanding (" +
+                             std::to_string(frames) + " frames)");
+  }
+
+  // 3. Closed mid-read: nothing is applied.
+  TA::CloseTab(shell, TA::ActiveTabIndex(shell));
+  context.OpenTab(file);
+  if (TA::ActiveTabContentState(shell) != Content::Loading) {
+    throw std::runtime_error("editor_open_large_file_async: the reopen did not go off-thread");
+  }
+  TA::CloseTab(shell, TA::ActiveTabIndex(shell));
+  TA::FlushPendingFileReads(shell);
+  context.PumpFrames(1);
+  if (TA::FocusedGroupOpenTabCount(shell) != 0) {
+    throw std::runtime_error("editor_open_large_file_async: a tab closed mid-read came back");
+  }
 }
 
 // ---- 054: multi-caret result-caret remap (fast + fallback paths) -----------
@@ -1006,6 +1111,15 @@ void RunEditorTabDragBurst(ScenarioContext& context) {
         "editor_tab_drag_burst: the drag produced no damage at all, so it measured nothing");
   }
 }
+
+const ScenarioRegistration g_perf_editor_open_large_file_async({Scenario{
+    .name = "editor_open_large_file_async",
+    .smoke = true,
+    .baseline_gated = true,
+    // The first pass writes the 64 MiB fixture and pays the cold page cache.
+    .warmup_iterations = 1,
+    .run = RunEditorOpenLargeFileAsync,
+}});
 
 const ScenarioRegistration g_perf_editor_tab_drag_burst({Scenario{
     .name = "editor_tab_drag_burst",
