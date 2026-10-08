@@ -65,7 +65,7 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
     host_screen_top_ = 0;
     host_screen_lines_ = lines_.size();
     host_alternate_ = false;
-    host_primary_stash_.clear();
+    host_primary_stash_.reset();
     host_primary_stash_screen_lines_ = 0;
     host_mirrored_ = false;
     next_input_seq_ = 1;
@@ -173,7 +173,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
       // A cold attach: nothing held is valid, scrollback included.
       lines_.clear();
       host_screen_lines_ = 0;
-      host_primary_stash_.clear();
+      host_primary_stash_.reset();
       host_primary_stash_screen_lines_ = 0;
       host_alternate_ = false;
       host_screen_top_ = frame.previous_top;
@@ -184,8 +184,12 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
       lines_.clear();
       host_screen_lines_ = 0;
     } else if (!alternate && host_alternate_) {
-      lines_ = std::move(host_primary_stash_);
-      host_primary_stash_.clear();
+      if (host_primary_stash_.has_value()) {
+        lines_ = std::move(*host_primary_stash_);
+      } else {
+        lines_.clear();
+      }
+      host_primary_stash_.reset();
       host_screen_lines_ = host_primary_stash_screen_lines_;
     }
     host_alternate_ = alternate;

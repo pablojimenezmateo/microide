@@ -455,8 +455,10 @@ class TerminalSession {
   std::size_t host_screen_lines_ = 0;   // screen lines at the tail of lines_
   bool host_alternate_ = false;
   bool host_mirrored_ = false;  // a frame has been applied
-  // The primary buffer while the host shows its alternate screen.
-  std::deque<TerminalLine> host_primary_stash_;
+  // The primary buffer while the host shows its alternate screen. Optional: a
+  // libstdc++ deque allocates when default-constructed, and every terminal —
+  // local ones, which never stash — paid two allocations for this slot.
+  std::optional<std::deque<TerminalLine>> host_primary_stash_;
   std::size_t host_primary_stash_screen_lines_ = 0;
   std::function<void()> output_observer_;
   TerminalPredictionOverlay prediction_;

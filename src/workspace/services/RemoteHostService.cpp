@@ -414,7 +414,13 @@ bool RemoteHostService::IsHostFileCopy(const std::filesystem::path& path) const 
 
 bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
                                         std::function<void(const std::filesystem::path&)> opened) {
-  if (fetching_copy_ == path.lexically_normal()) {
+  // Every open in the editor passes through here, so the local case must cost
+  // nothing: normalizing the path allocated per component on each open of a
+  // local file, ~10 allocations an open since v2.12.0.
+  if (projects_.empty()) {
+    return false;
+  }
+  if (!fetching_copy_.empty() && fetching_copy_ == path.lexically_normal()) {
     return false;  // the fetched copy itself, opening now: open it as it is
   }
   for (auto& [tree, entry] : projects_) {

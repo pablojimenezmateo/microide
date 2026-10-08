@@ -238,7 +238,7 @@ void TerminalSession::Stop() {
     prediction_.Withdraw(PredictionViewLocked());
     prediction_.Clear();
     host_channel_.reset();
-    host_primary_stash_.clear();
+    host_primary_stash_.reset();
   }
   if (backend) {
     backend->Stop();
