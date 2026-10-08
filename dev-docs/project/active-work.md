@@ -290,6 +290,11 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
+> **Phase 2b (2026-10-08): a remote PROJECT opens.** `Remote: Open Folder on Host…`
+> works end to end on a mirror — see `dev-docs/design/remote-projects.md`
+> § "Phase 2b as built" and `openspec/changes/remote-projects-phase-2b/tasks.md`
+> (open: 5.4 pushed git status, 6.1 host search). Remainders are TD-2026-10-08-328.
+>
 > **Next agent: start here.** Phase 2a is BUILT (2026-10-08): `tasks.md` in
 > `openspec/changes/remote-server-phase-2a/` is checked off except 4.5's settings
 > echo, 7.4's backfill and two-client rule, 9.1 (delay-proxy perf scenarios) and

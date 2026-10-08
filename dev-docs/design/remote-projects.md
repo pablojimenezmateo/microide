@@ -1,6 +1,6 @@
 # Remote Projects Over SSH
 
-Last revised 2026-10-08. **Status: Phase 2a — the server, host terminals with prediction, reattach and reconnect — is on `main` (see "Phase 2a as built" below); no remote PROJECT opens yet (Phase 2b).**
+Last revised 2026-10-08. **Status: Phase 2a (the server, host terminals with prediction, reattach and reconnect) and most of Phase 2b (a remote PROJECT on a mirror) are on `main` — see "Phase 2a as built" and "Phase 2b as built" below.**
 
 **Terminology.** This document talks about two different things that were both
 called "agent" until this revision. The **server** is `microide-server`, the
@@ -112,6 +112,43 @@ from the text above:
   `tests/fixtures/remote/fake-ssh`.
 - Open: `term/scrollback` backfill, two clients on one pty, the perf-harness
   delay scenarios (§ 9) — TD-2026-10-08-325, -326.
+
+**Phase 2b as built (2026-10-08).** `openspec/changes/remote-projects-phase-2b/`
+tracks it; what landed and where it differs from the text above:
+
+- **Hash.** `util::ContentHash` is BLAKE3 (hash mode, 32 raw bytes on the wire),
+  a self-contained portable implementation pinned by the upstream vectors
+  (~0.94 GB/s); the upstream SIMD sources are not vendored (TD-2026-10-08-328).
+  The editor's own `FileSignature` keeps its process-local `QuickContentHash`.
+- **Manifest.** `server/WorkspaceTree` decides the content set on the host (`git
+  ls-files --cached --others --exclude-standard`, or the scanner's walk), lstat's
+  through a root dirfd, hashes misses on up to 8 threads through a cache keyed
+  (dev, ino, size, mtime, ctime) that never trusts a racily clean key and persists
+  beside the socket. `tree/manifest` streams packed, prefix-compressed rows
+  (`RemoteManifest`) as `TreeRows` frames on the bulk lane; the reply rides behind
+  them. A failed content set is an error, never an empty manifest.
+- **Watch.** `server/WorkspaceWatch` is the kernel `FileIndexWatcher`; a batch
+  re-stats and re-hashes only what it names and asks git about new paths only
+  (a `.gitignore` edit or a shape change rebuilds), and each subscribed connection
+  gets a `WatchDelta` against exactly what it was last sent.
+- **Reads and writes.** `project/remote/TreeFiles` (shared by both ends): confined
+  O_NOFOLLOW walks and a three-valued precondition (hash | absent | any) for
+  `file/write` and `fs/op`; `object/fetch` and `file/read` stream verified bytes.
+- **No object store.** The mirror keeps each path's base HASH, not its bytes
+  (`MirrorStore`, `meta/state` + a small `meta/journal`); deltas are not
+  implemented. A pull writes the host's mtime so its recorded stat vouches at once.
+- **Engine.** `MirrorSyncEngine` decides every path against its base (current,
+  stale, absent, dirty, conflict); a pull is a compare-and-swap on the LOCAL file
+  under the path's lock; mass deletes are held; four pull batches are on the wire
+  at once, large files last and alone; pushes and tree operations are journaled
+  before they are tried and replayed in order.
+- **Project.** `RemoteProject` = a session whose hello names the host root + store
+  + engine + `MirrorWriteGate` + `RemoteProcessLauncher` (which maps out-of-project
+  host paths to `meta/host-files`, fetched on open). The open funnel recognizes a
+  mirror tree by `meta/remote`, so recents and restored sessions reconnect.
+- **Parity.** The suite's `mirror` locality runs every scenario on this stack.
+- Open: pushed `git/status`, host-side `search/run`, zstd deltas, files over the
+  64 MiB per-object ceiling — TD-2026-10-08-328.
 
 ## 1. The problem
 

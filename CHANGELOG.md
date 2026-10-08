@@ -10,6 +10,23 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Folders on a remote host.** `Remote: Open Folder on Host…` (`remote-open
+  [user@]host[:port]:/path`) opens a host directory as a project. The editor works
+  on a local mirror at local speed — typing, opening, the tree and quick-open never
+  wait on the network — while git, language servers, debuggers, formatters and
+  terminals run on the host. A save lands locally at once and is pushed under
+  compare-and-swap: it never overwrites what an agent wrote on the host meanwhile;
+  both versions are kept and the file gets a row with **Compare**, **Keep Mine** and
+  **Take Host's** (`remote-resolve`). Host changes stream into the mirror; a sync
+  that would delete most of it (an unmounted host disk) is held. Saves, renames and
+  deletes made offline are journaled and replayed on reconnect. A host file outside
+  the project that a language server or debugger names (a system header behind go
+  to definition) opens read-only from the host. The mirror lives under
+  `~/.local/share/microide/remote/`, reopens from the recents list (listed as
+  `host:/path`) as the remote project, and closing its tab releases the connection.
+  `remote-show-log` shows the host server's log; a host that ends processes at
+  logout or polls instead of watching says so.
+
 - **Terminals on a remote host.** `Remote: Open Terminal on Host…` (`remote-terminal
   [user@]host[:port]`) opens a terminal whose shell runs on the host, reached with
   your own ssh configuration — no inbound port, no root. The first connect installs
