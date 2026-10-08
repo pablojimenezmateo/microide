@@ -496,6 +496,21 @@ edit. Fix shape, as in `project/remote`: record the signature's ctime too, and
 treat a signature recorded within ~2 s of its own mtime/ctime as racy — confirm it
 with the content hash on the next check instead of believing the stat.
 
+### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [OPEN]
+
+Found by the first two-machine trial on 2026-10-08; none blocks editing.
+
+- A host file outside the project (a language server's definition) opens from
+  the client's cache under `$XDG_CACHE_HOME`, read-only and freshly fetched, but
+  the path bar shows that cache path. It should show `host:/abs/path`, as the tab
+  title and recents do; the cache path is an implementation detail.
+- The control channel's `type` answers `ok:true` when the target editor is
+  read-only and the edit was refused (the UI now says why, the reply does not).
+  The reply should carry the refusal, so an agent driving the editor sees it.
+- A tab tooltip was reported staying up after the pointer left the strip. Seen
+  only under Xvfb so far, where leave events can be missing; reproduce on a real
+  display before fixing.
+
 ### TD-2026-10-08-330 — `DebugService/SessionReconciledWhenAdapterDiesSilently` is intermittent. [OPEN]
 
 Failed once in eight parallel full-suite runs on 2026-10-08 ("a non-terminal
