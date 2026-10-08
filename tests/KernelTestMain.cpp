@@ -72,12 +72,14 @@ void RegisterEditBatchOrderTests(std::vector<TestCase>& tests);
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 void RegisterRemoteFrameTests(std::vector<TestCase>& tests);
 void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests);
+void RegisterRemotePeerTests(std::vector<TestCase>& tests);
 
 namespace {
 
 void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterRemoteFrameTests(tests);
   RegisterRemoteFrameTransportTests(tests);
+  RegisterRemotePeerTests(tests);
   RegisterTestRunnerCliTests(tests);
   RegisterAppDirectoriesTests(tests);
   RegisterTestSupportTests(tests);

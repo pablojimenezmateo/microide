@@ -301,6 +301,9 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/ProjectTraversalFilter.cpp
   src/project/remote/RemoteFrame.cpp
   src/project/remote/RemoteFrameTransport.cpp
+  src/project/remote/RemoteProtocol.cpp
+  src/project/remote/LinkHeartbeat.cpp
+  src/project/remote/RemotePeer.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalBase64.cpp
   src/terminal/TerminalCsiParser.cpp
@@ -1291,6 +1294,7 @@ add_executable(microide_kernel_tests
   tests/KernelTestMain.cpp
   tests/RemoteFrameTests.cpp
   tests/RemoteFrameTransportTests.cpp
+  tests/RemotePeerTests.cpp
   tests/TestRunner.cpp
   tests/TestRunnerCli.cpp
   tests/TestSupport.cpp

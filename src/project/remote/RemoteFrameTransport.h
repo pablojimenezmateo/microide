@@ -42,6 +42,8 @@ class RemoteFrameTransport {
   struct Callbacks {
     std::function<void(Frame)> on_frame;
     std::function<void(std::string_view reason)> on_closed;
+    // Every Options::tick_interval on the I/O thread (the heartbeat's clock).
+    std::function<void()> on_tick;
   };
 
   struct Options {
@@ -56,6 +58,9 @@ class RemoteFrameTransport {
     std::size_t ack_every_bytes = 32 * 1024;
     // Close the descriptors on Stop (false when someone else owns them).
     bool owns_fds = true;
+    // 0 = no ticks. The poll() wait is bounded by the next tick, so an idle
+    // connection wakes only for its heartbeat.
+    std::chrono::milliseconds tick_interval{0};
   };
 
   RemoteFrameTransport() = default;
@@ -78,6 +83,9 @@ class RemoteFrameTransport {
   // Stop the I/O thread and close owned descriptors. Idempotent. Does not run
   // on_closed if the transport had not already closed.
   void Stop();
+  // End the connection from above (a dead link, a protocol error in a body):
+  // reports `reason` through on_closed once and stops the I/O loop. Any thread.
+  void Fail(std::string_view reason);
 
   bool closed() const { return closed_.load(std::memory_order_acquire); }
   // The current bulk window (bytes of bulk payload allowed unacknowledged).
@@ -125,6 +133,7 @@ class RemoteFrameTransport {
   std::uint64_t bulk_bytes_received_ = 0;
   std::uint64_t bulk_bytes_received_acked_ = 0;
   std::chrono::steady_clock::time_point last_ack_time_{};
+  std::chrono::steady_clock::time_point next_tick_{};
   std::uint64_t last_ack_bytes_ = 0;
 };
 

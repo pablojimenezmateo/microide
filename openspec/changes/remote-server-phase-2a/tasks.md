@@ -30,10 +30,10 @@
 - [x] 4.1 `src/project/remote/RemoteFrame.{h,cpp}`: header `uint32 length, uint16 type, uint8 lane, uint64 id`, JSON control payloads, raw content payloads, the 64 MiB ceiling; incremental decoder that never allocates an announced size before validating it
 - [x] 4.2 Fuzz target for the decoder (`tests/fuzz/`, corpora checked in), in the `PersistedRecordReaderFuzz` pattern
 - [x] 4.3 Binary transport with the stdio transport's discipline: one poll I/O thread, per-lane bounded outbound queues, interactive-first draining, wedged-peer teardown, perf counters
-- [ ] 4.4 Adaptive bulk in-flight bound (~100 ms of measured bandwidth, 64 KiB floor, 1 MiB cap) and `op/cancel`
-- [ ] 4.5 `server/hello` with protocol version + minimum, release version, `daemon_epoch`, capabilities, session-survival report, effective settings; mismatch errors naming both release versions
-- [ ] 4.6 `link/ping` every 2 s on the interactive lane with clock and RTT estimate; three misses = dead link
-- [ ] 4.7 Unit tests: round trips of every frame type, a UTF-8 sequence split across content frames, oversized and truncated frames, lane ordering under a queued bulk backlog
+- [x] 4.4 Adaptive bulk in-flight bound (~100 ms of measured bandwidth, 64 KiB floor, 1 MiB cap) and `op/cancel`
+- [ ] 4.5 `server/hello` with protocol version + minimum, release version, `daemon_epoch`, capabilities, session-survival report, effective settings; mismatch errors naming both release versions — messages, validation and the compatibility check done 2026-10-08 (`RemoteProtocol`); the effective-settings echo lands with the settings in 8.6
+- [x] 4.6 `link/ping` every 2 s on the interactive lane with clock and RTT estimate; three misses = dead link
+- [x] 4.7 Unit tests: round trips of every frame type, a UTF-8 sequence split across content frames, oversized and truncated frames, lane ordering under a queued bulk backlog
 
 ## 5. Server daemon skeleton
 

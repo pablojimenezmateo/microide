@@ -129,6 +129,12 @@ void RemoteFrameTransport::Stop() {
   closed_.store(true, std::memory_order_release);
 }
 
+void RemoteFrameTransport::Fail(std::string_view reason) {
+  Close(reason);
+  stop_.store(true, std::memory_order_release);
+  wake_.Wake();
+}
+
 void RemoteFrameTransport::Close(std::string_view reason) {
   closed_.store(true, std::memory_order_release);
   if (!close_reported_.exchange(true) && callbacks_.on_closed) {
@@ -149,6 +155,10 @@ bool RemoteFrameTransport::HasWritable() {
 void RemoteFrameTransport::Run() {
 #if defined(__unix__) || defined(__APPLE__)
   std::string close_reason;
+  const bool ticking = options_.tick_interval.count() > 0;
+  if (ticking) {
+    next_tick_ = std::chrono::steady_clock::now() + options_.tick_interval;
+  }
   while (!stop_.load(std::memory_order_acquire)) {
     const bool want_write = HasWritable();
     pollfd fds[3] = {};
@@ -165,7 +175,20 @@ void RemoteFrameTransport::Run() {
     }
     const nfds_t wake_index = count;
     fds[count++] = pollfd{wake_.read_fd(), POLLIN, 0};
-    if (::poll(fds, count, -1) < 0) {
+    int timeout_ms = -1;
+    if (ticking) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= next_tick_) {
+        next_tick_ = now + options_.tick_interval;
+        if (callbacks_.on_tick) {
+          callbacks_.on_tick();
+        }
+        continue;  // the tick may have queued a frame (a ping): recompute the poll set
+      }
+      timeout_ms = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(next_tick_ - now).count() + 1);
+    }
+    if (::poll(fds, count, timeout_ms) < 0) {
       if (errno == EINTR) {
         continue;
       }
