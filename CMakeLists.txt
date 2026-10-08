@@ -839,6 +839,7 @@ endif()
 # that, and the two are complementary rather than redundant.
 add_library(microide_kernel OBJECT ${MICROIDE_KERNEL_SOURCES})
 target_include_directories(microide_kernel PRIVATE src)
+target_compile_definitions(microide_kernel PRIVATE MICROIDE_VERSION="${PROJECT_VERSION}")
 target_precompile_headers(microide_kernel PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
 target_link_libraries(microide_kernel PRIVATE ${MICROIDE_KERNEL_LIBS})
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

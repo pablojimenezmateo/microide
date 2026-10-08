@@ -13,6 +13,10 @@
 #include <vector>
 #include "util/StringUtil.h"
 
+#ifndef MICROIDE_VERSION
+#define MICROIDE_VERSION "dev"
+#endif
+
 namespace microide::terminal {
 
 void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
@@ -76,6 +80,11 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       }
     } else if (final == 'n') {
       for (const int mode : params) {
+        if (mode == 996) {
+          // Colour-scheme query (the mode-2031 protocol): 1 dark, 2 light.
+          SendBytesLocked(util::IsDarkColor(default_background_) ? "\x1b[?997;1n" : "\x1b[?997;2n");
+          continue;
+        }
         if (mode == 6) {
           // At the pending-wrap (LCF) column cursor_column_ == columns_; a real
           // terminal reports the last on-screen column, never one past the edge.
@@ -98,6 +107,10 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
   if (prefix == '>') {
     if (final == 'c') {
       SendBytesLocked("\x1b[>0;10;1c");
+    } else if (final == 'q' && intermediate == '\0' && (params.empty() || params.front() == 0)) {
+      // XTVERSION: name and version, so a program can tell which terminal it is
+      // in rather than guess from TERM (which says xterm-256color).
+      SendBytesLocked("\x1bP>|microide " MICROIDE_VERSION "\x1b\\");
     }
     return;
   }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "util/Rgba8.h"
 #include "platform/ProcessLauncher.h"
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
@@ -153,6 +154,11 @@ class TerminalSession {
   bool WantsMouseMotionCapture(bool buttons_down) const;
   bool WantsFocusEvents() const;
   std::optional<std::string> ConsumePendingClipboardText();
+  // The colours the host paints unstyled cells with. Programs ask for them
+  // (OSC 10/11) to pick a light or dark theme, so answering with anything but
+  // what is on screen gives them the wrong one. A dark/light flip is reported to
+  // a program that enabled mode 2031.
+  void SetDefaultColors(util::Rgba8 foreground, util::Rgba8 background);
   // True once (then reset) after the program rang the bell (BEL outside an escape
   // sequence) — locally, or on the host, carried by a frame's kBell.
   bool ConsumeBell();
@@ -395,6 +401,14 @@ class TerminalSession {
   bool focus_event_mode_ = false;
   bool cursor_visible_ = true;
   bool synchronized_output_ = false;
+  // DEC mode 2031: the app wants `CSI ? 997 ; 1|2 n` when the colour scheme
+  // flips between dark and light (Claude Code, neovim, helix follow the theme).
+  bool color_scheme_updates_ = false;
+  // What a cell with no explicit colour is painted with: the host's theme.
+  // Answers OSC 10/11/12 and the dark/light query. Defaults to the built-in
+  // dark palette until the host says otherwise.
+  util::Rgba8 default_foreground_ = util::Rgba8{0xf5, 0xf7, 0xfa, 0xff};
+  util::Rgba8 default_background_ = util::Rgba8{0x1f, 0x24, 0x2c, 0xff};
   int sync_suppressed_wakes_ = 0;
   // Kitty keyboard protocol progressive-enhancement flags (0 = legacy mode) and
   // the push/pop stack maintained by `CSI > flags u` / `CSI < n u`.

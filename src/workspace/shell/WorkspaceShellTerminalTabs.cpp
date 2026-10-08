@@ -214,6 +214,12 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   const std::size_t active_index = context_.current_project_state.active_terminal_tab_index;
   bool badge_changed = false;
   const auto& tabs = context_.current_project_state.terminal_tabs;
+  // What the bottom panel paints an unstyled cell with (resolve_terminal_colors):
+  // programs ask for it to pick their own light or dark palette.
+  const util::Rgba8 default_foreground{theme_.text_primary.r, theme_.text_primary.g,
+                                       theme_.text_primary.b, 0xff};
+  const util::Rgba8 default_background{theme_.surface_background.r, theme_.surface_background.g,
+                                       theme_.surface_background.b, 0xff};
   for (std::size_t index = 0; index < tabs.size(); ++index) {
     TerminalTabState* tab = tabs[index].get();
     if (tab == nullptr) {
@@ -224,6 +230,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
       if (pane == nullptr) {
         continue;
       }
+      pane->session.SetDefaultColors(default_foreground, default_background);
       const bool output_arrived = pane->session.ConsumeWakeEvent();
       // Output in a tab the user cannot see lights its strip tab up, so an agent
       // finishing in a background tab (or behind a hidden panel) is visible

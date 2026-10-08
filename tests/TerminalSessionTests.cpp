@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "util/Rgba8.h"
 
 #include "TerminalSessionTestAccess.h"
 
@@ -938,6 +939,55 @@ void TestTerminalSessionReportsWorkingDirectoryAndColors() {
   const std::string sent = TerminalSessionTestAccess::SentBytes(session);
   Expect(sent.rfind("\x1b]11;rgb:", 0) == 0 && sent.find("\x1b\\") != std::string::npos,
          "OSC 11 background query should be answered with an rgb: color reply");
+}
+
+// What modern TUIs (Claude Code, neovim, helix) ask the terminal at startup, and
+// what they must be told. Found by recording Claude Code's startup inside
+// microide: it sends XTVERSION, the kitty keyboard query and DA1, and enables
+// mode 2031 to follow the colour scheme.
+void TestTerminalSessionAnswersModernTuiQueries() {
+  using microide::terminal::TerminalSession;
+  using microide::util::Rgba8;
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  const auto reply_to = [&](std::string_view query) {
+    TerminalSessionTestAccess::ClearSentBytes(session);
+    TerminalSessionTestAccess::AppendOutput(session, query);
+    return TerminalSessionTestAccess::SentBytes(session);
+  };
+
+  // XTVERSION names the terminal (TERM only says xterm-256color).
+  const std::string version = reply_to("\x1b[>0q");
+  Expect(version.rfind("\x1bP>|microide ", 0) == 0 &&
+             version.size() > 2 && version.substr(version.size() - 2) == "\x1b\\",
+         "XTVERSION is answered with DCS > | name version ST: " + version);
+  Expect(reply_to("\x1b[>q").rfind("\x1bP>|microide ", 0) == 0, "with the parameter omitted too");
+
+  // OSC 10/11 report what the host paints, not a fixed dark palette.
+  session.SetDefaultColors(Rgba8{0x20, 0x20, 0x20, 0xff}, Rgba8{0xff, 0xff, 0xff, 0xff});
+  Expect(reply_to("\x1b]11;?\x1b\\") == "\x1b]11;rgb:ffff/ffff/ffff\x1b\\",
+         "OSC 11 reports the host's (light) background: " + reply_to("\x1b]11;?\x1b\\"));
+  Expect(reply_to("\x1b]10;?\x07") == "\x1b]10;rgb:2020/2020/2020\x1b\\",
+         "OSC 10 reports the host's foreground");
+
+  // Mode 2031: queried, enabled, then told when the scheme flips — once per flip.
+  Expect(reply_to("\x1b[?2031$p") == "\x1b[?2031;2$y", "2031 is a known mode, reset");
+  Expect(reply_to("\x1b[?996n") == "\x1b[?997;2n", "a white background is light");
+  Expect(reply_to("\x1b[?2031h").empty(), "enabling reports nothing by itself");
+  Expect(reply_to("\x1b[?2031$p") == "\x1b[?2031;1$y", "and the mode now reads set");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  session.SetDefaultColors(Rgba8{0xee, 0xee, 0xee, 0xff}, Rgba8{0x10, 0x10, 0x10, 0xff});
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[?997;1n",
+         "a switch to a dark theme is reported to a subscribed program");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  session.SetDefaultColors(Rgba8{0xef, 0xee, 0xee, 0xff}, Rgba8{0x11, 0x10, 0x10, 0xff});
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "a colour change that stays dark is not a scheme flip");
+  Expect(reply_to("\x1b[?2031l").empty(), "unsubscribe");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  session.SetDefaultColors(Rgba8{0, 0, 0, 0xff}, Rgba8{0xff, 0xff, 0xff, 0xff});
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "and an unsubscribed program is not told");
 }
 
 void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
@@ -3091,6 +3141,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionTracksInverseVideoStyle);
   AddTest(tests, "TerminalSession/ReportsWorkingDirectoryAndColors",
           TestTerminalSessionReportsWorkingDirectoryAndColors);
+  AddTest(tests, "TerminalSession/AnswersModernTuiQueries",
+          TestTerminalSessionAnswersModernTuiQueries);
   AddTest(tests, "TerminalSession/EncodesModifiedAndFunctionKeys",
           TestTerminalSessionEncodesModifiedAndFunctionKeys);
   AddTest(tests, "TerminalSession/KittyHugePopIsBoundedByStackDepth",

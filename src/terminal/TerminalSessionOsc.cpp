@@ -141,12 +141,12 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
 
   // Default foreground / background / cursor color queries. Applications use
   // these (especially OSC 11) to detect light vs dark backgrounds; answering
-  // avoids a startup timeout. Colors mirror the built-in dark palette.
+  // avoids a startup timeout. The answer is what the host actually paints
+  // (SetDefaultColors): a fixed dark reply under a light theme made Claude Code
+  // and friends pick their dark palette on a white background.
   if (command == "10" || command == "11" || command == "12") {
     if (payload.find('?') != std::string_view::npos) {
-      const util::Rgba8 foreground = util::BasicAnsiColor(7, true);
-      const util::Rgba8 background = util::BasicAnsiColor(0, false);
-      const util::Rgba8 color = command == "11" ? background : foreground;
+      const util::Rgba8 color = command == "11" ? default_background_ : default_foreground_;
       SendBytesLocked("\x1b]" + std::string(command) + ";" + FormatOscRgbReply(color) + "\x1b\\");
     }
     return;

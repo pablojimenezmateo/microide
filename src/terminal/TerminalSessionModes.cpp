@@ -98,6 +98,8 @@ int TerminalSession::QueryPrivateModeStateLocked(int mode) const {
       return bracketed_paste_mode_ ? 1 : 2;
     case 2026:
       return synchronized_output_ ? 1 : 2;
+    case 2031:
+      return color_scheme_updates_ ? 1 : 2;
     default:
       return 0;
   }
@@ -147,6 +149,9 @@ void TerminalSession::HandlePrivateModeLocked(int mode, bool enabled) {
       return;
     case 25:
       cursor_visible_ = enabled;
+      return;
+    case 2031:
+      color_scheme_updates_ = enabled;
       return;
     case 2026:
       synchronized_output_ = enabled;

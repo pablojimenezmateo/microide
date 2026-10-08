@@ -623,6 +623,23 @@ std::optional<std::string> TerminalSession::ConsumePendingClipboardText() {
   return pending;
 }
 
+void TerminalSession::SetDefaultColors(util::Rgba8 foreground, util::Rgba8 background) {
+  {
+    std::scoped_lock lock(mutex_);
+    if (default_foreground_ == foreground && default_background_ == background) {
+      return;  // the per-frame call: nothing changed
+    }
+    const bool was_dark = util::IsDarkColor(default_background_);
+    default_foreground_ = foreground;
+    default_background_ = background;
+    if (!color_scheme_updates_ || util::IsDarkColor(default_background_) == was_dark) {
+      return;
+    }
+    SendBytesLocked(util::IsDarkColor(default_background_) ? "\x1b[?997;1n" : "\x1b[?997;2n");
+  }
+  FlushPendingReply();
+}
+
 bool TerminalSession::ConsumeBell() {
   std::scoped_lock lock(mutex_);
   const bool rang = pending_bell_;

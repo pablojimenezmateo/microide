@@ -18,4 +18,10 @@ struct Rgba8 {
   friend constexpr bool operator==(const Rgba8&, const Rgba8&) = default;
 };
 
+// Dark by relative luminance (Rec. 709), the split terminal theme detection
+// uses: what a program asking "is the background dark?" should be told.
+constexpr bool IsDarkColor(Rgba8 color) {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b < 128.0;
+}
+
 }  // namespace microide::util
