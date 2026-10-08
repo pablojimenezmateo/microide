@@ -325,6 +325,38 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
 #endif
 }
 
+FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,
+                             std::string_view target) {
+#if defined(__unix__) || defined(__APPLE__)
+  std::string error;
+  std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
+  if (!parent.has_value()) {
+    return Error(error);
+  }
+  struct stat info {};
+  if (::fstatat(parent->dir.get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+      !S_ISLNK(info.st_mode)) {
+    return Conflict(std::nullopt);
+  }
+  const std::string temp = TempName(parent->name);
+  const std::string target_text(target);
+  if (::symlinkat(target_text.c_str(), parent->dir.get(), temp.c_str()) != 0) {
+    return Error(Errno("cannot create the link " + std::string(path)));
+  }
+  if (::renameat(parent->dir.get(), temp.c_str(), parent->dir.get(), parent->name.c_str()) != 0) {
+    const std::string why = Errno("cannot place the link " + std::string(path));
+    ::unlinkat(parent->dir.get(), temp.c_str(), 0);
+    return Error(why);
+  }
+  return Ok(std::nullopt);
+#else
+  (void)root;
+  (void)path;
+  (void)target;
+  return FileOpResult{};
+#endif
+}
+
 FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;

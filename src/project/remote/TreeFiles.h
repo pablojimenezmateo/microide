@@ -53,6 +53,11 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode);
 
+// Make `path` a symlink to `target`. Replaces only a link (never a file or a
+// directory: those are content); creates missing parents.
+FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,
+                             std::string_view target);
+
 FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path);
 // `expect` applies to `from`; `to` must not exist (RENAME_NOREPLACE).
 FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view from,
