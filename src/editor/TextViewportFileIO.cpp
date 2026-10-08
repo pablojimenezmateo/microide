@@ -163,7 +163,7 @@ TextViewport::ClassifiedContent TextViewport::ClassifyContent(std::string bytes)
   // Captured before the BOM strip and the LF canonicalization below: a re-read
   // produces these bytes, so this is what a later conflict check compares
   // against, and this is the one moment they exist.
-  classified.raw_content_hash = util::ContentHash(bytes);
+  classified.raw_content_hash = util::QuickContentHash(bytes);
 
   LineEndingMetadata metadata;
   {
@@ -365,7 +365,7 @@ bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) cons
   if (!bytes.has_value()) {
     return false;
   }
-  return ConfirmDiskContentUnchanged(current, util::ContentHash(*bytes));
+  return ConfirmDiskContentUnchanged(current, util::QuickContentHash(*bytes));
 }
 
 bool TextViewport::CouldConfirmDiskContent(const util::FileSignature& current) const {

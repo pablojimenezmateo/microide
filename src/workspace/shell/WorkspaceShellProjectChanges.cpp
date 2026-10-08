@@ -275,7 +275,7 @@ void WorkspaceShell::BeginExternalChangeConfirm(const std::filesystem::path& nor
       .path = normalized_path,
       .on_worker =
           [digest](std::string& bytes) {
-            *digest = util::ContentHash(bytes);
+            *digest = util::QuickContentHash(bytes);
             // The bytes stop here. Only the digest crosses to the shell thread —
             // handing an 8 MiB buffer across to be hashed there would be the
             // stall this exists to remove, one hop later.

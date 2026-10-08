@@ -8,11 +8,11 @@
 
 ## 2. Objects and writes
 
-- [ ] 2.1 `object/fetch`: hashes → object bytes (chunked content frames), lane per request; verify the hash before serving
-- [ ] 2.2 `file/write {path, content, mode, expect}` with expect = hash | absent | any; atomic; returns the new hash or `conflict {current_hash}`
-- [ ] 2.3 `fs/op`: mkdir, rename (expect on source, `RENAME_NOREPLACE` destination), delete
+- [x] 2.1 `object/fetch`: hashes → object bytes (chunked content frames), lane per request; verify the hash before serving
+- [x] 2.2 `file/write {path, content, mode, expect}` with expect = hash | absent | any; atomic; returns the new hash or `conflict {current_hash}`
+- [x] 2.3 `fs/op`: mkdir, rename (expect on source, `RENAME_NOREPLACE` destination), delete
 - [ ] 2.4 `file/read` (read-only, out of the content set)
-- [ ] 2.5 Root confinement on every server-side path (no `..`, no absolute, no escape through a symlink)
+- [x] 2.5 Root confinement on every server-side path (no `..`, no absolute, no escape through a symlink)
 
 ## 3. Watch
 

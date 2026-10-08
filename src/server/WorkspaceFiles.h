@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 
+#include "project/remote/RemoteProtocol.h"
 #include "util/ContentHash.h"
 
 namespace microide::server {
@@ -19,20 +20,7 @@ namespace microide::server {
 //
 // Stateless and blocking; the server runs these on a workspace worker.
 
-// What a write or tree operation requires of the path's current content.
-struct Precondition {
-  enum class Kind {
-    Hash,    // exactly this content (an update)
-    Absent,  // nothing there (a create: O_EXCL / RENAME_NOREPLACE)
-    Any,     // the user's explicit Overwrite; never a default
-  };
-  Kind kind = Kind::Absent;
-  util::ContentHash hash;
-
-  static Precondition Of(const util::ContentHash& hash) { return Precondition{Kind::Hash, hash}; }
-  static Precondition NotThere() { return Precondition{Kind::Absent, {}}; }
-  static Precondition Anything() { return Precondition{Kind::Any, {}}; }
-};
+using project::remote::Precondition;
 
 struct FileOpResult {
   enum class Status {

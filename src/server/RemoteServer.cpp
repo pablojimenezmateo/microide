@@ -99,6 +99,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallProcessHandlers(ref);
   InstallTerminalHandlers(ref);
   InstallTreeHandlers(ref);
+  InstallFileHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -255,6 +256,15 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
   peer.OnContent([this, &connection](remote::FrameType type, std::uint64_t handle, std::string bytes) {
     if (type == remote::FrameType::ProcStdin) {
       processes_->WriteStdin(handle, bytes);
+    } else if (type == remote::FrameType::WriteData) {
+      // The content of the file/write whose request id this is, sent just before
+      // it on the same lane. I/O thread only, like the request handler.
+      if (connection.upload_bytes + bytes.size() > kMaxUploadBytes) {
+        connection.peer.Fail("too much unclaimed file/write content");
+        return;
+      }
+      connection.upload_bytes += bytes.size();
+      connection.uploads[handle].append(bytes);
     } else if (type == remote::FrameType::TermInput) {
       std::vector<terminal::TerminalInputEvent> events;
       if (!terminal::DecodeTerminalInputEvents(bytes, events)) {
@@ -264,95 +274,6 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
       terminals_->Input(handle, events);
     }
   });
-}
-
-std::shared_ptr<RemoteServer::ServedTree> RemoteServer::TreeOf(const Connection& connection) {
-  std::lock_guard lock(mutex_);
-  if (connection.root.empty()) {
-    return nullptr;
-  }
-  const auto workspace = workspaces_.find(connection.root);
-  return workspace == workspaces_.end() ? nullptr : workspace->second.tree;
-}
-
-bool RemoteServer::RequestLive(std::uint64_t connection_id, std::uint64_t request_id) {
-  bool live = false;
-  WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-    live = !peer.closed() && !peer.IsCancelled(request_id);
-  });
-  return live;
-}
-
-void RemoteServer::InstallTreeHandlers(Connection& connection) {
-  remote::RemotePeer& peer = connection.peer;
-  peer.OnRequest(remote::method::kTreeManifest,
-                 [this, &connection](std::uint64_t id, const util::JsonValue&) {
-                   const std::shared_ptr<ServedTree> served = TreeOf(connection);
-                   if (!served) {
-                     connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                                "no workspace: send server/hello with a root");
-                     return;
-                   }
-                   // The raw pointer is safe in the job: ~ServedTree joins the queue
-                   // before the tree goes.
-                   ServedTree* tree = served.get();
-                   const std::uint64_t connection_id = connection.id;
-                   tree->queue.Post([this, tree, connection_id, id]() {
-                     std::string error;
-                     const auto cancelled = [&]() {
-                       return tree->closing.load() || !RequestLive(connection_id, id);
-                     };
-                     std::optional<WorkspaceTree::Manifest> manifest =
-                         tree->tree.BuildManifest(&error, cancelled);
-                     // Encode outside the server lock (WithPeer holds it), in chunks
-                     // under the bulk frame size so a keystroke's frame waits for at
-                     // most one of them.
-                     std::vector<std::string> chunks;
-                     if (manifest.has_value()) {
-                       const auto& rows = manifest->rows;
-                       const auto encode = [&](std::size_t from, std::size_t to) {
-                         chunks.emplace_back();
-                         remote::EncodeManifestRows(rows.data() + from, to - from, chunks.back());
-                       };
-                       std::size_t begin = 0;
-                       std::size_t estimate = 0;
-                       for (std::size_t i = 0; i < rows.size(); ++i) {
-                         const std::size_t row_bytes =
-                             rows[i].path.size() + rows[i].link_target.size() + 64;
-                         if (i > begin && estimate + row_bytes >
-                                              remote::RemoteFrameTransport::kMaxBulkChunkBytes) {
-                           encode(begin, i);
-                           begin = i;
-                           estimate = 0;
-                         }
-                         estimate += row_bytes;
-                       }
-                       if (begin < rows.size()) {
-                         encode(begin, rows.size());
-                       }
-                     }
-                     WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-                       if (!manifest.has_value()) {
-                         peer.ReplyError(id,
-                                         error == "cancelled" ? remote::kErrorCancelled
-                                                              : remote::kErrorInvalidParams,
-                                         error);
-                         return;
-                       }
-                       for (const std::string& chunk : chunks) {
-                         peer.SendContent(remote::FrameType::TreeRows, id, chunk,
-                                          remote::Lane::Bulk);
-                       }
-                       util::JsonObject result;
-                       result["manifest_id"] =
-                           util::JsonValue(static_cast<std::int64_t>(manifest->id));
-                       result["rows"] =
-                           util::JsonValue(static_cast<std::int64_t>(manifest->rows.size()));
-                       result["git"] = util::JsonValue(manifest->git);
-                       peer.Reply(id, util::JsonValue(std::move(result)), remote::Lane::Bulk);
-                     });
-                   });
-                 });
 }
 
 void RemoteServer::InstallTerminalHandlers(Connection& connection) {

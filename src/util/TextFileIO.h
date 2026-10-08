@@ -129,9 +129,10 @@ struct FileSignature {
   }
 };
 
-// Hash of `bytes` for FileSignature::content_hash. See the field's comment for why
+// Process-local hash of `bytes` for FileSignature::content_hash (not the mirror's
+// BLAKE3 util::ContentHash). See the field's comment for why
 // std::hash is the right choice here and blake3 is the right one for the manifest.
-std::size_t ContentHash(std::string_view bytes);
+std::size_t QuickContentHash(std::string_view bytes);
 
 FileSignature StatFileSignature(const std::filesystem::path& path);
 

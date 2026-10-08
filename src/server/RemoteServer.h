@@ -61,7 +61,12 @@ class RemoteServer {
     project::remote::RemotePeer peer;
     std::string root;  // the workspace this connection opened, "" before hello
     std::atomic<bool> closed{false};
+    // file/write content by request id, until its request claims it. I/O thread only.
+    std::map<std::uint64_t, std::string> uploads;
+    std::size_t upload_bytes = 0;
   };
+  // Unclaimed upload bytes one connection may hold.
+  static constexpr std::size_t kMaxUploadBytes = 512u * 1024 * 1024;
   // A root's tree and the worker its manifests are built on: never a connection's
   // I/O thread, which must keep answering pings while a cold tree hashes.
   struct ServedTree {
@@ -69,10 +74,12 @@ class RemoteServer {
     ~ServedTree() {
       closing.store(true);
       queue.Shutdown();  // before `tree`: a running job uses it
+      io_queue.Shutdown();
     }
     WorkspaceTree tree;
     std::atomic<bool> closing{false};
-    util::SerialWorkQueue queue;
+    util::SerialWorkQueue queue;     // manifests
+    util::SerialWorkQueue io_queue;  // reads, writes and tree ops, in arrival order
   };
   struct Workspace {
     std::size_t clients = 0;
@@ -83,6 +90,7 @@ class RemoteServer {
   void InstallProcessHandlers(Connection& connection);
   void InstallTerminalHandlers(Connection& connection);
   void InstallTreeHandlers(Connection& connection);
+  void InstallFileHandlers(Connection& connection);
   std::shared_ptr<ServedTree> TreeOf(const Connection& connection);
   // Whether the request is still wanted: its connection is open and it was not
   // cancelled.

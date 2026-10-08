@@ -7,7 +7,9 @@
 #include <string>
 #include <vector>
 
+#include "project/remote/RemoteFrame.h"
 #include "project/remote/RemoteManifest.h"
+#include "project/remote/RemoteProtocol.h"
 
 namespace microide::project::remote {
 
@@ -39,6 +41,48 @@ class RemoteWorkspace {
   // Blocking form, for a worker thread or a test; never the I/O thread.
   std::optional<Manifest> FetchManifestSync(std::string* error,
                                             std::chrono::milliseconds timeout = std::chrono::seconds(120));
+
+  // object/fetch: the current bytes at each path, and the hash of exactly those
+  // bytes (verified here, not taken on trust). `lane` is Interactive for a file the
+  // user is waiting on, Bulk for backfill.
+  struct FetchedObject {
+    std::string path;
+    std::optional<util::ContentHash> hash;  // set when the read succeeded
+    bool missing = false;                   // nothing at the path on the host
+    std::string error;
+    std::string content;
+  };
+  using FetchDone =
+      std::function<void(std::optional<std::vector<FetchedObject>> objects, std::string error)>;
+  std::uint64_t FetchObjects(std::vector<std::string> paths, Lane lane, FetchDone done,
+                             std::uint64_t max_bytes = 0);
+  std::optional<std::vector<FetchedObject>> FetchObjectsSync(
+      std::vector<std::string> paths, Lane lane, std::string* error,
+      std::chrono::milliseconds timeout = std::chrono::seconds(120));
+
+  // file/write and fs/op: compare-and-swap against `expect` (§ 6.3).
+  struct WriteResult {
+    enum class Status {
+      Ok,        // hash: what the path holds now (file/write)
+      Conflict,  // hash: what is there instead, nullopt when nothing is
+      Error,     // error says why; nothing changed on the host
+    };
+    Status status = Status::Error;
+    std::optional<util::ContentHash> hash;
+    std::string error;
+  };
+  using WriteDone = std::function<void(WriteResult result)>;
+  std::uint64_t WriteFile(std::string path, std::string_view content, const Precondition& expect,
+                          std::optional<std::uint32_t> mode, Lane lane, WriteDone done);
+  WriteResult WriteFileSync(std::string path, std::string_view content, const Precondition& expect,
+                            std::optional<std::uint32_t> mode = std::nullopt,
+                            std::chrono::milliseconds timeout = std::chrono::seconds(120));
+  enum class TreeOp { MakeDirectory, Rename, Delete };
+  std::uint64_t ApplyTreeOp(TreeOp op, std::string path, std::string to, const Precondition& expect,
+                            WriteDone done);
+  WriteResult ApplyTreeOpSync(TreeOp op, std::string path, std::string to,
+                              const Precondition& expect,
+                              std::chrono::milliseconds timeout = std::chrono::seconds(120));
 
  private:
   RemoteServerClient& client_;

@@ -125,7 +125,7 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
         util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
         if (const std::optional<std::string> bytes = util::ReadTextFile(normalized_path);
             bytes.has_value()) {
-          disk_content_hash = util::ContentHash(*bytes);
+          disk_content_hash = util::QuickContentHash(*bytes);
         } else {
           disk_read_failed = true;
         }

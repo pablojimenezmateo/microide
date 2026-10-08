@@ -85,6 +85,78 @@ void TestManifestNeedsAWorkspace() {
          "a terminal-only connection has no tree: " + error);
 }
 
+void TestObjectFetchServesVerifiedBytes() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "host";
+  const std::string big(300 * 1024 + 7, 'b');
+  WriteFile(root / "small.txt", "small\n");
+  WriteFile(root / "dir/big.bin", big);
+  WorkspaceSession session(root);
+  std::string error;
+  const auto objects = session.workspace->FetchObjectsSync(
+      {"small.txt", "dir/big.bin", "missing.txt", "../escape"}, remote::Lane::Interactive, &error);
+  Expect(objects.has_value() && objects->size() == 4, "the fetch answers every object: " + error);
+  Expect((*objects)[0].content == "small\n" && (*objects)[0].hash == util::HashContent("small\n"),
+         "a small object arrives with its hash");
+  Expect((*objects)[1].content == big && (*objects)[1].hash == util::HashContent(big),
+         "a multi-chunk object is reassembled in order");
+  Expect((*objects)[2].missing && !(*objects)[2].hash.has_value(), "a missing path says so");
+  Expect(!(*objects)[3].error.empty() && (*objects)[3].content.empty(),
+         "an unsafe path is an error, not a read");
+  const auto bulk = session.workspace->FetchObjectsSync({"dir/big.bin"}, remote::Lane::Bulk, &error);
+  Expect(bulk.has_value() && (*bulk)[0].content == big, "the bulk lane delivers the same bytes");
+}
+
+void TestWriteAndTreeOpsAreCompareAndSwap() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "host";
+  std::filesystem::create_directories(root);
+  WorkspaceSession session(root);
+  using Status = remote::RemoteWorkspace::WriteResult::Status;
+  const std::string content(200 * 1024, 'w');  // several WriteData frames
+  const auto created = session.workspace->WriteFileSync("src/new.cpp", content,
+                                                        remote::Precondition::NotThere());
+  Expect(created.status == Status::Ok && created.hash == util::HashContent(content) &&
+             ReadFile(root / "src/new.cpp") == content,
+         "a create lands on the host with its hash: " + created.error);
+  const auto again = session.workspace->WriteFileSync("src/new.cpp", "other",
+                                                      remote::Precondition::NotThere());
+  Expect(again.status == Status::Conflict && again.hash == util::HashContent(content),
+         "a second create conflicts, naming what is there");
+  const auto update = session.workspace->WriteFileSync(
+      "src/new.cpp", "v2", remote::Precondition::Of(util::HashContent(content)));
+  Expect(update.status == Status::Ok && ReadFile(root / "src/new.cpp") == "v2",
+         "an update on its base lands");
+  const auto stale = session.workspace->WriteFileSync(
+      "src/new.cpp", "v3", remote::Precondition::Of(util::HashContent(content)));
+  Expect(stale.status == Status::Conflict && ReadFile(root / "src/new.cpp") == "v2",
+         "an update on a stale base does not");
+  const auto refused = session.workspace->WriteFileSync("../outside.txt", "x",
+                                                        remote::Precondition::NotThere());
+  Expect(refused.status == Status::Error && !std::filesystem::exists(temp.path() / "outside.txt"),
+         "a write outside the root is refused");
+
+  using TreeOp = remote::RemoteWorkspace::TreeOp;
+  Expect(session.workspace
+                 ->ApplyTreeOpSync(TreeOp::Rename, "src/new.cpp", "src/moved.cpp",
+                                   remote::Precondition::Of(util::HashContent("v2")))
+                 .status == Status::Ok &&
+             ReadFile(root / "src/moved.cpp") == "v2",
+         "a rename on its base moves the file");
+  Expect(session.workspace
+                 ->ApplyTreeOpSync(TreeOp::MakeDirectory, "empty/dir", "",
+                                   remote::Precondition::Anything())
+                 .status == Status::Ok &&
+             std::filesystem::is_directory(root / "empty/dir"),
+         "mkdir creates the directory");
+  Expect(session.workspace
+                 ->ApplyTreeOpSync(TreeOp::Delete, "src/moved.cpp", "",
+                                   remote::Precondition::Of(util::HashContent("v2")))
+                 .status == Status::Ok &&
+             !std::filesystem::exists(root / "src/moved.cpp"),
+         "a delete on its base removes the file");
+}
+
 #endif
 
 }  // namespace
@@ -95,6 +167,9 @@ void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteWorkspace/ManifestFailureIsAnErrorNotAnEmptyTree",
           TestManifestFailureIsAnErrorNotAnEmptyTree);
   AddTest(tests, "RemoteWorkspace/ManifestNeedsAWorkspace", TestManifestNeedsAWorkspace);
+  AddTest(tests, "RemoteWorkspace/ObjectFetchServesVerifiedBytes", TestObjectFetchServesVerifiedBytes);
+  AddTest(tests, "RemoteWorkspace/WriteAndTreeOpsAreCompareAndSwap",
+          TestWriteAndTreeOpsAreCompareAndSwap);
 #else
   (void)tests;
 #endif

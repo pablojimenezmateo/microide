@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/ContentHash.h"
 #include "util/JsonValue.h"
 
 namespace microide::project::remote {
@@ -37,7 +38,39 @@ inline constexpr std::string_view kTermAck = "term/ack";
 // (id = the request) on the bulk lane, then, on the same lane so it cannot overtake
 // them, {manifest_id, rows, git}. Needs a hello with a root.
 inline constexpr std::string_view kTreeManifest = "tree/manifest";
+// object/fetch {objects: [{path}], max_bytes} -> ObjectData frames (id = request,
+// payload = varint index + bytes, in order per object) on the request's lane, then
+// on that lane {objects: [{hash} | {missing: true} | {error}]}, the hash being of
+// exactly the bytes sent.
+inline constexpr std::string_view kObjectFetch = "object/fetch";
+// file/write {path, expect, mode?} after its WriteData frames -> {hash} or
+// {conflict: true, current: hash | null}.
+inline constexpr std::string_view kFileWrite = "file/write";
+// fs/op {op: "mkdir"|"rename"|"delete", path, to?, expect?} -> {} or
+// {conflict: true, current: hash | null}.
+inline constexpr std::string_view kFsOp = "fs/op";
 }  // namespace method
+
+// What a write or tree operation requires of the path's current content (§ 6.3):
+// a hash (an update), absent (a create: O_EXCL / RENAME_NOREPLACE), or any (the
+// user's explicit Overwrite, never a default). On the wire: "absent", "any", or
+// the hash's 64 hex digits.
+struct Precondition {
+  enum class Kind {
+    Hash,
+    Absent,
+    Any,
+  };
+  Kind kind = Kind::Absent;
+  util::ContentHash hash;
+
+  static Precondition Of(const util::ContentHash& hash) { return Precondition{Kind::Hash, hash}; }
+  static Precondition NotThere() { return Precondition{Kind::Absent, {}}; }
+  static Precondition Anything() { return Precondition{Kind::Any, {}}; }
+  friend bool operator==(const Precondition&, const Precondition&) = default;
+};
+util::JsonValue ToJson(const Precondition& precondition);
+std::optional<Precondition> PreconditionFromJson(const util::JsonValue& json);
 
 // Error codes in a Response's {"error": {"code", "message"}}.
 inline constexpr std::int64_t kErrorProtocol = -32600;       // malformed body

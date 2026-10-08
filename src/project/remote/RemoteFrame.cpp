@@ -18,6 +18,8 @@ bool IsKnownFrameType(std::uint16_t type) {
     case FrameType::TermInput:
     case FrameType::TermFrame:
     case FrameType::TreeRows:
+    case FrameType::ObjectData:
+    case FrameType::WriteData:
       return true;
   }
   return false;

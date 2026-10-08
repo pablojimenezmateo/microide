@@ -36,6 +36,11 @@ enum class FrameType : std::uint16_t {
   TermFrame = 20,  // host -> client: one screen/scrollback update
   // Content: id = the request it answers (project/remote/RemoteManifest.h).
   TreeRows = 21,  // host -> client: a chunk of manifest rows for tree/manifest
+  // host -> client, for object/fetch: varint object index, then a piece of its bytes.
+  ObjectData = 22,
+  // client -> host: a piece of the content of the file/write with this request id,
+  // sent before the request on the same lane.
+  WriteData = 23,
 };
 
 // Whether `type` is one this build knows. An unknown type is a protocol error

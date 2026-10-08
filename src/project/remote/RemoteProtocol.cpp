@@ -152,4 +152,33 @@ std::optional<std::string> CheckProtocolCompatibility(std::int64_t local_protoco
   return std::nullopt;
 }
 
+util::JsonValue ToJson(const Precondition& precondition) {
+  switch (precondition.kind) {
+    case Precondition::Kind::Absent:
+      return util::JsonValue(std::string("absent"));
+    case Precondition::Kind::Any:
+      return util::JsonValue(std::string("any"));
+    case Precondition::Kind::Hash:
+      break;
+  }
+  return util::JsonValue(precondition.hash.Hex());
+}
+
+std::optional<Precondition> PreconditionFromJson(const util::JsonValue& json) {
+  if (!json.IsString()) {
+    return std::nullopt;
+  }
+  const std::string& text = json.AsString();
+  if (text == "absent") {
+    return Precondition::NotThere();
+  }
+  if (text == "any") {
+    return Precondition::Anything();
+  }
+  if (const auto hash = util::ContentHash::FromHex(text)) {
+    return Precondition::Of(*hash);
+  }
+  return std::nullopt;
+}
+
 }  // namespace microide::project::remote

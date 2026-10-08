@@ -830,8 +830,10 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 add_executable(microide-server
   src/server/ProcessTable.cpp
   src/server/RemoteServer.cpp
+  src/server/RemoteServerWorkspace.cpp
   src/server/ServerMain.cpp
   src/server/TerminalTable.cpp
+  src/server/WorkspaceFiles.cpp
   src/server/WorkspaceTree.cpp
   $<TARGET_OBJECTS:microide_kernel>
 )
