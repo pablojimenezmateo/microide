@@ -178,7 +178,7 @@ When a change affects performance-sensitive code, run relevant `dev-docs/perform
 Sanitizer and fuzz workflows expected for risky changes:
 
 ```bash
-cmake --preset microide-asan && cmake --build build/microide-asan -j8 && ctest --test-dir build/microide-asan --output-on-failure
+cmake --preset microide-asan && cmake --build build/microide-asan -j8 && LSAN_OPTIONS=suppressions=$PWD/tests/lsan.supp ctest --test-dir build/microide-asan --output-on-failure
 cmake --preset microide-ubsan && cmake --build build/microide-ubsan -j8 && ctest --test-dir build/microide-ubsan --output-on-failure
 cmake --preset microide-tsan && cmake --build build/microide-tsan -j8
 # LSan reads tests/lsan.supp (system-library leaks only); run-checks.sh fails a lane on ANY
