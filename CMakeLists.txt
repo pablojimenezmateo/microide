@@ -1272,6 +1272,32 @@ endif()
 target_include_directories(microide_tests PRIVATE src tests)
 target_include_directories(microide_tests SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide_tests PRIVATE ${MICROIDE_PCH_HEADERS})
+# The architecture lints scan every source file with std::regex, a header template
+# that runs ~10x slower unoptimized: at -O0 the lint group cost ~46 s of CPU per
+# plain run and several times that under the sanitizers. Optimize just the TUs that
+# instantiate it (all of them, so the linker cannot keep an -O0 copy of a shared
+# instantiation); they skip the PCH, which was compiled with the target's flags.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  set(MICROIDE_REGEX_HEAVY_TEST_SOURCES
+    tests/ArchitectureInvariantsTests.cpp
+    tests/PatchApplyTests.cpp
+    tests/architecture/ArchitectureFileScanner.cpp
+    tests/architecture/ArchitectureRuleFixtures.cpp
+    tests/architecture/ArchitectureRuleHelpers.cpp
+    tests/architecture/WorkspaceArchitectureRules.cpp
+    tests/architecture/WorkspaceShellArchitectureRules.cpp
+    tests/architecture/WorkspaceCoordinatorArchitectureRules.cpp
+    tests/architecture/WorkspaceServiceArchitectureRules.cpp
+    tests/architecture/WorkspaceViewModelArchitectureRules.cpp
+    tests/architecture/WorkspaceFileSizeArchitectureRules.cpp
+    tests/architecture/PluginArchitectureRules.cpp
+    tests/architecture/KernelArchitectureRules.cpp
+    tests/architecture/TerminalArchitectureRules.cpp
+  )
+  set_source_files_properties(${MICROIDE_REGEX_HEAVY_TEST_SOURCES} PROPERTIES
+    COMPILE_OPTIONS "-O2"
+    SKIP_PRECOMPILE_HEADERS ON)
+endif()
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})

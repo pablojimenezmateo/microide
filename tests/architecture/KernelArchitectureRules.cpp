@@ -351,12 +351,17 @@ RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::pat
       }
       continue;
     }
-    AppendCodeMaskRegexViolations(
-        result, entry.path(), text, run_subprocess,
-        "spawns must go through a platform::ProcessLauncher (LocalProcessLauncher() "
-        "when the spawn must never follow the project, and say why), not "
-        "platform::RunSubprocess directly");
-    if (std::regex_search(text, async_type) && std::regex_search(text, async_start) &&
+    // Literal prefilters: std::regex over every file in src/ is what made this
+    // rule take seconds, and a pattern cannot match where its literal is absent.
+    if (text.find("RunSubprocess") != std::string::npos) {
+      AppendCodeMaskRegexViolations(
+          result, entry.path(), text, run_subprocess,
+          "spawns must go through a platform::ProcessLauncher (LocalProcessLauncher() "
+          "when the spawn must never follow the project, and say why), not "
+          "platform::RunSubprocess directly");
+    }
+    if (text.find("AsyncSubprocess") != std::string::npos &&
+        std::regex_search(text, async_type) && std::regex_search(text, async_start) &&
         !std::regex_search(text, resolve_argv)) {
       result.violations.push_back(Violation{
           .path = entry.path(),
@@ -569,16 +574,24 @@ RuleResult CheckProjectWritesGoThroughTheWriteGate(const std::filesystem::path& 
     if (outside_the_gate) {
       continue;
     }
-    AppendCodeMaskRegexViolations(
-        result, entry.path(), text, raw_write,
-        "a write that replaces a file in a project tree must go through "
-        "project::FileWriteGate, not util::WriteTextFileAtomically directly — the gate "
-        "is what captures the post-write signature and what a remote project replaces");
-    AppendCodeMaskRegexViolations(
-        result, entry.path(), text, raw_tree_primitive,
-        "a create/rename/delete/trash in a project tree goes through "
-        "FileWriteGate::ApplyTreeOps (the project's write_gate()), not a platform "
-        "primitive — the gate is the one journal, and what a remote project replaces");
+    // Literal prefilters, as in CheckEverySpawnGoesThroughAProcessLauncher.
+    if (text.find("WriteTextFileAtomically") != std::string::npos ||
+        text.find("ofstream") != std::string::npos) {
+      AppendCodeMaskRegexViolations(
+          result, entry.path(), text, raw_write,
+          "a write that replaces a file in a project tree must go through "
+          "project::FileWriteGate, not util::WriteTextFileAtomically directly — the gate "
+          "is what captures the post-write signature and what a remote project replaces");
+    }
+    if (text.find("Path(") != std::string::npos || text.find("Path (") != std::string::npos ||
+        text.find("PathToTrash") != std::string::npos ||
+        text.find("PathNoOverwrite") != std::string::npos) {
+      AppendCodeMaskRegexViolations(
+          result, entry.path(), text, raw_tree_primitive,
+          "a create/rename/delete/trash in a project tree goes through "
+          "FileWriteGate::ApplyTreeOps (the project's write_gate()), not a platform "
+          "primitive — the gate is the one journal, and what a remote project replaces");
+    }
     for (const std::string_view dir : kTreeActingDirectories) {
       if (key.starts_with(dir)) {
         AppendCodeMaskRegexViolations(

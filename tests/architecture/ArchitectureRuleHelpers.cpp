@@ -25,8 +25,12 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
                                    const std::string& text,
                                    const std::regex& pattern,
                                    std::string_view message) {
-  const auto is_code = BuildCodeMask(text);
+  // Built on the first match: most files have none, and the mask is a full pass.
+  std::vector<bool> is_code;
   for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    if (is_code.empty()) {
+      is_code = BuildCodeMask(text);
+    }
     const std::size_t start = static_cast<std::size_t>(it->position());
     const std::size_t len = static_cast<std::size_t>(it->length());
     bool in_code = true;
@@ -48,8 +52,12 @@ void AppendCodeMaskRegexViolations(RuleResult& result,
 }
 
 bool CodeMaskedPatternAppears(const std::string& text, const std::regex& pattern) {
-  const auto is_code = BuildCodeMask(text);
+  // Built on the first match: most files have none, and the mask is a full pass.
+  std::vector<bool> is_code;
   for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    if (is_code.empty()) {
+      is_code = BuildCodeMask(text);
+    }
     const std::size_t start = static_cast<std::size_t>(it->position());
     const std::size_t len = static_cast<std::size_t>(it->length());
     bool in_code = true;
@@ -71,8 +79,12 @@ void AppendTrailingCodeRegexViolations(RuleResult& result,
                                        const std::string& text,
                                        const std::regex& pattern,
                                        std::string_view message) {
-  const auto is_code = BuildCodeMask(text);
+  // Built on the first match: most files have none, and the mask is a full pass.
+  std::vector<bool> is_code;
   for (std::sregex_iterator it(text.begin(), text.end(), pattern), end; it != end; ++it) {
+    if (is_code.empty()) {
+      is_code = BuildCodeMask(text);
+    }
     const std::size_t start = static_cast<std::size_t>(it->position());
     const std::size_t len = static_cast<std::size_t>(it->length());
     if (len == 0) {
