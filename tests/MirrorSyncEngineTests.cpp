@@ -141,6 +141,41 @@ void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   Expect(session.engine->status().conflicts == 1, "and still reports it");
 }
 
+// Nothing is settled automatically; the user's choice is: keep mine (the one
+// unconditional write) or take the host's.
+void TestMirrorResolvesConflictsTheUsersWay() {
+  MirrorSession session;
+  WriteFile(session.host / "mine.txt", "base\n");
+  WriteFile(session.host / "theirs.txt", "base\n");
+  session.Connect();
+  session.Sync();
+  for (const char* path : {"mine.txt", "theirs.txt"}) {
+    WriteFile(session.host / path, "agent\n");
+    WriteFile(session.Tree(path), "human\n");
+    session.engine->NotifyLocalWrite(path);
+  }
+  session.engine->Flush();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"mine.txt", "theirs.txt"},
+         "both are conflicts");
+
+  session.engine->ResolveConflict("mine.txt", remote::MirrorSyncEngine::Resolution::KeepMine);
+  session.engine->ResolveConflict("theirs.txt", remote::MirrorSyncEngine::Resolution::TakeHost);
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "mine.txt") == "human\n" &&
+             ReadFile(session.Tree("mine.txt")) == "human\n",
+         "keep mine overwrites the host's copy");
+  Expect(ReadFile(session.host / "theirs.txt") == "agent\n" &&
+             ReadFile(session.Tree("theirs.txt")) == "agent\n",
+         "take the host's replaces the mirror's");
+  Expect(session.engine->Conflicts().empty() &&
+             session.engine->StateOf("mine.txt") == ContentState::Current &&
+             session.engine->StateOf("theirs.txt") == ContentState::Current,
+         "both are current again");
+  // And they stay settled: the next sync finds nothing to do.
+  session.Sync();
+  Expect(session.engine->Conflicts().empty(), "a sync does not reopen them");
+}
+
 void TestMirrorHoldsAMassDelete() {
   MirrorSession session;
   for (int i = 0; i < 150; ++i) {
@@ -290,6 +325,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
+  AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);

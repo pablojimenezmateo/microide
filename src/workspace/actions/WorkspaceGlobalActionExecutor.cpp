@@ -199,6 +199,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     }
     case ActionId::RemoteOpenTerminal:
     case ActionId::RemoteOpenFolder:
+    case ActionId::RemoteResolveConflict:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:
@@ -237,6 +238,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           // The open funnel recognizes the mirror and gives it the project's locality.
           if (!context_.OpenProject(*tree, true, true)) {
             return reject("Cannot open the mirror of \"" + args[0] + "\"");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteResolveConflict: {
+          if (args.size() < 2 || (args[1] != "mine" && args[1] != "host")) {
+            return reject("usage: remote-resolve <path> <mine|host>");
+          }
+          if (!hosts->ResolveConflict(args[0], args[1] == "mine")) {
+            return reject("\"" + args[0] + "\" is not a conflict in a remote project");
           }
           return DispatchResult::Handled;
         }

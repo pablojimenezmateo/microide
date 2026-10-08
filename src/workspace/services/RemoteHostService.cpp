@@ -277,10 +277,79 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       }
       break;
   }
+  PublishConflictRows(tree, entry);
   PublishStatusSegment();
   if (operations_.request_redraw) {
     operations_.request_redraw();
   }
+}
+
+void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, Project& entry) {
+  // One row per conflicted file, with the choice on it (VS Code's save-conflict
+  // row): nothing is settled automatically, and a row stays until it is.
+  constexpr std::size_t kMaxRows = 3;
+  const std::vector<std::string> conflicts = entry.project->engine().Conflicts();
+  const std::string summary_key = "remote.conflicts." + tree.string();
+  const auto row_key = [&](const std::string& path) {
+    return "remote.conflict." + (tree / path).string();
+  };
+  for (const std::string& shown : entry.conflict_rows) {
+    if (!std::binary_search(conflicts.begin(), conflicts.end(), shown) && operations_.dismiss_notification) {
+      operations_.dismiss_notification(row_key(shown));
+    }
+  }
+  entry.conflict_rows.clear();
+  const std::string host = entry.project->record().host;
+  for (std::size_t i = 0; i < conflicts.size() && i < kMaxRows; ++i) {
+    const std::string absolute = (tree / conflicts[i]).string();
+    entry.conflict_rows.push_back(conflicts[i]);
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Warning,
+          .key = row_key(conflicts[i]),
+          .message = conflicts[i] + " changed on " + host + " and here",
+          .sticky = true,
+          .actions = {
+              NotificationAction{.label = "Keep Mine",
+                                 .id = ActionId::RemoteResolveConflict,
+                                 .args = {absolute, "mine"}},
+              NotificationAction{.label = "Take Host's",
+                                 .id = ActionId::RemoteResolveConflict,
+                                 .args = {absolute, "host"}},
+          },
+      });
+    }
+  }
+  if (conflicts.size() > kMaxRows && operations_.notify) {
+    operations_.notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Warning,
+        .key = summary_key,
+        .message = std::to_string(conflicts.size() - kMaxRows) + " more files changed on " + host +
+                   " and here (Remote: Show Status lists them)",
+        .sticky = true,
+    });
+  } else if (operations_.dismiss_notification) {
+    operations_.dismiss_notification(summary_key);
+  }
+}
+
+bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool keep_mine) {
+  for (auto& [tree, entry] : projects_) {
+    const std::filesystem::path relative = path.lexically_normal().lexically_relative(tree);
+    const std::string text = relative.generic_string();
+    if (text.empty() || text.rfind("..", 0) == 0) {
+      continue;
+    }
+    const std::vector<std::string> conflicts = entry.project->engine().Conflicts();
+    if (!std::binary_search(conflicts.begin(), conflicts.end(), text)) {
+      return false;
+    }
+    entry.project->engine().ResolveConflict(
+        text, keep_mine ? remote::MirrorSyncEngine::Resolution::KeepMine
+                        : remote::MirrorSyncEngine::Resolution::TakeHost);
+    return true;
+  }
+  return false;
 }
 
 RemoteHostService::Host& RemoteHostService::Ensure(const remote::RemoteHostTarget& target) {

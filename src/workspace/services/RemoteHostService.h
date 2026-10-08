@@ -78,6 +78,10 @@ class RemoteHostService {
   // The locality of `root` if it is a remote project's mirror — opening the project
   // (and starting its connection) the first time — and nullopt for any other folder.
   std::optional<project::ProjectLocality> LocalityForMirror(const std::filesystem::path& root);
+  // Settle the conflict at `path` (a file in a remote project's mirror): keep the
+  // mirror's bytes over the host's, or take the host's. False when `path` is not a
+  // conflict of any remote project.
+  bool ResolveConflict(const std::filesystem::path& path, bool keep_mine);
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);
@@ -110,6 +114,7 @@ class RemoteHostService {
     project::remote::RemoteHostSession::Status status;
     bool auth_terminal_opened = false;
     bool announced_sync = false;
+    std::vector<std::string> conflict_rows;  // relative paths with a row showing
   };
 
   project::remote::RemoteHostSession::Config SessionConfig(
@@ -117,6 +122,7 @@ class RemoteHostService {
   Project* OpenProject(const project::remote::RemoteHostTarget& target, const std::string& host_root,
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
+  void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
   Host* Find(std::string_view host);
   const Host* Find(std::string_view host) const;
   Host& Ensure(const project::remote::RemoteHostTarget& target);

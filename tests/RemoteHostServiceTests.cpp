@@ -164,6 +164,46 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "and the edit reaches the host's file: '" + ReadFile(host_root / "main.c") + "'");
+
+  // An agent rewrites the file on the host while the user saves another edit: the
+  // push is refused, both versions survive, and a row offers the choice.
+  WriteFile(host_root / "main.c", "// the agent's version\n");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// mine\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the second save succeeds locally");
+  const std::string row_key = "remote.conflict." + (mirror / "main.c").string();
+  const auto find_row = [&]() -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == row_key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return find_row() != nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "a conflict row appears");
+  const auto* row = find_row();
+  Expect(row != nullptr && row->actions.size() == 2 && row->actions[0].label == "Keep Mine" &&
+             row->actions[1].label == "Take Host's",
+         "with Keep Mine and Take Host's");
+  Expect(ReadFile(host_root / "main.c") == "// the agent's version\n" &&
+             ReadFile(mirror / "main.c").rfind("// mine\n", 0) == 0,
+         "and neither side was overwritten");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
+             shell, "remote-resolve " + (mirror / "main.c").string() + " host"),
+         "taking the host's version is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(mirror / "main.c") == "// the agent's version\n" && find_row() == nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the mirror takes the host's bytes and the row goes");
   }
   {
     // A later run opening the mirror as a plain folder.

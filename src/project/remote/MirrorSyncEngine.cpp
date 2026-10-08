@@ -199,6 +199,150 @@ void MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
   }
 }
 
+void MirrorSyncEngine::ResolveConflict(std::string path, Resolution resolution) {
+  if (!IsSafeRelativePath(path)) {
+    return;
+  }
+  queue_.PostFront([this, path = std::move(path), resolution]() {
+    ResolveNow(path, resolution);
+    {
+      std::lock_guard lock(mutex_);
+      RecountLocked();
+      SaveLocked();
+    }
+    Changed();
+  });
+}
+
+std::vector<std::string> MirrorSyncEngine::Conflicts() const {
+  std::lock_guard lock(mutex_);
+  std::vector<std::string> paths;
+  for (const auto& [path, entry] : store_.entries()) {
+    if (entry.conflict) {
+      paths.push_back(path);
+    }
+  }
+  return paths;
+}
+
+void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution) {
+  using Status = RemoteWorkspace::WriteResult::Status;
+  std::lock_guard path_lock(store_.PathLock(path));
+  {
+    std::lock_guard lock(mutex_);
+    const MirrorStore::Entry* entry = store_.Find(path);
+    if (entry == nullptr || !entry->conflict) {
+      return;
+    }
+  }
+  if (resolution == Resolution::KeepMine) {
+    std::string content;
+    const FileOpResult read = ReadTreeFile(store_.tree(), path, kMaxPushBytes,
+                                           [&](std::string_view chunk) { content.append(chunk); });
+    if (read.status == FileOpResult::Status::Error) {
+      std::lock_guard lock(mutex_);
+      status_.error = read.error;
+      return;
+    }
+    const bool local_exists = read.ok();
+    RemoteWorkspace::WriteResult result;
+    if (local_exists) {
+      std::optional<std::uint32_t> mode;
+      {
+        std::lock_guard lock(mutex_);
+        const MirrorStore::Entry* entry = store_.Find(path);
+        if (entry != nullptr && entry->has_remote && entry->remote.mode != 0) {
+          mode = entry->remote.mode;
+        }
+      }
+      result = workspace_.WriteFileSync(path, content, Precondition::Anything(), mode);
+    } else {
+      result = workspace_.ApplyTreeOpSync(RemoteWorkspace::TreeOp::Delete, path, {},
+                                          Precondition::Anything());
+    }
+    std::lock_guard lock(mutex_);
+    MirrorStore::Entry* entry = store_.Find(path);
+    if (entry == nullptr) {
+      return;
+    }
+    if (result.status != Status::Ok) {
+      status_.error = result.error.empty() ? "the host refused the overwrite of " + path : result.error;
+      return;
+    }
+    entry->conflict = false;
+    entry->push_pending = false;
+    if (!local_exists) {
+      store_.entries().erase(path);
+      return;
+    }
+    entry->base = result.hash;
+    if (entry->has_remote) {
+      entry->remote.hash = *result.hash;
+      entry->remote.size = content.size();
+    } else {
+      entry->local_only = true;
+    }
+    entry->local_known = false;
+    (void)store_.CheckLocal(path, *entry);
+    return;
+  }
+  // TakeHost.
+  std::string error;
+  std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
+      workspace_.FetchObjectsSync({path}, Lane::Interactive, &error);
+  if (!objects.has_value() || objects->size() != 1) {
+    std::lock_guard lock(mutex_);
+    status_.error = error.empty() ? "the host did not send " + path : error;
+    return;
+  }
+  RemoteWorkspace::FetchedObject& object = objects->front();
+  if (!object.missing && !object.hash.has_value()) {
+    std::lock_guard lock(mutex_);
+    status_.error = object.error;
+    return;
+  }
+  std::uint32_t mode = 0644;
+  {
+    std::lock_guard lock(mutex_);
+    const MirrorStore::Entry* entry = store_.Find(path);
+    if (entry != nullptr && entry->has_remote && entry->remote.mode != 0) {
+      mode = entry->remote.mode;
+    }
+  }
+  const FileOpResult written =
+      object.missing ? DeleteTreeEntry(store_.tree(), path, Precondition::Anything())
+                     : WriteTreeFile(store_.tree(), path, object.content, Precondition::Anything(), mode);
+  std::vector<std::string> materialized;
+  {
+    std::lock_guard lock(mutex_);
+    MirrorStore::Entry* entry = store_.Find(path);
+    if (entry == nullptr) {
+      return;
+    }
+    if (!written.ok()) {
+      status_.error = written.error;
+      return;
+    }
+    if (object.missing) {
+      store_.entries().erase(path);
+    } else {
+      entry->conflict = false;
+      entry->push_pending = false;
+      entry->local_only = false;
+      entry->has_remote = true;
+      entry->base = *object.hash;
+      entry->remote.path = path;
+      entry->remote.hash = *object.hash;
+      entry->remote.size = object.content.size();
+      store_.RecordLocal(path, *entry);
+    }
+    materialized.push_back(path);
+  }
+  if (callbacks_.materialized) {
+    callbacks_.materialized(materialized);
+  }
+}
+
 void MirrorSyncEngine::ApproveHeldDeletes() {
   queue_.Post([this]() {
     std::vector<std::string> deletes;

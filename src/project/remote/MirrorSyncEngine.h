@@ -110,6 +110,16 @@ class MirrorSyncEngine {
     std::string new_path;  // Rename
   };
   void NotifyLocalTreeOps(std::vector<LocalTreeOp> ops);
+  // Settle a conflict (§ 6.3: nothing is done automatically, both versions exist
+  // until the user chooses). KeepMine pushes the mirror's bytes over whatever the
+  // host has — the explicit Overwrite, the one write with `expect: any` — or
+  // deletes the host's file when the mirror's is gone. TakeHost writes the host's
+  // current bytes over the mirror's, or removes the mirror's file when the host has
+  // none.
+  enum class Resolution { KeepMine, TakeHost };
+  void ResolveConflict(std::string path, Resolution resolution);
+  // Paths in conflict, sorted.
+  std::vector<std::string> Conflicts() const;
   // Apply the held delete diff after all.
   void ApproveHeldDeletes();
 
@@ -145,6 +155,7 @@ class MirrorSyncEngine {
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);
   void TreeOpNow(const LocalTreeOp& op);
+  void ResolveNow(const std::string& path, Resolution resolution);
   void RecountLocked();
   void SaveLocked();
   void Changed();

@@ -31,6 +31,9 @@ enum class ActionId {
   // Open a host directory as a remote project: `remote-open [user@]host[:port]:/path`
   // (no argument: prompt for one). The editor opens the project's local mirror.
   RemoteOpenFolder,
+  // `remote-resolve <mirror-path> <mine|host>`: settle a file both the host and the
+  // mirror changed — the buttons on its conflict row.
+  RemoteResolveConflict,
   RemoteShowStatus,
   RemoteStopServer,   // `remote-stop-server [host]`; the sole host when omitted
   RemoteDisconnect,   // `remote-disconnect [host]`; every host when omitted
