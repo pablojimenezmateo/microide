@@ -236,6 +236,8 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
       return "Go to Line";
     case PromptSurfaceState::Action::RemoteHost:
       return "Open Terminal on Host";
+    case PromptSurfaceState::Action::RemoteFolder:
+      return "Open Folder on Host";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Rename Symbol";
     case PromptSurfaceState::Action::ConfirmRenameSave:
@@ -299,6 +301,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Enter a line[:column] to jump to.";
     case PromptSurfaceState::Action::RemoteHost:
       return "Enter [user@]host[:port] — reached with your ssh configuration.";
+    case PromptSurfaceState::Action::RemoteFolder:
+      return "Enter [user@]host[:port]:/path — the folder opens from a local mirror.";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Enter a new name for the symbol under the cursor.";
     case PromptSurfaceState::Action::ConfirmRenameSave:
@@ -359,6 +363,8 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Go", "Cancel"};
     case PromptSurfaceState::Action::RemoteHost:
       return {"Connect", "Cancel"};
+    case PromptSurfaceState::Action::RemoteFolder:
+      return {"Open", "Cancel"};
     case PromptSurfaceState::Action::RenameSymbol:
       return {"Rename", "Cancel"};
     case PromptSurfaceState::Action::ConfirmRenameSave:
@@ -524,12 +530,15 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     return;
   }
   if (context_.prompts.surface_visible &&
-      context_.prompts.surface.action == PromptSurfaceState::Action::RemoteHost) {
-    const std::string host = context_.prompts.surface.input.text();
+      (context_.prompts.surface.action == PromptSurfaceState::Action::RemoteHost ||
+       context_.prompts.surface.action == PromptSurfaceState::Action::RemoteFolder)) {
+    const ActionId action = context_.prompts.surface.action == PromptSurfaceState::Action::RemoteHost
+                                ? ActionId::RemoteOpenTerminal
+                                : ActionId::RemoteOpenFolder;
+    const std::string input = context_.prompts.surface.input.text();
     MakePromptSurfaceService().DismissPromptSurface(true);
-    if (!host.empty()) {
-      ActionCoordinator(MakeActionContext())
-          .Execute(ActionId::RemoteOpenTerminal, {host}, ActionSource::Shortcut);
+    if (!input.empty()) {
+      ActionCoordinator(MakeActionContext()).Execute(action, {input}, ActionSource::Shortcut);
     }
     return;
   }

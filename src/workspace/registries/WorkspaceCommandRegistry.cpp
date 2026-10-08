@@ -23,6 +23,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Run Notification Action", ""},
       ActionSpec{ActionId::ShowOutput, "show-output", "show-output <channel-id>",
                  "Show Output Channel…", ""},
+      ActionSpec{ActionId::RemoteOpenFolder, "remote-open",
+                 "remote-open [[user@]host[:port]:/path]", "Remote: Open Folder on Host\u2026", ""},
       ActionSpec{ActionId::RemoteOpenTerminal, "remote-terminal", "remote-terminal [[user@]host[:port]]",
                  "Remote: Open Terminal on Host\u2026", ""},
       ActionSpec{ActionId::RemoteShowStatus, "remote-status", "remote-status",

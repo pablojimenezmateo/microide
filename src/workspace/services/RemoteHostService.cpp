@@ -1,5 +1,6 @@
 #include "workspace/services/RemoteHostService.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <thread>
 #include <utility>
@@ -7,6 +8,7 @@
 #include "platform/ProcessLauncher.h"
 #include "platform/RuntimePaths.h"
 #include "project/remote/RemoteProcessLauncher.h"
+#include "project/remote/RemoteProject.h"
 #include "util/CommandLine.h"
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
@@ -58,6 +60,7 @@ RemoteHostService::~RemoteHostService() {
     worker.join();
   }
   // Sessions next: their threads post into the mailbox until they are joined.
+  projects_.clear();
   hosts_.clear();
 }
 
@@ -75,11 +78,8 @@ const RemoteHostService::Host* RemoteHostService::Find(std::string_view host) co
   return it == hosts_.end() ? nullptr : &it->second;
 }
 
-RemoteHostService::Host& RemoteHostService::Ensure(const remote::RemoteHostTarget& target) {
-  const std::string key = target.Display();
-  if (Host* existing = Find(key)) {
-    return *existing;
-  }
+remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
+    const remote::RemoteHostTarget& target) const {
   const auto setting = [&](std::string_view name) {
     return operations_.setting ? operations_.setting(name) : std::optional<std::string>();
   };
@@ -95,6 +95,203 @@ RemoteHostService::Host& RemoteHostService::Ensure(const remote::RemoteHostTarge
   config.server_command = setting("remote.server_command").value_or(std::string());
   config.install = SettingFlagEnabled(setting("remote.server_install"), true);
   config.server_binary = platform::ResolveBundledServerBinary();
+  return config;
+}
+
+std::optional<std::pair<remote::RemoteHostTarget, std::string>> RemoteHostService::ParseRemoteFolder(
+    std::string_view spec, std::string* error) {
+  std::string scratch;
+  error = error != nullptr ? error : &scratch;
+  while (!spec.empty() && (spec.front() == ' ' || spec.front() == '\t')) {
+    spec.remove_prefix(1);
+  }
+  while (!spec.empty() && (spec.back() == ' ' || spec.back() == '\t')) {
+    spec.remove_suffix(1);
+  }
+  const std::size_t split = spec.find(":/");
+  if (split == std::string_view::npos || split == 0) {
+    *error = "expected [user@]host[:port]:/absolute/path";
+    return std::nullopt;
+  }
+  std::optional<remote::RemoteHostTarget> target = remote::ParseRemoteHostTarget(spec.substr(0, split), error);
+  if (!target.has_value()) {
+    return std::nullopt;
+  }
+  const std::string_view path = spec.substr(split + 1);
+  if (path.find_first_of(std::string_view("\0\n\r", 3)) != std::string_view::npos) {
+    *error = "the host path contains a control character";
+    return std::nullopt;
+  }
+  std::string normalized = std::filesystem::path(std::string(path)).lexically_normal().generic_string();
+  while (normalized.size() > 1 && normalized.back() == '/') {
+    normalized.pop_back();
+  }
+  return std::make_pair(std::move(*target), std::move(normalized));
+}
+
+RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteHostTarget& target,
+                                                           const std::string& host_root,
+                                                           std::string* error) {
+  const std::filesystem::path tree = remote::RemoteProject::DefaultTree(target.Display(), host_root);
+  if (const auto existing = projects_.find(tree); existing != projects_.end()) {
+    return &existing->second;
+  }
+  remote::RemoteProject::Config config;
+  config.session = SessionConfig(target);
+  config.session.workspace_root = host_root;
+  config.mirror_directory = tree.parent_path();
+  auto project = std::make_unique<remote::RemoteProject>(std::move(config), [this, tree]() {
+    // Coalesced: only the latest state matters by the time the UI runs.
+    mailbox_.PostLatest("remote-project:" + tree.string(), [this, tree]() { ApplyProject(tree); });
+  });
+  Project entry;
+  remote::RemoteProject* raw = project.get();
+  entry.project = std::move(project);
+  Project& stored = projects_.emplace(tree, std::move(entry)).first->second;
+  if (!raw->Open(error)) {
+    projects_.erase(tree);
+    return nullptr;
+  }
+  PublishStatusSegment();
+  return &stored;
+}
+
+std::optional<std::filesystem::path> RemoteHostService::PrepareRemoteFolder(std::string_view spec,
+                                                                            std::string* error) {
+  const auto parsed = ParseRemoteFolder(spec, error);
+  if (!parsed.has_value()) {
+    return std::nullopt;
+  }
+  Project* project = OpenProject(parsed->first, parsed->second, error);
+  if (project == nullptr) {
+    return std::nullopt;
+  }
+  return project->project->tree();
+}
+
+std::optional<project::ProjectLocality> RemoteHostService::LocalityForMirror(
+    const std::filesystem::path& root) {
+  if (const auto existing = projects_.find(root); existing != projects_.end()) {
+    return existing->second.project->locality();
+  }
+  const std::optional<remote::RemoteProjectRecord> record = remote::RemoteProject::ReadRecord(root);
+  if (!record.has_value()) {
+    return std::nullopt;
+  }
+  std::string error;
+  const std::optional<remote::RemoteHostTarget> target =
+      remote::ParseRemoteHostTarget(record->host, &error);
+  // Only the mirror's own tree: a copy or a renamed directory is a local folder.
+  if (!target.has_value() ||
+      remote::RemoteProject::DefaultTree(target->Display(), record->host_root) != root) {
+    return std::nullopt;
+  }
+  Project* project = OpenProject(*target, record->host_root, &error);
+  if (project == nullptr) {
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Error,
+          .message = "Cannot open the mirror of " + record->host + ":" + record->host_root + ": " + error,
+      });
+    }
+    return std::nullopt;
+  }
+  return project->project->locality();
+}
+
+void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
+  const auto it = projects_.find(tree);
+  if (it == projects_.end()) {
+    return;
+  }
+  Project& entry = it->second;
+  remote::RemoteProject& project = *entry.project;
+  const remote::RemoteHostSession::Status status = project.session().status();
+  const remote::MirrorSyncEngine::Status sync = project.engine().status();
+  entry.status = status;
+  const remote::RemoteProjectRecord record = project.record();
+  const std::string label = record.host + ":" + record.host_root;
+  const std::string key = "remote.project." + tree.string();
+  using Tone = NotificationService::Tone;
+  const auto row = [&](Tone tone, std::string message, std::vector<NotificationAction> actions = {}) {
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Request{.tone = tone,
+                                                      .key = key,
+                                                      .message = std::move(message),
+                                                      .sticky = true,
+                                                      .actions = std::move(actions)});
+    }
+  };
+  const auto dismiss = [&]() {
+    if (operations_.dismiss_notification) {
+      operations_.dismiss_notification(key);
+    }
+  };
+  switch (status.state) {
+    case State::Connecting:
+    case State::StartingServer:
+    case State::Installing:
+      row(Tone::Info, status.message + "…");
+      break;
+    case State::NeedsAuth:
+      row(Tone::Warning, "Authenticate to " + record.host + " in the terminal below");
+      if (!entry.auth_terminal_opened && operations_.open_terminal) {
+        entry.auth_terminal_opened = true;
+        (void)operations_.open_terminal(LocalLauncher(), "ssh · ", project.session().SshCommandText());
+      }
+      break;
+    case State::Reconnecting:
+      row(Tone::Warning, "Reconnecting to " + record.host + "… (" + record.host_root +
+                             " stays editable; saves are queued)");
+      break;
+    case State::Offline:
+    case State::Disconnected:
+      entry.auth_terminal_opened = false;
+      if (status.error.empty()) {
+        dismiss();
+      } else {
+        row(Tone::Error, label + ": " + status.error);
+      }
+      break;
+    case State::Ready:
+      entry.auth_terminal_opened = false;
+      if (!sync.error.empty()) {
+        row(Tone::Error, "Sync with " + label + " failed: " + sync.error);
+      } else if (sync.held_deletes > 0) {
+        row(Tone::Warning, label + " would delete " + std::to_string(sync.held_deletes) +
+                               " files from the mirror; the deletion is held (the host root "
+                               "may be unmounted or empty)");
+      } else if (sync.syncing && !sync.synced_once) {
+        row(Tone::Info, "Syncing " + label + "… (" + std::to_string(sync.absent) + " files to fetch)");
+      } else {
+        dismiss();
+        if (sync.synced_once && !entry.announced_sync && operations_.notify) {
+          entry.announced_sync = true;
+          operations_.notify(NotificationService::Request{
+              .tone = Tone::Info,
+              .message = "Connected to " + label + (sync.conflicts > 0
+                                                        ? " — " + std::to_string(sync.conflicts) +
+                                                              " files changed on both sides"
+                                                        : std::string())});
+        }
+      }
+      break;
+  }
+  PublishStatusSegment();
+  if (operations_.request_redraw) {
+    operations_.request_redraw();
+  }
+}
+
+RemoteHostService::Host& RemoteHostService::Ensure(const remote::RemoteHostTarget& target) {
+  const std::string key = target.Display();
+  if (Host* existing = Find(key)) {
+    return *existing;
+  }
+  const auto setting = [&](std::string_view name) {
+    return operations_.setting ? operations_.setting(name) : std::optional<std::string>();
+  };
+  remote::RemoteHostSession::Config config = SessionConfig(target);
 
   Host entry;
   entry.session = std::make_unique<remote::RemoteHostSession>(
@@ -190,10 +387,23 @@ std::string RemoteHostService::SoleHost() const {
 }
 
 std::string RemoteHostService::StatusText() const {
-  if (hosts_.empty()) {
-    return "No remote hosts. Remote: Open Terminal on Host… connects to one.";
+  if (hosts_.empty() && projects_.empty()) {
+    return "No remote hosts. Remote: Open Folder on Host… or Remote: Open Terminal on Host… "
+           "connects to one.";
   }
   std::string text;
+  for (const auto& [tree, entry] : projects_) {
+    const remote::RemoteProjectRecord record = entry.project->record();
+    const remote::MirrorSyncEngine::Status sync = entry.project->engine().status();
+    if (!text.empty()) {
+      text += "\n";
+    }
+    text += record.host + ":" + record.host_root + ": " +
+            std::string(remote::RemoteHostSession::StateName(entry.status.state)) + ", " +
+            std::to_string(sync.files) + " files (" + std::to_string(sync.absent) + " to fetch, " +
+            std::to_string(sync.dirty) + " to push, " + std::to_string(sync.conflicts) +
+            " conflicts), mirror " + tree.string();
+  }
   for (const auto& [key, entry] : hosts_) {
     if (!text.empty()) {
       text += "\n";
@@ -304,7 +514,16 @@ void RemoteHostService::PublishStatusSegment() {
   if (!operations_.set_status_segment) {
     return;
   }
-  if (hosts_.empty()) {
+  // Every connection the editor holds: host terminals' and remote projects'.
+  std::vector<std::pair<std::string, State>> connections;
+  for (const auto& [key, entry] : hosts_) {
+    connections.emplace_back(key, entry.status.state);
+  }
+  for (const auto& [tree, entry] : projects_) {
+    (void)tree;
+    connections.emplace_back(entry.project->record().host, entry.status.state);
+  }
+  if (connections.empty()) {
     operations_.set_status_segment(StatusBarSegmentValue{});
     return;
   }
@@ -326,18 +545,18 @@ void RemoteHostService::PublishStatusSegment() {
     }
     return 3;
   };
-  const Host* worst = nullptr;
-  std::string worst_key;
-  for (const auto& [key, entry] : hosts_) {
-    if (worst == nullptr || rank(entry.status.state) > rank(worst->status.state)) {
-      worst = &entry;
-      worst_key = key;
-    }
+  const auto worst = std::max_element(connections.begin(), connections.end(),
+                                      [&](const auto& a, const auto& b) {
+                                        return rank(a.second) < rank(b.second);
+                                      });
+  bool one_host = true;
+  for (const auto& connection : connections) {
+    one_host = one_host && connection.first == connections.front().first;
   }
-  const State state = worst->status.state;
+  const State state = worst->second;
   StatusBarSegmentValue value;
   value.visible = true;
-  value.text = (hosts_.size() == 1 ? worst_key : std::to_string(hosts_.size()) + " hosts") +
+  value.text = (one_host ? worst->first : std::to_string(connections.size()) + " connections") +
                (state == State::Ready ? std::string()
                                       : " · " + std::string(remote::RemoteHostSession::StateName(state)));
   value.tooltip = "Remote: Show Status";

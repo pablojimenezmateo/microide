@@ -649,7 +649,8 @@ class WorkspaceActionContext {
   bool ShowOutputChannel(std::string_view channel_id);
   // Null only in a context built without the shell (tests).
   RemoteHostService* RemoteHosts();
-  void OpenRemoteHostPrompt();
+  // `folder`: Remote: Open Folder on Host…, else Remote: Open Terminal on Host….
+  void OpenRemoteHostPrompt(bool folder = false);
   bool CancelSaveWait(std::uint64_t id);
   std::optional<NotificationAction> TakeNotificationAction(std::string_view row,
                                                            std::string_view action,

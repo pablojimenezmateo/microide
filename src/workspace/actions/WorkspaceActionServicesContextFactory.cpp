@@ -243,9 +243,10 @@ void WorkspaceActionContext::OpenGoToLinePrompt() {
   }
 }
 
-void WorkspaceActionContext::OpenRemoteHostPrompt() {
+void WorkspaceActionContext::OpenRemoteHostPrompt(bool folder) {
   if (operations_.open_prompt_surface) {
-    operations_.open_prompt_surface(PromptSurfaceState::Action::RemoteHost,
+    operations_.open_prompt_surface(folder ? PromptSurfaceState::Action::RemoteFolder
+                                           : PromptSurfaceState::Action::RemoteHost,
                                     PromptSurfaceState::Kind::TextInput,
                                     std::filesystem::path{}, std::string{});
   }

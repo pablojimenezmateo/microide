@@ -119,6 +119,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::NotificationAction:  // rejects naming the row/action it cannot find
     case ActionId::ShowOutput:          // rejects naming a channel that does not exist
     case ActionId::RemoteOpenTerminal:  // no project needed: a host terminal has none
+    case ActionId::RemoteOpenFolder:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:    // these reject naming the host they cannot find
     case ActionId::RemoteDisconnect:

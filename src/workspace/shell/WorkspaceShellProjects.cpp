@@ -12,6 +12,7 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/services/ProjectCatalogService.h"
+#include "workspace/services/RemoteHostService.h"
 
 namespace microide::workspace {
 
@@ -28,8 +29,17 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                      bool log_feedback,
                      bool activate_restored_tab,
                      const project::ProjectLocality& locality) {
+                // A remote project's mirror opened as a plain root (from the recents
+                // list, a restored session, a typed path) gets its own locality and
+                // reconnects; an explicit locality always wins.
+                project::ProjectLocality resolved = locality;
+                if (resolved.launcher == &platform::LocalProcessLauncher()) {
+                  if (auto remote = MakeRemoteHostService().LocalityForMirror(project_root)) {
+                    resolved = *remote;
+                  }
+                }
                 return InitializeCurrentProject(project_root, restore_persistence, log_feedback,
-                                                activate_restored_tab, locality);
+                                                activate_restored_tab, resolved);
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
           .stop_project_search = [this]() { StopProjectSearch(); },

@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "project/ProjectLocality.h"
 #include "project/remote/RemoteHostSession.h"
 #include "util/MainThreadMailbox.h"
 #include "workspace/services/NotificationService.h"
@@ -21,6 +22,7 @@ class ProcessLauncher;
 
 namespace microide::project::remote {
 class RemoteProcessLauncher;
+class RemoteProject;
 }
 
 namespace microide::workspace {
@@ -32,9 +34,14 @@ namespace microide::workspace {
 // Install Command), the authentication terminal, and the host terminals waiting
 // for the connection.
 //
-// Phase 2a opens no remote project: a host here only runs terminals. Sessions
-// report on their worker threads; every report is drained on the UI thread
-// (DrainCompletions), so all the state below is UI-thread only.
+// And the remote PROJECTS (Phase 2b): a host directory opened as a project is a
+// mirror the editor opens as an ordinary root, with its own channel to the host.
+// The open funnel asks LocalityForMirror for every root it opens, so a mirror
+// reopened from the recents list or a restored session reconnects instead of
+// opening as a plain local folder.
+//
+// Sessions report on their worker threads; every report is drained on the UI
+// thread (DrainCompletions), so all the state below is UI-thread only.
 class RemoteHostService {
  public:
   struct Operations {
@@ -63,6 +70,17 @@ class RemoteHostService {
   // the terminal once it is ready. False with *error for a host string that is
   // refused before anything runs.
   bool OpenTerminalOnHost(std::string_view host, std::string* error);
+  // Remote: Open Folder on Host… — `[user@]host[:port]:/absolute/path`. Prepares the
+  // project's mirror and returns the tree the editor opens; the project connects
+  // when that tree is opened (LocalityForMirror). nullopt with *error otherwise.
+  std::optional<std::filesystem::path> PrepareRemoteFolder(std::string_view spec,
+                                                           std::string* error);
+  // The locality of `root` if it is a remote project's mirror — opening the project
+  // (and starting its connection) the first time — and nullopt for any other folder.
+  std::optional<project::ProjectLocality> LocalityForMirror(const std::filesystem::path& root);
+  // `[user@]host[:port]:/absolute/path`, validated like a host target.
+  static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
+      std::string_view spec, std::string* error);
   bool Reconnect(std::string_view host);
   // Empty = every host.
   void Disconnect(std::string_view host = {});
@@ -87,6 +105,18 @@ class RemoteHostService {
     bool auth_terminal_opened = false;
   };
 
+  struct Project {
+    std::unique_ptr<project::remote::RemoteProject> project;
+    project::remote::RemoteHostSession::Status status;
+    bool auth_terminal_opened = false;
+    bool announced_sync = false;
+  };
+
+  project::remote::RemoteHostSession::Config SessionConfig(
+      const project::remote::RemoteHostTarget& target) const;
+  Project* OpenProject(const project::remote::RemoteHostTarget& target, const std::string& host_root,
+                       std::string* error);
+  void ApplyProject(const std::filesystem::path& tree);
   Host* Find(std::string_view host);
   const Host* Find(std::string_view host) const;
   Host& Ensure(const project::remote::RemoteHostTarget& target);
@@ -96,6 +126,9 @@ class RemoteHostService {
 
   Operations operations_;
   std::map<std::string, Host, std::less<>> hosts_;
+  // By mirror tree. Kept until the service goes: a project state may still hold
+  // their launcher and gate (ProjectLocality's lifetime rule).
+  std::map<std::filesystem::path, Project> projects_;
   std::vector<std::thread> workers_;  // Stop Host Server runs, joined on destruction
   // Last: its queued closures name `this`, and it must drop them before the
   // sessions that post them are gone — sessions are destroyed explicitly first.

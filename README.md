@@ -135,8 +135,17 @@ for what is actually measured, and what is not.
   (`remote.server_install`); a passphrase prompt is answered in a terminal tab. On a slow link
   typed characters are drawn at once, underlined, and confirmed within a round trip
   (`remote.predict`). A `Remote` status segment and a notification row per host (Reconnect,
-  Copy ssh Command, Copy Install Command) show the connection. Remote *projects* (a mirrored
-  tree) are not built yet
+  Copy ssh Command, Copy Install Command) show the connection
+- **Folders on a remote host**: `Remote: Open Folder on Host…` (`remote-open
+  [user@]host[:port]:/path`) opens a host directory as a project. The editor works on a local
+  mirror at local speed — opening, searching the tree and typing never wait on the network —
+  while git, language servers, debuggers, formatters and terminals run on the host. A save
+  lands locally at once and is pushed under compare-and-swap, so it can never overwrite an
+  edit an agent made on the host meanwhile: both versions are kept and the file is marked
+  as a conflict. Host changes stream into the mirror as they happen; a sync that would delete
+  most of the mirror (an unmounted host disk) is held instead of applied. Saves made while
+  offline are journaled and replayed on reconnect. The mirror lives under
+  `~/.local/share/microide/remote/` and reopens from the recents list as the remote project
 
 ### Debugging
 - Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /
@@ -671,6 +680,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `focus-notifications`
 - `notification-action <row-key|row-index> <action-label|action-index>`
 - `show-output <channel-id>`
+- `remote-open [[user@]host[:port]:/path]`
 - `remote-terminal [[user@]host[:port]]`
 - `remote-status`
 - `remote-stop-server [host]`

@@ -92,6 +92,7 @@ struct PromptSurfaceState {
     SaveAs,
     // Remote: Open Terminal on Host…: type `[user@]host[:port]`.
     RemoteHost,
+    RemoteFolder,
   };
 
   Kind kind = Kind::None;

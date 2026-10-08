@@ -106,6 +106,82 @@ void TestOpenTerminalOnHostFromTheCommand() {
   }
 }
 
+void RemoveFakeMaster(const std::string& target) {
+  if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr) {
+    const std::filesystem::path control = std::filesystem::path(runtime) / "microide-ssh" /
+                                          ("m-" + util::Sha256Hex(target).substr(0, 16));
+    std::error_code ec;
+    std::filesystem::remove(control, ec);
+    std::filesystem::remove(control.string() + ".log", ec);
+  }
+}
+
+// Remote: Open Folder on Host… end to end: the command prepares the mirror, the
+// editor opens it as the project root with the host's launcher, the mirror fills
+// from the host, and an edit saved in the editor lands in the HOST's file. Then
+// the mirror reopened as a plain path (what the recents list and a restored session
+// do) is recognized and given its remote locality again.
+void TestOpenFolderOnHostEditsTheHostTree() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "app";
+  WriteFile(host_root / "main.c", "int main(void) { return 0; }\n");
+  const std::string target = "dev@fake-open-" + std::to_string(::getpid());
+  std::filesystem::path mirror;
+  {
+  WorkspaceShell shell;
+  std::string ssh;
+  for (const std::string& word : host.SshArgv()) {
+    ssh += (ssh.empty() ? "" : " ") + word;
+  }
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
+         "the ssh seam is set");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":relative"),
+         "a relative host path is refused");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
+                                                      "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  Expect(mirror.filename() == "app" && mirror != host_root,
+         "the project is the mirror, named after the host folder: " + mirror.string());
+  Expect(!WorkspaceShellTestAccess::ProjectLauncher(shell).is_local(),
+         "the project's processes run on the host");
+
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "main.c");
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills from the host");
+  WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// edited\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the save succeeds locally");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(host_root / "main.c") == "// edited\nint main(void) { return 0; }\n";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "and the edit reaches the host's file: '" + ReadFile(host_root / "main.c") + "'");
+  }
+  {
+    // A later run opening the mirror as a plain folder.
+    WorkspaceShell shell;
+    std::string ssh;
+    for (const std::string& word : host.SshArgv()) {
+      ssh += (ssh.empty() ? "" : " ") + word;
+    }
+    Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
+           "the ssh seam is set again");
+    Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, mirror, {}),
+           "the mirror opens as a path");
+    Expect(!WorkspaceShellTestAccess::ProjectLauncher(shell).is_local(),
+           "and is recognized as the remote project it mirrors");
+  }
+  RemoveFakeMaster(target);
+}
+
 #endif
 
 }  // namespace
@@ -114,6 +190,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);
+  AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
+          TestOpenFolderOnHostEditsTheHostTree);
 #else
   (void)tests;
 #endif

@@ -28,8 +28,8 @@
 
 ## 5. Opening a remote project
 
-- [ ] 5.1 `Remote: Open Folder on Host…` and the remote project record (host + host root)
-- [ ] 5.2 Project wiring: root = mirror `tree/`, launcher = host session, write gate = mirror, git metadata = host
+- [x] 5.1 `Remote: Open Folder on Host…` and the remote project record (host + host root)
+- [x] 5.2 Project wiring: root = mirror `tree/`, launcher = host session, write gate = mirror, git metadata = host
 - [ ] 5.3 Presentation: `host:/path` on the tab, title and recents; connecting/syncing status
 - [ ] 5.4 Pushed `git/metadata` and `git/status`
 

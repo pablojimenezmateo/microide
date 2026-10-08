@@ -198,6 +198,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::RemoteOpenTerminal:
+    case ActionId::RemoteOpenFolder:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:
@@ -220,6 +221,22 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           std::string error;
           if (!hosts->OpenTerminalOnHost(args[0], &error)) {
             return reject("Cannot connect to \"" + args[0] + "\": " + error);
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteOpenFolder: {
+          if (args.empty()) {
+            context_.OpenRemoteHostPrompt(/*folder=*/true);
+            return DispatchResult::Handled;
+          }
+          std::string error;
+          const std::optional<std::filesystem::path> tree = hosts->PrepareRemoteFolder(args[0], &error);
+          if (!tree.has_value()) {
+            return reject("Cannot open \"" + args[0] + "\": " + error);
+          }
+          // The open funnel recognizes the mirror and gives it the project's locality.
+          if (!context_.OpenProject(*tree, true, true)) {
+            return reject("Cannot open the mirror of \"" + args[0] + "\"");
           }
           return DispatchResult::Handled;
         }
