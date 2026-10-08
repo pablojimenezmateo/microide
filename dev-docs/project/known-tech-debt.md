@@ -460,11 +460,13 @@ silent one:
   until the window closes (closing the project tab keeps them, because a project
   state may still point at the locality).
 - Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
-  through the launcher meanwhile, a host process per refresh), host-side
-  `search/run` (search reads the mirror, which is complete once synced but
-  briefly stale under churn), the Compare choice of the conflict flow, absent
-  files in the tree before their first pull, presentation (`host:/path` in the
-  title and recents), and the parity rows against the real server with a mirror.
+  through the launcher meanwhile: two host processes per git-sidebar refresh, none
+  while the sidebar is hidden), host-side `search/run` (search reads the mirror,
+  which is complete once synced but briefly stale under churn), files over the
+  64 MiB per-object ceiling (absent, and so invisible in the tree), and the parity
+  rows against the real server with a mirror. Done since: the Compare choice of
+  the conflict flow, large files (pulled last, one at a time), `host:/path` in the
+  recents (the window has no title to set).
 
 ### TD-2026-10-08-329 — local external-change detection trusts a racily clean stat. [RESOLVED 2026-10-08]
 
