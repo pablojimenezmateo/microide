@@ -16,7 +16,7 @@
 
 ## 3. Watch
 
-- [ ] 3.1 `watch/subscribe` → coalesced `watch/changed` rows + deletes from the server's watcher; `.gitignore` edits re-run the content set
+- [x] 3.1 `watch/subscribe` → coalesced `watch/changed` rows + deletes from the server's watcher; `.gitignore` edits re-run the content set
 - [ ] 3.2 Watch mode (inotify | polling) reported in hello and on transition
 
 ## 4. Client mirror

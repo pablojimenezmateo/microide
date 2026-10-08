@@ -838,6 +838,7 @@ add_executable(microide-server
   src/server/ServerMain.cpp
   src/server/TerminalTable.cpp
   src/server/WorkspaceTree.cpp
+  src/server/WorkspaceWatch.cpp
   $<TARGET_OBJECTS:microide_kernel>
 )
 target_include_directories(microide-server PRIVATE src)

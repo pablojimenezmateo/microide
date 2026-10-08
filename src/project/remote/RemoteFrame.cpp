@@ -20,6 +20,7 @@ bool IsKnownFrameType(std::uint16_t type) {
     case FrameType::TreeRows:
     case FrameType::ObjectData:
     case FrameType::WriteData:
+    case FrameType::WatchDelta:
       return true;
   }
   return false;

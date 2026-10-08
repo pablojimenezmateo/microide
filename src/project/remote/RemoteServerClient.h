@@ -118,6 +118,13 @@ class RemoteServerClient {
   std::uint64_t RequestStream(std::string_view method, const util::JsonValue& params, Lane lane,
                               StreamContent content, RemotePeer::ResponseHandler done);
 
+  // WatchDelta frames (id = the manifest id they bring the client to), in order, on
+  // the I/O thread. Set before watch/subscribe.
+  void SetWatchHandler(std::function<void(std::uint64_t manifest_id, std::string bytes)> handler) {
+    std::lock_guard lock(mutex_);
+    watch_handler_ = std::make_shared<std::function<void(std::uint64_t, std::string)>>(std::move(handler));
+  }
+
   // One synchronous request; nullopt with *error on failure or after `timeout`.
   std::optional<util::JsonValue> Call(std::string_view method, const util::JsonValue& params,
                                       std::string* error,
@@ -153,6 +160,7 @@ class RemoteServerClient {
   std::map<std::uint64_t, Orphan> terminal_orphans_;
   // Content routes of in-flight RequestStream calls, by request id.
   std::map<std::uint64_t, std::shared_ptr<StreamContent>> streams_;
+  std::shared_ptr<std::function<void(std::uint64_t, std::string)>> watch_handler_;
 };
 
 }  // namespace microide::project::remote

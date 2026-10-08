@@ -49,6 +49,11 @@ inline constexpr std::string_view kFileWrite = "file/write";
 // fs/op {op: "mkdir"|"rename"|"delete", path, to?, expect?} -> {} or
 // {conflict: true, current: hash | null}.
 inline constexpr std::string_view kFsOp = "fs/op";
+// watch/subscribe {} -> {native: bool}. From the next tree/manifest on, every change
+// to the content set arrives as WatchDelta frames against what this connection was
+// last sent. Subscribe first, then fetch the manifest: changes in between are in
+// the manifest, and nothing is sent before it.
+inline constexpr std::string_view kWatchSubscribe = "watch/subscribe";
 }  // namespace method
 
 // What a write or tree operation requires of the path's current content (§ 6.3):

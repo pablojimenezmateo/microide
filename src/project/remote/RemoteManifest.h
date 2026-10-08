@@ -56,4 +56,17 @@ inline void EncodeManifestRows(const std::vector<ManifestRow>& rows, std::string
 // chunk (the decoder never leaves half a chunk behind).
 bool DecodeManifestRows(std::string_view bytes, std::vector<ManifestRow>& rows);
 
+// The difference between two manifests, both sorted and unique: rows of `after`
+// that are new or differ from `before`, and paths of `before` that `after` lacks.
+void DiffManifests(const std::vector<ManifestRow>& before, const std::vector<ManifestRow>& after,
+                   std::vector<const ManifestRow*>& changed, std::vector<const std::string*>& deleted);
+
+// A WatchDelta payload: deleted paths, then changed rows (a manifest chunk).
+void EncodeWatchDelta(const std::string* const* deleted, std::size_t deleted_count,
+                      const ManifestRow* const* rows, std::size_t row_count, std::string& out);
+// Appends to `deleted` and `rows`; false (both untouched) on malformed bytes or an
+// unsafe path.
+bool DecodeWatchDelta(std::string_view bytes, std::vector<std::string>& deleted,
+                      std::vector<ManifestRow>& rows);
+
 }  // namespace microide::project::remote

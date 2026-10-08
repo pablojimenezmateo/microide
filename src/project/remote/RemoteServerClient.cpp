@@ -69,6 +69,17 @@ void RemoteServerClient::InstallRouting() {
       DeliverTerminalFrame(handle, std::move(bytes));
       return;
     }
+    if (type == FrameType::WatchDelta) {
+      std::shared_ptr<std::function<void(std::uint64_t, std::string)>> handler;
+      {
+        std::lock_guard lock(mutex_);
+        handler = watch_handler_;
+      }
+      if (handler && *handler) {
+        (*handler)(handle, std::move(bytes));
+      }
+      return;
+    }
     if (type == FrameType::TreeRows || type == FrameType::ObjectData) {
       std::shared_ptr<StreamContent> route;
       {

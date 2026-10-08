@@ -100,6 +100,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallTerminalHandlers(ref);
   InstallTreeHandlers(ref);
   InstallFileHandlers(ref);
+  InstallWatchHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -139,7 +140,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        id, remote::ToJson(remote::HelloReply{
                                .release = config_.release,
                                .daemon_epoch = epoch_,
-                               .capabilities = {"proc", "term", "tree"},
+                               .capabilities = {"proc", "term", "tree", "watch"},
                                .session_survival = config_.session_survival,
                            }));
                  });
@@ -154,6 +155,10 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                  });
   peer.OnClosed([this, &connection](std::string_view reason) {
     util::Log("connection " + std::to_string(connection.id) + " closed: " + std::string(reason));
+    if (const std::shared_ptr<ServedTree> tree = TreeOf(connection)) {
+      std::lock_guard publish(tree->publish_mutex);
+      tree->subscribers.erase(connection.id);
+    }
     std::shared_ptr<ServedTree> released;  // destroyed (worker joined) outside the lock
     {
       std::lock_guard lock(mutex_);

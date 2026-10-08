@@ -42,6 +42,18 @@ class RemoteWorkspace {
   std::optional<Manifest> FetchManifestSync(std::string* error,
                                             std::chrono::milliseconds timeout = std::chrono::seconds(120));
 
+  // watch/subscribe: from the next manifest on, every change to the host's content
+  // set arrives through `on_delta` (I/O thread), against what this connection was
+  // last sent. Subscribe BEFORE fetching the manifest. False with *error when the
+  // server refused; *native says whether the host notifies or polls.
+  struct WatchDelta {
+    std::uint64_t manifest_id = 0;
+    std::vector<std::string> deleted;
+    std::vector<ManifestRow> rows;
+  };
+  bool SubscribeWatch(std::function<void(WatchDelta delta)> on_delta, bool* native,
+                      std::string* error);
+
   // object/fetch: the current bytes at each path, and the hash of exactly those
   // bytes (verified here, not taken on trust). `lane` is Interactive for a file the
   // user is waiting on, Bulk for backfill.

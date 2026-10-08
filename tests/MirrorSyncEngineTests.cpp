@@ -6,7 +6,10 @@
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 
+#include <chrono>
 #include <filesystem>
+#include <functional>
+#include <thread>
 #include <memory>
 #include <string>
 #include <vector>
@@ -177,6 +180,59 @@ void TestMirrorJournalSurvivesARestart() {
   Expect(ReadFile(session.host / "a.txt") == "a tool wrote this\n", "an outside local edit is pushed");
 }
 
+bool WaitFor(const std::function<bool()>& done, std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (done()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  return done();
+}
+
+void TestMirrorFollowsTheHostWatch() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "one\n");
+  WriteFile(session.host / "gone.txt", "x\n");
+  session.Connect();
+  bool native = false;
+  std::string error;
+  remote::MirrorSyncEngine* engine = session.engine.get();
+  Expect(session.workspace->SubscribeWatch(
+             [engine](remote::RemoteWorkspace::WatchDelta delta) {
+               engine->ApplyWatchDelta(std::move(delta));
+             },
+             &native, &error),
+         "subscribes: " + error);
+  session.Sync();
+  Expect(ReadFile(session.Tree("a.txt")) == "one\n", "the first sync lands");
+
+  WriteFile(session.host / "a.txt", "two\n");
+  WriteFile(session.host / "sub/new.txt", "new\n");
+  std::filesystem::remove(session.host / "gone.txt");
+  const bool followed = WaitFor(
+      [&] {
+        session.engine->Flush();
+        return std::filesystem::exists(session.Tree("sub/new.txt")) &&
+               ReadFile(session.Tree("a.txt")) == "two\n" &&
+               !std::filesystem::exists(session.Tree("gone.txt"));
+      },
+      std::chrono::seconds(10));
+  Expect(followed, std::string("an edit, a new file and a delete on the host reach the mirror with no ") +
+                       "sync requested (" + (native ? "native" : "polling") + " watch)");
+
+  // A local save echoed back by the watch changes nothing.
+  WriteFile(session.Tree("a.txt"), "three\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));
+  session.engine->Flush();
+  Expect(ReadFile(session.Tree("a.txt")) == "three\n" &&
+             session.engine->StateOf("a.txt") == ContentState::Current,
+         "our own push echoed by the watch is current, not a change");
+}
+
 void TestMirrorWriteGateReachesTheHost() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "host\n");
@@ -234,6 +290,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
+  AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);
 #else
   (void)tests;
 #endif

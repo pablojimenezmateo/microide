@@ -5,10 +5,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "project/remote/MirrorStore.h"
@@ -91,6 +93,9 @@ class MirrorSyncEngine {
   // Fetch a manifest and bring the mirror to it: deletes, pulls, then the journal's
   // pushes. Coalesced: a sync requested while one is queued is the same sync.
   void RequestSync();
+  // A watch delta from the host (RemoteWorkspace::SubscribeWatch): the same
+  // decisions as a full sync, for the rows it names.
+  void ApplyWatchDelta(RemoteWorkspace::WatchDelta delta);
   // Pull these paths now, on the interactive lane, ahead of any backfill (a tab
   // opening an absent or stale file).
   void Prioritize(std::vector<std::string> paths);
@@ -120,7 +125,22 @@ class MirrorSyncEngine {
     std::uint64_t size = 0;
   };
 
+  struct Plan {
+    std::vector<PullItem> pulls;
+    std::vector<std::string> deletes;
+    std::vector<std::string> pushes;
+    std::vector<std::pair<std::string, std::string>> links;
+    std::vector<std::string> directories;
+  };
+
   void SyncNow();
+  void ReconcileRowLocked(ManifestRow row, Plan& plan);
+  // Returns true when it erased the entry.
+  bool ReconcileDeleteLocked(std::map<std::string, MirrorStore::Entry, std::less<>>::iterator it,
+                             Plan& plan);
+  void HoldMassDeleteLocked(Plan& plan, std::size_t previously_remote);
+  std::size_t RemoteCountLocked() const;
+  void Execute(Plan plan);
   void PullNow(std::vector<PullItem> items, Lane lane);
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);

@@ -4,11 +4,14 @@
 // workers and returns; a connection's I/O thread never touches the disk.
 #include "server/RemoteServer.h"
 
+#include <algorithm>
+#include <map>
 #include <utility>
 
 #include "project/remote/RemoteManifest.h"
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
+#include "util/Log.h"
 
 namespace microide::server {
 namespace {
@@ -26,6 +29,27 @@ util::JsonValue OpResultJson(const remote::FileOpResult& result) {
     json["hash"] = util::JsonValue(result.current->Hex());
   }
   return util::JsonValue(std::move(json));
+}
+
+// Cut `count` rows into frames under the bulk chunk size, so an interactive frame
+// queued behind them waits for at most one. `bytes_of(i)` is a row's variable
+// size; the fixed part is estimated.
+template <typename BytesOf, typename Emit>
+void ForEachChunk(std::size_t count, const BytesOf& bytes_of, const Emit& emit) {
+  std::size_t begin = 0;
+  std::size_t estimate = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    const std::size_t row_bytes = bytes_of(i) + 64;
+    if (i > begin && estimate + row_bytes > remote::RemoteFrameTransport::kMaxBulkChunkBytes) {
+      emit(begin, i);
+      begin = i;
+      estimate = 0;
+    }
+    estimate += row_bytes;
+  }
+  if (begin < count) {
+    emit(begin, count);
+  }
 }
 
 }  // namespace
@@ -68,31 +92,23 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                      };
                      std::optional<WorkspaceTree::Manifest> manifest =
                          tree->tree.BuildManifest(&error, cancelled);
-                     // Encode outside the server lock (WithPeer holds it), in chunks
-                     // under the bulk frame size so a keystroke's frame waits for at
-                     // most one of them.
+                     // Encode outside the server lock (WithPeer holds it).
                      std::vector<std::string> chunks;
                      if (manifest.has_value()) {
                        const auto& rows = manifest->rows;
-                       const auto encode = [&](std::size_t from, std::size_t to) {
-                         chunks.emplace_back();
-                         remote::EncodeManifestRows(rows.data() + from, to - from, chunks.back());
-                       };
-                       std::size_t begin = 0;
-                       std::size_t estimate = 0;
-                       for (std::size_t i = 0; i < rows.size(); ++i) {
-                         const std::size_t row_bytes =
-                             rows[i].path.size() + rows[i].link_target.size() + 64;
-                         if (i > begin && estimate + row_bytes >
-                                              remote::RemoteFrameTransport::kMaxBulkChunkBytes) {
-                           encode(begin, i);
-                           begin = i;
-                           estimate = 0;
-                         }
-                         estimate += row_bytes;
-                       }
-                       if (begin < rows.size()) {
-                         encode(begin, rows.size());
+                       ForEachChunk(
+                           rows.size(),
+                           [&](std::size_t i) { return rows[i].path.size() + rows[i].link_target.size(); },
+                           [&](std::size_t from, std::size_t to) {
+                             chunks.emplace_back();
+                             remote::EncodeManifestRows(rows.data() + from, to - from, chunks.back());
+                           });
+                       // A watching connection's baseline is exactly what it is sent.
+                       std::lock_guard publish(tree->publish_mutex);
+                       if (const auto subscriber = tree->subscribers.find(connection_id);
+                           subscriber != tree->subscribers.end()) {
+                         subscriber->second.last_sent =
+                             std::make_shared<const std::vector<remote::ManifestRow>>(rows);
                        }
                      }
                      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
@@ -117,6 +133,108 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                      });
                    });
                  });
+}
+
+void RemoteServer::InstallWatchHandlers(Connection& connection) {
+  connection.peer.OnRequest(remote::method::kWatchSubscribe, [this, &connection](
+                                                                 std::uint64_t id,
+                                                                 const util::JsonValue&) {
+    const std::shared_ptr<ServedTree> served = TreeOf(connection);
+    if (!served) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                 "no workspace: send server/hello with a root");
+      return;
+    }
+    {
+      std::lock_guard publish(served->publish_mutex);
+      served->subscribers.try_emplace(connection.id);
+    }
+    // Starting the watch walks the tree: on the workspace's worker, not here. The
+    // reply follows it, so `native` is known.
+    ServedTree* tree = served.get();
+    const std::uint64_t connection_id = connection.id;
+    tree->queue.Post([this, tree, connection_id, id]() {
+      if (!tree->watch && !tree->closing.load()) {
+        tree->watch = std::make_unique<WorkspaceWatch>(
+            tree->tree.root(), WorkspaceWatch::Options{}, [this, tree]() {
+              if (!tree->closing.load()) {
+                tree->queue.PostLatest("watch", [this, tree]() { PublishWatchBatch(*tree); });
+              }
+            });
+      }
+      util::JsonObject result;
+      result["native"] = util::JsonValue(tree->watch && tree->watch->native());
+      WithPeer(connection_id,
+               [&](remote::RemotePeer& peer) { peer.Reply(id, util::JsonValue(std::move(result))); });
+    });
+  });
+}
+
+void RemoteServer::PublishWatchBatch(ServedTree& tree) {
+  {
+    std::lock_guard publish(tree.publish_mutex);
+    const bool anyone_primed =
+        std::any_of(tree.subscribers.begin(), tree.subscribers.end(),
+                    [](const auto& entry) { return entry.second.last_sent != nullptr; });
+    if (!anyone_primed) {
+      return;  // nobody has a baseline yet: their next manifest carries this
+    }
+  }
+  std::string error;
+  std::optional<WorkspaceTree::Manifest> manifest =
+      tree.tree.BuildManifest(&error, [&tree]() { return tree.closing.load(); });
+  if (!manifest.has_value()) {
+    util::Log("watch batch for " + tree.tree.root().string() + " failed: " + error);
+    return;
+  }
+  auto current = std::make_shared<const std::vector<remote::ManifestRow>>(std::move(manifest->rows));
+  // Subscribers primed by the same manifest share a baseline: one diff for each
+  // distinct baseline, not one per connection.
+  std::map<const std::vector<remote::ManifestRow>*, std::vector<std::string>> frames_for;
+  std::vector<std::pair<std::uint64_t, const std::vector<remote::ManifestRow>*>> sends;
+  // The replaced baselines stay alive until their frames are sent: they key the map.
+  std::vector<std::shared_ptr<const std::vector<remote::ManifestRow>>> previous;
+  {
+    std::lock_guard publish(tree.publish_mutex);
+    for (auto& [connection_id, subscriber] : tree.subscribers) {
+      if (!subscriber.last_sent) {
+        continue;
+      }
+      const std::vector<remote::ManifestRow>* baseline = subscriber.last_sent.get();
+      if (!frames_for.contains(baseline)) {
+        std::vector<const remote::ManifestRow*> changed;
+        std::vector<const std::string*> deleted;
+        remote::DiffManifests(*baseline, *current, changed, deleted);
+        std::vector<std::string>& frames = frames_for[baseline];
+        // Deletes ride the first frame; rows are chunked.
+        ForEachChunk(
+            changed.size(), [&](std::size_t i) { return changed[i]->path.size(); },
+            [&](std::size_t from, std::size_t to) {
+              frames.emplace_back();
+              const bool first = from == 0;
+              remote::EncodeWatchDelta(deleted.data(), first ? deleted.size() : 0,
+                                       changed.data() + from, to - from, frames.back());
+            });
+        if (changed.empty() && !deleted.empty()) {
+          frames.emplace_back();
+          remote::EncodeWatchDelta(deleted.data(), deleted.size(), nullptr, 0, frames.back());
+        }
+      }
+      sends.emplace_back(connection_id, baseline);
+      previous.push_back(std::exchange(subscriber.last_sent, current));
+    }
+    for (const auto& [connection_id, baseline] : sends) {
+      const std::vector<std::string>& frames = frames_for[baseline];
+      if (frames.empty()) {
+        continue;  // the batch changed nothing this connection can see
+      }
+      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+        for (const std::string& frame : frames) {
+          peer.SendContent(remote::FrameType::WatchDelta, manifest->id, frame, remote::Lane::Bulk);
+        }
+      });
+    }
+  }
 }
 
 void RemoteServer::InstallFileHandlers(Connection& connection) {

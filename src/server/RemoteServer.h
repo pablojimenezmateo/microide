@@ -16,6 +16,7 @@
 #include "server/ProcessTable.h"
 #include "server/TerminalTable.h"
 #include "server/WorkspaceTree.h"
+#include "server/WorkspaceWatch.h"
 #include "util/SerialWorkQueue.h"
 #include "util/JsonValue.h"
 #include "util/WakePipe.h"
@@ -67,18 +68,32 @@ class RemoteServer {
   };
   // Unclaimed upload bytes one connection may hold.
   static constexpr std::size_t kMaxUploadBytes = 512u * 1024 * 1024;
-  // A root's tree and the worker its manifests are built on: never a connection's
-  // I/O thread, which must keep answering pings while a cold tree hashes.
+  // A root's tree and the workers that serve it: manifests on `queue`, disk reads
+  // and writes on `io_queue` — never a connection's I/O thread, which must keep
+  // answering pings while a cold tree hashes.
   struct ServedTree {
+    // What one watching connection was last sent: the baseline its next delta is
+    // computed against. Shared: after a batch every primed subscriber points at
+    // the same snapshot.
+    struct Subscriber {
+      std::shared_ptr<const std::vector<project::remote::ManifestRow>> last_sent;
+    };
+
     explicit ServedTree(std::filesystem::path root) : tree(std::move(root)) {}
     ~ServedTree() {
       closing.store(true);
+      watch.reset();     // no more batches posted
       queue.Shutdown();  // before `tree`: a running job uses it
       io_queue.Shutdown();
     }
     WorkspaceTree tree;
     std::atomic<bool> closing{false};
-    util::SerialWorkQueue queue;     // manifests
+    // Held across "build a manifest and send it" so what each connection receives
+    // is in build order, and its baseline is exactly what it received.
+    std::mutex publish_mutex;
+    std::map<std::uint64_t, Subscriber> subscribers;  // by connection id
+    std::unique_ptr<WorkspaceWatch> watch;            // created on the first subscribe
+    util::SerialWorkQueue queue;     // manifests and watch batches
     util::SerialWorkQueue io_queue;  // reads, writes and tree ops, in arrival order
   };
   struct Workspace {
@@ -91,6 +106,9 @@ class RemoteServer {
   void InstallTerminalHandlers(Connection& connection);
   void InstallTreeHandlers(Connection& connection);
   void InstallFileHandlers(Connection& connection);
+  void InstallWatchHandlers(Connection& connection);
+  // A watch batch: rebuild the manifest and send each primed subscriber its delta.
+  void PublishWatchBatch(ServedTree& tree);
   std::shared_ptr<ServedTree> TreeOf(const Connection& connection);
   // Whether the request is still wanted: its connection is open and it was not
   // cancelled.

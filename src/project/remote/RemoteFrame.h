@@ -41,6 +41,11 @@ enum class FrameType : std::uint16_t {
   // client -> host: a piece of the content of the file/write with this request id,
   // sent before the request on the same lane.
   WriteData = 23,
+  // host -> client, after watch/subscribe; id = the manifest id it brings the
+  // client to. Payload: varint deleted count, that many varint-prefixed paths, then
+  // a manifest row chunk (RemoteManifest.h). Self-contained: a large delta is
+  // several frames with the same id, each applied as it arrives.
+  WatchDelta = 24,
 };
 
 // Whether `type` is one this build knows. An unknown type is a protocol error

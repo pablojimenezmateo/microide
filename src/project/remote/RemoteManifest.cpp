@@ -42,11 +42,14 @@ bool IsSafeRelativePath(std::string_view path) {
   return true;
 }
 
-void EncodeManifestRows(const ManifestRow* rows, std::size_t count, std::string& out) {
+namespace {
+
+template <typename RowAt>
+void EncodeRows(std::size_t count, const RowAt& row_at, std::string& out) {
   PutVarint(out, count);
   std::string_view previous;
   for (std::size_t i = 0; i < count; ++i) {
-    const ManifestRow& row = rows[i];
+    const ManifestRow& row = row_at(i);
     const std::size_t limit = std::min(previous.size(), row.path.size());
     std::size_t shared = 0;
     while (shared < limit && previous[shared] == row.path[shared]) {
@@ -65,6 +68,12 @@ void EncodeManifestRows(const ManifestRow* rows, std::size_t count, std::string&
     }
     previous = row.path;
   }
+}
+
+}  // namespace
+
+void EncodeManifestRows(const ManifestRow* rows, std::size_t count, std::string& out) {
+  EncodeRows(count, [rows](std::size_t i) -> const ManifestRow& { return rows[i]; }, out);
 }
 
 bool DecodeManifestRows(std::string_view bytes, std::vector<ManifestRow>& rows) {
@@ -124,6 +133,59 @@ bool DecodeManifestRows(std::string_view bytes, std::vector<ManifestRow>& rows) 
   if (in.failed() || !in.at_end()) {
     return fail();
   }
+  return true;
+}
+
+void DiffManifests(const std::vector<ManifestRow>& before, const std::vector<ManifestRow>& after,
+                   std::vector<const ManifestRow*>& changed, std::vector<const std::string*>& deleted) {
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < before.size() || j < after.size()) {
+    if (j == after.size() || (i < before.size() && before[i].path < after[j].path)) {
+      deleted.push_back(&before[i++].path);
+    } else if (i == before.size() || after[j].path < before[i].path) {
+      changed.push_back(&after[j++]);
+    } else {
+      if (!(before[i] == after[j])) {
+        changed.push_back(&after[j]);
+      }
+      ++i;
+      ++j;
+    }
+  }
+}
+
+void EncodeWatchDelta(const std::string* const* deleted, std::size_t deleted_count,
+                      const ManifestRow* const* rows, std::size_t row_count, std::string& out) {
+  PutVarint(out, deleted_count);
+  for (std::size_t i = 0; i < deleted_count; ++i) {
+    PutBytes(out, *deleted[i]);
+  }
+  EncodeRows(row_count, [rows](std::size_t i) -> const ManifestRow& { return *rows[i]; }, out);
+}
+
+bool DecodeWatchDelta(std::string_view bytes, std::vector<std::string>& deleted,
+                      std::vector<ManifestRow>& rows) {
+  ByteReader in(bytes);
+  const std::uint64_t count = in.Varint();
+  if (in.failed() || count > bytes.size()) {
+    return false;
+  }
+  std::vector<std::string> paths;
+  paths.reserve(static_cast<std::size_t>(count));
+  for (std::uint64_t i = 0; i < count; ++i) {
+    std::string path(in.Bytes(kMaxManifestPathBytes));
+    if (in.failed() || !IsSafeRelativePath(path)) {
+      return false;
+    }
+    paths.push_back(std::move(path));
+  }
+  const std::size_t consumed = bytes.size() - in.remaining();
+  if (!DecodeManifestRows(bytes.substr(consumed), rows)) {
+    return false;
+  }
+  deleted.insert(deleted.end(), std::make_move_iterator(paths.begin()),
+                 std::make_move_iterator(paths.end()));
   return true;
 }
 

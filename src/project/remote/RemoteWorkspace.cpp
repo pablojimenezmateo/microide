@@ -133,6 +133,34 @@ std::optional<RemoteWorkspace::Manifest> RemoteWorkspace::FetchManifestSync(
   return std::move(outcome.first);
 }
 
+bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_delta, bool* native,
+                                     std::string* error) {
+  RemoteServerClient& client = client_;
+  client_.SetWatchHandler([&client, on_delta = std::move(on_delta)](std::uint64_t manifest_id,
+                                                                    std::string bytes) {
+    WatchDelta delta;
+    delta.manifest_id = manifest_id;
+    if (!DecodeWatchDelta(bytes, delta.deleted, delta.rows)) {
+      client.peer().Fail("the server sent a malformed watch delta");
+      return;
+    }
+    on_delta(std::move(delta));
+  });
+  std::string why;
+  const std::optional<util::JsonValue> result =
+      client_.Call(method::kWatchSubscribe, util::JsonValue(util::JsonObject{}), &why);
+  if (!result.has_value()) {
+    if (error != nullptr) {
+      *error = why;
+    }
+    return false;
+  }
+  if (native != nullptr) {
+    *native = (*result)["native"].AsBool(false);
+  }
+  return true;
+}
+
 std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane lane,
                                             FetchDone done, std::uint64_t max_bytes) {
   struct State {
