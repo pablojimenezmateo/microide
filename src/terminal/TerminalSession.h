@@ -162,6 +162,14 @@ class TerminalSession {
   // True once (then reset) after the program rang the bell (BEL outside an escape
   // sequence) — locally, or on the host, carried by a frame's kBell.
   bool ConsumeBell();
+  // A desktop notification the program asked for (OSC 9 <body>, OSC 777 ;
+  // notify ; <title> ; <body>), the latest one, consumed once. Agent CLIs use it
+  // for "needs your input".
+  struct Notification {
+    std::string title;
+    std::string body;
+  };
+  std::optional<Notification> ConsumeNotification();
   // True once (then reset) when an OSC 52 clipboard sequence was dropped because it
   // overran the escape-sequence buffer cap. Lets the host surface a status instead
   // of silently swallowing a too-large clipboard write.
@@ -388,6 +396,7 @@ class TerminalSession {
   // A BEL not yet consumed by the UI (ConsumeBell), and one not yet sent to a
   // client in a host frame (CaptureForHost). Separate: a host session has both.
   bool pending_bell_ = false;
+  std::optional<Notification> pending_notification_;
   bool pending_host_bell_ = false;
   bool use_alternate_screen_ = false;
   bool mouse_tracking_normal_ = false;

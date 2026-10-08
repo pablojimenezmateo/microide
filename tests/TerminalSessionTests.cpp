@@ -990,6 +990,31 @@ void TestTerminalSessionAnswersModernTuiQueries() {
          "and an unsubscribed program is not told");
 }
 
+// Desktop notifications from a program: OSC 9 (iTerm2) and OSC 777 notify
+// (urxvt/Ghostty). OSC 9 with a numbered subcommand is ConEmu's family — 9;4 is
+// a progress bar — and must not be shown as a message.
+void TestTerminalSessionQueuesDesktopNotifications() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]9;Claude needs your permission\x07");
+  auto notification = session.ConsumeNotification();
+  Expect(notification.has_value() && notification->title.empty() &&
+             notification->body == "Claude needs your permission",
+         "OSC 9 queues its body");
+  Expect(!session.ConsumeNotification().has_value(), "once");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]9;4;1;50\x07");
+  Expect(!session.ConsumeNotification().has_value(), "a ConEmu progress subcommand is not a message");
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]777;notify;Build;finished in 3s\x1b\\");
+  notification = session.ConsumeNotification();
+  Expect(notification.has_value() && notification->title == "Build" &&
+             notification->body == "finished in 3s",
+         "OSC 777 notify carries a title and a body");
+  TerminalSessionTestAccess::AppendOutput(session, "plain text after");
+  Expect(!session.ConsumeNotification().has_value(), "nothing else queues one");
+}
+
 void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   using KeyPress = microide::terminal::TerminalSession::KeyPress;
   microide::terminal::TerminalSession session;
@@ -3141,6 +3166,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionTracksInverseVideoStyle);
   AddTest(tests, "TerminalSession/ReportsWorkingDirectoryAndColors",
           TestTerminalSessionReportsWorkingDirectoryAndColors);
+  AddTest(tests, "TerminalSession/QueuesDesktopNotifications",
+          TestTerminalSessionQueuesDesktopNotifications);
   AddTest(tests, "TerminalSession/AnswersModernTuiQueries",
           TestTerminalSessionAnswersModernTuiQueries);
   AddTest(tests, "TerminalSession/EncodesModifiedAndFunctionKeys",

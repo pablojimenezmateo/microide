@@ -165,9 +165,42 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
     return;
   }
 
-  // OSC 8 (hyperlinks), 9 (notifications), 133 (shell-integration prompt marks),
-  // and palette resets (104/110/111/112) are accepted and intentionally ignored
-  // so they never corrupt the screen.
+  // Notifications: OSC 9 ; <body> (iTerm2) and OSC 777 ; notify ; <title> ; <body>
+  // (urxvt, Ghostty). OSC 9 is overloaded — ConEmu/Windows Terminal send
+  // `9 ; <n> ; ...` subcommands (4 is a progress bar) — and a numbered
+  // subcommand is not a message for the user.
+  const auto sanitized = [](std::string_view text) {
+    constexpr std::size_t kMaxNotificationBytes = 512;
+    std::string out;
+    out.reserve(std::min(text.size(), kMaxNotificationBytes));
+    for (const char c : text.substr(0, kMaxNotificationBytes)) {
+      out.push_back(static_cast<unsigned char>(c) < 0x20 ? ' ' : c);
+    }
+    return out;
+  };
+  if (command == "9") {
+    const std::size_t digits = payload.find_first_not_of("0123456789");
+    const bool subcommand = digits != 0 && digits != std::string_view::npos && payload[digits] == ';';
+    if (!subcommand && !payload.empty()) {
+      pending_notification_ = Notification{.title = {}, .body = sanitized(payload)};
+    }
+    return;
+  }
+  if (command == "777") {
+    if (payload.rfind("notify;", 0) == 0) {
+      const std::string_view rest = payload.substr(7);
+      const std::size_t split = rest.find(';');
+      pending_notification_ =
+          Notification{.title = sanitized(rest.substr(0, split)),
+                       .body = split == std::string_view::npos ? std::string()
+                                                               : sanitized(rest.substr(split + 1))};
+    }
+    return;
+  }
+
+  // OSC 8 (hyperlinks), 133 (shell-integration prompt marks), and palette resets
+  // (104/110/111/112) are accepted and intentionally ignored so they never
+  // corrupt the screen.
 }
 
 }  // namespace microide::terminal

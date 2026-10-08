@@ -2263,6 +2263,30 @@ void TestWorkspaceShellTerminalBellMarksABackgroundTab() {
          "no stale bell resurfaces");
 }
 
+// A program in a background terminal asking for attention with a desktop
+// notification (Claude Code's "needs your permission", OSC 9) gets a toast and
+// the tab's bell mark; one in the terminal on screen is already being read.
+void TestWorkspaceShellTerminalNotificationToastsFromABackgroundTab() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+  auto& background = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  auto& foreground = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+  TerminalSessionTestAccess::AppendOutput(background, "\x1b]9;needs your permission\x07");
+  TerminalSessionTestAccess::AppendOutput(foreground, "\x1b]9;seen already\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  bool background_toast = false;
+  bool foreground_toast = false;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    background_toast = background_toast || row.message.find("needs your permission") != std::string::npos;
+    foreground_toast = foreground_toast || row.message.find("seen already") != std::string::npos;
+  }
+  Expect(background_toast, "a background terminal's notification is a toast");
+  Expect(!foreground_toast, "the terminal on screen does not toast");
+  Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0), "and marks its tab");
+}
+
 void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2325,6 +2349,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalToggleAndPanelToggleKeys);
   AddTest(tests, "WorkspaceShell/TerminalActivityDotMarksBackgroundOutput",
           TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput);
+  AddTest(tests, "WorkspaceShell/TerminalNotificationToastsFromABackgroundTab",
+          TestWorkspaceShellTerminalNotificationToastsFromABackgroundTab);
   AddTest(tests, "WorkspaceShell/TerminalBellMarksABackgroundTab",
           TestWorkspaceShellTerminalBellMarksABackgroundTab);
   AddTest(tests, "WorkspaceShell/TerminalRelaunchRestartsAnExitedPane",

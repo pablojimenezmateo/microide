@@ -245,6 +245,27 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
         tab->has_unseen_bell = true;
         badge_changed = true;
       }
+      // A program's desktop notification (OSC 9 / 777): a toast when its terminal
+      // is not on screen — an agent asking for input in a background tab. On
+      // screen the program is already showing it.
+      if (std::optional<terminal::TerminalSession::Notification> notification =
+              pane->session.ConsumeNotification();
+          notification.has_value() && !tab_on_screen) {
+        std::string message = pane->session.LaunchLabel();
+        message += ": ";
+        if (!notification->title.empty()) {
+          message += notification->title;
+          if (!notification->body.empty()) {
+            message += " — ";
+          }
+        }
+        message += notification->body;
+        Notify(NotificationService::Tone::Info, std::move(message));
+        if (!tab->has_unseen_bell) {
+          tab->has_unseen_bell = true;
+          badge_changed = true;
+        }
+      }
       if (pane->session.ConsumeOversizedOsc52Dropped()) {
         // An OSC 52 clipboard write that overran the escape-sequence buffer was
         // dropped. Surface it rather than fail silently so the user knows their

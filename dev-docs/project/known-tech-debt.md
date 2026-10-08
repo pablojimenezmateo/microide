@@ -420,6 +420,30 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-08-333 — modern TUIs in the terminal: what the Claude Code check left. [OPEN]
+
+Checked 2026-10-08 by driving Claude Code 2.1.294 headlessly in microide's
+terminal (`panel-maximize`, `term claude`, `key`/`type`, `terminal-output`;
+see dev-docs/control/control-channel.md) and recording its byte stream through
+a pty tap. Fixed the same day: XTVERSION, theme-true OSC 10/11/12, mode 2031 +
+the `?996` query, OSC 9/777 notifications (toast + bell mark from a background
+tab), `term` argument quoting, and the `key` command that made the check
+possible. Its trust dialog, prompt box, Shift+Enter (kitty protocol), slash
+menu, Esc and Ctrl+C exit all work. Left:
+
+- **Host terminals do not carry notifications.** The host session queues an
+  OSC 9/777 like a local one, but `TerminalHostFrame` has no field for it (the
+  bell rides `kBell`; a message needs payload), so a remote agent's "needs your
+  input" reaches only the bell. Needs a frame field and a wire-version bump.
+- **OSC 8 hyperlinks are dropped, not clickable.** Claude Code and modern
+  `ls`/`gcc`/`rg` emit them for file paths; VS Code's terminal opens them.
+  Needs a link id per cell (or a run table per line) in `TerminalCell` and the
+  hover/click path the plain-URL detector already has.
+- **No headless regression for a real TUI.** The check above needs `claude`
+  installed and is manual; a recorded stream replayed through `TerminalSession`
+  would pin the emulator side without the binary (the recording must be
+  scrubbed of paths and account names before it is committed).
+
 ### TD-2026-10-08-328 — Phase 2b remainders: what the first remote-project slices left. [OPEN]
 
 Phase 2b (`openspec/changes/remote-projects-phase-2b/`) opens a host folder as a

@@ -640,6 +640,13 @@ void TerminalSession::SetDefaultColors(util::Rgba8 foreground, util::Rgba8 backg
   FlushPendingReply();
 }
 
+std::optional<TerminalSession::Notification> TerminalSession::ConsumeNotification() {
+  std::scoped_lock lock(mutex_);
+  std::optional<Notification> pending = std::move(pending_notification_);
+  pending_notification_.reset();
+  return pending;
+}
+
 bool TerminalSession::ConsumeBell() {
   std::scoped_lock lock(mutex_);
   const bool rang = pending_bell_;
