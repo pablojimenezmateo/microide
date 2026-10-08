@@ -37,6 +37,17 @@ struct ManifestRow {
 // under the mirror prefix anyway (§ 6.2: the engine checks the longest row).
 inline constexpr std::size_t kMaxManifestPathBytes = 4096;
 
+// A file's (size, mtime, ctime) vouches for its content only once its timestamps are
+// safely in the past: a same-size rewrite within one coarse kernel timestamp tick —
+// or one second, on a filesystem that stores seconds — leaves all three unchanged.
+// A signature recorded within this window of its own timestamps is "racily clean"
+// (git's term) and is not trusted: the content is hashed again next time.
+inline constexpr std::int64_t kRacySignatureWindowNs = 2'000'000'000;
+std::int64_t WallClockNowNs();
+inline bool IsRacySignature(std::int64_t mtime_ns, std::int64_t ctime_ns, std::int64_t now_ns) {
+  return now_ns - mtime_ns < kRacySignatureWindowNs || now_ns - ctime_ns < kRacySignatureWindowNs;
+}
+
 // Whether `path` is a relative path that stays under the root by construction: not
 // empty, not absolute, no empty, "." or ".." component, no NUL, no backslash, no
 // component over 255 bytes. Every path the server sends is checked with this before

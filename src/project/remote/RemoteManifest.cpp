@@ -1,6 +1,7 @@
 #include "project/remote/RemoteManifest.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 #include "util/ByteCodec.h"
@@ -23,6 +24,13 @@ std::int64_t UnZigZag(std::uint64_t value) {
 }
 
 }  // namespace
+
+std::int64_t WallClockNowNs() {
+  // File timestamps are wall-clock time, so this is the clock to compare them with.
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
 
 bool IsSafeRelativePath(std::string_view path) {
   if (path.empty() || path.size() > kMaxManifestPathBytes || path.front() == '/') {

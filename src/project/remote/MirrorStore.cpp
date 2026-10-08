@@ -56,6 +56,12 @@ struct LocalStat {
   bool regular = false;
   std::uint64_t size = 0;
   std::int64_t mtime_ns = 0;
+  std::int64_t ctime_ns = 0;
+
+  // Whether this stat may stand for the content from now on (see IsRacySignature).
+  bool Trustworthy() const {
+    return exists && regular && !IsRacySignature(mtime_ns, ctime_ns, WallClockNowNs());
+  }
 };
 
 LocalStat StatNoFollow(const std::filesystem::path& path) {
@@ -69,6 +75,7 @@ LocalStat StatNoFollow(const std::filesystem::path& path) {
   out.regular = S_ISREG(info.st_mode);
   out.size = static_cast<std::uint64_t>(info.st_size);
   out.mtime_ns = static_cast<std::int64_t>(info.st_mtim.tv_sec) * 1'000'000'000 + info.st_mtim.tv_nsec;
+  out.ctime_ns = static_cast<std::int64_t>(info.st_ctim.tv_sec) * 1'000'000'000 + info.st_ctim.tv_nsec;
 #else
   (void)path;
 #endif
@@ -235,8 +242,9 @@ MirrorStore::LocalState MirrorStore::CheckLocal(std::string_view path, Entry& en
   std::uint64_t size = 0;
   const auto hash = util::HashFileContent(local, &size);
   if (hash.has_value() && *hash == *entry.base) {
-    // Touched, or rewritten with the same bytes: re-record so the next check is a stat.
-    entry.local_known = true;
+    // Touched, or rewritten with the same bytes: re-record so the next check is a
+    // stat — unless the stat is too recent to vouch for the bytes.
+    entry.local_known = now.Trustworthy();
     entry.local_size = now.size;
     entry.local_mtime_ns = now.mtime_ns;
     return LocalState::MatchesBase;
@@ -246,7 +254,7 @@ MirrorStore::LocalState MirrorStore::CheckLocal(std::string_view path, Entry& en
 
 void MirrorStore::RecordLocal(std::string_view path, Entry& entry) const {
   const LocalStat now = StatNoFollow(tree_ / std::string(path));
-  entry.local_known = now.exists && now.regular;
+  entry.local_known = now.Trustworthy();
   entry.local_size = now.size;
   entry.local_mtime_ns = now.mtime_ns;
 }

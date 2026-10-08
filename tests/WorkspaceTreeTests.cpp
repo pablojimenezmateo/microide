@@ -78,7 +78,7 @@ void TestWorkspaceTreeHashCache() {
   for (int i = 0; i < 100; ++i) {
     WriteFile(root / ("f" + std::to_string(i) + ".txt"), std::string(1000 + i, 'a'));
   }
-  WorkspaceTree tree(root);
+  WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
   std::string error;
   const auto first = tree.BuildManifest(&error);
   Expect(first.has_value() && tree.last_hashed_files() == 100, "a cold tree hashes every file");
@@ -92,6 +92,25 @@ void TestWorkspaceTreeHashCache() {
   const ManifestRow* changed = Find(*third, "f7.txt");
   Expect(changed != nullptr && changed->hash == util::HashContent("changed"),
          "the changed file's row has the new hash");
+}
+
+// A file written moments ago is racily clean: a same-size rewrite in the same
+// timestamp tick would leave (size, mtime, ctime) as they were, so its cached hash
+// would be served for different bytes and the change never synced. Within the
+// window the cache does not vouch for it.
+void TestWorkspaceTreeDoesNotTrustARacyCacheEntry() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "plain";
+  WriteFile(root / "hot.txt", "one\n");
+  WorkspaceTree tree(root);  // the default window
+  std::string error;
+  Expect(tree.BuildManifest(&error).has_value() && tree.last_hashed_files() == 1, "hashed once");
+  Expect(tree.BuildManifest(&error).has_value() && tree.last_hashed_files() == 1,
+         "and again: a just-written file is not served from the cache");
+  WriteFile(root / "hot.txt", "two\n");  // same size
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value() && manifest->rows[0].hash == util::HashContent("two\n"),
+         "a same-size rewrite is seen at once");
 }
 
 // A failure to decide the set is an error, never an empty manifest.
@@ -149,6 +168,8 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
+  AddTest(tests, "WorkspaceTree/DoesNotTrustARacyCacheEntry",
+          TestWorkspaceTreeDoesNotTrustARacyCacheEntry);
   AddTest(tests, "WorkspaceTree/Symlinks", TestWorkspaceTreeSymlinks);
 }
 

@@ -82,7 +82,9 @@ void TestMirrorStoreCheckLocal() {
   WriteFile(store.tree() / "f.txt", "base");
   Expect(store.CheckLocal("f.txt", entry) == MirrorStore::LocalState::MatchesBase,
          "matching bytes match, found by hash");
-  Expect(entry.local_known, "and the stat is recorded for next time");
+  Expect(!entry.local_known,
+         "a stat seconds old does not vouch for the bytes (a same-size rewrite in the same "
+         "tick would keep it): the next check hashes again");
   WriteFile(store.tree() / "f.txt", "edit");
   Expect(store.CheckLocal("f.txt", entry) == MirrorStore::LocalState::Differs, "an edit differs");
   MirrorStore::Entry no_base;

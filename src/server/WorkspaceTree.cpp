@@ -316,6 +316,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifest(
     *error = "cancelled";
     return std::nullopt;
   }
+  const std::int64_t now_ns = project::remote::WallClockNowNs();
   std::vector<char> drop(manifest.rows.size(), 0);
   for (std::size_t i = 0; i < pending.size(); ++i) {
     ManifestRow& row = manifest.rows[pending[i].row];
@@ -326,8 +327,13 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifest(
     row.hash = hashed[i]->hash;
     row.size = hashed[i]->size;
     row.mtime_ns = Nanoseconds(hashed[i]->after.st_mtim);
-    if (stable[i] != 0) {
-      next_cache.emplace(row.path, CacheEntry{key_of(hashed[i]->after), row.hash});
+    const CacheKey key = key_of(hashed[i]->after);
+    // A racily clean key cannot tell this content from a same-size rewrite in the
+    // same timestamp tick: hash the file again next time instead.
+    const bool racy = now_ns - key.mtime_ns < options_.racy_window_ns ||
+                      now_ns - key.ctime_ns < options_.racy_window_ns;
+    if (stable[i] != 0 && !racy) {
+      next_cache.emplace(row.path, CacheEntry{key, row.hash});
     }
   }
   if (std::find(drop.begin(), drop.end(), 1) != drop.end()) {
