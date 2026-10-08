@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "project/remote/RemoteManifest.h"
-#include "server/WorkspaceFiles.h"
+#include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 
 namespace microide::server {
@@ -16,9 +16,9 @@ namespace {
 // The largest object a fetch serves unless the request asks for less.
 constexpr std::uint64_t kMaxObjectBytes = 64u * 1024 * 1024;
 
-util::JsonValue OpResultJson(const FileOpResult& result) {
+util::JsonValue OpResultJson(const remote::FileOpResult& result) {
   util::JsonObject json;
-  if (result.status == FileOpResult::Status::Conflict) {
+  if (result.status == remote::FileOpResult::Status::Conflict) {
     json["conflict"] = util::JsonValue(true);
     json["current"] = result.current.has_value() ? util::JsonValue(result.current->Hex())
                                                  : util::JsonValue();
@@ -166,7 +166,7 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
           frame = prefix;
         };
         frame = prefix;
-        const FileOpResult read = ReadWorkspaceFile(
+        const remote::FileOpResult read = remote::ReadTreeFile(
             tree->tree.root(), paths[index], max_bytes, [&](std::string_view chunk) {
               while (!chunk.empty()) {
                 const std::size_t room =
@@ -183,7 +183,7 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
         util::JsonObject entry;
         if (read.ok()) {
           entry["hash"] = util::JsonValue(read.current->Hex());
-        } else if (read.status == FileOpResult::Status::Conflict) {
+        } else if (read.status == remote::FileOpResult::Status::Conflict) {
           entry["missing"] = util::JsonValue(true);
         } else {
           entry["error"] = util::JsonValue(read.error);
@@ -225,9 +225,9 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     const std::uint64_t connection_id = connection.id;
     tree->io_queue.Post([this, tree, connection_id, id, path = path.AsString(),
                          content = std::move(content), expect = *expect, bits]() {
-      const FileOpResult result = WriteWorkspaceFile(tree->tree.root(), path, content, expect, bits);
+      const remote::FileOpResult result = remote::WriteTreeFile(tree->tree.root(), path, content, expect, bits);
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-        if (result.status == FileOpResult::Status::Error) {
+        if (result.status == remote::FileOpResult::Status::Error) {
           peer.ReplyError(id, remote::kErrorInvalidParams, result.error);
         } else {
           peer.Reply(id, OpResultJson(result));
@@ -259,11 +259,11 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     tree->io_queue.Post([this, tree, connection_id, id, op, path = path.AsString(),
                          to = to.IsString() ? to.AsString() : std::string(), expect = *expect]() {
       const std::filesystem::path& root = tree->tree.root();
-      const FileOpResult result = op == "mkdir"    ? MakeWorkspaceDirectory(root, path)
-                                  : op == "rename" ? RenameWorkspaceEntry(root, path, to, expect)
-                                                   : DeleteWorkspaceEntry(root, path, expect);
+      const remote::FileOpResult result = op == "mkdir"    ? remote::MakeTreeDirectory(root, path)
+                                  : op == "rename" ? remote::RenameTreeEntry(root, path, to, expect)
+                                                   : remote::DeleteTreeEntry(root, path, expect);
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-        if (result.status == FileOpResult::Status::Error) {
+        if (result.status == remote::FileOpResult::Status::Error) {
           peer.ReplyError(id, remote::kErrorInvalidParams, result.error);
         } else {
           peer.Reply(id, OpResultJson(result));

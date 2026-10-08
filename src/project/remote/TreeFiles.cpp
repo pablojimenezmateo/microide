@@ -1,4 +1,4 @@
-#include "server/WorkspaceFiles.h"
+#include "project/remote/TreeFiles.h"
 
 #include <atomic>
 #include <cerrno>
@@ -14,7 +14,7 @@
 #include <unistd.h>
 #endif
 
-namespace microide::server {
+namespace microide::project::remote {
 namespace {
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -79,7 +79,7 @@ struct Parent {
 
 std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_view path,
                                  bool create, std::string* error) {
-  if (!project::remote::IsSafeRelativePath(path)) {
+  if (!IsSafeRelativePath(path)) {
     *error = "unsafe path '" + std::string(path) + "'";
     return std::nullopt;
   }
@@ -207,7 +207,7 @@ std::string TempName(const std::string& name) {
 
 }  // namespace
 
-FileOpResult ReadWorkspaceFile(const std::filesystem::path& root, std::string_view path,
+FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view path,
                                std::uint64_t max_bytes,
                                const std::function<void(std::string_view chunk)>& sink) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -247,7 +247,7 @@ FileOpResult ReadWorkspaceFile(const std::filesystem::path& root, std::string_vi
 #endif
 }
 
-FileOpResult WriteWorkspaceFile(const std::filesystem::path& root, std::string_view path,
+FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -325,7 +325,7 @@ FileOpResult WriteWorkspaceFile(const std::filesystem::path& root, std::string_v
 #endif
 }
 
-FileOpResult MakeWorkspaceDirectory(const std::filesystem::path& root, std::string_view path) {
+FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
@@ -349,7 +349,7 @@ FileOpResult MakeWorkspaceDirectory(const std::filesystem::path& root, std::stri
 #endif
 }
 
-FileOpResult RenameWorkspaceEntry(const std::filesystem::path& root, std::string_view from,
+FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view from,
                                   std::string_view to, const Precondition& expect) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;
@@ -390,7 +390,7 @@ FileOpResult RenameWorkspaceEntry(const std::filesystem::path& root, std::string
 #endif
 }
 
-FileOpResult DeleteWorkspaceEntry(const std::filesystem::path& root, std::string_view path,
+FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
                                   const Precondition& expect) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;
@@ -423,4 +423,4 @@ FileOpResult DeleteWorkspaceEntry(const std::filesystem::path& root, std::string
 #endif
 }
 
-}  // namespace microide::server
+}  // namespace microide::project::remote

@@ -305,6 +305,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteProtocol.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/RemoteManifest.cpp
+  src/project/remote/TreeFiles.cpp
   src/project/remote/RemoteWorkspace.cpp
   src/project/remote/RemotePathMap.cpp
   src/project/remote/RemotePeer.cpp
@@ -833,7 +834,6 @@ add_executable(microide-server
   src/server/RemoteServerWorkspace.cpp
   src/server/ServerMain.cpp
   src/server/TerminalTable.cpp
-  src/server/WorkspaceFiles.cpp
   src/server/WorkspaceTree.cpp
   $<TARGET_OBJECTS:microide_kernel>
 )
@@ -1367,8 +1367,7 @@ add_executable(microide_kernel_tests
   tests/RemoteManifestTests.cpp
   tests/WorkspaceTreeTests.cpp
   tests/RemoteWorkspaceTests.cpp
-  tests/WorkspaceFilesTests.cpp
-  src/server/WorkspaceFiles.cpp
+  tests/TreeFilesTests.cpp
   src/server/WorkspaceTree.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp

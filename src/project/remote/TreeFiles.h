@@ -10,17 +10,17 @@
 #include "project/remote/RemoteProtocol.h"
 #include "util/ContentHash.h"
 
-namespace microide::server {
+namespace microide::project::remote {
 
-// The host side of the mirror's reads and writes (dev-docs/design/remote-projects.md
-// § 6.3): file content by path, and writes and tree operations under a three-valued
-// precondition. Every path is relative to the workspace root and is resolved one
+// Confined reads, writes and tree operations under a root, with a three-valued
+// precondition (dev-docs/design/remote-projects.md § 6.3). Both ends use them: the
+// server applies a client's writes to the host's tree, and the client materializes
+// pulls into its mirror — where a pull written under `expect = base` cannot
+// overwrite a local edit, by construction. Every path is relative to the workspace root and is resolved one
 // component at a time with O_NOFOLLOW, so no parent component — a symlink an agent
 // planted, or a path with `..` — can lead a write out of the root.
 //
-// Stateless and blocking; the server runs these on a workspace worker.
-
-using project::remote::Precondition;
+// Stateless and blocking: callers run them on a worker, never a UI or I/O thread.
 
 struct FileOpResult {
   enum class Status {
@@ -40,7 +40,7 @@ struct FileOpResult {
 // the bytes handed over. The final component may be a link (an out-of-root link is
 // shipped as the file it names); parents may not. Over `max_bytes` is an error
 // before any byte is read.
-FileOpResult ReadWorkspaceFile(const std::filesystem::path& root, std::string_view path,
+FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view path,
                                std::uint64_t max_bytes,
                                const std::function<void(std::string_view chunk)>& sink);
 
@@ -49,16 +49,16 @@ FileOpResult ReadWorkspaceFile(const std::filesystem::path& root, std::string_vi
 // directories are created. `mode` (permission bits) applies when given; otherwise an
 // existing file keeps its mode and a new one gets 0644. A symlink at `path` is
 // refused rather than replaced.
-FileOpResult WriteWorkspaceFile(const std::filesystem::path& root, std::string_view path,
+FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode);
 
-FileOpResult MakeWorkspaceDirectory(const std::filesystem::path& root, std::string_view path);
+FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path);
 // `expect` applies to `from`; `to` must not exist (RENAME_NOREPLACE).
-FileOpResult RenameWorkspaceEntry(const std::filesystem::path& root, std::string_view from,
+FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view from,
                                   std::string_view to, const Precondition& expect);
 // A file (under `expect`) or an empty directory (`expect` must be Any).
-FileOpResult DeleteWorkspaceEntry(const std::filesystem::path& root, std::string_view path,
+FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
                                   const Precondition& expect);
 
-}  // namespace microide::server
+}  // namespace microide::project::remote
