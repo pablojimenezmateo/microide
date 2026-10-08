@@ -459,10 +459,6 @@ silent one:
 - **A remote project is never released**: its session, engine and launcher live
   until the window closes (closing the project tab keeps them, because a project
   state may still point at the locality).
-- **Go to definition into a host file not fetched yet opens it at the top.** The
-  out-of-project cache (file/read) fetches on open, asynchronously, and the
-  navigation's jump is not carried to the deferred open; a second go-to-definition
-  lands on the line. Carry the target position with the pending open.
 - Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
   through the launcher meanwhile: two host processes per git-sidebar refresh, none
   while the sidebar is hidden), host-side `search/run` (search reads the mirror,

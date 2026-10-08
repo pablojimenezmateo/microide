@@ -382,6 +382,7 @@
     shell.ReloadCleanEditorTabsForPath(path,
                                        microide::workspace::EditorReloadEchoGuard::AlreadyResolved);
   }
+  static AssistService& Assist(WorkspaceShell& shell) { return shell.assist_service_; }
   static bool SaveTabDeferred(WorkspaceShell& shell, std::size_t index) {
     return shell.SaveTab(index, SaveMode::Deferred);
   }

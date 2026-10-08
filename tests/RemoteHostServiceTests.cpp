@@ -4,6 +4,8 @@
 #include "terminal/TerminalSession.h"
 #include "util/Sha256.h"
 #include "workspace/services/RemoteHostService.h"
+#include "workspace/FileUri.h"
+#include "workspace/services/AssistService.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <chrono>
@@ -13,6 +15,14 @@
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
 #endif
+
+namespace microide::workspace {
+struct AssistServiceTestAccess {
+  static void NavigateToLspLocation(AssistService& assist, const LspClient::Location& location) {
+    assist.NavigateToLspLocation(location, lsp_encoding::PositionEncoding::Utf16);
+  }
+};
+}  // namespace microide::workspace
 
 namespace microide::tests {
 namespace {
@@ -293,7 +303,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   // A host file outside the project — what a language server's definition in a
   // system header names — maps to the out-of-project cache, never to a same-named
   // local path, and opening it fetches it read-only from the host first.
-  WriteFile(host.home / "include" / "outside.h", "#define FROM_THE_HOST 1\n");
+  WriteFile(host.home / "include" / "outside.h", "#define FROM_THE_HOST 1\nint the_definition;\n");
   const std::filesystem::path cached = WorkspaceShellTestAccess::ProjectLauncher(shell).LocalPathFromHost(
       host.home / "include" / "outside.h");
   Expect(cached != host.home / "include" / "outside.h" &&
@@ -312,7 +322,27 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "then opens the host's file");
-  Expect(ReadFile(cached) == "#define FROM_THE_HOST 1\n", "with the host's bytes");
+  Expect(ReadFile(cached) == "#define FROM_THE_HOST 1\nint the_definition;\n", "with the host's bytes");
+
+  // Go to definition into a host header nobody fetched yet still lands on the line.
+  WriteFile(host.home / "include" / "other.h", "\n\n\nint target;\n");
+  workspace::LspClient::Location location;
+  location.uri = workspace::FileUriForPath(
+      WorkspaceShellTestAccess::ProjectLauncher(shell).LocalPathFromHost(host.home / "include" / "other.h"));
+  location.range.start.line = 3;
+  location.range.start.character = 4;
+  workspace::AssistServiceTestAccess::NavigateToLspLocation(WorkspaceShellTestAccess::Assist(shell), location);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+               return viewport != nullptr && viewport->path().filename() == "other.h";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the definition's file is fetched and opened");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 4,
+         "at the definition, not at the top");
   }
   {
     // A later run opening the mirror as a plain folder.

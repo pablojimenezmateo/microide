@@ -1215,17 +1215,30 @@ void AssistService::ResolveDefinitionNavigation(const std::shared_ptr<Navigation
 void AssistService::NavigateToLspLocation(const LspClient::Location& location,
                                           lsp_encoding::PositionEncoding encoding) {
   const std::optional<std::filesystem::path> path = PathFromFileUri(location.uri);
-  if (!path.has_value() || !operations_.open_file_in_new_tab(*path)) {
+  if (!path.has_value()) {
     return;
   }
-  if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
-    const std::size_t target_line =
-        static_cast<std::size_t>(std::max(location.range.start.line, 0));
-    active->JumpCursorTo(
-        target_line,
-        LspPositionToByteColumn(*active, target_line, location.range.start.character, encoding));
-    operations_.reset_caret_blink();
-    operations_.request_focused_editor_redraw();
+  // `this` is the shell's own member, alive as long as any completion.
+  OpenThen(*path, [this, location, encoding]() {
+    if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
+      const std::size_t target_line =
+          static_cast<std::size_t>(std::max(location.range.start.line, 0));
+      active->JumpCursorTo(
+          target_line,
+          LspPositionToByteColumn(*active, target_line, location.range.start.character, encoding));
+      operations_.reset_caret_blink();
+      operations_.request_focused_editor_redraw();
+    }
+  });
+}
+
+void AssistService::OpenThen(const std::filesystem::path& path, std::function<void()> then) {
+  if (operations_.open_file_then) {
+    (void)operations_.open_file_then(path, std::move(then));
+    return;
+  }
+  if (operations_.open_file_in_new_tab(path)) {
+    then();
   }
 }
 
@@ -2050,16 +2063,18 @@ void AssistService::ResolveSignatureHelp(const std::shared_ptr<SignatureHelpMerg
 }
 
 void AssistService::NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location) {
-  if (location.path.empty() || !operations_.open_file_in_new_tab(location.path)) {
+  if (location.path.empty()) {
     return;
   }
-  if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
-    // Provider line/column are 1-based; the viewport caret is 0-based.
-    active->JumpCursorTo(location.line > 0 ? location.line - 1 : 0,
-                         location.column > 0 ? location.column - 1 : 0);
-    operations_.reset_caret_blink();
-    operations_.request_focused_editor_redraw();
-  }
+  OpenThen(location.path, [this, location]() {
+    if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
+      // Provider line/column are 1-based; the viewport caret is 0-based.
+      active->JumpCursorTo(location.line > 0 ? location.line - 1 : 0,
+                           location.column > 0 ? location.column - 1 : 0);
+      operations_.reset_caret_blink();
+      operations_.request_focused_editor_redraw();
+    }
+  });
 }
 
 editor::TextViewport* AssistService::RequireActiveEditableViewport(

@@ -1,4 +1,6 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
+#include "workspace/shell/ShellGlueCache.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -424,6 +426,23 @@ WorkspaceShell::WorkspaceShell() {
               },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },
+          .open_file_then =
+              [this](const std::filesystem::path& path, std::function<void()> then) {
+                if (glue_->remote_host_service != nullptr &&
+                    glue_->remote_host_service->OpenWhenFetched(
+                        path, [this, then](const std::filesystem::path& fetched) {
+                          if (OpenFileInNewTab(fetched)) {
+                            then();
+                          }
+                        })) {
+                  return true;
+                }
+                if (!OpenFileInNewTab(path)) {
+                  return false;
+                }
+                then();
+                return true;
+              },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .request_active_editable_last_change_redraw =

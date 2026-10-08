@@ -24,6 +24,8 @@
 
 namespace microide::workspace {
 
+struct AssistServiceTestAccess;
+
 class AssistService {
  public:
   // Transitional callback seam for shell integration.
@@ -79,6 +81,10 @@ class AssistService {
                        const std::vector<WorkspaceResourceOp>&)>
         apply_rename_workspace_edit;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
+    // Open `path` and then run `then` on the opened tab — now, or later when the
+    // file must first come from the host (a remote project's out-of-project file).
+    // False when it will not open at all.
+    std::function<bool(const std::filesystem::path&, std::function<void()> then)> open_file_then;
     std::function<void()> reset_caret_blink;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> request_active_editable_last_change_redraw;
@@ -187,6 +193,8 @@ class AssistService {
   // a surface this shell does not have. Entries reuse the references formatter, so
   // each is a clickable file:line:col with context.
   bool ShowCallHierarchy(bool incoming, std::string* error_message = nullptr);
+
+  friend struct AssistServiceTestAccess;
 
  private:
   struct EditSideEffectsSnapshot {
@@ -307,6 +315,8 @@ class AssistService {
   void NavigateToPluginLocation(const plugin::PluginHost::LocationResult& location);
   // Open an LSP Location (0-based, server position encoding) in a new tab and move
   // the caret there. Shared by definition and the type/impl/decl navigations.
+  // Open `path`, then run `then` (now, or once a host file has been fetched).
+  void OpenThen(const std::filesystem::path& path, std::function<void()> then);
   void NavigateToLspLocation(const LspClient::Location& location,
                              lsp_encoding::PositionEncoding encoding);
 
