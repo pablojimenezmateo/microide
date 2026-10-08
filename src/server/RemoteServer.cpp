@@ -76,6 +76,8 @@ RemoteServer::~RemoteServer() {
     connections.swap(connections_);
   }
   for (auto& connection : connections) {
+    // A reply queued just before the teardown (server/shutdown's own) still goes out.
+    (void)connection->peer.Flush(std::chrono::milliseconds(500));
     connection->peer.Stop();  // joins its I/O thread, and with it any closed handler
   }
   terminals_.reset();
@@ -461,6 +463,7 @@ int RemoteServer::ServeOne(int read_fd, int write_fd) {
     ::poll(&fd, 1, -1);
     wake_.Drain();
   }
+  (void)connection.peer.Flush(std::chrono::milliseconds(500));
   connection.peer.Stop();
   return 0;
 #else

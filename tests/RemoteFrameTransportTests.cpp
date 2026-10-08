@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -264,6 +265,28 @@ void TestLyingAckCloses() {
   ::close(pair.b);
 }
 
+// Flush waits until what was queued has been written — the reply a deliberate
+// teardown sends last (server/shutdown's) — and gives up at its deadline when the
+// peer does not read.
+void TestFlushWaitsForQueuedFrames() {
+  SocketPair pair;
+  Inbox inbox;
+  RemoteFrameTransport transport;
+  Expect(transport.Start(pair.a, pair.a, inbox.Callbacks()), "start");
+  const std::string big(4 * 1024 * 1024, 'f');  // more than the socket buffers hold
+  Expect(transport.Send(FrameType::ProcStdout, Lane::Interactive, 1, big), "queued");
+  Expect(!transport.Flush(std::chrono::milliseconds(50)),
+         "with nobody reading, the flush gives up at its deadline");
+  FrameDecoder decoder;
+  std::vector<Frame> frames;
+  std::thread reader([&]() { frames = ReadRawFrames(pair.b, decoder, 1); });
+  Expect(transport.Flush(std::chrono::seconds(10)), "once the peer reads, it completes");
+  reader.join();
+  Expect(frames.size() == 1 && frames[0].payload.size() == big.size(), "and the frame arrived whole");
+  transport.Stop();
+  ::close(pair.b);
+}
+
 #endif
 
 }  // namespace
@@ -278,6 +301,7 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
           TestGarbageFromThePeerClosesOnce);
   AddTest(tests, "RemoteFrameTransport/PeerHangupCloses", TestPeerHangupCloses);
   AddTest(tests, "RemoteFrameTransport/WedgedPeerIsTornDown", TestWedgedPeerIsTornDown);
+  AddTest(tests, "RemoteFrameTransport/FlushWaitsForQueuedFrames", TestFlushWaitsForQueuedFrames);
   AddTest(tests, "RemoteFrameTransport/LyingAckCloses", TestLyingAckCloses);
 #else
   (void)tests;

@@ -80,6 +80,11 @@ class RemoteFrameTransport {
   // the transport — a peer that does not read is a dead peer). Ack is internal.
   bool Send(FrameType type, Lane lane, std::uint64_t id, std::string_view payload);
 
+  // Wait up to `timeout` for every frame queued so far to be written (a reply sent
+  // just before a deliberate teardown). False when the deadline passed or the
+  // transport closed first. Not from the I/O thread.
+  bool Flush(std::chrono::milliseconds timeout);
+
   // Stop the I/O thread and close owned descriptors. Idempotent. Does not run
   // on_closed if the transport had not already closed.
   void Stop();
@@ -127,6 +132,8 @@ class RemoteFrameTransport {
   // I/O thread only.
   std::string writing_;
   std::size_t writing_offset_ = 0;
+  // Bytes accepted by Send and not yet fully written (queued or in writing_).
+  std::atomic<std::size_t> unwritten_{0};
   FrameDecoder decoder_;
   std::uint64_t bulk_bytes_sent_ = 0;   // bulk payload bytes put on the wire
   std::uint64_t bulk_bytes_acked_ = 0;  // ... and acknowledged by the peer

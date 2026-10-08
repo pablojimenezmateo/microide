@@ -194,7 +194,9 @@ void TestStartedServerServesWorkspacesAndDoesNotHoldStdio() {
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
   Expect(::access(remote::ServerSocketPath(dir).c_str(), F_OK) == 0,
          "a hand-started server never idles out");
-  Expect(RunServer({"stop", "--socket-dir", dir.string()}).success(), "stop");
+  const auto stopped = RunServer({"stop", "--socket-dir", dir.string()});
+  Expect(stopped.success(), "stop: exit " + std::to_string(stopped.exit_code) + " " +
+                                stopped.stdout_text + stopped.stderr_text);
   Expect(WaitUntil([&]() { return ::access(remote::ServerSocketPath(dir).c_str(), F_OK) != 0; },
                    std::chrono::seconds(10)),
          "stop removes the socket");

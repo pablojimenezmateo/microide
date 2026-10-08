@@ -90,6 +90,7 @@ bool RemoteFrameTransport::Send(FrameType type, Lane lane, std::uint64_t id,
       overflowed_ = true;
     } else {
       queued_bytes_ += encoded.size();
+      unwritten_.fetch_add(encoded.size(), std::memory_order_acq_rel);
       Queue& queue = lane == Lane::Interactive ? interactive_ : bulk_;
       queue.frames.push_back(std::move(encoded));
       if (lane == Lane::Bulk) {
@@ -127,6 +128,18 @@ void RemoteFrameTransport::Stop() {
   write_fd_ = -1;
   wake_.Close();
   closed_.store(true, std::memory_order_release);
+}
+
+bool RemoteFrameTransport::Flush(std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  wake_.Wake();
+  while (unwritten_.load(std::memory_order_acquire) > 0) {
+    if (closed() || std::chrono::steady_clock::now() >= deadline) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return true;
 }
 
 void RemoteFrameTransport::Fail(std::string_view reason) {
@@ -255,6 +268,9 @@ bool RemoteFrameTransport::FlushWrites() {
         ::write(write_fd_, writing_.data() + writing_offset_, writing_.size() - writing_offset_);
     if (written > 0) {
       writing_offset_ += static_cast<std::size_t>(written);
+      unwritten_.fetch_sub(std::min(unwritten_.load(std::memory_order_acquire),
+                                    static_cast<std::size_t>(written)),
+                           std::memory_order_acq_rel);
       util::AddPerformanceCounter(util::PerfCounterId::RemoteBytesSent,
                                   static_cast<std::uint64_t>(written));
       continue;
@@ -343,6 +359,7 @@ void RemoteFrameTransport::QueueAck() {
   bulk_bytes_received_acked_ = bulk_bytes_received_;
   std::lock_guard lock(queue_mutex_);
   queued_bytes_ += encoded.size();
+  unwritten_.fetch_add(encoded.size(), std::memory_order_acq_rel);
   interactive_.frames.push_back(std::move(encoded));
 }
 
