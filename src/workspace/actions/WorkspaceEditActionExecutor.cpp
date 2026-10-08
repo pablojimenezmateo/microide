@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -342,8 +343,19 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         if (!text.empty()) text.push_back(' ');
         text += arg;
       }
-      if (!text.empty()) {
-        context_.InsertText(std::move(text));
+      if (text.empty()) {
+        return DispatchResult::Handled;
+      }
+      // A read-only view refuses the edit by counting it; the keyboard path says
+      // so from the event loop, but this verb answered `ok` to an agent driving
+      // the editor whose text never landed. Rejected through the action, the
+      // reply carries the reason.
+      const editor::TextViewport* target = context_.ActiveNavigableViewport();
+      const std::uint64_t refused_before = target != nullptr ? target->refused_edits() : 0;
+      context_.InsertText(std::move(text));
+      if (target != nullptr && context_.ActiveNavigableViewport() == target &&
+          target->refused_edits() > refused_before) {
+        return reject("Cannot edit in read-only editor");
       }
       return DispatchResult::Handled;
     }

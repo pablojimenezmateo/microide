@@ -1289,6 +1289,32 @@ void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
          "ctrl+end should still land on the last line");
 }
 
+// `type <text>` into a read-only view: the keyboard path says "Cannot edit in
+// read-only editor" from the event loop, but the verb answered success to the
+// control channel while the text never landed, so an agent driving the editor
+// could not tell. The refusal is the verb's answer now.
+void TestWorkspaceShellTypeVerbReportsAReadOnlyRefusal() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "hello\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "type x"),
+         "typing into a writable buffer succeeds");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and the text landed");
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).SetReadOnly(true);
+  const std::string before = WorkspaceShellTestAccess::ActiveEditor(shell).SerializeDocumentText();
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "type y"),
+         "a refused edit is not reported as success");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Cannot edit in read-only editor",
+         "the reply says why: '" + WorkspaceShellTestAccess::CommandFeedbackText(shell) + "'");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).SerializeDocumentText() == before, "and nothing changed");
+}
+
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
           TestWorkspaceShellNotificationToastIsClickable);
@@ -1345,6 +1371,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorLineOpenChordsReachTheEditor);
   AddTest(tests, "WorkspaceShell/EditorMultiCaretCollapsesOnEscapeAndDocumentJump",
           TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump);
+  AddTest(tests, "WorkspaceShell/TypeVerbReportsAReadOnlyRefusal",
+          TestWorkspaceShellTypeVerbReportsAReadOnlyRefusal);
 }
 
 }  // namespace microide::tests
