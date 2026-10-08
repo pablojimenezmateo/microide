@@ -337,6 +337,49 @@ void TestBlockingSaveWritesFormattedBeforeItReturns() {
              ReadFile(file));
 }
 
+// The file changes on disk while its formatter runs. Applying the formatter's
+// output used to re-stat the file and adopt what it found as the new conflict
+// baseline, so the save right after it overwrote the other writer's bytes without
+// a word. The baseline is the one the buffer was loaded against; the save is
+// refused and the external-change banner raised.
+void TestAnExternalChangeDuringFormattingIsNotOverwritten() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path file = OpenOneFileProject(shell, temp_dir, "hello world\n");
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      UppercasingFormatter());
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, 0), "the deferred save started");
+
+  WriteFile(file, "someone else's newer, longer content\n");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(ReadFile(file) == "someone else's newer, longer content\n",
+         "the other writer's bytes survive, got: " + ReadFile(file));
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, file),
+         "the user is asked instead (external-change banner)");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the buffer keeps its edits");
+}
+
+// Same hole on the blocking path, where the conflict check runs BEFORE the
+// formatter: a formatter that is itself the other writer (it rewrites the file
+// while it runs) must not have its write clobbered by the save it was part of.
+void TestAnExternalChangeDuringABlockingFormatIsNotOverwritten() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path file = OpenOneFileProject(shell, temp_dir, "hello world\n");
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      {"sh", "-c", "printf 'written by someone else meanwhile\\n' > '" + file.string() +
+                       "'; sed s/hello/HELLO/"});
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  Expect(!WorkspaceShellTestAccess::SaveTab(shell, 0), "the blocking save is refused");
+  Expect(ReadFile(file) == "written by someone else meanwhile\n",
+         "the bytes written while the formatter ran survive, got: " + ReadFile(file));
+}
+
 }  // namespace
 
 void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
@@ -344,6 +387,10 @@ void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
           TestCloseAllDirtyTabsDefersEveryFormatter);
   AddTest(tests, "SaveFormatterPipeline/ADeferredSaveLeavesTheBufferDirtyUntilItWrites",
           TestADeferredSaveLeavesTheBufferDirtyUntilItWrites);
+  AddTest(tests, "SaveFormatterPipeline/AnExternalChangeDuringFormattingIsNotOverwritten",
+          TestAnExternalChangeDuringFormattingIsNotOverwritten);
+  AddTest(tests, "SaveFormatterPipeline/AnExternalChangeDuringABlockingFormatIsNotOverwritten",
+          TestAnExternalChangeDuringABlockingFormatIsNotOverwritten);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseWaitsForTheWriteWithoutBlocking",
           TestSaveThenCloseWaitsForTheWriteWithoutBlocking);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseIsImmediateWithoutAFormatter",

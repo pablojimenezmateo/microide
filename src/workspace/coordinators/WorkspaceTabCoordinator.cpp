@@ -93,6 +93,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
              .ok()) {
       return false;
     }
+    if (!RefuseIfChangedOnDisk(compare_tab.right_viewport,
+                               compare_tab.right_viewport.path().lexically_normal())) {
+      return false;
+    }
     if (!compare_tab.right_viewport.Save(state_.write_gate())) {
       if (operations_.notify_save_failed) {
         operations_.notify_save_failed(compare_tab.right_viewport.path());
@@ -123,6 +127,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
                                                   merge_tab.result_viewport, nullptr,
                                                   SaveMode::Blocking)
              .ok()) {
+      return false;
+    }
+    if (!RefuseIfChangedOnDisk(merge_tab.result_viewport,
+                               merge_tab.result_viewport.path().lexically_normal())) {
       return false;
     }
     if (!merge_tab.result_viewport.Save(state_.write_gate())) {
@@ -202,6 +210,12 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
       editor_state->pending_format_save.Arm(prepared.deferred_run_id,
                                             candidate->content_revision());
       return true;
+    }
+    // The conflict check above ran BEFORE the participants and the formatter, and
+    // a formatter can take seconds: a file written meanwhile must not be
+    // overwritten by the save it raced. One stat.
+    if (!RefuseIfChangedOnDisk(*candidate, normalized_path)) {
+      return false;
     }
   }
   editor_state->pending_format_save.Disarm();
@@ -957,6 +971,17 @@ void TabCoordinator::MaybeNotifyLspClose(const TabEntry& tab) {
   if (!path.empty() && operations_.count_open_buffer_views(path) == 1) {
     operations_.notify_lsp_buffer_close(path);
   }
+}
+
+bool TabCoordinator::RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
+                                           const std::filesystem::path& normalized_path) {
+  if (viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None) {
+    return true;
+  }
+  if (operations_.request_external_change_banner) {
+    operations_.request_external_change_banner(normalized_path);
+  }
+  return false;
 }
 
 bool TabCoordinator::SaveThenClose(std::size_t index) {

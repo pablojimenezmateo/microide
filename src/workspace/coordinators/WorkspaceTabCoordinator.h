@@ -262,6 +262,11 @@ class TabCoordinator {
   // participant rejected it, or the file changed on disk) — the tab stays open,
   // as it did before.
   bool SaveThenClose(std::size_t index);
+  // True when `viewport`'s file is as it was loaded or last saved; otherwise raise
+  // the external-change banner for it and return false. For the re-check after
+  // save participants and a formatter ran, which can take seconds.
+  bool RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
+                             const std::filesystem::path& normalized_path);
   // Group-aware close: closes editor_groups[group_index].open_tabs[index] with the same
   // LSP-didClose accounting as Close(); delegates to Close() for the focused group, and
   // for a background group erases the tab, clamps its active index, and collapses the

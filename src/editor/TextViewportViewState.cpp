@@ -102,8 +102,17 @@ void TextViewport::ReloadPreservingViewState(std::string_view text) {
   const std::optional<SelectionRange> selection_before = selection_range();
   const std::filesystem::path path_before = path();
   const std::optional<LineEnding> line_ending_before = line_ending();
+  // This replaces the content IN MEMORY (a formatter's output, a virtual
+  // document's new text); it is not a read of the file. LoadContent re-stats the
+  // path to take a new conflict baseline, which here would adopt whatever is on
+  // disk NOW: an external change made while the formatter ran became the
+  // baseline, and the save right after this overwrote it without a word. The
+  // baseline stays the one the buffer was loaded or last saved against.
+  const util::FileSignature disk_signature_before =
+      document_ != nullptr ? document_->disk_signature : util::FileSignature{};
 
   LoadContent(text, path_before, line_ending_before);
+  document_->disk_signature = disk_signature_before;
   SetViewportSize(visible_lines_before, visible_columns_before);
   ApplyRestoredViewState(cursor_line_before, cursor_column_before, scroll_line_before,
                          horizontal_scroll_before, selection_before);
