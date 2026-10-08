@@ -10,6 +10,7 @@
 #include "util/StringUtil.h"
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/services/RemoteHostService.h"
 namespace microide::workspace {
 
 namespace {
@@ -195,6 +196,68 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("Nothing is waiting to save");
       }
       return DispatchResult::Handled;
+    }
+    case ActionId::RemoteOpenTerminal:
+    case ActionId::RemoteShowStatus:
+    case ActionId::RemoteStopServer:
+    case ActionId::RemoteDisconnect:
+    case ActionId::RemoteReconnect:
+    case ActionId::RemoteCopyCommand: {
+      RemoteHostService* hosts = context_.RemoteHosts();
+      if (hosts == nullptr) {
+        return reject("Remote hosts are not available here");
+      }
+      // A host argument, else the only host there is.
+      const auto host_arg = [&]() -> std::string {
+        return args.empty() ? hosts->SoleHost() : args[0];
+      };
+      switch (id) {
+        case ActionId::RemoteOpenTerminal: {
+          if (args.empty()) {
+            context_.OpenRemoteHostPrompt();
+            return DispatchResult::Handled;
+          }
+          std::string error;
+          if (!hosts->OpenTerminalOnHost(args[0], &error)) {
+            return reject("Cannot connect to \"" + args[0] + "\": " + error);
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteShowStatus:
+          context_.Notify(NotificationService::Tone::Info, hosts->StatusText());
+          return DispatchResult::Handled;
+        case ActionId::RemoteStopServer: {
+          const std::string host = host_arg();
+          if (host.empty() || !hosts->StopServer(host)) {
+            return reject(host.empty() ? "usage: remote-stop-server <host>"
+                                       : "No remote host \"" + host + "\"");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteDisconnect:
+          hosts->Disconnect(args.empty() ? std::string_view() : std::string_view(args[0]));
+          return DispatchResult::Handled;
+        case ActionId::RemoteReconnect: {
+          const std::string host = host_arg();
+          if (host.empty() || !hosts->Reconnect(host)) {
+            return reject("No remote host \"" + host + "\"");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteCopyCommand: {
+          if (args.size() < 2) {
+            return reject("usage: remote-copy-command <host> <ssh|install>");
+          }
+          const std::optional<std::string> text = hosts->CommandText(args[0], args[1]);
+          if (!text.has_value() || !context_.WriteClipboardText(*text)) {
+            return reject("No remote host \"" + args[0] + "\"");
+          }
+          context_.Notify(NotificationService::Tone::Info, "Copied: " + *text);
+          return DispatchResult::Handled;
+        }
+        default:
+          return reject("unreachable");
+      }
     }
     case ActionId::ShowOutput:
       if (args.empty()) {

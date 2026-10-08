@@ -1910,6 +1910,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   //   right: line/column, problems, lsp
   add_segment(StatusBarSegmentId::Project, vm.left_segments);
   add_segment(StatusBarSegmentId::Branch, vm.left_segments);
+  add_segment(StatusBarSegmentId::Remote, vm.left_segments);
   // Compact-mode drop order (workspace-status-bar §"Compact-mode segment drop order"):
   //   encoding, language, indent display
   // Keep: project+branch+cleanliness, line/column, problems count, LSP state.

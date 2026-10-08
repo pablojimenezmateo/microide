@@ -243,6 +243,14 @@ void WorkspaceActionContext::OpenGoToLinePrompt() {
   }
 }
 
+void WorkspaceActionContext::OpenRemoteHostPrompt() {
+  if (operations_.open_prompt_surface) {
+    operations_.open_prompt_surface(PromptSurfaceState::Action::RemoteHost,
+                                    PromptSurfaceState::Kind::TextInput,
+                                    std::filesystem::path{}, std::string{});
+  }
+}
+
 void WorkspaceActionContext::OpenRenameSymbolPrompt() {
   if (!operations_.open_prompt_surface) {
     return;
@@ -901,6 +909,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 RequestWindowRedraw();
                 return true;
               },
+          .remote_hosts = [this]() -> RemoteHostService& { return MakeRemoteHostService(); },
           .cancel_save_wait =
               [this](std::uint64_t id) {
                 EditorTabService& editor_tabs = MakeEditorTabService();

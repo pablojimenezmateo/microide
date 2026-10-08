@@ -74,7 +74,7 @@ void TerminalPanelService::OpenTerminal(std::string command, bool focus_terminal
   }
   const bool was_visible = PanelVisible();
   const bool panel_already_showing_terminal = state_.panel.content == PanelContentKind::Terminal;
-  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(std::move(command));
+  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(std::move(command), {}, {});
   if (pane == nullptr) {
     return;
   }
@@ -85,6 +85,22 @@ void TerminalPanelService::OpenTerminal(std::string command, bool focus_terminal
   }
   operations_.note_layout_inputs_changed();
   NotePanelVisibilityChanged(was_visible);
+}
+
+bool TerminalPanelService::OpenTerminalOn(std::shared_ptr<const platform::ProcessLauncher> launcher,
+                                          std::string label_prefix, std::string command) {
+  const bool was_visible = PanelVisible();
+  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
+      std::move(command), std::move(launcher), std::move(label_prefix));
+  if (pane == nullptr) {
+    return false;
+  }
+  state_.terminal_tabs.push_back(MakeTerminalTab(std::move(pane)));
+  state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
+  ShowTerminalContent(true);
+  operations_.note_layout_inputs_changed();
+  NotePanelVisibilityChanged(was_visible);
+  return true;
 }
 
 void TerminalPanelService::OpenDefaultTerminalForProjectInit() {
@@ -166,10 +182,14 @@ bool TerminalPanelService::CycleTerminalTab(int delta) {
 
 bool TerminalPanelService::SplitActivePane() {
   TerminalTabState* tab = state_.active_terminal_tab();
-  if (tab == nullptr || tab->full() || state_.root.empty()) {
+  const TerminalPaneState* active = tab != nullptr ? tab->active() : nullptr;
+  // A split of a host terminal is another terminal on that host.
+  if (tab == nullptr || tab->full() || (state_.root.empty() && (active == nullptr || !active->launcher))) {
     return false;
   }
-  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane({});
+  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
+      {}, active != nullptr ? active->launcher : nullptr,
+      active != nullptr ? active->label_prefix : std::string());
   if (pane == nullptr) {
     return false;
   }

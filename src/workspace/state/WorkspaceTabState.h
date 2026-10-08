@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "compare/BranchReviewStateTypes.h"
+#include "platform/ProcessLauncher.h"
 #include "compare/CompareModel.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
@@ -551,6 +552,13 @@ struct TerminalPaneState {
   // command rather than opened as a fresh tab that loses its position.
   std::filesystem::path launch_working_directory;
   std::string launch_command;
+  // Where it runs when that is not the project's launcher: a terminal opened on a
+  // host (Remote: Open Terminal on Host…). Shared, so the pane keeps it alive and
+  // a relaunch or a split stays on that host. Null = the project's.
+  std::shared_ptr<const platform::ProcessLauncher> launcher;
+  // Prepended to the tab title ("build-box · "), so a host terminal is never
+  // mistaken for a local one.
+  std::string label_prefix;
 };
 
 // One tab of the bottom panel's terminal strip: one to `kMaxTerminalPanes`

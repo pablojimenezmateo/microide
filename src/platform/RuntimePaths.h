@@ -22,4 +22,10 @@ std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path);
 // non-POSIX platforms it just creates the directory (different ACL model).
 bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir);
 
+// The microide-server binary this client installs on a host that has none
+// (dev-docs/design/remote-projects.md § 6.6): `$MICROIDE_SERVER_BINARY` when set,
+// else the one beside this executable (the build tree and the package both put it
+// there). Empty when there is none, which turns install into the copy command.
+std::filesystem::path ResolveBundledServerBinary();
+
 }  // namespace microide::platform

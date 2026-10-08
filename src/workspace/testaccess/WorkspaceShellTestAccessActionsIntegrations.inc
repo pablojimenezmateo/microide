@@ -653,6 +653,10 @@
     const auto* pane = shell.context_.current_project_state.active_terminal_pane();
     return pane == nullptr ? std::filesystem::path{} : pane->launch_working_directory;
   }
+  // What the tab strip prefixes a tab's title with ("host · " for a host terminal).
+  static std::string TerminalTabLabelPrefix(const WorkspaceShell& shell, std::size_t tab_index) {
+    return shell.context_.current_project_state.terminal_tabs[tab_index]->active()->label_prefix;
+  }
   static void OpenTerminalViaService(WorkspaceShell& shell, std::string command = {}) {
     shell.MakeTerminalPanelService().OpenTerminal(std::move(command));
   }

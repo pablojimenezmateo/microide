@@ -1,3 +1,4 @@
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ShellGlueCache.h"
 
 // The unique_ptr members are declared over forward-declared types, so the

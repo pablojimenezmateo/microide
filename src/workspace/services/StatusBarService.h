@@ -18,6 +18,7 @@ enum class StatusBarSegmentId : std::uint8_t {
   Problems,
   Lsp,
   LayoutMode,
+  Remote,  // the remote hosts' connection state (RemoteHostService)
   Count,
 };
 

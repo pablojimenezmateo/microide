@@ -63,13 +63,13 @@
 
 ## 8. Connection lifecycle, install and UI
 
-- [ ] 8.1 `RemoteHostSession`: ssh ControlMaster per (user, host, port) with `BatchMode`, validated host/user strings after `--`, short control path; state machine Disconnected → Connecting → (NeedsAuth) → StartingServer → (Installing) → Ready → Reconnecting/Offline
-- [ ] 8.2 NeedsAuth in a terminal tab running ssh without `BatchMode`; continue when the control socket appears
-- [ ] 8.3 Self-install over the existing connection with the one fixed script; bundled server per architecture; `remote.server_install = off` shows the copy command; mismatch with live terminals installs beside and asks before restart
-- [ ] 8.4 Reconnecting = attach with resume of every terminal and kept process; `daemon_epoch` mismatch falls back to a cold attach
-- [ ] 8.5 `workspace/services/RemoteHostService` (no new shell companion): `Remote: Open Terminal on Host…`, `Remote: Show Status`, `Remote: Stop Host Server`, status-bar segment, sticky notification rows with actions (Reconnect, Show Log, Copy Install Command, Copy ssh Command), session-survival warning row
-- [ ] 8.6 Register `remote.server_command`, `remote.server_install`, `remote.server_socket_dir`, `remote.predict`, `remote.term_credit_bytes`, `remote.backfill_inflight_bytes`, `remote.scrollback_prefetch_lines` in `WorkspaceSettingsRegistry`
-- [ ] 8.7 Tests with a `remote.ssh_command` seam pointing at a shim: auth fallback, install path, link death within 6 s and resume, host-string rejection
+- [x] 8.1 `RemoteHostSession`: ssh ControlMaster per (user, host, port) with `BatchMode`, validated host/user strings after `--`, short control path; state machine Disconnected → Connecting → (NeedsAuth) → StartingServer → (Installing) → Ready → Reconnecting/Offline
+- [x] 8.2 NeedsAuth in a terminal tab running ssh without `BatchMode`; continue when the control socket appears
+- [x] 8.3 Self-install over the existing connection with the one fixed script; bundled server per architecture; `remote.server_install = off` shows the copy command; mismatch with live terminals installs beside and asks before restart — done 2026-10-08; the bundled binary is the one beside the executable (`ResolveBundledServerBinary`), per-architecture bundling is packaging
+- [x] 8.4 Reconnecting = attach with resume of every terminal and kept process; `daemon_epoch` mismatch falls back to a cold attach
+- [x] 8.5 `workspace/services/RemoteHostService` (no new shell companion): `Remote: Open Terminal on Host…`, `Remote: Show Status`, `Remote: Stop Host Server`, status-bar segment, sticky notification rows with actions (Reconnect, Show Log, Copy Install Command, Copy ssh Command), session-survival warning row — done 2026-10-08 except Show Log and the session-survival row (TD-2026-10-08-325)
+- [x] 8.6 Register `remote.server_command`, `remote.server_install`, `remote.server_socket_dir`, `remote.predict`, `remote.term_credit_bytes`, `remote.backfill_inflight_bytes`, `remote.scrollback_prefetch_lines` in `WorkspaceSettingsRegistry` — done 2026-10-08 for every setting something reads (plus the `remote.ssh_command` seam); `remote.server_socket_dir` and `remote.backfill_inflight_bytes` wait on what reads them (TD-2026-10-08-325)
+- [x] 8.7 Tests with a `remote.ssh_command` seam pointing at a shim: auth fallback, install path, link death within 6 s and resume, host-string rejection — done 2026-10-08 (`tests/fixtures/remote/fake-ssh`, `RemoteHostSessionTests`, `RemoteHostServiceTests`)
 
 ## 9. Budgets, lanes and wrap-up
 

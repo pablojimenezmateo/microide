@@ -27,6 +27,7 @@ class SidebarMouseCoordinator;
 class SidebarService;
 class TabMouseCoordinator;
 class TerminalPanelService;
+class RemoteHostService;
 class TextInputCoordinator;
 class WorkspaceActionContext;
 
@@ -67,6 +68,9 @@ struct ShellGlueCache {
   std::unique_ptr<CompareMergeService> compare_merge_service;
   std::unique_ptr<PromptSurfaceService> prompt_surface_service;
   std::unique_ptr<TerminalPanelService> terminal_panel_service;
+  // Its sessions' threads post status here until joined; declared like the rest,
+  // built on first use (Remote: Open Terminal on Host…).
+  std::unique_ptr<RemoteHostService> remote_host_service;
   std::unique_ptr<ProjectCatalogService> project_catalog_service;
   std::unique_ptr<DebugPaneService> debug_pane_service;
   std::unique_ptr<PersistenceCoordinator> persistence_coordinator;

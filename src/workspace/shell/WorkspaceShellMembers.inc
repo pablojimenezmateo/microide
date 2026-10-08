@@ -676,6 +676,7 @@
   PanelMouseCoordinator& MakePanelMouseCoordinator();
   DebugPaneMouseCoordinator& MakeDebugPaneMouseCoordinator();
   TerminalPanelService& MakeTerminalPanelService();
+  RemoteHostService& MakeRemoteHostService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
   void ConsumeHighlightPrefetchResults();  // installs worker prefetch results (main thread)

@@ -517,6 +517,7 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
     if (label.empty()) {
       label = "Terminal";
     }
+    label.insert(0, pane->label_prefix);
     tabs.push_back(BottomPanelTabModel{
         .kind = BottomPanelTabKind::Terminal,
         .terminal_index = i,
@@ -705,6 +706,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
     if (label.empty()) {
       label = "Terminal";
     }
+    label.insert(0, pane->label_prefix);
     terminal_indices.push_back(i);
     display_titles.push_back(label);
     tooltip_labels.push_back(label);

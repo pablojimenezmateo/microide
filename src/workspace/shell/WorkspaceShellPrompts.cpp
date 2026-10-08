@@ -234,6 +234,8 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
       return "Debug Console";
     case PromptSurfaceState::Action::GoToLine:
       return "Go to Line";
+    case PromptSurfaceState::Action::RemoteHost:
+      return "Open Terminal on Host";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Rename Symbol";
     case PromptSurfaceState::Action::ConfirmRenameSave:
@@ -295,6 +297,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
       return "Evaluate in the active session; the result prints to the console.";
     case PromptSurfaceState::Action::GoToLine:
       return "Enter a line[:column] to jump to.";
+    case PromptSurfaceState::Action::RemoteHost:
+      return "Enter [user@]host[:port] — reached with your ssh configuration.";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Enter a new name for the symbol under the cursor.";
     case PromptSurfaceState::Action::ConfirmRenameSave:
@@ -353,6 +357,8 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Evaluate", "Close"};
     case PromptSurfaceState::Action::GoToLine:
       return {"Go", "Cancel"};
+    case PromptSurfaceState::Action::RemoteHost:
+      return {"Connect", "Cancel"};
     case PromptSurfaceState::Action::RenameSymbol:
       return {"Rename", "Cancel"};
     case PromptSurfaceState::Action::ConfirmRenameSave:
@@ -514,6 +520,16 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!typed.empty()) {
       ActionCoordinator(MakeActionContext()).Execute(ActionId::Save, {typed}, ActionSource::Shortcut);
+    }
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::RemoteHost) {
+    const std::string host = context_.prompts.surface.input.text();
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    if (!host.empty()) {
+      ActionCoordinator(MakeActionContext())
+          .Execute(ActionId::RemoteOpenTerminal, {host}, ActionSource::Shortcut);
     }
     return;
   }

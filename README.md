@@ -661,6 +661,12 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `focus-notifications`
 - `notification-action <row-key|row-index> <action-label|action-index>`
 - `show-output <channel-id>`
+- `remote-terminal [[user@]host[:port]]`
+- `remote-status`
+- `remote-stop-server [host]`
+- `remote-disconnect [host]`
+- `remote-reconnect <host>`
+- `remote-copy-command <host> <ssh|install>`
 - `cancel-save-wait <id>`
 - `colorscheme [name|list]`
 - `toggle-theme`

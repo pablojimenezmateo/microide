@@ -52,6 +52,41 @@ inline void StartServer(const ShortServerDir& dir) {
   Expect(started.success(), "the server starts: " + started.stderr_text);
 }
 
+// A "host" for the connection-lifecycle tests: tests/fixtures/remote/fake-ssh,
+// which runs the remote command on this machine with HOME pointed at a private
+// directory, plus the server that ends up running there — stopped when the test
+// ends.
+struct FakeSshHost {
+  ShortServerDir dir;
+  std::filesystem::path home = dir.scratch() / "h";
+  std::filesystem::path shim = std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" /
+                               "remote" / "fake-ssh";
+
+  FakeSshHost() {
+    std::filesystem::create_directories(home);
+    // The server refuses a socket directory under anything group-writable; a
+    // real home is not, whatever this machine's umask made the fixture.
+    std::filesystem::permissions(home, std::filesystem::perms::owner_all);
+  }
+  ~FakeSshHost() {
+    platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir",
+                             (home / ".local/state/microide/server").string()},
+                            platform::SubprocessOptions{.timeout_ms = 10000});
+  }
+  FakeSshHost(const FakeSshHost&) = delete;
+  FakeSshHost& operator=(const FakeSshHost&) = delete;
+
+  // The `remote.ssh_command` that reaches it, as argv.
+  std::vector<std::string> SshArgv(bool needs_auth = false) const {
+    std::vector<std::string> argv = {"env", "FAKE_SSH_HOME=" + home.string()};
+    if (needs_auth) {
+      argv.push_back("FAKE_SSH_NEEDS_AUTH=1");
+    }
+    argv.push_back(shim.string());
+    return argv;
+  }
+};
+
 }  // namespace microide::tests
 
 #endif

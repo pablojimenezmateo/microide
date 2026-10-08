@@ -1,4 +1,5 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
 
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
@@ -1046,6 +1047,9 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
   // the applies invalidate the finder/search/index below.
   save_formatter_service_.DrainCompletions();
   file_read_service_.DrainCompletions();
+  if (glue_->remote_host_service != nullptr) {
+    glue_->remote_host_service->DrainCompletions();
+  }
   file_index_refresh_mailbox_.Drain();
   project_replace_mailbox_.Drain();
   project_file_event_pending_.store(false, std::memory_order_release);

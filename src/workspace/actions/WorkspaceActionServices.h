@@ -20,6 +20,8 @@
 
 namespace microide::workspace {
 
+class RemoteHostService;
+
 // Defined in GitSidebarCommandCenter.h; only the type is needed here (function
 // signatures + a parameter), so forward-declare to avoid the heavy include.
 enum class GitSidebarActionId;
@@ -240,6 +242,8 @@ class WorkspaceActionContext {
         take_notification_action;
     // Show an Output channel by id; false when no such channel exists.
     std::function<bool(std::string_view)> show_output_channel;
+    // The remote-host service (created on first use).
+    std::function<RemoteHostService&()> remote_hosts;
     // Cancel a quit / close-project waiting on formatter saves; false when no
     // wait with that id exists (it already ran or was cancelled).
     std::function<bool(std::uint64_t)> cancel_save_wait;
@@ -643,6 +647,9 @@ class WorkspaceActionContext {
   // Focus the notification stack (see Operations::focus_notifications).
   bool FocusNotifications();
   bool ShowOutputChannel(std::string_view channel_id);
+  // Null only in a context built without the shell (tests).
+  RemoteHostService* RemoteHosts();
+  void OpenRemoteHostPrompt();
   bool CancelSaveWait(std::uint64_t id);
   std::optional<NotificationAction> TakeNotificationAction(std::string_view row,
                                                            std::string_view action,

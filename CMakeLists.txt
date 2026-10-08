@@ -572,6 +572,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/render/OverviewRuler.cpp
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
+  src/workspace/services/RemoteHostService.cpp
   src/workspace/services/TerminalPanelService.cpp
   src/workspace/services/TerminalFindService.cpp
   src/workspace/persistence/WorkspacePersistenceBinaryFormat.cpp
@@ -1142,6 +1143,7 @@ add_executable(microide_tests
   tests/parity/LoopbackLocality.cpp
   tests/parity/ParityHarness.cpp
   tests/parity/ParityTests.cpp
+  tests/RemoteHostServiceTests.cpp
   tests/PluginHostTests.cpp
   tests/PluginPureHelperTests.cpp
   tests/PluginSurfaceCoverageTests.cpp

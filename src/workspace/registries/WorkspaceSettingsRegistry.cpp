@@ -427,6 +427,71 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.ssh_command",
+          .label = "ssh Command",
+          .description = "The ssh client used to reach hosts, as a command line (default: ssh). "
+                         "Your ~/.ssh/config applies.",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.server_command",
+          .label = "Host Server Command",
+          .description = "The microide-server to run on a host. Empty: the self-installed one in "
+                         "~/.local/share/microide/server, else one on the host's PATH.",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.server_install",
+          .label = "Install the Host Server Automatically",
+          .description = "Copy microide-server to a host that has none (or an incompatible one) "
+                         "over the ssh connection. Off: show the copy command instead.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.term_credit_bytes",
+          .label = "Host Terminal Window",
+          .description = "Bytes of terminal output a host may send before this client "
+                         "acknowledges them (16 KiB..16 MiB; 0 = 256 KiB). Beyond it, scrolled-past "
+                         "lines become a counted gap; the screen is never withheld.",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 0,
+          .min_int = 0,
+          .max_int = 16 * 1024 * 1024,
+          .int_step = 65536,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.scrollback_prefetch_lines",
+          .label = "Host Terminal History on Attach",
+          .description = "Lines of history sent with the screen when a host terminal is attached "
+                         "(0 = 500).",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 0,
+          .min_int = 0,
+          .max_int = 100000,
+          .int_step = 100,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "terminal.osc52_clipboard_write",
           .label = "Allow Terminal Clipboard Writes (OSC 52)",
           .description = "Let a program running in the terminal set the system clipboard via the "

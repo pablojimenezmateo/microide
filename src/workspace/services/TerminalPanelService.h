@@ -31,7 +31,12 @@ class TerminalPanelService {
     // scrollback cap and wake channel). Null when the project has no root or the
     // launch failed; in placeholder-terminal test mode the pane is started without
     // a real process.
-    std::function<std::unique_ptr<TerminalPaneState>(std::string)> make_started_pane;
+    // `launcher` null = the project's; otherwise the pane records it (and the
+    // label prefix) for relaunches and splits.
+    std::function<std::unique_ptr<TerminalPaneState>(
+        std::string command, std::shared_ptr<const platform::ProcessLauncher> launcher,
+        std::string label_prefix)>
+        make_started_pane;
     // Restart an exited pane's session in place with its recorded cwd/command.
     // False when the launch failed.
     std::function<bool(TerminalPaneState&)> relaunch_pane;
@@ -53,6 +58,11 @@ class TerminalPanelService {
   // Opens a new tab around one started pane. `focus_terminal` also shows the
   // Terminal content and moves keyboard focus to the panel.
   void OpenTerminal(std::string command = {}, bool focus_terminal = true, bool log_feedback = false);
+  // A tab whose shell runs through `launcher` (a host, or this machine on purpose)
+  // instead of the project's, titled with `label_prefix`. False when the launch
+  // failed. Works with no project open: a host terminal needs none.
+  bool OpenTerminalOn(std::shared_ptr<const platform::ProcessLauncher> launcher,
+                      std::string label_prefix, std::string command = {});
   // The default terminal at project init. In placeholder-terminal test mode it
   // installs a bare, unstarted pane (no shell spawn); otherwise OpenTerminal.
   void OpenDefaultTerminalForProjectInit();

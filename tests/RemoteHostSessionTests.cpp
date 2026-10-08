@@ -45,32 +45,11 @@ void TestHostTargetsAreValidatedBeforeAnythingRuns() {
 
 // The fake host: the ssh shim, a home directory, and the server it starts there,
 // stopped when the test ends.
-struct FakeHost {
-  ShortServerDir dir;
-  std::filesystem::path home = dir.scratch() / "h";
-  std::filesystem::path shim = std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" /
-                               "remote" / "fake-ssh";
-
-  FakeHost() {
-    std::filesystem::create_directories(home);
-    // The server refuses a socket directory under anything group-writable; a
-    // real home is not, whatever this machine's umask made the fixture.
-    std::filesystem::permissions(home, std::filesystem::perms::owner_all);
-  }
-  ~FakeHost() {
-    platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir",
-                             (home / ".local/state/microide/server").string()},
-                            platform::SubprocessOptions{.timeout_ms = 10000});
-  }
-
+struct FakeHost : FakeSshHost {
   RemoteHostSession::Config Config(bool needs_auth = false) const {
     RemoteHostSession::Config config;
     config.target = *remote::ParseRemoteHostTarget("dev@fake-host", nullptr);
-    config.ssh = {"env", "FAKE_SSH_HOME=" + home.string()};
-    if (needs_auth) {
-      config.ssh.push_back("FAKE_SSH_NEEDS_AUTH=1");
-    }
-    config.ssh.push_back(shim.string());
+    config.ssh = SshArgv(needs_auth);
     config.control_dir = dir.scratch() / "c";
     config.server_binary = MICROIDE_SERVER_BINARY;
     config.release = "test";

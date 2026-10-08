@@ -1364,6 +1364,10 @@ bool WorkspaceActionContext::CancelSaveWait(std::uint64_t id) {
   return operations_.cancel_save_wait && operations_.cancel_save_wait(id);
 }
 
+RemoteHostService* WorkspaceActionContext::RemoteHosts() {
+  return operations_.remote_hosts ? &operations_.remote_hosts() : nullptr;
+}
+
 bool WorkspaceActionContext::ShowOutputChannel(std::string_view channel_id) {
   return operations_.show_output_channel && operations_.show_output_channel(channel_id);
 }

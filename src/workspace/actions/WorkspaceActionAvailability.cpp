@@ -118,6 +118,12 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::FocusNotifications:  // rejects with a message when there are none
     case ActionId::NotificationAction:  // rejects naming the row/action it cannot find
     case ActionId::ShowOutput:          // rejects naming a channel that does not exist
+    case ActionId::RemoteOpenTerminal:  // no project needed: a host terminal has none
+    case ActionId::RemoteShowStatus:
+    case ActionId::RemoteStopServer:    // these reject naming the host they cannot find
+    case ActionId::RemoteDisconnect:
+    case ActionId::RemoteReconnect:
+    case ActionId::RemoteCopyCommand:
     case ActionId::CancelSaveWait:      // rejects when nothing with that id is waiting
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:

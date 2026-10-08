@@ -23,6 +23,7 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests);
 void RegisterBranchReviewStateTests(std::vector<TestCase>& tests);
 void RegisterAssistServiceTests(std::vector<TestCase>& tests);
 void RegisterParityTests(std::vector<TestCase>& tests);
+void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests);
 void RegisterPatchApplyTests(std::vector<TestCase>& tests);
 void RegisterDiagnosticsStoreTests(std::vector<TestCase>& tests);
 void RegisterPluginDecorationStoreTests(std::vector<TestCase>& tests);
@@ -180,6 +181,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterBranchReviewStateTests(tests);
   RegisterAssistServiceTests(tests);
   RegisterParityTests(tests);
+  RegisterRemoteHostServiceTests(tests);
   RegisterPatchApplyTests(tests);
   RegisterDiagnosticsStoreTests(tests);
   RegisterPluginDecorationStoreTests(tests);

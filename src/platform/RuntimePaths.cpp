@@ -81,6 +81,21 @@ std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path) {
   return (asset_root / std::string(relative_path)).lexically_normal();
 }
 
+std::filesystem::path ResolveBundledServerBinary() {
+  std::error_code ec;
+  if (const std::filesystem::path explicit_binary = EnvPath("MICROIDE_SERVER_BINARY");
+      !explicit_binary.empty()) {
+    return std::filesystem::is_regular_file(explicit_binary, ec) ? explicit_binary
+                                                                 : std::filesystem::path();
+  }
+  const std::filesystem::path base = BasePath();
+  if (base.empty()) {
+    return {};
+  }
+  const std::filesystem::path beside = base / "microide-server";
+  return std::filesystem::is_regular_file(beside, ec) ? beside : std::filesystem::path();
+}
+
 bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir) {
   if (dir.empty()) {
     return false;

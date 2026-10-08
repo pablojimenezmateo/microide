@@ -90,6 +90,8 @@ struct PromptSurfaceState {
     ConfirmRenameSave,
     // Ctrl+S on an untitled buffer: type the path to save as.
     SaveAs,
+    // Remote: Open Terminal on Host…: type `[user@]host[:port]`.
+    RemoteHost,
   };
 
   Kind kind = Kind::None;

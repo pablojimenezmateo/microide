@@ -1,4 +1,5 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
 
 #include <algorithm>
 
@@ -41,10 +42,16 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
         GetSettingValue("remote.predict").value_or("adaptive")));
     pane.launch_working_directory = cwd;
     pane.launch_command = command;
-    return terminal::UsePlaceholderTerminalsForTesting()
+    // A pane on a host runs through that host's launcher, and a host's shell is
+    // the host's login shell: `terminal.shell` names a program on THIS machine.
+    const bool on_host = pane.launcher != nullptr;
+    const platform::ProcessLauncher& launcher =
+        on_host ? *pane.launcher : context_.current_project_state.launcher();
+    return terminal::UsePlaceholderTerminalsForTesting() && !on_host
                ? pane.session.StartPlaceholderForTesting(cwd, command)
-               : pane.session.Start(context_.current_project_state.launcher(), cwd, command,
-                                    GetSettingValue("terminal.shell").value_or(""));
+               : pane.session.Start(launcher, cwd, command,
+                                    on_host ? std::string()
+                                            : GetSettingValue("terminal.shell").value_or(""));
   };
   glue_->terminal_panel_service = std::make_unique<TerminalPanelService>(
       context_.current_project_state,
@@ -58,11 +65,15 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
           .sync_primary_selection_with_terminal_selection =
               [this]() { SyncPrimarySelectionWithTerminalSelection(); },
           .make_started_pane =
-              [this, start_pane](std::string command) -> std::unique_ptr<TerminalPaneState> {
-                if (context_.current_project_state.root.empty()) {
+              [this, start_pane](std::string command,
+                                 std::shared_ptr<const platform::ProcessLauncher> launcher,
+                                 std::string label_prefix) -> std::unique_ptr<TerminalPaneState> {
+                if (context_.current_project_state.root.empty() && launcher == nullptr) {
                   return nullptr;
                 }
                 auto pane = std::make_unique<TerminalPaneState>();
+                pane->launcher = std::move(launcher);
+                pane->label_prefix = std::move(label_prefix);
                 if (!start_pane(*pane, context_.current_project_state.root, command)) {
                   return nullptr;
                 }
@@ -77,6 +88,36 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
       });
   return *glue_->terminal_panel_service;
+}
+
+RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
+  if (glue_->remote_host_service != nullptr) {
+    return *glue_->remote_host_service;
+  }
+  glue_->remote_host_service = std::make_unique<RemoteHostService>(RemoteHostService::Operations{
+      .notify = [this](NotificationService::Request request) { Notify(std::move(request)); },
+      .dismiss_notification =
+          [this](std::string_view key) {
+            if (notification_service_.DismissKey(key)) {
+              RequestFullRedraw();
+            }
+          },
+      .open_terminal =
+          [this](std::shared_ptr<const platform::ProcessLauncher> launcher, std::string label_prefix,
+                 std::string command) {
+            return MakeTerminalPanelService().OpenTerminalOn(std::move(launcher),
+                                                             std::move(label_prefix),
+                                                             std::move(command));
+          },
+      .setting = [this](std::string_view key) { return GetSettingValue(std::string(key)); },
+      .set_status_segment =
+          [this](StatusBarSegmentValue value) {
+            status_bar_service_.SetSegment(StatusBarSegmentId::Remote, std::move(value));
+          },
+      .request_redraw = [this]() { RequestFullRedraw(); },
+  });
+  glue_->remote_host_service->SetWakeChannel(project_file_event_type_);
+  return *glue_->remote_host_service;
 }
 
 WorkspaceShell::TerminalPaneState* WorkspaceShell::ActiveTerminalPane() {

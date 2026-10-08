@@ -1,0 +1,105 @@
+#pragma once
+
+#include <cstddef>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
+
+#include "project/remote/RemoteHostSession.h"
+#include "util/MainThreadMailbox.h"
+#include "workspace/services/NotificationService.h"
+#include "workspace/services/StatusBarService.h"
+
+namespace microide::platform {
+class ProcessLauncher;
+}
+
+namespace microide::project::remote {
+class RemoteProcessLauncher;
+}
+
+namespace microide::workspace {
+
+// The editor's hosts (dev-docs/design/remote-projects.md § 6.6, § 7): one
+// RemoteHostSession per `[user@]host[:port]` the user opened a terminal on, its
+// launcher, and everything the user sees of it — the status-bar segment, the
+// keyed notification row with its buttons (Reconnect, Copy ssh Command, Copy
+// Install Command), the authentication terminal, and the host terminals waiting
+// for the connection.
+//
+// Phase 2a opens no remote project: a host here only runs terminals. Sessions
+// report on their worker threads; every report is drained on the UI thread
+// (DrainCompletions), so all the state below is UI-thread only.
+class RemoteHostService {
+ public:
+  struct Operations {
+    std::function<void(NotificationService::Request)> notify;
+    std::function<void(std::string_view key)> dismiss_notification;
+    // Open a terminal tab whose shell runs through `launcher`, titled with
+    // `label_prefix`; `command` empty = an interactive shell. False on failure.
+    std::function<bool(std::shared_ptr<const platform::ProcessLauncher> launcher,
+                       std::string label_prefix, std::string command)>
+        open_terminal;
+    std::function<std::optional<std::string>(std::string_view key)> setting;
+    std::function<void(StatusBarSegmentValue)> set_status_segment;
+    std::function<void()> request_redraw;
+  };
+
+  explicit RemoteHostService(Operations operations);
+  ~RemoteHostService();
+  RemoteHostService(const RemoteHostService&) = delete;
+  RemoteHostService& operator=(const RemoteHostService&) = delete;
+
+  void SetWakeChannel(util::WakeChannel channel) { mailbox_.SetWakeChannel(channel); }
+  // Apply what the sessions reported. True when anything was drained.
+  bool DrainCompletions();
+
+  // Remote: Open Terminal on Host… — connects (or reuses the connection) and opens
+  // the terminal once it is ready. False with *error for a host string that is
+  // refused before anything runs.
+  bool OpenTerminalOnHost(std::string_view host, std::string* error);
+  bool Reconnect(std::string_view host);
+  // Empty = every host.
+  void Disconnect(std::string_view host = {});
+  // `microide-server stop` on the host, off the UI thread; the result is a row.
+  bool StopServer(std::string_view host);
+  // "ssh" or "install": what the matching Copy button puts on the clipboard.
+  std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
+  // Remote: Show Status.
+  std::string StatusText() const;
+  // The only host, or empty when there are none or several.
+  std::string SoleHost() const;
+  bool has_hosts() const { return !hosts_.empty(); }
+
+  static std::string NotificationKey(std::string_view host);
+
+ private:
+  struct Host {
+    std::unique_ptr<project::remote::RemoteHostSession> session;
+    std::shared_ptr<project::remote::RemoteProcessLauncher> launcher;
+    project::remote::RemoteHostSession::Status status;
+    std::size_t pending_terminals = 0;
+    bool auth_terminal_opened = false;
+  };
+
+  Host* Find(std::string_view host);
+  const Host* Find(std::string_view host) const;
+  Host& Ensure(const project::remote::RemoteHostTarget& target);
+  void Apply(const std::string& host, const project::remote::RemoteHostSession::Status& status);
+  void OpenPendingTerminals(const std::string& host, Host& entry);
+  void PublishStatusSegment();
+
+  Operations operations_;
+  std::map<std::string, Host, std::less<>> hosts_;
+  std::vector<std::thread> workers_;  // Stop Host Server runs, joined on destruction
+  // Last: its queued closures name `this`, and it must drop them before the
+  // sessions that post them are gone — sessions are destroyed explicitly first.
+  util::MainThreadMailbox mailbox_;
+};
+
+}  // namespace microide::workspace
