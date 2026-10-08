@@ -428,11 +428,8 @@ the journal, Open Folder on Host — and leaves these, each a known gap rather t
 silent one:
 
 - **No zstd deltas** (§ 6.2): a stale file transfers whole. zstd is not vendored.
-- **The portable BLAKE3 only** (~0.94 GB/s here, against ~0.44 for SHA-256). The
-  upstream SIMD backends (several GB/s) were downloaded at the pinned 1.5.4 tag but
-  building them was refused by the session's permission policy for external code;
-  vendoring them needs the maintainer's explicit go-ahead. `util/ContentHash.h`'s
-  interface is the seam: only `ContentHash.cpp` changes.
+- ~~The portable BLAKE3 only~~ — resolved 2026-10-08: the official C sources are
+  vendored (`third_party/blake3`), ~2.3 GB/s against the portable ~0.94.
 - ~~A watch batch rebuilds the whole manifest~~ — fixed 2026-10-08: the watch is the
   kernel `FileIndexWatcher`, and a batch re-stats and re-hashes only the paths it
   names, asking git about the NEW paths only (`ls-files -- :(literal)…`); a

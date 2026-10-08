@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.28)
 
-project(microide VERSION 2.12.0 LANGUAGES CXX)
+project(microide VERSION 2.12.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -159,6 +159,44 @@ if(MICROIDE_PCRE2_TARGET STREQUAL "")
   message(FATAL_ERROR
     "PCRE2 was not found. Install PCRE2 development files and rerun CMake.")
 endif()
+
+# BLAKE3 (third_party/blake3, the official 1.5.4 C sources): the remote mirror's
+# content hash (dev-docs/design/remote-projects.md § 6.2), reached only through
+# util/ContentHash. Built from the portable C and the INTRINSICS backends with
+# runtime dispatch, never from the per-target assembly, so a static server build
+# needs no assembler per architecture.
+add_library(microide_blake3 STATIC
+  third_party/blake3/blake3.c
+  third_party/blake3/blake3_dispatch.c
+  third_party/blake3/blake3_portable.c
+)
+target_include_directories(microide_blake3 SYSTEM PUBLIC third_party/blake3)
+set_target_properties(microide_blake3 PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  # Optimized in every build type: an unoptimized intrinsics build hashes at a
+  # fifth of the speed, and the dev and test builds hash whole trees too.
+  target_compile_options(microide_blake3 PRIVATE -O3)
+endif()
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  target_sources(microide_blake3 PRIVATE
+    third_party/blake3/blake3_sse2.c
+    third_party/blake3/blake3_sse41.c
+    third_party/blake3/blake3_avx2.c
+    third_party/blake3/blake3_avx512.c)
+  set_source_files_properties(third_party/blake3/blake3_sse2.c PROPERTIES COMPILE_OPTIONS "-msse2")
+  set_source_files_properties(third_party/blake3/blake3_sse41.c PROPERTIES COMPILE_OPTIONS "-msse4.1")
+  set_source_files_properties(third_party/blake3/blake3_avx2.c PROPERTIES COMPILE_OPTIONS "-mavx2")
+  set_source_files_properties(third_party/blake3/blake3_avx512.c PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512vl")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  target_sources(microide_blake3 PRIVATE third_party/blake3/blake3_neon.c)
+  target_compile_definitions(microide_blake3 PRIVATE BLAKE3_USE_NEON=1)
+else()
+  target_compile_definitions(microide_blake3 PRIVATE
+    BLAKE3_NO_SSE2 BLAKE3_NO_SSE41 BLAKE3_NO_AVX2 BLAKE3_NO_AVX512 BLAKE3_USE_NEON=0)
+endif()
+
+# Every link unit that carries the kernel's objects links these.
+set(MICROIDE_KERNEL_LIBS ${MICROIDE_PCRE2_TARGET} microide_blake3)
 
 # Optional: fontconfig gives correct family/style matching for the
 # `editor.font_family` setting. When absent, the backend falls back to a scan of
@@ -733,7 +771,7 @@ target_include_directories(microide_core PRIVATE src)
 # invisible in the noise. This is also what lets that flag be permanent below.
 target_include_directories(microide_core SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide_core PRIVATE ${MICROIDE_PCH_HEADERS})
-target_link_libraries(microide_core PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_core PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_KERNEL_LIBS})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_core PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -802,7 +840,7 @@ endif()
 add_library(microide_kernel OBJECT ${MICROIDE_KERNEL_SOURCES})
 target_include_directories(microide_kernel PRIVATE src)
 target_precompile_headers(microide_kernel PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
-target_link_libraries(microide_kernel PRIVATE ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_kernel PRIVATE ${MICROIDE_KERNEL_LIBS})
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_kernel PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})
   if(MICROIDE_WARNINGS_AS_ERRORS)
@@ -820,7 +858,7 @@ add_executable(microide_kernel_link_probe
   $<TARGET_OBJECTS:microide_kernel>
 )
 target_include_directories(microide_kernel_link_probe PRIVATE src)
-target_link_libraries(microide_kernel_link_probe PRIVATE ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_kernel_link_probe PRIVATE ${MICROIDE_KERNEL_LIBS})
 # Run it too: linking proves the kernel needs no window, running proves it WORKS
 # without one. The test asserts on each area's return value, so a probe hollowed out
 # to `return 0` fails here rather than passing.
@@ -844,7 +882,7 @@ add_executable(microide-server
 )
 target_include_directories(microide-server PRIVATE src)
 target_precompile_headers(microide-server PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
-target_link_libraries(microide-server PRIVATE ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide-server PRIVATE ${MICROIDE_KERNEL_LIBS})
 target_compile_definitions(microide-server PRIVATE MICROIDE_VERSION="${PROJECT_VERSION}")
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide-server PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers ${MICROIDE_EXTRA_WARNINGS})
@@ -891,7 +929,7 @@ endif()
 target_include_directories(microide PRIVATE src)
 target_include_directories(microide SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide PRIVATE ${MICROIDE_PCH_HEADERS})
-target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_KERNEL_LIBS})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -1313,7 +1351,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     COMPILE_OPTIONS "-O2"
     SKIP_PRECOMPILE_HEADERS ON)
 endif()
-target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_KERNEL_LIBS})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
   target_link_libraries(microide_tests PRIVATE ${MICROIDE_LUA_TARGET})
 endif()
@@ -1450,7 +1488,7 @@ add_executable(microide_kernel_tests
 )
 target_include_directories(microide_kernel_tests PRIVATE src tests)
 target_precompile_headers(microide_kernel_tests PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
-target_link_libraries(microide_kernel_tests PRIVATE ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_kernel_tests PRIVATE ${MICROIDE_KERNEL_LIBS})
 target_compile_definitions(microide_kernel_tests PRIVATE
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1
@@ -1541,7 +1579,7 @@ if(MICROIDE_FUZZ)
     src/util/StringUtil.cpp
     tests/fuzz/SearchRegexFuzz.cpp
   )
-  target_link_libraries(SearchRegexFuzz PRIVATE ${MICROIDE_PCRE2_TARGET})
+  target_link_libraries(SearchRegexFuzz PRIVATE ${MICROIDE_KERNEL_LIBS})
   microide_configure_fuzz_target(SearchRegexFuzz)
 
   # `git status --porcelain=v2 -z`: NUL record splitting where a rename's origPath
@@ -1578,6 +1616,7 @@ if(MICROIDE_FUZZ)
     src/util/ContentHash.cpp
     tests/fuzz/RemoteManifestDecodeFuzz.cpp
   )
+  target_link_libraries(RemoteManifestDecodeFuzz PRIVATE microide_blake3)
   microide_configure_fuzz_target(RemoteManifestDecodeFuzz)
 
   # `.editorconfig` comes out of the OPENED REPOSITORY, so its bytes are supplied
@@ -1743,7 +1782,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   target_precompile_headers(microide_perf PRIVATE ${MICROIDE_PCH_HEADERS})
   target_link_libraries(microide_perf PRIVATE
     ${MICROIDE_SDL3_TARGET}
-    ${MICROIDE_PCRE2_TARGET}
+    ${MICROIDE_KERNEL_LIBS}
   )
   if(NOT MICROIDE_LUA_TARGET STREQUAL "")
     target_link_libraries(microide_perf PRIVATE ${MICROIDE_LUA_TARGET})
@@ -1905,7 +1944,7 @@ add_executable(microide_diff_bench
 
 target_sources(microide_diff_bench PRIVATE ${MICROIDE_INSTRUMENTATION_SOURCES})
 target_include_directories(microide_diff_bench PRIVATE src)
-target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_KERNEL_LIBS})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_diff_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
@@ -1932,7 +1971,7 @@ add_executable(microide_search_bench
 
 target_sources(microide_search_bench PRIVATE ${MICROIDE_INSTRUMENTATION_SOURCES})
 target_include_directories(microide_search_bench PRIVATE src)
-target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
+target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_KERNEL_LIBS})
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_search_bench PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)

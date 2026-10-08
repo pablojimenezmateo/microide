@@ -117,8 +117,8 @@ from the text above:
 tracks it; what landed and where it differs from the text above:
 
 - **Hash.** `util::ContentHash` is BLAKE3 (hash mode, 32 raw bytes on the wire),
-  a self-contained portable implementation pinned by the upstream vectors
-  (~0.94 GB/s); the upstream SIMD sources are not vendored (TD-2026-10-08-328).
+  the official C implementation vendored in `third_party/blake3` (1.5.4, intrinsics
+  backends with runtime dispatch, always `-O3`): ~2.3 GB/s single-threaded here.
   The editor's own `FileSignature` keeps its process-local `QuickContentHash`.
 - **Manifest.** `server/WorkspaceTree` decides the content set on the host (`git
   ls-files --cached --others --exclude-standard`, or the scanner's walk), lstat's
