@@ -10,7 +10,7 @@
 - [x] 2.1 Add `std::vector<NotificationAction>{label, ActionId, args}` to `NotificationService::Request` and `Notification`; reposting a keyed row replaces its actions in place
 - [x] 2.2 Compose button labels, truncation and rects in `RenderViewModelBuilder`; draw them in the notification render TU with no string materialization (render lints)
 - [x] 2.3 Hit-test and dispatch a click through the action executor; dismiss a transient row after its action unless the action opts out; keep a hovered row alive past expiry and give rows with actions a longer default lifetime
-- [ ] 2.4 Keyboard: focus the notification stack and move between buttons; Enter invokes
+- [x] 2.4 Keyboard: focus the notification stack and move between buttons; Enter invokes
 - [ ] 2.5 Control channel: list a row's actions and invoke one by label or id (`dev-docs/control/control-channel.md`)
 - [ ] 2.6 First consumers: `Show Output` on formatter failures, `Compare` on the external-change banner row if it is a notification, `Reload` where a reload is offered
 - [ ] 2.7 Tests: view-model tests for layout and truncation, a click-dispatch test, a control-channel invoke test, an allocation check in the perf-tests lane for the steady-state render

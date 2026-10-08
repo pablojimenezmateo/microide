@@ -856,6 +856,14 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
+          .focus_notifications =
+              [this]() {
+                if (!notification_service_.Focus()) {
+                  return false;
+                }
+                RequestWindowRedraw();
+                return true;
+              },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },

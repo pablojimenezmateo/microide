@@ -15,13 +15,14 @@
 
 namespace microide::workspace {
 
-KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state,
-                                         PromptState& prompts,
+KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state, PromptState& prompts,
                                          MenuSurfaceState& menu_state,
+                                         NotificationService& notifications,
                                          Operations operations)
     : state_(state),
       prompts_(prompts),
       menu_state_(menu_state),
+      notifications_(notifications),
       operations_(std::move(operations)) {}
 
 bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
@@ -77,6 +78,13 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
       ensure_redraw([this]() { operations_.request_prompt_redraw(); });
     }
     return handled;
+  }
+
+  // The notification stack, once focused (Focus Notifications), owns the keys it
+  // understands. After the prompt surface, so a palette opened over a focused
+  // toast still takes its typing.
+  if (HandleNotificationFocusKeyDown(event, modifiers)) {
+    return true;
   }
 
   // The Variables surface owns its keys while the debug pane holds focus so tree
@@ -662,6 +670,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
   }
   glue_->key_input_coordinator = std::make_unique<KeyInputCoordinator>(
       context_.current_project_state, context_.prompts, context_.menu_state,
+      notification_service_,
       KeyInputCoordinator::Operations{
           .has_pending_redraw = [this]() { return pending_render_invalidation_.HasAnyRedraw(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },

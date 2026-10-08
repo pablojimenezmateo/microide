@@ -10,6 +10,7 @@
 #include "workspace/git/CommitWorkflowState.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"
+#include "workspace/services/NotificationService.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceMenuState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
@@ -220,6 +221,7 @@ class KeyInputCoordinator {
   KeyInputCoordinator(ProjectWorkspaceState& state,
                       PromptState& prompts,
                       MenuSurfaceState& menu_state,
+                      NotificationService& notifications,
                       Operations operations);
 
   bool HandleKeyDown(const SDL_KeyboardEvent& event);
@@ -265,10 +267,15 @@ class KeyInputCoordinator {
   bool HandleDebugCallStackKeyDown(const SDL_KeyboardEvent& event);
   bool HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent& event);
   bool HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  // Keys while the notification stack holds keyboard focus (false at once when it
+  // does not). Returns true when the key was the stack's; any other key gives
+  // focus back and falls through.
+  bool HandleNotificationFocusKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
 
   ProjectWorkspaceState& state_;
   PromptState& prompts_;
   MenuSurfaceState& menu_state_;
+  NotificationService& notifications_;
   Operations operations_;
 };
 

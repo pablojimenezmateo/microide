@@ -183,6 +183,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::OpenCommandPalette:
       context_.OpenCommandPalette();
       return DispatchResult::Handled;
+    case ActionId::FocusNotifications:
+      if (!context_.FocusNotifications()) {
+        return reject("No notifications to focus");
+      }
+      return DispatchResult::Handled;
     case ActionId::OpenSettings:
       context_.OpenSettingsOverlay();
       return DispatchResult::Handled;

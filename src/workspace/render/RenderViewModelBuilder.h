@@ -63,6 +63,7 @@ struct NotificationButtonViewModel {
   float label_width = 0.0f;  // already clamped to the button's share of the row
   SDL_FRect rect{};
   bool hovered = false;
+  bool focused = false;  // keyboard focus: Enter runs this one
 };
 
 struct NotificationEntryViewModel {
@@ -74,6 +75,7 @@ struct NotificationEntryViewModel {
   std::optional<float> progress;
   NotificationToastLayout layout{};
   util::InlineVector<NotificationButtonViewModel, NotificationService::MaxActions()> buttons;
+  bool focused = false;  // the keyboard is on this row
 };
 
 // Every row the service can hold at once: the transient cap plus the sticky cap.

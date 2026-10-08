@@ -658,6 +658,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `format-json [path]`
 - `rename-symbol [new-name]`
 - `command-palette`
+- `focus-notifications`
 - `colorscheme [name|list]`
 - `toggle-theme`
 - `toggle-fullscreen`

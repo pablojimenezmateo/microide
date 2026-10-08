@@ -1006,6 +1006,47 @@ void TestWorkspaceShellNotificationActionButtonRunsItsAction() {
   Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).empty(),
          "a transient toast is dismissed after its action runs");
 }
+
+// The same buttons from the keyboard: Focus Notifications, move, Enter.
+void TestWorkspaceShellNotificationActionsReachableByKeyboard() {
+  using microide::workspace::ActionId;
+  using microide::workspace::NotificationService;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  std::string body;
+  for (int i = 0; i < 100; ++i) {
+    body += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  WriteFile(source, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "focus-notifications"),
+         "focusing an empty stack is refused");
+
+  NotificationService::Request request{.message = "formatter failed"};
+  request.actions.push_back({.label = "Go to 10", .id = ActionId::Goto, .args = {"10"}});
+  request.actions.push_back({.label = "Go to 42", .id = ActionId::Goto, .args = {"42"}});
+  WorkspaceShellTestAccess::ShowNotificationRequest(shell, std::move(request));
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "focus-notifications"),
+         "focus-notifications focuses the stack");
+  Expect(WorkspaceShellTestAccess::NotificationsVm(shell).entries[0].buttons[1].focused,
+         "the primary button is focused and the view model says so");
+
+  const std::size_t line_before =
+      WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line();
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_NONE), "Left is the stack's");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == line_before,
+         "an arrow on the focused stack does not move the caret");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter is the stack's");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).cursor_line() == 9,
+         "Enter ran the focused (first) button's Goto");
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).empty(),
+         "and the transient toast closed");
+}
 }  // namespace
 
 // Ctrl+Left/Right and Ctrl+Backspace/Delete must reach the editor as WORD verbs.
@@ -1138,6 +1179,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellNotificationToastIsClickable);
   AddTest(tests, "WorkspaceShell/NotificationActionButtonRunsItsAction",
           TestWorkspaceShellNotificationActionButtonRunsItsAction);
+  AddTest(tests, "WorkspaceShell/NotificationActionsReachableByKeyboard",
+          TestWorkspaceShellNotificationActionsReachableByKeyboard);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenBottomPanelHidesWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion);
   AddTest(tests, "WorkspaceShell/CursorRestoresAfterMouseLeave",

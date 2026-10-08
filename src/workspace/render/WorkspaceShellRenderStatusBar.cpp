@@ -126,6 +126,15 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
           text_renderer_.TruncateToWidthEphemeralView(button.label, button.label_width),
           i + 1 == entry.buttons.size() ? ButtonTone::Accent : ButtonTone::Neutral,
           ButtonVisualState{.enabled = true, .hovered = button.hovered, .active = false});
+      if (button.focused) {
+        OutlineRect(renderer,
+                    SDL_FRect{button.rect.x - 2.0f, button.rect.y - 2.0f, button.rect.w + 4.0f,
+                              button.rect.h + 4.0f},
+                    theme_.accent);
+      }
+    }
+    if (entry.focused) {
+      OutlineRect(renderer, toast.rect, theme_.accent);
     }
 
     if (entry.progress.has_value()) {

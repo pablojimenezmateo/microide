@@ -15,6 +15,9 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::RenameSymbol, "rename-symbol", "rename-symbol [new-name]", "Rename Symbol", "F2"},
       ActionSpec{ActionId::OpenCommandPalette, "command-palette", "command-palette",
                  "Command Palette…", "Ctrl+Shift+P"},
+      // No default chord, as in VS Code (notifications.focusToasts is unbound).
+      ActionSpec{ActionId::FocusNotifications, "focus-notifications", "focus-notifications",
+                 "Focus Notifications", ""},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
                  "Colorscheme", ""},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",

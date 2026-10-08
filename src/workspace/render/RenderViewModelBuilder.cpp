@@ -1701,6 +1701,7 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
         .progress = notification.progress.has_value()
                         ? std::optional<float>(std::clamp(*notification.progress, 0.0f, 1.0f))
                         : std::nullopt,
+        .focused = notification.focused,
     };
 
     // Buttons share the row evenly when their labels do not all fit, so one long
@@ -1733,6 +1734,7 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
           .label_width = label_widths[i],
           .rect = SDL_FRect{x, entry.layout.buttons.y, width, entry.layout.buttons.h},
           .hovered = notification.hovered_action == i,
+          .focused = notification.focused_action == i,
       });
       x += width + kNotificationButtonGap;
     }

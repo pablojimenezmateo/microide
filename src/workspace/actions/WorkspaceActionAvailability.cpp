@@ -115,6 +115,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleColorTheme:
     case ActionId::Files:
     case ActionId::OpenCommandPalette:
+    case ActionId::FocusNotifications:  // rejects with a message when there are none
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:

@@ -13,6 +13,10 @@ enum class ActionId {
   FormatJson,
   RenameSymbol,
   OpenCommandPalette,
+  // Move keyboard focus onto the notification stack (VS Code's "Focus Notification
+  // Toast"): arrows move between rows and buttons, Enter runs a button, Delete
+  // dismisses a row, Escape gives focus back.
+  FocusNotifications,
   Colorscheme,
   ToggleColorTheme,
   ToggleFullscreen,

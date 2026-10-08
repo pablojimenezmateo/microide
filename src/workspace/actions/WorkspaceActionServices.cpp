@@ -1356,6 +1356,10 @@ void WorkspaceActionContext::RequestLiveConfigRedraw() {
   }
 }
 
+bool WorkspaceActionContext::FocusNotifications() {
+  return operations_.focus_notifications && operations_.focus_notifications();
+}
+
 void WorkspaceActionContext::ToggleWindowFullscreen() {
   if (operations_.request_toggle_fullscreen) {
     operations_.request_toggle_fullscreen();

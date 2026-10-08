@@ -94,6 +94,11 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
             *existing.hovered_action >= existing.actions.size()) {
           existing.hovered_action.reset();
         }
+        if (existing.focused) {
+          existing.focused_action = existing.actions.empty()
+                                        ? std::nullopt
+                                        : std::optional<std::size_t>(existing.actions.size() - 1);
+        }
         return;
       }
     }
@@ -172,7 +177,7 @@ bool NotificationService::ExpireDue(std::uint64_t now_ms) {
       std::remove_if(notifications_.begin(), notifications_.end(),
                      [now_ms](const Notification& notification) {
                        return !notification.sticky && !notification.hovered &&
-                              notification.expiry_ms <= now_ms;
+                              !notification.focused && notification.expiry_ms <= now_ms;
                      }),
       notifications_.end());
   return notifications_.size() != before;
@@ -181,7 +186,7 @@ bool NotificationService::ExpireDue(std::uint64_t now_ms) {
 std::optional<std::uint64_t> NotificationService::NextExpiryDelayMs(std::uint64_t now_ms) const {
   std::optional<std::uint64_t> earliest;
   for (const Notification& notification : notifications_) {
-    if (notification.sticky || notification.hovered) {
+    if (notification.sticky || notification.hovered || notification.focused) {
       // Nothing to wake for: a sticky row ends when its owner says so, and a
       // hovered one when the pointer leaves (SetHovered re-arms its expiry).
       continue;
@@ -229,6 +234,101 @@ std::optional<NotificationService::Action> NotificationService::TakeAction(std::
     Dismiss(index);
   }
   return taken;
+}
+
+namespace {
+
+std::optional<std::size_t> PrimaryAction(const NotificationService::Notification& row) {
+  return row.actions.empty() ? std::nullopt
+                             : std::optional<std::size_t>(row.actions.size() - 1);
+}
+
+}  // namespace
+
+bool NotificationService::Focus() {
+  ClearFocus();
+  if (notifications_.empty()) {
+    return false;
+  }
+  Notification& newest = notifications_.back();
+  newest.focused = true;
+  newest.focused_action = PrimaryAction(newest);
+  return true;
+}
+
+bool NotificationService::HasFocus() const {
+  return std::any_of(notifications_.begin(), notifications_.end(),
+                     [](const Notification& n) { return n.focused; });
+}
+
+void NotificationService::ClearFocus() {
+  for (Notification& notification : notifications_) {
+    notification.focused = false;
+    notification.focused_action.reset();
+  }
+}
+
+NotificationService::FocusKeyResult NotificationService::HandleFocusKey(FocusKey key) {
+  const auto focused = std::find_if(notifications_.begin(), notifications_.end(),
+                                    [](const Notification& n) { return n.focused; });
+  if (focused == notifications_.end()) {
+    return {};
+  }
+  const std::size_t index = static_cast<std::size_t>(focused - notifications_.begin());
+  const auto move_to = [this](std::size_t from, std::size_t to) {
+    notifications_[from].focused = false;
+    notifications_[from].focused_action.reset();
+    notifications_[to].focused = true;
+    notifications_[to].focused_action = PrimaryAction(notifications_[to]);
+  };
+  Notification& row = *focused;
+  const std::size_t button_count = row.actions.size();
+  switch (key) {
+    case FocusKey::Older:
+      if (index == 0) {
+        return {};
+      }
+      move_to(index, index - 1);
+      return {.changed = true};
+    case FocusKey::Newer:
+      if (index + 1 >= notifications_.size()) {
+        return {};
+      }
+      move_to(index, index + 1);
+      return {.changed = true};
+    case FocusKey::Previous:
+    case FocusKey::Next: {
+      if (button_count < 2 || !row.focused_action.has_value()) {
+        return {};
+      }
+      const std::size_t current = *row.focused_action;
+      row.focused_action = key == FocusKey::Next ? (current + 1) % button_count
+                                                 : (current + button_count - 1) % button_count;
+      return {.changed = true};
+    }
+    case FocusKey::Activate: {
+      if (!row.focused_action.has_value()) {
+        return {};
+      }
+      // A transient row closes behind its action and takes the focus with it, so
+      // the keyboard goes back to where it was — as after a click on the button.
+      // A row that stays up (sticky, or keep_open) stays focused.
+      std::optional<Action> action = TakeAction(index, *row.focused_action);
+      return {.changed = true, .action = std::move(action)};
+    }
+    case FocusKey::Close:
+      Dismiss(index);
+      if (!notifications_.empty()) {
+        Notification& next = notifications_[std::min(index, notifications_.size() - 1)];
+        next.focused = true;
+        next.focused_action = PrimaryAction(next);
+      }
+      return {.changed = true};
+    case FocusKey::Leave:
+      ClearFocus();
+      return {.changed = true};
+  }
+  return {};
 }
 
 }  // namespace microide::workspace

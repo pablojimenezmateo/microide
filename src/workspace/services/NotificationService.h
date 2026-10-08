@@ -93,6 +93,26 @@ class NotificationService {
     bool hovered = false;
     // Index into `actions` of the button under the pointer.
     std::optional<std::size_t> hovered_action;
+    // Keyboard focus (see Focus): the row does not expire while focused, and
+    // `focused_action` is the button Enter runs.
+    bool focused = false;
+    std::optional<std::size_t> focused_action;
+  };
+
+  // Keys the focused stack understands, already translated from the platform's
+  // key events so the service stays free of any windowing library.
+  enum class FocusKey {
+    Older,     // Up: the row above
+    Newer,     // Down: the row below
+    Previous,  // Left / Shift+Tab: the previous button, wrapping
+    Next,      // Right / Tab: the next button, wrapping
+    Activate,  // Enter / Space: run the focused button
+    Close,     // Delete: dismiss the focused row, focus moves to its neighbour
+    Leave,     // Escape: give focus back, the toasts stay
+  };
+  struct FocusKeyResult {
+    bool changed = false;          // something a frame draws changed
+    std::optional<Action> action;  // Activate on a button: run this
   };
 
   // What a caller posts. The two-argument Show below covers the common case; this
@@ -151,6 +171,13 @@ class NotificationService {
   // dismiss rows. Dismisses a transient row unless the action keeps it open.
   // nullopt for a stale index.
   std::optional<Action> TakeAction(std::size_t index, std::size_t action);
+
+  // Keyboard focus on the stack (VS Code's "Focus Notification Toast"): the newest
+  // row, on its primary (last) button. False when there is nothing to focus.
+  bool Focus();
+  bool HasFocus() const;
+  void ClearFocus();
+  FocusKeyResult HandleFocusKey(FocusKey key);
 
   // Drop a single notification by its index in Active(). Out-of-range indices are
   // ignored, so a click resolved against a stale frame cannot corrupt the stack.

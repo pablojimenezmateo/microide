@@ -397,6 +397,55 @@ void TestNotificationServiceHoveredRowDoesNotExpire() {
          "it expires once the grace period passes");
 }
 
+// Keyboard focus (Focus Notifications): lands on the newest row's primary button,
+// arrows walk rows and buttons, Enter hands back the focused action, Delete
+// dismisses and moves to a neighbour, Escape leaves. A focused row does not expire.
+void TestNotificationServiceKeyboardFocus() {
+  using microide::workspace::ActionId;
+  using FocusKey = NotificationService::FocusKey;
+  NotificationService service;
+  Expect(!service.Focus(), "an empty stack cannot take focus");
+  service.Show(NotificationService::Request{.key = "older", .message = "older", .sticky = true}, 0);
+  NotificationService::Request request{.message = "newer"};
+  request.actions.push_back({.label = "A", .id = ActionId::Goto, .args = {"1"}});
+  request.actions.push_back({.label = "B", .id = ActionId::Goto, .args = {"2"}});
+  service.Show(std::move(request), 0);
+
+  Expect(service.Focus() && service.HasFocus(), "focus lands on the stack");
+  Expect(service.Active()[1].focused && service.Active()[1].focused_action == std::size_t{1},
+         "on the newest row's primary (last) button");
+  Expect(!service.ExpireDue(1'000'000) && service.Active().size() == 2,
+         "a focused row does not expire");
+
+  Expect(service.HandleFocusKey(FocusKey::Next).changed &&
+             service.Active()[1].focused_action == std::size_t{0},
+         "Next wraps to the first button");
+  Expect(service.HandleFocusKey(FocusKey::Previous).changed &&
+             service.Active()[1].focused_action == std::size_t{1},
+         "Previous wraps back");
+  Expect(!service.HandleFocusKey(FocusKey::Newer).changed, "nothing below the newest row");
+  Expect(service.HandleFocusKey(FocusKey::Older).changed && service.Active()[0].focused &&
+             !service.Active()[1].focused,
+         "Older moves up the stack");
+  Expect(!service.HandleFocusKey(FocusKey::Activate).action.has_value(),
+         "a row without buttons has nothing to activate");
+  Expect(service.HandleFocusKey(FocusKey::Newer).changed, "back down");
+
+  const auto activated = service.HandleFocusKey(FocusKey::Activate);
+  Expect(activated.action.has_value() && activated.action->args.at(0) == "2",
+         "Enter returns the focused button's action");
+  Expect(service.Active().size() == 1 && !service.HasFocus(),
+         "the transient row closed behind its action and took the focus with it");
+
+  Expect(service.Focus(), "refocus");
+  Expect(service.HandleFocusKey(FocusKey::Close).changed && service.Empty() && !service.HasFocus(),
+         "Delete dismisses the focused row");
+  service.Show(NotificationService::Tone::Info, "x", 0);
+  Expect(service.Focus() && service.HandleFocusKey(FocusKey::Leave).changed && !service.HasFocus() &&
+             service.Active().size() == 1,
+         "Escape gives focus back and keeps the row");
+}
+
 }  // namespace
 
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
@@ -432,6 +481,7 @@ void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
           TestNotificationServiceTakeActionDismissRules);
   AddTest(tests, "NotificationService/HoveredRowDoesNotExpire",
           TestNotificationServiceHoveredRowDoesNotExpire);
+  AddTest(tests, "NotificationService/KeyboardFocus", TestNotificationServiceKeyboardFocus);
   AddTest(tests, "NotificationService/ToastWidthScalesWithWindow",
           TestNotificationToastWidthScalesWithWindow);
 }

@@ -1,6 +1,7 @@
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -225,6 +226,55 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
     default:
       return true;
   }
+}
+
+bool KeyInputCoordinator::HandleNotificationFocusKeyDown(const SDL_KeyboardEvent& event,
+                                                         SDL_Keymod modifiers) {
+  if (!notifications_.HasFocus()) {
+    return false;
+  }
+  using FocusKey = NotificationService::FocusKey;
+  std::optional<FocusKey> key;
+  switch (event.key) {
+    case SDLK_UP: key = FocusKey::Older; break;
+    case SDLK_DOWN: key = FocusKey::Newer; break;
+    case SDLK_LEFT: key = FocusKey::Previous; break;
+    case SDLK_RIGHT: key = FocusKey::Next; break;
+    case SDLK_TAB:
+      key = (modifiers & SDL_KMOD_SHIFT) != 0 ? FocusKey::Previous : FocusKey::Next;
+      break;
+    case SDLK_RETURN:
+    case SDLK_KP_ENTER:
+    case SDLK_SPACE: key = FocusKey::Activate; break;
+    case SDLK_DELETE: key = FocusKey::Close; break;
+    case SDLK_ESCAPE: key = FocusKey::Leave; break;
+    case SDLK_LSHIFT:
+    case SDLK_RSHIFT:
+    case SDLK_LCTRL:
+    case SDLK_RCTRL:
+    case SDLK_LALT:
+    case SDLK_RALT:
+    case SDLK_LGUI:
+    case SDLK_RGUI:
+      return true;  // a bare modifier is the start of a chord, not a reason to leave
+    default:
+      break;
+  }
+  if (!key.has_value()) {
+    // VS Code gives focus back on any other key and lets it through, so typing
+    // after glancing at a toast still types.
+    notifications_.ClearFocus();
+    EnsureRedraw([this]() { operations_.request_window_redraw(); });
+    return false;
+  }
+  NotificationService::FocusKeyResult result = notifications_.HandleFocusKey(*key);
+  if (result.action.has_value()) {
+    operations_.execute_action(result.action->id, result.action->args, ActionSource::Command);
+  }
+  if (result.changed) {
+    EnsureRedraw([this]() { operations_.request_window_redraw(); });
+  }
+  return true;
 }
 
 }  // namespace microide::workspace
