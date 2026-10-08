@@ -50,6 +50,7 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   void Send(const terminal::TerminalInputEvent& event) override;
   void Resize(std::size_t rows, std::size_t columns) override;
   void Close() override;
+  std::optional<std::chrono::milliseconds> RoundTrip() const override;
 
   // The host's handle; 0 until term/open answers.
   std::uint64_t handle() const;

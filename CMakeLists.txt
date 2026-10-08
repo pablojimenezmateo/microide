@@ -319,6 +319,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/terminal/TerminalSession.cpp
   src/terminal/TerminalHostFrameBuilder.cpp
   src/terminal/TerminalHostWire.cpp
+  src/terminal/TerminalPredictionOverlay.cpp
   src/terminal/TerminalSessionCsi.cpp
   src/terminal/TerminalSessionHost.cpp
   src/terminal/TerminalSessionInput.cpp

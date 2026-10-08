@@ -70,9 +70,10 @@ struct Mirror {
 
   void Write(std::string_view bytes) { TerminalSessionTestAccess::AppendOutput(host, bytes); }
 
-  bool Sync(std::size_t budget = 1u << 30) {
+  bool Sync(std::size_t budget = 1u << 30, std::uint64_t echo_ack = 0) {
     host.CaptureForHost(builder.capture_from(), builder.capture_lines_before_screen(500), capture);
     builder.Build(capture, budget, frame);
+    frame.echo_ack = echo_ack;
     std::string wire;
     EncodeTerminalHostFrame(wire, frame);
     last_frame_bytes = wire.size();
@@ -377,6 +378,140 @@ void TestHostModeInputBecomesSemanticEvents() {
   Expect(mirror.channel->closed, "stopping a host terminal closes it on the host");
 }
 
+void Type(TerminalSession& session, char32_t codepoint) {
+  TerminalSession::KeyPress press;
+  press.key = TerminalSession::KeyPress::Key::Char;
+  press.codepoint = codepoint;
+  (void)session.SendKeyPress(press);
+}
+
+std::string CursorLineText(const TerminalSession& session) {
+  const std::vector<TerminalLine> lines = session.SnapshotLines();
+  return session.cursor_row() < lines.size() ? LineText(lines[session.cursor_row()]) : "";
+}
+
+bool UnderlinedAt(const TerminalSession& session, std::size_t column) {
+  const std::vector<TerminalLine> lines = session.SnapshotLines();
+  if (session.cursor_row() >= lines.size() || column >= lines[session.cursor_row()].cells.size()) {
+    return false;
+  }
+  return lines[session.cursor_row()].cells[column].style.underline();
+}
+
+// A typed glyph is drawn, underlined, before any frame; the frame that confirms it
+// replaces it with exactly the host's cell — nothing left over.
+void TestPredictionIsDrawnThenConfirmed() {
+  Mirror mirror(4, 20);
+  mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+  mirror.Write("$ ");
+  Expect(mirror.Sync(), "sync");
+  Type(mirror.client, U'a');
+  Type(mirror.client, U'b');
+  Expect(CursorLineText(mirror.client) == "$ ab", "both glyphs are drawn in the keystroke's frame");
+  Expect(UnderlinedAt(mirror.client, 2) && UnderlinedAt(mirror.client, 3), "underlined while pending");
+  Expect(mirror.client.cursor_column() == 4, "the cursor moves with the prediction");
+  mirror.Write("a");
+  Expect(mirror.Sync(1u << 30, /*echo_ack=*/1), "the first echo arrives");
+  Expect(CursorLineText(mirror.client) == "$ ab", "the second is still drawn after the first is confirmed");
+  Expect(!UnderlinedAt(mirror.client, 2) && UnderlinedAt(mirror.client, 3),
+         "the confirmed glyph is the host's, the pending one still underlined");
+  mirror.Write("b");
+  Expect(mirror.Sync(1u << 30, 2), "the second echo arrives");
+  mirror.ExpectSame("after both echoes, the screen is exactly the host's");
+  Expect(mirror.client.PendingPredictions() == 0, "nothing is pending");
+}
+
+// A password prompt does not echo: the glyph is gone with the frame that covers
+// it, and nothing more is drawn until a prediction is confirmed again.
+void TestContradictedPredictionIsGoneAndSuppressesTheNext() {
+  Mirror mirror(4, 20);
+  mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+  mirror.Write("Password: ");
+  Expect(mirror.Sync(), "sync");
+  Type(mirror.client, U's');
+  Expect(CursorLineText(mirror.client) == "Password: s", "drawn before the host answers");
+  Expect(mirror.Sync(1u << 30, 1), "the frame covering it arrives, unchanged");
+  mirror.ExpectSame("the contradicted glyph is gone within the round trip");
+  Type(mirror.client, U'e');
+  mirror.ExpectSame("after a contradiction nothing is drawn");
+  // The program starts echoing again (the password was accepted, a shell prompt).
+  mirror.Write("\r\n$ x");
+  Expect(mirror.Sync(1u << 30, 2), "a frame covering the undrawn 'e'");
+  mirror.ExpectSame("still nothing drawn: 'e' was never echoed");
+  Type(mirror.client, U'y');
+  mirror.ExpectSame("'y' is tracked but not drawn");
+  mirror.Write("y");
+  Expect(mirror.Sync(1u << 30, 3), "'y' echoes where it was predicted");
+  Type(mirror.client, U'z');
+  Expect(CursorLineText(mirror.client) == "$ xyz", "a confirmed prediction lifts the suppression");
+}
+
+void TestNothingIsPredictedWhereThePositionIsUnknown() {
+  {
+    Mirror mirror(3, 6);
+    mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+    mirror.Write("abcde");
+    Expect(mirror.Sync(), "sync");
+    Type(mirror.client, U'f');
+    mirror.ExpectSame("nothing at the right margin");
+  }
+  {
+    Mirror mirror(3, 20);
+    mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+    mirror.Write("$ \x1b[?25l");
+    Expect(mirror.Sync(), "sync");
+    Type(mirror.client, U'a');
+    mirror.ExpectSame("nothing while the cursor is hidden");
+  }
+  {
+    Mirror mirror(3, 20);
+    mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+    mirror.Write("\x1b[?1049h~");
+    Expect(mirror.Sync(), "sync");
+    Type(mirror.client, U'a');
+    mirror.ExpectSame("nothing on the alternate screen");
+  }
+  {
+    Mirror mirror(3, 20);
+    mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+    mirror.Write("$ ");
+    Expect(mirror.Sync(), "sync");
+    TerminalSession::KeyPress enter;
+    enter.key = TerminalSession::KeyPress::Key::Enter;
+    (void)mirror.client.SendKeyPress(enter);
+    Type(mirror.client, U'a');
+    mirror.ExpectSame("nothing after a control key until the host has answered it");
+    mirror.Write("\r\n$ ");
+    Expect(mirror.Sync(1u << 30, 1), "the host answers the Enter");
+    Type(mirror.client, U'b');
+    Expect(CursorLineText(mirror.client) == "$ b", "predicting resumes once it has");
+  }
+  {
+    Mirror mirror(3, 20);  // the default: adaptive, and no round trip measured
+    mirror.Write("$ ");
+    Expect(mirror.Sync(), "sync");
+    Type(mirror.client, U'a');
+    mirror.ExpectSame("adaptive draws nothing without a slow round trip");
+  }
+}
+
+// The host enters the alternate screen between two predicted keystrokes: the
+// confirmed frame is applied byte for byte, with no predicted cell left over.
+void TestModeChangeDuringABurstLeavesTheConfirmedScreenExact() {
+  Mirror mirror(4, 20);
+  mirror.client.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+  mirror.Write("$ ");
+  Expect(mirror.Sync(), "sync");
+  Type(mirror.client, U'v');
+  Type(mirror.client, U'i');
+  mirror.Write("v\x1b[?1049h\x1b[H\x1b[2J~\r\n~");
+  Expect(mirror.Sync(1u << 30, 2), "the frame that switched screens");
+  mirror.ExpectSame("the alternate screen exactly as the host has it");
+  mirror.Write("\x1b[?1049l");
+  Expect(mirror.Sync(1u << 30, 2), "back to the primary screen");
+  mirror.ExpectSame("the primary screen exactly as the host has it");
+}
+
 }  // namespace
 
 void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
@@ -392,6 +527,13 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
           TestCreditWindowWithholdsScrollbackAsOneCountedGap);
   AddTest(tests, "TerminalHost/HostModeInputBecomesSemanticEvents",
           TestHostModeInputBecomesSemanticEvents);
+  AddTest(tests, "TerminalHost/PredictionIsDrawnThenConfirmed", TestPredictionIsDrawnThenConfirmed);
+  AddTest(tests, "TerminalHost/ContradictedPredictionIsGoneAndSuppressesTheNext",
+          TestContradictedPredictionIsGoneAndSuppressesTheNext);
+  AddTest(tests, "TerminalHost/NothingIsPredictedWhereThePositionIsUnknown",
+          TestNothingIsPredictedWhereThePositionIsUnknown);
+  AddTest(tests, "TerminalHost/ModeChangeDuringABurstLeavesTheConfirmedScreenExact",
+          TestModeChangeDuringABurstLeavesTheConfirmedScreenExact);
 }
 
 }  // namespace microide::tests

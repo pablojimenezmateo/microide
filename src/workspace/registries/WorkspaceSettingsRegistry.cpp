@@ -19,6 +19,12 @@ const SettingEnumValue kColorschemeValues[] = {
     {"default", "Default"},
 };
 
+const SettingEnumValue kRemotePredictValues[] = {
+    {"adaptive", "Adaptive"},
+    {"always", "Always"},
+    {"never", "Never"},
+};
+
 const SettingEnumValue kEditorWrapValues[] = {
     {"off", "Off"},
     {"word", "Word"},
@@ -407,6 +413,18 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_string = {},
           .enum_values = {},
           .group = "Terminal",
+      },
+      SettingSpec{
+          .id = "remote.predict",
+          .label = "Predict Typed Characters on Host Terminals",
+          .description = "Draw typed characters (underlined) before a host terminal echoes them, "
+                         "mosh-style; a wrong guess is gone within a round trip. Adaptive predicts "
+                         "only while the round trip exceeds 30 ms.",
+          .type = SettingType::Enum,
+          .scope = SettingScope::User,
+          .default_string = "adaptive",
+          .enum_values = kRemotePredictValues,
+          .group = "Remote",
       },
       SettingSpec{
           .id = "terminal.osc52_clipboard_write",

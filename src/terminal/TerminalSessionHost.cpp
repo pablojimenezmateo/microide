@@ -102,6 +102,28 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
   return channel != nullptr;
 }
 
+TerminalPredictionOverlay::View TerminalSession::PredictionViewLocked() {
+  return TerminalPredictionOverlay::View{.lines = lines_,
+                                         .cursor_row = cursor_row_,
+                                         .cursor_column = cursor_column_,
+                                         .columns = std::max<std::size_t>(1, columns_),
+                                         .cursor_visible = cursor_visible_,
+                                         .alternate_screen = use_alternate_screen_};
+}
+
+void TerminalSession::SetPredictionMode(TerminalPredictionOverlay::Mode mode) {
+  std::scoped_lock lock(mutex_);
+  if (mode == TerminalPredictionOverlay::Mode::Never && prediction_.Withdraw(PredictionViewLocked())) {
+    AdvanceSnapshotGenerationLocked();
+  }
+  prediction_.set_mode(mode);
+}
+
+std::size_t TerminalSession::PendingPredictions() const {
+  std::scoped_lock lock(mutex_);
+  return prediction_.pending();
+}
+
 bool TerminalSession::SendToHost(TerminalInputEvent event) {
   std::shared_ptr<TerminalHostChannel> channel;
   {
@@ -112,7 +134,23 @@ bool TerminalSession::SendToHost(TerminalInputEvent event) {
     channel = host_channel_;
     event.seq = next_input_seq_++;
   }
+  // Sent first: the prediction is drawn in this frame either way, and the host
+  // should not wait on the overlay.
   channel->Send(event);
+  bool predicted = false;
+  {
+    std::scoped_lock lock(mutex_);
+    if (host_channel_ == channel) {
+      prediction_.set_round_trip(channel->RoundTrip());
+      predicted = prediction_.Typed(event, PredictionViewLocked());
+      if (predicted) {
+        AdvanceSnapshotGenerationLocked();
+      }
+    }
+  }
+  if (predicted) {
+    PushWakeEvent();
+  }
   return true;
 }
 
@@ -123,8 +161,11 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     if (host_channel_ == nullptr) {
       return true;  // stopped: a late frame has nothing to apply to
     }
+    // Predictions out first: Keep and Promote name CONFIRMED lines.
+    prediction_.Withdraw(PredictionViewLocked());
     const bool alternate = frame.has(TerminalHostFrame::kAlternateScreen);
     if (frame.has(TerminalHostFrame::kReset)) {
+      prediction_.Clear();
       // A cold attach: nothing held is valid, scrollback included.
       lines_.clear();
       host_screen_lines_ = 0;
@@ -244,6 +285,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     if (frame.clipboard) {
       pending_clipboard_text_ = std::move(*frame.clipboard);
     }
+    prediction_.Judge(frame.echo_ack, PredictionViewLocked());
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();
@@ -257,6 +299,8 @@ void TerminalSession::HostConnectionLost(std::string_view reason) {
       return;
     }
     running_ = false;
+    prediction_.Withdraw(PredictionViewLocked());
+    prediction_.Clear();
     const std::string text = "[connection to the host lost: " + std::string(reason) + "]";
     TerminalLine line;
     for (const char c : text) {

@@ -95,6 +95,14 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Attach(
   return id == 0 ? nullptr : channel;
 }
 
+std::optional<std::chrono::milliseconds> RemoteTerminalChannel::RoundTrip() const {
+  const std::optional<std::int64_t> rtt = client_->peer().rtt_ms();
+  if (!rtt.has_value()) {
+    return std::nullopt;
+  }
+  return std::chrono::milliseconds(*rtt);
+}
+
 std::uint64_t RemoteTerminalChannel::handle() const {
   std::lock_guard lock(mutex_);
   return handle_;

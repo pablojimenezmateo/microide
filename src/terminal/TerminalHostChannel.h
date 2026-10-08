@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
+#include <optional>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -29,6 +31,9 @@ class TerminalHostChannel {
   // Close the terminal on the host and stop delivering frames. When this returns
   // no frame is being applied and none will be.
   virtual void Close() = 0;
+  // The link's measured round trip, for adaptive echo prediction; nullopt until
+  // one has been measured.
+  virtual std::optional<std::chrono::milliseconds> RoundTrip() const { return std::nullopt; }
 };
 
 // A launcher whose shells run on ANOTHER machine also implements this, the way

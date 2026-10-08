@@ -235,6 +235,8 @@ void TerminalSession::Stop() {
   if (host_channel) {
     host_channel->Close();
     std::scoped_lock lock(mutex_);
+    prediction_.Withdraw(PredictionViewLocked());
+    prediction_.Clear();
     host_channel_.reset();
     host_primary_stash_.clear();
   }

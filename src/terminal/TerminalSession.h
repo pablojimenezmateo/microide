@@ -6,6 +6,7 @@
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalHostWire.h"
 #include "terminal/TerminalInput.h"
+#include "terminal/TerminalPredictionOverlay.h"
 #include "terminal/TerminalLineBufferPool.h"
 #include "terminal/TerminalSearch.h"
 #include "util/KeyModifiers.h"
@@ -185,6 +186,10 @@ class TerminalSession {
   // The connection carrying this terminal went away (not the shell): it is shown
   // as ended until it reattaches.
   void HostConnectionLost(std::string_view reason);
+  // Local echo prediction for host terminals (`remote.predict`).
+  void SetPredictionMode(TerminalPredictionOverlay::Mode mode);
+  // Pending predictions not yet confirmed by the host; for tests and diagnostics.
+  std::size_t PendingPredictions() const;
 
   // Server side. One consistent capture under the session lock: the frame header
   // (flags, cursor, title, working directory; consumes a pending OSC 52 write and
@@ -435,6 +440,8 @@ class TerminalSession {
   std::deque<TerminalLine> host_primary_stash_;
   std::size_t host_primary_stash_screen_lines_ = 0;
   std::function<void()> output_observer_;
+  TerminalPredictionOverlay prediction_;
+  TerminalPredictionOverlay::View PredictionViewLocked();
 
   friend struct ::microide::tests::TerminalSessionTestAccess;
 };

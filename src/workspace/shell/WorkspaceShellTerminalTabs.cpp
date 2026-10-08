@@ -37,6 +37,8 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
     }
     pane.session.SetMaxScrollbackLines(
         ResolvedScrollbackLines(GetSettingValue("terminal.scrollback_lines")));
+    pane.session.SetPredictionMode(terminal::TerminalPredictionOverlay::ParseMode(
+        GetSettingValue("remote.predict").value_or("adaptive")));
     pane.launch_working_directory = cwd;
     pane.launch_command = command;
     return terminal::UsePlaceholderTerminalsForTesting()
