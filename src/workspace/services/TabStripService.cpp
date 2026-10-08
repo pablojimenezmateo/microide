@@ -447,6 +447,42 @@ bool TabStripService::ScrollEditorTabStrip(EditorGroup& group, std::size_t group
   return false;
 }
 
+namespace {
+
+// Whether the panel holds terminals on a host and terminals on this machine side
+// by side: only then does a label need to say where its shell runs.
+bool TerminalsAreMixed(const ProjectWorkspaceState& state) {
+  bool host = false;
+  bool local = false;
+  for (const auto& terminal_tab : state.terminal_tabs) {
+    const TerminalPaneState* pane = terminal_tab != nullptr ? terminal_tab->active() : nullptr;
+    if (pane != nullptr) {
+      (pane->session.is_host_terminal() ? host : local) = true;
+    }
+  }
+  return host && local;
+}
+
+// A terminal tab's label prefix: its own (a host terminal opened from Remote: Open
+// Terminal on Host…), else — while host and local terminals are mixed — `local · `
+// or the project's host.
+std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane,
+                                bool mixed) {
+  if (!pane.label_prefix.empty() || !mixed) {
+    return pane.label_prefix;
+  }
+  if (!pane.session.is_host_terminal()) {
+    return "local \xc2\xb7 ";
+  }
+  std::string_view host = state.launcher().description();
+  if (host.rfind("ssh ", 0) == 0) {
+    host.remove_prefix(4);
+  }
+  return std::string(host) + " \xc2\xb7 ";
+}
+
+}  // namespace
+
 std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     const ProjectWorkspaceState& state,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
@@ -464,6 +500,10 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     const TerminalPaneState* pane = terminal_tab->active();
     hash = HashMix(hash, pane != nullptr ? std::string_view{pane->session.LaunchLabel()}
                                          : std::string_view{});
+    // Where it runs and its own prefix shape the label too (TerminalLabelPrefix).
+    hash = HashMix(hash, pane != nullptr ? std::string_view{pane->label_prefix} : std::string_view{});
+    hash = HashMix(hash, pane != nullptr && pane->session.is_host_terminal() ? std::uint64_t{1}
+                                                                            : std::uint64_t{0});
     // The activity dot is part of the model: it is painted from the strip tab.
     hash = HashMix(hash, terminal_tab->has_unseen_output ? std::uint64_t{1} : std::uint64_t{0});
   }
@@ -505,6 +545,7 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
 
   std::vector<BottomPanelTabModel> tabs;
   tabs.reserve(state.terminal_tabs.size() + state.panel.output.open_channel_ids.size() + 1);
+  const bool mixed = TerminalsAreMixed(state);
 
   for (std::size_t i = 0; i < state.terminal_tabs.size(); ++i) {
     const TerminalTabState* terminal_tab = state.terminal_tabs[i].get();
@@ -517,7 +558,7 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
     if (label.empty()) {
       label = "Terminal";
     }
-    label.insert(0, pane->label_prefix);
+    label.insert(0, TerminalLabelPrefix(state, *pane, mixed));
     tabs.push_back(BottomPanelTabModel{
         .kind = BottomPanelTabKind::Terminal,
         .terminal_index = i,
@@ -695,6 +736,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
   widths.reserve(state.terminal_tabs.size());
   display_titles.reserve(state.terminal_tabs.size());
   tooltip_labels.reserve(state.terminal_tabs.size());
+  const bool mixed = TerminalsAreMixed(state);
   for (std::size_t i = 0; i < state.terminal_tabs.size(); ++i) {
     const TerminalTabState* terminal_tab = state.terminal_tabs[i].get();
     const TerminalPaneState* pane = terminal_tab != nullptr ? terminal_tab->active() : nullptr;
@@ -706,7 +748,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(
     if (label.empty()) {
       label = "Terminal";
     }
-    label.insert(0, pane->label_prefix);
+    label.insert(0, TerminalLabelPrefix(state, *pane, mixed));
     terminal_indices.push_back(i);
     display_titles.push_back(label);
     tooltip_labels.push_back(label);

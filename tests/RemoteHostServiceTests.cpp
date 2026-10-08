@@ -106,6 +106,42 @@ void TestOpenTerminalOnHostFromTheCommand() {
   }
 }
 
+// With a host terminal and a local one side by side, every tab says where its
+// shell runs: `local · ` on the local one, the host on the host one.
+void RemoveFakeMaster(const std::string& target);
+
+void TestMixedTerminalsSayWhereTheyRun() {
+  FakeSshHost host;
+  TemporaryDirectory project;
+  WorkspaceShell shell;
+  std::string ssh;
+  for (const std::string& word : host.SshArgv()) {
+    ssh += (ssh.empty() ? "" : " ") + word;
+  }
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh), "ssh seam");
+  Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, project.path(), {}), "a local project");
+  if (WorkspaceShellTestAccess::TerminalTabCount(shell) == 0) {
+    WorkspaceShellTestAccess::ExecuteCommandLine(shell, "terminal");
+  }
+  const std::size_t local_tabs = WorkspaceShellTestAccess::TerminalTabCount(shell);
+  Expect(local_tabs >= 1, "a local terminal is open");
+  const auto titles = [&] { return WorkspaceShellTestAccess::BottomPanelTerminalLabels(shell); };
+  Expect(titles()[0].rfind("local", 0) != 0, "alone, a local terminal carries no prefix: " + titles()[0]);
+  const std::string target = "dev@fake-mixed-" + std::to_string(::getpid());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal " + target), "host terminal");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::TerminalTabCount(shell) == local_tabs + 1;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(5)),
+         "the host terminal opens");
+  const auto all = titles();
+  Expect(all[0].rfind("local \xc2\xb7 ", 0) == 0 && all.back().rfind(target + " \xc2\xb7 ", 0) == 0,
+         "mixed, each says where it runs: '" + all[0] + "' / '" + all.back() + "'");
+  RemoveFakeMaster(target);
+}
+
 void RemoveFakeMaster(const std::string& target) {
   if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr) {
     const std::filesystem::path control = std::filesystem::path(runtime) / "microide-ssh" /
@@ -279,6 +315,7 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);
+  AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
 #else

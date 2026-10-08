@@ -451,6 +451,17 @@
     }
     return {};
   }
+  // The terminal tabs' labels as the bottom panel models them (no layout needed).
+  static std::vector<std::string> BottomPanelTerminalLabels(WorkspaceShell& shell) {
+    std::vector<std::string> labels;
+    for (const BottomPanelTabModel& tab : shell.tab_strip_service_.BuildBottomPanelTabs(
+             shell.context_.current_project_state, shell.output_channels_.Channels())) {
+      if (tab.kind == BottomPanelTabKind::Terminal) {
+        labels.push_back(tab.label);
+      }
+    }
+    return labels;
+  }
   static std::vector<std::string> BottomPanelTabDisplayTitles(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =

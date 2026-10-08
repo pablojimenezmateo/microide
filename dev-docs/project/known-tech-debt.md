@@ -550,9 +550,9 @@ From Phase 2a group 8: ~~no Show Log action~~ (done 2026-10-08: `remote-show-log
 row once per host with a Copy Fix Command button for `loginctl enable-linger`), `remote.server_socket_dir` and
 `remote.backfill_inflight_bytes` are not registered because nothing reads them
 yet, the hello does not echo the effective settings (task 4.5), BEL from a host
-terminal is not surfaced (nor from a local one, active-work § 3), and a LOCAL
-terminal is not titled `local · …` while host terminals are open (only host tabs
-carry their prefix). Packaging (a static musl `microide-server` per architecture
+terminal is not surfaced (nor from a local one, active-work § 3), and ~~a LOCAL
+terminal is not titled `local · …` while host terminals are open~~ (done
+2026-10-08: a mixed panel prefixes every tab with where it runs). Packaging (a static musl `microide-server` per architecture
 inside the `.deb`) is release work; until then install ships the binary beside
 the executable, which is the build's own architecture.
 
