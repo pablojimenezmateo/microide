@@ -10,6 +10,9 @@ namespace {
 
 using LocalState = MirrorStore::LocalState;
 
+// Backfill fetches on the wire at once (§ 6.3's pull concurrency).
+constexpr std::size_t kMaxPullsInFlight = 4;
+
 // A pushed file's local bytes are read whole; past this, the push is refused rather
 // than holding the editor's largest buffers twice in memory.
 constexpr std::uint64_t kMaxPushBytes = 256u * 1024 * 1024;
@@ -22,6 +25,7 @@ MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& stor
       store_(store),
       options_(options),
       callbacks_(std::move(callbacks)),
+      alive_(std::make_shared<Alive>(this)),
       queue_(util::SerialWorkQueue::StartMode::kEager,
              util::SerialWorkQueue::Hooks{
                  .on_enqueue =
@@ -44,6 +48,11 @@ void MirrorSyncEngine::Flush() {
 }
 
 MirrorSyncEngine::~MirrorSyncEngine() {
+  {
+    // A fetch completing from now on finds no engine.
+    std::lock_guard lock(alive_->mutex);
+    alive_->engine = nullptr;
+  }
   queue_.Shutdown();
 }
 
@@ -562,8 +571,7 @@ void MirrorSyncEngine::SyncNow() {
     SaveLocked();
   }
   Changed();
-  Execute(std::move(plan));
-  queue_.Post([this]() {
+  Execute(std::move(plan), [this]() {
     {
       std::lock_guard lock(mutex_);
       status_.syncing = false;
@@ -601,11 +609,11 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
       SaveLocked();
     }
     Changed();
-    Execute(std::move(plan));
+    Execute(std::move(plan), {});
   });
 }
 
-void MirrorSyncEngine::Execute(Plan plan) {
+void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   DeleteNow(plan.deletes);
   std::vector<std::string> changed_paths;
   for (const auto& [path, target] : plan.links) {
@@ -619,28 +627,80 @@ void MirrorSyncEngine::Execute(Plan plan) {
   if (!changed_paths.empty() && callbacks_.materialized) {
     callbacks_.materialized(changed_paths);
   }
-  // Pulls in batches, each its own job, so a Prioritize() posted meanwhile runs
-  // between two batches instead of after all of them.
+  // The journal's pushes first: they are the user's saves.
+  for (std::string& path : plan.pushes) {
+    queue_.Post([this, path = std::move(path)]() { PushNow(path); });
+  }
+  // Pulls in batches, kMaxPullsInFlight requests on the wire at once (one round
+  // trip per batch, overlapped), each batch's disk writes a job of its own so a
+  // Prioritize() posted meanwhile runs between two of them.
+  auto pipeline = std::make_shared<PullPipeline>();
+  pipeline->on_drained = std::move(on_done);
   std::vector<PullItem> batch;
   std::uint64_t batch_bytes = 0;
-  const auto post_batch = [&]() {
-    if (!batch.empty()) {
-      queue_.Post([this, items = std::move(batch)]() mutable { PullNow(std::move(items), Lane::Bulk); });
-      batch.clear();
-      batch_bytes = 0;
-    }
-  };
   for (PullItem& item : plan.pulls) {
     if (!batch.empty() && (batch.size() >= options_.pull_batch_files ||
                            batch_bytes + item.size > options_.pull_batch_bytes)) {
-      post_batch();
+      pipeline->batches.push_back(std::move(batch));
+      batch.clear();
+      batch_bytes = 0;
     }
     batch_bytes += item.size;
     batch.push_back(std::move(item));
   }
-  post_batch();
-  for (std::string& path : plan.pushes) {
-    queue_.Post([this, path = std::move(path)]() { PushNow(path); });
+  if (!batch.empty()) {
+    pipeline->batches.push_back(std::move(batch));
+  }
+  LaunchPulls(pipeline);
+}
+
+void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline) {
+  if (pipeline->batches.empty() && pipeline->in_flight == 0) {
+    if (pipeline->on_drained) {
+      // Behind every job the batches posted.
+      queue_.Post(std::exchange(pipeline->on_drained, {}));
+    }
+    return;
+  }
+  while (pipeline->in_flight < kMaxPullsInFlight && !pipeline->batches.empty()) {
+    std::vector<std::string> paths;
+    for (PullItem& item : pipeline->batches.front()) {
+      paths.push_back(std::move(item.path));
+    }
+    pipeline->batches.pop_front();
+    ++pipeline->in_flight;
+    BeginExternalWork();
+    workspace_.FetchObjects(
+        std::move(paths), Lane::Bulk,
+        [alive = alive_, pipeline](std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
+                                   std::string error) {
+          // The connection's I/O thread, possibly after the engine is gone: hand the
+          // disk work to the worker if there still is one.
+          std::lock_guard lock(alive->mutex);
+          MirrorSyncEngine* engine = alive->engine;
+          if (engine == nullptr) {
+            return;
+          }
+          engine->queue_.Post([engine, pipeline, objects = std::move(objects),
+                               error = std::move(error)]() mutable {
+            engine->ApplyFetched(std::move(objects), error);
+            --pipeline->in_flight;
+            engine->LaunchPulls(pipeline);
+          });
+          engine->EndExternalWork();
+        });
+  }
+}
+
+void MirrorSyncEngine::BeginExternalWork() {
+  std::lock_guard lock(idle_mutex_);
+  ++outstanding_;
+}
+
+void MirrorSyncEngine::EndExternalWork() {
+  std::lock_guard lock(idle_mutex_);
+  if (--outstanding_ == 0) {
+    idle_cv_.notify_all();
   }
 }
 
@@ -653,6 +713,11 @@ void MirrorSyncEngine::PullNow(std::vector<PullItem> items, Lane lane) {
   std::string error;
   std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
       workspace_.FetchObjectsSync(paths, lane, &error);
+  ApplyFetched(std::move(objects), error);
+}
+
+void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
+                                    const std::string& error) {
   if (!objects.has_value()) {
     {
       std::lock_guard lock(mutex_);

@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <deque>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -150,7 +152,19 @@ class MirrorSyncEngine {
                              Plan& plan);
   void HoldMassDeleteLocked(Plan& plan, std::size_t previously_remote);
   std::size_t RemoteCountLocked() const;
-  void Execute(Plan plan);
+  // `on_done` runs on the worker once every pull of the plan has landed.
+  void Execute(Plan plan, std::function<void()> on_done);
+  struct PullPipeline {  // worker thread only
+    std::deque<std::vector<PullItem>> batches;
+    std::size_t in_flight = 0;
+    std::function<void()> on_drained;
+  };
+  void LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline);
+  void ApplyFetched(std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
+                    const std::string& error);
+  // Work in flight outside the queue (a fetch on the wire): Flush waits for it.
+  void BeginExternalWork();
+  void EndExternalWork();
   void PullNow(std::vector<PullItem> items, Lane lane);
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);
@@ -168,6 +182,14 @@ class MirrorSyncEngine {
   mutable std::mutex mutex_;  // guards store_'s entries and the members below
   Status status_;
   std::vector<std::string> held_deletes_;
+
+  // What an asynchronous completion holds instead of `this`.
+  struct Alive {
+    explicit Alive(MirrorSyncEngine* owner) : engine(owner) {}
+    std::mutex mutex;
+    MirrorSyncEngine* engine;
+  };
+  std::shared_ptr<Alive> alive_;
 
   std::mutex idle_mutex_;
   std::condition_variable idle_cv_;
