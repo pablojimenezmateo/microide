@@ -480,6 +480,16 @@ carry their prefix). Packaging (a static musl `microide-server` per architecture
 inside the `.deb`) is release work; until then install ships the binary beside
 the executable, which is the build's own architecture.
 
+Also open from group 9: the perf-harness scenarios behind a delaying relay
+(`--server-delay-ms`: first prompt, confirmed echo under a bulk transfer, reattach
+in two round trips, no frame over 16 ms with a stalled server). Not added as
+wall-clock gates yet: they need a delay proxy in the harness and baselines from
+`perf-runner-v1`. What they would protect is pinned deterministically meanwhile —
+the prediction is drawn inside the keystroke's own call
+(`TerminalHost/PredictionIsDrawnThenConfirmed`), term/open and term/attach never
+wait on the UI thread, and the transport drains the interactive lane first
+(`RemoteFrameTransport` tests).
+
 ### TD-2026-10-08-324 — format-on-save throws away the buffer's undo history. [RESOLVED 2026-10-08]
 
 Resolved: `TextViewport::ApplyFormattedText` canonicalizes the output as
