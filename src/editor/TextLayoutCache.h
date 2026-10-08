@@ -218,6 +218,11 @@ class TextLayoutCache {
   // flips the size away and back (TD-2026-09-29-317). One slot; an empty table
   // never displaces a parked one.
   void ParkLineWidthsForTabSizeChange();
+  // Parking is opt-in: building the parked slot costs a deque (two
+  // allocations), which an ordinary tab-size change — a settings walk over every
+  // tab — must not pay for a round trip that never comes. The reader thread arms
+  // it for the one table it pre-builds; the next width-table build disarms it.
+  void ArmLineWidthParking() { line_width_parking_armed_ = true; }
   // Drops just the visible-line LRU + max-columns cache (used by tab-size
   // changes, where the wrapped-row table is separately re-keyed via
   // layout_shape_revision and rebuilt lazily on the next access).
@@ -710,6 +715,7 @@ class TextLayoutCache {
     }
   };
   mutable ParkedLineWidths parked_line_widths_;
+  mutable bool line_width_parking_armed_ = false;
 
   // Segmented maxima over `cached_visual_line_columns_`: the widest line of each
   // run of `kVisualColumnBlockLines`, so the document maximum is a walk of

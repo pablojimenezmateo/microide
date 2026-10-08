@@ -981,7 +981,9 @@ void TestTextViewportDerivedCacheBytesTracksEachCache() {
 void TestTextViewportHighlightStatesGrowWithTheFrontier() {
   TextViewport viewport;
   std::string content;
-  constexpr std::size_t kLines = 50'000;
+  // More lines than the initial reservation (64k), so a document-sized chain
+  // and a frontier-sized one are told apart by capacity.
+  constexpr std::size_t kLines = 300'000;
   for (std::size_t i = 0; i < kLines; ++i) {
     content += i % 100 == 0 ? "/* a block\n" : i % 100 == 1 ? "   comment */\n" : "int x = 1;\n";
   }
@@ -992,7 +994,7 @@ void TestTextViewportHighlightStatesGrowWithTheFrontier() {
   }
   const std::size_t bytes = viewport.DerivedCacheBytes().highlight_states;
   Expect(bytes > 0, "painted lines record their states");
-  Expect(bytes < kLines * sizeof(microide::editor::SyntaxState) / 10,
+  Expect(bytes < kLines * sizeof(microide::editor::SyntaxState) / 4,
          "painting the top must not size the state chain to the document: " +
              std::to_string(bytes) + " bytes");
 
@@ -1000,7 +1002,7 @@ void TestTextViewportHighlightStatesGrowWithTheFrontier() {
   viewport.MoveCursorTo(5, 0, false);
   viewport.InsertText("/* opened ");
   viewport.InsertText("*/");
-  const std::size_t deep = 30'001;
+  const std::size_t deep = 200'001;
   const auto deep_tokens = std::vector(viewport.HighlightedLineTokens(deep).begin(),
                                        viewport.HighlightedLineTokens(deep).end());
   TextViewport fresh;
@@ -1023,6 +1025,7 @@ void TestTextViewportTabSizeRoundTripKeepsTheWidthTable() {
   }
   viewport.LoadContent(content, "/tmp/tabs.txt");
   viewport.SetTabSize(4);
+  viewport.PrebuildLineWidths();
   const std::size_t at_four = viewport.max_visual_columns();
 
   microide::util::ResetPerformanceCounters();
@@ -1042,6 +1045,7 @@ void TestTextViewportTabSizeRoundTripKeepsTheWidthTable() {
   // An edit in between invalidates the parked table: no stale width comes back.
   microide::util::ResetPerformanceCounters();
   viewport.SetTabSize(4);
+  viewport.PrebuildLineWidths();
   viewport.MoveCursorTo(700, 0, false);
   viewport.InsertCharacter('\t');
   viewport.SetTabSize(8);

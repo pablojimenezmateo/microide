@@ -245,6 +245,13 @@ void TextViewport::StoreLineHighlightState(std::size_t line, const SyntaxState& 
   if (line < line_highlight_states_.size()) {
     line_highlight_states_[line] = state;
   } else {
+    if (line_highlight_states_.capacity() == 0) {
+      // One reservation, not ~log2(lines) regrowths: a reservation is address
+      // space, not resident memory, and unlike the resize this replaced it
+      // writes nothing. Capped so a huge file reserves a window, then grows.
+      constexpr std::size_t kInitialReserveLines = 64 * 1024;
+      line_highlight_states_.reserve(std::min(document_->lines.size(), kInitialReserveLines));
+    }
     line_highlight_states_.push_back(state);
   }
   line_highlight_states_valid_through_ = line + 1;

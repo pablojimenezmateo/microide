@@ -333,6 +333,11 @@ class TabCoordinator {
 
  private:
   bool RestoreEditorTab(TabEntry::EditorTabState& editor_state);
+  // The view a restore target opens into: off-thread (read_id != 0, the view an
+  // empty stand-in) or read now, with the caret and scroll placed. The one
+  // hydration path for both unloaded-tab forms (TD-2026-09-29-314).
+  bool LoadRestoreView(const DeferredTabHandle& restore, editor::TextViewport& view,
+                       std::uint64_t& read_id);
   bool EnsureEditorTabLoaded(TabEntry& tab);
   // Load an editor tab for activation/promotion: hydrates an already-loaded tab,
   // or opens a deferred/fresh one applying preferences, detected indent, and (for a

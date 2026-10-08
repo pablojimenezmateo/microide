@@ -972,6 +972,7 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
       }
     }
     parked_line_widths_.Reset();
+    line_width_parking_armed_ = false;
     RebuildVisualColumnBlockMaxima();
   }
 
@@ -1162,6 +1163,10 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
 }
 
 void TextLayoutCache::ParkLineWidthsForTabSizeChange() {
+  if (!line_width_parking_armed_) {
+    ClearVisibleLineAndMaxColumns();
+    return;
+  }
   // An empty table never displaces a parked one. Swapped, not moved: a moved-from
   // libstdc++ deque re-allocates its map.
   ParkedLineWidths parked;

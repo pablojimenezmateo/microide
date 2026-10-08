@@ -196,7 +196,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                           ApplyDetectedIndentAfterPreferences(
                               *loaded, [&](std::string_view) { return detect_on_open; },
                               editor_config);
-                          (void)loaded->max_visual_columns();
+                          loaded->PrebuildLineWidths();
                         },
                     .on_complete =
                         [this, loaded](project::FileReadService::Completion completion) {

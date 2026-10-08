@@ -28,36 +28,44 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   if (editor_state.content == TabEntry::EditorTabState::Content::Failed) {
     return false;
   }
-  if (editor_state.restore.path.empty()) {
+  editor::TextViewport view;
+  std::uint64_t read_id = 0;
+  if (!LoadRestoreView(editor_state.restore, view, read_id)) {
     return false;
   }
-  if (ShouldOpenOffThread(editor_state.restore.path)) {
-    editor::TextViewport loading_view;
-    const std::uint64_t read_id = BeginOffThreadOpen(editor_state.restore.path, loading_view);
+  editor_state.viewport = std::move(view);
+  if (read_id != 0) {
+    editor_state.content = EditorTabState::Content::Loading;
+    editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
+  } else {
+    editor_state.content = EditorTabState::Content::Ready;
+  }
+  return true;
+}
+
+bool TabCoordinator::LoadRestoreView(const DeferredTabHandle& restore, editor::TextViewport& view,
+                                     std::uint64_t& read_id) {
+  read_id = 0;
+  if (restore.path.empty()) {
+    return false;
+  }
+  if (ShouldOpenOffThread(restore.path)) {
+    read_id = BeginOffThreadOpen(restore.path, view);
     if (read_id != 0) {
-      editor_state.viewport = std::move(loading_view);
-      editor_state.content = TabEntry::EditorTabState::Content::Loading;
-      editor_state.pending_load.Arm(read_id, editor_state.viewport.content_revision());
       return true;
     }
   }
-
-  editor::TextViewport loaded_view;
-  {
-    util::PerformanceTrace::Scope open_scope("TabCoordinator::RestoreEditorTab::OpenFile");
-    // A restored session can hold the same file in two panes; the second one to
-    // load shares the first's buffer rather than reading the file again.
-    // Preferences / indent detection (applied in there for a fresh read)
-    // internally re-run EnsureCursorVisible, so they come BEFORE the view-state
-    // restore — otherwise they snap scroll back onto the caret (the "reopen
-    // lands on line 1 after scrolling" bug).
-    if (!OpenEditorViewForPath(editor_state.restore.path, loaded_view)) {
-      return false;
-    }
+  util::PerformanceTrace::Scope open_scope("TabCoordinator::RestoreEditorTab::OpenFile");
+  // A restored session can hold the same file in two panes; the second one to
+  // load shares the first's buffer rather than reading the file again.
+  // Preferences / indent detection (applied in there for a fresh read)
+  // internally re-run EnsureCursorVisible, so they come BEFORE the view-state
+  // restore — otherwise they snap scroll back onto the caret (the "reopen
+  // lands on line 1 after scrolling" bug).
+  if (!OpenEditorViewForPath(restore.path, view)) {
+    return false;
   }
-  editor_state.restore.ApplyViewStateTo(loaded_view);
-  editor_state.viewport = std::move(loaded_view);
-  editor_state.content = EditorTabState::Content::Ready;
+  restore.ApplyViewStateTo(view);
   return true;
 }
 
@@ -129,11 +137,27 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
   if (handle.path.empty()) {
     return false;
   }
+  // The view is built first and the editor state made from it once: one
+  // TextViewport, as the removed copy built, rather than a placeholder state
+  // that RestoreEditorTab would then fill.
+  editor::TextViewport view;
+  std::uint64_t read_id = 0;
+  if (!LoadRestoreView(handle, view, read_id)) {
+    // Not readable now (deleted, unreadable): keep it unloaded, as the handle
+    // was, so the next activation tries again.
+    tab.deferred_handle = std::move(handle);
+    return false;
+  }
   tab.deferred_handle.reset();
-  tab.editor_state = operations_.make_editor_tab_state(editor::TextViewport{});
-  tab.editor_state->content = EditorTabState::Content::Deferred;
+  tab.editor_state = operations_.make_editor_tab_state(view);
   tab.editor_state->restore = std::move(handle);
-  return EnsureEditorTabLoaded(tab);
+  if (read_id != 0) {
+    tab.editor_state->content = EditorTabState::Content::Loading;
+    tab.editor_state->pending_load.Arm(read_id, tab.editor_state->viewport.content_revision());
+  }
+  tab.path = operations_.editor_view_path(*tab.editor_state);
+  tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+  return true;
 }
 
 std::optional<std::size_t> TabCoordinator::FindIndexBySpecifier(std::string_view specifier,

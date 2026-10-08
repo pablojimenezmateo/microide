@@ -485,6 +485,12 @@ class TextViewport {
   LineEditSpan ConsumeFoldEditSpan();
   std::size_t tab_size() const { return tab_size_; }
   std::size_t max_visual_columns() const { return MaxVisualColumns(); }
+  // Build the width table now (off the shell thread, for a large open) and keep
+  // it across the next tab-size round trip — see TextLayoutCache::ArmLineWidthParking.
+  void PrebuildLineWidths() const {
+    (void)MaxVisualColumns();
+    layout_cache_.ArmLineWidthParking();
+  }
   std::size_t indent_width() const { return indent_width_; }
   bool soft_tabs() const { return soft_tabs_; }
   LineEnding line_ending() const { return document_->line_ending; }
