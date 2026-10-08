@@ -24,6 +24,7 @@ bool IsKnownFrameType(std::uint16_t type) {
     case FrameType::Request:
     case FrameType::Response:
     case FrameType::Notification:
+    case FrameType::Ack:
     case FrameType::ProcStdin:
     case FrameType::ProcStdout:
     case FrameType::ProcStderr:

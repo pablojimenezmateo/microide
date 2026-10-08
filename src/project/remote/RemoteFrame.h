@@ -24,6 +24,9 @@ enum class FrameType : std::uint16_t {
   Request = 1,       // {"method": ..., "params": ...}; id = the request id
   Response = 2,      // {"result": ...} or {"error": {"code", "message"}}; id = request id
   Notification = 3,  // {"method": ..., "params": ...}; id = 0, or the handle it concerns
+  // Transport-internal, consumed by RemoteFrameTransport and never delivered:
+  // binary payloads, always on the interactive lane.
+  Ack = 4,   // u64 LE: total bulk payload bytes received so far (the bulk window)
   // Content: raw bytes; id = the process handle.
   ProcStdin = 16,
   ProcStdout = 17,

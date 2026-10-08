@@ -441,6 +441,11 @@ namespace microide::util {
   X(DapBytesSent, "dap.bytes_sent")                                                             \
   X(DapMessagesReceived, "dap.messages_received")                                               \
   X(DapBytesReceived, "dap.bytes_received")                                                     \
+  /* --- remote server transport ------------------------------------------ */                 \
+  X(RemoteFramesSent, "remote.frames_sent")                                                     \
+  X(RemoteBytesSent, "remote.bytes_sent")                                                       \
+  X(RemoteFramesReceived, "remote.frames_received")                                             \
+  X(RemoteBytesReceived, "remote.bytes_received")                                               \
   /* --- filesystem watch / index ----------------------------------------- */                 \
   X(FileWatcherWakes, "watch.wakes")                                                            \
   X(FileWatcherPollScans, "watch.poll_scans")                                                    \
