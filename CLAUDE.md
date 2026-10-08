@@ -77,15 +77,23 @@ cmake -S . -B build
 cmake --build build -j8
 ```
 
-For the inner test loop, build only the test binary and run only its shards. The
-narrow build skips the production `microide` executable and the bench binaries
-(roughly halves the build), and the narrow test selection is what keeps it
+For the inner test loop, build only the two test binaries and run only their
+shards. The narrow build skips the production `microide` executable and the bench
+binaries (roughly halves the build), and the narrow test selection is what keeps it
 HONEST:
 
 ```bash
-cmake --build build --target microide_tests -j8
-ctest --test-dir build -R microide_tests_shard --output-on-failure -j$(nproc)
+cmake --build build --target microide_tests microide_kernel_tests -j8
+ctest --test-dir build -R _tests_shard --output-on-failure -j$(nproc)
 ```
+
+There are TWO test binaries. `microide_kernel_tests` holds the tests of the
+SDL-free kernel (util, platform, project, compare, persistence, terminal) and
+links `microide_kernel` alone — the link unit `microide-server` is built from — so
+a test there that reaches for SDL or the shell fails to compile or link; move such
+a test to `microide_tests` rather than adding the dependency. Focused filters work
+the same on both (`./build/microide/microide_kernel_tests TerminalSession`).
+`-R microide_tests_shard` on its own silently skips every kernel test.
 
 `ctest` with no `-R` does **not** invoke just `microide_tests`. It also runs
 `microide_perf_tests` (the `--smoke` perf gate), `microide_kernel_link_probe` and

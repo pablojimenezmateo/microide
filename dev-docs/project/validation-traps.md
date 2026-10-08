@@ -309,8 +309,9 @@ unseen for the same reason.
 
 Two lessons, and the second is the general one:
 
-- The fast loop now narrows BOTH halves: `--target microide_tests` plus
-  `ctest -R microide_tests_shard`. A narrow build with a wide test selection is
+- The fast loop now narrows BOTH halves: `--target microide_tests
+  microide_kernel_tests` plus `ctest -R _tests_shard` (two test binaries since
+  2026-10-08; `-R microide_tests_shard` alone skips every kernel test). A narrow build with a wide test selection is
   the bug; a narrow build with a narrow selection is honest, because what it does
   not run, it also does not claim.
 - A trap fixed in one place is not fixed. This one was found in `run-checks.sh`,

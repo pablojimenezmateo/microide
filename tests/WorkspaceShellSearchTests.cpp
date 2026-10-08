@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 
 #include "platform/FileIndexWatcher.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"

@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 
 #include <filesystem>
 #include <string_view>

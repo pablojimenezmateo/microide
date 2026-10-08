@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 #include "WorkspaceShellEventHelpers.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"

@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 #include "perf/AllocationCounter.h"
 
 #include "editor/FoldingModel.h"

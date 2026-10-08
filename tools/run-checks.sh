@@ -91,7 +91,7 @@ check_tests() {
   run_logged "$log" bash -c '
     set -e
     cmake -S . -B build
-    targets="microide_tests microide_kernel_link_probe"
+    targets="microide_tests microide_kernel_tests microide_kernel_link_probe"
     if grep -q "^MICROIDE_PERF_HARNESS_BUILD:BOOL=ON" build/CMakeCache.txt; then
       targets="$targets microide_perf"
     fi
@@ -176,7 +176,7 @@ check_release() {
   local log="${LOG_DIR}/microide-release.log"
   run_logged "$log" bash -c '
     set -e
-    cmake --build '"$build_dir"' --target microide_tests microide_kernel_link_probe -j'"$JOBS"'
+    cmake --build '"$build_dir"' --target microide_tests microide_kernel_tests microide_kernel_link_probe -j'"$JOBS"'
     ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
@@ -447,14 +447,19 @@ check_coverage() {
       -DMICROIDE_TEST_SHARDS=1 \
       -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping -O0 -g0" \
       -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
-    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    cmake --build '"$build_dir"' --target microide_tests microide_kernel_tests -j'"$JOBS"'
 
-    # One process, not the 24 shards: a merged multi-shard profile is fine for the
-    # numbers but slower to produce, and coverage is not a latency-sensitive lane.
+    # One process per binary, not the shards: a merged multi-shard profile is fine
+    # for the numbers but slower to produce, and coverage is not a latency-sensitive
+    # lane. BOTH binaries, merged: the kernel tests moved to microide_kernel_tests
+    # (TD-2026-09-22-303), so a report over microide_tests alone would read every
+    # kernel file as newly uncovered.
     cd '"$build_dir"'
-    LLVM_PROFILE_FILE=coverage.profraw ./microide/microide_tests
-    llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
+    LLVM_PROFILE_FILE=coverage-shell.profraw ./microide/microide_tests
+    LLVM_PROFILE_FILE=coverage-kernel.profraw ./microide/microide_kernel_tests
+    llvm-profdata merge -sparse coverage-shell.profraw coverage-kernel.profraw -o coverage.profdata
     llvm-cov report ./microide/microide_tests \
+      -object ./microide/microide_kernel_tests \
       -instr-profile=coverage.profdata \
       -ignore-filename-regex="(tests/|third_party/|/usr/)" > coverage-report.txt
     cd - >/dev/null
@@ -491,7 +496,7 @@ check_hardened() {
     cmake -S . -B '"$build_dir"' \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CXX_FLAGS="-D_GLIBCXX_ASSERTIONS"
-    cmake --build '"$build_dir"' --target microide_tests microide_kernel_link_probe -j'"$JOBS"'
+    cmake --build '"$build_dir"' --target microide_tests microide_kernel_tests microide_kernel_link_probe -j'"$JOBS"'
     ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?

@@ -1245,7 +1245,7 @@ completion, and therefore still blocks:
   re-derive) and a deferred completion would have to find the pane rather than the
   tab. Deliberately left; the formatter stall on those surfaces is rarer.
 
-### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [OPEN — scheduled as task group 1 of `openspec/changes/remote-server-phase-2a`]
+### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [RESOLVED 2026-10-08 — `microide_kernel_tests`]
 
 `microide_kernel` compiles without SDL, and `microide_kernel_link_probe` proves it
 links and runs with no windowing library. What is still missing is the design's
@@ -1259,6 +1259,34 @@ presets or the clang lane, so a kernel-only ASAN/UBSAN failure would be invisibl
 there — which is a smaller gap than it sounds (the same objects are sanitized inside
 `microide_tests`) but is worth closing when the second test binary lands, since that
 is the same CMake work.
+
+**Resolution (2026-10-08).** `microide_kernel_tests` links `microide_kernel` and
+pcre2 and nothing else (`ldd` names no SDL, no Lua, no font library), compiles
+against the kernel's SDL-free PCH, and holds 58 test TUs / 691 tests that moved out
+of `microide_tests`: util, platform (subprocess, watcher, control socket, terminal
+backend), project (git, file index, finder, search, read service, tree ops),
+compare models, persistence and the terminal emulator. The runner — argument
+parsing, filters, listing, sharding, watchdog, user-directory isolation — moved
+out of `TestMain.cpp` into `tests/TestRunner.cpp`, so both binaries take the same
+command line; `TestSupport.h` lost its SDL include (the three SDL helpers are in
+`TestSupportSdl.h`). Registered as `microide_kernel_tests_shard_{0..7}`, so
+`ctest -R _tests_shard` selects both suites (CLAUDE.md, AGENTS.md and
+validation-traps.md updated — `-R microide_tests_shard` alone now skips every
+kernel test).
+
+Lanes: `tests`, `hardened` and the release gate build it by name; the three
+sanitizer presets and `clang-build` build the default target, which includes it
+and the link probe (the "probe is not built under the sanitizer presets" above was
+already untrue — the presets name no target list); `coverage` runs both binaries
+and merges the two profiles, since a report over `microide_tests` alone would read
+every kernel file as newly uncovered.
+
+Left in `microide_tests` deliberately: `BackgroundTaskCounterTests` and
+`MainThreadMailboxTests` (they test the kernel's wake path THROUGH the SDL waker),
+the allocation-counter and perf-isolation tests (they need the counting
+`operator new` the shell binary carries), and the architecture lints (repo-wide,
+not kernel). Candidates were found by include closure; a test whose closure names
+a shell header that turns out to be header-only may still be movable.
 
 ### TD-2026-09-22-301 — every spawn names its launcher, and every one of them names the LOCAL launcher. [RESOLVED 2026-10-06 — slices 1-4 plus plugin tools via TD-2026-10-06-318]
 

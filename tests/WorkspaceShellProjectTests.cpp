@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"

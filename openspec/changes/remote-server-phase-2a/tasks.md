@@ -1,9 +1,9 @@
 ## 1. Kernel test binary (TD-2026-09-22-303)
 
-- [ ] 1.1 Add `microide_kernel_tests`: a second test executable linking only `microide_kernel` + the shared test support that has no SDL dependency, registered with the same `--shard-index/--shard-count` sharding as `microide_tests`
-- [ ] 1.2 Move every test TU that names no SDL and touches only kernel sources into it (start from the ~120 SDL-free test TUs; keep any that need `WorkspaceShell` in `microide_tests`)
-- [ ] 1.3 Build and run it in `tools/run-checks.sh` for tests, asan, ubsan, tsan, clang-build and coverage; build `microide_kernel_link_probe` in the sanitizer and clang lanes too
-- [ ] 1.4 Resolve TD-2026-09-22-303 in `dev-docs/project/known-tech-debt.md`
+- [x] 1.1 Add `microide_kernel_tests`: a second test executable linking only `microide_kernel` + the shared test support that has no SDL dependency, registered with the same `--shard-index/--shard-count` sharding as `microide_tests`
+- [x] 1.2 Move every test TU that names no SDL and touches only kernel sources into it (start from the ~120 SDL-free test TUs; keep any that need `WorkspaceShell` in `microide_tests`)
+- [x] 1.3 Build and run it in `tools/run-checks.sh` for tests, asan, ubsan, tsan, clang-build and coverage; build `microide_kernel_link_probe` in the sanitizer and clang lanes too
+- [x] 1.4 Resolve TD-2026-09-22-303 in `dev-docs/project/known-tech-debt.md`
 
 ## 2. Notification actions (G7, VS Code-style inline buttons)
 

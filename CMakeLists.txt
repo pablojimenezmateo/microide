@@ -1039,12 +1039,9 @@ add_executable(microide_tests
   $<TARGET_OBJECTS:microide_kernel>
   $<TARGET_OBJECTS:microide_core>
   tests/ApplicationTests.cpp
-  tests/AppDirectoriesTests.cpp
   tests/AppStartupOptionsTests.cpp
-  tests/TestSupportTests.cpp
   src/app/AppStartupOptions.cpp
   tests/BoundedResourceCapsTests.cpp
-  tests/ControlSocketServerTests.cpp
   tests/ControlClientTests.cpp
   tests/ControlProtocolRobustnessTests.cpp
   tests/ControlProtocolTests.cpp
@@ -1052,8 +1049,6 @@ add_executable(microide_tests
   tests/ControlChannelServiceTests.cpp
   tests/WorkspaceShellControlSettingsTests.cpp
   tests/WorkspaceShellLspSettingsTests.cpp
-  tests/CompareModelPropertyTests.cpp
-  tests/CompareModelTests.cpp
   tests/CompareReviewTests.cpp
   tests/BranchReviewStateTests.cpp
   tests/PatchApplyTests.cpp
@@ -1067,28 +1062,15 @@ add_executable(microide_tests
   tests/EditorInsetLayoutTests.cpp
   tests/EolDecorationLayoutTests.cpp
   tests/InlayHintColumnsTests.cpp
-  tests/DirectoryTreeTests.cpp
   tests/DirtyRegionPolicyTests.cpp
-  tests/FilesystemTests.cpp
-  tests/GlobMatchTests.cpp
   tests/EditorSplitTreeTests.cpp
   tests/TerminalPaneLayoutTests.cpp
-  tests/GitBranchOperationsTests.cpp
-  tests/IgnoreMatcherTests.cpp
-  tests/ProjectTraversalFilterTests.cpp
-  tests/CompileCommandsLocatorTests.cpp
-  tests/FileFinderTests.cpp
   tests/RecentsServiceTests.cpp
-  tests/FileIndexTests.cpp
-  tests/FileTreeOpsTests.cpp
   tests/GitServiceTests.cpp
-  tests/GitPorcelainDifferentialTests.cpp
-  tests/GitRepositoryStateTests.cpp
   tests/GitRepositoryServiceTests.cpp
   tests/CommitWorkflowTests.cpp
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
-  tests/EditorConfigTests.cpp
   tests/LspFileWatchTests.cpp
   tests/LspProtocolTests.cpp
   tests/LspResourceOpsTests.cpp
@@ -1098,36 +1080,21 @@ add_executable(microide_tests
   tests/WorkspaceDapClientTests.cpp
   tests/DapProtocolTests.cpp
   tests/DebugServiceTests.cpp
-  tests/GitBlameServiceTests.cpp
-  tests/MergeModelPropertyTests.cpp
   tests/MergeModelTests.cpp
   tests/SurfaceTokenWindowTests.cpp
   tests/MergeConflictResolutionTests.cpp
   tests/GitMergeConflictFixtures.cpp
   tests/ReviewTabPlanTests.cpp
   tests/ReviewSessionTests.cpp
-  tests/ProjectSearchServiceTests.cpp
-  tests/ProjectChangeTests.cpp
   tests/ExternalRepoChangeTests.cpp
-  tests/RegexUtilTests.cpp
-  tests/RuntimePathsTests.cpp
-  tests/TaskExecutorTests.cpp
   tests/MainThreadMailboxTests.cpp
-  tests/SerialWorkQueueTests.cpp
-  tests/WakePipeTests.cpp
-  tests/GenerationTests.cpp
-  tests/ProjectBackgroundExecutorTests.cpp
   tests/RenderViewModelBuilderTests.cpp
-  tests/TerminalBackendTests.cpp
-  tests/TerminalLifecycleStressTests.cpp
-  tests/TerminalInvariantSweepTests.cpp
-  tests/TerminalSessionTests.cpp
   tests/TerminalWordSelectionTests.cpp
-  tests/TerminalSearchTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp
+  tests/TestRunner.cpp
   tests/TestRunnerCli.cpp
-  tests/TestRunnerCliTests.cpp
+  tests/TestSupportSdl.cpp
   tests/TestSupport.cpp
   tests/AssistServiceTests.cpp
   tests/parity/LoopbackLocality.cpp
@@ -1137,16 +1104,7 @@ add_executable(microide_tests
   tests/PluginPureHelperTests.cpp
   tests/PluginSurfaceCoverageTests.cpp
   tests/SurfaceTextureCacheTests.cpp
-  tests/PluginThreadTests.cpp
-  tests/InlineVectorTests.cpp
-  tests/SmallVectorTests.cpp
-  tests/FlatDedupSetTests.cpp
-  tests/ParseTests.cpp
-  tests/JsonValueTests.cpp
-  tests/JsonFormatTests.cpp
   tests/WorkspaceShellFormatJsonTests.cpp
-  tests/ProjectFileScannerTests.cpp
-  tests/TextFileIOTests.cpp
   tests/SaveDataIntegrityTests.cpp
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
@@ -1162,16 +1120,11 @@ add_executable(microide_tests
   tests/architecture/KernelArchitectureRules.cpp
   tests/architecture/TerminalArchitectureRules.cpp
   tests/BackgroundTaskCounterTests.cpp
-  tests/CommandLineTests.cpp
   tests/FileWriteGateTests.cpp
   tests/SaveFormatterPipelineTests.cpp
   tests/ProcessLauncherTests.cpp
-  tests/FileIndexWatcherTests.cpp
-  tests/FileIndexWatcherContractTests.cpp
-  tests/PatternCacheTests.cpp
   tests/WorkspaceToolDownloaderTests.cpp
   tests/PersistedRecordDumpTests.cpp
-  tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
   tests/DebugPaneTests.cpp
   tests/DebugPaneRenderTests.cpp
@@ -1190,21 +1143,15 @@ add_executable(microide_tests
   tests/SelectionGranularityTests.cpp
   tests/SelectionGranularityPropertyTests.cpp
   tests/MergeWrapRowsTests.cpp
-  tests/AsyncBufferWorkTests.cpp
   tests/AsyncFileOpenTests.cpp
-  tests/FileReadServiceTests.cpp
   tests/DiffWrapLayoutTests.cpp
   tests/ImeCompositionTests.cpp
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
-  tests/LineEditSpanTests.cpp
   tests/LineIndentScanTests.cpp
   tests/PersistedRecordWriteQueueTests.cpp
   tests/SyntaxDefinitionLoaderTests.cpp
-  tests/Sha256Tests.cpp
-  tests/StringUtilTests.cpp
-  tests/SubprocessTests.cpp
   tests/TextRendererTests.cpp
   tests/TextViewportTests.cpp
   tests/TextLayoutTests.cpp
@@ -1219,13 +1166,11 @@ add_executable(microide_tests
   tests/FoldingModelTests.cpp
   tests/EditorFoldingTests.cpp
   tests/EditorEdgeCaseTests.cpp
-  tests/EditBatchOrderTests.cpp
   tests/MultiCaretRemapTests.cpp
   tests/EditorWrapNavigationPropertyTests.cpp
   tests/EditorWrapInvarianceTests.cpp
   tests/EditorMultiCaretTests.cpp
   tests/EditorMultiCaretMotionTests.cpp
-  tests/WindowPresentationTests.cpp
   tests/CommandLabelConsistencyTests.cpp
   tests/MenuAcceleratorConsistencyTests.cpp
   tests/WorkspaceMenuRegistryTests.cpp
@@ -1254,7 +1199,6 @@ add_executable(microide_tests
   tests/WorkspaceShellSharedTerminalTests.cpp
   tests/WorkspaceShellTerminalTests.cpp
   tests/ContributionRegistryTests.cpp
-  tests/Phase3Tests.cpp
   tests/Phase4Tests.cpp
   tests/Phase5Tests.cpp
   tests/SingleLineEditorTests.cpp
@@ -1328,6 +1272,105 @@ if(MICROIDE_TEST_SHARDS GREATER 1)
   endforeach()
 else()
   add_test(NAME microide_tests COMMAND microide_tests)
+endif()
+
+# The kernel's own test binary (TD-2026-09-22-303): the tests of everything in
+# microide_kernel, linked against microide_kernel and pcre2 ONLY — the same link
+# unit the remote server is built from. Its own SDL-free precompiled header means a
+# test here that names an SDL type fails to compile, and the missing shell objects
+# mean one that calls into the shell fails to link; either way the fix is to move
+# the test to microide_tests, never to add the dependency. Sharded exactly like
+# microide_tests (same runner, tests/TestRunner.cpp) and registered under the
+# same `*_tests_shard_*` naming so `ctest -R tests_shard` selects both suites.
+add_executable(microide_kernel_tests
+  $<TARGET_OBJECTS:microide_kernel>
+  tests/KernelTestMain.cpp
+  tests/TestRunner.cpp
+  tests/TestRunnerCli.cpp
+  tests/TestSupport.cpp
+  tests/AsyncBufferWorkTests.cpp
+  tests/CommandLineTests.cpp
+  tests/CompareModelPropertyTests.cpp
+  tests/CompareModelTests.cpp
+  tests/CompileCommandsLocatorTests.cpp
+  tests/ControlSocketServerTests.cpp
+  tests/DirectoryTreeTests.cpp
+  tests/EditBatchOrderTests.cpp
+  tests/EditorConfigTests.cpp
+  tests/FileFinderTests.cpp
+  tests/FileIndexTests.cpp
+  tests/FileIndexWatcherContractTests.cpp
+  tests/FileIndexWatcherTests.cpp
+  tests/FileReadServiceTests.cpp
+  tests/FileTreeOpsTests.cpp
+  tests/FilesystemTests.cpp
+  tests/FlatDedupSetTests.cpp
+  tests/GenerationTests.cpp
+  tests/GitBlameServiceTests.cpp
+  tests/GitBranchOperationsTests.cpp
+  tests/GitPorcelainDifferentialTests.cpp
+  tests/GitRepositoryStateTests.cpp
+  tests/GlobMatchTests.cpp
+  tests/IgnoreMatcherTests.cpp
+  tests/InlineVectorTests.cpp
+  tests/JsonFormatTests.cpp
+  tests/JsonValueTests.cpp
+  tests/LineEditSpanTests.cpp
+  tests/MergeModelPropertyTests.cpp
+  tests/ParseTests.cpp
+  tests/PatternCacheTests.cpp
+  tests/PersistedRecordIoTests.cpp
+  tests/Phase3Tests.cpp
+  tests/PluginThreadTests.cpp
+  tests/ProjectBackgroundExecutorTests.cpp
+  tests/ProjectChangeTests.cpp
+  tests/ProjectFileScannerTests.cpp
+  tests/ProjectSearchServiceTests.cpp
+  tests/ProjectTraversalFilterTests.cpp
+  tests/RegexUtilTests.cpp
+  tests/RuntimePathsTests.cpp
+  tests/SerialWorkQueueTests.cpp
+  tests/Sha256Tests.cpp
+  tests/SmallVectorTests.cpp
+  tests/StringUtilTests.cpp
+  tests/SubprocessTests.cpp
+  tests/TaskExecutorTests.cpp
+  tests/TerminalBackendTests.cpp
+  tests/TerminalInvariantSweepTests.cpp
+  tests/TerminalLifecycleStressTests.cpp
+  tests/TerminalSearchTests.cpp
+  tests/TerminalSessionTests.cpp
+  tests/TestRunnerCliTests.cpp
+  tests/TestSupportTests.cpp
+  tests/TextFileIOTests.cpp
+  tests/WakePipeTests.cpp
+  tests/WindowPresentationTests.cpp
+  tests/AppDirectoriesTests.cpp
+)
+target_include_directories(microide_kernel_tests PRIVATE src tests)
+target_precompile_headers(microide_kernel_tests PRIVATE ${MICROIDE_KERNEL_PCH_HEADERS})
+target_link_libraries(microide_kernel_tests PRIVATE ${MICROIDE_PCRE2_TARGET})
+target_compile_definitions(microide_kernel_tests PRIVATE
+  MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
+  MICROIDE_TESTING=1
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+  target_compile_options(microide_kernel_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+  if(MICROIDE_WARNINGS_AS_ERRORS)
+    target_compile_options(microide_kernel_tests PRIVATE -Werror)
+  endif()
+endif()
+set(MICROIDE_KERNEL_TEST_SHARDS "8" CACHE STRING
+    "Number of parallel shards the microide_kernel_tests suite is split into for ctest")
+if(MICROIDE_KERNEL_TEST_SHARDS GREATER 1)
+  math(EXPR _microide_last_kernel_shard "${MICROIDE_KERNEL_TEST_SHARDS} - 1")
+  foreach(_microide_shard RANGE ${_microide_last_kernel_shard})
+    add_test(NAME microide_kernel_tests_shard_${_microide_shard}
+             COMMAND microide_kernel_tests --shard-index=${_microide_shard}
+                     --shard-count=${MICROIDE_KERNEL_TEST_SHARDS})
+  endforeach()
+else()
+  add_test(NAME microide_kernel_tests COMMAND microide_kernel_tests)
 endif()
 
 # The perf-drift reporter decides which measurements count as a failure, and it
