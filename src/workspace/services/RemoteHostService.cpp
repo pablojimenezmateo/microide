@@ -173,6 +173,10 @@ std::optional<std::filesystem::path> RemoteHostService::PrepareRemoteFolder(std:
 std::optional<project::ProjectLocality> RemoteHostService::LocalityForMirror(
     const std::filesystem::path& root) {
   if (const auto existing = projects_.find(root); existing != projects_.end()) {
+    // Reopened after a close (which disconnected it): connect again. A no-op when
+    // the project is still connected or connecting.
+    existing->second.closed = false;
+    existing->second.project->session().Connect();
     return existing->second.project->locality();
   }
   const std::optional<remote::RemoteProjectRecord> record = remote::RemoteProject::ReadRecord(root);
@@ -206,6 +210,9 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
     return;
   }
   Project& entry = it->second;
+  if (entry.closed) {
+    return;  // its rows went with its tab
+  }
   remote::RemoteProject& project = *entry.project;
   const remote::RemoteHostSession::Status status = project.session().status();
   const remote::MirrorSyncEngine::Status sync = project.engine().status();
@@ -488,6 +495,20 @@ bool RemoteHostService::OpenTerminalOnHost(std::string_view host, std::string* e
   }
   PublishStatusSegment();
   return true;
+}
+
+void RemoteHostService::ProjectClosed(const std::filesystem::path& root) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return;
+  }
+  it->second.closed = true;
+  it->second.project->session().Disconnect();
+  it->second.announced_sync = false;
+  PublishStatusSegment();
+  if (operations_.dismiss_notification) {
+    operations_.dismiss_notification("remote.project." + root.string());
+  }
 }
 
 bool RemoteHostService::Reconnect(std::string_view host) {
@@ -790,7 +811,9 @@ void RemoteHostService::PublishStatusSegment() {
   }
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
-    connections.emplace_back(entry.project->record().host, entry.status.state);
+    if (!entry.closed) {
+      connections.emplace_back(entry.project->record().host, entry.status.state);
+    }
   }
   if (connections.empty()) {
     operations_.set_status_segment(StatusBarSegmentValue{});

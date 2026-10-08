@@ -85,6 +85,10 @@ class RemoteHostService {
   // The locality of `root` if it is a remote project's mirror — opening the project
   // (and starting its connection) the first time — and nullopt for any other folder.
   std::optional<project::ProjectLocality> LocalityForMirror(const std::filesystem::path& root);
+  // The project at `root` was closed: drop its connection (the ssh channel, the
+  // host's workspace and its watch). The RemoteProject itself stays — a project state
+  // may still point at its locality while it is torn down — and reopening reconnects.
+  void ProjectClosed(const std::filesystem::path& root);
   // Settle the conflict at `path` (a file in a remote project's mirror): keep the
   // mirror's bytes over the host's, or take the host's. False when `path` is not a
   // conflict of any remote project.
@@ -133,6 +137,7 @@ class RemoteHostService {
     bool auth_terminal_opened = false;
     bool announced_sync = false;
     bool warned_polling = false;
+    bool closed = false;  // its project tab is closed: disconnected, and not shown
     std::vector<std::string> conflict_rows;  // relative paths with a row showing
   };
 

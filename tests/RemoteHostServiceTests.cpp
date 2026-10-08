@@ -343,6 +343,27 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 4,
          "at the definition, not at the top");
+
+  // Closing the project drops its connection (and its status segment); reopening
+  // the mirror connects again.
+  WorkspaceShellTestAccess::CloseProject(shell, 0);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return !WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, StatusBarSegmentId::Remote);
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "a closed remote project leaves no connection behind: '" +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'");
+  Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, mirror, {}), "reopened");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) ==
+                      target;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "and connected again");
   }
   {
     // A later run opening the mirror as a plain folder.

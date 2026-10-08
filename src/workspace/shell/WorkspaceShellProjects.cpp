@@ -198,7 +198,13 @@ void WorkspaceShell::CloseProject(std::size_t index) {
   // is silently dropped. The flush only ever waits when a formatter is mid-run.
   save_formatter_service_.FlushPendingRuns();
   file_read_service_.CancelAllAndFlush();
+  const std::filesystem::path closed_root = ProjectCatalogRoot(index);
   MakeProjectCatalogService().Close(index);
+  // A remote project's channel, host-side workspace and watch go with its tab; the
+  // mirror and its journal stay, and reopening reconnects.
+  if (glue_->remote_host_service != nullptr) {
+    glue_->remote_host_service->ProjectClosed(closed_root);
+  }
   // Closing may drop the open-project count to <= 1, which can re-hide the strip when
   // "chrome.project_tabs.hide_when_single" is on; the coordinator only requests a redraw,
   // so mark layout dirty here to force a recompute (Open/Switch already do this).

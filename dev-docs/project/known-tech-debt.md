@@ -456,9 +456,11 @@ silent one:
 - ~~Paths travel in JSON~~ — not a gap (checked 2026-10-08): the JSON layer carries
   a string's bytes verbatim between the two ends, so a non-UTF-8 host name lists,
   pulls and pushes (`MirrorSyncEngine/CarriesNonUtf8Names`).
-- **A remote project is never released**: its session, engine and launcher live
-  until the window closes (closing the project tab keeps them, because a project
-  state may still point at the locality).
+- ~~A remote project is never released~~ — mostly fixed 2026-10-08: closing its tab
+  disconnects it (the ssh channel, the host's workspace and watch go; the mirror and
+  journal stay) and reopening reconnects. The RemoteProject object itself (an engine
+  thread, the store in memory) still lives until the window closes, since a closing
+  project state may point at its locality.
 - Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
   through the launcher meanwhile: two host processes per git-sidebar refresh, none
   while the sidebar is hidden), host-side `search/run` (search reads the mirror,
