@@ -155,6 +155,28 @@ void TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild() {
          "and a newly ignored untracked file leaves the set");
 }
 
+// The hash cache outlives the server process: an on-demand server that idled out
+// and was started again hashes nothing a predecessor already hashed.
+void TestWorkspaceTreeCachePersists() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "plain";
+  for (int i = 0; i < 20; ++i) {
+    WriteFile(root / ("f" + std::to_string(i)), std::string(100 + i, 'p'));
+  }
+  const WorkspaceTree::Options options{.racy_window_ns = 0, .cache_path = temp.path() / "cache" / "c"};
+  std::string error;
+  {
+    WorkspaceTree tree(root, options);
+    Expect(tree.BuildManifest(&error).has_value() && tree.last_hashed_files() == 20, "a cold build");
+  }
+  WorkspaceTree again(root, options);
+  Expect(again.BuildManifest(&error).has_value() && again.last_hashed_files() == 0,
+         "a new process with the saved cache hashes nothing");
+  WorkspaceTree other(temp.path(), options);  // another root, the same file
+  Expect(other.BuildManifest(&error).has_value() && other.last_hashed_files() > 0,
+         "a cache saved for another root is not used");
+}
+
 // A failure to decide the set is an error, never an empty manifest.
 void TestWorkspaceTreeFailsLoudly() {
   TemporaryDirectory temp;
@@ -210,6 +232,7 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
+  AddTest(tests, "WorkspaceTree/CachePersists", TestWorkspaceTreeCachePersists);
   AddTest(tests, "WorkspaceTree/IncrementalUpdateMatchesAFullBuild",
           TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild);
   AddTest(tests, "WorkspaceTree/DoesNotTrustARacyCacheEntry",

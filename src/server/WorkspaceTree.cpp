@@ -3,12 +3,16 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <span>
 #include <thread>
 #include <utility>
 
+#include "persistence/PersistedRecordReader.h"
+#include "persistence/PersistedRecordWriter.h"
 #include "platform/ProcessLauncher.h"
 #include "project/GitMetadataSource.h"
 #include "project/ProjectTraversalFilter.h"
+#include "util/ByteCodec.h"
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -101,7 +105,79 @@ std::optional<HashedFile> HashAt(int root_fd, const std::string& path, bool foll
 }  // namespace
 
 WorkspaceTree::WorkspaceTree(std::filesystem::path root, Options options)
-    : root_(std::move(root)), options_(options) {}
+    : root_(std::move(root)), options_(std::move(options)) {
+  LoadCache();
+}
+
+WorkspaceTree::~WorkspaceTree() {
+  std::lock_guard lock(mutex_);
+  SaveCacheLocked();
+}
+
+// The cache file: the root it belongs to, then per entry the path, the stat key and
+// the hash. A file for another root (a hash collision on the name) or in any other
+// shape is ignored — the cache only ever saves work, never decides an answer.
+void WorkspaceTree::LoadCache() {
+  if (options_.cache_path.empty()) {
+    return;
+  }
+  const auto read = persistence::PersistedRecordReader::ReadFile(options_.cache_path);
+  if (!read.has_value()) {
+    return;
+  }
+  const std::string_view body(reinterpret_cast<const char*>(read->body.data()), read->body.size());
+  util::ByteReader in(body);
+  if (in.Varint() != 1 || in.Bytes(4096) != root_.string()) {
+    return;
+  }
+  const std::uint64_t count = in.Varint();
+  std::unordered_map<std::string, CacheEntry> loaded;
+  for (std::uint64_t i = 0; i < count && !in.failed() && i <= body.size(); ++i) {
+    std::string path(in.Bytes(project::remote::kMaxManifestPathBytes));
+    CacheEntry entry;
+    entry.key.dev = in.Varint();
+    entry.key.ino = in.Varint();
+    entry.key.size = in.Varint();
+    entry.key.mtime_ns = static_cast<std::int64_t>(in.Le(8));
+    entry.key.ctime_ns = static_cast<std::int64_t>(in.Le(8));
+    const auto hash = util::ContentHash::FromRaw(in.Raw(util::ContentHash::kBytes));
+    if (in.failed() || !hash.has_value()) {
+      return;
+    }
+    entry.hash = *hash;
+    loaded.emplace(std::move(path), entry);
+  }
+  if (!in.failed() && in.at_end()) {
+    cache_ = std::move(loaded);
+  }
+}
+
+void WorkspaceTree::SaveCacheLocked() {
+  if (options_.cache_path.empty() || !cache_dirty_) {
+    return;
+  }
+  std::string body;
+  util::PutVarint(body, 1);
+  util::PutBytes(body, root_.string());
+  util::PutVarint(body, cache_.size());
+  for (const auto& [path, entry] : cache_) {
+    util::PutBytes(body, path);
+    util::PutVarint(body, entry.key.dev);
+    util::PutVarint(body, entry.key.ino);
+    util::PutVarint(body, entry.key.size);
+    util::PutLe(body, static_cast<std::uint64_t>(entry.key.mtime_ns), 8);
+    util::PutLe(body, static_cast<std::uint64_t>(entry.key.ctime_ns), 8);
+    body.append(entry.hash.raw());
+  }
+  std::error_code ec;
+  std::filesystem::create_directories(options_.cache_path.parent_path(), ec);
+  if (persistence::PersistedRecordWriter::WriteFile(
+          options_.cache_path,
+          std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()),
+          0)) {
+    cache_dirty_ = false;
+  }
+}
 
 std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std::string* error) {
   std::vector<std::string> paths;
@@ -362,6 +438,10 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
     return std::nullopt;
   }
   cache_ = std::move(next_cache);
+  cache_dirty_ = true;
+  // After a full build, not per watch batch: a full build is when the whole tree was
+  // just paid for, and a batch's handful of entries is not worth a rewrite.
+  SaveCacheLocked();
   manifest.rows = std::move(*rows);
   manifest.id = next_manifest_id_++;
   last_rows_ = manifest.rows;
@@ -439,6 +519,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   }
   std::optional<std::vector<ManifestRow>> fresh =
       RowsFor(recompute, root_fd.get(), cancelled, error, cache_);
+  cache_dirty_ = cache_dirty_ || !recompute.empty();
   if (!fresh.has_value()) {
     return std::nullopt;
   }

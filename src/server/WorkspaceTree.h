@@ -43,6 +43,10 @@ class WorkspaceTree {
     // A file whose mtime or ctime is this recent is hashed on every manifest rather
     // than trusted from the cache (project::remote::IsRacySignature). Tests shrink it.
     std::int64_t racy_window_ns = project::remote::kRacySignatureWindowNs;
+    // Where the hash cache persists between server processes ("" = memory only): an
+    // on-demand server exits when idle, and without this every reconnect after
+    // that hashed the whole tree again.
+    std::filesystem::path cache_path;
   };
 
   struct Manifest {
@@ -52,6 +56,7 @@ class WorkspaceTree {
   };
 
   WorkspaceTree(std::filesystem::path root, Options options);
+  ~WorkspaceTree();
   explicit WorkspaceTree(std::filesystem::path root) : WorkspaceTree(std::move(root), Options{}) {}
 
   // nullopt with *error when the root cannot be read, the content-set command
@@ -107,6 +112,8 @@ class WorkspaceTree {
   std::optional<std::vector<std::string>> AdmitCandidates(const std::vector<std::string>& candidates,
                                                           std::string* error);
   std::string OverLimitMessage() const;
+  void LoadCache();
+  void SaveCacheLocked();
 
   std::filesystem::path root_;
   Options options_;
@@ -119,6 +126,7 @@ class WorkspaceTree {
   bool last_git_ = false;
   bool built_ = false;
   bool last_update_was_full_ = false;
+  bool cache_dirty_ = false;
 };
 
 }  // namespace microide::server

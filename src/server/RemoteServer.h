@@ -79,7 +79,8 @@ class RemoteServer {
       std::shared_ptr<const std::vector<project::remote::ManifestRow>> last_sent;
     };
 
-    explicit ServedTree(std::filesystem::path root) : tree(std::move(root)) {}
+    ServedTree(std::filesystem::path root, WorkspaceTree::Options options)
+        : tree(std::move(root), std::move(options)) {}
     ~ServedTree() {
       closing.store(true);
       watch.reset();     // no more batches posted

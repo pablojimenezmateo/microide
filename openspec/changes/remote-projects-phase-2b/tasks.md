@@ -4,7 +4,7 @@
 - [x] 1.2 `RemoteManifest` row codec: packed, prefix-compressed, validated decode (fuzz target)
 - [x] 1.3 Server `WorkspaceTree`: content set (git ls-files / filtered walk), lstat rows, in-memory hash cache, parallel cold hashing, `max_manifest_files`, failure is never an empty set
 - [x] 1.4 `tree/manifest` → `TreeRows` bulk content frames, reply on the bulk lane after the last chunk with `manifest_id` and the count; worker thread, never the peer's I/O thread
-- [ ] 1.5 Persist the hash cache under the server's state directory
+- [x] 1.5 Persist the hash cache under the server's state directory
 
 ## 2. Objects and writes
 

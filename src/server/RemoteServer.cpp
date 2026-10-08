@@ -8,6 +8,7 @@
 
 #include "project/GitMetadataSource.h"
 #include "project/remote/RemoteServerPaths.h"
+#include "util/ContentHash.h"
 #include "util/Log.h"
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -134,7 +135,16 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        Workspace& workspace = workspaces_[hello->root];
                        ++workspace.clients;
                        if (!workspace.tree) {
-                         workspace.tree = std::make_shared<ServedTree>(hello->root);
+                         WorkspaceTree::Options tree_options;
+                         // Beside the socket, keyed by the root: a hand-started or
+                         // on-demand server finds its predecessor's hashes.
+                         if (!config_.socket_path.empty()) {
+                           tree_options.cache_path =
+                               config_.socket_path.parent_path() / "cache" /
+                               util::HashContent(hello->root).Hex().substr(0, 32);
+                         }
+                         workspace.tree =
+                             std::make_shared<ServedTree>(hello->root, std::move(tree_options));
                        }
                      }
                    }
