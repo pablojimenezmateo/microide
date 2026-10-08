@@ -304,6 +304,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteFrameTransport.cpp
   src/project/remote/RemoteProtocol.cpp
   src/project/remote/LinkHeartbeat.cpp
+  src/project/remote/RemoteManifest.cpp
   src/project/remote/RemotePathMap.cpp
   src/project/remote/RemotePeer.cpp
   src/project/remote/RemoteProcessLauncher.cpp
@@ -1359,6 +1360,7 @@ add_executable(microide_kernel_tests
   $<TARGET_OBJECTS:microide_kernel>
   tests/KernelTestMain.cpp
   tests/RemoteFrameTests.cpp
+  tests/RemoteManifestTests.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
@@ -1553,6 +1555,14 @@ if(MICROIDE_FUZZ)
     tests/fuzz/RemoteFrameDecoderFuzz.cpp
   )
   microide_configure_fuzz_target(RemoteFrameDecoderFuzz)
+
+  # The manifest row decoder: every path it yields names a file under the mirror.
+  add_executable(RemoteManifestDecodeFuzz
+    src/project/remote/RemoteManifest.cpp
+    src/util/ContentHash.cpp
+    tests/fuzz/RemoteManifestDecodeFuzz.cpp
+  )
+  microide_configure_fuzz_target(RemoteManifestDecodeFuzz)
 
   # `.editorconfig` comes out of the OPENED REPOSITORY, so its bytes are supplied
   # by whoever wrote the checkout — the same trust level as `.gitignore`. The

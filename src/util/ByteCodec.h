@@ -73,6 +73,17 @@ class ByteReader {
     return 0;
   }
 
+  // Exactly `count` bytes, unprefixed.
+  std::string_view Raw(std::size_t count) {
+    if (failed_ || in_.size() - offset_ < count) {
+      failed_ = true;
+      return {};
+    }
+    const std::string_view bytes = in_.substr(offset_, count);
+    offset_ += count;
+    return bytes;
+  }
+
   // A varint length, then that many bytes; at most `max_bytes` (a forged length
   // fails rather than being trusted).
   std::string_view Bytes(std::size_t max_bytes) {
