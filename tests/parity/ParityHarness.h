@@ -19,7 +19,10 @@ namespace microide::tests::parity {
 // kLoopback is the in-process stand-in; kServer is the real thing — the project's
 // processes run through a RemoteProcessLauncher over a `microide-server
 // serve-stdio` spoken to over a pipe (Phase 2a 6.3), with the same split trees.
-enum class Locality { kLocal, kLoopback, kServer };
+// kMirror is the whole Phase 2b stack: the mirror is FILLED by the sync engine from
+// the server's manifest (the fixture is built on the host only), and every write
+// goes through the MirrorWriteGate and is pushed under compare-and-swap.
+enum class Locality { kLocal, kLoopback, kServer, kMirror };
 std::string_view LocalityName(Locality locality);
 
 struct Tree {

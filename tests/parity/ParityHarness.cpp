@@ -8,7 +8,13 @@
 #include "TestSupport.h"
 #include "parity/LoopbackLocality.h"
 #include "parity/ParityKnownGaps.h"
+#include "project/remote/MirrorStore.h"
+#include "project/remote/MirrorSyncEngine.h"
+#include "project/remote/MirrorWriteGate.h"
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteProcessLauncher.h"
+#include "project/remote/RemoteServerClient.h"
+#include "project/remote/RemoteWorkspace.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::parity {
@@ -67,6 +73,77 @@ const KnownGap* FindKnownGap(std::string_view scenario, std::string_view localit
   return nullptr;
 }
 
+// The mirror locality's stack. The gate flushes the engine after every write, so a
+// scenario that reads the host's bytes right after a save sees them: the engine's
+// asynchrony is the mirror tests' subject, not parity's.
+struct MirrorLocality {
+  std::shared_ptr<project::remote::RemoteServerClient> client =
+      std::make_shared<project::remote::RemoteServerClient>();
+  std::shared_ptr<project::remote::RemoteConnection> connection;
+  std::unique_ptr<project::remote::RemoteWorkspace> workspace;
+  std::unique_ptr<project::remote::MirrorStore> store;
+  std::unique_ptr<project::remote::MirrorSyncEngine> engine;
+  std::unique_ptr<project::remote::RemoteProcessLauncher> launcher;
+
+  class FlushingGate final : public project::FileWriteGate {
+   public:
+    FlushingGate(project::remote::MirrorStore& store, project::remote::MirrorSyncEngine& engine)
+        : inner_(store, engine), engine_(engine) {}
+    Result WriteText(const std::filesystem::path& path, std::string_view text,
+                     Signature signature) override {
+      ++writes_;
+      Result result = inner_.WriteText(path, text, signature);
+      engine_.Flush();
+      return result;
+    }
+    TreeResult ApplyTreeOps(std::span<const TreeOp> ops) override {
+      ++writes_;
+      TreeResult result = inner_.ApplyTreeOps(ops);
+      engine_.Flush();
+      return result;
+    }
+    void DisposeStaged(std::span<const std::filesystem::path> staged) override {
+      inner_.DisposeStaged(staged);
+    }
+    std::size_t writes() const { return writes_; }
+
+   private:
+    project::remote::MirrorWriteGate inner_;
+    project::remote::MirrorSyncEngine& engine_;
+    std::size_t writes_ = 0;
+  };
+  std::unique_ptr<FlushingGate> gate;
+
+  bool Open(const std::filesystem::path& state_dir, const std::filesystem::path& host_root,
+            std::string* error) {
+    if (!client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                project::remote::HelloRequest{.release = "parity",
+                                                              .root = host_root.string()},
+                                error)) {
+      return false;
+    }
+    connection = std::make_shared<project::remote::RemoteConnection>(client);
+    workspace = std::make_unique<project::remote::RemoteWorkspace>(connection);
+    store = std::make_unique<project::remote::MirrorStore>(state_dir, host_root.filename().string());
+    if (!store->Open(error)) {
+      return false;
+    }
+    engine = std::make_unique<project::remote::MirrorSyncEngine>(*workspace, *store);
+    engine->RequestSync();
+    engine->Flush();
+    if (!engine->status().error.empty()) {
+      *error = engine->status().error;
+      return false;
+    }
+    gate = std::make_unique<FlushingGate>(*store, *engine);
+    launcher = std::make_unique<project::remote::RemoteProcessLauncher>(
+        connection, project::remote::RemotePathMap(store->tree(), host_root),
+        project::remote::RemoteProcessLauncher::Options{.host_paths_readable_locally = true,
+                                                        .description = "mirror"});
+    return true;
+  }
+};
+
 }  // namespace
 
 std::string_view LocalityName(Locality locality) {
@@ -77,6 +154,8 @@ std::string_view LocalityName(Locality locality) {
       return "loopback";
     case Locality::kServer:
       return "server";
+    case Locality::kMirror:
+      return "mirror";
   }
   return "?";
 }
@@ -95,9 +174,22 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
   std::unique_ptr<LoopbackProcessLauncher> loopback_launcher;
   std::unique_ptr<project::remote::RemoteProcessLauncher> server_launcher;
   std::unique_ptr<LoopbackWriteGate> gate;
+  std::unique_ptr<MirrorLocality> mirror;
   platform::ProcessLauncher* launcher = nullptr;
+  project::FileWriteGate* write_gate = nullptr;
   const RecordingLocalLauncher local_launcher;
-  if (locality == Locality::kLocal) {
+  if (locality == Locality::kMirror) {
+    tree.host_root = temp_dir.path() / "host" / "project";
+    std::filesystem::create_directories(tree.host_root);
+    scenario.build(tree.host_root, /*is_mirror=*/false);
+    mirror = std::make_unique<MirrorLocality>();
+    std::string error;
+    Expect(mirror->Open(temp_dir.path() / "mirror", tree.host_root, &error),
+           "parity: the mirror locality connects and syncs: " + error);
+    tree.root = mirror->store->tree();
+    launcher = mirror->launcher.get();
+    write_gate = mirror->gate.get();
+  } else if (locality == Locality::kLocal) {
     tree.root = temp_dir.path() / "project";
     tree.host_root = tree.root;
     std::filesystem::create_directories(tree.root);
@@ -117,6 +209,7 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     // engine is Phase 2b. What the server locality changes is where every process
     // runs — through the real protocol, on the real daemon.
     gate = std::make_unique<LoopbackWriteGate>(map);
+    write_gate = gate.get();
     if (locality == Locality::kLoopback) {
       loopback_launcher = std::make_unique<LoopbackProcessLauncher>(map);
       launcher = loopback_launcher.get();
@@ -141,7 +234,7 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
                   shell, tree.root,
                   project::ProjectLocality{&local_launcher, &project::LocalFileWriteGate()})
             : WorkspaceShellTestAccess::OpenProjectTabWithLocality(
-                  shell, tree.root, project::ProjectLocality{launcher, gate.get()});
+                  shell, tree.root, project::ProjectLocality{launcher, write_gate});
     Expect(opened, "parity: the project opens under " + std::string(LocalityName(locality)));
     scenario.run(shell, tree, outcome);
   }
@@ -156,6 +249,10 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     result.spawns = server_launcher->spawn_count();
     result.spawn_log = server_launcher->recent_spawns();
     result.writes = gate->write_count();
+  } else if (mirror != nullptr) {
+    result.spawns = mirror->launcher->spawn_count();
+    result.spawn_log = mirror->launcher->recent_spawns();
+    result.writes = mirror->gate->writes();
   } else {
     result.spawn_log = local_launcher.spawns();
     result.spawns = result.spawn_log.size();
@@ -206,7 +303,7 @@ std::string CheckParity(const Scenario& scenario, Locality locality) {
 }
 
 void ExpectParity(const Scenario& scenario) {
-  for (const Locality locality : {Locality::kLoopback, Locality::kServer}) {
+  for (const Locality locality : {Locality::kLoopback, Locality::kServer, Locality::kMirror}) {
     const std::string failure = CheckParity(scenario, locality);
     const KnownGap* gap = FindKnownGap(scenario.name, LocalityName(locality));
     if (gap == nullptr) {

@@ -37,4 +37,4 @@
 
 - [ ] 6.1 `search/run` on the host, streamed results
 - [ ] 6.2 Conflict flow: Reload / Overwrite / Compare on a refused push
-- [ ] 6.3 Parity rows against the real server with the mirror in place
+- [x] 6.3 Parity rows against the real server with the mirror in place

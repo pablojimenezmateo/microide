@@ -463,8 +463,9 @@ silent one:
   through the launcher meanwhile: two host processes per git-sidebar refresh, none
   while the sidebar is hidden), host-side `search/run` (search reads the mirror,
   which is complete once synced but briefly stale under churn), files over the
-  64 MiB per-object ceiling (absent, and so invisible in the tree), and the parity
-  rows against the real server with a mirror. Done since: the Compare choice of
+  64 MiB per-object ceiling (absent, and so invisible in the tree). Done since: the
+  parity suite's `mirror` locality (every scenario against the real server with
+  the mirror filled by the engine and writes through the mirror gate), the Compare choice of
   the conflict flow, large files (pulled last, one at a time), `host:/path` in the
   recents (the window has no title to set).
 
