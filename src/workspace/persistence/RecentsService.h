@@ -63,6 +63,10 @@ class RecentsService {
   // (TD-2026-07-17A-014). A path that disappears while the MRU is unchanged stays
   // listed until the next MRU change re-validates — the perf-first cache contract.
   const std::vector<std::filesystem::path>& ExistingRecentProjects() const;
+  // Parallel to ExistingRecentProjects: what to show for each — the path, or
+  // `host:/path` for a remote project's mirror (never the mirror's own path, which
+  // is an implementation detail under the data directory). Same cache.
+  const std::vector<std::string>& ExistingRecentProjectDisplays() const;
   const std::vector<std::filesystem::path>& ExistingRecentFilesFor(
       const std::filesystem::path& project_root, std::size_t limit) const;
 
@@ -103,6 +107,7 @@ class RecentsService {
   // existing-path caches below.
   std::uint64_t revision_ = 0;
   mutable std::vector<std::filesystem::path> existing_projects_;
+  mutable std::vector<std::string> existing_project_displays_;
   mutable std::uint64_t existing_projects_revision_ = 0;
   mutable bool existing_projects_valid_ = false;
   mutable std::vector<std::filesystem::path> existing_files_;

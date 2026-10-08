@@ -1,5 +1,7 @@
 #include "workspace/persistence/RecentsService.h"
 
+#include "project/remote/RemoteProject.h"
+
 #include <algorithm>
 #include <atomic>
 #include <utility>
@@ -107,6 +109,7 @@ std::vector<std::filesystem::path> RecentsService::RecentFilesFor(
 const std::vector<std::filesystem::path>& RecentsService::ExistingRecentProjects() const {
   if (!existing_projects_valid_ || existing_projects_revision_ != revision_) {
     existing_projects_.clear();
+    existing_project_displays_.clear();
     for (const std::filesystem::path& root : state_.recent_project_roots) {
       if (root.empty()) {
         continue;
@@ -114,12 +117,20 @@ const std::vector<std::filesystem::path>& RecentsService::ExistingRecentProjects
       std::error_code ec;
       if (std::filesystem::exists(root, ec)) {
         existing_projects_.push_back(root);
+        const auto remote = project::remote::RemoteProject::ReadRecord(root);
+        existing_project_displays_.push_back(remote.has_value() ? remote->host + ":" + remote->host_root
+                                                                : root.string());
       }
     }
     existing_projects_revision_ = revision_;
     existing_projects_valid_ = true;
   }
   return existing_projects_;
+}
+
+const std::vector<std::string>& RecentsService::ExistingRecentProjectDisplays() const {
+  (void)ExistingRecentProjects();  // fills both
+  return existing_project_displays_;
 }
 
 const std::vector<std::filesystem::path>& RecentsService::ExistingRecentFilesFor(

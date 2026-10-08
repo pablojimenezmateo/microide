@@ -1784,16 +1784,17 @@ std::string PathLeafName(const std::filesystem::path& path) {
 // longer stats each path per paint — the validation is cached against the MRU
 // revision in the service (TD-2026-07-17A-014).
 std::vector<editor::WelcomeRecent> BuildRecentRows(
-    std::span<const std::filesystem::path> paths) {
+    std::span<const std::filesystem::path> paths, std::span<const std::string> displays = {}) {
   std::vector<editor::WelcomeRecent> rows;
   rows.reserve(paths.size());
-  for (const std::filesystem::path& path : paths) {
+  for (std::size_t i = 0; i < paths.size(); ++i) {
+    const std::filesystem::path& path = paths[i];
     if (path.empty()) {
       continue;
     }
     rows.push_back(editor::WelcomeRecent{
         .name = PathLeafName(path),
-        .path_display = path.string(),
+        .path_display = i < displays.size() ? displays[i] : path.string(),
         .path = path,
     });
   }
@@ -1860,7 +1861,8 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
     vm.recents_heading = "Recent";
     vm.empty_recents_label = "No recent projects yet.";
     vm.open_folder_label = LabelWithChord("Open Folder…", ActionId::ProjectOpen);
-    vm.recent_projects = BuildRecentRows(recents.ExistingRecentProjects());
+    vm.recent_projects =
+        BuildRecentRows(recents.ExistingRecentProjects(), recents.ExistingRecentProjectDisplays());
     return vm;
   }
 

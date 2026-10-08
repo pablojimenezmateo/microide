@@ -2,10 +2,13 @@
 
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/persistence/PersistenceService.h"
+#include "persistence/PersistedRecordWriter.h"
+#include "util/ByteCodec.h"
 #include "util/PerformanceCounters.h"
 
 #include <cstddef>
 #include <filesystem>
+#include <span>
 #include <string>
 
 namespace microide::tests {
@@ -187,7 +190,32 @@ void TestRecentsReopeningNewestEntryDoesNotWrite() {
          "re-recording the entry that is already newest must not write");
 }
 
+// A remote project's mirror is listed as the host folder it mirrors, never as the
+// mirror's own path under the data directory.
+void TestRecentsShowAMirrorAsItsHostFolder() {
+  TemporaryDirectory temp;
+  const std::filesystem::path plain = temp.path() / "plain";
+  const std::filesystem::path mirror_tree = temp.path() / "mirror" / "app";
+  std::filesystem::create_directories(plain);
+  std::filesystem::create_directories(mirror_tree);
+  std::string body;
+  util::PutVarint(body, 1);
+  util::PutBytes(body, "dev@box");
+  util::PutBytes(body, "/home/dev/app");
+  Expect(persistence::PersistedRecordWriter::WriteFile(
+             temp.path() / "mirror" / "meta" / "remote",
+             std::span<const std::byte>(reinterpret_cast<const std::byte*>(body.data()), body.size()), 0),
+         "the mirror's record is written");
+  RecentsService recents;
+  recents.RecordProjectOpen(plain);
+  recents.RecordProjectOpen(mirror_tree);
+  const auto& displays = recents.ExistingRecentProjectDisplays();
+  Expect(displays.size() == 2 && displays[0] == "dev@box:/home/dev/app" && displays[1] == plain.string(),
+         "the mirror shows as host:/path, a plain folder as its path");
+}
+
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RecentsService/ShowAMirrorAsItsHostFolder", TestRecentsShowAMirrorAsItsHostFolder);
   AddTest(tests, "RecentsService/ExistingProjectsFilterAndCacheInvalidation",
           TestRecentsExistingProjectsFilterAndCacheInvalidation);
   AddTest(tests, "RecentsService/ProjectsNewestFirstAndDeduped",
