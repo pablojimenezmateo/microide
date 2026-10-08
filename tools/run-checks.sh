@@ -64,6 +64,30 @@ run_logged() {
   return "${PIPESTATUS[0]}"
 }
 
+# A remote-server test fixture (`tests/RemoteServerTestSupport.h`, a /tmp/mip.*
+# directory) records its test process's pid in owner.pid and stops its server in
+# its destructor. After ctest every test process has exited, so a fixture whose
+# owner is gone and whose directory still exists is a teardown leak — usually a
+# server kept alive by a host process or terminal the test never ended
+# (TD-2026-10-08-332). Owner-pid scoped, so a lane running concurrently in
+# another build tree is not mistaken for a leak. Reports, cleans up, fails.
+check_leaked_fixtures() {
+  local log="$1" leaked=0 dir owner
+  shopt -s nullglob
+  for dir in "${TMPDIR:-/tmp}"/mip.??????; do
+    owner="$(cat "$dir/owner.pid" 2>/dev/null)"
+    [[ -n "$owner" ]] || continue
+    kill -0 "$owner" 2>/dev/null && continue
+    leaked=1
+    echo "run-checks: leaked remote-server fixture $dir (owner pid $owner exited):" | tee -a "$log"
+    pgrep -af -- "$dir/" | grep -v pgrep | tee -a "$log"
+    pkill -KILL -f -- "$dir/" 2>/dev/null
+    rm -rf "$dir"
+  done
+  shopt -u nullglob
+  return $leaked
+}
+
 check_tests() {
   local log="${LOG_DIR}/microide-tests.log"
   # Fast, build-free pre-check: every public doc must state the CMakeLists
@@ -99,6 +123,7 @@ check_tests() {
     ctest --test-dir build --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
+  check_leaked_fixtures "$log" || rc=1
   echo "run-checks: tests finished (exit $rc); log at $log"
   return $rc
 }
@@ -170,6 +195,7 @@ check_sanitizer() {
     rc=1
   fi
 
+  check_leaked_fixtures "$log" || rc=1
   echo "run-checks: ${san} finished (exit $rc); log at $log"
   return $rc
 }
@@ -509,6 +535,7 @@ check_hardened() {
     ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
+  check_leaked_fixtures "$log" || rc=1
   echo "run-checks: hardened finished (exit $rc); log at $log"
   return $rc
 }

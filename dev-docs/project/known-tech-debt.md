@@ -496,7 +496,23 @@ edit. Fix shape, as in `project/remote`: record the signature's ctime too, and
 treat a signature recorded within ~2 s of its own mtime/ctime as racy — confirm it
 with the content hash on the next check instead of believing the stat.
 
-### TD-2026-10-08-332 — remote test runs leak `microide-server` processes that never exit. [OPEN]
+### TD-2026-10-08-332 — remote test runs leak `microide-server` processes that never exit. [RESOLVED 2026-10-08]
+
+Resolved: the fixtures' destructors already ran `stop` — the leaked directories
+were ones whose destructor never ran at all (a KILLED shard: ctest timeout,
+sanitizer abort, Ctrl-C), so no teardown change could reach them. Now each
+`ShortServerDir` (which `FakeSshHost` builds on) writes its test's pid to
+`owner.pid`, and the first fixture in every test process reaps `/tmp/mip.*`
+directories whose owner is dead (or, with no owner file, are over an hour old):
+it SIGKILLs every process whose command line names a path under the directory
+and removes it. The destructor also kills what `stop` left. `run-checks.sh`
+fails a lane (tests, the sanitizers, hardened) on any fixture left behind with a
+dead owner, cleaning it up as it reports. Verified by SIGKILLing a host-terminal
+test mid-run: the lane check reports the server, and the next run reaps it.
+Left as is: an on-demand server whose socket directory was deleted still waits
+for its children; nothing in the product deletes that directory.
+
+Original report:
 
 Found 2026-10-08 after the sanitizer lanes: ten `microide-server` processes from
 the test runs were still alive ~5h40m later, each in a `/tmp/mip.*` fixture
