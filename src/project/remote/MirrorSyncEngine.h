@@ -96,6 +96,15 @@ class MirrorSyncEngine {
   void Prioritize(std::vector<std::string> paths);
   // tree/<path> was written locally (the mirror's write gate): journal it and push.
   void NotifyLocalWrite(std::string path);
+  // Tree operations already applied to tree/ (the mirror's write gate): replay them
+  // on the host, in order, each under its source's base.
+  struct LocalTreeOp {
+    enum class Kind { CreateFile, CreateDirectory, Rename, Delete };
+    Kind kind = Kind::CreateFile;
+    std::string path;
+    std::string new_path;  // Rename
+  };
+  void NotifyLocalTreeOps(std::vector<LocalTreeOp> ops);
   // Apply the held delete diff after all.
   void ApproveHeldDeletes();
 
@@ -115,6 +124,7 @@ class MirrorSyncEngine {
   void PullNow(std::vector<PullItem> items, Lane lane);
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);
+  void TreeOpNow(const LocalTreeOp& op);
   void RecountLocked();
   void SaveLocked();
   void Changed();

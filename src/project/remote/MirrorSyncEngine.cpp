@@ -104,6 +104,101 @@ void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
   });
 }
 
+void MirrorSyncEngine::NotifyLocalTreeOps(std::vector<LocalTreeOp> ops) {
+  queue_.Post([this, ops = std::move(ops)]() {
+    for (const LocalTreeOp& op : ops) {
+      TreeOpNow(op);
+    }
+    {
+      std::lock_guard lock(mutex_);
+      RecountLocked();
+      SaveLocked();
+    }
+    Changed();
+  });
+}
+
+void MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
+  using TreeOp = RemoteWorkspace::TreeOp;
+  using Status = RemoteWorkspace::WriteResult::Status;
+  if (!IsSafeRelativePath(op.path) ||
+      (op.kind == LocalTreeOp::Kind::Rename && !IsSafeRelativePath(op.new_path))) {
+    return;
+  }
+  if (op.kind == LocalTreeOp::Kind::CreateFile) {
+    {
+      std::lock_guard lock(mutex_);
+      MirrorStore::Entry& entry = store_.entries()[op.path];
+      entry.remote.path = op.path;
+      entry.push_pending = true;
+    }
+    PushNow(op.path);
+    return;
+  }
+  if (op.kind == LocalTreeOp::Kind::CreateDirectory) {
+    const auto result = workspace_.ApplyTreeOpSync(TreeOp::MakeDirectory, op.path, {},
+                                                   Precondition::Anything());
+    if (result.status == Status::Error) {
+      std::lock_guard lock(mutex_);
+      status_.error = result.error;
+    }
+    return;
+  }
+  // A rename or delete of one file is checked against its base; a directory's
+  // (no entry of its own) against nothing — its files were each the user's to move.
+  Precondition expect = Precondition::Anything();
+  {
+    std::lock_guard lock(mutex_);
+    if (const MirrorStore::Entry* entry = store_.Find(op.path);
+        entry != nullptr && entry->base.has_value()) {
+      expect = Precondition::Of(*entry->base);
+    }
+  }
+  const bool rename = op.kind == LocalTreeOp::Kind::Rename;
+  const auto result = workspace_.ApplyTreeOpSync(rename ? TreeOp::Rename : TreeOp::Delete, op.path,
+                                                 rename ? op.new_path : std::string(), expect);
+  std::lock_guard lock(mutex_);
+  auto& entries = store_.entries();
+  // The path itself and, for a directory, everything under it.
+  const std::string prefix = op.path + "/";
+  std::vector<std::string> affected;
+  for (auto it = entries.lower_bound(op.path);
+       it != entries.end() && (it->first == op.path || it->first.rfind(prefix, 0) == 0); ++it) {
+    affected.push_back(it->first);
+  }
+  if (result.status == Status::Ok) {
+    for (const std::string& path : affected) {
+      auto node = entries.extract(path);
+      if (rename) {
+        node.key() = op.new_path + path.substr(op.path.size());
+        node.mapped().remote.path = node.key();
+        entries.insert(std::move(node));
+      }
+    }
+    return;
+  }
+  if (result.status == Status::Error) {
+    status_.error = result.error;
+    return;
+  }
+  // Refused: the host's copy moved since our base. The local tree already shows
+  // the operation; the next sync restores the host's version at the old path (an
+  // agent's newer bytes are never lost to a delete of older ones), and a renamed
+  // file waits at its new path as a conflict.
+  if (rename) {
+    for (const std::string& path : affected) {
+      MirrorStore::Entry moved = entries[path];
+      const std::string to = op.new_path + path.substr(op.path.size());
+      moved.remote.path = to;
+      moved.has_remote = false;
+      moved.base.reset();
+      moved.push_pending = true;
+      moved.conflict = true;
+      entries[to] = std::move(moved);
+    }
+  }
+}
+
 void MirrorSyncEngine::ApproveHeldDeletes() {
   queue_.Post([this]() {
     std::vector<std::string> deletes;

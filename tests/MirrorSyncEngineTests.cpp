@@ -2,6 +2,7 @@
 
 #include "project/remote/MirrorStore.h"
 #include "project/remote/MirrorSyncEngine.h"
+#include "project/remote/MirrorWriteGate.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 
@@ -176,6 +177,49 @@ void TestMirrorJournalSurvivesARestart() {
   Expect(ReadFile(session.host / "a.txt") == "a tool wrote this\n", "an outside local edit is pushed");
 }
 
+void TestMirrorWriteGateReachesTheHost() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "host\n");
+  WriteFile(session.host / "dir/b.txt", "b\n");
+  WriteFile(session.host / "c.txt", "c\n");
+  session.Connect();
+  session.Sync();
+  remote::MirrorWriteGate gate(*session.store, *session.engine);
+
+  const auto saved = gate.WriteText(session.Tree("a.txt"), "saved\n",
+                                    project::FileWriteGate::Signature::Capture);
+  Expect(saved.ok && saved.signature.exists, "the save lands locally at once, with its signature");
+  Expect(ReadFile(session.Tree("a.txt")) == "saved\n", "in the mirror");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "saved\n", "and then on the host");
+
+  using TreeOp = project::FileWriteGate::TreeOp;
+  const std::vector<TreeOp> ops = {
+      TreeOp{.kind = TreeOp::Kind::Rename, .path = session.Tree("dir/b.txt"),
+             .new_path = session.Tree("moved/b.txt")},
+      TreeOp{.kind = TreeOp::Kind::Delete, .path = session.Tree("c.txt")},
+      TreeOp{.kind = TreeOp::Kind::CreateFile, .path = session.Tree("empty.txt")},
+      TreeOp{.kind = TreeOp::Kind::CreateDirectory, .path = session.Tree("newdir")},
+  };
+  const auto applied = gate.ApplyTreeOps(ops);
+  Expect(applied.ok, "the tree ops apply locally: " + applied.error_message);
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "moved/b.txt") == "b\n" && !std::filesystem::exists(session.host / "dir/b.txt"),
+         "a rename is replayed on the host");
+  Expect(!std::filesystem::exists(session.host / "c.txt"), "a delete is replayed");
+  Expect(std::filesystem::exists(session.host / "empty.txt") &&
+             std::filesystem::file_size(session.host / "empty.txt") == 0,
+         "a created file is created");
+  Expect(std::filesystem::is_directory(session.host / "newdir"), "a created directory is created");
+  Expect(session.engine->StateOf("moved/b.txt") == ContentState::Current,
+         "the renamed file keeps its base under its new name");
+
+  // A path outside the mirror is a plain local write.
+  const auto outside = gate.WriteText(session.temp.path() / "elsewhere.txt", "x");
+  Expect(outside.ok && !std::filesystem::exists(session.host / "elsewhere.txt"),
+         "a write outside tree/ stays local");
+}
+
 #endif
 
 }  // namespace
@@ -189,6 +233,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
+  AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
 #else
   (void)tests;
 #endif
