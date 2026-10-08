@@ -22,7 +22,27 @@
 #include <utility>
 #include <vector>
 
+#if defined(__GLIBC__)
+#include <execinfo.h>
+#include <unistd.h>
+#endif
+
 namespace {
+
+// A std::terminate in a shard printed one line — "terminate called without an
+// active exception" — and the test running at the time was often not the one at
+// fault (a thread from an earlier test). Print the stack of the thread that
+// called terminate, so the culprit names itself.
+[[noreturn]] void TerminateWithBacktrace() {
+#if defined(__GLIBC__)
+  static constexpr char kHeader[] = "\n*** std::terminate — backtrace of the calling thread:\n";
+  (void)!::write(STDERR_FILENO, kHeader, sizeof(kHeader) - 1);
+  void* frames[64];
+  const int count = ::backtrace(frames, 64);
+  ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
+#endif
+  std::abort();
+}
 
 bool WildcardMatch(std::string_view pattern, std::string_view text) {
   std::size_t pattern_index = 0;
@@ -178,6 +198,7 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
   // that shard happened to call IgnoreBrokenPipeSignal() first, so adding a test
   // anywhere could reshuffle the round-robin and move the crash to a new shard.
   microide::platform::IgnoreBrokenPipeSignal();
+  std::set_terminate(&TerminateWithBacktrace);
 
   // Use in-process placeholder terminals for the whole suite instead of spawning
   // real PTY-backed shells. Formerly a compile-time MICROIDE_TESTING fork; now a

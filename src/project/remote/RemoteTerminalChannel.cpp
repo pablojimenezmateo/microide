@@ -71,10 +71,19 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
   // The reply runs on the I/O thread; a channel closed by then just closes the
   // terminal it was given.
   const std::weak_ptr<RemoteTerminalChannel> weak = channel;
+  // The client WEAKLY: this callback lives in the client's own peer, so a strong
+  // capture is a cycle, and the reply arriving released the last reference on
+  // the transport's I/O thread — destroying the transport from inside its own
+  // thread, which is std::terminate (a joinable std::thread destroyed).
+  const std::weak_ptr<RemoteServerClient> weak_client = client;
   const std::uint64_t id = client->peer().Request(
       method::kTermOpen, util::JsonValue(std::move(params)), Lane::Interactive,
-      [weak, client](std::optional<util::JsonValue> result,
-                     std::optional<RemotePeer::RpcError> error) {
+      [weak, weak_client](std::optional<util::JsonValue> result,
+                          std::optional<RemotePeer::RpcError> error) {
+        const std::shared_ptr<RemoteServerClient> client = weak_client.lock();
+        if (client == nullptr) {
+          return;  // the connection is gone with everything it served
+        }
         const std::shared_ptr<RemoteTerminalChannel> channel = weak.lock();
         const std::int64_t handle = result.has_value() ? (*result)["handle"].AsInt(0) : 0;
         if (channel == nullptr) {
@@ -137,12 +146,14 @@ bool RemoteTerminalChannel::SendAttach(
     const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
     const std::optional<terminal::TerminalSession::HostResumePoint>& resume, bool reattach) {
   const std::weak_ptr<RemoteTerminalChannel> weak = weak_from_this();
+  const std::weak_ptr<RemoteServerClient> weak_client = client;  // see Open
   return client->peer().Request(
              method::kTermAttach, AttachParams(handle, resume), Lane::Interactive,
-             [weak, client, handle, reattach](std::optional<util::JsonValue> result,
-                                              std::optional<RemotePeer::RpcError> error) {
+             [weak, weak_client, handle, reattach](std::optional<util::JsonValue> result,
+                                                   std::optional<RemotePeer::RpcError> error) {
                const std::shared_ptr<RemoteTerminalChannel> channel = weak.lock();
-               if (channel == nullptr) {
+               const std::shared_ptr<RemoteServerClient> client = weak_client.lock();
+               if (channel == nullptr || client == nullptr) {
                  return;
                }
                if (!result.has_value()) {

@@ -418,10 +418,17 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
   // Acknowledge by counting what arrived, not what was captured: an uncaptured
   // stream must not stall the process on its credit window.
   auto received = std::make_shared<std::pair<std::atomic<std::uint64_t>, std::atomic<std::uint64_t>>>();
+  // The client weakly: these handlers are held by the client itself (see
+  // RemoteTerminalChannel::Open for what a strong capture cost).
+  const std::weak_ptr<RemoteServerClient> weak_client = client;
   RemoteServerClient::ProcessEvents events{
       .output =
-          [collected, capture_out, capture_err, client, handle, received](FrameType stream,
-                                                                          std::string_view bytes) {
+          [collected, capture_out, capture_err, weak_client, handle, received](
+              FrameType stream, std::string_view bytes) {
+            const std::shared_ptr<RemoteServerClient> client = weak_client.lock();
+            if (client == nullptr) {
+              return;
+            }
             const bool is_out = stream == FrameType::ProcStdout;
             {
               std::lock_guard lock(collected->mutex);
