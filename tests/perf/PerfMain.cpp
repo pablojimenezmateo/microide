@@ -437,23 +437,8 @@ void OpenEditorEssentials50kCppOrThrow(ScenarioContext& context) {
   if (!context.Open(path.parent_path())) {
     throw std::runtime_error("failed to open editor essentials fixture project");
   }
-  context.OpenTab(path);
+  context.OpenTab(path);  // drains the off-thread read: the buffer is the file
   context.PumpFrames(2);
-  // 8.19 MB is over the 4 MiB off-thread threshold, so the tab starts as an empty
-  // read-only stand-in and the bytes land on whichever frame drains the reader.
-  // Two frames was a race against the disk: a scenario that started before the
-  // completion measured an empty buffer, against a baseline recorded when the
-  // open was synchronous (TD-2026-09-29-317). Wait for the content, bounded.
-  using TA = microide::workspace::WorkspaceShell::TestAccess;
-  using Content = microide::workspace::TabEntry::EditorTabState::Content;
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-  while (TA::ActiveTabContentState(context.Shell()) == Content::Loading &&
-         std::chrono::steady_clock::now() < deadline) {
-    context.PumpFrames(1);
-  }
-  if (TA::ActiveTabContentState(context.Shell()) != Content::Ready) {
-    throw std::runtime_error("editor essentials fixture never finished loading");
-  }
 }
 
 void RegisterBuiltInScenarios() {

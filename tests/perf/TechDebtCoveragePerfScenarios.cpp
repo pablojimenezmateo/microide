@@ -306,7 +306,8 @@ void RunEditorOpenLargeFileAsync(ScenarioContext& context) {
   workspace::WorkspaceShell& shell = context.Shell();
 
   // 1. The open returns with the read still outstanding.
-  context.Measure("open_large_async.open_call", [&] { context.OpenTab(file); });
+  // Through the shell, not context.OpenTab: that one waits for the content.
+  context.Measure("open_large_async.open_call", [&] { TA::OpenFile(shell, file); });
   if (TA::ActiveTabContentState(shell) != Content::Loading) {
     throw std::runtime_error("editor_open_large_file_async: a 64 MiB open did not go off-thread");
   }
@@ -343,7 +344,7 @@ void RunEditorOpenLargeFileAsync(ScenarioContext& context) {
 
   // 3. Closed mid-read: nothing is applied.
   TA::CloseTab(shell, TA::ActiveTabIndex(shell));
-  context.OpenTab(file);
+  TA::OpenFile(shell, file);
   if (TA::ActiveTabContentState(shell) != Content::Loading) {
     throw std::runtime_error("editor_open_large_file_async: the reopen did not go off-thread");
   }

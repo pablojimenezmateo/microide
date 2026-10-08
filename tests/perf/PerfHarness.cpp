@@ -452,13 +452,19 @@ bool ScenarioContext::Open(const std::filesystem::path& project_root) {
 }
 
 void ScenarioContext::OpenTab(const std::filesystem::path& path) {
+  using TA = workspace::WorkspaceShell::TestAccess;
   std::error_code error;
   const std::filesystem::path resolved = std::filesystem::absolute(path, error).lexically_normal();
-  if (error || resolved.empty()) {
-    workspace::WorkspaceShell::TestAccess::OpenFile(shell_, path);
-    return;
-  }
-  workspace::WorkspaceShell::TestAccess::OpenFile(shell_, resolved);
+  TA::OpenFile(shell_, error || resolved.empty() ? path : resolved);
+  // A file of at least 4 MiB opens off the shell thread: the tab starts as an
+  // empty read-only stand-in and the bytes land when the reader's completion is
+  // drained. "Open a tab" in a scenario means the FILE is open, so drain it here.
+  // Without this, every scenario that opened the 8.19 MB fixture and acted on it
+  // straight away measured an empty buffer once the off-thread open landed —
+  // against baselines recorded on the synchronous one (TD-2026-09-29-317).
+  // `editor_open_large_file_async` measures the open itself and opens through
+  // the shell directly.
+  TA::FlushPendingFileReads(shell_);  // returns at once when nothing is in flight
 }
 
 void ScenarioContext::CloseActiveTab() {
