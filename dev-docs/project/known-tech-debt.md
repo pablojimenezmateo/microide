@@ -496,6 +496,30 @@ edit. Fix shape, as in `project/remote`: record the signature's ctime too, and
 treat a signature recorded within ~2 s of its own mtime/ctime as racy — confirm it
 with the content hash on the next check instead of believing the stat.
 
+### TD-2026-10-08-332 — remote test runs leak `microide-server` processes that never exit. [OPEN]
+
+Found 2026-10-08 after the sanitizer lanes: ten `microide-server` processes from
+the test runs were still alive ~5h40m later, each in a `/tmp/mip.*` fixture
+directory that also survived. Seven are `--on-demand --idle-timeout-ms 600000`
+servers started through the fake SSH host (`/tmp/mip.*/h/.local/state/microide/server`);
+three are plain `start --socket-dir /tmp/mip.*/s` servers from the tsan build
+(no idle timeout at all). Every one still owns a live child the test started
+through it and never ended — `cat`, `bash -i`, `sh -i` (a host process or
+terminal, with `/dev/ptmx` open) — and a server with a live process is, by
+design, not idle (a host terminal is meant to outlive a disconnect), so the
+idle timeout never fires.
+
+So the leak is in teardown, not in the idle rule: a test that starts a process
+or terminal on a fixture server and fails, returns early, or simply never
+closes it leaves the server and its fixture directory behind for good. Fix
+shape: the fixture owning a server (`FakeSshHost`, the `/s` socket-dir fixture
+in `RemoteServerTestSupport`) runs `microide-server stop --socket-dir …` (and
+kills the process group as a fallback) in its destructor, then removes its
+directory; a check at the end of a lane (`run-checks.sh`) that fails on any
+surviving `microide-server` whose socket dir is under `/tmp/mip.` keeps it
+fixed. Worth deciding separately whether an on-demand server should still exit
+when its socket directory has been deleted, since nothing can reach it then.
+
 ### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [OPEN]
 
 Found by the first two-machine trial on 2026-10-08; none blocks editing.
