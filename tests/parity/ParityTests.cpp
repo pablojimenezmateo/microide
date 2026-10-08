@@ -561,8 +561,8 @@ return ide.plugin({
         .run = [](WorkspaceShell&, const Tree& tree,
                   Outcome& outcome) { outcome.Add("path", "shown", (tree.host_root / "a.txt").string()); },
     };
-    const std::string failure = parity::CheckParity(leak);
-    Expect(failure.find("+ loopback: path | shown | ") != std::string::npos,
+    const std::string failure = parity::CheckParity(leak, parity::Locality::kLoopback);
+    Expect(failure.find("+ remote:   path | shown | ") != std::string::npos,
            "a host path shown to the user must fail parity, got: " + failure);
   });
   AddTest(tests, "Parity/Control/UnwiredLoopbackFails", [] {
@@ -572,7 +572,7 @@ return ide.plugin({
         .run = [](WorkspaceShell&, const Tree&, Outcome& outcome) { outcome.Add("k", "", "v"); },
         .spawns = true,
     };
-    Expect(parity::CheckParity(unwired).find("saw no spawn") != std::string::npos,
+    Expect(parity::CheckParity(unwired, parity::Locality::kLoopback).find("saw no spawn") != std::string::npos,
            "a spawning scenario with no loopback spawn must fail as vacuous");
   });
   AddTest(tests, "Parity/Control/ExtraRoundTripsFail", [] {
@@ -591,7 +591,7 @@ return ide.plugin({
             },
         .spawns = true,
     };
-    Expect(parity::CheckParity(chatty).find("more processes") != std::string::npos,
+    Expect(parity::CheckParity(chatty, parity::Locality::kLoopback).find("more processes") != std::string::npos,
            "a non-local run that spawns more than the local one must fail");
   });
   AddTest(tests, "Parity/Control/EmptyOutcomeFails", [] {
@@ -600,7 +600,7 @@ return ide.plugin({
         .build = [](const std::filesystem::path& root, bool) { WriteFile(root / "a.txt", "a\n"); },
         .run = [](WorkspaceShell&, const Tree&, Outcome&) {},
     };
-    Expect(parity::CheckParity(empty).find("observed nothing") != std::string::npos,
+    Expect(parity::CheckParity(empty, parity::Locality::kLoopback).find("observed nothing") != std::string::npos,
            "a scenario that records nothing must fail as vacuous");
   });
 }

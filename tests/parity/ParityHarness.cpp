@@ -8,6 +8,8 @@
 #include "TestSupport.h"
 #include "parity/LoopbackLocality.h"
 #include "parity/ParityKnownGaps.h"
+#include "project/remote/RemoteProcessLauncher.h"
+#include "project/remote/RemoteServerClient.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::parity {
@@ -52,14 +54,14 @@ std::string LineDiff(const std::vector<std::string>& local,
     out += "\n  - local:    " + line;
   }
   for (const std::string& line : only_remote) {
-    out += "\n  + loopback: " + line;
+    out += "\n  + remote:   " + line;
   }
   return out;
 }
 
-const KnownGap* FindKnownGap(std::string_view scenario) {
+const KnownGap* FindKnownGap(std::string_view scenario, std::string_view locality) {
   for (const KnownGap& gap : kParityKnownGaps) {
-    if (gap.scenario == scenario) {
+    if (gap.scenario == scenario && gap.locality == locality) {
       return &gap;
     }
   }
@@ -69,7 +71,15 @@ const KnownGap* FindKnownGap(std::string_view scenario) {
 }  // namespace
 
 std::string_view LocalityName(Locality locality) {
-  return locality == Locality::kLocal ? "local" : "loopback";
+  switch (locality) {
+    case Locality::kLocal:
+      return "local";
+    case Locality::kLoopback:
+      return "loopback";
+    case Locality::kServer:
+      return "server";
+  }
+  return "?";
 }
 
 void Outcome::Add(std::string_view kind, std::string_view key, std::string_view value) {
@@ -83,8 +93,10 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
   TemporaryDirectory temp_dir;
   Tree tree;
   tree.locality = locality;
-  std::unique_ptr<LoopbackProcessLauncher> launcher;
+  std::unique_ptr<LoopbackProcessLauncher> loopback_launcher;
+  std::unique_ptr<project::remote::RemoteProcessLauncher> server_launcher;
   std::unique_ptr<LoopbackWriteGate> gate;
+  platform::ProcessLauncher* launcher = nullptr;
   const RecordingLocalLauncher local_launcher;
   if (locality == Locality::kLocal) {
     tree.root = temp_dir.path() / "project";
@@ -102,8 +114,25 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
     scenario.build(tree.host_root, /*is_mirror=*/false);
     scenario.build(tree.root, /*is_mirror=*/true);
     const LoopbackPathMap map(tree.root, tree.host_root);
-    launcher = std::make_unique<LoopbackProcessLauncher>(map);
+    // Writes are replicated by the loopback gate under both: the mirror's sync
+    // engine is Phase 2b. What the server locality changes is where every process
+    // runs — through the real protocol, on the real daemon.
     gate = std::make_unique<LoopbackWriteGate>(map);
+    if (locality == Locality::kLoopback) {
+      loopback_launcher = std::make_unique<LoopbackProcessLauncher>(map);
+      launcher = loopback_launcher.get();
+    } else {
+      auto client = std::make_shared<project::remote::RemoteServerClient>();
+      std::string error;
+      Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                    project::remote::HelloRequest{.release = "parity"}, &error),
+             "parity: the server locality connects: " + error);
+      server_launcher = std::make_unique<project::remote::RemoteProcessLauncher>(
+          client, map,
+          project::remote::RemoteProcessLauncher::Options{.host_paths_readable_locally = true,
+                                                          .description = "server"});
+      launcher = server_launcher.get();
+    }
   }
 
   Outcome outcome;
@@ -119,16 +148,20 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
                   shell, tree.root,
                   project::ProjectLocality{&local_launcher, &project::LocalFileWriteGate()})
             : WorkspaceShellTestAccess::OpenProjectTabWithLocality(
-                  shell, tree.root, project::ProjectLocality{launcher.get(), gate.get()});
+                  shell, tree.root, project::ProjectLocality{launcher, gate.get()});
     Expect(opened, "parity: the project opens under " + std::string(LocalityName(locality)));
     scenario.run(shell, tree, outcome);
   }
 
   RunResult result;
   result.lines = Normalize(outcome.lines(), tree.root);
-  if (launcher != nullptr) {
-    result.spawns = launcher->spawn_count();
-    result.spawn_log = launcher->spawns();
+  if (loopback_launcher != nullptr) {
+    result.spawns = loopback_launcher->spawn_count();
+    result.spawn_log = loopback_launcher->spawns();
+    result.writes = gate->write_count();
+  } else if (server_launcher != nullptr) {
+    result.spawns = server_launcher->spawn_count();
+    result.spawn_log = server_launcher->recent_spawns();
     result.writes = gate->write_count();
   } else {
     result.spawn_log = local_launcher.spawns();
@@ -137,27 +170,28 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
   return result;
 }
 
-std::string CheckParity(const Scenario& scenario) {
+std::string CheckParity(const Scenario& scenario, Locality locality) {
   const RunResult local = RunUnder(scenario, Locality::kLocal);
-  const RunResult loopback = RunUnder(scenario, Locality::kLoopback);
+  const RunResult loopback = RunUnder(scenario, locality);
+  const std::string name = std::string(LocalityName(locality));
   if (local.lines.empty()) {
     return scenario.name + ": the scenario observed nothing, so equality would prove nothing";
   }
   if (scenario.spawns && loopback.spawns == 0) {
     return scenario.name +
-           ": the loopback launcher saw no spawn, so the project's processes did not go "
+           ": the " + name + " launcher saw no spawn, so the project's processes did not go "
            "through it and both runs were local";
   }
   if (scenario.writes && loopback.writes == 0) {
     return scenario.name +
-           ": the loopback gate saw no write, so the project's writes did not go through it";
+           ": the " + name + " gate saw no write, so the project's writes did not go through it";
   }
   if (loopback.spawns > local.spawns) {
     std::string logs = "\n  local spawns:";
     for (const std::string& spawn : local.spawn_log) {
       logs += "\n    " + spawn;
     }
-    logs += "\n  loopback spawns:";
+    logs += "\n  " + name + " spawns:";
     for (const std::string& spawn : loopback.spawn_log) {
       logs += "\n    " + spawn;
     }
@@ -170,25 +204,28 @@ std::string CheckParity(const Scenario& scenario) {
     for (const std::string& spawn : loopback.spawn_log) {
       spawn_log += "\n    " + spawn;
     }
-    return scenario.name + ": a loopback (non-local) project differs from the same tree "
+    return scenario.name + ": a " + name + " (non-local) project differs from the same tree "
                            "opened locally:" +
-           LineDiff(local.lines, loopback.lines) + "\n  loopback spawns:" +
+           LineDiff(local.lines, loopback.lines) + "\n  " + name + " spawns:" +
            (spawn_log.empty() ? std::string(" none") : spawn_log);
   }
   return {};
 }
 
 void ExpectParity(const Scenario& scenario) {
-  const std::string failure = CheckParity(scenario);
-  const KnownGap* gap = FindKnownGap(scenario.name);
-  if (gap == nullptr) {
-    Expect(failure.empty(), failure);
-    return;
+  for (const Locality locality : {Locality::kLoopback, Locality::kServer}) {
+    const std::string failure = CheckParity(scenario, locality);
+    const KnownGap* gap = FindKnownGap(scenario.name, LocalityName(locality));
+    if (gap == nullptr) {
+      Expect(failure.empty(), failure);
+      continue;
+    }
+    Expect(!failure.empty(), scenario.name + " now matches local under " +
+                                 std::string(LocalityName(locality)) +
+                                 ": remove it from kParityKnownGaps "
+                                 "(tests/parity/ParityKnownGaps.h); it was waiting on " +
+                                 std::string(gap->removed_by));
   }
-  Expect(!failure.empty(), scenario.name +
-                               " now matches local: remove it from kParityKnownGaps "
-                               "(tests/parity/ParityKnownGaps.h); it was waiting on " +
-                               std::string(gap->removed_by));
 }
 
 }  // namespace microide::tests::parity

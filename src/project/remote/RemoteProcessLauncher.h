@@ -55,8 +55,10 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
       const std::filesystem::path& root) const override;
 
   // Host processes started through this launcher (Run and StartAsync), for the
-  // parity suite's spawn-count check.
+  // parity suite's spawn-count check, and the most recent of them as
+  // "program arg…" lines (bounded) for diagnostics.
   std::size_t spawn_count() const;
+  std::vector<std::string> recent_spawns() const;
 
  private:
   std::optional<RemoteServerClient::GitMetadata> Metadata(const std::filesystem::path& root) const;
@@ -66,7 +68,10 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
   Options options_;
   mutable std::mutex mutex_;
   mutable std::map<std::filesystem::path, RemoteServerClient::GitMetadata> metadata_;
+  void Record(const std::vector<std::string>& argv) const;
+
   mutable std::size_t spawns_ = 0;
+  mutable std::vector<std::string> recent_;
 };
 
 }  // namespace microide::project::remote

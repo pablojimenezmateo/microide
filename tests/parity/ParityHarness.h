@@ -16,7 +16,10 @@ namespace microide::tests::parity {
 // USER would see, normalized -- must be equal. Equality, not two independent
 // assertions: asserting each locality on its own lets both drift together.
 
-enum class Locality { kLocal, kLoopback };
+// kLoopback is the in-process stand-in; kServer is the real thing — the project's
+// processes run through a RemoteProcessLauncher over a `microide-server
+// serve-stdio` spoken to over a pipe (Phase 2a 6.3), with the same split trees.
+enum class Locality { kLocal, kLoopback, kServer };
 std::string_view LocalityName(Locality locality);
 
 struct Tree {
@@ -62,9 +65,9 @@ struct RunResult {
 
 RunResult RunUnder(const Scenario& scenario, Locality locality);
 
-// Empty when the two runs agree (and the guards hold); otherwise the failure, with
-// a line diff. Does not consult the known gaps.
-std::string CheckParity(const Scenario& scenario);
+// Empty when `locality`'s run agrees with the local one (and the guards hold);
+// otherwise the failure, with a line diff. Does not consult the known gaps.
+std::string CheckParity(const Scenario& scenario, Locality locality);
 
 // CheckParity plus the known-gaps ratchet (ParityKnownGaps.h): an unlisted
 // mismatch fails, and so does a listed gap that now MATCHES, so the list can only

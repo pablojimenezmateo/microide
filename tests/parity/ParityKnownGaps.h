@@ -10,6 +10,8 @@ namespace microide::tests::parity {
 // EMPTY (dev-docs/design/remote-projects.md § 10.1).
 struct KnownGap {
   std::string_view scenario;
+  // "loopback" or "server" (LocalityName): a gap is a property of one locality.
+  std::string_view locality;
   std::string_view removed_by;
 };
 

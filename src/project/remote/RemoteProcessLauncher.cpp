@@ -307,10 +307,7 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
     result.stderr_text = spawned.error;
     return result;
   }
-  {
-    std::lock_guard lock(mutex_);
-    ++spawns_;
-  }
+  Record(argv);
   handle->store(spawned.handle);
   client_->Ack(spawned.handle, received->first.load(), received->second.load());
   if (!options.stdin_text.empty()) {
@@ -371,10 +368,7 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
     ::close(consumer->second);
     return false;
   }
-  {
-    std::lock_guard lock(mutex_);
-    ++spawns_;
-  }
+  Record(argv);
   remote->Begin(spawned.handle, spawned.pid);
   return process.Adopt(consumer->first, consumer->second, remote);
 #else
@@ -424,6 +418,28 @@ std::optional<std::filesystem::path> RemoteProcessLauncher::ReadableGitDirectory
     return std::nullopt;
   }
   return std::filesystem::path(metadata->git_dir);
+}
+
+void RemoteProcessLauncher::Record(const std::vector<std::string>& argv) const {
+  constexpr std::size_t kRecent = 64;
+  std::string line;
+  for (const std::string& word : argv) {
+    if (!line.empty()) {
+      line += ' ';
+    }
+    line += word;
+  }
+  std::lock_guard lock(mutex_);
+  ++spawns_;
+  if (recent_.size() == kRecent) {
+    recent_.erase(recent_.begin());
+  }
+  recent_.push_back(std::move(line));
+}
+
+std::vector<std::string> RemoteProcessLauncher::recent_spawns() const {
+  std::lock_guard lock(mutex_);
+  return recent_;
 }
 
 std::size_t RemoteProcessLauncher::spawn_count() const {

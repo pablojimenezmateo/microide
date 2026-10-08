@@ -1272,6 +1272,7 @@ if(NOT MICROIDE_LUA_TARGET STREQUAL "")
 endif()
 
 target_compile_definitions(microide_tests PRIVATE
+  MICROIDE_SERVER_BINARY="$<TARGET_FILE:microide-server>"
   MICROIDE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests"
   MICROIDE_TESTING=1
   MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
@@ -1396,8 +1397,10 @@ target_compile_definitions(microide_kernel_tests PRIVATE
   MICROIDE_TESTING=1
   MICROIDE_SERVER_BINARY="$<TARGET_FILE:microide-server>"
 )
-# The daemon tests drive the real binary, so it must be current when they run.
+# The daemon tests and the parity suite's server locality drive the real binary,
+# so it must be current when they run.
 add_dependencies(microide_kernel_tests microide-server)
+add_dependencies(microide_tests microide-server)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   target_compile_options(microide_kernel_tests PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
   if(MICROIDE_WARNINGS_AS_ERRORS)
