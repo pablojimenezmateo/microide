@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -54,6 +55,12 @@ class ContentHasher {
 };
 
 ContentHash HashContent(std::string_view bytes);
+
+// The hash of everything readable from `fd` from its current offset, in 64 KiB
+// reads; `sink`, when given, sees every chunk (a reader that ships the bytes it
+// hashes). nullopt on a read error. Does not close `fd`.
+std::optional<ContentHash> HashFileDescriptor(int fd, std::uint64_t* size_out = nullptr,
+                                              const std::function<void(std::string_view)>& sink = {});
 
 // A regular file's hash, read in bounded chunks. nullopt when it is not a regular
 // file (never blocks on a FIFO or device) or cannot be read. `size_out`, when given,

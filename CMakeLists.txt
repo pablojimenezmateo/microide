@@ -1365,6 +1365,8 @@ add_executable(microide_kernel_tests
   tests/RemoteManifestTests.cpp
   tests/WorkspaceTreeTests.cpp
   tests/RemoteWorkspaceTests.cpp
+  tests/WorkspaceFilesTests.cpp
+  src/server/WorkspaceFiles.cpp
   src/server/WorkspaceTree.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp

@@ -278,6 +278,43 @@ ContentHash HashContent(std::string_view bytes) {
   return hasher.Finish();
 }
 
+std::optional<ContentHash> HashFileDescriptor(int fd, std::uint64_t* size_out,
+                                              const std::function<void(std::string_view)>& sink) {
+#if defined(__unix__) || defined(__APPLE__)
+  ContentHasher hasher;
+  std::uint64_t total = 0;
+  char buffer[64 * 1024];
+  for (;;) {
+    const ssize_t got = ::read(fd, buffer, sizeof(buffer));
+    if (got > 0) {
+      const std::string_view chunk(buffer, static_cast<std::size_t>(got));
+      hasher.Update(chunk);
+      if (sink) {
+        sink(chunk);
+      }
+      total += static_cast<std::uint64_t>(got);
+      continue;
+    }
+    if (got < 0 && errno == EINTR) {
+      continue;
+    }
+    if (got < 0) {
+      return std::nullopt;
+    }
+    break;
+  }
+  if (size_out != nullptr) {
+    *size_out = total;
+  }
+  return hasher.Finish();
+#else
+  (void)fd;
+  (void)size_out;
+  (void)sink;
+  return std::nullopt;
+#endif
+}
+
 std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
                                            std::uint64_t* size_out) {
 #if defined(__unix__) || defined(__APPLE__)
@@ -287,34 +324,12 @@ std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
     return std::nullopt;
   }
   struct stat info {};
-  if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode)) {
-    ::close(fd);
-    return std::nullopt;
-  }
-  ContentHasher hasher;
-  std::uint64_t total = 0;
-  char buffer[64 * 1024];
-  for (;;) {
-    const ssize_t got = ::read(fd, buffer, sizeof(buffer));
-    if (got > 0) {
-      hasher.Update(std::string_view(buffer, static_cast<std::size_t>(got)));
-      total += static_cast<std::uint64_t>(got);
-      continue;
-    }
-    if (got < 0 && errno == EINTR) {
-      continue;
-    }
-    if (got < 0) {
-      ::close(fd);
-      return std::nullopt;
-    }
-    break;
+  std::optional<ContentHash> hash;
+  if (::fstat(fd, &info) == 0 && S_ISREG(info.st_mode)) {
+    hash = HashFileDescriptor(fd, size_out);
   }
   ::close(fd);
-  if (size_out != nullptr) {
-    *size_out = total;
-  }
-  return hasher.Finish();
+  return hash;
 #else
   (void)path;
   (void)size_out;

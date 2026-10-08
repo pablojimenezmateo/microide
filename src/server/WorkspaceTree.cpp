@@ -79,27 +79,14 @@ std::optional<HashedFile> HashAt(int root_fd, const std::string& path, bool foll
     if (::fstat(fd.get(), &before) != 0 || !S_ISREG(before.st_mode)) {
       return std::nullopt;
     }
-    util::ContentHasher hasher;
-    char buffer[64 * 1024];
-    for (;;) {
-      const ssize_t got = ::read(fd.get(), buffer, sizeof(buffer));
-      if (got > 0) {
-        hasher.Update(std::string_view(buffer, static_cast<std::size_t>(got)));
-        out.size += static_cast<std::uint64_t>(got);
-        continue;
-      }
-      if (got < 0 && errno == EINTR) {
-        continue;
-      }
-      if (got < 0) {
-        return std::nullopt;
-      }
-      break;
+    const std::optional<util::ContentHash> hash = util::HashFileDescriptor(fd.get(), &out.size);
+    if (!hash.has_value()) {
+      return std::nullopt;
     }
     if (::fstat(fd.get(), &out.after) != 0) {
       return std::nullopt;
     }
-    out.hash = hasher.Finish();
+    out.hash = *hash;
     *stable = out.after.st_size == before.st_size &&
               Nanoseconds(out.after.st_mtim) == Nanoseconds(before.st_mtim) &&
               Nanoseconds(out.after.st_ctim) == Nanoseconds(before.st_ctim) &&
