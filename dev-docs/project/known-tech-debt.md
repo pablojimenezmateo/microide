@@ -465,7 +465,17 @@ silent one:
   files in the tree before their first pull, presentation (`host:/path` in the
   title and recents), and the parity rows against the real server with a mirror.
 
-### TD-2026-10-08-329 — local external-change detection trusts a racily clean stat. [OPEN]
+### TD-2026-10-08-329 — local external-change detection trusts a racily clean stat. [RESOLVED 2026-10-08]
+
+Resolved the same day: `FileSignature::racy` marks a stat taken within 2 s of the
+file's own mtime, `SameContentAs` no longer vouches for content when either side
+is racy, and every caller already confirms a non-matching stat with the content
+hash — so a racy match now does too. A viewport whose signature carries no hash
+(nothing to confirm with) keeps the stat-only answer via `SameStatAs`.
+Regression: `FileWriteGate/SameTickRewriteIsStillADiskConflict` pins the mtime
+back after a same-size rewrite.
+
+Original report:
 
 Found while fixing the same bug in the remote hash cache (see the 2026-10-08
 `fix(remote): never trust a racily clean stat signature` commit). `FileSignature`

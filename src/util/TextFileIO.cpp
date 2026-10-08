@@ -1,5 +1,7 @@
 #include "util/TextFileIO.h"
 
+#include <chrono>
+
 #include <functional>
 
 #include "util/StringUtil.h"
@@ -301,6 +303,10 @@ FileSignature StatFileSignature(const std::filesystem::path& path) {
   signature.exists = true;
   signature.mtime_ticks = static_cast<std::uint64_t>(mtime.time_since_epoch().count());
   signature.size = size;
+  // Within this window of its own mtime a stat cannot tell this content from a
+  // same-size rewrite in the same timestamp tick (FileSignature::racy).
+  constexpr auto kRacyWindow = std::chrono::seconds(2);
+  signature.racy = std::filesystem::file_time_type::clock::now() - mtime < kRacyWindow;
   return signature;
 }
 

@@ -358,7 +358,8 @@ bool TextViewport::DiskContentUnchanged(const util::FileSignature& current) cons
   // needed), and the file must be small enough that reading it is not itself the
   // stall this check sits inside.
   if (!CouldConfirmDiskContent(current)) {
-    return false;
+    // No content hash to confirm a racy match with: the stat is all there is.
+    return current.SameStatAs(document_->disk_signature);
   }
   util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
   const std::optional<std::string> bytes = util::ReadTextFile(document_->path);
@@ -385,8 +386,10 @@ bool TextViewport::ConfirmDiskContentUnchanged(const util::FileSignature& curren
     return false;
   }
   // Re-baseline to the new stat so the next call takes the one-stat fast path
-  // instead of re-reading a file already confirmed unchanged.
+  // instead of re-reading a file already confirmed unchanged — once that stat is
+  // old enough to vouch for the bytes.
   document_->disk_signature.mtime_ticks = current.mtime_ticks;
+  document_->disk_signature.racy = current.racy;
   return true;
 }
 

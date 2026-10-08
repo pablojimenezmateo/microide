@@ -119,6 +119,9 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
         continue;  // one stat answered it for this view
       }
       if (!viewport.CouldConfirmDiskContent(signature)) {
+        if (signature.SameStatAs(viewport.disk_signature())) {
+          continue;  // a racy match with no hash to confirm it: the stat is all there is
+        }
         return false;  // a size change is a real change; no read needed
       }
       if (!disk_content_hash.has_value() && !disk_read_failed) {
@@ -170,6 +173,9 @@ TabCoordinator::ExternalChangeVerdict TabCoordinator::ClassifyExternalChange(
         continue;  // one stat answered it for this view
       }
       if (!viewport.CouldConfirmDiskContent(signature)) {
+        if (signature.SameStatAs(viewport.disk_signature())) {
+          continue;  // a racy match with no hash to confirm it: the stat is all there is
+        }
         return ExternalChangeVerdict::Changed;  // no digest can excuse this one
       }
       needs_confirm = true;

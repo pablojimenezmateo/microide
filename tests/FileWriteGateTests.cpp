@@ -38,7 +38,7 @@ void TestLocalGateWritesAndReportsTheSignature() {
   // caller records so the watcher's echo of this very write is recognised instead
   // of read as an external change. Captured by the gate, so no caller re-stats.
   Expect(created.signature.exists, "the returned signature describes an existing file");
-  Expect(created.signature.SameContentAs(util::StatFileSignature(file)),
+  Expect(created.signature.SameStatAs(util::StatFileSignature(file)),
          "the gate's signature matches the file it just wrote");
 
   const FileWriteGate::Result replaced =
@@ -106,15 +106,34 @@ void TestIdenticalRewriteIsNotADiskConflict() {
   // Rewrite with IDENTICAL content. The mtime moves; the bytes do not.
   WriteFile(file, "same bytes\n");
   ForceDistinctModificationTime(file);
-  Expect(!util::StatFileSignature(file).SameContentAs(viewport.disk_signature()),
+  Expect(!util::StatFileSignature(file).SameStatAs(viewport.disk_signature()),
          "the fixture must actually move the stat, or this test proves nothing");
   Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None,
          "a byte-identical rewrite is not a disk conflict");
 
   // …and the re-baseline means the next check does not have to read the file again
   // to reach the same answer.
-  Expect(util::StatFileSignature(file).SameContentAs(viewport.disk_signature()),
+  Expect(util::StatFileSignature(file).SameStatAs(viewport.disk_signature()),
          "a confirmed-unchanged file is re-baselined to the new stat");
+}
+
+// A same-size rewrite inside one timestamp tick leaves mtime and size exactly as
+// they were (git's "racily clean" entry). Pinning the mtime back reproduces that
+// deterministically: a stat this fresh must not vouch for the bytes, so the
+// content hash decides — and the edit is caught (TD-2026-10-08-329).
+void TestSameTickRewriteIsStillADiskConflict() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path file = temp_dir.path() / "racy.txt";
+  WriteFile(file, "same bytes\n");
+  editor::TextViewport viewport;
+  Expect(viewport.OpenFile(file), "the fixture file opens");
+  const auto opened_mtime = std::filesystem::last_write_time(file);
+  WriteFile(file, "SAME BYTES\n");
+  std::filesystem::last_write_time(file, opened_mtime);
+  Expect(util::StatFileSignature(file).SameStatAs(viewport.disk_signature()),
+         "the fixture leaves the stat exactly as it was, or this test proves nothing");
+  Expect(viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::Changed,
+         "a same-tick, same-size rewrite is still a conflict");
 }
 
 // The other half: a real change must still be caught. Same size, different bytes —
@@ -253,6 +272,8 @@ void TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload() {
 }  // namespace
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileWriteGate/SameTickRewriteIsStillADiskConflict",
+          TestSameTickRewriteIsStillADiskConflict);
   AddTest(tests, "FileWriteGate/LocalGateWritesAndReportsTheSignature",
           TestLocalGateWritesAndReportsTheSignature);
   AddTest(tests, "FileWriteGate/LocalGateReportsFailureWithoutTouchingTheFile",

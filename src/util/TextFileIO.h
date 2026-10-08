@@ -119,11 +119,23 @@ struct FileSignature {
   bool has_content_hash = false;
   std::size_t content_hash = 0;
 
-  // Two existing files with identical mtime+size are treated as the same content.
-  // This is the cheap test; a caller that can afford to read the file confirms a
-  // MISMATCH against the content hash rather than trusting it (a touch and a
-  // byte-identical rewrite both fail this one).
+  // The stat was taken within a couple of seconds of the file's own mtime, so it
+  // cannot vouch for the content: a same-size rewrite in the same coarse timestamp
+  // tick (or second, on a filesystem that stores seconds) leaves mtime and size as
+  // they were — git's "racily clean" entry (TD-2026-10-08-329).
+  bool racy = false;
+
+  // Two existing files with identical mtime+size are treated as the same content —
+  // unless either stat is racy. This is the cheap test; a caller that can afford to
+  // read the file confirms a MISMATCH against the content hash rather than trusting
+  // it (a touch and a byte-identical rewrite both fail this one), and a racy match
+  // takes that same confirmation.
   bool SameContentAs(const FileSignature& other) const {
+    return SameStatAs(other) && !racy && !other.racy;
+  }
+  // The stat alone, racy or not: all a caller holding no content hash to confirm
+  // against can go on.
+  bool SameStatAs(const FileSignature& other) const {
     return exists && other.exists && !error && !other.error &&
            mtime_ticks == other.mtime_ticks && size == other.size;
   }
