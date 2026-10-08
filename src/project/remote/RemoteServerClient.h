@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -63,6 +64,18 @@ class RemoteServerClient {
   bool ConnectFds(int read_fd, int write_fd, const HelloRequest& hello, std::string* error);
 
   bool connected() const { return connected_ && !peer_.closed(); }
+  // After a failed Connect*: the server answered, but with a protocol outside
+  // this client's range (install the matching one).
+  bool incompatible() const { return incompatible_; }
+  // After a failed ConnectCommand: the command's exit status, waiting up to
+  // `wait` for it to exit. 127 is a shell's "command not found".
+  std::optional<int> command_exit_code(std::chrono::milliseconds wait);
+  // Runs once, on the I/O thread, when an established connection closes (the
+  // link died, or the server went away) — after every terminal heard of it.
+  // Set before Connect*.
+  void SetClosedHandler(std::function<void(std::string_view reason)> handler) {
+    closed_handler_ = std::move(handler);
+  }
   const HelloReply& hello() const { return hello_reply_; }
   RemotePeer& peer() { return peer_; }
 
@@ -110,7 +123,9 @@ class RemoteServerClient {
 
   platform::AsyncSubprocess command_;  // the server (or ssh), when ConnectCommand ran it
   RemotePeer peer_;
-  bool connected_ = false;
+  std::atomic<bool> connected_{false};  // read by the I/O thread's close handler
+  bool incompatible_ = false;
+  std::function<void(std::string_view)> closed_handler_;
   HelloReply hello_reply_;
 
   std::mutex mutex_;

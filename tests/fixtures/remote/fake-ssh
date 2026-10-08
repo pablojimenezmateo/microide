@@ -1,0 +1,44 @@
+#!/bin/sh
+# A stand-in for ssh in the RemoteHostSession tests: the "host" is this machine
+# with HOME=$FAKE_SSH_HOME, the ControlMaster is a file at the -S path, and a
+# remote command runs through `sh -c` the way a login shell would run what ssh
+# sends it (the words joined with spaces).
+#
+#   FAKE_SSH_HOME        the host's home directory (required)
+#   FAKE_SSH_NEEDS_AUTH  set: a BatchMode master fails the way a key with a
+#                        passphrase does; an interactive one succeeds
+ctl=
+log=
+batch=no
+master=no
+check=no
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) [ "$2" = BatchMode=yes ] && batch=yes; shift 2 ;;
+    -S) ctl="$2"; shift 2 ;;
+    -E) log="$2"; shift 2 ;;
+    -p|-l) shift 2 ;;
+    -O) [ "$2" = check ] && check=yes; shift 2 ;;
+    -fN|-N|-f) master=yes; shift ;;
+    --) shift; break ;;
+    *) shift ;;
+  esac
+done
+shift  # the host
+if [ "$check" = yes ]; then
+  [ -e "$ctl" ]
+  exit $?
+fi
+if [ "$master" = yes ]; then
+  if [ -n "$FAKE_SSH_NEEDS_AUTH" ] && [ "$batch" = yes ]; then
+    echo "user@host: Permission denied (publickey)." > "${log:-/dev/stderr}"
+    exit 255
+  fi
+  : > "$ctl"
+  exit 0
+fi
+[ -e "$ctl" ] || { echo "ssh: no master at $ctl" >&2; exit 255; }
+HOME="$FAKE_SSH_HOME"
+export HOME
+cd "$HOME" || exit 255
+exec sh -c "$*"

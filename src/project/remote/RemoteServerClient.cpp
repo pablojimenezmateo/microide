@@ -1,6 +1,7 @@
 #include "project/remote/RemoteServerClient.h"
 
 #include <atomic>
+#include <thread>
 #include <utility>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -41,6 +42,14 @@ bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
   return Handshake(hello, error);
 }
 
+std::optional<int> RemoteServerClient::command_exit_code(std::chrono::milliseconds wait) {
+  const auto deadline = std::chrono::steady_clock::now() + wait;
+  while (command_.IsRunning() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  return command_.exit_code();
+}
+
 bool RemoteServerClient::ConnectFds(int read_fd, int write_fd, const HelloRequest& hello,
                                     std::string* error) {
   RemotePeer::Options options;
@@ -74,6 +83,9 @@ void RemoteServerClient::InstallRouting() {
         events->lost(reason);
       }
     }
+    if (connected_ && closed_handler_) {
+      closed_handler_(reason);
+    }
   });
   peer_.OnNotification("proc/exit", [this](std::uint64_t handle, const util::JsonValue& params) {
     DeliverExit(handle, params);
@@ -97,6 +109,7 @@ bool RemoteServerClient::Handshake(const HelloRequest& hello, std::string* error
           CheckProtocolCompatibility(hello.protocol, hello.min_protocol, hello.release,
                                      parsed->protocol, parsed->min_protocol, parsed->release)) {
     *error = *incompatible;
+    incompatible_ = true;
     return false;
   }
   hello_reply_ = std::move(*parsed);

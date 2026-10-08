@@ -308,6 +308,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemotePeer.cpp
   src/project/remote/RemoteProcessLauncher.cpp
   src/project/remote/RemoteServerClient.cpp
+  src/project/remote/RemoteHostSession.cpp
   src/project/remote/RemoteServerPaths.cpp
   src/project/remote/RemoteTerminalChannel.cpp
   src/terminal/TerminalAnsiColors.cpp
@@ -1358,6 +1359,7 @@ add_executable(microide_kernel_tests
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
   tests/RemoteProcessTests.cpp
+  tests/RemoteHostSessionTests.cpp
   tests/RemoteTerminalTests.cpp
   tests/RemoteLauncherTests.cpp
   tests/TestRunner.cpp

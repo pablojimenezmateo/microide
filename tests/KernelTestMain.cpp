@@ -73,6 +73,7 @@ void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 void RegisterRemoteFrameTests(std::vector<TestCase>& tests);
 void RegisterTerminalHostTests(std::vector<TestCase>& tests);
 void RegisterRemoteTerminalTests(std::vector<TestCase>& tests);
+void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests);
 void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests);
 void RegisterRemotePeerTests(std::vector<TestCase>& tests);
 void RegisterRemoteServerTests(std::vector<TestCase>& tests);
@@ -85,6 +86,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterRemoteFrameTests(tests);
   RegisterTerminalHostTests(tests);
   RegisterRemoteTerminalTests(tests);
+  RegisterRemoteHostSessionTests(tests);
   RegisterRemoteFrameTransportTests(tests);
   RegisterRemotePeerTests(tests);
   RegisterRemoteServerTests(tests);
