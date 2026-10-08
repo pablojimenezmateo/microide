@@ -9,6 +9,8 @@
 
 namespace microide::platform {
 
+class AsyncSubprocess;
+
 // WHERE a spawned process runs.
 //
 // The editor spawns a lot of children — git, ripgrep, formatters, language servers,
@@ -59,6 +61,15 @@ class ProcessLauncher {
   // one and cannot see the other (git used to pass its root as `-C <root>`).
   virtual SubprocessResult Run(std::vector<std::string> argv,
                                          SubprocessOptions options) const = 0;
+
+  // Start a LONG-LIVED process (a language server, a debug adapter) into `process`.
+  // Local: AsyncSubprocess::Start with the resolved argv and working directory. A
+  // remote launcher starts it on the host and adopts it (AsyncSubprocess::Adopt),
+  // so the caller's stdio loop is the same either way. `cwd` is the editor-side
+  // path, as for Run.
+  virtual bool StartAsync(AsyncSubprocess& process, const std::vector<std::string>& argv,
+                          const std::filesystem::path& cwd,
+                          const SubprocessSandbox& sandbox) const;
 
   // False for a launcher that runs the process on another machine. Callers use it to
   // refuse a thing that only makes sense locally rather than doing it in the wrong

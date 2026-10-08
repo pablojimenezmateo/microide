@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <utility>
 
+#include "project/GitMetadataSource.h"
 #include "project/remote/RemoteServerPaths.h"
 #include "util/Log.h"
 
@@ -166,6 +167,24 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
     util::JsonObject result;
     result["handle"] = util::JsonValue(static_cast<std::int64_t>(spawned.handle));
     result["pid"] = util::JsonValue(static_cast<std::int64_t>(spawned.pid));
+    connection.peer.Reply(id, util::JsonValue(std::move(result)));
+  });
+  // What the client's GitMetadataSource answers from (project/GitMetadataSource.h):
+  // whether a tree is a repository and where its git directory is, by stat on THIS
+  // machine — the client's mirror has no `.git`, and running git to ask would cost
+  // a host process per probe.
+  peer.OnRequest("git/metadata", [&connection](std::uint64_t id, const util::JsonValue& params) {
+    const util::JsonValue& root = params["root"];
+    if (!root.IsString() || root.AsString().empty() || root.AsString().front() != '/') {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams, "root must be an absolute path");
+      return;
+    }
+    const project::GitMetadataSource& local = project::LocalGitMetadataSource();
+    util::JsonObject result;
+    result["repository"] =
+        util::JsonValue(local.Availability(root.AsString()) == project::GitAvailability::Repository);
+    const auto git_dir = local.ReadableGitDirectory(root.AsString());
+    result["git_dir"] = util::JsonValue(git_dir.has_value() ? git_dir->string() : std::string());
     connection.peer.Reply(id, util::JsonValue(std::move(result)));
   });
   peer.OnRequest("proc/attach", [this, &connection](std::uint64_t id, const util::JsonValue& params) {

@@ -13,6 +13,7 @@
 #include "platform/ProcessLauncher.h"
 #include "project/FileWriteGate.h"
 #include "project/GitMetadataSource.h"
+#include "project/remote/RemotePathMap.h"
 
 namespace microide::tests::parity {
 
@@ -25,19 +26,15 @@ namespace microide::tests::parity {
 // directories on purpose: with one shared root every path-translation bug passes,
 // because the untranslated path is also a correct one.
 
-// Maps a mirror path onto the host tree, component-wise. A path outside the mirror
-// root is not the project's and maps to nothing.
-class LoopbackPathMap {
+// The mirror <-> host map is the kernel's (project/remote/RemotePathMap.h), the
+// same one the real remote launcher uses; `ToMirror` is its `ToLocal`.
+class LoopbackPathMap : public project::remote::RemotePathMap {
  public:
-  LoopbackPathMap(std::filesystem::path mirror_root, std::filesystem::path host_root);
-  std::optional<std::filesystem::path> ToHost(const std::filesystem::path& mirror_path) const;
-  std::optional<std::filesystem::path> ToMirror(const std::filesystem::path& host_path) const;
-  const std::filesystem::path& mirror_root() const { return mirror_root_; }
-  const std::filesystem::path& host_root() const { return host_root_; }
-
- private:
-  std::filesystem::path mirror_root_;
-  std::filesystem::path host_root_;
+  using RemotePathMap::RemotePathMap;
+  std::optional<std::filesystem::path> ToMirror(const std::filesystem::path& host_path) const {
+    return ToLocal(host_path);
+  }
+  const std::filesystem::path& mirror_root() const { return local_root(); }
 };
 
 // `is_local() == false`; runs the real command on this machine with the working

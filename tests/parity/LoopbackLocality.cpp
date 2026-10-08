@@ -7,50 +7,6 @@
 
 namespace microide::tests::parity {
 
-LoopbackPathMap::LoopbackPathMap(std::filesystem::path mirror_root,
-                                 std::filesystem::path host_root)
-    : mirror_root_(mirror_root.lexically_normal()), host_root_(host_root.lexically_normal()) {}
-
-namespace {
-
-// `path` re-rooted from `from` onto `to`, component-wise; nullopt when `path` is
-// not under `from`.
-std::optional<std::filesystem::path> Reroot(const std::filesystem::path& path,
-                                            const std::filesystem::path& from,
-                                            const std::filesystem::path& to) {
-  const std::filesystem::path normal = path.lexically_normal();
-  auto from_it = from.begin();
-  auto path_it = normal.begin();
-  for (; from_it != from.end(); ++from_it, ++path_it) {
-    // A trailing separator normalizes to an empty final component.
-    if (from_it->empty()) {
-      continue;
-    }
-    if (path_it == normal.end() || *path_it != *from_it) {
-      return std::nullopt;
-    }
-  }
-  std::filesystem::path rerooted = to;
-  for (; path_it != normal.end(); ++path_it) {
-    if (!path_it->empty()) {
-      rerooted /= *path_it;
-    }
-  }
-  return rerooted;
-}
-
-}  // namespace
-
-std::optional<std::filesystem::path> LoopbackPathMap::ToHost(
-    const std::filesystem::path& mirror_path) const {
-  return Reroot(mirror_path, mirror_root_, host_root_);
-}
-
-std::optional<std::filesystem::path> LoopbackPathMap::ToMirror(
-    const std::filesystem::path& host_path) const {
-  return Reroot(host_path, host_root_, mirror_root_);
-}
-
 void LoopbackProcessLauncher::Record(const std::vector<std::string>& argv) const {
   std::string line;
   for (const std::string& word : argv) {

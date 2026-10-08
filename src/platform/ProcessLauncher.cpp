@@ -1,5 +1,7 @@
 #include "platform/ProcessLauncher.h"
 
+#include "platform/AsyncSubprocess.h"
+
 #include <string_view>
 #include <utility>
 
@@ -48,6 +50,12 @@ std::vector<std::string> ExpandWorkspaceFolder(std::vector<std::string> argv,
     }
   }
   return argv;
+}
+
+bool ProcessLauncher::StartAsync(AsyncSubprocess& process, const std::vector<std::string>& argv,
+                                 const std::filesystem::path& cwd,
+                                 const SubprocessSandbox& sandbox) const {
+  return process.Start(ResolveArgv(argv), ResolveWorkingDirectory(cwd).string(), sandbox);
 }
 
 const ProcessLauncher& LocalProcessLauncher() {

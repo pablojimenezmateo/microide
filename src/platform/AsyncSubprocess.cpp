@@ -35,6 +35,8 @@ struct AsyncSubprocess::Impl {
   std::atomic<pid_t> pid{-1};
   int stdin_fd = -1;   // write end — parent writes here
   int stdout_fd = -1;  // read end  — parent reads here
+  // Set for an adopted process (Adopt): it answers instead of waitpid/kill.
+  std::shared_ptr<AsyncProcessController> controller;
   std::atomic<bool> running{false};
   std::optional<int> exit_code;
 
@@ -234,11 +236,37 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   return true;
 }
 
+bool AsyncSubprocess::Adopt(int stdin_fd, int stdout_fd,
+                            std::shared_ptr<AsyncProcessController> controller) {
+  if (impl_ == nullptr || controller == nullptr || stdin_fd < 0 || stdout_fd < 0) {
+    return false;
+  }
+  std::lock_guard lock(impl_->state_mutex);
+  if (impl_->running.load(std::memory_order_acquire)) {
+    return false;
+  }
+  fcntl(stdin_fd, F_SETFL, O_NONBLOCK);
+  fcntl(stdout_fd, F_SETFL, O_NONBLOCK);
+  impl_->stdin_fd = stdin_fd;
+  impl_->stdout_fd = stdout_fd;
+  impl_->controller = std::move(controller);
+  impl_->exit_code.reset();
+  impl_->running.store(true, std::memory_order_release);
+  return true;
+}
+
 bool AsyncSubprocess::IsRunning() const {
   if (impl_ == nullptr) {
     return false;
   }
   std::lock_guard lock(impl_->state_mutex);
+  if (impl_->controller != nullptr) {
+    if (!impl_->controller->IsRunning()) {
+      impl_->running.store(false, std::memory_order_release);
+      impl_->exit_code = impl_->controller->exit_code();
+    }
+    return impl_->running.load(std::memory_order_acquire);
+  }
   const pid_t current_pid = impl_->pid.load(std::memory_order_acquire);
   if (!impl_->running.load(std::memory_order_acquire) || current_pid < 0) {
     return false;
@@ -478,6 +506,13 @@ void AsyncSubprocess::Shutdown(int timeout_ms) {
     return;
   }
   std::lock_guard lock(impl_->state_mutex);
+  if (impl_->controller != nullptr) {
+    impl_->Close();  // the remote side sees stdin EOF
+    impl_->controller->Terminate(timeout_ms);
+    impl_->exit_code = impl_->controller->exit_code();
+    impl_->running.store(false, std::memory_order_release);
+    return;
+  }
   pid_t pid = impl_->pid.load(std::memory_order_acquire);
   if (!impl_->running.load(std::memory_order_acquire) || pid < 0) {
     impl_->Close();
@@ -521,6 +556,9 @@ int AsyncSubprocess::pid() const {
     return -1;
   }
   std::lock_guard lock(impl_->state_mutex);
+  if (impl_->controller != nullptr) {
+    return impl_->controller->pid();
+  }
   return static_cast<int>(impl_->pid.load(std::memory_order_acquire));
 }
 
@@ -529,6 +567,9 @@ std::optional<int> AsyncSubprocess::exit_code() const {
     return std::nullopt;
   }
   std::lock_guard lock(impl_->state_mutex);
+  if (impl_->controller != nullptr && !impl_->exit_code.has_value()) {
+    return impl_->controller->exit_code();
+  }
   return impl_->exit_code;
 }
 
@@ -540,7 +581,19 @@ int AsyncSubprocess::stdout_fd() const {
   return impl_->stdout_fd;
 }
 
+int AsyncSubprocess::stdin_fd() const {
+  if (impl_ == nullptr) {
+    return -1;
+  }
+  std::lock_guard lock(impl_->state_mutex);
+  return impl_->stdin_fd;
+}
+
 #elif defined(_WIN32)
+
+bool AsyncSubprocess::Adopt(int, int, std::shared_ptr<AsyncProcessController>) {
+  return false;  // remote processes are POSIX-only for now
+}
 
 namespace {
 
@@ -812,6 +865,7 @@ std::optional<int> AsyncSubprocess::exit_code() const {
 }
 
 int AsyncSubprocess::stdout_fd() const { return -1; }
+int AsyncSubprocess::stdin_fd() const { return -1; }
 
 #else  // non-POSIX stubs
 
@@ -819,6 +873,7 @@ bool AsyncSubprocess::Start(const std::vector<std::string>&, const std::string&,
                             const SubprocessSandbox&) {
   return false;
 }
+bool AsyncSubprocess::Adopt(int, int, std::shared_ptr<AsyncProcessController>) { return false; }
 bool AsyncSubprocess::IsRunning() const { return false; }
 bool AsyncSubprocess::Write(std::string_view) { return false; }
 std::optional<std::string> AsyncSubprocess::Read(std::size_t, int) { return std::nullopt; }
@@ -830,6 +885,7 @@ std::optional<int> AsyncSubprocess::exit_code() const {
   return impl_ != nullptr ? impl_->exit_code : std::nullopt;
 }
 int AsyncSubprocess::stdout_fd() const { return -1; }
+int AsyncSubprocess::stdin_fd() const { return -1; }
 
 #endif
 

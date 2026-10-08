@@ -47,7 +47,7 @@
 ## 6. proc/spawn and RemoteProcessLauncher (first vertical slice)
 
 - [x] 6.1 Server: `proc/spawn` (argv array, host cwd, env additions, `keep_on_detach`), `proc/stdin`, `proc/stdout`, `proc/stderr`, `proc/signal`, `proc/exit`; per-stream byte offsets; per-handle credit window
-- [ ] 6.2 `RemoteServerClient` (owns the transport) and `RemoteProcessLauncher` implementing `platform::ProcessLauncher` and `project::GitMetadataSource`; `Run` collects to completion; long-lived spawns (`AsyncSubprocess` users: LSP, DAP) get a process handle whose stdio is the protocol
+- [x] 6.2 `RemoteServerClient` (owns the transport) and `RemoteProcessLauncher` implementing `platform::ProcessLauncher` and `project::GitMetadataSource`; `Run` collects to completion; long-lived spawns (`AsyncSubprocess` users: LSP, DAP) get a process handle whose stdio is the protocol
 - [ ] 6.3 Parity harness: add the `server` locality — spawn `microide-server attach` locally over a pipe with split host/mirror roots and a host root on the server side; run every existing `Parity/*` row against it, including the spawn-count check
 - [ ] 6.4 Real gdb and clangd rows against the server locality (copy the loopback rows; skips decided by a local reference run)
 - [x] 6.5 Tests: argv fidelity (space, quotes, `$HOME`, newline), exit status and signals, a kept process surviving a transport drop and resuming stdio from its offset with no duplicates, a non-kept process terminated on detach, exit while detached delivered on attach

@@ -304,7 +304,10 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteFrameTransport.cpp
   src/project/remote/RemoteProtocol.cpp
   src/project/remote/LinkHeartbeat.cpp
+  src/project/remote/RemotePathMap.cpp
   src/project/remote/RemotePeer.cpp
+  src/project/remote/RemoteProcessLauncher.cpp
+  src/project/remote/RemoteServerClient.cpp
   src/project/remote/RemoteServerPaths.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalBase64.cpp
@@ -1322,6 +1325,7 @@ add_executable(microide_kernel_tests
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
   tests/RemoteProcessTests.cpp
+  tests/RemoteLauncherTests.cpp
   tests/TestRunner.cpp
   tests/TestRunnerCli.cpp
   tests/TestSupport.cpp
@@ -1794,6 +1798,7 @@ add_executable(microide_diff_bench
   src/platform/Subprocess.cpp
   src/platform/SubprocessSandbox.cpp
   src/platform/Filesystem.cpp
+  src/platform/AsyncSubprocess.cpp
   src/platform/ProcessLauncher.cpp
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp

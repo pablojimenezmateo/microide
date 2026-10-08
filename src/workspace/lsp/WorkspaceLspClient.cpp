@@ -43,8 +43,7 @@ bool LspClient::Start(const platform::ProcessLauncher& launcher,
     // indexes a different machine's tree lands diagnostics on lines the buffer does
     // not have. The same launcher translates every path in the messages both ways.
     impl_->SetPathTranslator(HostPathTranslator(launcher));
-    if (!impl_->proc.Start(launcher.ResolveArgv(command),
-                           launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
+    if (!launcher.StartAsync(impl_->proc, command, cwd, sandbox)) {
       impl_->last_error = "failed to start language server process";
       {
         std::lock_guard lock(impl_->mutex);

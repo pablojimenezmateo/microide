@@ -54,7 +54,8 @@ class ProcessTable {
   struct SpawnRequest {
     std::vector<std::string> argv;
     std::string cwd;
-    std::vector<std::pair<std::string, std::string>> env;
+    // Set (a value) or unset (nullopt) on top of the server's own environment.
+    std::vector<std::pair<std::string, std::optional<std::string>>> env;
     bool keep_on_detach = false;
   };
   struct SpawnResult {

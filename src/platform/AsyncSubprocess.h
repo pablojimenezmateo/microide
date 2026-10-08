@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -13,6 +14,19 @@ namespace microide::platform {
 // A long-running subprocess with bidirectional stdin/stdout communication.
 // Designed for LSP and similar protocol-backed servers.
 // POSIX-only; returns "not implemented" results elsewhere.
+// The process behind an ADOPTED AsyncSubprocess — one that runs somewhere else (a
+// remote host, through microide-server) with its stdio carried by two local pipes.
+// Liveness, exit status and termination are asked of it instead of waitpid/kill.
+class AsyncProcessController {
+ public:
+  virtual ~AsyncProcessController() = default;
+  virtual bool IsRunning() const = 0;
+  virtual std::optional<int> exit_code() const = 0;
+  virtual int pid() const = 0;
+  // SIGTERM, then SIGKILL if it has not exited within `timeout_ms`.
+  virtual void Terminate(int timeout_ms) = 0;
+};
+
 class AsyncSubprocess {
  public:
   AsyncSubprocess();
@@ -26,6 +40,14 @@ class AsyncSubprocess {
   // (Linux Landlock/seccomp/setrlimit) between fork and exec — used for plugin-contributed servers.
   bool Start(const std::vector<std::string>& argv, const std::string& cwd = {},
              const SubprocessSandbox& sandbox = {});
+
+  // Take over a process started elsewhere: `stdin_fd` is written to feed its stdin,
+  // `stdout_fd` read for its stdout (both now owned, made non-blocking), and
+  // `controller` answers for the process itself. Everything else — Write, Read,
+  // stdout_fd() for a poll loop, CloseStdin — works exactly as for a local child,
+  // which is what lets the language server and debug adapter clients run a remote
+  // process without knowing it is one. False when already running.
+  bool Adopt(int stdin_fd, int stdout_fd, std::shared_ptr<AsyncProcessController> controller);
 
   // True while the child process is believed to be alive.
   bool IsRunning() const;
@@ -54,6 +76,9 @@ class AsyncSubprocess {
   // Raw stdout read fd (POSIX), for callers that want to poll() it alongside
   // their own wakeup fd in a single I/O loop. Returns -1 off POSIX or if closed.
   int stdout_fd() const;
+  // Raw stdin write fd (POSIX), for a caller that drives both pipes from its own
+  // I/O loop (the remote server connection). -1 off POSIX or once closed.
+  int stdin_fd() const;
 
   // exit code of the child once it has exited, or nullopt while still running/unknown.
   std::optional<int> exit_code() const;

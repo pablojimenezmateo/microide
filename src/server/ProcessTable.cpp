@@ -59,15 +59,16 @@ void SetNonBlocking(int fd) {
 
 // Resolve argv[0] through PATH in the parent: the child of a multi-threaded process
 // may only call async-signal-safe functions, and execve is one; execvp is not.
-std::string ResolveExecutable(const std::string& name,
-                              const std::vector<std::pair<std::string, std::string>>& env) {
+std::string ResolveExecutable(
+    const std::string& name,
+    const std::vector<std::pair<std::string, std::optional<std::string>>>& env) {
   if (name.find('/') != std::string::npos) {
     return name;
   }
   std::string path_value;
   for (const auto& [key, value] : env) {
-    if (key == "PATH") {
-      path_value = value;
+    if (key == "PATH" && value.has_value()) {
+      path_value = *value;
     }
   }
   if (path_value.empty()) {
@@ -167,12 +168,14 @@ std::optional<ProcessTable::SpawnRequest> ProcessTable::ParseSpawn(const util::J
       return std::nullopt;
     }
     for (const auto& entry : env.AsObject()) {
-      if (!ValidEnvName(entry.key) || !entry.value.IsString() ||
+      if (!ValidEnvName(entry.key) || !(entry.value.IsString() || entry.value.IsNull()) ||
           entry.value.AsString().find('\0') != std::string::npos) {
-        *error = "env entries must be NAME: string";
+        *error = "env entries must be NAME: string (set) or NAME: null (unset)";
         return std::nullopt;
       }
-      request.env.emplace_back(entry.key, entry.value.AsString());
+      request.env.emplace_back(entry.key, entry.value.IsNull()
+                                              ? std::nullopt
+                                              : std::optional<std::string>(entry.value.AsString()));
     }
   }
   request.keep_on_detach = params["keep_on_detach"].AsBool(false);
@@ -206,7 +209,9 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
     }
   }
   for (const auto& [key, value] : request.env) {
-    env_storage.push_back(key + "=" + value);
+    if (value.has_value()) {
+      env_storage.push_back(key + "=" + *value);
+    }
   }
   std::vector<char*> envp;
   for (std::string& entry : env_storage) {

@@ -33,8 +33,7 @@ bool DapClient::Start(const platform::ProcessLauncher& launcher,
   // for a file nobody is looking at. The same launcher translates every path in the
   // messages both ways.
   impl_->SetPathTranslator(HostPathTranslator(launcher));
-  if (!impl_->proc.Start(launcher.ResolveArgv(command),
-                         launcher.ResolveWorkingDirectory(cwd).string(), sandbox)) {
+  if (!launcher.StartAsync(impl_->proc, command, cwd, sandbox)) {
     impl_->last_error = "failed to start debug adapter process";
     return false;
   }
