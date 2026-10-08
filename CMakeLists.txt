@@ -345,6 +345,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/util/PerformanceCounters.cpp
   src/util/PerformanceTrace.cpp
   src/util/SerialWorkQueue.cpp
+  src/util/ContentHash.cpp
   src/util/Sha256.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
@@ -1410,6 +1411,7 @@ add_executable(microide_kernel_tests
   tests/RegexUtilTests.cpp
   tests/RuntimePathsTests.cpp
   tests/SerialWorkQueueTests.cpp
+  tests/ContentHashTests.cpp
   tests/Sha256Tests.cpp
   tests/SmallVectorTests.cpp
   tests/StringUtilTests.cpp

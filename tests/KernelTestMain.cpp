@@ -38,6 +38,7 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests);
 void RegisterRegexUtilTests(std::vector<TestCase>& tests);
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests);
 void RegisterStringUtilTests(std::vector<TestCase>& tests);
+void RegisterContentHashTests(std::vector<TestCase>& tests);
 void RegisterSha256Tests(std::vector<TestCase>& tests);
 void RegisterSubprocessTests(std::vector<TestCase>& tests);
 void RegisterTaskExecutorTests(std::vector<TestCase>& tests);
@@ -129,6 +130,7 @@ void RegisterKernelTests(std::vector<TestCase>& tests) {
   RegisterRegexUtilTests(tests);
   RegisterRuntimePathsTests(tests);
   RegisterStringUtilTests(tests);
+  RegisterContentHashTests(tests);
   RegisterSha256Tests(tests);
   RegisterSubprocessTests(tests);
   RegisterTaskExecutorTests(tests);
