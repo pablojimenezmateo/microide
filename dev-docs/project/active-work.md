@@ -290,9 +290,12 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
-> **Next agent: start here.** Phase 2a is committed (2026-10-08) and specified in
-> `openspec/changes/remote-server-phase-2a/` — read `proposal.md`, then
-> `design.md`, then work `tasks.md` top to bottom (`/opsx:apply`). Order matters:
+> **Next agent: start here.** Phase 2a is BUILT (2026-10-08): `tasks.md` in
+> `openspec/changes/remote-server-phase-2a/` is checked off except 4.5's settings
+> echo, 7.4's backfill and two-client rule, 9.1 (delay-proxy perf scenarios) and
+> the archive step; the remainders are TD-2026-10-08-325 and -326. What it built is
+> summarized in `dev-docs/design/remote-projects.md` § "Phase 2a as built". The
+> next phase is 2b (the mirror and a remote PROJECT). Phase 2a's original plan: Order matters:
 > **(1) kernel test binary, (2) notification actions, (3) save continuations,
 > (4) frame codec + transport, (5) daemon skeleton, (6) `proc/spawn` +
 > `RemoteProcessLauncher` as the parity suite's third locality, (7) host terminals

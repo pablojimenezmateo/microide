@@ -10,6 +10,19 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Terminals on a remote host.** `Remote: Open Terminal on Host…` (`remote-terminal
+  [user@]host[:port]`) opens a terminal whose shell runs on the host, reached with
+  your own ssh configuration — no inbound port, no root. The first connect installs
+  `microide-server` under `~/.local/share/microide/server` over the same connection
+  (`remote.server_install`); a key that needs a passphrase is answered in a terminal
+  tab. The host owns the pty and the terminal model, so a dropped link (a closed
+  laptop) kills nothing: the client reconnects by itself and every terminal resumes
+  where it was, with what it printed meanwhile. Typed characters are drawn at once,
+  underlined, on a slow link (`remote.predict`, mosh-style) and confirmed within a
+  round trip. A `Remote` status segment and a notification row per host (Reconnect,
+  Copy ssh Command, Copy Install Command) show the connection; `remote-status`,
+  `remote-disconnect`, `remote-reconnect` and `remote-stop-server` act on it.
+
 - **Terminal split panes.** A terminal tab is now a group of up to six sessions
   side by side (VS Code's terminal group): `Ctrl+Shift+\` with the terminal
   focused, Terminal ▸ Split Terminal, or the tab's context menu puts a new pane
@@ -60,6 +73,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
   panes.
 
 ### Fixed
+
+- **Format-on-save keeps the undo history.** Applying a formatter's output used to
+  reload the buffer, so after a save that formatted anything Ctrl+Z reached neither
+  the formatting nor anything typed before it. The output is now one edit: one undo
+  takes the formatting back, and the history before it is intact.
+- A theme file added or removed within the filesystem's timestamp granularity of
+  the previous listing no longer stays missing (or listed) from the theme picker.
 
 - **Indent guides on pathological indentation.** A line opening with hundreds of
   thousands of spaces made the guide sweep walk one column per indent step every

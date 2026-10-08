@@ -1,6 +1,6 @@
 # Remote Projects Over SSH
 
-Last revised 2026-10-07. **Status: groundwork roughly 55% shipped (§ 8; G11 added 2026-10-07). No remote code yet.**
+Last revised 2026-10-08. **Status: Phase 2a — the server, host terminals with prediction, reattach and reconnect — is on `main` (see "Phase 2a as built" below); no remote PROJECT opens yet (Phase 2b).**
 
 **Terminology.** This document talks about two different things that were both
 called "agent" until this revision. The **server** is `microide-server`, the
@@ -81,6 +81,37 @@ When a phase is committed to, it graduates into an `openspec/changes/` proposal.
 tasks). It folds in three small prerequisites: the kernel test binary
 (TD-2026-09-22-303), notification actions (G7) and save continuations (the quit and
 close-project half of TD-2026-09-28-304).
+
+**Phase 2a as built (2026-10-08).** What landed, and where it deliberately differs
+from the text above:
+
+- `microide-server` (`src/server/`, kernel-only) with `start/stop/status/attach`,
+  `proc/*` with kept processes and offset resume, and `term/*` over
+  `server/TerminalTable`: each host terminal is a kernel `TerminalSession` in a pty
+  the server owns.
+- **One ordered frame instead of `term/screen` + `term/lines` + `term/event`.**
+  `terminal/TerminalHostWire.h`: every line has a host-absolute index; a frame
+  carries, per line that scrolled out of view, *Promote* (the client's old screen
+  row is exact), *Lines* (under the credit window) or *Gap* (one counted rule),
+  and per screen row *Keep* or the line, against a per-client shadow
+  (`TerminalHostFrameBuilder`). Title, OSC 7 and OSC 52 ride the same frame, so a
+  title can never overtake the screen that set it. A keystroke's frame is one row.
+- **No `RemoteTerminalView`.** The client's `TerminalSession` has a *host mode*
+  (`HostTerminalsFor(launcher)`, the `GitMetadataFor` pattern): it mirrors the
+  host buffer from frames and turns every input call into a semantic event, so the
+  panel's rendering, selection and search run unchanged on a host terminal.
+- `TerminalPredictionOverlay` (mosh-style, `remote.predict`, adaptive > 30 ms) is
+  withdrawn before every frame and judged against `echo_ack` after it.
+- Warm reattach (`term/attach` with the client's resume point) and
+  `RemoteConnection::Replace`, which carries terminals AND kept host processes
+  (LSP, DAP) over a reconnect.
+- `RemoteHostSession`: ControlMaster with BatchMode, NeedsAuth in a terminal tab,
+  attach-or-install over the same master, reconnect with backoff;
+  `workspace/services/RemoteHostService` for `Remote: Open Terminal on Host…`, the
+  status segment and the notification rows. Tested end to end against
+  `tests/fixtures/remote/fake-ssh`.
+- Open: `term/scrollback` backfill, two clients on one pty, the perf-harness
+  delay scenarios (§ 9) — TD-2026-10-08-325, -326.
 
 ## 1. The problem
 
