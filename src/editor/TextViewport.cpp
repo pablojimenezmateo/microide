@@ -53,6 +53,7 @@ TextViewport::TextViewport(const TextViewport& other)
       save_ensure_final_newline_(other.save_ensure_final_newline_),
       save_line_ending_override_(other.save_line_ending_override_),
       read_only_(other.read_only_),
+      refused_edits_(other.refused_edits_),
       lc_view_(other.lc_view_),
       language_id_(other.language_id_),
       language_id_document_(other.language_id_document_),
@@ -148,6 +149,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       save_ensure_final_newline_(other.save_ensure_final_newline_),
       save_line_ending_override_(other.save_line_ending_override_),
       read_only_(other.read_only_),
+      refused_edits_(other.refused_edits_),
       lc_view_(std::move(other.lc_view_)),
       language_id_(std::move(other.language_id_)),
       language_id_document_(other.language_id_document_),
@@ -222,6 +224,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   save_ensure_final_newline_ = other.save_ensure_final_newline_;
   save_line_ending_override_ = other.save_line_ending_override_;
   read_only_ = other.read_only_;
+  refused_edits_ = other.refused_edits_;
   lc_view_ = std::move(other.lc_view_);
   language_id_ = std::move(other.language_id_);
   language_id_document_ = other.language_id_document_;
