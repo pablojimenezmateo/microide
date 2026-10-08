@@ -14,6 +14,7 @@
 // in 14.x, so an older gdb on PATH also skips rather than failing.
 #include "TestSupport.h"
 #include "parity/LoopbackLocality.h"
+#include "project/remote/RemoteProcessLauncher.h"
 
 #include "platform/Subprocess.h"
 #include "util/JsonValue.h"
@@ -353,18 +354,33 @@ void TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost() {
     return;
   }
 
-  const tests::parity::LoopbackProcessLauncher launcher(
-      tests::parity::LoopbackPathMap(mirror, host));
-  const GdbCycleResult remote = RunGdbBreakpointCycle(gdb, launcher, mirror,
-                                                      mirror / "debuggee.c", mirror / "debuggee");
-  Expect(remote.started, "gdb starts through the loopback host");
-  Expect(remote.stopped,
-         "the MIRROR's program and breakpoint reach the host's binary, and it stops there");
-  Expect(std::filesystem::path(remote.frame_path).lexically_normal() ==
-                 (mirror / "debuggee.c").lexically_normal() &&
-             remote.frame_line == 2,
-         "the stop is reported in the MIRROR's file, on the breakpoint's line; got " +
-             remote.frame_path + ":" + std::to_string(remote.frame_line));
+  // Both non-local localities: the in-process loopback, and the real server
+  // over a pipe (Phase 2a 6.4) -- where gdb is a `proc/spawn` child whose DAP
+  // stdio is the protocol's credit-windowed streams.
+  const tests::parity::LoopbackPathMap map(mirror, host);
+  const tests::parity::LoopbackProcessLauncher loopback(map);
+  std::string error;
+  const auto server = tests::parity::ConnectServerLocality(map, &error);
+  Expect(server != nullptr, "the server locality connects: " + error);
+  const std::pair<const platform::ProcessLauncher*, std::string_view> localities[] = {
+      {&loopback, "loopback"}, {server.get(), "server"}};
+  for (const auto& [launcher, name] : localities) {
+    if (launcher == nullptr) {
+      continue;
+    }
+    const std::string where = " (" + std::string(name) + ")";
+    const GdbCycleResult remote = RunGdbBreakpointCycle(
+        gdb, *launcher, mirror, mirror / "debuggee.c", mirror / "debuggee");
+    Expect(remote.started, "gdb starts through the non-local host" + where);
+    Expect(remote.stopped,
+           "the MIRROR's program and breakpoint reach the host's binary, and it stops there" +
+               where);
+    Expect(std::filesystem::path(remote.frame_path).lexically_normal() ==
+                   (mirror / "debuggee.c").lexically_normal() &&
+               remote.frame_line == 2,
+           "the stop is reported in the MIRROR's file, on the breakpoint's line; got " +
+               remote.frame_path + ":" + std::to_string(remote.frame_line) + where);
+  }
 #endif
 }
 

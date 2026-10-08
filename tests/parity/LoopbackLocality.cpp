@@ -1,8 +1,11 @@
 #include "parity/LoopbackLocality.h"
 
+#include <memory>
 #include <system_error>
 #include <utility>
 
+#include "project/remote/RemoteProcessLauncher.h"
+#include "project/remote/RemoteServerClient.h"
 #include "util/TextFileIO.h"
 
 namespace microide::tests::parity {
@@ -159,6 +162,19 @@ project::FileWriteGate::TreeResult LoopbackWriteGate::ApplyTreeOps(std::span<con
 
 void LoopbackWriteGate::DisposeStaged(std::span<const std::filesystem::path> staged) {
   project::LocalFileWriteGate().DisposeStaged(staged);
+}
+
+std::unique_ptr<project::remote::RemoteProcessLauncher> ConnectServerLocality(
+    const LoopbackPathMap& map, std::string* error) {
+  auto client = std::make_shared<project::remote::RemoteServerClient>();
+  if (!client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                              project::remote::HelloRequest{.release = "parity"}, error)) {
+    return nullptr;
+  }
+  return std::make_unique<project::remote::RemoteProcessLauncher>(
+      std::move(client), map,
+      project::remote::RemoteProcessLauncher::Options{.host_paths_readable_locally = true,
+                                                      .description = "server"});
 }
 
 }  // namespace microide::tests::parity

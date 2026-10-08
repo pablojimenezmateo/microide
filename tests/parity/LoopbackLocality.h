@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 #include <cstddef>
 #include <filesystem>
 #include <mutex>
@@ -14,6 +15,10 @@
 #include "project/FileWriteGate.h"
 #include "project/GitMetadataSource.h"
 #include "project/remote/RemotePathMap.h"
+
+namespace microide::project::remote {
+class RemoteProcessLauncher;
+}
 
 namespace microide::tests::parity {
 
@@ -123,5 +128,13 @@ class LoopbackWriteGate final : public project::FileWriteGate {
   LoopbackPathMap map_;
   std::atomic<std::size_t> writes_{0};
 };
+
+// The parity suite's third locality: a RemoteProcessLauncher over a real
+// `microide-server serve-stdio` child spoken to through a pipe, with `map`'s host
+// side readable here. Null (with `error` set) when the server cannot be reached.
+// One helper for the harness and the real-tool rows, so a fourth locality's
+// wiring has one place to change.
+std::unique_ptr<project::remote::RemoteProcessLauncher> ConnectServerLocality(
+    const LoopbackPathMap& map, std::string* error);
 
 }  // namespace microide::tests::parity

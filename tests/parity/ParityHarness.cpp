@@ -9,7 +9,6 @@
 #include "parity/LoopbackLocality.h"
 #include "parity/ParityKnownGaps.h"
 #include "project/remote/RemoteProcessLauncher.h"
-#include "project/remote/RemoteServerClient.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::parity {
@@ -122,15 +121,9 @@ RunResult RunUnder(const Scenario& scenario, Locality locality) {
       loopback_launcher = std::make_unique<LoopbackProcessLauncher>(map);
       launcher = loopback_launcher.get();
     } else {
-      auto client = std::make_shared<project::remote::RemoteServerClient>();
       std::string error;
-      Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
-                                    project::remote::HelloRequest{.release = "parity"}, &error),
-             "parity: the server locality connects: " + error);
-      server_launcher = std::make_unique<project::remote::RemoteProcessLauncher>(
-          client, map,
-          project::remote::RemoteProcessLauncher::Options{.host_paths_readable_locally = true,
-                                                          .description = "server"});
+      server_launcher = ConnectServerLocality(map, &error);
+      Expect(server_launcher != nullptr, "parity: the server locality connects: " + error);
       launcher = server_launcher.get();
     }
   }

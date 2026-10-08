@@ -11,6 +11,7 @@
 // clangd path to force a specific binary.
 #include "TestSupport.h"
 #include "parity/LoopbackLocality.h"
+#include "project/remote/RemoteProcessLauncher.h"
 
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
@@ -276,17 +277,30 @@ void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
     return;
   }
 
-  const tests::parity::LoopbackProcessLauncher launcher(
-      tests::parity::LoopbackPathMap(mirror, host));
-  const ClangdDefinitionResult remote =
-      RunClangdDefinition(clangd, launcher, mirror, mirror / "main.cpp", main_text);
-  Expect(remote.initialized, "clangd starts through the loopback host");
-  Expect(!remote.include_not_found,
-         "clangd works in the HOST tree, where the generated header exists");
-  Expect(remote.definition_path ==
-             (mirror / "build" / "gen" / "generated.h").lexically_normal().string(),
-         "go-to-definition into the host-only header comes back as the mirror's path; got '" +
-             remote.definition_path + "'");
+  // Both non-local localities: the in-process loopback, and the real server
+  // over a pipe (Phase 2a 6.4).
+  const tests::parity::LoopbackPathMap map(mirror, host);
+  const tests::parity::LoopbackProcessLauncher loopback(map);
+  std::string error;
+  const auto server = tests::parity::ConnectServerLocality(map, &error);
+  Expect(server != nullptr, "the server locality connects: " + error);
+  const std::pair<const platform::ProcessLauncher*, std::string_view> localities[] = {
+      {&loopback, "loopback"}, {server.get(), "server"}};
+  for (const auto& [launcher, name] : localities) {
+    if (launcher == nullptr) {
+      continue;
+    }
+    const std::string where = " (" + std::string(name) + ")";
+    const ClangdDefinitionResult remote =
+        RunClangdDefinition(clangd, *launcher, mirror, mirror / "main.cpp", main_text);
+    Expect(remote.initialized, "clangd starts through the non-local host" + where);
+    Expect(!remote.include_not_found,
+           "clangd works in the HOST tree, where the generated header exists" + where);
+    Expect(remote.definition_path ==
+               (mirror / "build" / "gen" / "generated.h").lexically_normal().string(),
+           "go-to-definition into the host-only header comes back as the mirror's path; got '" +
+               remote.definition_path + "'" + where);
+  }
 #endif
 }
 
