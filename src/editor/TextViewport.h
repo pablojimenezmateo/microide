@@ -256,6 +256,14 @@ class TextViewport {
   // view to the end of the file. Restoring view state is this class's business, so
   // it lives here and both callers are one line.
   void ReloadPreservingViewState(std::string_view text);
+  // A formatter's output, applied as an EDIT (TD-2026-10-08-324): the lines it
+  // left alone are kept, the differing middle is one ReplaceLines inside one undo
+  // group, so Undo takes the formatting back in one step and everything typed
+  // before the save stays reachable. Cursor, scroll and selection are restored as
+  // ReloadPreservingViewState does; the disk baseline is untouched. Falls back to
+  // a reload when the output differs in what the buffer stores beside its lines
+  // (a byte mark, opaque bytes). False when the output is the buffer.
+  bool ApplyFormattedText(std::string_view text);
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);

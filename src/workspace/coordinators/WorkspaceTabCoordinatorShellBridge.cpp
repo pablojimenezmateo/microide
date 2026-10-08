@@ -292,7 +292,7 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
         }
       } else if (!completion.formatted_text.empty()) {
         if (claim == editor::AsyncBufferWork::Claim::Current) {
-          editor_state.viewport.ReloadPreservingViewState(completion.formatted_text);
+          (void)editor_state.viewport.ApplyFormattedText(completion.formatted_text);
           editor_state.viewport.SetDirty(true);
         } else {
           // The user typed while the formatter ran. Applying its output now would
@@ -650,7 +650,7 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     return SavePreparation::Ready();
   }
 
-  viewport.ReloadPreservingViewState(text);
+  (void)viewport.ApplyFormattedText(text);
   viewport.SetDirty(true);
   return SavePreparation::Ready();
 }

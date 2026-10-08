@@ -420,7 +420,17 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-08-324 — format-on-save throws away the buffer's undo history. [OPEN]
+### TD-2026-10-08-324 — format-on-save throws away the buffer's undo history. [RESOLVED 2026-10-08]
+
+Resolved: `TextViewport::ApplyFormattedText` canonicalizes the output as
+`LoadContent` does, keeps the common prefix and suffix lines, and applies the
+differing middle as ONE `ReplaceLines` (widened by a kept line for a pure deletion,
+which `ReplaceLines` cannot express). Both the deferred completion and the
+blocking preparation use it; the disk baseline is untouched. A changed byte-order
+mark or opaque bytes still fall back to the reload. Regression:
+`TextViewport/FormattedTextIsOneUndoStepAndKeepsHistory`.
+
+Original report:
 
 A formatter's output is applied with `TextViewport::ReloadPreservingViewState`,
 which goes through `LoadContent` → `ResetMetadataAfterContent`, and that clears

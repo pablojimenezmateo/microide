@@ -6322,7 +6322,46 @@ void TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource() {
          "eviction and invalidation must leave the recency list well formed");
 }
 
+// TD-2026-10-08-324: a formatter's output is an EDIT. Undo takes the formatting
+// back in one step, and the user's own typing before the save is still there to
+// undo after it — a reload would have thrown both away.
+void TestFormattedTextIsOneUndoStepAndKeepsHistory() {
+  TextViewport view;
+  view.LoadContent("int  a;\nint b;\nint c;\n", "/tmp/format-undo.cpp");
+  view.MoveCursorTo(1, 5);
+  view.InsertText("x");  // the user's edit: "int bx;"
+  Expect(view.ApplyFormattedText("int a;\nint bx;\nint c;\n"), "the formatting applies");
+  Expect(view.SerializeDocumentText() == "int a;\nint bx;\nint c;\n", "formatted");
+  Expect(view.cursor_line() == 1 && view.cursor_column() == 6, "the cursor stays where it was");
+  Expect(view.Undo() && view.SerializeDocumentText() == "int  a;\nint bx;\nint c;\n",
+         "one undo takes back exactly the formatting; got: " + view.SerializeDocumentText());
+  Expect(view.Undo() && view.SerializeDocumentText() == "int  a;\nint b;\nint c;\n",
+         "and the edit before the save is still undoable");
+  Expect(view.Redo() && view.Redo() && view.SerializeDocumentText() == "int a;\nint bx;\nint c;\n",
+         "redo replays both");
+
+  // Lines removed, lines added, and an output equal to the buffer.
+  TextViewport shrink;
+  shrink.LoadContent("a\n\n\nb\n", "/tmp/format-shrink.txt");
+  Expect(shrink.ApplyFormattedText("a\nb\n") && shrink.SerializeDocumentText() == "a\nb\n",
+         "a formatter that deletes lines leaves no stray blank line");
+  Expect(shrink.Undo() && shrink.SerializeDocumentText() == "a\n\n\nb\n", "and it undoes");
+  TextViewport grow;
+  grow.LoadContent("{}\n", "/tmp/format-grow.txt");
+  Expect(grow.ApplyFormattedText("{\n}\n") && grow.SerializeDocumentText() == "{\n}\n",
+         "a formatter that adds lines");
+  Expect(!grow.ApplyFormattedText("{\n}\n"), "an output equal to the buffer is no edit");
+
+  // The buffer keeps its line endings: the comparison is on canonical lines.
+  TextViewport crlf;
+  crlf.LoadContent("a\r\nb\r\n", "/tmp/format-crlf.txt");
+  Expect(crlf.ApplyFormattedText("a\r\nB\r\n") && crlf.SerializeDocumentText() == "a\r\nB\r\n",
+         "CRLF output on a CRLF buffer changes only the line that changed");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/FormattedTextIsOneUndoStepAndKeepsHistory",
+          TestFormattedTextIsOneUndoStepAndKeepsHistory);
   AddTest(tests, "TextViewport/LineVerbsTreatACollapsedFoldAsOneLine",
           TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine);
   AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",

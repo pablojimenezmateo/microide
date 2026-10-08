@@ -418,6 +418,72 @@ void TextViewport::LoadContent(std::string_view content,
   document_->utf8_bom = utf8_bom;
 }
 
+bool TextViewport::ApplyFormattedText(std::string_view text) {
+  EnsureDocument();
+  if (read_only_) {
+    return false;
+  }
+  // The same normalization LoadContent applies — a comparison against bytes the
+  // buffer never holds would see every line as changed.
+  const bool utf8_bom = util::HasUtf8Bom(text);
+  if (utf8_bom != document_->utf8_bom || DetectEncoding(text) == TextEncoding::Bytes) {
+    ReloadPreservingViewState(text);
+    return true;
+  }
+  if (utf8_bom) {
+    text.remove_prefix(util::kUtf8Bom.size());
+  }
+  const std::string canonical = CanonicalizeLineEndingsToLf(text, AnalyzeLineEndings(text));
+  std::vector<std::string_view> lines;
+  for (std::size_t start = 0;;) {
+    const std::size_t newline = canonical.find('\n', start);
+    lines.push_back(std::string_view(canonical).substr(
+        start, newline == std::string::npos ? std::string::npos : newline - start));
+    if (newline == std::string::npos) {
+      break;
+    }
+    start = newline + 1;
+  }
+
+  const TextBuffer& buffer = document_->lines;
+  const std::size_t old_count = buffer.size();
+  const std::size_t new_count = lines.size();
+  std::size_t prefix = 0;
+  while (prefix < old_count && prefix < new_count && buffer.LineView(prefix) == lines[prefix]) {
+    ++prefix;
+  }
+  if (prefix == old_count && prefix == new_count) {
+    return false;
+  }
+  std::size_t suffix = 0;
+  while (suffix < old_count - prefix && suffix < new_count - prefix &&
+         buffer.LineView(old_count - 1 - suffix) == lines[new_count - 1 - suffix]) {
+    ++suffix;
+  }
+  // A pure deletion: ReplaceLines cannot install zero lines (an empty
+  // replacement is one blank line), so take one kept line into the window.
+  if (prefix + suffix == new_count) {
+    if (prefix > 0) {
+      --prefix;
+    } else {
+      --suffix;
+    }
+  }
+  std::vector<std::string> middle(lines.begin() + static_cast<std::ptrdiff_t>(prefix),
+                                  lines.end() - static_cast<std::ptrdiff_t>(suffix));
+
+  const std::size_t cursor_line_before = cursor_line();
+  const std::size_t cursor_column_before = cursor_column();
+  const std::size_t scroll_line_before = scroll_line();
+  const std::size_t horizontal_scroll_before = horizontal_scroll();
+  const std::optional<SelectionRange> selection_before = selection_range();
+  // One ReplaceLines is one undo entry: Undo takes the formatting back in one step.
+  const bool changed = ReplaceLines(prefix, old_count - suffix, std::move(middle));
+  ApplyRestoredViewState(cursor_line_before, cursor_column_before, scroll_line_before,
+                         horizontal_scroll_before, selection_before);
+  return changed;
+}
+
 std::string TextViewport::SerializeDocumentText(std::optional<LineEnding> line_ending) const {
   const LineEnding ending = line_ending.value_or(document_->line_ending);
   if (!document_->utf8_bom) {
