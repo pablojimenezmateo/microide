@@ -276,9 +276,15 @@ const editor::TextViewport* WorkspaceShell::StatusBarSourceViewport() const {
   // compare tab's read-only left side has no navigable viewport, so fall back
   // rather than blanking the bar there.
   if (const editor::TextViewport* navigable = ActiveNavigableViewport(); navigable != nullptr) {
-    return navigable;
+    return navigable->is_placeholder() ? nullptr : navigable;
   }
-  return ActiveEditorViewport();
+  // With no tab open the group resolves to its welcome surface's built-in
+  // placeholder buffer; describing that put "unknown  Tabs: 4  UTF-8 · LF" on
+  // the bar over an empty editor area. VS Code shows none of those segments
+  // with no editor open. `is_placeholder()` is cleared by every real-content
+  // path, `SetUntitledBuffer` included, so Ctrl+N keeps its segments.
+  const editor::TextViewport* active = ActiveEditorViewport();
+  return active != nullptr && !active->is_placeholder() ? active : nullptr;
 }
 
 }  // namespace microide::workspace

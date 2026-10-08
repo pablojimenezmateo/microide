@@ -238,7 +238,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
         editor_segments_cache_.language_tooltip.append("Language: ");
         editor_segments_cache_.language_tooltip.append(filetype);
       }
-      language.text = filetype;
+      // "unknown" is the fallback definition's id, which keys syntax, the LSP and
+      // the language-contract cache, so it stays; on screen it read as an error.
+      // VS Code calls the same state "Plain Text".
+      language.text = filetype == "unknown" ? std::string_view("Plain Text") : std::string_view(filetype);
       language.tooltip = editor_segments_cache_.language_tooltip;
       language.visible = true;
     }

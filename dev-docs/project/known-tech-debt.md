@@ -538,7 +538,18 @@ Found by the first two-machine trial on 2026-10-08; none blocks editing.
   only under Xvfb so far, where leave events can be missing; reproduce on a real
   display before fixing.
 
-### TD-2026-10-08-330 — `DebugService/SessionReconciledWhenAdapterDiesSilently` is intermittent. [OPEN]
+### TD-2026-10-08-330 — `DebugService/SessionReconciledWhenAdapterDiesSilently` is intermittent. [RESOLVED 2026-10-08]
+
+Resolved: the mock adapter's `die` mode exited right after answering `launch`,
+but the host pipelines `setBreakpoints` and `configurationDone` behind `launch`.
+Whether one was still pending when the adapter exited was timing, and a pending
+request failing on exit moves the session terminal by itself — so
+`PruneTerminated` sometimes found it before the reconciliation the test is
+about. The mock now dies after answering `configurationDone`, the last
+handshake request (30/30 isolated runs pass). Not a product defect: both paths
+end Failed and pruned.
+
+Original report:
 
 Failed once in eight parallel full-suite runs on 2026-10-08 ("a non-terminal
 session is not prunable on its own"); passes alone and on rerun. Not investigated
@@ -1258,7 +1269,15 @@ kind plus a Retry action. That is why it was not done with G4: the banner's
 button layout is a fixed three-plus-dismiss rect set, so a banner with one action
 needs the layout to stop being positional first.
 
-### TD-2026-09-29-310 — the status bar describes the welcome surface. [OPEN]
+### TD-2026-09-29-310 — the status bar describes the welcome surface. [RESOLVED 2026-10-08]
+
+Resolved as proposed: `StatusBarSourceViewport()` returns nullptr for a
+placeholder viewport, so with no editor open the four editor segments hide (an
+untitled buffer keeps them), and the Language segment shows the fallback id
+`unknown` as "Plain Text" — a display mapping only; the id is unchanged.
+Regression: `WorkspaceShell/StatusBarHidesEditorSegmentsWithNoEditorOpen`.
+
+Original report:
 
 Seen in a headless capture of a freshly-opened project (no file open, the welcome
 placeholder showing). The status bar reads:

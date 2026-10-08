@@ -1257,6 +1257,43 @@ void TestWorkspaceShellStatusBarColumnIsTheVisibleColumn() {
          "the column follows the bytes before the caret, not just the caret");
 }
 
+// With no tab open the group's active viewport is the welcome surface's built-in
+// placeholder buffer, and the bar described it: "unknown  Tabs: 4  UTF-8 · LF"
+// over an empty editor area. VS Code shows no editor segments with no editor open
+// — but an untitled buffer IS an editor, so Ctrl+N must keep them. A buffer whose
+// language is the fallback reads "Plain Text", not the internal id "unknown".
+void TestWorkspaceShellStatusBarHidesEditorSegmentsWithNoEditorOpen() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README", "hello\n");
+  using microide::workspace::StatusBarSegmentId;
+  constexpr StatusBarSegmentId kEditorSegments[] = {
+      StatusBarSegmentId::LineColumn, StatusBarSegmentId::Indent,
+      StatusBarSegmentId::Language, StatusBarSegmentId::Encoding};
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+  for (const StatusBarSegmentId id : kEditorSegments) {
+    Expect(!WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, id),
+           "no editor open: segment should be hidden, shows '" +
+               WorkspaceShellTestAccess::StatusBarSegmentText(shell, id) + "'");
+  }
+
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Tab, {}),
+         "a new untitled tab should open");
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+  for (const StatusBarSegmentId id : kEditorSegments) {
+    Expect(WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, id),
+           "an untitled buffer is an editor: its segments stay visible");
+  }
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Language) ==
+             "Plain Text",
+         "the fallback language reads Plain Text, got '" +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Language) +
+             "'");
+}
+
 void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -4109,6 +4146,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenderedFrameIsFullyOpaque);
   AddTest(tests, "WorkspaceShell/StatusBarColumnIsTheVisibleColumn",
           TestWorkspaceShellStatusBarColumnIsTheVisibleColumn);
+  AddTest(tests, "WorkspaceShell/StatusBarHidesEditorSegmentsWithNoEditorOpen",
+          TestWorkspaceShellStatusBarHidesEditorSegmentsWithNoEditorOpen);
   AddTest(tests, "WorkspaceShell/StatusBarRepaintsWhenItsValuesChange",
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
