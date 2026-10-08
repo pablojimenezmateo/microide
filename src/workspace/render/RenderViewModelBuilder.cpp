@@ -1719,10 +1719,32 @@ NotificationsViewModel RenderViewModelBuilder::BuildNotifications(
       }
       buttons_width += gaps;
     }
-    const float content_width =
-        std::max(text_renderer.MeasureWidth(notification.message), buttons_width);
+    const float message_width = text_renderer.MeasureWidth(notification.message);
+    const float content_width = std::max(message_width, buttons_width);
+    // Wrap a message wider than the card: greedy, at spaces, into views of the
+    // row's own text; the last line takes whatever is left (truncated when painted).
+    std::string_view rest = notification.message;
+    while (!rest.empty() && entry.lines.size() + 1 < entry.lines.capacity() &&
+           text_renderer.MeasureWidth(rest) > budget) {
+      std::size_t cut = 0;
+      for (std::size_t space = rest.find(' '); space != std::string_view::npos;
+           space = rest.find(' ', space + 1)) {
+        if (text_renderer.MeasureWidth(rest.substr(0, space)) > budget) {
+          break;
+        }
+        cut = space;
+      }
+      if (cut == 0) {
+        break;  // one word wider than the card: it is truncated, not split
+      }
+      entry.lines.push_back(rest.substr(0, cut));
+      rest.remove_prefix(cut + 1);
+    }
+    if (!rest.empty() || entry.lines.empty()) {
+      entry.lines.push_back(rest);
+    }
     entry.layout = NotificationToastLayoutAt(status_bar, line_height, bottom, content_width,
-                                             button_count > 0);
+                                             button_count > 0, entry.lines.size());
 
     // Right-aligned, in the order the caller listed them (VS Code puts the primary
     // action last, nearest the corner).

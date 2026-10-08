@@ -23,6 +23,9 @@ inline constexpr float kNotificationToastMaxTextWidth = 640.0f;
 // reports progress — the hit-test and the painter share one geometry here
 // precisely so chrome cannot end up painted and unclickable.
 inline constexpr float kNotificationToastProgressHeight = 3.0f;
+// A long message wraps at word boundaries onto at most this many lines (VS Code's
+// toasts wrap too); only what is past the last one is truncated with "…".
+inline constexpr std::size_t kNotificationMaxMessageLines = 3;
 
 // Inline action buttons (VS Code-style): a row of them under the message, right
 // aligned, each a label in a padded pill.
@@ -60,8 +63,9 @@ inline float NotificationButtonHeight(float line_height) {
   return line_height + kNotificationButtonPadY * 2.0f;
 }
 
-inline float NotificationToastHeight(float line_height, bool has_actions) {
-  return line_height + kNotificationToastPadding * 2.0f +
+inline float NotificationToastHeight(float line_height, bool has_actions, std::size_t lines = 1) {
+  return line_height * static_cast<float>(std::max<std::size_t>(lines, 1)) +
+         kNotificationToastPadding * 2.0f +
          (has_actions ? kNotificationButtonRowGap + NotificationButtonHeight(line_height) : 0.0f);
 }
 
@@ -77,15 +81,17 @@ inline NotificationToastLayout NotificationToastLayoutAt(const SDL_FRect& status
                                                          float line_height,
                                                          float bottom,
                                                          float measured_content_width,
-                                                         bool has_actions = false) {
-  const float height = NotificationToastHeight(line_height, has_actions);
+                                                         bool has_actions = false,
+                                                         std::size_t message_lines = 1) {
+  const std::size_t lines = std::max<std::size_t>(message_lines, 1);
+  const float height = NotificationToastHeight(line_height, has_actions, lines);
   const float width = NotificationToastWidth(measured_content_width, status_bar.w);
   const SDL_FRect rect{status_bar.x + status_bar.w - kNotificationToastMargin - width,
                        bottom - height, width, height};
   const float content_x = rect.x + kNotificationToastAccentWidth + kNotificationToastPadding;
   const float content_w =
       width - kNotificationToastAccentWidth - kNotificationToastPadding * 2.0f;
-  const float message_h = line_height + kNotificationToastPadding * 2.0f;
+  const float message_h = line_height * static_cast<float>(lines) + kNotificationToastPadding * 2.0f;
   return NotificationToastLayout{
       .rect = rect,
       .accent = SDL_FRect{rect.x, rect.y, kNotificationToastAccentWidth, rect.h},

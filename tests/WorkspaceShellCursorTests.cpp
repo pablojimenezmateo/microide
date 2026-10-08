@@ -1053,6 +1053,31 @@ void TestWorkspaceShellNotificationActionsReachableByKeyboard() {
 // off the card; each keeps its full label in the view model and is truncated to
 // its share at paint time. And the steady-state build + hit-test — what every
 // frame and every pointer motion over a toast runs — touches no heap.
+// A long message wraps (VS Code's toasts do) rather than losing its end at the card
+// edge: up to three lines, views into the row's own text, the card as tall as them.
+void TestWorkspaceShellNotificationLongMessageWraps() {
+  using microide::workspace::NotificationService;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 600);
+  const std::string message =
+      "Not saved: REMOTE_TEST.md changed on disk since it was opened. Compare, Reload or "
+      "Overwrite in the banner above it";
+  WorkspaceShellTestAccess::ShowNotificationRequest(shell, NotificationService::Request{.message = message});
+  const auto vm = WorkspaceShellTestAccess::NotificationsVm(shell);
+  Expect(vm.entries.size() == 1, "one row");
+  const auto& entry = vm.entries[0];
+  Expect(entry.lines.size() >= 2, "the long message wraps onto more than one line");
+  std::string joined;
+  for (std::size_t i = 0; i < entry.lines.size(); ++i) {
+    joined += (i > 0 ? " " : "") + std::string(entry.lines[i]);
+  }
+  Expect(joined == message, "and every word of it is on a line, in order: " + joined);
+  WorkspaceShellTestAccess::ShowNotificationRequest(shell, NotificationService::Request{.message = "short"});
+  const auto short_vm = WorkspaceShellTestAccess::NotificationsVm(shell);
+  Expect(short_vm.entries[0].lines.size() == 1 && short_vm.entries[0].layout.rect.h < entry.layout.rect.h,
+         "a short message stays one line, in a shorter card");
+}
+
 void TestWorkspaceShellNotificationButtonsShareANarrowRow() {
   using microide::workspace::ActionId;
   using microide::workspace::NotificationService;
@@ -1271,6 +1296,7 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellNotificationActionButtonRunsItsAction);
   AddTest(tests, "WorkspaceShell/NotificationActionsReachableByKeyboard",
           TestWorkspaceShellNotificationActionsReachableByKeyboard);
+  AddTest(tests, "WorkspaceShell/NotificationLongMessageWraps", TestWorkspaceShellNotificationLongMessageWraps);
   AddTest(tests, "WorkspaceShell/NotificationButtonsShareANarrowRow",
           TestWorkspaceShellNotificationButtonsShareANarrowRow);
   AddTest(tests, "WorkspaceShell/NotificationActionCommandRunsTheButton",

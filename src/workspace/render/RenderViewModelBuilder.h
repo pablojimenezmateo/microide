@@ -70,6 +70,9 @@ struct NotificationEntryViewModel {
   std::size_t index = 0;  // into NotificationService::Active()
   NotificationService::Tone tone = NotificationService::Tone::Info;
   std::string_view message;  // frame-stable view into the service's row
+  // `message` wrapped at word boundaries to the toast's width: views into it, so
+  // wrapping allocates nothing. The last line may still need truncating.
+  util::InlineVector<std::string_view, kNotificationMaxMessageLines> lines;
   // 0..1 when the row reports progress, already clamped here so the painter does
   // arithmetic on a fraction it can trust.
   std::optional<float> progress;

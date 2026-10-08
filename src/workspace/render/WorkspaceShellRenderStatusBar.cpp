@@ -113,9 +113,16 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
       // transient, so a message that ends mid-word with no "…" reads as a
       // rendering fault instead of "there was more here".
       const render::ScopedRenderClip clip_scope(renderer, clip);
-      DrawVCenteredTextOn(text_renderer_, renderer, toast.text, 0.0f, theme_.text_primary,
-                          theme_.overlay_background,
-                          text_renderer_.TruncateToWidthEphemeralView(entry.message, toast.text.w));
+      const float line_height = text_renderer_.LineHeight();
+      for (std::size_t line = 0; line < entry.lines.size(); ++line) {
+        const SDL_FRect line_rect{toast.text.x,
+                                  toast.text.y + kNotificationToastPadding +
+                                      line_height * static_cast<float>(line),
+                                  toast.text.w, line_height};
+        DrawVCenteredTextOn(text_renderer_, renderer, line_rect, 0.0f, theme_.text_primary,
+                            theme_.overlay_background,
+                            text_renderer_.TruncateToWidthEphemeralView(entry.lines[line], toast.text.w));
+      }
     }
 
     // The last button is the primary one (VS Code's order), drawn in the accent.
