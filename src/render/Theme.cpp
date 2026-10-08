@@ -5,6 +5,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -443,6 +444,10 @@ void AppendThemeNamesFromDirectory(const std::filesystem::path& directory,
   }
 }
 
+// Wider than any filesystem timestamp granularity the editor runs on (ext4's
+// coarse clock is a jiffy; FAT stamps in 2 s).
+constexpr std::chrono::seconds kRacyStampWindow{2};
+
 void SortAndDedupe(std::vector<std::string>& names) {
   std::sort(names.begin(), names.end());
   names.erase(std::unique(names.begin(), names.end()), names.end());
@@ -484,7 +489,12 @@ const std::vector<std::string>& ThemeNameCatalog::Names(
     error.clear();
     const std::filesystem::file_time_type mtime =
         std::filesystem::last_write_time(resolved_directory_, error);
-    if (!error) {
+    // A stamp within the filesystem's timestamp granularity of "now" is racy
+    // (git's "racily clean" rule): the kernel stamps mtimes from a coarse
+    // clock, so a theme added or removed in the same tick as this sample leaves
+    // the directory's mtime unchanged and a memo would hide it forever. Such a
+    // stamp is not trusted; the next call rescans until the directory settles.
+    if (!error && std::filesystem::file_time_type::clock::now() - mtime > kRacyStampWindow) {
       resolved_mtime_ = mtime;
       valid_ = true;
     }

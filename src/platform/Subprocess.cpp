@@ -21,6 +21,11 @@
 #include <unistd.h>
 
 #include "util/PosixPipe.h"
+
+// At global scope: declared inside the anonymous namespace, GCC 15 gives it
+// internal linkage and the link fails on an undefined
+// `(anonymous namespace)::environ`.
+extern "C" char** environ;
 #elif defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -301,8 +306,6 @@ bool PumpChildIo(UniqueFd* stdin_fd,
   }
   return false;  // stdio fully drained (or poll error) before any deadline.
 }
-
-extern "C" char** environ;
 
 // Build the child's environment (the current environ with overrides applied) in
 // Fold one spawn phase into the ranked summary, labelled under the RunSubprocess
