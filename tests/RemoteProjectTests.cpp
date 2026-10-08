@@ -4,6 +4,8 @@
 #include "project/remote/RemoteProject.h"
 
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 
@@ -73,6 +75,51 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
              std::string(remote::RemoteHostSession::StateName(project.session().status().state)));
 }
 
+// MICROIDE_BENCH_REMOTE=1: open this repository's src/ and tests/ as a remote
+// project through the fake host and report how long the first full sync takes.
+// A measurement, not a gate (no time assertions in the suite).
+void TestRemoteProjectBenchFirstSync() {
+  if (std::getenv("MICROIDE_BENCH_REMOTE") == nullptr) {
+    return;
+  }
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "microide";
+  const std::filesystem::path repo = std::filesystem::path(MICROIDE_TEST_SOURCE_DIR).parent_path();
+  std::filesystem::create_directories(host_root);
+  for (const char* part : {"src", "tests"}) {
+    std::filesystem::copy(repo / part, host_root / part, std::filesystem::copy_options::recursive);
+  }
+  std::size_t files = 0;
+  std::uintmax_t bytes = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(host_root)) {
+    if (entry.is_regular_file()) {
+      ++files;
+      bytes += entry.file_size();
+    }
+  }
+  remote::RemoteProject::Config config;
+  config.session.target = *remote::ParseRemoteHostTarget("dev@bench-host", nullptr);
+  config.session.ssh = host.SshArgv();
+  config.session.control_dir = host.dir.scratch() / "c";
+  config.session.server_binary = MICROIDE_SERVER_BINARY;
+  config.session.release = "test";
+  config.session.workspace_root = host_root.string();
+  config.mirror_directory = host.dir.scratch() / "m";
+  const auto start = std::chrono::steady_clock::now();
+  remote::RemoteProject project(config, {});
+  std::string error;
+  Expect(project.Open(&error), "opens: " + error);
+  const bool synced = WaitUntil(
+      [&] { return project.engine().status().synced_once; }, std::chrono::seconds(120),
+      std::chrono::milliseconds(2));
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - start)
+                      .count();
+  Expect(synced, "synced: " + project.engine().status().error);
+  std::fprintf(stderr, "bench: %zu files, %.1f MiB, first sync in %lld ms (connect + install + manifest + pulls)\n",
+               files, static_cast<double>(bytes) / (1024.0 * 1024.0), static_cast<long long>(ms));
+}
+
 #endif
 
 }  // namespace
@@ -80,6 +127,7 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
 void RegisterRemoteProjectTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteProject/OpensAMirrorOverSsh", TestRemoteProjectOpensAMirrorOverSsh);
+  AddTest(tests, "RemoteProject/BenchFirstSync", TestRemoteProjectBenchFirstSync);
 #else
   (void)tests;
 #endif
