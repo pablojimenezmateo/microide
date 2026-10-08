@@ -14,6 +14,7 @@
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
 #include "server/ProcessTable.h"
+#include "server/TerminalTable.h"
 #include "util/JsonValue.h"
 #include "util/WakePipe.h"
 
@@ -65,6 +66,7 @@ class RemoteServer {
 
   Connection& Accept(int read_fd, int write_fd);
   void InstallProcessHandlers(Connection& connection);
+  void InstallTerminalHandlers(Connection& connection);
   void WithPeer(std::uint64_t connection_id, const std::function<void(remote::RemotePeer&)>& use);
   void InstallHandlers(Connection& connection);
   util::JsonValue StatusJson();
@@ -83,8 +85,9 @@ class RemoteServer {
   std::map<std::string, Workspace> workspaces_;
   std::chrono::steady_clock::time_point idle_since_ = std::chrono::steady_clock::now();
 
-  // Last: its thread sends through connections_, so it must stop first.
+  // Last: their threads send through connections_, so they must stop first.
   std::unique_ptr<ProcessTable> processes_;
+  std::unique_ptr<TerminalTable> terminals_;
 };
 
 }  // namespace microide::server

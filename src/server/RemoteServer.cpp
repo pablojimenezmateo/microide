@@ -37,6 +37,15 @@ RemoteServer::RemoteServer(Config config)
             });
           },
   });
+  terminals_ = std::make_unique<TerminalTable>(TerminalTable::Sink{
+      .frame =
+          [this](std::uint64_t connection, std::uint64_t handle, std::string_view frame) {
+            WithPeer(connection, [&](remote::RemotePeer& peer) {
+              peer.SendContent(remote::FrameType::TermFrame, handle, frame,
+                               remote::Lane::Interactive);
+            });
+          },
+  });
 }
 
 void RemoteServer::WithPeer(std::uint64_t connection_id,
@@ -57,7 +66,9 @@ void RemoteServer::WithPeer(std::uint64_t connection_id,
 }
 
 RemoteServer::~RemoteServer() {
-  processes_.reset();  // stop its thread before the connections it sends through go
+  // Stop their threads before the connections they send through go.
+  terminals_.reset();
+  processes_.reset();
   std::vector<std::unique_ptr<Connection>> connections;
   {
     std::lock_guard lock(mutex_);
@@ -83,6 +94,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   }
   InstallHandlers(ref);
   InstallProcessHandlers(ref);
+  InstallTerminalHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -118,7 +130,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        id, remote::ToJson(remote::HelloReply{
                                .release = config_.release,
                                .daemon_epoch = epoch_,
-                               .capabilities = {"proc"},
+                               .capabilities = {"proc", "term"},
                                .session_survival = config_.session_survival,
                            }));
                  });
@@ -145,6 +157,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
       }
     }
     processes_->Detach(connection.id);
+    terminals_->Detach(connection.id);
     connection.closed = true;
     wake_.Wake();
   });
@@ -228,11 +241,77 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
   peer.OnNotification("proc/release", [this, handle_of](std::uint64_t, const util::JsonValue& params) {
     processes_->Release(handle_of(params));
   });
-  peer.OnContent([this](remote::FrameType type, std::uint64_t handle, std::string bytes) {
+  peer.OnContent([this, &connection](remote::FrameType type, std::uint64_t handle, std::string bytes) {
     if (type == remote::FrameType::ProcStdin) {
       processes_->WriteStdin(handle, bytes);
+    } else if (type == remote::FrameType::TermInput) {
+      std::vector<terminal::TerminalInputEvent> events;
+      if (!terminal::DecodeTerminalInputEvents(bytes, events)) {
+        connection.peer.Fail("malformed term input");
+        return;
+      }
+      terminals_->Input(handle, events);
     }
   });
+}
+
+void RemoteServer::InstallTerminalHandlers(Connection& connection) {
+  remote::RemotePeer& peer = connection.peer;
+  peer.OnRequest(remote::method::kTermOpen,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   std::string error;
+                   std::optional<TerminalTable::OpenRequest> request =
+                       TerminalTable::ParseOpen(params, &error);
+                   if (!request.has_value()) {
+                     connection.peer.ReplyError(id, remote::kErrorInvalidParams, error);
+                     return;
+                   }
+                   const TerminalTable::OpenResult opened =
+                       terminals_->Open(connection.id, std::move(*request));
+                   if (opened.handle == 0) {
+                     connection.peer.ReplyError(id, remote::kErrorInvalidParams, opened.error);
+                     return;
+                   }
+                   util::JsonObject result;
+                   result["handle"] = util::JsonValue(static_cast<std::int64_t>(opened.handle));
+                   result["credit_bytes"] = util::JsonValue(
+                       static_cast<std::int64_t>(terminals_->limits().credit_bytes));
+                   connection.peer.Reply(id, util::JsonValue(std::move(result)));
+                 });
+  peer.OnRequest(remote::method::kTermAttach,
+                 [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+                   const std::int64_t handle = params["handle"].AsInt(0);
+                   if (handle <= 0 ||
+                       !terminals_->Attach(connection.id, static_cast<std::uint64_t>(handle))) {
+                     connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                                "no such terminal");
+                     return;
+                   }
+                   connection.peer.Reply(id, util::JsonValue(true));
+                 });
+  const auto handle_of = [](const util::JsonValue& params) -> std::uint64_t {
+    const std::int64_t handle = params["handle"].AsInt(0);
+    return handle > 0 ? static_cast<std::uint64_t>(handle) : 0;
+  };
+  peer.OnNotification(remote::method::kTermResize,
+                      [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+                        const std::int64_t rows = params["rows"].AsInt(0);
+                        const std::int64_t columns = params["columns"].AsInt(0);
+                        if (rows > 0 && columns > 0) {
+                          terminals_->Resize(handle_of(params), static_cast<std::size_t>(rows),
+                                             static_cast<std::size_t>(columns));
+                        }
+                      });
+  peer.OnNotification(remote::method::kTermClose,
+                      [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+                        terminals_->Close(handle_of(params));
+                      });
+  peer.OnNotification(remote::method::kTermAck,
+                      [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+                        const std::int64_t bytes = params["bytes"].AsInt(0);
+                        terminals_->Ack(handle_of(params),
+                                        static_cast<std::uint64_t>(std::max<std::int64_t>(bytes, 0)));
+                      });
 }
 
 util::JsonValue RemoteServer::StatusJson() {
@@ -261,6 +340,7 @@ util::JsonValue RemoteServer::StatusJson() {
   }
   status["workspaces"] = util::JsonValue(std::move(workspaces));
   status["processes"] = util::JsonValue(static_cast<std::int64_t>(processes_->LiveCount()));
+  status["terminals"] = util::JsonValue(static_cast<std::int64_t>(terminals_->LiveCount()));
   util::JsonObject survival;
   survival["kill_user_processes"] = util::JsonValue(config_.session_survival.kill_user_processes);
   survival["linger"] = util::JsonValue(config_.session_survival.linger);
@@ -292,7 +372,7 @@ void RemoteServer::ReapClosed() {
 bool RemoteServer::Idle() {
   std::lock_guard lock(mutex_);
   return config_.on_demand && connections_.empty() && workspaces_.empty() &&
-         processes_->LiveCount() == 0 &&
+         processes_->LiveCount() == 0 && terminals_->LiveCount() == 0 &&
          std::chrono::steady_clock::now() - idle_since_ >= config_.idle_timeout;
 }
 

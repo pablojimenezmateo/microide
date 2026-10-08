@@ -309,6 +309,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteProcessLauncher.cpp
   src/project/remote/RemoteServerClient.cpp
   src/project/remote/RemoteServerPaths.cpp
+  src/project/remote/RemoteTerminalChannel.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalBase64.cpp
   src/terminal/TerminalCsiParser.cpp
@@ -823,6 +824,7 @@ add_executable(microide-server
   src/server/ProcessTable.cpp
   src/server/RemoteServer.cpp
   src/server/ServerMain.cpp
+  src/server/TerminalTable.cpp
   $<TARGET_OBJECTS:microide_kernel>
 )
 target_include_directories(microide-server PRIVATE src)
@@ -1329,6 +1331,7 @@ add_executable(microide_kernel_tests
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
   tests/RemoteProcessTests.cpp
+  tests/RemoteTerminalTests.cpp
   tests/RemoteLauncherTests.cpp
   tests/TestRunner.cpp
   tests/TestRunnerCli.cpp

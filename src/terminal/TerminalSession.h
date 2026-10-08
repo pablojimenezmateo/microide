@@ -60,6 +60,12 @@ class TerminalSession {
              const std::filesystem::path& working_directory,
              std::string_view command = {},
              std::string_view shell = {});
+  // Same, with the shell already argv (an empty argv is the platform default).
+  // The host side of a host terminal starts here: its argv crossed the wire as
+  // an array and must not be re-split.
+  bool StartArgv(const platform::ProcessLauncher& launcher,
+                 const std::filesystem::path& working_directory, std::string_view command,
+                 std::vector<std::string> shell_argv);
   void Stop();
   // Test seam: brings the session up without spawning a real PTY/child process.
   // Always compiled; selected at runtime when placeholder-terminal test mode is

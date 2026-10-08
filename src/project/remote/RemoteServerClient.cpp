@@ -56,7 +56,24 @@ bool RemoteServerClient::ConnectFds(int read_fd, int write_fd, const HelloReques
 void RemoteServerClient::InstallRouting() {
   // Before Start: the peer reads its handler tables unlocked from its I/O thread.
   peer_.OnContent([this](FrameType type, std::uint64_t handle, std::string bytes) {
+    if (type == FrameType::TermFrame) {
+      DeliverTerminalFrame(handle, std::move(bytes));
+      return;
+    }
     Deliver(handle, type, std::move(bytes));
+  });
+  peer_.OnClosed([this](std::string_view reason) {
+    std::map<std::uint64_t, std::shared_ptr<TerminalEvents>> terminals;
+    {
+      std::lock_guard lock(mutex_);
+      terminals.swap(terminals_);
+    }
+    for (auto& [handle, events] : terminals) {
+      (void)handle;
+      if (events->lost) {
+        events->lost(reason);
+      }
+    }
   });
   peer_.OnNotification("proc/exit", [this](std::uint64_t handle, const util::JsonValue& params) {
     DeliverExit(handle, params);
@@ -214,6 +231,49 @@ void RemoteServerClient::DeliverExit(std::uint64_t handle, const util::JsonValue
     }
     events->exit(code, signal);
   }
+}
+
+void RemoteServerClient::DeliverTerminalFrame(std::uint64_t handle, std::string bytes) {
+  std::shared_ptr<TerminalEvents> events;
+  {
+    std::lock_guard lock(mutex_);
+    const auto it = terminals_.find(handle);
+    if (it == terminals_.end()) {
+      Orphan& orphan = terminal_orphans_[handle];
+      if (orphan.bytes + bytes.size() <= kMaxOrphanBytes) {
+        orphan.bytes += bytes.size();
+        orphan.output.emplace_back(FrameType::TermFrame, std::move(bytes));
+      }
+      return;
+    }
+    events = it->second;
+  }
+  if (events->frame) {
+    events->frame(bytes);
+  }
+}
+
+void RemoteServerClient::RegisterTerminal(std::uint64_t handle,
+                                          std::shared_ptr<TerminalEvents> events) {
+  // Replayed under the lock, so a frame arriving meanwhile on the I/O thread
+  // cannot overtake the held ones; the I/O thread waits on mutex_ for that long.
+  std::lock_guard lock(mutex_);
+  if (const auto orphan = terminal_orphans_.find(handle); orphan != terminal_orphans_.end()) {
+    for (auto& [type, bytes] : orphan->second.output) {
+      (void)type;
+      if (events->frame) {
+        events->frame(bytes);
+      }
+    }
+    terminal_orphans_.erase(orphan);
+  }
+  terminals_[handle] = std::move(events);
+}
+
+void RemoteServerClient::UnregisterTerminal(std::uint64_t handle) {
+  std::lock_guard lock(mutex_);
+  terminals_.erase(handle);
+  terminal_orphans_.erase(handle);
 }
 
 bool RemoteServerClient::WriteStdin(std::uint64_t handle, std::string_view bytes) {

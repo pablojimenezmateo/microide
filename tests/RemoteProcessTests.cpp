@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "RemoteServerTestSupport.h"
 
 #include "platform/Subprocess.h"
 #include "platform/UnixSocket.h"
@@ -29,33 +30,7 @@ namespace remote = project::remote;
 
 #if defined(__unix__) || defined(__APPLE__)
 
-class ShortDir {
- public:
-  ShortDir() {
-    std::string pattern = (std::filesystem::temp_directory_path() / "mip.XXXXXX").string();
-    std::vector<char> buffer(pattern.begin(), pattern.end());
-    buffer.push_back('\0');
-    Expect(::mkdtemp(buffer.data()) != nullptr, "mkdtemp");
-    path_ = std::filesystem::path(buffer.data()) / "s";
-  }
-  ~ShortDir() {
-    platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", path_.string()},
-                            platform::SubprocessOptions{.timeout_ms = 10000});
-    std::error_code ec;
-    std::filesystem::remove_all(path_.parent_path(), ec);
-  }
-  const std::filesystem::path& path() const { return path_; }
-
- private:
-  std::filesystem::path path_;
-};
-
-void StartServer(const ShortDir& dir) {
-  const auto started = platform::RunSubprocess(
-      {MICROIDE_SERVER_BINARY, "start", "--socket-dir", dir.path().string()},
-      platform::SubprocessOptions{.timeout_ms = 20000});
-  Expect(started.success(), "the server starts: " + started.stderr_text);
-}
+using ShortDir = ShortServerDir;
 
 // A client that collects each handle's output and exit, acknowledging as it goes.
 class ProcClient {

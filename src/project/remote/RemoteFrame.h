@@ -31,6 +31,9 @@ enum class FrameType : std::uint16_t {
   ProcStdin = 16,
   ProcStdout = 17,
   ProcStderr = 18,
+  // Content: id = the terminal handle (terminal/TerminalHostWire.h).
+  TermInput = 19,  // client -> host: a batch of semantic input events
+  TermFrame = 20,  // host -> client: one screen/scrollback update
 };
 
 // Whether `type` is one this build knows. An unknown type is a protocol error

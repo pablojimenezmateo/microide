@@ -15,6 +15,8 @@ bool IsKnownFrameType(std::uint16_t type) {
     case FrameType::ProcStdin:
     case FrameType::ProcStdout:
     case FrameType::ProcStderr:
+    case FrameType::TermInput:
+    case FrameType::TermFrame:
       return true;
   }
   return false;

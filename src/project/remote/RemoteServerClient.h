@@ -79,6 +79,17 @@ class RemoteServerClient {
 
   std::optional<GitMetadata> QueryGitMetadata(const std::filesystem::path& host_root);
 
+  // Host terminals (terminal/TerminalHostWire.h). `frame` runs on the I/O thread
+  // with each TermFrame for `handle`, in order — including any that arrived
+  // before the registration (the server's first frame races its term/open
+  // reply). `lost` runs once if the connection closes while registered.
+  struct TerminalEvents {
+    std::function<void(std::string_view frame)> frame;
+    std::function<void(std::string_view reason)> lost;
+  };
+  void RegisterTerminal(std::uint64_t handle, std::shared_ptr<TerminalEvents> events);
+  void UnregisterTerminal(std::uint64_t handle);
+
   // One synchronous request; nullopt with *error on failure or after `timeout`.
   std::optional<util::JsonValue> Call(std::string_view method, const util::JsonValue& params,
                                       std::string* error,
@@ -95,6 +106,7 @@ class RemoteServerClient {
   bool Handshake(const HelloRequest& hello, std::string* error);
   void Deliver(std::uint64_t handle, FrameType type, std::string bytes);
   void DeliverExit(std::uint64_t handle, const util::JsonValue& params);
+  void DeliverTerminalFrame(std::uint64_t handle, std::string bytes);
 
   platform::AsyncSubprocess command_;  // the server (or ssh), when ConnectCommand ran it
   RemotePeer peer_;
@@ -106,6 +118,9 @@ class RemoteServerClient {
   // Output that arrived before its spawn reply was handled (the server's process
   // thread and its reply race); replayed when the handle is registered.
   std::map<std::uint64_t, Orphan> orphans_;
+  std::map<std::uint64_t, std::shared_ptr<TerminalEvents>> terminals_;
+  // Frames for a terminal whose open reply has not been handled yet.
+  std::map<std::uint64_t, Orphan> terminal_orphans_;
 };
 
 }  // namespace microide::project::remote

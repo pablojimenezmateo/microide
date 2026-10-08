@@ -12,6 +12,7 @@
 #include "platform/ProcessLauncher.h"
 #include "project/GitMetadataSource.h"
 #include "project/remote/RemotePathMap.h"
+#include "terminal/TerminalHostChannel.h"
 #include "project/remote/RemoteServerClient.h"
 
 namespace microide::project::remote {
@@ -24,7 +25,8 @@ namespace microide::project::remote {
 // source, answered by the host's `git/metadata` and cached per root, so a status
 // probe never costs a host process.
 class RemoteProcessLauncher final : public platform::ProcessLauncher,
-                                    public project::GitMetadataSource {
+                                    public project::GitMetadataSource,
+                                    public terminal::HostTerminalSource {
  public:
   struct Options {
     // True only when the host's paths are ALSO readable here (the parity suite's
@@ -51,6 +53,12 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
   std::string_view description() const override { return options_.description; }
 
   project::GitAvailability Availability(const std::filesystem::path& root) const override;
+
+  // A terminal in a remote project is a host terminal: the pty and the shell run
+  // on the host (term/open), never a local shell in a mapped directory.
+  std::shared_ptr<terminal::TerminalHostChannel> OpenTerminal(
+      const OpenRequest& request, terminal::TerminalSession& session,
+      std::string* error) const override;
   std::optional<std::filesystem::path> ReadableGitDirectory(
       const std::filesystem::path& root) const override;
 

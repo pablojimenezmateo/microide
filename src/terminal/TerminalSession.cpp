@@ -100,11 +100,18 @@ bool TerminalSession::Start(const platform::ProcessLauncher& launcher,
                             const std::filesystem::path& working_directory,
                             std::string_view command,
                             std::string_view shell) {
-  Stop();
   // `shell` is a command line, not a program path — that is what the setting has
   // always said it was. Splitting here (rather than in the backend) keeps the
   // backend's request argv-shaped and the quoting rules in one place.
-  std::vector<std::string> shell_argv = launcher.ResolveArgv(util::SplitCommandLine(shell));
+  return StartArgv(launcher, working_directory, command,
+                   launcher.ResolveArgv(util::SplitCommandLine(shell)));
+}
+
+bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
+                                const std::filesystem::path& working_directory,
+                                std::string_view command,
+                                std::vector<std::string> shell_argv) {
+  Stop();
   if (const HostTerminalSource* host = HostTerminalsFor(launcher)) {
     return StartOnHost(*host, working_directory, command, std::move(shell_argv));
   }

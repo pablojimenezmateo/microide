@@ -1,5 +1,7 @@
 #include "project/remote/RemoteProcessLauncher.h"
 
+#include "project/remote/RemoteTerminalChannel.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -240,6 +242,21 @@ std::filesystem::path RemoteProcessLauncher::ResolveWorkingDirectory(
     return map_.host_root();
   }
   return map_.ToHost(cwd).value_or(cwd);
+}
+
+std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTerminal(
+    const OpenRequest& request, terminal::TerminalSession& session, std::string* error) const {
+  OpenRequest host_request = request;
+  host_request.working_directory = ResolveWorkingDirectory(request.working_directory);
+  auto channel = RemoteTerminalChannel::Open(
+      client_, host_request, session,
+      [map = map_](const std::filesystem::path& host_path) {
+        return map.ToLocal(host_path).value_or(host_path);
+      });
+  if (channel == nullptr && error != nullptr) {
+    *error = "not connected to the host";
+  }
+  return channel;
 }
 
 std::filesystem::path RemoteProcessLauncher::LocalPathFromHost(
