@@ -439,10 +439,11 @@ menu, Esc and Ctrl+C exit all work. Left:
   `ls`/`gcc`/`rg` emit them for file paths; VS Code's terminal opens them.
   Needs a link id per cell (or a run table per line) in `TerminalCell` and the
   hover/click path the plain-URL detector already has.
-- **No headless regression for a real TUI.** The check above needs `claude`
-  installed and is manual; a recorded stream replayed through `TerminalSession`
-  would pin the emulator side without the binary (the recording must be
-  scrubbed of paths and account names before it is committed).
+- ~~**No headless regression for a real TUI.**~~ Done 2026-10-08: Claude
+  Code's real first frame (path scrubbed, no account data) is a fixture,
+  replayed by `TerminalSession/ReplaysClaudeCodeTrustDialog`, which checks the
+  screen and the three startup replies. The interactive part (keys, the prompt
+  box) still needs `claude` installed and stays a manual control-channel check.
 
 ### TD-2026-10-08-328 — Phase 2b remainders: what the first remote-project slices left. [OPEN]
 

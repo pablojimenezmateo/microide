@@ -11,3 +11,4 @@ These fixtures are meant to be consumed by future unit, integration, and golden 
 - `diff/git/base/` and `diff/git/head/` are matching working trees intended for tests that create a temporary git repository and exercise file-history and compare flows.
 
 `manifest.json` records the generated files, their sizes, and exact expectations for the deterministic diff pairs.
+- `terminal/claude-code-2.1.294-trust-dialog.raw` is Claude Code 2.1.294's real first frame at 40x120 (its folder-trust dialog, the workspace path scrubbed to `/tmp/project`), recorded through a pty; it ends with the queries it sends at startup. Replayed by `TerminalSession/ReplaysClaudeCodeTrustDialog`.

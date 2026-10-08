@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1013,6 +1015,37 @@ void TestTerminalSessionQueuesDesktopNotifications() {
          "OSC 777 notify carries a title and a body");
   TerminalSessionTestAccess::AppendOutput(session, "plain text after");
   Expect(!session.ConsumeNotification().has_value(), "nothing else queues one");
+}
+
+// A real modern TUI's frame, replayed: Claude Code 2.1.294's folder-trust dialog
+// as it wrote it to a 40x120 pty (tests/fixtures/terminal). It positions every
+// word with CHA, draws in truecolor, moves the cursor back up into the dialog,
+// and ends with XTVERSION, the kitty keyboard query and DA1 — each of which
+// must be answered, or it waits on them.
+void TestTerminalSessionReplaysClaudeCodeTrustDialog() {
+  std::ifstream in(std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" / "terminal" /
+                       "claude-code-2.1.294-trust-dialog.raw",
+                   std::ios::binary);
+  const std::string stream((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  Expect(stream.size() > 1000, "the recording is present");
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 40, 120);
+  TerminalSessionTestAccess::AppendOutput(session, stream);
+
+  std::string screen;
+  for (const auto& line : session.SnapshotLines()) {
+    screen += LineText(line);
+    screen += '\n';
+  }
+  const auto has = [&](std::string_view text) { return screen.find(text) != std::string::npos; };
+  Expect(has(" Accessing workspace:") && has(" /tmp/project") &&
+             has(" \xe2\x9d\xaf No, exit") && has("   Yes, I trust this folder") &&
+             has(" Enter to confirm \xc2\xb7 Esc to cancel"),
+         "the dialog lands where the program put it:\n" + screen);
+  const std::string replies = TerminalSessionTestAccess::SentBytes(session);
+  Expect(replies.find("\x1bP>|microide ") != std::string::npos, "XTVERSION answered: " + replies);
+  Expect(replies.find("\x1b[?0u") != std::string::npos, "the kitty keyboard query answered");
+  Expect(replies.find("\x1b[?1;2c") != std::string::npos, "DA1 answered");
 }
 
 void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
@@ -3168,6 +3201,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionReportsWorkingDirectoryAndColors);
   AddTest(tests, "TerminalSession/QueuesDesktopNotifications",
           TestTerminalSessionQueuesDesktopNotifications);
+  AddTest(tests, "TerminalSession/ReplaysClaudeCodeTrustDialog",
+          TestTerminalSessionReplaysClaudeCodeTrustDialog);
   AddTest(tests, "TerminalSession/AnswersModernTuiQueries",
           TestTerminalSessionAnswersModernTuiQueries);
   AddTest(tests, "TerminalSession/EncodesModifiedAndFunctionKeys",
