@@ -264,6 +264,16 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
     case State::Ready:
       entry.auth_terminal_opened = false;
       WarnIfSessionsEndAtLogout(record.host, project.session());
+      if (project.watch_native() == std::optional(false) && !entry.warned_polling && operations_.notify) {
+        // Degraded freshness is reported, never presented as normal (§ 6.3).
+        entry.warned_polling = true;
+        operations_.notify(NotificationService::Request{
+            .tone = Tone::Warning,
+            .key = key + ".watch",
+            .message = record.host + " cannot watch " + record.host_root +
+                       " for changes and polls it instead (inotify unavailable, or out of "
+                       "watches: fs.inotify.max_user_watches); changes made there arrive late"});
+      }
       if (!sync.error.empty()) {
         row(Tone::Error, "Sync with " + label + " failed: " + sync.error);
       } else if (sync.held_deletes > 0) {

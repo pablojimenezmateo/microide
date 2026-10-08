@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -73,6 +74,12 @@ class RemoteProject {
   RemoteHostSession& session() { return *session_; }
   MirrorSyncEngine& engine() { return *engine_; }
   const std::shared_ptr<RemoteProcessLauncher>& launcher() const { return launcher_; }
+  // Whether the host watches the tree natively (false: it polls — inotify
+  // unavailable or out of watches). Unknown until the first connection subscribes.
+  std::optional<bool> watch_native() const {
+    std::lock_guard lock(watch_mutex_);
+    return watch_native_;
+  }
 
  private:
   void OnSessionStatus(const RemoteHostSession::Status& status);
@@ -85,6 +92,8 @@ class RemoteProject {
   std::unique_ptr<MirrorSyncEngine> engine_;
   std::unique_ptr<MirrorWriteGate> gate_;
   std::shared_ptr<RemoteProcessLauncher> launcher_;
+  mutable std::mutex watch_mutex_;
+  std::optional<bool> watch_native_;
 };
 
 }  // namespace microide::project::remote

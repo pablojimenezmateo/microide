@@ -45,6 +45,8 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
       std::chrono::seconds(20), std::chrono::milliseconds(20));
   Expect(synced, "it connects and syncs: " + project.engine().status().error + " / " +
                      project.session().status().error);
+  Expect(project.watch_native() == std::optional(true),
+         "the host reports how it watches the tree (natively, here)");
   Expect(ReadFile(project.tree() / "main.c") == "int main(void) { return 0; }\n" &&
              ReadFile(project.tree() / "lib/util.h") == "#pragma once\n",
          "the mirror holds the host's tree");

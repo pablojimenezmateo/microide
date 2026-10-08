@@ -129,9 +129,13 @@ void RemoteProject::OnSessionStatus(const RemoteHostSession::Status& status) {
     // in the manifest, and nothing is lost before it.
     MirrorSyncEngine* engine = engine_.get();
     std::string error;
-    (void)workspace_->SubscribeWatch(
-        [engine](RemoteWorkspace::WatchDelta delta) { engine->ApplyWatchDelta(std::move(delta)); },
-        nullptr, &error);
+    bool native = false;
+    if (workspace_->SubscribeWatch(
+            [engine](RemoteWorkspace::WatchDelta delta) { engine->ApplyWatchDelta(std::move(delta)); },
+            &native, &error)) {
+      std::lock_guard lock(watch_mutex_);
+      watch_native_ = native;
+    }
     engine_->RequestSync();
   }
   if (listener_) {

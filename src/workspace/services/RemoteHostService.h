@@ -132,6 +132,7 @@ class RemoteHostService {
     project::remote::RemoteHostSession::Status status;
     bool auth_terminal_opened = false;
     bool announced_sync = false;
+    bool warned_polling = false;
     std::vector<std::string> conflict_rows;  // relative paths with a row showing
   };
 
