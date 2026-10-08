@@ -241,8 +241,11 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       }
       break;
     case State::Reconnecting:
-      row(Tone::Warning, "Reconnecting to " + record.host + "… (" + record.host_root +
-                             " stays editable; saves are queued)");
+      row(Tone::Warning,
+          "Reconnecting to " + record.host + "… (" + record.host_root +
+              " stays editable; saves are queued)",
+          {NotificationAction{.label = "Reconnect", .id = ActionId::RemoteReconnect,
+                              .args = {record.host}}});
       break;
     case State::Offline:
     case State::Disconnected:
@@ -250,7 +253,11 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       if (status.error.empty()) {
         dismiss();
       } else {
-        row(Tone::Error, label + ": " + status.error);
+        row(Tone::Error, label + ": " + status.error + " (the mirror stays editable; saves are queued)",
+            {NotificationAction{.label = "Reconnect", .id = ActionId::RemoteReconnect,
+                                .args = {record.host}},
+             NotificationAction{.label = "Copy ssh Command", .id = ActionId::RemoteCopyCommand,
+                                .args = {record.host, "ssh"}, .keep_open = true}});
       }
       break;
     case State::Ready:
@@ -396,13 +403,22 @@ bool RemoteHostService::OpenTerminalOnHost(std::string_view host, std::string* e
 }
 
 bool RemoteHostService::Reconnect(std::string_view host) {
-  Host* entry = Find(host);
-  if (entry == nullptr) {
-    return false;
+  bool found = false;
+  if (Host* entry = Find(host)) {
+    entry->auth_terminal_opened = false;
+    entry->session->Connect();
+    found = true;
   }
-  entry->auth_terminal_opened = false;
-  entry->session->Connect();
-  return true;
+  // A host's remote projects each have their own channel: they reconnect with it.
+  for (auto& [tree, project] : projects_) {
+    (void)tree;
+    if (project.project->record().host == host) {
+      project.auth_terminal_opened = false;
+      project.project->session().Connect();
+      found = true;
+    }
+  }
+  return found;
 }
 
 void RemoteHostService::Disconnect(std::string_view host) {
@@ -412,6 +428,34 @@ void RemoteHostService::Disconnect(std::string_view host) {
       entry.session->Disconnect();
     }
   }
+  // The mirror stays open and editable; saves queue in its journal until the next
+  // connection.
+  for (auto& [tree, project] : projects_) {
+    (void)tree;
+    if (host.empty() || project.project->record().host == host) {
+      project.project->session().Disconnect();
+    }
+  }
+}
+
+std::string RemoteHostService::SoleHost() const {
+  std::string sole;
+  for (const auto& [key, entry] : hosts_) {
+    (void)entry;
+    if (!sole.empty() && sole != key) {
+      return {};
+    }
+    sole = key;
+  }
+  for (const auto& [tree, project] : projects_) {
+    (void)tree;
+    const std::string host = project.project->record().host;
+    if (!sole.empty() && sole != host) {
+      return {};
+    }
+    sole = host;
+  }
+  return sole;
 }
 
 bool RemoteHostService::StopServer(std::string_view host) {
@@ -441,18 +485,22 @@ bool RemoteHostService::StopServer(std::string_view host) {
 
 std::optional<std::string> RemoteHostService::CommandText(std::string_view host,
                                                           std::string_view which) const {
-  const Host* entry = Find(host);
-  if (entry == nullptr) {
+  const remote::RemoteHostSession* session = nullptr;
+  if (const Host* entry = Find(host)) {
+    session = entry->session.get();
+  } else {
+    for (const auto& [tree, project] : projects_) {
+      (void)tree;
+      if (project.project->record().host == host) {
+        session = &project.project->session();
+        break;
+      }
+    }
+  }
+  if (session == nullptr) {
     return std::nullopt;
   }
-  if (which == "install") {
-    return entry->session->InstallCommandText();
-  }
-  return entry->session->SshCommandText();
-}
-
-std::string RemoteHostService::SoleHost() const {
-  return hosts_.size() == 1 ? hosts_.begin()->first : std::string();
+  return which == "install" ? session->InstallCommandText() : session->SshCommandText();
 }
 
 std::string RemoteHostService::StatusText() const {

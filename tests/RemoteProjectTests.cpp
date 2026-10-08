@@ -65,6 +65,12 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
          "the mirror tree is recognizable as a remote project");
   Expect(!remote::RemoteProject::ReadRecord(host_root).has_value(),
          "an ordinary folder is not");
+
+  project.session().Disconnect();
+  Expect(WaitUntil([&] { return project.session().status().state == remote::RemoteHostSession::State::Disconnected; },
+                   std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         std::string("Disconnect takes the project offline: ") +
+             std::string(remote::RemoteHostSession::StateName(project.session().status().state)));
 }
 
 #endif

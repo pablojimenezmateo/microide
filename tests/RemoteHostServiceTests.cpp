@@ -204,6 +204,27 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the mirror takes the host's bytes and the row goes");
+
+  // Disconnect and Reconnect reach a remote project's own channel too.
+  const auto segment = [&] {
+    return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote);
+  };
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnect");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return segment().find("disconnected") != std::string::npos;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "the project's connection goes down: '" + segment() + "'");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return segment() == target;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "and comes back: '" + segment() + "'");
   }
   {
     // A later run opening the mirror as a plain folder.
