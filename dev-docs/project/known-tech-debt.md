@@ -1308,7 +1308,19 @@ completion contract for a load whose inputs are not a file.
 type). Neither has a perf gate for the large case, and nor does the
 new path (see TD-2026-09-29-317).
 
-### TD-2026-09-29-313 — the async-open threshold is a size, and the remote case is not about size. [OPEN]
+### TD-2026-09-29-313 — the async-open threshold is a size, and the remote case is not about size. [RESOLVED 2026-10-08 — by the mirror, as this entry predicted]
+
+Closed without code: Phase 2b shipped the design's answer. A host folder opens
+only as a local mirror (`Open Folder on Host`), so every path the editor opens
+in a remote project is local by construction, and a host file outside the
+project is fetched off the shell thread before it opens
+(`RemoteHostService::OpenWhenFetched`). There is no longer a "remote project
+before the mirror exists" to cover. A local folder on a slow network mount
+(sshfs, NFS) is still sized by `stat` and read inline under 4 MiB; if that is
+ever reported, the fix remains the one below — a locality flag set by whatever
+owns the mount — not a lower threshold.
+
+Original report:
 
 An open goes off-thread when the file is at least 4 MiB
 (`TabCoordinator::kAsyncOpenThresholdBytes`). That is the right question for the
