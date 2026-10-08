@@ -343,6 +343,24 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 3 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 4,
          "at the definition, not at the top");
+  // It is a copy of a file outside the project: read-only, and never trusted on
+  // reopen — a local copy that went stale (or was tampered with) is refetched.
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).read_only(), "the host file's copy is read-only");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("typed");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and typing does not change it");
+  const std::filesystem::path other_copy =
+      WorkspaceShellTestAccess::ProjectLauncher(shell).LocalPathFromHost(host.home / "include" / "other.h");
+  std::filesystem::permissions(other_copy, std::filesystem::perms::owner_all);
+  WriteFile(other_copy, "stale local copy\n");
+  WriteFile(host.home / "include" / "other.h", "\n\n\nint target; // updated on the host\n");
+  Expect(!WorkspaceShellTestAccess::OpenFileInNewTab(shell, other_copy), "reopening fetches again");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(other_copy) == "\n\n\nint target; // updated on the host\n";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the copy is the host's current bytes, not the stale local ones");
 
   // Closing the project drops its connection (and its status segment); reopening
   // the mirror connects again.

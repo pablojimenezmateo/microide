@@ -97,10 +97,14 @@ class RemoteHostService {
   // the mirror's file. False when `path` is not a conflict of any remote project.
   bool CompareConflict(const std::filesystem::path& path);
   // `path` is a host file outside a remote project (the launcher's out-of-project
-  // cache) not fetched yet: fetch it read-only and run `opened` with it on the UI
-  // thread. False when `path` is nothing of the kind (open it as usual).
+  // cache): fetch its CURRENT bytes — every open, so a stale or locally changed
+  // copy is never what opens — and run `opened` with it on the UI thread. False
+  // when `path` is nothing of the kind (open it as usual).
   bool OpenWhenFetched(const std::filesystem::path& path,
                        std::function<void(const std::filesystem::path&)> opened);
+  // Whether `path` is such a copy: it opens read-only, since it is not part of the
+  // project and a save could only ever overwrite the copy.
+  bool IsHostFileCopy(const std::filesystem::path& path) const;
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);
@@ -168,6 +172,7 @@ class RemoteHostService {
   // their launcher and gate (ProjectLocality's lifetime rule).
   std::map<std::filesystem::path, Project> projects_;
   std::vector<std::string> survival_warned_;  // hosts already warned
+  std::filesystem::path fetching_copy_;  // the host-file copy being opened right now
   std::vector<std::thread> workers_;  // Stop Host Server runs, joined on destruction
   // Last: its queued closures name `this`, and it must drop them before the
   // sessions that post them are gone — sessions are destroyed explicitly first.

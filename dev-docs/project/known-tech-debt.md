@@ -458,6 +458,12 @@ silent one:
   journal stay) and reopening reconnects. The RemoteProject object itself (an engine
   thread, the store in memory) still lives until the window closes, since a closing
   project state may point at its locality.
+- **Host-file copies (out-of-project, read-only), loose ends found in the first
+  real-host trial (2026-10-08):** the breadcrumb shows the copy's local path rather
+  than the host path; typing into the read-only tab is refused with no message
+  (VS Code says "Cannot edit in read-only editor"); a copy reopened by a restored
+  session (not through the open funnel) is not marked read-only; and Remote: Show
+  Status's toast truncates its line at the long mirror path.
 - Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
   through the launcher meanwhile: two host processes per git-sidebar refresh, none
   while the sidebar is hidden), host-side `search/run` (search reads the mirror,

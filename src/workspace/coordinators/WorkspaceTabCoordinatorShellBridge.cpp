@@ -892,6 +892,13 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
     return false;
   }
   const bool opened = MakeEditorTabService().OpenFileInNewTab(path);
+  if (opened && glue_->remote_host_service != nullptr &&
+      glue_->remote_host_service->IsHostFileCopy(path)) {
+    // A copy of a host file outside the project: not the project's to edit.
+    if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+      viewport->SetReadOnly(true);
+    }
+  }
   if (opened) {
     // Record into the recent-files MRU, scoped to the active project. Resolve to an
     // absolute path so finder/welcome lookups match regardless of the caller's input.

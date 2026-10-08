@@ -397,11 +397,20 @@ bool RemoteHostService::ResolveConflict(const std::filesystem::path& path, bool 
   return true;
 }
 
+bool RemoteHostService::IsHostFileCopy(const std::filesystem::path& path) const {
+  for (const auto& [tree, entry] : projects_) {
+    (void)tree;
+    if (entry.project->launcher()->HostPathOfCached(path).has_value()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
                                         std::function<void(const std::filesystem::path&)> opened) {
-  std::error_code ec;
-  if (std::filesystem::exists(path, ec)) {
-    return false;
+  if (fetching_copy_ == path.lexically_normal()) {
+    return false;  // the fetched copy itself, opening now: open it as it is
   }
   for (auto& [tree, entry] : projects_) {
     (void)tree;
@@ -421,7 +430,9 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
         [this, opened = std::move(opened)](std::optional<std::filesystem::path> file, std::string error) {
           mailbox_.Post([this, opened, file = std::move(file), error = std::move(error)]() {
             if (file.has_value()) {
+              fetching_copy_ = file->lexically_normal();
               opened(*file);
+              fetching_copy_.clear();
             } else if (operations_.notify) {
               operations_.notify(NotificationService::Request{
                   .tone = NotificationService::Tone::Error,
