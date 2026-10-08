@@ -47,6 +47,27 @@ inline std::string ProjectLabelForRoot(const std::filesystem::path& root) {
   return filename.empty() ? root.lexically_normal().string() : filename;
 }
 
+// A path for a message, with the home directory spelled "~" (as a shell prompt
+// does): the mirror and cache paths under ~/.local live there, and a toast that
+// spends 20 columns on "/home/<user>" loses the part that differs. Only a whole
+// leading component is replaced — "/home/pab" is not a prefix of "/home/pablo2".
+inline std::string HomeAbbreviatedPath(const std::filesystem::path& path, std::string_view home) {
+  std::string text = path.string();
+  while (home.size() > 1 && home.back() == '/') {
+    home.remove_suffix(1);
+  }
+  if (home.size() <= 1 || home.front() != '/' || text.compare(0, home.size(), home) != 0) {
+    return text;
+  }
+  if (text.size() == home.size()) {
+    return "~";
+  }
+  if (text[home.size()] != '/') {
+    return text;
+  }
+  return "~" + text.substr(home.size());
+}
+
 // The one separator for key-hint lists, matching the overlay hint ("↑↓ select ·
 // Enter choose · Esc cancel"). Not for joining unrelated fields — the breadcrumb's
 // "path | left -> right" and the merge status line are separators between

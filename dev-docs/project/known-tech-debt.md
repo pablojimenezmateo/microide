@@ -507,6 +507,9 @@ Found by the first two-machine trial on 2026-10-08; none blocks editing.
 - The control channel's `type` answers `ok:true` when the target editor is
   read-only and the edit was refused (the UI now says why, the reply does not).
   The reply should carry the refusal, so an agent driving the editor sees it.
+- A control-channel save that is refused returns the error but shows no toast
+  (Ctrl+S does). Defensible — the caller got the reason — but it is one more
+  place the two paths differ; decide once whether control actions notify.
 - A tab tooltip was reported staying up after the pointer left the strip. Seen
   only under Xvfb so far, where leave events can be missing; reproduce on a real
   display before fixing.

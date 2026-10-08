@@ -5,6 +5,7 @@
 #include "util/Sha256.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/FileUri.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/services/AssistService.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -466,9 +467,26 @@ void TestOpenFolderOnHostEditsTheHostTree() {
 
 #endif
 
+// Show Status names the mirror under ~/.local/share: the home prefix is spelled
+// "~" so the part that differs survives the toast's three lines — and only a
+// whole leading component is, never a longer sibling's prefix.
+void TestStatusPathsAbbreviateHome() {
+  using workspace::HomeAbbreviatedPath;
+  Expect(HomeAbbreviatedPath("/home/u/.local/share/microide/remote/h/app-1/app", "/home/u") ==
+             "~/.local/share/microide/remote/h/app-1/app",
+         "the home prefix becomes ~");
+  Expect(HomeAbbreviatedPath("/home/u", "/home/u/") == "~", "home itself, trailing slash or not");
+  Expect(HomeAbbreviatedPath("/home/u2/x", "/home/u") == "/home/u2/x", "a sibling is not home");
+  Expect(HomeAbbreviatedPath("/srv/x", "/home/u") == "/srv/x", "elsewhere is unchanged");
+  Expect(HomeAbbreviatedPath("/home/u/x", "") == "/home/u/x" &&
+             HomeAbbreviatedPath("/home/u/x", "/") == "/home/u/x",
+         "no HOME, or HOME=/, abbreviates nothing");
+}
+
 }  // namespace
 
 void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RemoteHostService/StatusPathsAbbreviateHome", TestStatusPathsAbbreviateHome);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);

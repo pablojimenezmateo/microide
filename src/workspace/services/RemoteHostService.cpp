@@ -13,6 +13,7 @@
 #include "util/CommandLine.h"
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/WorkspaceUiText.h"
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
@@ -676,6 +677,7 @@ std::string RemoteHostService::StatusText() const {
            "connects to one.";
   }
   std::string text;
+  const char* home = std::getenv("HOME");
   for (const auto& [tree, entry] : projects_) {
     const remote::RemoteProjectRecord record = entry.project->record();
     const remote::MirrorSyncEngine::Status sync = entry.project->engine().status();
@@ -686,7 +688,7 @@ std::string RemoteHostService::StatusText() const {
             std::string(remote::RemoteHostSession::StateName(entry.status.state)) + ", " +
             std::to_string(sync.files) + " files (" + std::to_string(sync.absent) + " to fetch, " +
             std::to_string(sync.dirty) + " to push, " + std::to_string(sync.conflicts) +
-            " conflicts), mirror " + tree.string();
+            " conflicts), mirror " + HomeAbbreviatedPath(tree, home != nullptr ? home : "");
   }
   for (const auto& [key, entry] : hosts_) {
     if (!text.empty()) {
