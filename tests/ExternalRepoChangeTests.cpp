@@ -521,6 +521,38 @@ void TestWorkspaceShellBannerOverwriteWritesInMemoryEdits() {
          "Overwrite should leave the buffer clean after saving");
 }
 
+// VS Code's save conflict: the refused save says why, and Compare shows the file
+// on disk beside the unsaved buffer without settling anything — the banner stays.
+void TestWorkspaceShellBannerCompareShowsDiskBesideTheBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_path = root / "notes.txt";
+  WriteFile(file_path, "original\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "opens");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file_path);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  DrainProjectChanges(shell);
+  WriteFile(file_path, "newer on disk\n");
+  Expect(WaitForExternalChangeBanner(shell, file_path, std::chrono::seconds(1)), "banner");
+
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save"), "the save is refused");
+  std::string said = WorkspaceShellTestAccess::CommandFeedbackText(shell);
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    said += " | " + row.message;
+  }
+  Expect(said.find("changed on disk since it was opened") != std::string::npos,
+         "and says why, not just 'Save failed': " + said);
+
+  WorkspaceShellTestAccess::EditorBannerCompare(shell, file_path);
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "Compare opens a comparison");
+  Expect(WorkspaceShellTestAccess::EditorBannerCount(shell) == 1,
+         "and leaves the banner up: Reload or Overwrite is still the choice");
+  Expect(ReadFile(file_path) == "newer on disk\n", "nothing was written");
+}
+
 void TestWorkspaceShellBannerReloadReplacesBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -784,6 +816,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRealRewriteStillNotifies);
   AddTest(tests, "ExternalRepoChange/SaveTimeConflictGuardBlocksClobber",
           TestWorkspaceShellSaveTimeConflictGuardBlocksClobber);
+  AddTest(tests, "ExternalRepoChange/BannerCompareShowsDiskBesideTheBuffer",
+          TestWorkspaceShellBannerCompareShowsDiskBesideTheBuffer);
   AddTest(tests, "ExternalRepoChange/BannerOverwriteWritesInMemoryEdits",
           TestWorkspaceShellBannerOverwriteWritesInMemoryEdits);
   AddTest(tests, "ExternalRepoChange/BannerReloadReplacesBuffer",

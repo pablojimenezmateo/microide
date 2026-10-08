@@ -295,7 +295,9 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       const std::filesystem::path path = banner->path;
       state_.surface.focus = FocusTarget::Editor;
       if (operations_.editor_banner_action) {
-        if (has_actions && Contains(buttons.reload, event.button.x, event.button.y)) {
+        if (has_actions && Contains(buttons.compare, event.button.x, event.button.y)) {
+          operations_.editor_banner_action(EditorBannerAction::Compare, path);
+        } else if (has_actions && Contains(buttons.reload, event.button.x, event.button.y)) {
           operations_.editor_banner_action(EditorBannerAction::Reload, path);
         } else if (has_actions && Contains(buttons.overwrite, event.button.x, event.button.y)) {
           operations_.editor_banner_action(EditorBannerAction::Overwrite, path);

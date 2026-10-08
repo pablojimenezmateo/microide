@@ -321,6 +321,7 @@ inline constexpr float kWorkspaceEditorBannerHeight = 30.0f;
 // w == 0 for the informational `ReloadedNotice` banner; `dismiss` (the X) is
 // always present.
 struct EditorBannerButtonLayout {
+  SDL_FRect compare{};
   SDL_FRect reload{};
   SDL_FRect overwrite{};
   SDL_FRect keep{};

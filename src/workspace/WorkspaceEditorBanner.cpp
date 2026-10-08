@@ -4,6 +4,8 @@
 // WorkspaceShellRenderFrame.cpp and hit-testing in WorkspaceEditorMouseCoordinator.
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/CompareInput.h"
+#include "workspace/services/CompareMergeService.h"
 
 #include <algorithm>
 
@@ -60,6 +62,33 @@ bool DismissEditorBannerForPath(ProjectWorkspaceState& state, const std::filesys
 void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
                                                 const std::filesystem::path& path) {
   switch (action) {
+    case EditorBannerAction::Compare: {
+      // The file as it is on disk — in a remote project, the host's bytes the
+      // mirror just pulled — beside this buffer's unsaved version. The banner stays
+      // up: the choice is still Reload or Overwrite.
+      const editor::TextViewport* viewport = nullptr;
+      for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+        for (const TabEntry& tab : group.open_tabs) {
+          if (viewport == nullptr && tab.editor_state.has_value() &&
+              tab.editor_state->viewport.path().lexically_normal() == path.lexically_normal()) {
+            viewport = &tab.editor_state->viewport;
+          }
+        }
+      }
+      std::optional<CompareInput> on_disk = ReadFileCompareInput(path, /*editable=*/false);
+      if (viewport != nullptr && on_disk.has_value()) {
+        on_disk->label = path.filename().string() + " (on disk)";
+        CompareInput mine{
+            .content = viewport->SerializeDocumentText(),
+            .label = path.filename().string() + " (your changes)",
+            .path = {},
+            .editable = false,
+        };
+        (void)MakeCompareMergeService().OpenPlainComparison(std::move(*on_disk), std::move(mine));
+      }
+      RequestEditorSurfaceRedraw();
+      return;
+    }
     case EditorBannerAction::Reload:
       MakeEditorTabService().ReloadEditorTabsForPathFromDisk(path);
       RefreshOpenCompareTabsForPath(path);

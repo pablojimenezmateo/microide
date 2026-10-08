@@ -1099,7 +1099,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
 
     const EditorBannerButtonLayout buttons =
         ComputeEditorBannerButtonRects(strip, banner_vm.has_actions);
-    const float message_right = banner_vm.has_actions ? buttons.reload.x : buttons.dismiss.x;
+    const float message_right = banner_vm.has_actions ? buttons.compare.x : buttons.dismiss.x;
     const SDL_FRect message_rect = MakeRect(strip.x + 12.0f, strip.y,
                                             std::max(0.0f, message_right - strip.x - 20.0f), strip.h);
     const SDL_Rect clip{static_cast<int>(message_rect.x), static_cast<int>(message_rect.y),
@@ -1124,6 +1124,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                          });
     };
     if (banner_vm.has_actions) {
+      draw_banner_button(buttons.compare, "Compare", ButtonTone::Neutral);
       draw_banner_button(buttons.reload, "Reload", ButtonTone::Neutral);
       draw_banner_button(buttons.overwrite, "Overwrite", ButtonTone::Destructive);
       draw_banner_button(buttons.keep, "Keep", ButtonTone::Neutral);

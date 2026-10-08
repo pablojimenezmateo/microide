@@ -115,6 +115,9 @@
   static void EditorBannerOverwrite(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.ActivateEditorBannerAction(EditorBannerAction::Overwrite, path);
   }
+  static void EditorBannerCompare(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.ActivateEditorBannerAction(EditorBannerAction::Compare, path);
+  }
   static void EditorBannerKeep(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.ActivateEditorBannerAction(EditorBannerAction::Keep, path);
   }

@@ -599,7 +599,7 @@ struct EditorBannerState {
   std::filesystem::path path;  // normalized absolute path the banner pertains to
 };
 
-enum class EditorBannerAction { Reload, Overwrite, Keep };
+enum class EditorBannerAction { Compare, Reload, Overwrite, Keep };
 
 // Render-side resolved file-tree icons, parallel to DirectoryTree::entries().
 // Rebuilt lazily only when the tree entries change or plugin icon themes reload,

@@ -249,6 +249,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
           context_.ResetCaretBlink();
         }
       } else {
+        // The common refusal: the file changed on disk (an agent, a pull from the
+        // host) since this buffer last read or wrote it. Say so, and where the
+        // choice is, as VS Code's "the content of the file is newer" does.
+        if (const editor::TextViewport* viewport = context_.ActiveEditableViewport();
+            viewport != nullptr && !viewport->path().empty() &&
+            viewport->DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+          return reject("Not saved: " + viewport->path().filename().string() +
+                        " changed on disk since it was opened. Compare, Reload or Overwrite in "
+                        "the banner above it");
+        }
         return reject("Save failed");
       }
       return DispatchResult::Handled;

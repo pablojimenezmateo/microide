@@ -620,6 +620,9 @@ EditorBannerButtonLayout ComputeEditorBannerButtonRects(const SDL_FRect& strip, 
   layout.overwrite = MakeRect(x, y, kOverwriteWidth, kButtonHeight);
   x -= kButtonGap + kReloadWidth;
   layout.reload = MakeRect(x, y, kReloadWidth, kButtonHeight);
+  constexpr float kCompareWidth = 72.0f;
+  x -= kButtonGap + kCompareWidth;
+  layout.compare = MakeRect(x, y, kCompareWidth, kButtonHeight);
   return layout;
 }
 
