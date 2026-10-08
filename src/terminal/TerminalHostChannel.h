@@ -49,6 +49,8 @@ class HostTerminalSource {
     std::size_t rows = 24;
     std::size_t columns = 80;
     std::size_t scrollback_lines = 2000;
+    std::size_t credit_bytes = 0;    // remote.term_credit_bytes (0 = the host's default)
+    std::size_t prefetch_lines = 0;  // remote.scrollback_prefetch_lines (0 = the host's default)
   };
 
   virtual ~HostTerminalSource() = default;

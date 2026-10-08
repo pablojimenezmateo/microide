@@ -274,8 +274,8 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                    }
                    util::JsonObject result;
                    result["handle"] = util::JsonValue(static_cast<std::int64_t>(opened.handle));
-                   result["credit_bytes"] = util::JsonValue(
-                       static_cast<std::int64_t>(terminals_->limits().credit_bytes));
+                   result["credit_bytes"] =
+                       util::JsonValue(static_cast<std::int64_t>(opened.credit_bytes));
                    connection.peer.Reply(id, util::JsonValue(std::move(result)));
                  });
   peer.OnRequest(remote::method::kTermAttach,

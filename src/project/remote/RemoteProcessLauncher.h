@@ -36,6 +36,10 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
     // other content, so ReadableGitDirectory says nothing rather than guess.
     bool host_paths_readable_locally = false;
     std::string description = "remote";
+    // Per host terminal: remote.term_credit_bytes and remote.scrollback_prefetch_lines
+    // (0 = the host's defaults).
+    std::size_t terminal_credit_bytes = 0;
+    std::size_t terminal_prefetch_lines = 0;
   };
 
   // Over the host's current connection, which a reconnect replaces underneath.

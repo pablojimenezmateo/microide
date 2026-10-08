@@ -61,9 +61,14 @@ class TerminalTable {
     std::size_t rows = 24;
     std::size_t columns = 80;
     std::size_t scrollback_lines = 2000;
+    // The client's preferences (remote.term_credit_bytes,
+    // remote.scrollback_prefetch_lines), clamped; 0 = the table's default.
+    std::size_t credit_bytes = 0;
+    std::size_t prefetch_lines = 0;
   };
   struct OpenResult {
     std::uint64_t handle = 0;
+    std::size_t credit_bytes = 0;  // what the terminal was given
     std::string error;
   };
 
@@ -101,6 +106,8 @@ class TerminalTable {
   struct Terminal {
     std::uint64_t handle = 0;
     terminal::TerminalSession session;
+    std::size_t credit_bytes = 0;
+    std::size_t prefetch_lines = 0;
     // Guarded by the table mutex.
     std::uint64_t connection = 0;
     terminal::TerminalHostFrameBuilder builder;

@@ -253,6 +253,8 @@ std::filesystem::path RemoteProcessLauncher::ResolveWorkingDirectory(
 std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTerminal(
     const OpenRequest& request, terminal::TerminalSession& session, std::string* error) const {
   OpenRequest host_request = request;
+  host_request.credit_bytes = options_.terminal_credit_bytes;
+  host_request.prefetch_lines = options_.terminal_prefetch_lines;
   // A directory outside the project's tree has no host counterpart: the host
   // starts the shell in the user's home rather than in a path that only exists
   // here (empty = $HOME). A terminal-only connection has no tree at all.

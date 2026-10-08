@@ -92,6 +92,11 @@ std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::J
       !in_range(columns, terminal::kMaxHostTerminalDimension) || !in_range(scrollback, 1000000)) {
     return fail("rows, columns and scrollback_lines must be positive and bounded");
   }
+  // Bounded so a client cannot ask the host to buffer without limit.
+  request.credit_bytes = static_cast<std::size_t>(
+      std::clamp<std::int64_t>(params["credit_bytes"].AsInt(0), 0, 16 * 1024 * 1024));
+  request.prefetch_lines = static_cast<std::size_t>(
+      std::clamp<std::int64_t>(params["prefetch_lines"].AsInt(0), 0, 100000));
   request.rows = static_cast<std::size_t>(rows);
   request.columns = static_cast<std::size_t>(columns);
   request.scrollback_lines = static_cast<std::size_t>(scrollback);
@@ -107,6 +112,11 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
     }
     terminal->handle = next_handle_++;
     terminal->connection = connection;
+    terminal->credit_bytes =
+        request.credit_bytes != 0 ? std::max<std::size_t>(request.credit_bytes, 16 * 1024)
+                                  : limits_.credit_bytes;
+    terminal->prefetch_lines =
+        request.prefetch_lines != 0 ? request.prefetch_lines : limits_.prefetch_lines;
   }
   Terminal* raw = terminal.get();
   terminal->session.SetOutputObserver([this, raw]() {
@@ -123,12 +133,13 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
   }
   terminal->session.Resize(request.rows, request.columns);
   const std::uint64_t handle = terminal->handle;
+  const std::size_t credit = terminal->credit_bytes;
   {
     std::lock_guard lock(mutex_);
     terminals_.emplace(handle, std::move(terminal));
   }
   Notify();
-  return OpenResult{.handle = handle};
+  return OpenResult{.handle = handle, .credit_bytes = credit};
 }
 
 bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
@@ -307,7 +318,7 @@ void TerminalTable::Run() {
         continue;
       }
       const std::uint64_t in_flight = terminal->sent_bytes - terminal->acked_bytes;
-      const auto interval = in_flight > limits_.credit_bytes / 2 ? limits_.congested_interval
+      const auto interval = in_flight > terminal->credit_bytes / 2 ? limits_.congested_interval
                                                                  : limits_.frame_interval;
       if (now - terminal->last_sent < interval) {
         wake_at(terminal->last_sent + interval);
@@ -328,13 +339,14 @@ void TerminalTable::Run() {
       terminal->dirty.store(false, std::memory_order_release);
       terminal->session.CaptureForHost(
           terminal->builder.capture_from(),
-          terminal->builder.capture_lines_before_screen(limits_.prefetch_lines), capture);
+          terminal->builder.capture_lines_before_screen(terminal->prefetch_lines), capture);
       if (echo_ack == terminal->echo_ack && terminal->builder.UpToDate(capture)) {
         continue;
       }
       const std::uint64_t in_flight = terminal->sent_bytes - terminal->acked_bytes;
       const std::size_t budget =
-          in_flight >= limits_.credit_bytes ? 0 : limits_.credit_bytes - static_cast<std::size_t>(in_flight);
+          in_flight >= terminal->credit_bytes ? 0
+                                              : terminal->credit_bytes - static_cast<std::size_t>(in_flight);
       terminal->builder.Build(capture, budget, frame);
       frame.echo_ack = echo_ack;
       terminal->echo_ack = echo_ack;

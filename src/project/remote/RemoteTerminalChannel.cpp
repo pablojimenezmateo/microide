@@ -62,6 +62,12 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
   params["rows"] = util::JsonValue(static_cast<std::int64_t>(request.rows));
   params["columns"] = util::JsonValue(static_cast<std::int64_t>(request.columns));
   params["scrollback_lines"] = util::JsonValue(static_cast<std::int64_t>(request.scrollback_lines));
+  if (request.credit_bytes != 0) {
+    params["credit_bytes"] = util::JsonValue(static_cast<std::int64_t>(request.credit_bytes));
+  }
+  if (request.prefetch_lines != 0) {
+    params["prefetch_lines"] = util::JsonValue(static_cast<std::int64_t>(request.prefetch_lines));
+  }
   // The reply runs on the I/O thread; a channel closed by then just closes the
   // terminal it was given.
   const std::weak_ptr<RemoteTerminalChannel> weak = channel;
