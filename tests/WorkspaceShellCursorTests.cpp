@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
+#include "perf/AllocationCounter.h"
 #include "WorkspaceShellEventHelpers.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -1048,6 +1049,52 @@ void TestWorkspaceShellNotificationActionsReachableByKeyboard() {
          "and the transient toast closed");
 }
 
+// Three long labels on a narrow window share the row instead of pushing each other
+// off the card; each keeps its full label in the view model and is truncated to
+// its share at paint time. And the steady-state build + hit-test — what every
+// frame and every pointer motion over a toast runs — touches no heap.
+void TestWorkspaceShellNotificationButtonsShareANarrowRow() {
+  using microide::workspace::ActionId;
+  using microide::workspace::NotificationService;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 480, 600);
+  NotificationService::Request request{.message = "Remote host unreachable"};
+  for (int i = 0; i < 3; ++i) {
+    request.actions.push_back({.label = "A rather long button label number " + std::to_string(i),
+                               .id = ActionId::Goto});
+  }
+  WorkspaceShellTestAccess::ShowNotificationRequest(shell, std::move(request));
+
+  const auto vm = WorkspaceShellTestAccess::NotificationsVm(shell);
+  Expect(vm.entries.size() == 1 && vm.entries[0].buttons.size() == 3, "one row, three buttons");
+  const auto& entry = vm.entries[0];
+  for (std::size_t i = 0; i < entry.buttons.size(); ++i) {
+    const SDL_FRect& rect = entry.buttons[i].rect;
+    Expect(rect.x >= entry.layout.rect.x && rect.x + rect.w <= entry.layout.rect.x + entry.layout.rect.w + 0.01f,
+           "every button stays inside the card");
+    if (i > 0) {
+      const SDL_FRect& previous = entry.buttons[i - 1].rect;
+      Expect(previous.x + previous.w <= rect.x, "buttons do not overlap");
+    }
+    Expect(entry.buttons[i].label.size() > 20, "the view model keeps the whole label");
+  }
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  const SDL_FRect button = entry.buttons[1].rect;
+  (void)WorkspaceShellTestAccess::NotificationsVm(shell);  // warm text measurement
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+  for (int i = 0; i < 32; ++i) {
+    const auto frame_vm = WorkspaceShellTestAccess::NotificationsVm(shell);
+    (void)microide::workspace::NotificationHitAt(frame_vm, button.x + 1.0f, button.y + 1.0f);
+  }
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0,
+         "building and hit-testing the notification view model must not allocate");
+#endif
+}
+
 // The control channel presses the same button: `notification-action <row> <action>`
 // resolves the row by key or index and the button by label or index, then runs
 // the action through the executor a click uses.
@@ -1224,6 +1271,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellNotificationActionButtonRunsItsAction);
   AddTest(tests, "WorkspaceShell/NotificationActionsReachableByKeyboard",
           TestWorkspaceShellNotificationActionsReachableByKeyboard);
+  AddTest(tests, "WorkspaceShell/NotificationButtonsShareANarrowRow",
+          TestWorkspaceShellNotificationButtonsShareANarrowRow);
   AddTest(tests, "WorkspaceShell/NotificationActionCommandRunsTheButton",
           TestWorkspaceShellNotificationActionCommandRunsTheButton);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenBottomPanelHidesWithoutMotion",
