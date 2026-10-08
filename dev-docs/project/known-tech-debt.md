@@ -420,6 +420,55 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-08-327 — a host's language server and debug adapter do not survive a reconnect. [OPEN]
+
+`RemoteProcessLauncher::StartAsync` (LSP, DAP) adopts a `RemoteAsyncProcess` bound
+to the client that was current at spawn, and spawns with `keep_on_detach = false`.
+When the link drops, `RemoteConnection::Replace` carries the launcher and every
+host TERMINAL over to the new client (warm reattach), but a long-lived process is
+terminated by the server on detach and its `AsyncSubprocess` sees EOF — the
+language server restarts from scratch and a debug session ends. The server side
+already supports what is needed (`keep_on_detach`, `proc/attach` with per-stream
+offsets, exit delivered on attach — `RemoteProcessTests`). Fix shape: spawn
+StartAsync processes kept, let `RemoteAsyncProcess` hold the `RemoteConnection`
+and re-`proc/attach` from its acknowledged offsets on Replace, as
+`RemoteTerminalChannel::Reattach` does. Found 2026-10-08 while building the
+reconnect; not done then because no remote PROJECT exists yet (Phase 2b) to run
+a language server over it.
+
+### TD-2026-10-08-326 — host terminals: backfill, two clients, and a gap at a resize. [OPEN]
+
+Phase 2a task 7.4 left three pieces of the host-terminal protocol:
+
+- **`term/scrollback`**: an attach sends the screen plus 500 lines
+  (`remote.scrollback_prefetch_lines`); older history the host still holds is not
+  fetchable, so scrolling up past the prefetch shows the top of what arrived.
+  Fetch older pages on demand, keyed by absolute line index, without blocking the
+  shell thread (and before copying a selection that reaches into it).
+- **Two clients, one pty**: `TerminalTable::Terminal` has ONE connection; a second
+  `term/attach` takes the terminal over instead of sharing it at the smaller size
+  (tmux's rule, spec "Two clients share one pty at the smaller size"). Needs a
+  frame builder, credit counters and input sequence per attached client.
+- **A gap rule at a resize**: the client draws a withheld range as ONE rule line,
+  so its scrollback no longer maps 1:1 to host indexes. A frame whose screen grew
+  upward (`screen_top < previous_top`) pops that many lines off the client's
+  scrollback — if the rule is among them, one line too many or too few is
+  dropped. Only reachable with a flood that exhausted the credit window right
+  before a taller resize; the next cold attach repairs it.
+
+### TD-2026-10-08-325 — remote host UI remainders. [OPEN]
+
+From Phase 2a group 8: no **Show Log** action (the server's log beside its socket
+is not fetched), no **session-survival warning row** (the hello reports
+`KillUserProcesses`/linger and nothing shows it), `remote.server_socket_dir` and
+`remote.backfill_inflight_bytes` are not registered because nothing reads them
+yet, the hello does not echo the effective settings (task 4.5), BEL from a host
+terminal is not surfaced (nor from a local one, active-work § 3), and a LOCAL
+terminal is not titled `local · …` while host terminals are open (only host tabs
+carry their prefix). Packaging (a static musl `microide-server` per architecture
+inside the `.deb`) is release work; until then install ships the binary beside
+the executable, which is the build's own architecture.
+
 ### TD-2026-10-08-324 — format-on-save throws away the buffer's undo history. [RESOLVED 2026-10-08]
 
 Resolved: `TextViewport::ApplyFormattedText` canonicalizes the output as
