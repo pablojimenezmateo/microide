@@ -45,6 +45,7 @@ using microide::workspace::FindWorkspaceActionSpec;
 using microide::workspace::FindWorkspaceMenuSpec;
 using microide::workspace::FormatCommandCompletionToken;
 using microide::workspace::JoinCommandArguments;
+using microide::workspace::JoinShellCommandArguments;
 using microide::workspace::IsLspDrivenMenuAction;
 using microide::workspace::IsLspMenuActionReady;
 using microide::workspace::LspDrivenMenuActionLabel;
@@ -478,6 +479,18 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
          "formatted completion should quote spaced tokens and append a space");
   Expect(JoinCommandArguments({"cmd", "left", "right value"}, 1) == "left right value",
          "joined command arguments should preserve argument order");
+#if !defined(_WIN32)
+  // `term bash -c "echo hi; sleep 1"` is parsed again by the shell: the quoted
+  // argument must stay one word, or bash ran `echo` with $0 = `hi;` and printed
+  // a blank line. Bare words and operators are left alone, so a typed pipe pipes.
+  Expect(JoinShellCommandArguments({"term", "bash", "-c", "echo hi; sleep 1"}, 1) ==
+             "bash -c 'echo hi; sleep 1'",
+         "a spaced argument is re-quoted");
+  Expect(JoinShellCommandArguments({"ls", "|", "grep", "x"}, 0) == "ls | grep x",
+         "operators typed bare stay operators");
+  Expect(JoinShellCommandArguments({"echo", "it's", ""}, 0) == "echo 'it'\\''s' ''",
+         "a quote inside and an empty argument survive");
+#endif
 }
 
 // Command-line completion pulls plugin command names by reference from the host-owned

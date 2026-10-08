@@ -28,7 +28,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.OpenTerminal(JoinCommandArguments(args, 0));
+      context_.OpenTerminal(JoinShellCommandArguments(args, 0));
       return DispatchResult::Handled;
     case ActionId::TermClose:
       if (!context_.CloseActiveTerminal()) {

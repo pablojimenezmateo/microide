@@ -300,6 +300,43 @@ std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path
   return matches;
 }
 
+std::string JoinShellCommandArguments(const std::vector<std::string>& args,
+                                      std::size_t start_index) {
+  std::string joined;
+  for (std::size_t i = start_index; i < args.size(); ++i) {
+    if (i > start_index) {
+      joined.push_back(' ');
+    }
+    const std::string& arg = args[i];
+    const bool needs_quotes =
+        arg.empty() || arg.find_first_of(" \t\n'\"") != std::string::npos;
+    if (!needs_quotes) {
+      joined += arg;
+      continue;
+    }
+#if defined(_WIN32)
+    // cmd.exe: double quotes, an embedded one doubled.
+    joined.push_back('"');
+    for (const char c : arg) {
+      joined += c == '"' ? std::string("\"\"") : std::string(1, c);
+    }
+    joined.push_back('"');
+#else
+    // POSIX: single quotes take everything literally; a ' closes, escapes, reopens.
+    joined.push_back('\'');
+    for (const char c : arg) {
+      if (c == '\'') {
+        joined += "'\\''";
+      } else {
+        joined.push_back(c);
+      }
+    }
+    joined.push_back('\'');
+#endif
+  }
+  return joined;
+}
+
 std::string JoinCommandArguments(const std::vector<std::string>& args, std::size_t start_index) {
   if (start_index >= args.size()) {
     return {};

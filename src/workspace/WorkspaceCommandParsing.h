@@ -75,5 +75,11 @@ std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path
                                                      std::string_view token,
                                                      bool directories_only);
 std::string JoinCommandArguments(const std::vector<std::string>& args, std::size_t start_index);
+// For a command line that a SHELL will parse again (`term <command>` runs it as
+// `$SHELL -lc`): an argument that was one quoted word when typed — it holds
+// whitespace or a quote, or is empty — is re-quoted so it stays one word. Bare
+// words, operators included, pass through, so `term ls | grep x` still pipes.
+std::string JoinShellCommandArguments(const std::vector<std::string>& args,
+                                      std::size_t start_index);
 
 }  // namespace microide::workspace
