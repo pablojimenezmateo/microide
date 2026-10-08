@@ -72,14 +72,21 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
 
 std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Attach(
     std::shared_ptr<RemoteServerClient> client, std::uint64_t handle,
-    terminal::TerminalSession& session, HostToLocal host_to_local) {
+    terminal::TerminalSession& session, HostToLocal host_to_local,
+    std::optional<terminal::TerminalSession::HostResumePoint> resume) {
   if (client == nullptr || !client->connected() || handle == 0) {
     return nullptr;
   }
   auto channel = std::make_shared<RemoteTerminalChannel>(client, session, std::move(host_to_local));
   const std::weak_ptr<RemoteTerminalChannel> weak = channel;
+  util::JsonObject params;
+  params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
+  if (resume.has_value()) {
+    params["screen_top"] = util::JsonValue(static_cast<std::int64_t>(resume->screen_top));
+    params["alternate"] = util::JsonValue(resume->alternate);
+  }
   const std::uint64_t id = client->peer().Request(
-      method::kTermAttach, HandleParams(handle), Lane::Interactive,
+      method::kTermAttach, util::JsonValue(std::move(params)), Lane::Interactive,
       [weak, handle](std::optional<util::JsonValue> result,
                      std::optional<RemotePeer::RpcError> error) {
         const std::shared_ptr<RemoteTerminalChannel> channel = weak.lock();

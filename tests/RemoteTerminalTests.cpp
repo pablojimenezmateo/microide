@@ -151,6 +151,51 @@ void TestHostTerminalSurvivesADroppedConnection() {
   session.Stop();
 }
 
+// A reconnect from the SAME session is warm: it keeps everything it already
+// mirrored and receives only what the shell printed since — the history is not
+// re-sent, and nothing appears twice.
+void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  std::filesystem::create_directories(root);
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 6, 60);
+  auto first = Connect(dir);
+  auto channel = remote::RemoteTerminalChannel::Open(
+      first, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}},
+      session, identity);
+  Expect(channel != nullptr, "the terminal opens");
+  TerminalSessionTestAccess::EnterHostMode(session, channel);
+  TypeLine(session, "for i in $(seq 1 20); do echo early-$i; done; sleep 1; echo late-$((6*7))");
+  Expect(WaitForText(session, "early-20"), "the early output arrives:\n" + ScreenText(session));
+  const std::uint64_t handle = channel->handle();
+  first->peer().Fail("link dropped");
+  Expect(WaitUntil([&] { return !session.running(); }, std::chrono::seconds(5)), "the link drops");
+  const auto resume = session.host_resume_point();
+  Expect(resume.has_value(), "a mirrored session has a resume point");
+
+  auto second = Connect(dir);
+  auto reattached = remote::RemoteTerminalChannel::Attach(second, handle, session, identity, resume);
+  Expect(reattached != nullptr, "the warm reattach is sent");
+  session.ReattachHost(reattached);
+  Expect(WaitForText(session, "late-42"), "what the shell printed while detached arrives:\n" +
+                                              ScreenText(session));
+  const std::string text = ScreenText(session);
+  for (const char* line : {"early-1\n", "early-20", "late-42"}) {
+    Expect(text.find(line) != std::string::npos && text.find(line) == text.rfind(line),
+           std::string("exactly one '") + line + "':\n" + text);
+  }
+  Expect(text.find("connection to the host lost") != std::string::npos,
+         "the kept scrollback still says where the link dropped");
+  TypeLine(session, "echo again-$((1+1))");
+  Expect(WaitForText(session, "again-2"), "and it takes input on the new connection");
+  session.Stop();
+  channel.reset();
+}
+
 #endif
 
 }  // namespace
@@ -161,6 +206,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestHostTerminalRunsTheShellOnTheHost);
   AddTest(tests, "RemoteTerminal/HostTerminalSurvivesADroppedConnection",
           TestHostTerminalSurvivesADroppedConnection);
+  AddTest(tests, "RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing",
+          TestWarmReattachKeepsTheMirrorAndDuplicatesNothing);
 #else
   (void)tests;
 #endif

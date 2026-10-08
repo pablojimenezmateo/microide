@@ -124,7 +124,8 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
   return OpenResult{.handle = handle};
 }
 
-bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle) {
+bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
+                           std::optional<Resume> resume) {
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
@@ -133,7 +134,14 @@ bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle) {
     }
     Terminal& terminal = *it->second;
     terminal.connection = connection;
-    terminal.builder.Reset();
+    if (resume.has_value()) {
+      terminal.builder.Resume(resume->screen_top, resume->alternate);
+    } else {
+      terminal.builder.Reset();
+    }
+    // Input sequence numbers are per client: a new client starts its own.
+    terminal.written_seq = 0;
+    terminal.echo_ack = 0;
     terminal.sent_bytes = 0;
     terminal.acked_bytes = 0;
     terminal.last_sent = {};

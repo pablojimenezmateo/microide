@@ -77,8 +77,15 @@ class TerminalTable {
   static std::optional<OpenRequest> ParseOpen(const util::JsonValue& params, std::string* error);
 
   OpenResult Open(std::uint64_t connection, OpenRequest request);
-  // Take over terminal `handle` (a reattach): the next frame is a cold one.
-  bool Attach(std::uint64_t connection, std::uint64_t handle);
+  // Take over terminal `handle` (a reattach). Cold (`resume` unset): the next
+  // frame is the screen plus prefetched history. Warm: the client still holds
+  // everything through its screen at `resume->screen_top`, and gets only what
+  // came after.
+  struct Resume {
+    std::uint64_t screen_top = 0;
+    bool alternate = false;
+  };
+  bool Attach(std::uint64_t connection, std::uint64_t handle, std::optional<Resume> resume = {});
   void Input(std::uint64_t handle, const std::vector<terminal::TerminalInputEvent>& events);
   void Resize(std::uint64_t handle, std::size_t rows, std::size_t columns);
   // The client has received this many frame bytes in total.

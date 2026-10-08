@@ -281,8 +281,14 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
   peer.OnRequest(remote::method::kTermAttach,
                  [this, &connection](std::uint64_t id, const util::JsonValue& params) {
                    const std::int64_t handle = params["handle"].AsInt(0);
-                   if (handle <= 0 ||
-                       !terminals_->Attach(connection.id, static_cast<std::uint64_t>(handle))) {
+                   std::optional<TerminalTable::Resume> resume;
+                   if (const util::JsonValue& top = params["screen_top"]; top.IsInt()) {
+                     resume = TerminalTable::Resume{
+                         .screen_top = static_cast<std::uint64_t>(std::max<std::int64_t>(top.AsInt(0), 0)),
+                         .alternate = params["alternate"].AsBool(false)};
+                   }
+                   if (handle <= 0 || !terminals_->Attach(connection.id,
+                                                          static_cast<std::uint64_t>(handle), resume)) {
                      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
                                                 "no such terminal");
                      return;

@@ -67,6 +67,7 @@ bool TerminalSession::StartOnHost(const HostTerminalSource& source,
     host_alternate_ = false;
     host_primary_stash_.clear();
     host_primary_stash_screen_lines_ = 0;
+    host_mirrored_ = false;
     next_input_seq_ = 1;
     stop_requested_ = false;
   }
@@ -253,6 +254,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     if (!alternate) {
       host_screen_top_ = frame.screen_top;
     }
+    host_mirrored_ = true;
 
     rows_ = frame.rows;
     columns_ = frame.columns;
@@ -313,6 +315,28 @@ void TerminalSession::HostConnectionLost(std::string_view reason) {
     lines_.insert(lines_.end() - static_cast<std::ptrdiff_t>(std::min(host_screen_lines_, lines_.size())),
                   std::move(line));
     ++cursor_row_;
+    AdvanceSnapshotGenerationLocked();
+  }
+  PushWakeEvent();
+}
+
+std::optional<TerminalSession::HostResumePoint> TerminalSession::host_resume_point() const {
+  std::scoped_lock lock(mutex_);
+  if (host_channel_ == nullptr || !host_mirrored_) {
+    return std::nullopt;
+  }
+  return HostResumePoint{.screen_top = host_screen_top_, .alternate = host_alternate_};
+}
+
+void TerminalSession::ReattachHost(std::shared_ptr<TerminalHostChannel> channel) {
+  {
+    std::scoped_lock lock(mutex_);
+    prediction_.Withdraw(PredictionViewLocked());
+    prediction_.Clear();
+    host_channel_ = std::move(channel);
+    // The new client numbers its input from 1 again; so does the host.
+    next_input_seq_ = 1;
+    running_ = host_channel_ != nullptr;
     AdvanceSnapshotGenerationLocked();
   }
   PushWakeEvent();

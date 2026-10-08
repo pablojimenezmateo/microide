@@ -18,6 +18,11 @@ class TerminalHostFrameBuilder {
  public:
   // The next frame is a cold attach (kReset): the client holds nothing.
   void Reset();
+  // A warm reattach: the client still holds the buffer up to its screen at
+  // absolute index `screen_top` (on the alternate screen when `alternate`), but
+  // nothing the host can vouch for of the screen itself. The next frame resends
+  // the screen and only the lines that scrolled past since — no history again.
+  void Resume(std::uint64_t screen_top, bool alternate);
 
   // The capture window for the next frame: lines from `capture_from()`, at most
   // `capture_lines_before_screen(prefetch)` of them above the screen. A cold

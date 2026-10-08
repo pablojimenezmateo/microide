@@ -186,6 +186,17 @@ class TerminalSession {
   // The connection carrying this terminal went away (not the shell): it is shown
   // as ended until it reattaches.
   void HostConnectionLost(std::string_view reason);
+  // What a warm reattach tells the host this mirror still holds: the absolute
+  // index of its screen's first line, and which screen it shows. nullopt when the
+  // session has never mirrored a host terminal.
+  struct HostResumePoint {
+    std::uint64_t screen_top = 0;
+    bool alternate = false;
+  };
+  std::optional<HostResumePoint> host_resume_point() const;
+  // Carry on over a new channel to the same host terminal (a reconnect), keeping
+  // the mirror: the channel was attached with host_resume_point().
+  void ReattachHost(std::shared_ptr<TerminalHostChannel> channel);
   // Local echo prediction for host terminals (`remote.predict`).
   void SetPredictionMode(TerminalPredictionOverlay::Mode mode);
   // Pending predictions not yet confirmed by the host; for tests and diagnostics.
@@ -436,6 +447,7 @@ class TerminalSession {
   std::uint64_t host_screen_top_ = 0;   // host-absolute index of the first screen line
   std::size_t host_screen_lines_ = 0;   // screen lines at the tail of lines_
   bool host_alternate_ = false;
+  bool host_mirrored_ = false;  // a frame has been applied
   // The primary buffer while the host shows its alternate screen.
   std::deque<TerminalLine> host_primary_stash_;
   std::size_t host_primary_stash_screen_lines_ = 0;

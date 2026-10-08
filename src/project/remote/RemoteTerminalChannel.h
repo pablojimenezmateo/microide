@@ -6,10 +6,12 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "terminal/TerminalHostChannel.h"
+#include "terminal/TerminalSession.h"
 
 namespace microide::project::remote {
 
@@ -36,12 +38,14 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
       HostToLocal host_to_local);
 
   // Take over host terminal `handle` — a reattach after a dropped link, or from
-  // another machine. The first frame is a cold one: the screen plus prefetched
-  // history, nothing of this session's previous contents kept.
-  static std::shared_ptr<RemoteTerminalChannel> Attach(std::shared_ptr<RemoteServerClient> client,
-                                                       std::uint64_t handle,
-                                                       terminal::TerminalSession& session,
-                                                       HostToLocal host_to_local);
+  // another machine. Without `resume` the first frame is a cold one (the screen
+  // plus prefetched history; the session's contents are replaced). With it — the
+  // session's own host_resume_point() — the session keeps its scrollback and gets
+  // only what the host printed since.
+  static std::shared_ptr<RemoteTerminalChannel> Attach(
+      std::shared_ptr<RemoteServerClient> client, std::uint64_t handle,
+      terminal::TerminalSession& session, HostToLocal host_to_local,
+      std::optional<terminal::TerminalSession::HostResumePoint> resume = {});
 
   RemoteTerminalChannel(std::shared_ptr<RemoteServerClient> client,
                         terminal::TerminalSession& session, HostToLocal host_to_local);

@@ -15,6 +15,13 @@ void TerminalHostFrameBuilder::Reset() {
   working_directory_.clear();
 }
 
+void TerminalHostFrameBuilder::Resume(std::uint64_t screen_top, bool alternate) {
+  Reset();
+  reset_ = false;
+  primary_top_ = screen_top;
+  alternate_ = alternate;
+}
+
 std::size_t TerminalHostFrameBuilder::EstimateLineBytes(const TerminalLine& line) {
   // One byte per ASCII glyph plus a style run every few cells, plus the header.
   return 4 + line.cells.size() + line.cells.size() / 4;
