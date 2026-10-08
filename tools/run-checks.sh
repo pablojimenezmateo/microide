@@ -162,6 +162,14 @@ check_sanitizer() {
   fi
   shopt -u nullglob
 
+  # A report from a process the tests SPAWN (microide-server, a helper) does not
+  # fail the test that spawned it: the child dies, the test may well pass, and
+  # ctest reports green over a race. Any report in the log fails the lane.
+  if (( rc == 0 )) && grep -qE "WARNING: ThreadSanitizer|ERROR: (Address|Leak)Sanitizer|runtime error:" "$log"; then
+    echo "run-checks: ${san}: sanitizer reports found in $log (from a spawned process?) — failing the lane"
+    rc=1
+  fi
+
   echo "run-checks: ${san} finished (exit $rc); log at $log"
   return $rc
 }
