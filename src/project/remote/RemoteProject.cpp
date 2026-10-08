@@ -114,7 +114,8 @@ bool RemoteProject::Open(std::string* error) {
   launcher_ = std::make_shared<RemoteProcessLauncher>(
       session_->connection(), RemotePathMap(store_->tree(), config_.session.workspace_root),
       RemoteProcessLauncher::Options{.description = "ssh " + mine.host,
-                                     .host_file_cache = host_file_cache()});
+                                     .host_file_cache = host_file_cache(),
+                                     .host_label = mine.host});
   session_->Connect();
   return true;
 }

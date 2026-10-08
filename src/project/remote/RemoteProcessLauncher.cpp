@@ -384,6 +384,14 @@ std::optional<std::filesystem::path> RemoteProcessLauncher::HostPathOfCached(
   return std::filesystem::path("/") / relative;
 }
 
+std::string RemoteProcessLauncher::DisplayPathOf(const std::filesystem::path& local_path) const {
+  if (options_.host_label.empty()) {
+    return {};
+  }
+  const std::optional<std::filesystem::path> host = HostPathOfCached(local_path);
+  return host.has_value() ? options_.host_label + ":" + host->generic_string() : std::string();
+}
+
 platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> argv,
                                                       platform::SubprocessOptions options) const {
   struct Collected {

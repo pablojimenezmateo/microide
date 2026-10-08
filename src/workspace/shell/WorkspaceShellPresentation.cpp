@@ -90,7 +90,12 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
       cache.label = BuildMergeBreadcrumbLabel(root, *path, left, right);
       break;
     default:
-      cache.label = BuildEditorBreadcrumbLabel(root, *path, placeholder);
+      // A remote project's copy of a host file outside the project lives in a
+      // cache; the path bar names the host's file, as go to definition did.
+      cache.label = context_.current_project_state.launcher().DisplayPathOf(*path);
+      if (cache.label.empty()) {
+        cache.label = BuildEditorBreadcrumbLabel(root, *path, placeholder);
+      }
       break;
   }
   cache.valid = true;

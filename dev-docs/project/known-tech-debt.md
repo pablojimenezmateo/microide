@@ -458,9 +458,10 @@ silent one:
   journal stay) and reopening reconnects. The RemoteProject object itself (an engine
   thread, the store in memory) still lives until the window closes, since a closing
   project state may point at its locality.
-- **Host-file copies, loose ends from the first real-host trial (2026-10-08):** the
+- ~~**Host-file copies, loose ends from the first real-host trial (2026-10-08):** the
   breadcrumb shows the copy's local path rather than the host path, and Remote: Show
-  Status's toast truncates its line at the long mirror path. (Fixed the same day: a
+  Status's toast truncates its line at the long mirror path.~~ Both fixed 2026-10-08
+  (the breadcrumb via TD-2026-10-08-331; Show Status spells home as `~` and toasts wrap). (Fixed the same day: a
   restored or split copy is read-only too, typing into a read-only view says "Cannot
   edit in read-only editor", and the conflict Compare labels the host's side.)
 - Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
@@ -536,7 +537,24 @@ surviving `microide-server` whose socket dir is under `/tmp/mip.` keeps it
 fixed. Worth deciding separately whether an on-demand server should still exit
 when its socket directory has been deleted, since nothing can reach it then.
 
-### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [OPEN]
+### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [PARTLY RESOLVED 2026-10-08 — only the tooltip report remains]
+
+Resolved 2026-10-08:
+- The path bar names a cached host copy `host:/abs/path`: `ProcessLauncher::
+  DisplayPathOf` (empty locally; the remote launcher maps its host-file cache
+  back), consulted when the breadcrumb memo rebuilds. Asserted in
+  `RemoteHostService/OpenFolderOnHostEditsTheHostTree`.
+- `type` into a read-only view is REJECTED with "Cannot edit in read-only
+  editor", so the control reply carries it
+  (`WorkspaceShell/TypeVerbReportsAReadOnlyRefusal`).
+- Decided: control actions do not toast. The control channel dispatches as
+  `ActionSource::Command`, whose rejections answer the caller (reply / feedback
+  line) — the command line's rule — while shortcut, menu and button rejections
+  toast because nothing else would show them. Two paths differ on purpose.
+
+Still open: the sticking tab tooltip (seen only under Xvfb).
+
+Original report:
 
 Found by the first two-machine trial on 2026-10-08; none blocks editing.
 

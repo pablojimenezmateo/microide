@@ -384,6 +384,16 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   // It is a copy of a file outside the project: read-only, and never trusted on
   // reopen — a local copy that went stale (or was tampered with) is refetched.
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).read_only(), "the host file's copy is read-only");
+  {
+    // The path bar names the host's file; the cache it lives in is an
+    // implementation detail.
+    const std::string crumb = WorkspaceShellTestAccess::BreadcrumbLabel(shell);
+    const std::string host_file = ":" + (host.home / "include" / "other.h").generic_string();
+    Expect(crumb.size() > host_file.size() &&
+               crumb.compare(crumb.size() - host_file.size(), host_file.size(), host_file) == 0 &&
+               crumb.find("host-files") == std::string::npos,
+           "the path bar shows host:/abs/path, got '" + crumb + "'");
+  }
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("typed");
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and typing does not change it");
   {

@@ -44,6 +44,8 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
     // path a language server or debugger names that the mirror does not hold maps to
     // <cache>/<host path>, fetched read-only when the editor opens it (file/read).
     std::filesystem::path host_file_cache;
+    // The host's name as the user typed it, for DisplayPathOf ("" = no display).
+    std::string host_label;
   };
 
   // Over the host's current connection, which a reconnect replaces underneath.
@@ -60,6 +62,8 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
   std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const override;
   // The host path a file in the out-of-project cache stands for, if it is one.
   std::optional<std::filesystem::path> HostPathOfCached(const std::filesystem::path& local_path) const;
+  // A cached host copy shows as `host:/abs/path`.
+  std::string DisplayPathOf(const std::filesystem::path& local_path) const override;
   platform::SubprocessResult Run(std::vector<std::string> argv,
                                  platform::SubprocessOptions options) const override;
   bool StartAsync(platform::AsyncSubprocess& process, const std::vector<std::string>& argv,

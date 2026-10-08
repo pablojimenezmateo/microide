@@ -49,6 +49,13 @@ class ProcessLauncher {
   // Local: unchanged. A path the mapping does not cover comes back unchanged too,
   // and is then simply a path outside the project.
   virtual std::filesystem::path LocalPathFromHost(std::filesystem::path host_path) const = 0;
+  // How to SHOW `local_path` when the editor's path is an implementation detail: a
+  // remote project's copy of a host file outside the project lives in a cache, and
+  // the user should see `host:/abs/path`, not the cache. Empty: show the path.
+  virtual std::string DisplayPathOf(const std::filesystem::path& local_path) const {
+    (void)local_path;
+    return {};
+  }
 
   // Run to completion. Every synchronous spawn in the tree goes through here.
   //
