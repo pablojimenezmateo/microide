@@ -127,7 +127,6 @@ class PatchApplyService {
   util::MainThreadMailbox completion_mailbox_;
   mutable std::mutex mutex_;
   std::optional<PendingDiscard> pending_discard_;
-  std::uint64_t operation_generation_ = 0;
 };
 
 }  // namespace microide::workspace
