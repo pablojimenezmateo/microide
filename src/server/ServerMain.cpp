@@ -194,14 +194,21 @@ int Start(const Options& options) {
       microide::util::Log("cannot listen: " + listen_error);
       ::_exit(1);
     }
-    microide::server::RemoteServer server(microide::server::RemoteServer::Config{
-        .socket_path = socket,
-        .release = MICROIDE_VERSION,
-        .on_demand = options.on_demand,
-        .idle_timeout = options.idle_timeout,
-        .session_survival = remote::ReadSessionSurvival("/", UserName()),
-    });
-    ::_exit(server.RunListener(listen_fd));
+    int code = 0;
+    {
+      // Scoped, so its destructor runs before _exit: that is what joins the
+      // connections' threads and ends the processes and terminal shells it owns.
+      // _exit straight out of RunListener left them running on the host for nobody.
+      microide::server::RemoteServer server(microide::server::RemoteServer::Config{
+          .socket_path = socket,
+          .release = MICROIDE_VERSION,
+          .on_demand = options.on_demand,
+          .idle_timeout = options.idle_timeout,
+          .session_survival = remote::ReadSessionSurvival("/", UserName()),
+      });
+      code = server.RunListener(listen_fd);
+    }
+    ::_exit(code);
   }
   int status = 0;
   ::waitpid(child, &status, 0);  // the intermediate child, which exits at once

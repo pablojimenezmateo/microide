@@ -138,11 +138,14 @@ bool TerminalSession::SendToHost(TerminalInputEvent event) {
   // Sent first: the prediction is drawn in this frame either way, and the host
   // should not wait on the overlay.
   channel->Send(event);
+  // Asked OUTSIDE the session lock: the channel takes its own lock, and it holds
+  // that one while it applies a frame, which takes this one (lock order).
+  const std::optional<std::chrono::milliseconds> round_trip = channel->RoundTrip();
   bool predicted = false;
   {
     std::scoped_lock lock(mutex_);
     if (host_channel_ == channel) {
-      prediction_.set_round_trip(channel->RoundTrip());
+      prediction_.set_round_trip(round_trip);
       predicted = prediction_.Typed(event, PredictionViewLocked());
       if (predicted) {
         AdvanceSnapshotGenerationLocked();
