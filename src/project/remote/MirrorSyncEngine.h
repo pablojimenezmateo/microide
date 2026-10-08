@@ -106,6 +106,10 @@ class MirrorSyncEngine {
   // A watch delta from the host (RemoteWorkspace::SubscribeWatch): the same
   // decisions as a full sync, for the rows it names.
   void ApplyWatchDelta(RemoteWorkspace::WatchDelta delta);
+  // What RemoteWorkspace::SubscribeWatch should be given: forwards to
+  // ApplyWatchDelta while the engine lives, and drops the delta after — the
+  // connection's I/O thread outlives the engine, and must never call into a dead one.
+  std::function<void(RemoteWorkspace::WatchDelta)> WatchSink();
   // Pull these paths now, on the interactive lane, ahead of any backfill (a tab
   // opening an absent or stale file).
   void Prioritize(std::vector<std::string> paths);

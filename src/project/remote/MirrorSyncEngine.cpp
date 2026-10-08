@@ -759,6 +759,15 @@ void MirrorSyncEngine::SyncNow() {
   });
 }
 
+std::function<void(RemoteWorkspace::WatchDelta)> MirrorSyncEngine::WatchSink() {
+  return [alive = alive_](RemoteWorkspace::WatchDelta delta) {
+    std::lock_guard lock(alive->mutex);
+    if (alive->engine != nullptr) {
+      alive->engine->ApplyWatchDelta(std::move(delta));
+    }
+  };
+}
+
 void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
   queue_.Post([this, delta = std::move(delta)]() mutable {
     Plan plan;

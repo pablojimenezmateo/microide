@@ -336,12 +336,7 @@ void TestMirrorFollowsTheHostWatch() {
   session.Connect();
   bool native = false;
   std::string error;
-  remote::MirrorSyncEngine* engine = session.engine.get();
-  Expect(session.workspace->SubscribeWatch(
-             [engine](remote::RemoteWorkspace::WatchDelta delta) {
-               engine->ApplyWatchDelta(std::move(delta));
-             },
-             &native, &error),
+  Expect(session.workspace->SubscribeWatch(session.engine->WatchSink(), &native, &error),
          "subscribes: " + error);
   session.Sync();
   Expect(ReadFile(session.Tree("a.txt")) == "one\n", "the first sync lands");

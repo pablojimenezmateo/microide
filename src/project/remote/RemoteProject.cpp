@@ -127,12 +127,9 @@ void RemoteProject::OnSessionStatus(const RemoteHostSession::Status& status) {
   if (status.state == RemoteHostSession::State::Ready && engine_ && workspace_) {
     // A new connection: resubscribe first, then sync — a change between the two is
     // in the manifest, and nothing is lost before it.
-    MirrorSyncEngine* engine = engine_.get();
     std::string error;
     bool native = false;
-    if (workspace_->SubscribeWatch(
-            [engine](RemoteWorkspace::WatchDelta delta) { engine->ApplyWatchDelta(std::move(delta)); },
-            &native, &error)) {
+    if (workspace_->SubscribeWatch(engine_->WatchSink(), &native, &error)) {
       std::lock_guard lock(watch_mutex_);
       watch_native_ = native;
     }
