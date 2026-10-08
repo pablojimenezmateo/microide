@@ -433,11 +433,10 @@ silent one:
   building them was refused by the session's permission policy for external code;
   vendoring them needs the maintainer's explicit go-ahead. `util/ContentHash.h`'s
   interface is the seam: only `ContentHash.cpp` changes.
-- **A watch batch rebuilds the whole manifest** (`git ls-files` plus a stat per
-  file, hashes only for what moved). Correct by construction — it covers a
-  `.gitignore` membership change and a branch switch — but O(tree) per agent burst.
-  Per-path rows from the inotify events, with the full rebuild kept for membership
-  changes, is Phase 3's churn work.
+- ~~A watch batch rebuilds the whole manifest~~ — fixed 2026-10-08: the watch is the
+  kernel `FileIndexWatcher`, and a batch re-stats and re-hashes only the paths it
+  names, asking git about the NEW paths only (`ls-files -- :(literal)…`); a
+  `.gitignore` edit, a shape change or a truncated walk still rebuilds in full.
 - **The watch's directory filter is the scanner's**: a TRACKED file under a
   directory the default skip list prunes (`build/`, `out/`, …) does not wake the
   watch; its change arrives with the next batch something else triggers, or the

@@ -156,10 +156,22 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
     tree->queue.Post([this, tree, connection_id, id]() {
       if (!tree->watch && !tree->closing.load()) {
         tree->watch = std::make_unique<WorkspaceWatch>(
-            tree->tree.root(), WorkspaceWatch::Options{}, [this, tree]() {
-              if (!tree->closing.load()) {
-                tree->queue.PostLatest("watch", [this, tree]() { PublishWatchBatch(*tree); });
+            tree->tree.root(), WorkspaceWatch::Options{},
+            [this, tree](WorkspaceTree::Changes changes) {
+              if (tree->closing.load()) {
+                return;
               }
+              {
+                // Batches that pile up behind a slow one fold into the next.
+                std::lock_guard pending(tree->watch_mutex);
+                WorkspaceTree::Changes& into = tree->watch_changes;
+                into.touched.insert(into.touched.end(), changes.touched.begin(), changes.touched.end());
+                into.deleted_directories.insert(into.deleted_directories.end(),
+                                                changes.deleted_directories.begin(),
+                                                changes.deleted_directories.end());
+                into.full = into.full || changes.full;
+              }
+              tree->queue.PostLatest("watch", [this, tree]() { PublishWatchBatch(*tree); });
             });
       }
       util::JsonObject result;
@@ -180,9 +192,14 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
       return;  // nobody has a baseline yet: their next manifest carries this
     }
   }
+  WorkspaceTree::Changes changes;
+  {
+    std::lock_guard pending(tree.watch_mutex);
+    changes = std::exchange(tree.watch_changes, {});
+  }
   std::string error;
   std::optional<WorkspaceTree::Manifest> manifest =
-      tree.tree.BuildManifest(&error, [&tree]() { return tree.closing.load(); });
+      tree.tree.UpdateManifest(changes, &error, [&tree]() { return tree.closing.load(); });
   if (!manifest.has_value()) {
     util::Log("watch batch for " + tree.tree.root().string() + " failed: " + error);
     return;

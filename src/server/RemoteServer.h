@@ -93,6 +93,8 @@ class RemoteServer {
     std::mutex publish_mutex;
     std::map<std::uint64_t, Subscriber> subscribers;  // by connection id
     std::unique_ptr<WorkspaceWatch> watch;            // created on the first subscribe
+    std::mutex watch_mutex;                           // guards watch_changes
+    WorkspaceTree::Changes watch_changes;             // since the last published batch
     util::SerialWorkQueue queue;     // manifests and watch batches
     util::SerialWorkQueue io_queue;  // reads, writes and tree ops, in arrival order
   };

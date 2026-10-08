@@ -113,6 +113,48 @@ void TestWorkspaceTreeDoesNotTrustARacyCacheEntry() {
          "a same-size rewrite is seen at once");
 }
 
+// A watch batch re-stats only what it names and asks git only about new paths —
+// and lands on exactly the manifest a full rebuild would.
+void TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "repo";
+  InitializeGitRepo(root);
+  WriteFile(root / ".gitignore", "*.log\n");
+  for (int i = 0; i < 50; ++i) {
+    WriteFile(root / "src" / ("f" + std::to_string(i) + ".c"), "int f" + std::to_string(i) + ";\n");
+  }
+  WriteFile(root / "doomed/a.c", "a");
+  WriteFile(root / "doomed/b.c", "b");
+  CommitAll(root, "init", "incremental");
+  WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
+  std::string error;
+  Expect(tree.BuildManifest(&error).has_value(), "built: " + error);
+
+  WriteFile(root / "src/f3.c", "changed\n");
+  WriteFile(root / "src/new.c", "new\n");
+  WriteFile(root / "debug.log", "ignored\n");
+  std::filesystem::remove(root / "src/f7.c");
+  std::filesystem::remove_all(root / "doomed");
+  const auto updated = tree.UpdateManifest(
+      WorkspaceTree::Changes{.touched = {"src/f3.c", "src/new.c", "debug.log", "src/f7.c", "doomed"},
+                             .deleted_directories = {"doomed"}},
+      &error);
+  Expect(updated.has_value() && !tree.last_update_was_full(), "an incremental update: " + error);
+  Expect(tree.last_hashed_files() == 2, "only the changed and the new file are hashed");
+  WorkspaceTree fresh(root);
+  const auto full = fresh.BuildManifest(&error);
+  Expect(full.has_value() && updated->rows == full->rows,
+         "the same rows as a full build: the ignored file out, the deleted ones gone");
+
+  WriteFile(root / ".gitignore", "*.log\nsrc/new.c\n");
+  const auto after_rules = tree.UpdateManifest(WorkspaceTree::Changes{.touched = {".gitignore"}}, &error);
+  Expect(after_rules.has_value() && tree.last_update_was_full(),
+         "a .gitignore edit rebuilds: membership rules changed");
+  Expect(std::none_of(after_rules->rows.begin(), after_rules->rows.end(),
+                      [](const ManifestRow& row) { return row.path == "src/new.c"; }),
+         "and a newly ignored untracked file leaves the set");
+}
+
 // A failure to decide the set is an error, never an empty manifest.
 void TestWorkspaceTreeFailsLoudly() {
   TemporaryDirectory temp;
@@ -168,6 +210,8 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/WalksWithoutGit", TestWorkspaceTreeWalksWithoutGit);
   AddTest(tests, "WorkspaceTree/HashCache", TestWorkspaceTreeHashCache);
   AddTest(tests, "WorkspaceTree/FailsLoudly", TestWorkspaceTreeFailsLoudly);
+  AddTest(tests, "WorkspaceTree/IncrementalUpdateMatchesAFullBuild",
+          TestWorkspaceTreeIncrementalUpdateMatchesAFullBuild);
   AddTest(tests, "WorkspaceTree/DoesNotTrustARacyCacheEntry",
           TestWorkspaceTreeDoesNotTrustARacyCacheEntry);
   AddTest(tests, "WorkspaceTree/Symlinks", TestWorkspaceTreeSymlinks);

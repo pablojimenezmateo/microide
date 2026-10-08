@@ -60,6 +60,23 @@ class WorkspaceTree {
   std::optional<Manifest> BuildManifest(std::string* error,
                                         const std::function<bool()>& cancelled = {});
 
+  // What changed since the last manifest, as a watcher reported it: paths created,
+  // modified or deleted, directories deleted with everything under them, and
+  // whether the tree's shape changed in a way paths cannot describe.
+  struct Changes {
+    std::vector<std::string> touched;
+    std::vector<std::string> deleted_directories;
+    bool full = false;
+  };
+  // The next manifest, from the last one plus `changes`: only the touched paths are
+  // stat'ed and hashed, and git is asked about the NEW paths only. A change to the
+  // membership rules (a .gitignore, .git/info/exclude), a shape change, or no
+  // previous manifest falls back to BuildManifest.
+  std::optional<Manifest> UpdateManifest(const Changes& changes, std::string* error,
+                                         const std::function<bool()>& cancelled = {});
+  // Whether the last UpdateManifest fell back to a full build (tests, logs).
+  bool last_update_was_full() const { return last_update_was_full_; }
+
   const std::filesystem::path& root() const { return root_; }
   // Files hashed (cache misses) by the most recent BuildManifest.
   std::size_t last_hashed_files() const { return last_hashed_files_; }
@@ -79,6 +96,17 @@ class WorkspaceTree {
   };
 
   std::optional<std::vector<std::string>> ContentSet(bool* git, std::string* error);
+  std::optional<Manifest> BuildManifestLocked(std::string* error,
+                                              const std::function<bool()>& cancelled);
+  // Rows for `paths` (sorted, members of the set): lstat each, hash what the cache
+  // does not vouch for; the cache entries for them land in `out_cache`.
+  std::optional<std::vector<project::remote::ManifestRow>> RowsFor(
+      std::vector<std::string> paths, int root_fd, const std::function<bool()>& cancelled,
+      std::string* error, std::unordered_map<std::string, CacheEntry>& out_cache);
+  // Which of `candidates` (paths new to the tree) the content-set rules admit.
+  std::optional<std::vector<std::string>> AdmitCandidates(const std::vector<std::string>& candidates,
+                                                          std::string* error);
+  std::string OverLimitMessage() const;
 
   std::filesystem::path root_;
   Options options_;
@@ -86,6 +114,11 @@ class WorkspaceTree {
   std::uint64_t next_manifest_id_ = 1;
   std::unordered_map<std::string, CacheEntry> cache_;
   std::size_t last_hashed_files_ = 0;
+  // The last manifest's rows, the base of the next incremental update.
+  std::vector<project::remote::ManifestRow> last_rows_;
+  bool last_git_ = false;
+  bool built_ = false;
+  bool last_update_was_full_ = false;
 };
 
 }  // namespace microide::server
