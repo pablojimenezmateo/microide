@@ -1,0 +1,8 @@
+# LeakSanitizer suppressions for the asan lane (tools/run-checks.sh exports
+# LSAN_OPTIONS=suppressions=<this file>). Each entry is a leak in a SYSTEM library,
+# never one in microide's own code — a leak in src/ is a bug to fix, not to list.
+
+# fontconfig parses its configuration once per process through expat and keeps
+# the parse state for the process's lifetime (256 bytes, Ubuntu 26.04's
+# libfontconfig 2.17). It is a cache, not a leak that grows.
+leak:libfontconfig.so

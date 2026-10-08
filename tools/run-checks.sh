@@ -114,6 +114,7 @@ check_sanitizer() {
   # log is the primary artifact; log_path is belt-and-suspenders and appends a
   # ".<pid>" suffix per the sanitizer runtime.
   export ASAN_OPTIONS="halt_on_error=1:log_path=${LOG_DIR}/microide-asan-rt"
+  export LSAN_OPTIONS="suppressions=${REPO_ROOT}/tests/lsan.supp:print_suppressions=0"
   export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:log_path=${LOG_DIR}/microide-ubsan-rt"
   export TSAN_OPTIONS="halt_on_error=1:suppressions=${REPO_ROOT}/tests/tsan.supp:log_path=${LOG_DIR}/microide-tsan-rt"
 
