@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -12,10 +13,13 @@
 
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
+#include "server/ProcessTable.h"
 #include "util/JsonValue.h"
 #include "util/WakePipe.h"
 
 namespace microide::server {
+
+namespace remote = project::remote;
 
 // The microide-server daemon's core (dev-docs/design/remote-projects.md § 6.6): one
 // per user, many roots. It accepts connections on its socket (or serves one over
@@ -60,6 +64,8 @@ class RemoteServer {
   };
 
   Connection& Accept(int read_fd, int write_fd);
+  void InstallProcessHandlers(Connection& connection);
+  void WithPeer(std::uint64_t connection_id, const std::function<void(remote::RemotePeer&)>& use);
   void InstallHandlers(Connection& connection);
   util::JsonValue StatusJson();
   // Drop connections whose transport closed. Not from their own I/O thread.
@@ -76,6 +82,9 @@ class RemoteServer {
   std::vector<std::unique_ptr<Connection>> connections_;
   std::map<std::string, Workspace> workspaces_;
   std::chrono::steady_clock::time_point idle_since_ = std::chrono::steady_clock::now();
+
+  // Last: its thread sends through connections_, so it must stop first.
+  std::unique_ptr<ProcessTable> processes_;
 };
 
 }  // namespace microide::server

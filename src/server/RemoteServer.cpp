@@ -1,6 +1,8 @@
 #include "server/RemoteServer.h"
 
 #include <algorithm>
+#include <csignal>
+#include <map>
 #include <cerrno>
 #include <utility>
 
@@ -15,14 +17,46 @@
 
 namespace microide::server {
 
-namespace remote = project::remote;
-
 RemoteServer::RemoteServer(Config config)
     : config_(std::move(config)), epoch_(remote::MakeDaemonEpoch()) {
   wake_.Open();
+  processes_ = std::make_unique<ProcessTable>(ProcessTable::Sink{
+      .content =
+          [this](std::uint64_t connection, remote::FrameType type, std::uint64_t handle,
+                 std::string_view bytes) {
+            WithPeer(connection, [&](remote::RemotePeer& peer) {
+              peer.SendContent(type, handle, bytes, remote::Lane::Interactive);
+            });
+          },
+      .notify =
+          [this](std::uint64_t connection, std::string_view method, std::uint64_t handle,
+                 const util::JsonValue& params) {
+            WithPeer(connection, [&](remote::RemotePeer& peer) {
+              peer.Notify(method, params, remote::Lane::Interactive, handle);
+            });
+          },
+  });
+}
+
+void RemoteServer::WithPeer(std::uint64_t connection_id,
+                            const std::function<void(remote::RemotePeer&)>& use) {
+  if (connection_id == 0) {
+    return;
+  }
+  // Under the lock for the whole use: ReapClosed destroys connections, and a
+  // pointer taken out of the lock could be to one it just destroyed. Sending only
+  // queues (the transport's own lock), so this never waits on the network.
+  std::lock_guard lock(mutex_);
+  for (const auto& connection : connections_) {
+    if (connection->id == connection_id && !connection->closed) {
+      use(connection->peer);
+      return;
+    }
+  }
 }
 
 RemoteServer::~RemoteServer() {
+  processes_.reset();  // stop its thread before the connections it sends through go
   std::vector<std::unique_ptr<Connection>> connections;
   {
     std::lock_guard lock(mutex_);
@@ -47,6 +81,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
     connections_.push_back(std::move(connection));
   }
   InstallHandlers(ref);
+  InstallProcessHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -108,8 +143,76 @@ void RemoteServer::InstallHandlers(Connection& connection) {
         }
       }
     }
+    processes_->Detach(connection.id);
     connection.closed = true;
     wake_.Wake();
+  });
+}
+
+void RemoteServer::InstallProcessHandlers(Connection& connection) {
+  remote::RemotePeer& peer = connection.peer;
+  peer.OnRequest("proc/spawn", [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+    std::string error;
+    std::optional<ProcessTable::SpawnRequest> request = ProcessTable::ParseSpawn(params, &error);
+    if (!request.has_value()) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams, error);
+      return;
+    }
+    const ProcessTable::SpawnResult spawned = processes_->Spawn(connection.id, std::move(*request));
+    if (spawned.handle == 0) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams, spawned.error);
+      return;
+    }
+    util::JsonObject result;
+    result["handle"] = util::JsonValue(static_cast<std::int64_t>(spawned.handle));
+    result["pid"] = util::JsonValue(static_cast<std::int64_t>(spawned.pid));
+    connection.peer.Reply(id, util::JsonValue(std::move(result)));
+  });
+  peer.OnRequest("proc/attach", [this, &connection](std::uint64_t id, const util::JsonValue& params) {
+    const std::int64_t handle = params["handle"].AsInt(0);
+    const std::int64_t out = params["stdout"].AsInt(-1);
+    const std::int64_t err = params["stderr"].AsInt(-1);
+    std::string error;
+    if (handle <= 0 || out < 0 || err < 0 ||
+        !processes_->Attach(connection.id, static_cast<std::uint64_t>(handle),
+                            static_cast<std::uint64_t>(out), static_cast<std::uint64_t>(err),
+                            &error)) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                 error.empty() ? "bad proc/attach" : error);
+      return;
+    }
+    connection.peer.Reply(id, util::JsonValue(true));
+  });
+  const auto handle_of = [](const util::JsonValue& params) -> std::uint64_t {
+    const std::int64_t handle = params["handle"].AsInt(0);
+    return handle > 0 ? static_cast<std::uint64_t>(handle) : 0;
+  };
+  peer.OnNotification("proc/stdin_close", [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+    processes_->CloseStdin(handle_of(params));
+  });
+  peer.OnNotification("proc/signal", [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+    static const std::map<std::string, int, std::less<>> kSignals = {
+        {"TERM", SIGTERM}, {"KILL", SIGKILL}, {"INT", SIGINT},   {"HUP", SIGHUP},
+        {"QUIT", SIGQUIT}, {"USR1", SIGUSR1}, {"USR2", SIGUSR2}, {"WINCH", SIGWINCH},
+    };
+    const auto signal = kSignals.find(params["signal"].AsString());
+    if (signal != kSignals.end()) {
+      processes_->Signal(handle_of(params), signal->second);
+    }
+  });
+  peer.OnNotification("proc/ack", [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+    const std::int64_t out = params["stdout"].AsInt(0);
+    const std::int64_t err = params["stderr"].AsInt(0);
+    processes_->Ack(handle_of(params), static_cast<std::uint64_t>(std::max<std::int64_t>(out, 0)),
+                    static_cast<std::uint64_t>(std::max<std::int64_t>(err, 0)));
+  });
+  peer.OnNotification("proc/release", [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+    processes_->Release(handle_of(params));
+  });
+  peer.OnContent([this](remote::FrameType type, std::uint64_t handle, std::string bytes) {
+    if (type == remote::FrameType::ProcStdin) {
+      processes_->WriteStdin(handle, bytes);
+    }
   });
 }
 
@@ -134,10 +237,11 @@ util::JsonValue RemoteServer::StatusJson() {
     entry["root"] = util::JsonValue(root);
     entry["clients"] = util::JsonValue(static_cast<std::int64_t>(workspace.clients));
     entry["terminals"] = util::JsonValue(std::int64_t{0});
-    entry["processes"] = util::JsonValue(std::int64_t{0});
+    entry["processes"] = util::JsonValue(std::int64_t{0});  // per-workspace accounting: TD
     workspaces.push_back(util::JsonValue(std::move(entry)));
   }
   status["workspaces"] = util::JsonValue(std::move(workspaces));
+  status["processes"] = util::JsonValue(static_cast<std::int64_t>(processes_->LiveCount()));
   util::JsonObject survival;
   survival["kill_user_processes"] = util::JsonValue(config_.session_survival.kill_user_processes);
   survival["linger"] = util::JsonValue(config_.session_survival.linger);
@@ -169,6 +273,7 @@ void RemoteServer::ReapClosed() {
 bool RemoteServer::Idle() {
   std::lock_guard lock(mutex_);
   return config_.on_demand && connections_.empty() && workspaces_.empty() &&
+         processes_->LiveCount() == 0 &&
          std::chrono::steady_clock::now() - idle_since_ >= config_.idle_timeout;
 }
 

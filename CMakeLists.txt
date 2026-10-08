@@ -814,6 +814,7 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 # builds link it statically against musl (packaging); dev and sanitizer builds link
 # it normally so every lane covers it.
 add_executable(microide-server
+  src/server/ProcessTable.cpp
   src/server/RemoteServer.cpp
   src/server/ServerMain.cpp
   $<TARGET_OBJECTS:microide_kernel>
@@ -1320,6 +1321,7 @@ add_executable(microide_kernel_tests
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp
+  tests/RemoteProcessTests.cpp
   tests/TestRunner.cpp
   tests/TestRunnerCli.cpp
   tests/TestSupport.cpp
