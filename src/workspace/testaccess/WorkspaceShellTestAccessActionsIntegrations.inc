@@ -644,6 +644,9 @@
                                                                  std::size_t tab_index) {
     return shell.context_.current_project_state.terminal_tabs[tab_index]->active()->session;
   }
+  static bool TerminalTabHasUnseenBell(const WorkspaceShell& shell, std::size_t tab_index) {
+    return shell.context_.current_project_state.terminal_tabs[tab_index]->has_unseen_bell;
+  }
   static bool TerminalTabHasUnseenOutput(const WorkspaceShell& shell, std::size_t tab_index) {
     return shell.context_.current_project_state.terminal_tabs[tab_index]->has_unseen_output;
   }

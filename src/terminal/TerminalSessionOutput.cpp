@@ -273,8 +273,13 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
           case '\t':
             cursor_column_ = NextTabStopLocked(cursor_column_);
             break;
+          case '\a':
+            // Executed mid-CSI like any C0 (see above): it rings.
+            pending_bell_ = true;
+            pending_host_bell_ = true;
+            break;
           default:
-            // BEL and the remaining C0 controls have no positional effect here.
+            // The remaining C0 controls have no positional effect here.
             break;
         }
         continue;
@@ -423,6 +428,12 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         if (cursor_column_ > 0) {
           --cursor_column_;
         }
+        break;
+      case '\a':
+        // BEL: no effect on the screen; the UI marks a background tab with it
+        // (ConsumeBell), and a host session carries it in the next frame.
+        pending_bell_ = true;
+        pending_host_bell_ = true;
         break;
       case 0x7f:
         // DEL received in the output stream is ignored (ECMA-48 / xterm / VTE).

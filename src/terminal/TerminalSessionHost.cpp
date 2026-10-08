@@ -281,6 +281,9 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     mouse_tracking_any_ = frame.has(TerminalHostFrame::kMouseAny);
     focus_event_mode_ = frame.has(TerminalHostFrame::kFocusEvents);
     running_ = frame.has(TerminalHostFrame::kRunning);
+    if (frame.has(TerminalHostFrame::kBell)) {
+      pending_bell_ = true;
+    }
     if (frame.title) {
       launch_label_ = frame.title->empty() ? default_launch_label_ : std::move(*frame.title);
     }
@@ -370,6 +373,8 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
   flag(TerminalHostFrame::kMouseAny, mouse_tracking_any_);
   flag(TerminalHostFrame::kFocusEvents, focus_event_mode_);
   flag(TerminalHostFrame::kRunning, running_);
+  flag(TerminalHostFrame::kBell, pending_host_bell_);
+  pending_host_bell_ = false;
   header.cursor_shape = cursor_shape_;
 
   const std::size_t screen_row = PrimaryScreenTopLocked();

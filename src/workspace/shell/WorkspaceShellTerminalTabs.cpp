@@ -232,6 +232,12 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
         tab->has_unseen_output = true;
         badge_changed = true;
       }
+      // Consumed whether or not the tab is on screen, so a bell rung while the
+      // user was watching does not mark the tab later.
+      if (pane->session.ConsumeBell() && !tab_on_screen && !tab->has_unseen_bell) {
+        tab->has_unseen_bell = true;
+        badge_changed = true;
+      }
       if (pane->session.ConsumeOversizedOsc52Dropped()) {
         // An OSC 52 clipboard write that overran the escape-sequence buffer was
         // dropped. Surface it rather than fail silently so the user knows their

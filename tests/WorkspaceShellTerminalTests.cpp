@@ -2232,6 +2232,37 @@ void TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput() {
          "output behind a hidden panel is unseen");
 }
 
+// A program ringing the bell (BEL) in a background terminal marks its tab — a
+// build finishing, a prompt waiting for input — and showing the tab clears it.
+// A bell rung in the tab on screen marks nothing, then or later. Carried for a
+// host terminal by the frame's kBell (TerminalHost/BellReachesTheClientOnce).
+void TestWorkspaceShellTerminalBellMarksABackgroundTab() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+  auto& background = WorkspaceShellTestAccess::TerminalTabSession(shell, 0);
+  auto& foreground = WorkspaceShellTestAccess::TerminalTabSession(shell, 1);
+  TerminalSessionTestAccess::AppendOutput(background, "build finished\x07");
+  TerminalSessionTestAccess::AppendOutput(foreground, "\x07");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0),
+         "a bell in a background tab marks it");
+  Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 1),
+         "a bell in the tab on screen is heard as it rings");
+
+  Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 0), "activate the background tab");
+  fixture.PaintFrame();
+  Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0), "showing it clears the mark");
+  // The foreground bell was consumed when it rang: switching away does not
+  // surface it later.
+  Expect(WorkspaceShellTestAccess::ActivateTerminalTab(shell, 1), "back to the other tab");
+  WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
+  Expect(!WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 0) &&
+             !WorkspaceShellTestAccess::TerminalTabHasUnseenBell(shell, 1),
+         "no stale bell resurfaces");
+}
+
 void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2294,6 +2325,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalToggleAndPanelToggleKeys);
   AddTest(tests, "WorkspaceShell/TerminalActivityDotMarksBackgroundOutput",
           TestWorkspaceShellTerminalActivityDotMarksBackgroundOutput);
+  AddTest(tests, "WorkspaceShell/TerminalBellMarksABackgroundTab",
+          TestWorkspaceShellTerminalBellMarksABackgroundTab);
   AddTest(tests, "WorkspaceShell/TerminalRelaunchRestartsAnExitedPane",
           TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane);
   AddTest(tests, "WorkspaceShell/TerminalClosesFromTheCommandLine",

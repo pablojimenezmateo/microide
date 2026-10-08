@@ -760,6 +760,20 @@ void TestTerminalSessionOsc52ClipboardBellQueuesClipboardText() {
          "queued clipboard text should be consumed only once");
 }
 
+// BEL outside an escape sequence rings the bell once; the BEL that terminates an
+// OSC (a title, a clipboard write) is a terminator, not a bell.
+void TestTerminalSessionBellIsConsumedOnceAndNotFromAnOscTerminator() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;title\x07plain text");
+  Expect(!session.ConsumeBell(), "an OSC terminated by BEL does not ring");
+
+  TerminalSessionTestAccess::AppendOutput(session, "done\x07\x07");
+  Expect(session.ConsumeBell(), "a bare BEL rings");
+  Expect(!session.ConsumeBell(), "and is consumed once, however many arrived together");
+}
+
 void TestTerminalSessionOsc52ClipboardStQueuesClipboardText() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -3059,6 +3073,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionEmptyOscTitleRestoresLaunchLabel);
   AddTest(tests, "TerminalSession/Osc52ClipboardBellQueuesClipboardText",
           TestTerminalSessionOsc52ClipboardBellQueuesClipboardText);
+  AddTest(tests, "TerminalSession/BellIsConsumedOnceAndNotFromAnOscTerminator",
+          TestTerminalSessionBellIsConsumedOnceAndNotFromAnOscTerminator);
   AddTest(tests, "TerminalSession/Osc52ClipboardStQueuesClipboardText",
           TestTerminalSessionOsc52ClipboardStQueuesClipboardText);
   AddTest(tests, "TerminalSession/Osc52RejectsInvalidClipboardPayloads",

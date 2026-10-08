@@ -623,6 +623,13 @@ std::optional<std::string> TerminalSession::ConsumePendingClipboardText() {
   return pending;
 }
 
+bool TerminalSession::ConsumeBell() {
+  std::scoped_lock lock(mutex_);
+  const bool rang = pending_bell_;
+  pending_bell_ = false;
+  return rang;
+}
+
 bool TerminalSession::ConsumeOversizedOsc52Dropped() {
   std::scoped_lock lock(mutex_);
   const bool dropped = oversized_osc52_dropped_;

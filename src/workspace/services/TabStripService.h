@@ -27,8 +27,10 @@ struct VisibleStripTab {
   std::string badge_text;
   SDL_Color badge_color{};
   bool show_badge = false;
-  // Terminal strip only: output arrived in this tab while it was not on screen.
+  // Terminal strip only: output arrived in this tab while it was not on screen,
+  // and (stronger) the program rang the bell.
   bool activity_dot = false;
+  bool bell_mark = false;
 };
 
 struct TabStripOverflowControls {
@@ -53,8 +55,9 @@ struct BottomPanelTabModel {
   std::string surface_id;
   std::string label;
   std::string tooltip_label;
-  // Terminal tabs: unseen output, see TerminalTabState::has_unseen_output.
+  // Terminal tabs: unseen output and an unseen bell, see TerminalTabState.
   bool activity = false;
+  bool bell = false;
 };
 
 struct ProjectTabBadgeStyle {

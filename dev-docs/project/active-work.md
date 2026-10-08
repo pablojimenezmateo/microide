@@ -113,8 +113,8 @@ new terminal behaviour lands there.
 - open on the pane model: an inactive pane's URL hover and selection (only the
   active pane links and selects today), a persisted `panel.maximized` and pane
   layout across sessions (terminals themselves are not restored, so the flag
-  would come back over a fresh default terminal), and a bell indicator next to
-  the activity dot (BEL is parsed but not surfaced)
+  would come back over a fresh default terminal). (The bell indicator next to
+  the activity dot shipped 2026-10-08.)
 
 ### 4. Editor correctness and scale
 

@@ -98,6 +98,7 @@ void TabStripService::BuildVisibleStripTabsInto(
     tab.badge_color = SDL_Color{};
     tab.show_badge = false;
     tab.activity_dot = false;
+    tab.bell_mark = false;
   }
 }
 
@@ -506,6 +507,7 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
                                                                             : std::uint64_t{0});
     // The activity dot is part of the model: it is painted from the strip tab.
     hash = HashMix(hash, terminal_tab->has_unseen_output ? std::uint64_t{1} : std::uint64_t{0});
+    hash = HashMix(hash, terminal_tab->has_unseen_bell ? std::uint64_t{1} : std::uint64_t{0});
   }
   // Output: the augmentation inputs plus the resolved open ids and the full channel
   // id/label table. The per-tab label is a deterministic function of (open ids,
@@ -566,6 +568,7 @@ const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
         .label = label,
         .tooltip_label = label,
         .activity = terminal_tab->has_unseen_output,
+        .bell = terminal_tab->has_unseen_bell,
     });
   }
 
@@ -708,6 +711,7 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   }
   for (VisibleStripTab& tab : visible) {
     tab.activity_dot = tab.index < tabs.size() && tabs[tab.index].activity;
+    tab.bell_mark = tab.index < tabs.size() && tabs[tab.index].bell;
   }
   cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
   cache.geometry_epoch = geometry_epoch_;

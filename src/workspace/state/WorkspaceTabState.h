@@ -576,6 +576,10 @@ struct TerminalTabState {
   // the strip tab and cleared the first frame the tab is shown, so an agent that
   // finishes in a background tab is visible without switching to it.
   bool has_unseen_output = false;
+  // The program rang the bell (BEL) while this tab was not on screen: a build
+  // finishing, a prompt wanting input. A stronger mark than unseen output,
+  // cleared the same way (VS Code marks the terminal tab with a bell).
+  bool has_unseen_bell = false;
   // Bumped by every structural edit and divider move; the per-frame grid resize
   // keys on it instead of re-reading each pane's rows and columns under the
   // session mutex.

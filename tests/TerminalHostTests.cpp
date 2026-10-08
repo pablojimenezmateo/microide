@@ -103,6 +103,20 @@ struct Mirror {
   }
 };
 
+// A bell on the host reaches the client once, in the next frame — not in every
+// frame after it.
+void TestHostBellReachesTheClientOnce() {
+  Mirror mirror(4, 20);
+  mirror.Write("build done\x07");
+  Expect(mirror.Sync(), "the frame applies");
+  Expect(mirror.frame.has(TerminalHostFrame::kBell), "the frame after a BEL carries it");
+  Expect(mirror.client.ConsumeBell(), "and the client rings");
+  mirror.Write("more");
+  Expect(mirror.Sync(), "the next frame applies");
+  Expect(!mirror.frame.has(TerminalHostFrame::kBell), "the next frame does not repeat it");
+  Expect(!mirror.client.ConsumeBell(), "so the client rang once");
+}
+
 void TestHostFrameRoundTripsEveryField() {
   TerminalHostFrame frame;
   frame.rows = 3;
@@ -532,6 +546,7 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
           TestContradictedPredictionIsGoneAndSuppressesTheNext);
   AddTest(tests, "TerminalHost/NothingIsPredictedWhereThePositionIsUnknown",
           TestNothingIsPredictedWhereThePositionIsUnknown);
+  AddTest(tests, "TerminalHost/BellReachesTheClientOnce", TestHostBellReachesTheClientOnce);
   AddTest(tests, "TerminalHost/ModeChangeDuringABurstLeavesTheConfirmedScreenExact",
           TestModeChangeDuringABurstLeavesTheConfirmedScreenExact);
 }

@@ -184,7 +184,8 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   — what the user is looking at. `tabs` stays as the flat list the media scripts use.
 - `commands` lists the runnable command registry as `{command, usage, label}`.
 - `terminals` lists the terminal strip: per tab `{tab, active, unseenOutput,
-  panes}`, per pane `{pane, active, label, running, lineCount}`.
+  unseenBell, panes}`, per pane `{pane, active, label, running, lineCount}`.
+  `unseenBell`: a program rang the bell (BEL) while the tab was not on screen.
 - `terminal-output` snapshots one pane's scrollback: args `{tab, pane, lines}`
   default to the active tab's active pane and the last 1000 lines (capped at
   20000). It returns `{tab, pane, running, lineCount, text}` with trailing blank

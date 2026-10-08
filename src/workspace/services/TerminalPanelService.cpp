@@ -416,8 +416,10 @@ void TerminalPanelService::NoteActiveTabShown() {
   if (state_.panel.content != PanelContentKind::Terminal) {
     return;
   }
-  if (TerminalTabState* tab = state_.active_terminal_tab(); tab != nullptr && tab->has_unseen_output) {
+  if (TerminalTabState* tab = state_.active_terminal_tab();
+      tab != nullptr && (tab->has_unseen_output || tab->has_unseen_bell)) {
     tab->has_unseen_output = false;
+    tab->has_unseen_bell = false;
     operations_.request_bottom_panel_redraw();
   }
 }

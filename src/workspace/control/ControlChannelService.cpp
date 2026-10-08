@@ -808,6 +808,7 @@ util::JsonValue ControlChannelService::BuildTerminals() const {
     tab_object["tab"] = util::JsonValue(static_cast<std::int64_t>(t));
     tab_object["active"] = util::JsonValue(t == state.active_terminal_tab_index);
     tab_object["unseenOutput"] = util::JsonValue(tab->has_unseen_output);
+    tab_object["unseenBell"] = util::JsonValue(tab->has_unseen_bell);
     util::JsonArray panes;
     for (std::size_t p = 0; p < tab->panes.size(); ++p) {
       const TerminalPaneState* pane = tab->panes[p].get();

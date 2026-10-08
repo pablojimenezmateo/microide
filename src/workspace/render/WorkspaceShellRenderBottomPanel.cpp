@@ -350,14 +350,15 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                             tab.active ? panel_tab_palette.active_glyph
                                        : panel_tab_palette.inactive_glyph,
                             panel_tab_palette.active_text);
-      if (tab.activity_dot) {
+      if (tab.activity_dot || tab.bell_mark) {
         // Unseen output in a background terminal: a small accent square just
-        // left of the close glyph, where the eye already goes for tab state.
-        const float dot = 6.0f;
+        // left of the close glyph, where the eye already goes for tab state. A
+        // bell is the same place, larger and in the warning colour.
+        const float dot = tab.bell_mark ? 8.0f : 6.0f;
         DrawFilledRect(renderer,
                        MakeRect(close_rect.x - dot - 6.0f,
                                 std::floor(rect.y + (rect.h - dot) * 0.5f), dot, dot),
-                       theme_.accent);
+                       tab.bell_mark ? theme_.diagnostic_warning : theme_.accent);
       }
     }
     const SDL_FRect new_tab_rect = tab_strip_service_.BottomPanelTerminalNewTabRect(

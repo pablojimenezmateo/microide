@@ -153,6 +153,9 @@ class TerminalSession {
   bool WantsMouseMotionCapture(bool buttons_down) const;
   bool WantsFocusEvents() const;
   std::optional<std::string> ConsumePendingClipboardText();
+  // True once (then reset) after the program rang the bell (BEL outside an escape
+  // sequence) — locally, or on the host, carried by a frame's kBell.
+  bool ConsumeBell();
   // True once (then reset) when an OSC 52 clipboard sequence was dropped because it
   // overran the escape-sequence buffer cap. Lets the host surface a status instead
   // of silently swallowing a too-large clipboard write.
@@ -376,6 +379,10 @@ class TerminalSession {
   // Set when an oversized OSC 52 clipboard sequence is abandoned at the escape
   // buffer cap; drained by ConsumeOversizedOsc52Dropped so the host can notify.
   bool oversized_osc52_dropped_ = false;
+  // A BEL not yet consumed by the UI (ConsumeBell), and one not yet sent to a
+  // client in a host frame (CaptureForHost). Separate: a host session has both.
+  bool pending_bell_ = false;
+  bool pending_host_bell_ = false;
   bool use_alternate_screen_ = false;
   bool mouse_tracking_normal_ = false;
   bool mouse_tracking_drag_ = false;
