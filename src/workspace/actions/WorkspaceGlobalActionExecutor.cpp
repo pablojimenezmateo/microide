@@ -200,6 +200,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteOpenTerminal:
     case ActionId::RemoteOpenFolder:
     case ActionId::RemoteResolveConflict:
+    case ActionId::RemoteShowLog:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:
@@ -249,6 +250,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                   : hosts->ResolveConflict(args[0], args[1] == "mine");
           if (!known) {
             return reject("\"" + args[0] + "\" is not a conflict in a remote project");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteShowLog: {
+          const std::string host = host_arg();
+          if (host.empty() || !hosts->ShowLog(host)) {
+            return reject(host.empty() ? "usage: remote-show-log <host>"
+                                       : "Not connected to \"" + host + "\"");
           }
           return DispatchResult::Handled;
         }

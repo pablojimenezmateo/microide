@@ -121,6 +121,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteOpenTerminal:  // no project needed: a host terminal has none
     case ActionId::RemoteOpenFolder:
     case ActionId::RemoteResolveConflict:
+    case ActionId::RemoteShowLog:
     case ActionId::RemoteShowStatus:
     case ActionId::RemoteStopServer:    // these reject naming the host they cannot find
     case ActionId::RemoteDisconnect:

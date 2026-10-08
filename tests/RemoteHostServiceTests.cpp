@@ -239,6 +239,20 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "and comes back: '" + segment() + "'");
+
+  // The host server's log, in an output channel.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-show-log " + target),
+         "show log is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const auto* entries =
+                   WorkspaceShellTestAccess::OutputChannelEntries(shell, "remote.log." + target);
+               return entries != nullptr && entries->size() > 1 &&
+                      entries->front().find("server.log") != std::string::npos;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the host's server log arrives in an output channel");
   }
   {
     // A later run opening the mirror as a plain folder.

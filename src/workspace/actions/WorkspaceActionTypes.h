@@ -34,6 +34,8 @@ enum class ActionId {
   // `remote-resolve <mirror-path> <mine|host>`: settle a file both the host and the
   // mirror changed — the buttons on its conflict row.
   RemoteResolveConflict,
+  // `remote-show-log [host]`: the host server's log in an output channel.
+  RemoteShowLog,
   RemoteShowStatus,
   RemoteStopServer,   // `remote-stop-server [host]`; the sole host when omitted
   RemoteDisconnect,   // `remote-disconnect [host]`; every host when omitted

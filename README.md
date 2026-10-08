@@ -682,6 +682,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `show-output <channel-id>`
 - `remote-open [[user@]host[:port]:/path]`
 - `remote-resolve <path> <mine|host|compare>`
+- `remote-show-log [host]`
 - `remote-terminal [[user@]host[:port]]`
 - `remote-status`
 - `remote-stop-server [host]`

@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "platform/ProcessLauncher.h"
+#include "project/remote/RemoteServerClient.h"
 #include "platform/RuntimePaths.h"
 #include "project/remote/RemoteProcessLauncher.h"
 #include "project/remote/RemoteProject.h"
@@ -519,20 +520,54 @@ bool RemoteHostService::StopServer(std::string_view host) {
   return true;
 }
 
-std::optional<std::string> RemoteHostService::CommandText(std::string_view host,
-                                                          std::string_view which) const {
-  const remote::RemoteHostSession* session = nullptr;
+const remote::RemoteHostSession* RemoteHostService::SessionFor(std::string_view host) const {
   if (const Host* entry = Find(host)) {
-    session = entry->session.get();
-  } else {
-    for (const auto& [tree, project] : projects_) {
-      (void)tree;
-      if (project.project->record().host == host) {
-        session = &project.project->session();
-        break;
-      }
+    return entry->session.get();
+  }
+  for (const auto& [tree, project] : projects_) {
+    (void)tree;
+    if (project.project->record().host == host) {
+      return &project.project->session();
     }
   }
+  return nullptr;
+}
+
+bool RemoteHostService::ShowLog(std::string_view host) {
+  const remote::RemoteHostSession* session = SessionFor(host);
+  std::shared_ptr<remote::RemoteServerClient> client =
+      session != nullptr ? session->connection()->client() : nullptr;
+  if (client == nullptr) {
+    return false;
+  }
+  const std::string key(host);
+  workers_.emplace_back([this, client, key]() {
+    std::string error;
+    const std::optional<util::JsonValue> reply =
+        client->Call(remote::method::kServerLog, util::JsonValue(util::JsonObject{}), &error);
+    std::string text = reply.has_value() ? (*reply)["text"].AsString() : std::string();
+    const std::string remote_path = reply.has_value() ? (*reply)["path"].AsString() : std::string();
+    mailbox_.Post([this, key, text = std::move(text), remote_path, error, ok = reply.has_value()]() {
+      if (!ok || remote_path.empty()) {
+        if (operations_.notify) {
+          operations_.notify(NotificationService::Request{
+              .tone = NotificationService::Tone::Error,
+              .message = "No server log from " + key + (error.empty() ? "" : ": " + error)});
+        }
+        return;
+      }
+      if (operations_.show_output) {
+        operations_.show_output("remote.log." + key, "Remote: " + key,
+                                "# " + key + ":" + remote_path + "\n" + text);
+      }
+    });
+  });
+  return true;
+}
+
+std::optional<std::string> RemoteHostService::CommandText(std::string_view host,
+                                                          std::string_view which) const {
+  const remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return std::nullopt;
   }

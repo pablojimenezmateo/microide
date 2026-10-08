@@ -59,6 +59,9 @@ class RemoteHostService {
     // success, else why not.
     std::function<std::string(const std::filesystem::path& left, const std::filesystem::path& right)>
         compare_files;
+    // Replace output channel `id`'s lines with `text`'s and show it.
+    std::function<void(std::string_view id, std::string_view label, std::string_view text)>
+        show_output;
   };
 
   explicit RemoteHostService(Operations operations);
@@ -97,6 +100,9 @@ class RemoteHostService {
   void Disconnect(std::string_view host = {});
   // `microide-server stop` on the host, off the UI thread; the result is a row.
   bool StopServer(std::string_view host);
+  // Remote: Show Host Server Log — fetched off the UI thread, shown in an output
+  // channel (VS Code's "Remote - SSH" log). False when nothing connects to `host`.
+  bool ShowLog(std::string_view host);
   // "ssh" or "install": what the matching Copy button puts on the clipboard.
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
   // Remote: Show Status.
@@ -130,6 +136,8 @@ class RemoteHostService {
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
+  // Any session to `host`: its terminal session, else a project's.
+  const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;
   // The project and relative path a conflicted mirror path belongs to.
   std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
   Host* Find(std::string_view host);

@@ -10,6 +10,7 @@
 #include "project/remote/RemoteServerPaths.h"
 #include "util/ContentHash.h"
 #include "util/Log.h"
+#include "util/TextFileIO.h"
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <poll.h>
@@ -158,6 +159,23 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                  });
   peer.OnRequest("server/status", [this, &connection](std::uint64_t id, const util::JsonValue&) {
     connection.peer.Reply(id, StatusJson());
+  });
+  peer.OnRequest(remote::method::kServerLog, [this, &connection](std::uint64_t id, const util::JsonValue&) {
+    // Size-capped by the server's own logger, so this is a small local read.
+    util::JsonObject result;
+    std::string text;
+    std::string path;
+    if (!config_.socket_path.empty()) {
+      const std::filesystem::path log = remote::ServerLogPath(config_.socket_path.parent_path());
+      path = log.string();
+      if (std::optional<std::string> bytes = util::ReadTextFile(log)) {
+        constexpr std::size_t kMaxBytes = 256 * 1024;
+        text = bytes->size() > kMaxBytes ? bytes->substr(bytes->size() - kMaxBytes) : std::move(*bytes);
+      }
+    }
+    result["path"] = util::JsonValue(std::move(path));
+    result["text"] = util::JsonValue(std::move(text));
+    connection.peer.Reply(id, util::JsonValue(std::move(result)));
   });
   peer.OnRequest(remote::method::kServerShutdown,
                  [this, &connection](std::uint64_t id, const util::JsonValue&) {

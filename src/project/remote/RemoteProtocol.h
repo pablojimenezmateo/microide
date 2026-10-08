@@ -54,6 +54,9 @@ inline constexpr std::string_view kFsOp = "fs/op";
 // last sent. Subscribe first, then fetch the manifest: changes in between are in
 // the manifest, and nothing is sent before it.
 inline constexpr std::string_view kWatchSubscribe = "watch/subscribe";
+// server/log {} -> {path, text}: the tail (at most 256 KiB) of the server's log
+// beside its socket; empty text for a server with no log (serve-stdio).
+inline constexpr std::string_view kServerLog = "server/log";
 }  // namespace method
 
 // What a write or tree operation requires of the path's current content (§ 6.3):

@@ -124,6 +124,17 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
                        ? std::string()
                        : std::string("the comparison did not open");
           },
+      .show_output =
+          [this](std::string_view id, std::string_view label, std::string_view text) {
+            output_channels_.Clear(id);
+            for (std::size_t start = 0; start < text.size();) {
+              const std::size_t end = std::min(text.find('\n', start), text.size());
+              output_channels_.AppendLine(id, label, std::string(text.substr(start, end - start)));
+              start = end + 1;
+            }
+            (void)ActionCoordinator(MakeActionContext())
+                .Execute(ActionId::ShowOutput, {std::string(id)}, ActionSource::Shortcut);
+          },
   });
   glue_->remote_host_service->SetWakeChannel(project_file_event_type_);
   return *glue_->remote_host_service;
