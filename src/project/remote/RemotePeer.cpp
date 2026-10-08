@@ -76,6 +76,12 @@ bool RemotePeer::SendControl(FrameType type, Lane lane, std::uint64_t id,
 
 std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue& params,
                                   Lane lane, ResponseHandler handler) {
+  return Request(method, params, lane, std::move(handler), {});
+}
+
+std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue& params,
+                                  Lane lane, ResponseHandler handler,
+                                  const std::function<void(std::uint64_t id)>& before_send) {
   std::uint64_t id = 0;
   {
     std::lock_guard lock(mutex_);
@@ -84,6 +90,9 @@ std::uint64_t RemotePeer::Request(std::string_view method, const util::JsonValue
     }
     id = next_request_id_++;
     pending_[id] = std::move(handler);
+  }
+  if (before_send) {
+    before_send(id);
   }
   util::JsonObject body;
   body["method"] = util::JsonValue(std::string(method));

@@ -305,6 +305,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteProtocol.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/RemoteManifest.cpp
+  src/project/remote/RemoteWorkspace.cpp
   src/project/remote/RemotePathMap.cpp
   src/project/remote/RemotePeer.cpp
   src/project/remote/RemoteProcessLauncher.cpp
@@ -1363,6 +1364,7 @@ add_executable(microide_kernel_tests
   tests/RemoteFrameTests.cpp
   tests/RemoteManifestTests.cpp
   tests/WorkspaceTreeTests.cpp
+  tests/RemoteWorkspaceTests.cpp
   src/server/WorkspaceTree.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp

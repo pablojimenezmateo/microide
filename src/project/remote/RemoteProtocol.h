@@ -14,8 +14,8 @@ namespace microide::project::remote {
 // (dev-docs/design/remote-projects.md § 6.4): bumped only when the wire changes,
 // with a floor each side still accepts, so a 2.14 client talks to a 2.12 server
 // for as long as the wire has not actually moved.
-inline constexpr std::int64_t kProtocolVersion = 1;
-inline constexpr std::int64_t kMinProtocolVersion = 1;
+inline constexpr std::int64_t kProtocolVersion = 2;
+inline constexpr std::int64_t kMinProtocolVersion = 2;
 
 // Method names. A method not listed here is answered with kErrorUnknownMethod.
 namespace method {
@@ -33,6 +33,10 @@ inline constexpr std::string_view kTermAttach = "term/attach";
 inline constexpr std::string_view kTermResize = "term/resize";
 inline constexpr std::string_view kTermClose = "term/close";
 inline constexpr std::string_view kTermAck = "term/ack";
+// The workspace tree (Phase 2b, § 6.2). tree/manifest {} -> TreeRows content frames
+// (id = the request) on the bulk lane, then, on the same lane so it cannot overtake
+// them, {manifest_id, rows, git}. Needs a hello with a root.
+inline constexpr std::string_view kTreeManifest = "tree/manifest";
 }  // namespace method
 
 // Error codes in a Response's {"error": {"code", "message"}}.

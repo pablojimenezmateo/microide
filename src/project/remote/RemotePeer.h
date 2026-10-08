@@ -72,6 +72,12 @@ class RemotePeer {
   // Returns the request id, 0 when the request could not be sent (handler not run).
   std::uint64_t Request(std::string_view method, const util::JsonValue& params, Lane lane,
                         ResponseHandler handler);
+  // As above, with `before_send(id)` run after the id is allocated and before the
+  // request can reach the peer — where a caller registers a route for content
+  // frames that answer it, which may otherwise arrive before Request returns.
+  std::uint64_t Request(std::string_view method, const util::JsonValue& params, Lane lane,
+                        ResponseHandler handler,
+                        const std::function<void(std::uint64_t id)>& before_send);
   // Ask the peer to stop request `id`; the local handler still runs once, with the
   // peer's terminal reply.
   bool Cancel(std::uint64_t id);

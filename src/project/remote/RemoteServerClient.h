@@ -110,6 +110,14 @@ class RemoteServerClient {
   void RegisterTerminal(std::uint64_t handle, std::shared_ptr<TerminalEvents> events);
   void UnregisterTerminal(std::uint64_t handle);
 
+  // A request answered by content frames (id = the request) and then a response:
+  // `content` runs on the I/O thread for each frame, in order, and `done` once
+  // after the last. Returns the request id (0 when it could not be sent; `done`
+  // does not run then).
+  using StreamContent = std::function<void(FrameType type, std::string bytes)>;
+  std::uint64_t RequestStream(std::string_view method, const util::JsonValue& params, Lane lane,
+                              StreamContent content, RemotePeer::ResponseHandler done);
+
   // One synchronous request; nullopt with *error on failure or after `timeout`.
   std::optional<util::JsonValue> Call(std::string_view method, const util::JsonValue& params,
                                       std::string* error,
@@ -143,6 +151,8 @@ class RemoteServerClient {
   std::map<std::uint64_t, std::shared_ptr<TerminalEvents>> terminals_;
   // Frames for a terminal whose open reply has not been handled yet.
   std::map<std::uint64_t, Orphan> terminal_orphans_;
+  // Content routes of in-flight RequestStream calls, by request id.
+  std::map<std::uint64_t, std::shared_ptr<StreamContent>> streams_;
 };
 
 }  // namespace microide::project::remote

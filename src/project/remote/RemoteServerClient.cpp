@@ -69,6 +69,21 @@ void RemoteServerClient::InstallRouting() {
       DeliverTerminalFrame(handle, std::move(bytes));
       return;
     }
+    if (type == FrameType::TreeRows) {
+      std::shared_ptr<StreamContent> route;
+      {
+        std::lock_guard lock(mutex_);
+        const auto it = streams_.find(handle);
+        if (it != streams_.end()) {
+          route = it->second;
+        }
+      }
+      // An answer to nothing in flight (a cancelled request's tail) is dropped.
+      if (route && *route) {
+        (*route)(type, std::move(bytes));
+      }
+      return;
+    }
     Deliver(handle, type, std::move(bytes));
   });
   peer_.OnClosed([this](std::string_view reason) {
@@ -115,6 +130,36 @@ bool RemoteServerClient::Handshake(const HelloRequest& hello, std::string* error
   hello_reply_ = std::move(*parsed);
   connected_ = true;
   return true;
+}
+
+std::uint64_t RemoteServerClient::RequestStream(std::string_view method,
+                                                const util::JsonValue& params, Lane lane,
+                                                StreamContent content,
+                                                RemotePeer::ResponseHandler done) {
+  auto route = std::make_shared<StreamContent>(std::move(content));
+  auto registered = std::make_shared<std::uint64_t>(0);
+  const std::uint64_t id = peer_.Request(
+      method, params, lane,
+      [this, registered, done = std::move(done)](std::optional<util::JsonValue> result,
+                                                 std::optional<RemotePeer::RpcError> error) {
+        // The response travels behind every content frame on its lane, so the
+        // route is finished with; unregister before `done` sees the result.
+        {
+          std::lock_guard lock(mutex_);
+          streams_.erase(*registered);
+        }
+        done(std::move(result), std::move(error));
+      },
+      [&](std::uint64_t allocated) {
+        std::lock_guard lock(mutex_);
+        streams_[allocated] = route;
+        *registered = allocated;
+      });
+  if (id == 0 && *registered != 0) {
+    std::lock_guard lock(mutex_);
+    streams_.erase(*registered);
+  }
+  return id;
 }
 
 std::optional<util::JsonValue> RemoteServerClient::Call(std::string_view method,

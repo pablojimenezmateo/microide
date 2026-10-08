@@ -15,6 +15,8 @@
 #include "project/remote/RemoteProtocol.h"
 #include "server/ProcessTable.h"
 #include "server/TerminalTable.h"
+#include "server/WorkspaceTree.h"
+#include "util/SerialWorkQueue.h"
 #include "util/JsonValue.h"
 #include "util/WakePipe.h"
 
@@ -60,13 +62,31 @@ class RemoteServer {
     std::string root;  // the workspace this connection opened, "" before hello
     std::atomic<bool> closed{false};
   };
+  // A root's tree and the worker its manifests are built on: never a connection's
+  // I/O thread, which must keep answering pings while a cold tree hashes.
+  struct ServedTree {
+    explicit ServedTree(std::filesystem::path root) : tree(std::move(root)) {}
+    ~ServedTree() {
+      closing.store(true);
+      queue.Shutdown();  // before `tree`: a running job uses it
+    }
+    WorkspaceTree tree;
+    std::atomic<bool> closing{false};
+    util::SerialWorkQueue queue;
+  };
   struct Workspace {
     std::size_t clients = 0;
+    std::shared_ptr<ServedTree> tree;
   };
 
   Connection& Accept(int read_fd, int write_fd);
   void InstallProcessHandlers(Connection& connection);
   void InstallTerminalHandlers(Connection& connection);
+  void InstallTreeHandlers(Connection& connection);
+  std::shared_ptr<ServedTree> TreeOf(const Connection& connection);
+  // Whether the request is still wanted: its connection is open and it was not
+  // cancelled.
+  bool RequestLive(std::uint64_t connection_id, std::uint64_t request_id);
   void WithPeer(std::uint64_t connection_id, const std::function<void(remote::RemotePeer&)>& use);
   void InstallHandlers(Connection& connection);
   util::JsonValue StatusJson();
