@@ -299,6 +299,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp
   src/project/ProjectTraversalFilter.cpp
+  src/project/remote/RemoteFrame.cpp
   src/terminal/TerminalAnsiColors.cpp
   src/terminal/TerminalBase64.cpp
   src/terminal/TerminalCsiParser.cpp
@@ -1287,6 +1288,7 @@ endif()
 add_executable(microide_kernel_tests
   $<TARGET_OBJECTS:microide_kernel>
   tests/KernelTestMain.cpp
+  tests/RemoteFrameTests.cpp
   tests/TestRunner.cpp
   tests/TestRunnerCli.cpp
   tests/TestSupport.cpp
@@ -1452,7 +1454,6 @@ if(MICROIDE_FUZZ)
     src/project/GitRepositoryState.cpp
     src/project/GitCommandUtil.cpp
     src/project/GitMetadataSource.cpp
-  src/project/GitMetadataSource.cpp
     src/util/TextFileIO.cpp
     src/util/DurableFile.cpp
     src/platform/Subprocess.cpp
@@ -1460,6 +1461,14 @@ if(MICROIDE_FUZZ)
     tests/fuzz/GitPorcelainV2ParserFuzz.cpp
   )
   microide_configure_fuzz_target(GitPorcelainV2ParserFuzz)
+
+  # The remote server's frame decoder: the bytes it reads come from a peer across
+  # ssh (or a local pipe), so it is a hostile-input surface by design (§ 6.9).
+  add_executable(RemoteFrameDecoderFuzz
+    src/project/remote/RemoteFrame.cpp
+    tests/fuzz/RemoteFrameDecoderFuzz.cpp
+  )
+  microide_configure_fuzz_target(RemoteFrameDecoderFuzz)
 
   # `.editorconfig` comes out of the OPENED REPOSITORY, so its bytes are supplied
   # by whoever wrote the checkout — the same trust level as `.gitignore`. The
