@@ -958,7 +958,8 @@
                                                      const std::filesystem::path& path,
                                                      editor::TextViewport& viewport,
                                                      std::string* error_message) {
-    return shell.PrepareEditorViewportForSave(path, viewport, error_message).ok();
+    return shell.PrepareEditorViewportForSave(path, viewport, error_message, SaveMode::Blocking)
+        .ok();
   }
   // Deferred preparation plus the wait that finishes it: what a test wants is the
   // same end state as a blocking save, reached through the asynchronous path.

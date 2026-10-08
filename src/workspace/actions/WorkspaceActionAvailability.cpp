@@ -118,6 +118,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::FocusNotifications:  // rejects with a message when there are none
     case ActionId::NotificationAction:  // rejects naming the row/action it cannot find
     case ActionId::ShowOutput:          // rejects naming a channel that does not exist
+    case ActionId::CancelSaveWait:      // rejects when nothing with that id is waiting
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:
     case ActionId::OpenSettings:

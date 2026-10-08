@@ -13,6 +13,7 @@
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
+#include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/git/ReviewSessionCoordinator.h"
@@ -723,7 +724,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
-          .save_tab = [this](std::size_t index) { return SaveTab(index); },
+          .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
           .save_tab_deferred =
               [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
           .save_tab_as =
@@ -899,6 +900,13 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 NoteLayoutInputsChanged();
                 RequestWindowRedraw();
                 return true;
+              },
+          .cancel_save_wait =
+              [this](std::uint64_t id) {
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+                return MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces)
+                    .CancelSaveContinuation(id);
               },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },

@@ -9,6 +9,7 @@
 #include "workspace/state/WorkspaceMenuState.h"
 #include "workspace/state/WorkspaceProjectState.h"
 #include "workspace/state/WorkspacePromptState.h"
+#include "workspace/state/SaveContinuationState.h"
 #include "workspace/state/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
@@ -20,6 +21,10 @@ struct WorkspaceContext {
   MenuSurfaceState menu_state;
   PromptState prompts;
   TextInputState text_input;
+  // Work waiting on deferred (format-on-save) writes: tab close, rename/delete,
+  // project close, quit. Shell-wide rather than per project because quit spans
+  // projects; each entry names the project its tabs live in.
+  SaveContinuationQueue save_continuations;
   std::vector<std::pair<std::string, std::string>> user_settings;
   std::vector<std::string> disabled_keybinding_ids;
   std::vector<std::string> disabled_plugin_ids;

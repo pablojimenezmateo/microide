@@ -119,8 +119,8 @@ bool EditorTabService::DiskSignatureMatchesOpenView(const std::filesystem::path&
   return coordinator_.DiskSignatureMatchesOpenView(path);
 }
 
-bool EditorTabService::SaveThenClose(std::size_t index) {
-  return coordinator_.SaveThenClose(index);
+TabCoordinator::SaveForCloseResult EditorTabService::SaveForClose(std::size_t index) {
+  return coordinator_.SaveForClose(index);
 }
 
 bool EditorTabService::OpenUntitled() {

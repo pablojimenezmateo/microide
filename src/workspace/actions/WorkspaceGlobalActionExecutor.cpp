@@ -188,6 +188,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("No notifications to focus");
       }
       return DispatchResult::Handled;
+    case ActionId::CancelSaveWait: {
+      const std::optional<std::size_t> id =
+          args.empty() ? std::nullopt : util::ParseSize(args[0]);
+      if (!id.has_value() || !context_.CancelSaveWait(*id)) {
+        return reject("Nothing is waiting to save");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::ShowOutput:
       if (args.empty()) {
         return reject("usage: show-output <channel-id>");

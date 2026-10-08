@@ -4,6 +4,7 @@
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -337,6 +338,156 @@ void TestBlockingSaveWritesFormattedBeforeItReturns() {
              ReadFile(file));
 }
 
+// Two dirty buffers with a formatter, in a real project tab.
+struct TwoDirtyFormattedFiles {
+  std::filesystem::path root;
+  std::filesystem::path first;
+  std::filesystem::path second;
+};
+
+TwoDirtyFormattedFiles OpenTwoDirtyFormattedFiles(WorkspaceShell& shell,
+                                                  const TemporaryDirectory& temp_dir) {
+  TwoDirtyFormattedFiles files{.root = temp_dir.path() / "project"};
+  files.first = files.root / "first.txt";
+  files.second = files.root / "second.txt";
+  WriteFile(files.first, "hello one\n");
+  WriteFile(files.second, "hello two\n");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, files.root, false, false),
+         "the fixture opens its project");
+  WorkspaceShellTestAccess::OpenFile(shell, files.first);
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      UppercasingFormatter());
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  WorkspaceShellTestAccess::OpenFile(shell, files.second);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("y");
+  return files;
+}
+
+const microide::workspace::NotificationService::Notification* RowWithKey(
+    WorkspaceShell& shell, std::string_view key) {
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    if (row.key == key) {
+      return &row;
+    }
+  }
+  return nullptr;
+}
+
+// Quit with Save All no longer runs the formatters on the shell thread: it waits
+// behind a progress row with a Cancel button, and quits once the last write lands.
+void TestQuitWaitsForFormatterSavesBehindAProgressRow() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const TwoDirtyFormattedFiles files = OpenTwoDirtyFormattedFiles(shell, temp_dir);
+
+  WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);  // Save All
+
+  Expect(ReadFile(files.first) == "hello one\n" && ReadFile(files.second) == "hello two\n",
+         "nothing is written before the formatters return: the shell thread came back");
+  Expect(!shell.ConsumeQuitRequested(), "and the quit waits for the writes");
+  const auto* row = RowWithKey(shell, "save.wait.quit");
+  Expect(row != nullptr && row->sticky && row->progress.has_value() &&
+             row->message.find("2 files") != std::string::npos,
+         "a sticky progress row says what it is waiting for");
+  Expect(row != nullptr && row->actions.size() == 1 && row->actions[0].label == "Cancel",
+         "and offers Cancel");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(ReadFile(files.first) == "xHELLO one\n" && ReadFile(files.second) == "yHELLO two\n",
+         "both files are written formatted");
+  Expect(shell.ConsumeQuitRequested(), "and then the application quits");
+  Expect(RowWithKey(shell, "save.wait.quit") == nullptr, "the progress row is gone");
+}
+
+// Cancel aborts the quit: the application stays, the buffers whose saves had not
+// landed stay open and dirty, and the abandoned writes never happen.
+void TestCancellingTheQuitLeavesBuffersDirty() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const TwoDirtyFormattedFiles files = OpenTwoDirtyFormattedFiles(shell, temp_dir);
+
+  WorkspaceShellTestAccess::ShowDirtyPromptForQuit(shell);
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
+                                                      "notification-action save.wait.quit Cancel"),
+         "Cancel on the progress row runs");
+  Expect(RowWithKey(shell, "save.wait.quit") == nullptr, "the progress row is gone");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(!shell.ConsumeQuitRequested(), "the application does not quit");
+  Expect(ReadFile(files.first) == "hello one\n" && ReadFile(files.second) == "hello two\n",
+         "the abandoned writes never land");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == 2 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the buffers are still open and dirty");
+}
+
+// Closing a project waits the same way, and the project's state is not torn down
+// before its last write lands.
+void TestCloseProjectWaitsForItsWrites() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const TwoDirtyFormattedFiles files = OpenTwoDirtyFormattedFiles(shell, temp_dir);
+  const std::size_t projects_before = WorkspaceShellTestAccess::ProjectCount(shell);
+
+  WorkspaceShellTestAccess::RequestCloseProject(shell, projects_before - 1);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell), "the close asks about the edits");
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 0);
+
+  Expect(WorkspaceShellTestAccess::ProjectCount(shell) == projects_before,
+         "the project stays open while its formatters run");
+  Expect(RowWithKey(shell, "save.wait.close-project") != nullptr,
+         "behind a progress row with Cancel");
+
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(ReadFile(files.first) == "xHELLO one\n" && ReadFile(files.second) == "yHELLO two\n",
+         "both files are written formatted");
+  Expect(WorkspaceShellTestAccess::ProjectCount(shell) == projects_before - 1,
+         "and then the project closes");
+}
+
+// A rename waiting on a save that the external-change guard refuses is cancelled:
+// the file is not renamed, and a notification says why.
+void TestARefusedSaveCancelsTheRename() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const TwoDirtyFormattedFiles files = OpenTwoDirtyFormattedFiles(shell, temp_dir);
+  const std::filesystem::path renamed = files.root / "renamed.txt";
+
+  WorkspaceShellTestAccess::OpenPromptSurfaceForTest(
+      shell, workspace::PromptSurfaceState::Action::RenamePath,
+      workspace::PromptSurfaceState::Kind::TextInput, files.second, "", "renamed.txt");
+  WorkspaceShellTestAccess::ConfirmPromptSurfaceSavingDirtyBuffers(shell);
+  Expect(std::filesystem::exists(files.second) && !std::filesystem::exists(renamed),
+         "the rename waits for its write");
+
+  // Someone else writes the file while its formatter runs: the save must not
+  // clobber it, so it is refused — and the rename with it.
+  WriteFile(files.second, "changed on disk by someone else, longer than before\n");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, files.second),
+         "the formatted save is refused and the external-change banner raised instead");
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+
+  Expect(std::filesystem::exists(files.second) && !std::filesystem::exists(renamed),
+         "the file is not renamed");
+  Expect(ReadFile(files.second) == "changed on disk by someone else, longer than before\n",
+         "and the other writer's bytes are not clobbered");
+  bool told = false;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    told = told || row.message.find("rename/delete was not applied") != std::string::npos;
+  }
+  Expect(told, "a notification says the rename was not applied");
+}
+
 // The file changes on disk while its formatter runs. Applying the formatter's
 // output used to re-stat the file and adopt what it found as the new conflict
 // baseline, so the save right after it overwrote the other writer's bytes without
@@ -391,6 +542,14 @@ void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
           TestAnExternalChangeDuringFormattingIsNotOverwritten);
   AddTest(tests, "SaveFormatterPipeline/AnExternalChangeDuringABlockingFormatIsNotOverwritten",
           TestAnExternalChangeDuringABlockingFormatIsNotOverwritten);
+  AddTest(tests, "SaveFormatterPipeline/QuitWaitsForFormatterSavesBehindAProgressRow",
+          TestQuitWaitsForFormatterSavesBehindAProgressRow);
+  AddTest(tests, "SaveFormatterPipeline/CancellingTheQuitLeavesBuffersDirty",
+          TestCancellingTheQuitLeavesBuffersDirty);
+  AddTest(tests, "SaveFormatterPipeline/CloseProjectWaitsForItsWrites",
+          TestCloseProjectWaitsForItsWrites);
+  AddTest(tests, "SaveFormatterPipeline/ARefusedSaveCancelsTheRename",
+          TestARefusedSaveCancelsTheRename);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseWaitsForTheWriteWithoutBlocking",
           TestSaveThenCloseWaitsForTheWriteWithoutBlocking);
   AddTest(tests, "SaveFormatterPipeline/SaveThenCloseIsImmediateWithoutAFormatter",

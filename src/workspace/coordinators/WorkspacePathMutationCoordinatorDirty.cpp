@@ -154,7 +154,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
 
   if (resolution == DirtyPathResolution::Save) {
     bool saved_any = false;
-    bool deferred_any = false;
+    std::vector<std::uint64_t> deferred_tab_ids;
     for (const DirtyPathTarget& target : dirty_targets) {
       if (target.group_index >= state.editor_groups.size() ||
           target.tab_index >= state.editor_groups[target.group_index].open_tabs.size()) {
@@ -168,7 +168,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
             !tab.compare->right_viewport.dirty()) {
           continue;
         }
-        if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index)) {
+        if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index, SaveMode::Blocking)) {
           return false;
         }
         saved_any = true;
@@ -181,7 +181,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         if (!tab.merge->result_viewport.dirty()) {
           continue;
         }
-        if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index)) {
+        if (!editor_tabs_.SaveGroupTab(target.group_index, target.tab_index, SaveMode::Blocking)) {
           return false;
         }
         saved_any = true;
@@ -217,8 +217,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         return false;
       }
       if (editor_state.pending_format_save.armed()) {
-        editor_state.path_mutation_after_save = true;
-        deferred_any = true;
+        deferred_tab_ids.push_back(EnsureTabStableId(tab));
         continue;
       }
       saved_any = true;
@@ -236,10 +235,16 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
         operations_.request_automatic_git_sidebar_refresh();
       }
     }
-    if (deferred_any) {
-      // The user's decision is made: close both prompts and park the mutation
-      // until the last formatter run lands (ResumeDeferredPathMutation).
-      context_.prompts.deferred_path_mutation = context_.prompts.surface;
+    if (!deferred_tab_ids.empty()) {
+      // The user's decision is made: close both prompts and let the mutation wait
+      // for the last formatter run as a save continuation; it is replayed through
+      // ResumeDeferredPathMutation once every one of those writes has landed.
+      context_.save_continuations.Add(SaveContinuation{
+          .kind = SaveContinuation::Kind::PathMutation,
+          .waiting_tab_ids = std::move(deferred_tab_ids),
+          .project_root = state.root,
+          .path_mutation = context_.prompts.surface,
+      });
       if (context_.prompts.dirty_visible) {
         prompt_surfaces_.DismissDirtyPrompt(false);
       }
@@ -251,38 +256,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
   return true;
 }
 
-void PathMutationCoordinator::ResumeDeferredPathMutation(bool saved) {
-  if (!context_.prompts.deferred_path_mutation.has_value()) {
-    return;
-  }
-  auto& state = CurrentProjectState();
-  if (!saved) {
-    // The write did not land, so the path must not move: renaming a file whose
-    // save failed would carry the user's edits nowhere. Every other waiting tab
-    // keeps its own save; only the mutation is dropped.
-    for (EditorGroup& group : state.editor_groups) {
-      for (TabEntry& tab : group.open_tabs) {
-        if (tab.editor_state.has_value()) {
-          tab.editor_state->path_mutation_after_save = false;
-        }
-      }
-    }
-    context_.prompts.deferred_path_mutation.reset();
-    if (operations_.notify) {
-      operations_.notify(NotificationService::Tone::Warning,
-                         "The save did not complete, so the rename/delete was not applied");
-    }
-    return;
-  }
-  for (const EditorGroup& group : state.editor_groups) {
-    for (const TabEntry& tab : group.open_tabs) {
-      if (tab.editor_state.has_value() && tab.editor_state->path_mutation_after_save) {
-        return;  // another buffer of this path is still being formatted
-      }
-    }
-  }
-  PromptSurfaceState pending = std::move(*context_.prompts.deferred_path_mutation);
-  context_.prompts.deferred_path_mutation.reset();
+void PathMutationCoordinator::ResumeDeferredPathMutation(PromptSurfaceState pending) {
   if (context_.prompts.surface_visible || context_.prompts.dirty_visible) {
     // Another prompt owns the screen now; replaying through it would answer a
     // question the user is in the middle of. Say so rather than guess.

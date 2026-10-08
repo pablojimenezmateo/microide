@@ -7,6 +7,8 @@
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
+#include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
+#include "workspace/services/PromptSurfaceService.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/MergeWrapRows.h"

@@ -109,14 +109,14 @@ class TabCoordinator {
                  Operations operations);
 
   std::string ActiveTitle() const;
-  bool Save(std::size_t index, SaveMode mode = SaveMode::Blocking);
+  bool Save(std::size_t index, SaveMode mode);
   // Group-aware save primitive: saves editor_groups[group_index].open_tabs[index]
   // (Editor/Compare/Merge) with the same disk-conflict guard and plugin-save notify
   // as Save(). Bounds-checks both indices. Save() delegates here with the clamped
   // focused group; the all-groups flush paths (autosave, save-on-quit) call it
   // directly so a buffer dirtied in the non-focused split group is not skipped.
   bool SaveGroupTab(std::size_t group_index, std::size_t index,
-                    SaveMode mode = SaveMode::Blocking);
+                    SaveMode mode);
   // Save As / naming an untitled buffer: rebinds the editor tab at `index` to
   // `path` (refused when another file already sits there) and saves it. On
   // failure `error` says why.
@@ -254,14 +254,19 @@ class TabCoordinator {
   void ReloadVirtualDocumentTabs(const std::filesystem::path& virtual_path,
                                  std::string_view content);
   void Close(std::size_t index);
-  // Save `index` and then close it — closing when the WRITE lands, which for a
-  // buffer with a contributed formatter is after a subprocess run on the worker
+  // Save `index` for a close that must wait for the WRITE, which for a buffer
+  // with a contributed formatter lands after a subprocess run on the worker
   // thread. The close path used to save in SaveMode::Blocking and wait, so
   // closing one dirty JS file froze the window for as long as node took to start
-  // (TD-2026-09-28-304). Returns false if the save was refused (a save
-  // participant rejected it, or the file changed on disk) — the tab stays open,
-  // as it did before.
-  bool SaveThenClose(std::size_t index);
+  // (TD-2026-09-28-304). Nothing was deferred: the tab is closed here. Deferred:
+  // the tab stays open and the result names it, so the caller can register the
+  // close as a save continuation. Refused (a save participant rejected it, or
+  // the file changed on disk): the tab stays open, as it did before.
+  struct SaveForCloseResult {
+    bool saved = false;
+    std::uint64_t deferred_tab_id = 0;  // non-zero: still formatting
+  };
+  SaveForCloseResult SaveForClose(std::size_t index);
   // True when `viewport`'s file is as it was loaded or last saved; otherwise raise
   // the external-change banner for it and return false. For the re-check after
   // save participants and a formatter ran, which can take seconds.

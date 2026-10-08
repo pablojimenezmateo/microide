@@ -485,11 +485,13 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/shell/WorkspaceShellCursor.cpp
   src/workspace/coordinators/WorkspaceDiffTabCoordinator.cpp
   src/workspace/coordinators/WorkspaceDirtyPromptCoordinator.cpp
+  src/workspace/coordinators/WorkspaceDirtyPromptCoordinatorContinuations.cpp
   src/workspace/services/PromptSurfaceService.cpp
   src/workspace/WorkspaceEditorBanner.cpp
   src/workspace/shell/WorkspaceShellEditor.cpp
   src/workspace/shell/WorkspaceShellEditorSplits.cpp
   src/workspace/WorkspaceTabExternalChangeOps.cpp
+  src/workspace/state/SaveContinuationState.cpp
   src/workspace/shell/WorkspaceShellInteraction.cpp
   src/workspace/shell/WorkspaceShellMenu.cpp
   src/workspace/shell/WorkspaceShellMouse.cpp

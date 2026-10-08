@@ -23,6 +23,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Run Notification Action", ""},
       ActionSpec{ActionId::ShowOutput, "show-output", "show-output <channel-id>",
                  "Show Output Channel…", ""},
+      ActionSpec{ActionId::CancelSaveWait, "cancel-save-wait", "cancel-save-wait <id>",
+                 "Cancel Saving Before Quit/Close", ""},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
                  "Colorscheme", ""},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",

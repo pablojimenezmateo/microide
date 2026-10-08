@@ -418,20 +418,9 @@ struct EditorTabState {
   // formatter run. Without it a deferred save would post a fresh run every time it
   // finished one.
   bool skip_formatter_once = false;
-  // Set when this tab was closed with unsaved edits and the user chose Save: the
-  // save is deferred (the formatter runs on the worker), so the CLOSE has to wait
-  // for it too. Closing before the write lands would discard the edits the user
-  // just asked to keep. The completion clears it and closes the tab.
-  //
-  // Per-tab rather than one pending-close on the shell, because two tabs can be
-  // closing at once — "Close Others" over a group with several dirty buffers
-  // posts one formatter run each, and they complete in whatever order the worker
-  // finishes them.
-  bool close_after_save = false;
-  // The rename or delete of this file is waiting on this tab's deferred save
-  // (PromptState::deferred_path_mutation); the formatter completion resumes it
-  // once the write lands, exactly as `close_after_save` resumes a close.
-  bool path_mutation_after_save = false;
+  // What waits on this tab's deferred save — its close, a rename/delete of its
+  // path, a project close, a quit — is a SaveContinuation keyed by `stable_id`
+  // (WorkspaceContext::save_continuations), not a flag here.
   // Per-tab fold-region model. Lazily computed by the renderer / fold action
   // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
   // close; rekeyed implicitly through its `(layout_revision, tab_size,
@@ -479,8 +468,9 @@ struct TabEntry {
   Kind kind = Kind::Editor;
   std::filesystem::path path;
   std::string title;
-  // Stable per-tab identity, assigned lazily (from ProjectWorkspaceState::
-  // next_tab_stable_id) the first time a tab is referenced by a modal dirty prompt.
+  // Stable per-tab identity, assigned lazily (EnsureTabStableId, process-unique)
+  // the first time a tab is referenced by a modal dirty prompt or waited on by a
+  // save continuation.
   // 0 = unassigned. Lets a dirty prompt survive a tab close/reorder while it is up:
   // the prompt stores ids, not indices, and resolves them back to current indices at
   // confirm time — so it never saves/closes the wrong tab (TD-2026-07-17-024). Purely
@@ -491,6 +481,18 @@ struct TabEntry {
   std::optional<CompareTabState> compare;
   std::optional<MergeTabState> merge;
 };
+
+// Give `tab` its stable id if it has none, and return it. Process-unique rather
+// than per project: save continuations (WorkspaceContext::save_continuations) are
+// shell-wide — a quit spans projects — so an id must name one tab across all of
+// them. Shell thread only.
+inline std::uint64_t EnsureTabStableId(TabEntry& tab) {
+  static std::uint64_t next_stable_id = 1;
+  if (tab.stable_id == 0) {
+    tab.stable_id = next_stable_id++;
+  }
+  return tab.stable_id;
+}
 
 // The trait clang caches as `false` when the optional's element type is nested in
 // the class holding the optional (TD-2026-08-14-214). Asserting it here — after

@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -72,16 +73,9 @@ std::optional<std::size_t> DirtyPromptCoordinator::FindProjectIndexByRoot(
 
 bool DirtyPromptCoordinator::SaveDirtyTabs(std::span<const std::size_t> tab_indices) {
   for (std::size_t index : tab_indices) {
-    if (!editor_tabs_.Save(index)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool DirtyPromptCoordinator::SaveDirtyGroupTabs(std::span<const GroupTabRef> refs) {
-  for (const GroupTabRef& ref : refs) {
-    if (!editor_tabs_.SaveGroupTab(ref.group_index, ref.tab_index)) {
+    // Blocking: the legacy id-less prompt cannot address a deferred tab (see
+    // ConfirmCloseTabs), so it waits for each write.
+    if (!editor_tabs_.Save(index, SaveMode::Blocking)) {
       return false;
     }
   }
@@ -147,7 +141,7 @@ void DirtyPromptCoordinator::ConfirmCloseTab(const DirtyPromptState& prompt) {
     // for as long as node took to start (TD-2026-09-28-304). The prompt is
     // dismissed either way — the decision has been made — but the tab survives a
     // refused save, as it did before.
-    if (!editor_tabs_.SaveThenClose(*resolved)) {
+    if (!SaveThenClose(*resolved)) {
       return;
     }
     prompt_surfaces_.DismissDirtyPrompt(true);
@@ -188,7 +182,7 @@ void DirtyPromptCoordinator::ConfirmCloseTabs(const DirtyPromptState& prompt) {
     } else {
       for (const std::uint64_t id : prompt.dirty_tab_ids) {
         if (const std::optional<std::size_t> index = ResolveFocusedTabIndexById(id)) {
-          editor_tabs_.SaveThenClose(*index);
+          SaveThenClose(*index);
         }
       }
     }
@@ -244,15 +238,35 @@ void DirtyPromptCoordinator::ConfirmCloseProject(const DirtyPromptState& prompt)
       return;
     }
   }
-  // Closing a project flushes every dirty buffer across ALL its editor groups
-  // (not just the focused group's tabs captured in prompt.dirty_tabs). The target
-  // is active here (already-active, or just switched above), so DirtyGroupTabs()
-  // reads the correct project.
-  if (prompt.selected_action == 0 && !SaveDirtyGroupTabs(editor_tabs_.DirtyGroupTabs())) {
-    if (!target_was_active && !original_active_root.empty()) {
-      SwitchProjectByRoot(original_active_root);
+  const bool switched = !target_was_active && !original_active_root.empty();
+  if (prompt.selected_action == 0) {
+    // Closing a project flushes every dirty buffer across ALL its editor groups
+    // (not just the focused group's tabs captured in prompt.dirty_tabs). The
+    // target is active here (already-active, or just switched above). Deferred:
+    // a formatter runs off the shell thread and the close waits for its write,
+    // behind a progress row with Cancel, rather than the window waiting
+    // (TD-2026-09-28-304).
+    std::optional<std::vector<std::uint64_t>> waiting = DeferSaveDirtyGroupTabs();
+    if (!waiting.has_value()) {
+      if (switched) {
+        SwitchProjectByRoot(original_active_root);
+      }
+      return;
     }
-    return;
+    if (!waiting->empty()) {
+      prompt_surfaces_.DismissDirtyPrompt(false);
+      const std::uint64_t id = context_.save_continuations.Add(SaveContinuation{
+          .kind = SaveContinuation::Kind::CloseProject,
+          .waiting_tab_ids = std::move(*waiting),
+          .project_root = target_root,
+          .return_root = original_active_root,
+          .switched_to_project = switched,
+      });
+      if (const SaveContinuation* registered = context_.save_continuations.Find(id)) {
+        ShowWaitRow(*registered);
+      }
+      return;
+    }
   }
 
   prompt_surfaces_.DismissDirtyPrompt(false);
@@ -262,49 +276,33 @@ void DirtyPromptCoordinator::ConfirmCloseProject(const DirtyPromptState& prompt)
   }
   operations_.close_project(*target_index);
 
-  if (!target_was_active && !original_active_root.empty()) {
+  if (switched) {
     SwitchProjectByRoot(original_active_root);
   }
 }
 
 void DirtyPromptCoordinator::ConfirmQuit(const DirtyPromptState& prompt) {
-  const std::filesystem::path original_active_root = context_.current_project_state.root;
-  if (prompt.selected_action == 0) {
-    std::vector<std::filesystem::path> project_roots;
-    project_roots.reserve(context_.project_catalog.entries.size());
-    for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
-      const std::filesystem::path root = context_.ProjectCatalogRoot(i);
-      if (!root.empty()) {
-        project_roots.push_back(root);
-      }
-    }
-
-    for (const auto& root : project_roots) {
-      // Only projects with unsaved buffers need saving. DirtyGroupTabsForProject
-      // inspects the catalog entry's in-memory tabs (all groups) without activating
-      // it, so we avoid a full persist-out/load-in round trip for every clean project.
-      const auto index = FindProjectIndexByRoot(root);
-      if (!index.has_value() || editor_tabs_.DirtyGroupTabsForProject(*index).empty()) {
-        continue;
-      }
-      if (!SwitchProjectByRoot(root)) {
-        continue;
-      }
-      if (!SaveDirtyGroupTabs(editor_tabs_.DirtyGroupTabs())) {
-        if (!original_active_root.empty()) {
-          SwitchProjectByRoot(original_active_root);
-        }
-        return;
-      }
-    }
-
-    if (!original_active_root.empty()) {
-      SwitchProjectByRoot(original_active_root);
+  prompt_surfaces_.DismissDirtyPrompt(false);
+  if (prompt.selected_action != 0) {
+    quit_requested_ = true;
+    return;
+  }
+  // Save All, then quit — one project at a time, each waiting for its own writes
+  // (ContinueQuit). Only projects with unsaved buffers are visited:
+  // DirtyGroupTabsForProject inspects a catalog entry's in-memory tabs (all
+  // groups) without activating it, so a clean project costs no persist-out /
+  // load-in round trip.
+  SaveContinuation step{
+      .kind = SaveContinuation::Kind::Quit,
+      .return_root = context_.current_project_state.root,
+  };
+  for (std::size_t i = 0; i < context_.project_catalog.entries.size(); ++i) {
+    const std::filesystem::path root = context_.ProjectCatalogRoot(i);
+    if (!root.empty() && !editor_tabs_.DirtyGroupTabsForProject(i).empty()) {
+      step.remaining_roots.push_back(root);
     }
   }
-
-  prompt_surfaces_.DismissDirtyPrompt(false);
-  quit_requested_ = true;
+  ContinueQuit(std::move(step));
 }
 
 DirtyPromptCoordinator WorkspaceShell::MakeDirtyPromptCoordinator(
@@ -326,6 +324,21 @@ DirtyPromptCoordinator WorkspaceShell::MakeDirtyPromptCoordinator(
                 return SwitchProject(index, log_feedback);
               },
           .close_project = [this](std::size_t index) { CloseProject(index); },
+          .notify = [this](NotificationService::Request request) { Notify(std::move(request)); },
+          .dismiss_notification =
+              [this](std::string_view key) {
+                if (notification_service_.DismissKey(key)) {
+                  RequestFullRedraw();
+                }
+              },
+          .resume_path_mutation =
+              [this](PromptSurfaceState pending) {
+                // Built fresh here: the factory's own parameters are not captured.
+                EditorTabService& tabs = MakeEditorTabService();
+                PromptSurfaceService& surfaces = MakePromptSurfaceService();
+                MakePathMutationCoordinator(tabs, surfaces)
+                    .ResumeDeferredPathMutation(std::move(pending));
+              },
       });
 }
 

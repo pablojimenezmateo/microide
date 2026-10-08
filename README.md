@@ -661,6 +661,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `focus-notifications`
 - `notification-action <row-key|row-index> <action-label|action-index>`
 - `show-output <channel-id>`
+- `cancel-save-wait <id>`
 - `colorscheme [name|list]`
 - `toggle-theme`
 - `toggle-fullscreen`

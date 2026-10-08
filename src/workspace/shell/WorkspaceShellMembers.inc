@@ -730,8 +730,8 @@
   // completion (ApplyDeferredSaveFormat) finishes that save.
   SavePreparation PrepareEditorViewportForSave(const std::filesystem::path& path,
                                                editor::TextViewport& viewport,
-                                               std::string* error_message = nullptr,
-                                               SaveMode mode = SaveMode::Blocking);
+                                               std::string* error_message,
+                                               SaveMode mode);
   // Shell thread, from the SaveFormatterService completion: find the tab that posted
   // this run and finish its save.
   void ApplyDeferredSaveFormat(const SaveFormatterService::Completion& completion);
@@ -788,11 +788,11 @@
   void RequestCloseTab(std::size_t index);
   void RequestCloseTabs(std::vector<std::size_t> indices);
   void SyncActiveEditorTab();
-  bool SaveTab(std::size_t index, SaveMode mode = SaveMode::Blocking);
+  bool SaveTab(std::size_t index, SaveMode mode);
   // Group-aware save wrapper (mirrors SaveTab's save_tab_mutex_ + format-suppress
   // bracket) so autosave / save-on-quit can flush a tab in the non-focused group.
   bool SaveGroupTab(std::size_t group_index, std::size_t index,
-                    SaveMode mode = SaveMode::Blocking);
+                    SaveMode mode);
   // Autosave dirty, titled editor tabs when editor.autosave selects the matching
   // trigger (on_focus_change vs after_delay). Safe: never prompts, never clobbers.
   void MaybeAutosaveDirtyTabs(bool on_focus_change);

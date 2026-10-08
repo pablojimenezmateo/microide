@@ -350,7 +350,9 @@
         WorkspaceShell::ActionId::SidebarShow, {"git"}, WorkspaceShell::ActionSource::Menu);
   }
   static void OpenCommandPalette(WorkspaceShell& shell) { shell.OpenCommandPalette(); }
-  static bool SaveTab(WorkspaceShell& shell, std::size_t index) { return shell.SaveTab(index); }
+  static bool SaveTab(WorkspaceShell& shell, std::size_t index) {
+    return shell.SaveTab(index, SaveMode::Blocking);
+  }
   // The LSP half of every keystroke: shift stored diagnostics, drop edit-stale
   // overlays, sync the open document. Exposed to pin its per-key cost.
   static void SyncLspForActiveEditableLastChange(WorkspaceShell& shell) {
@@ -384,7 +386,9 @@
     return shell.SaveTab(index, SaveMode::Deferred);
   }
   static bool SaveThenCloseTab(WorkspaceShell& shell, std::size_t index) {
-    return shell.MakeEditorTabService().SaveThenClose(index);
+    EditorTabService& editor_tabs = shell.MakeEditorTabService();
+    PromptSurfaceService& prompt_surfaces = shell.MakePromptSurfaceService();
+    return shell.MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SaveThenClose(index);
   }
   static int DrainSaveFormatterCompletions(WorkspaceShell& shell) {
     return shell.save_formatter_service_.DrainCompletions();

@@ -54,10 +54,10 @@ class PathMutationCoordinator {
                                  std::string* blocking_label) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   void ConfirmPromptSurface(DirtyPathResolution resolution);
-  // A tab whose save a rename/delete was waiting on finished (`saved` false: the
-  // write failed or was refused). Once the last such tab lands, the parked
-  // mutation runs; a failed save cancels it with a notification instead.
-  void ResumeDeferredPathMutation(bool saved);
+  // Replay a confirmed rename/delete once every write it waited on has landed
+  // (a SaveContinuation of kind PathMutation; a failed write cancels it before
+  // this is reached).
+  void ResumeDeferredPathMutation(PromptSurfaceState pending);
 
   // Reconcile shell state after an EXTERNAL path mutation (an LSP WorkspaceEdit
   // resource op) already happened on disk: no prompts, no file operations — pure

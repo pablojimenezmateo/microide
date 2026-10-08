@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/services/PromptSurfaceService.h"
 
@@ -303,28 +304,23 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
       }
       // One re-entry, with the formatter suppressed, so this lands exactly one write
       // and cannot post another run.
-      const bool close_after_save = editor_state.close_after_save;
-      editor_state.close_after_save = false;
-      const bool path_mutation_after_save = editor_state.path_mutation_after_save;
-      editor_state.path_mutation_after_save = false;
+      const std::uint64_t tab_id = tab.stable_id;
       editor_state.skip_formatter_once = true;
       const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::Blocking);
-      // The tab was closed with unsaved edits and the user chose Save, so the
-      // close was waiting on this write. Only now — closing on a FAILED write
-      // would discard exactly the edits they asked to keep, so a refused save
-      // leaves the tab open with its contents intact.
-      if (close_after_save && saved) {
-        MakeEditorTabService().CloseGroupTab(group_index, tab_index);
-      }
-      // A rename/delete was waiting on this write (TD-2026-09-28-304).
-      if (path_mutation_after_save) {
-        EditorTabService& editor_tabs = MakeEditorTabService();
-        PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-        MakePathMutationCoordinator(editor_tabs, prompt_surfaces).ResumeDeferredPathMutation(saved);
-      }
+      // Whatever waited on this write — the tab's close, a rename/delete, a project
+      // close, a quit — runs now, or is cancelled when the write did not land:
+      // closing on a FAILED write would discard exactly the edits the user asked to
+      // keep (TD-2026-09-28-304).
+      EditorTabService& editor_tabs = MakeEditorTabService();
+      PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+      MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
       return;
     }
   }
+  // Not in the active project: see DirtyPromptCoordinator::SettleOrphanedRun.
+  EditorTabService& editor_tabs = MakeEditorTabService();
+  PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+  MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleOrphanedRun(completion.id);
 }
 
 void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion completion,
@@ -469,7 +465,7 @@ void WorkspaceShell::MaybeAutosaveDirtyTabs(bool on_focus_change) {
   // Flush every dirty tab across ALL editor groups, not just the focused one, so a
   // buffer dirtied in the non-focused split group is autosaved too (VSCode parity).
   for (const GroupTabRef& ref : MakeEditorTabService().DirtyGroupTabs()) {
-    SaveGroupTab(ref.group_index, ref.tab_index);
+    SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Blocking);  // formatter suppressed
   }
   autosave_suppress_format_on_save_ = false;
 }

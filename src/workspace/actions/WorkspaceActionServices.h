@@ -240,6 +240,9 @@ class WorkspaceActionContext {
         take_notification_action;
     // Show an Output channel by id; false when no such channel exists.
     std::function<bool(std::string_view)> show_output_channel;
+    // Cancel a quit / close-project waiting on formatter saves; false when no
+    // wait with that id exists (it already ran or was cancelled).
+    std::function<bool(std::uint64_t)> cancel_save_wait;
     // Queue the host-level full-screen toggle. The window itself is owned by
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;
     // the shell only records the request.
@@ -640,6 +643,7 @@ class WorkspaceActionContext {
   // Focus the notification stack (see Operations::focus_notifications).
   bool FocusNotifications();
   bool ShowOutputChannel(std::string_view channel_id);
+  bool CancelSaveWait(std::uint64_t id);
   std::optional<NotificationAction> TakeNotificationAction(std::string_view row,
                                                            std::string_view action,
                                                            std::string* error);

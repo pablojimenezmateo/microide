@@ -25,6 +25,10 @@ enum class ActionId {
   // tail (VS Code's "Output: Show Output Channel"): `show-output <channel-id>`.
   // The "Show Output" button on a formatter failure is this.
   ShowOutput,
+  // The Cancel button of a quit / close-project that is waiting for formatter
+  // saves: `cancel-save-wait <id>` (the id rides on the button). The quit or close
+  // is abandoned and the buffers still formatting stay open and dirty.
+  CancelSaveWait,
   Colorscheme,
   ToggleColorTheme,
   ToggleFullscreen,

@@ -1187,7 +1187,7 @@ Not covered, on purpose: the plugin data directory, persistence, the tool cache
 and the control descriptor create and remove files that are not in a project
 tree. (The editor save's own gate is TD-2026-09-29-308, resolved the same day.)
 
-### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [OPEN]
+### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [PARTLY RESOLVED 2026-10-08 — close, rename/delete, close-project and quit wait as save continuations; save participants and compare/merge saves remain]
 
 `SaveFormatterService` took the formatter off the shell thread for the INTERACTIVE
 save, which is the one that used to freeze the window on every Ctrl+S. Three things
@@ -1236,6 +1236,34 @@ completion, and therefore still blocks:
   would come back to; and **rename/delete** must sequence the path mutation
   AFTER the write, so the continuation has to carry the mutation rather than
   just a close.
+
+  **Done 2026-10-08: one continuation queue.** `WorkspaceContext::save_continuations`
+  (`state/SaveContinuationState.h`) holds every piece of work waiting on deferred
+  writes as DATA — kind, the stable ids of the tabs it waits on, the project
+  those tabs live in, and the payload (a tab id, the rename/delete prompt, the
+  project to return to, the projects still to save) — never a closure, so nothing
+  captures a coordinator built for one call. `DirtyPromptCoordinator`
+  (`…Continuations.cpp`) is the one place that runs or cancels them:
+  `ApplyDeferredSaveFormat` calls `SettleSave(tab_id, saved)`, which runs every
+  continuation whose last tab landed and cancels every one waiting on a failed or
+  refused write. `close_after_save`, `path_mutation_after_save` and
+  `PromptState::deferred_path_mutation` are gone; so is the per-project
+  `next_tab_stable_id` (ids are process-unique now, `EnsureTabStableId`, because a
+  quit spans projects). Quit and close-project defer every dirty buffer's save and
+  wait behind a sticky progress row ("Saving N files before quitting…") whose
+  Cancel button (`cancel-save-wait <id>`) abandons the in-flight writes — the
+  buffers stay open and dirty — and runs nothing further; quit visits one project
+  at a time and stays on it until its writes land. A completion for a tab that is
+  no longer in the active project (the user switched while it formatted, or closed
+  the tab) is reported and settled as failed rather than dropped silently, which it
+  used to be. `SaveMode` lost its `Blocking` default everywhere, so a new caller
+  states which save it wants. Tests: `SaveFormatterPipeline/QuitWaits…`,
+  `CancellingTheQuit…`, `CloseProjectWaits…`, `ARefusedSaveCancelsTheRename`.
+
+  Writing the refused-rename test found a data-loss bug fixed alongside
+  (931115b9): applying a formatter's output re-stat'd the file and adopted the
+  disk state as the conflict baseline, so a file changed on disk while its
+  formatter ran was overwritten by the save without a word.
 - **save participants still run on the shell thread.** They are plugin calls that
   hand off to the plugin worker and wait, so they are bounded by the plugin
   runtime's own budget rather than by a subprocess — but they are a wait, and

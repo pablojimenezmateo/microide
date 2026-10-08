@@ -837,9 +837,6 @@ struct ProjectWorkspaceState {
   // half owns both).
   std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
   std::size_t focused_group_index = 0;
-  // Monotonic source of TabEntry::stable_id (never reused within a project session).
-  // Only advanced when a dirty prompt first stamps a tab (TD-2026-07-17-024).
-  std::uint64_t next_tab_stable_id = 1;
   EditorSplitTree editor_split;
 
   // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the

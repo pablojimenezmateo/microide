@@ -20,11 +20,7 @@ std::uint64_t PromptSurfaceService::EnsureFocusedTabStableId(std::size_t index) 
   if (index >= tabs.size()) {
     return 0;
   }
-  TabEntry& tab = tabs[index];
-  if (tab.stable_id == 0) {
-    tab.stable_id = state_.next_tab_stable_id++;
-  }
-  return tab.stable_id;
+  return EnsureTabStableId(tabs[index]);
 }
 
 std::vector<std::uint64_t> PromptSurfaceService::StableIdsForFocusedTabs(

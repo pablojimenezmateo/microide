@@ -19,9 +19,9 @@ class EditorTabService {
   explicit EditorTabService(TabCoordinator coordinator);
 
   std::string ActiveTitle() const;
-  bool Save(std::size_t index, SaveMode mode = SaveMode::Blocking);
+  bool Save(std::size_t index, SaveMode mode);
   bool SaveGroupTab(std::size_t group_index, std::size_t index,
-                    SaveMode mode = SaveMode::Blocking);
+                    SaveMode mode);
   bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
                       const std::filesystem::path& path, std::string* error);
   bool IsDirty(std::size_t index) const;
@@ -60,9 +60,10 @@ class EditorTabService {
                                  std::string_view content);
   void Close(std::size_t index);
   void CloseGroupTab(std::size_t group_index, std::size_t index);
-  // Save then close, closing when the write lands rather than blocking the shell
-  // thread on the formatter. See TabCoordinator::SaveThenClose.
-  bool SaveThenClose(std::size_t index);
+  // Save for a close that waits for the write rather than blocking the shell
+  // thread on the formatter. See TabCoordinator::SaveForClose; the close of a
+  // deferred tab is a save continuation (DirtyPromptCoordinator::SaveThenClose).
+  TabCoordinator::SaveForCloseResult SaveForClose(std::size_t index);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
   bool FocusEditorGroupInDirection(EditorGroupDirection direction);

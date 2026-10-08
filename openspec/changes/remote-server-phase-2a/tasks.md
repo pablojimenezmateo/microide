@@ -17,13 +17,13 @@
 
 ## 3. Save continuations (rest of TD-2026-09-28-304)
 
-- [ ] 3.1 Introduce a continuation queue keyed by stable tab ids: register `(tab ids, precondition, run, cancel-message)`; `ApplyDeferredSaveFormat` completes a tab and runs every continuation whose tabs are all done, cancelling on any failed or refused save
-- [ ] 3.2 Port tab close (`close_after_save`) and rename/delete (`path_mutation_after_save`, `PromptState::deferred_path_mutation`) onto it and delete the old flags; existing tests must pass unchanged
-- [ ] 3.3 Close-project: defer the dirty buffers' saves, show a sticky progress row with a Cancel action (needs 2.x), tear down after the last write; never run a continuation against a switched-away project
-- [ ] 3.4 Quit: same, "Saving N files before quitting…" with Cancel; exit when the last write lands; Cancel aborts the quit and leaves buffers open; no exit with a save in flight, no silent unformatted exit
-- [ ] 3.5 Remove the remaining `SaveMode::Blocking` callers that 3.3/3.4 replace and tighten the `CheckNoSynchronousSubprocessInWorkspace` allowlist accordingly
-- [ ] 3.6 Tests: quit and close-project with a slow formatter keep the shell responsive and finish; Cancel leaves the buffer open and dirty; a refused save cancels the continuation with a notification
-- [ ] 3.7 Update TD-2026-09-28-304 (only save participants and compare/merge saves remain)
+- [x] 3.1 Introduce a continuation queue keyed by stable tab ids: register `(tab ids, precondition, run, cancel-message)`; `ApplyDeferredSaveFormat` completes a tab and runs every continuation whose tabs are all done, cancelling on any failed or refused save
+- [x] 3.2 Port tab close (`close_after_save`) and rename/delete (`path_mutation_after_save`, `PromptState::deferred_path_mutation`) onto it and delete the old flags; existing tests must pass unchanged
+- [x] 3.3 Close-project: defer the dirty buffers' saves, show a sticky progress row with a Cancel action (needs 2.x), tear down after the last write; never run a continuation against a switched-away project
+- [x] 3.4 Quit: same, "Saving N files before quitting…" with Cancel; exit when the last write lands; Cancel aborts the quit and leaves buffers open; no exit with a save in flight, no silent unformatted exit
+- [x] 3.5 Remove the remaining `SaveMode::Blocking` callers that 3.3/3.4 replace and tighten the `CheckNoSynchronousSubprocessInWorkspace` allowlist accordingly — done 2026-10-08: quit/close-project no longer save Blocking; the `RunBlocking` allowlist was already the save-pipeline TU only (compare/merge saves keep it), so the tightening is `SaveMode` losing its `Blocking` default — every caller now names its mode
+- [x] 3.6 Tests: quit and close-project with a slow formatter keep the shell responsive and finish; Cancel leaves the buffer open and dirty; a refused save cancels the continuation with a notification
+- [x] 3.7 Update TD-2026-09-28-304 (only save participants and compare/merge saves remain)
 
 ## 4. Protocol codec and transport
 
