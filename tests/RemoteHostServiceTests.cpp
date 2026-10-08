@@ -363,7 +363,13 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                       target;
              },
              std::chrono::seconds(60), std::chrono::milliseconds(10)),
-         "and connected again");
+         "and connected again: '" +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "' " + [&] {
+               (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-status");
+               std::string all;
+               for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
+               return all;
+             }());
   }
   {
     // A later run opening the mirror as a plain folder.

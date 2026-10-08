@@ -176,7 +176,10 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityForMirror(
     // Reopened after a close (which disconnected it): connect again. A no-op when
     // the project is still connected or connecting.
     existing->second.closed = false;
+    // Reopened before its session acted on the close's Disconnect, it is simply
+    // still connected and reports no new state: show it again from here.
     existing->second.project->session().Connect();
+    ApplyProject(root);
     return existing->second.project->locality();
   }
   const std::optional<remote::RemoteProjectRecord> record = remote::RemoteProject::ReadRecord(root);
