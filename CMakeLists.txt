@@ -263,6 +263,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/platform/SubprocessSandbox.cpp
   src/platform/TerminalBackend.cpp
   src/platform/Trash.cpp
+  src/platform/UnixSocket.cpp
   src/project/CommitWorkflowChecks.cpp
   src/project/CompileCommandsLocator.cpp
   src/project/DirectoryTree.cpp
