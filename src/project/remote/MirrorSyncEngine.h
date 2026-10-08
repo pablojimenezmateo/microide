@@ -168,7 +168,11 @@ class MirrorSyncEngine {
   void PullNow(std::vector<PullItem> items, Lane lane);
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);
-  void TreeOpNow(const LocalTreeOp& op);
+  // False when the host could not be reached: the op stays journaled for later.
+  bool TreeOpNow(const LocalTreeOp& op);
+  // Replay the journaled tree operations in order, stopping at the first that
+  // cannot reach the host.
+  void DrainTreeOps();
   void ResolveNow(const std::string& path, Resolution resolution);
   void RecountLocked();
   void SaveLocked();

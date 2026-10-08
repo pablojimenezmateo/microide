@@ -19,7 +19,8 @@
 namespace microide::project::remote {
 namespace {
 
-constexpr std::uint64_t kStateVersion = 1;
+// 2: the tree-operation journal follows the entries.
+constexpr std::uint64_t kStateVersion = 2;
 
 enum EntryFlag : std::uint8_t {
   kHasRemote = 1u << 0,
@@ -110,6 +111,7 @@ bool MirrorStore::Open(std::string* error) {
     }
   }
   entries_.clear();
+  pending_tree_ops_.clear();
   manifest_id_ = 0;
   persistence::PersistedRecordReaderError read_error = persistence::PersistedRecordReaderError::None;
   const auto record = persistence::PersistedRecordReader::ReadFile(state_path(), &read_error);
@@ -127,7 +129,7 @@ bool MirrorStore::Open(std::string* error) {
   const std::uint64_t version = in.Varint();
   manifest_id_ = in.Varint();
   const std::uint64_t count = in.Varint();
-  if (in.failed() || version != kStateVersion || count > body.size()) {
+  if (in.failed() || (version != 1 && version != kStateVersion) || count > body.size()) {
     *error = "the mirror's state file " + state_path().string() + " has an unknown format";
     return false;
   }
@@ -169,8 +171,26 @@ bool MirrorStore::Open(std::string* error) {
     }
     entries_.emplace(std::move(path), std::move(entry));
   }
+  pending_tree_ops_.clear();
+  if (version >= 2 && !in.failed()) {
+    const std::uint64_t ops = in.Varint();
+    for (std::uint64_t i = 0; i < ops && !in.failed() && i <= body.size(); ++i) {
+      PendingTreeOp op;
+      const std::uint64_t kind = in.Le(1);
+      op.path = std::string(in.Bytes(kMaxManifestPathBytes));
+      op.new_path = std::string(in.Bytes(kMaxManifestPathBytes));
+      if (kind < 1 || kind > 3 || !IsSafeRelativePath(op.path) ||
+          (kind == 2 && !IsSafeRelativePath(op.new_path))) {
+        in.Fail();
+        break;
+      }
+      op.kind = static_cast<PendingTreeOp::Kind>(kind);
+      pending_tree_ops_.push_back(std::move(op));
+    }
+  }
   if (in.failed() || !in.at_end()) {
     entries_.clear();
+    pending_tree_ops_.clear();
     *error = "the mirror's state file " + state_path().string() + " is truncated or corrupt";
     return false;
   }
@@ -210,6 +230,12 @@ bool MirrorStore::Save(std::string* error) const {
       util::PutVarint(body, entry.local_size);
       util::PutVarint(body, ZigZag(entry.local_mtime_ns));
     }
+  }
+  util::PutVarint(body, pending_tree_ops_.size());
+  for (const PendingTreeOp& op : pending_tree_ops_) {
+    body.push_back(static_cast<char>(op.kind));
+    util::PutBytes(body, op.path);
+    util::PutBytes(body, op.new_path);
   }
   persistence::PersistedRecordWriterError write_error = persistence::PersistedRecordWriterError::None;
   if (!persistence::PersistedRecordWriter::WriteFile(

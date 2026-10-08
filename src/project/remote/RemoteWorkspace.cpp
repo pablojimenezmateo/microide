@@ -47,6 +47,7 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
   RemoteWorkspace::WriteResult out;
   if (error.has_value() || !result.has_value()) {
     out.error = error.has_value() ? error->message : "no answer";
+    out.unreachable = !error.has_value() || error->code == kErrorCancelled;
     return out;
   }
   const util::JsonValue& hash = (*result)["hash"];
@@ -294,7 +295,7 @@ std::uint64_t RemoteWorkspace::WriteFile(std::string path, std::string_view cont
   }
   const std::shared_ptr<RemoteServerClient> client = Client();
   if (!client) {
-    done(WriteResult{.error = kNotConnected});
+    done(WriteResult{.error = kNotConnected, .unreachable = true});
     return 0;
   }
   RemotePeer& peer = client->peer();
@@ -312,7 +313,7 @@ std::uint64_t RemoteWorkspace::WriteFile(std::string path, std::string_view cont
         }
       });
   if (id == 0) {
-    done(WriteResult{.error = "not connected"});
+    done(WriteResult{.error = "not connected", .unreachable = true});
   }
   return id;
 }
@@ -327,7 +328,7 @@ RemoteWorkspace::WriteResult RemoteWorkspace::WriteFileSync(std::string path,
         return WriteFile(std::move(path), content, expect, mode, Lane::Interactive,
                          std::move(finish));
       },
-      connection_, timeout, WriteResult{.error = "timed out waiting for file/write"});
+      connection_, timeout, WriteResult{.error = "timed out waiting for file/write", .unreachable = true});
 }
 
 std::uint64_t RemoteWorkspace::ApplyTreeOp(TreeOp op, std::string path, std::string to,
@@ -343,7 +344,7 @@ std::uint64_t RemoteWorkspace::ApplyTreeOp(TreeOp op, std::string path, std::str
   params["expect"] = ToJson(expect);
   const std::shared_ptr<RemoteServerClient> client = Client();
   if (!client) {
-    done(WriteResult{.error = kNotConnected});
+    done(WriteResult{.error = kNotConnected, .unreachable = true});
     return 0;
   }
   const std::uint64_t id = client->peer().Request(
@@ -352,7 +353,7 @@ std::uint64_t RemoteWorkspace::ApplyTreeOp(TreeOp op, std::string path, std::str
         done(WriteResultFrom(std::move(result), std::move(error)));
       });
   if (id == 0) {
-    done(WriteResult{.error = "not connected"});
+    done(WriteResult{.error = "not connected", .unreachable = true});
   }
   return id;
 }
@@ -365,7 +366,7 @@ RemoteWorkspace::WriteResult RemoteWorkspace::ApplyTreeOpSync(TreeOp op, std::st
       [&](WriteDone finish) {
         return ApplyTreeOp(op, std::move(path), std::move(to), expect, std::move(finish));
       },
-      connection_, timeout, WriteResult{.error = "timed out waiting for fs/op"});
+      connection_, timeout, WriteResult{.error = "timed out waiting for fs/op", .unreachable = true});
 }
 
 }  // namespace microide::project::remote

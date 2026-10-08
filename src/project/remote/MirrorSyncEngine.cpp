@@ -115,8 +115,37 @@ void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
 
 void MirrorSyncEngine::NotifyLocalTreeOps(std::vector<LocalTreeOp> ops) {
   queue_.Post([this, ops = std::move(ops)]() {
+    {
+      // Journaled before they are tried, like a push: a restart or a dropped link
+      // replays them, in order, before the next reconcile.
+      std::lock_guard lock(mutex_);
+      using Pending = MirrorStore::PendingTreeOp;
+      for (const LocalTreeOp& op : ops) {
+        switch (op.kind) {
+          case LocalTreeOp::Kind::CreateFile: {
+            MirrorStore::Entry& entry = store_.entries()[op.path];
+            entry.remote.path = op.path;
+            entry.push_pending = true;  // a create is a push, journaled as one
+            break;
+          }
+          case LocalTreeOp::Kind::CreateDirectory:
+            store_.pending_tree_ops().push_back(Pending{Pending::Kind::CreateDirectory, op.path, {}});
+            break;
+          case LocalTreeOp::Kind::Rename:
+            store_.pending_tree_ops().push_back(Pending{Pending::Kind::Rename, op.path, op.new_path});
+            break;
+          case LocalTreeOp::Kind::Delete:
+            store_.pending_tree_ops().push_back(Pending{Pending::Kind::Delete, op.path, {}});
+            break;
+        }
+      }
+      SaveLocked();
+    }
+    DrainTreeOps();
     for (const LocalTreeOp& op : ops) {
-      TreeOpNow(op);
+      if (op.kind == LocalTreeOp::Kind::CreateFile) {
+        PushNow(op.path);
+      }
     }
     {
       std::lock_guard lock(mutex_);
@@ -127,31 +156,54 @@ void MirrorSyncEngine::NotifyLocalTreeOps(std::vector<LocalTreeOp> ops) {
   });
 }
 
-void MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
+void MirrorSyncEngine::DrainTreeOps() {
+  for (;;) {
+    LocalTreeOp op;
+    {
+      std::lock_guard lock(mutex_);
+      auto& pending = store_.pending_tree_ops();
+      if (pending.empty()) {
+        return;
+      }
+      const MirrorStore::PendingTreeOp& front = pending.front();
+      using Pending = MirrorStore::PendingTreeOp;
+      op.kind = front.kind == Pending::Kind::CreateDirectory ? LocalTreeOp::Kind::CreateDirectory
+                : front.kind == Pending::Kind::Rename        ? LocalTreeOp::Kind::Rename
+                                                             : LocalTreeOp::Kind::Delete;
+      op.path = front.path;
+      op.new_path = front.new_path;
+    }
+    if (!TreeOpNow(op)) {
+      return;  // the host is out of reach: the rest wait, in order
+    }
+    std::lock_guard lock(mutex_);
+    store_.pending_tree_ops().pop_front();
+    SaveLocked();
+  }
+}
+
+bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
   using TreeOp = RemoteWorkspace::TreeOp;
   using Status = RemoteWorkspace::WriteResult::Status;
   if (!IsSafeRelativePath(op.path) ||
       (op.kind == LocalTreeOp::Kind::Rename && !IsSafeRelativePath(op.new_path))) {
-    return;
+    return true;
   }
   if (op.kind == LocalTreeOp::Kind::CreateFile) {
-    {
-      std::lock_guard lock(mutex_);
-      MirrorStore::Entry& entry = store_.entries()[op.path];
-      entry.remote.path = op.path;
-      entry.push_pending = true;
-    }
     PushNow(op.path);
-    return;
+    return true;
   }
   if (op.kind == LocalTreeOp::Kind::CreateDirectory) {
     const auto result = workspace_.ApplyTreeOpSync(TreeOp::MakeDirectory, op.path, {},
                                                    Precondition::Anything());
+    if (result.unreachable) {
+      return false;
+    }
     if (result.status == Status::Error) {
       std::lock_guard lock(mutex_);
       status_.error = result.error;
     }
-    return;
+    return true;
   }
   // A rename or delete of one file is checked against its base; a directory's
   // (no entry of its own) against nothing — its files were each the user's to move.
@@ -166,6 +218,9 @@ void MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
   const bool rename = op.kind == LocalTreeOp::Kind::Rename;
   const auto result = workspace_.ApplyTreeOpSync(rename ? TreeOp::Rename : TreeOp::Delete, op.path,
                                                  rename ? op.new_path : std::string(), expect);
+  if (result.unreachable) {
+    return false;
+  }
   std::lock_guard lock(mutex_);
   auto& entries = store_.entries();
   // The path itself and, for a directory, everything under it.
@@ -184,11 +239,11 @@ void MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
         entries.insert(std::move(node));
       }
     }
-    return;
+    return true;
   }
   if (result.status == Status::Error) {
     status_.error = result.error;
-    return;
+    return true;
   }
   // Refused: the host's copy moved since our base. The local tree already shows
   // the operation; the next sync restores the host's version at the old path (an
@@ -206,6 +261,7 @@ void MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
       entries[to] = std::move(moved);
     }
   }
+  return true;
 }
 
 void MirrorSyncEngine::ResolveConflict(std::string path, Resolution resolution) {
@@ -534,6 +590,9 @@ std::size_t MirrorSyncEngine::RemoteCountLocked() const {
 }
 
 void MirrorSyncEngine::SyncNow() {
+  // The journal's tree operations first, in order: a rename made offline must land
+  // before the manifest is compared, or the old path reads as one to pull back.
+  DrainTreeOps();
   std::string error;
   std::optional<RemoteWorkspace::Manifest> manifest = workspace_.FetchManifestSync(&error);
   if (!manifest.has_value()) {

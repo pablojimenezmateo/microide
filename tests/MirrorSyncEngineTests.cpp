@@ -270,6 +270,45 @@ void TestMirrorFollowsTheHostWatch() {
          "our own push echoed by the watch is current, not a change");
 }
 
+// A rename and a delete made with no connection are journaled, survive the engine
+// going away, and replay — in order, before the manifest is compared — on the next
+// connection: the deleted file is not pulled back, the renamed one lands at its
+// new path on the host.
+void TestMirrorTreeOpsMadeOfflineReplay() {
+  MirrorSession session;
+  WriteFile(session.host / "old.txt", "moving\n");
+  WriteFile(session.host / "doomed.txt", "bye\n");
+  session.Connect();
+  session.Sync();
+  {
+    // Offline: an engine whose connection has no client.
+    remote::RemoteWorkspace offline(std::make_shared<remote::RemoteConnection>(nullptr));
+    remote::MirrorSyncEngine engine(offline, *session.store);
+    remote::MirrorWriteGate gate(*session.store, engine);
+    session.engine.reset();
+    using TreeOp = project::FileWriteGate::TreeOp;
+    const std::vector<TreeOp> ops = {
+        TreeOp{.kind = TreeOp::Kind::Rename, .path = session.Tree("old.txt"),
+               .new_path = session.Tree("new.txt")},
+        TreeOp{.kind = TreeOp::Kind::Delete, .path = session.Tree("doomed.txt")},
+    };
+    Expect(gate.ApplyTreeOps(ops).ok, "the ops apply locally while offline");
+    engine.Flush();
+    Expect(session.store->pending_tree_ops().size() == 2, "and wait in the journal");
+  }
+  session.Connect();  // a new engine over a reopened store
+  Expect(session.store->pending_tree_ops().size() == 2, "the journal survived the restart");
+  session.Sync();
+  Expect(!std::filesystem::exists(session.host / "old.txt") &&
+             ReadFile(session.host / "new.txt") == "moving\n",
+         "the rename reached the host");
+  Expect(!std::filesystem::exists(session.host / "doomed.txt"), "the delete reached the host");
+  Expect(!std::filesystem::exists(session.Tree("doomed.txt")) &&
+             !std::filesystem::exists(session.Tree("old.txt")),
+         "and nothing was pulled back into the mirror");
+  Expect(session.store->pending_tree_ops().empty(), "the journal is empty");
+}
+
 void TestMirrorWriteGateReachesTheHost() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "host\n");
@@ -328,6 +367,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
+  AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);
 #else
   (void)tests;

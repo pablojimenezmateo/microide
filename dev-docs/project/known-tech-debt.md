@@ -442,11 +442,9 @@ silent one:
   directory the default skip list prunes (`build/`, `out/`, …) does not wake the
   watch; its change arrives with the next batch something else triggers, or the
   next reconnect.
-- **Tree operations are not journaled across a restart.** A content push is (the
-  `push_pending` flag plus the local bytes), but a rename or delete made while the
-  link was down and not replayed before the editor exits is lost: the next sync
-  pulls the deleted file back, and a renamed file's new path is left untracked
-  locally (never pushed, never lost).
+- ~~Tree operations are not journaled across a restart~~ — fixed 2026-10-08: mkdir,
+  rename and delete are journaled in `meta/state` before they are tried and replayed
+  in order before the next reconcile (`MirrorSyncEngine/TreeOpsMadeOfflineReplay`).
 - **No object store**: the mirror keeps each path's base HASH, not its bytes, so
   there is no delta base, no three-way view of a conflict, and a branch switch
   re-fetches files the mirror once had. Correctness does not depend on it.

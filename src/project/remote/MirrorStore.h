@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <map>
 #include <mutex>
@@ -78,6 +79,17 @@ class MirrorStore {
   bool Open(std::string* error);
   bool Save(std::string* error) const;
 
+  // Tree operations applied to tree/ and not yet acknowledged by the host, in the
+  // order they were made (a rename before a later push to its new path matters).
+  struct PendingTreeOp {
+    enum class Kind : std::uint8_t { CreateDirectory = 1, Rename = 2, Delete = 3 };
+    Kind kind = Kind::Delete;
+    std::string path;
+    std::string new_path;  // Rename
+    friend bool operator==(const PendingTreeOp&, const PendingTreeOp&) = default;
+  };
+  std::deque<PendingTreeOp>& pending_tree_ops() { return pending_tree_ops_; }
+
   std::map<std::string, Entry, std::less<>>& entries() { return entries_; }
   const std::map<std::string, Entry, std::less<>>& entries() const { return entries_; }
   Entry* Find(std::string_view path);
@@ -100,6 +112,7 @@ class MirrorStore {
   std::filesystem::path tree_;
   std::filesystem::path meta_;
   std::map<std::string, Entry, std::less<>> entries_;
+  std::deque<PendingTreeOp> pending_tree_ops_;
   std::uint64_t manifest_id_ = 0;
   std::array<std::mutex, 64> path_locks_;
 };

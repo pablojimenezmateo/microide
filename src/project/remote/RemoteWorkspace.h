@@ -87,6 +87,9 @@ class RemoteWorkspace {
     Status status = Status::Error;
     std::optional<util::ContentHash> hash;
     std::string error;
+    // The request never got an answer (no connection, or it closed): nothing is
+    // known about the host, and the operation is worth retrying on the next one.
+    bool unreachable = false;
   };
   using WriteDone = std::function<void(WriteResult result)>;
   std::uint64_t WriteFile(std::string path, std::string_view content, const Precondition& expect,
