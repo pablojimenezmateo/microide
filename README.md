@@ -145,7 +145,9 @@ for what is actually measured, and what is not.
   conflict row with **Compare**, **Keep Mine** and **Take Host's** (`remote-resolve`). Host changes stream into the mirror as they happen; a sync that would delete
   most of the mirror (an unmounted host disk) is held instead of applied. Saves made while
   offline are journaled and replayed on reconnect. The mirror lives under
-  `~/.local/share/microide/remote/` and reopens from the recents list as the remote project
+  `~/.local/share/microide/remote/` and reopens from the recents list as the remote project.
+  A host file outside the project that a language server or debugger points at (a system
+  header, a generated file in an ignored build directory) opens read-only from the host
 
 ### Debugging
 - Built-in DAP debugger (validated against gdb 17.2): per-language launch configs, line /
