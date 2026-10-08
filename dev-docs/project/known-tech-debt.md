@@ -1222,6 +1222,14 @@ completion, and therefore still blocks:
   land carries the edits nowhere. Test
   `WorkspaceShell/RenameOfDirtyFileWaitsForTheFormatterNotTheWindow`.
 
+  **Decided 2026-10-08 with the user, and scheduled** as part of
+  `openspec/changes/remote-server-phase-2a` (the `save-continuations` spec): quit
+  and close-project **wait for the formatter with a progress row and a Cancel
+  button** — never freeze, never exit with a save in flight, never exit
+  unformatted on a timeout — through one continuation queue that also replaces
+  `close_after_save`, `path_mutation_after_save` and
+  `PromptState::deferred_path_mutation`.
+
   The remaining callers are each harder for one specific reason: **quit** must
   not exit until every save lands (there is no continuation to run afterwards —
   the process is gone); **close-project** tears down the state the completion
@@ -1237,7 +1245,7 @@ completion, and therefore still blocks:
   re-derive) and a deferred completion would have to find the pane rather than the
   tab. Deliberately left; the formatter stall on those surfaces is rarer.
 
-### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [OPEN]
+### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [OPEN — scheduled as task group 1 of `openspec/changes/remote-server-phase-2a`]
 
 `microide_kernel` compiles without SDL, and `microide_kernel_link_probe` proves it
 links and runs with no windowing library. What is still missing is the design's

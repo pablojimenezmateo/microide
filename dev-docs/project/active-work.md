@@ -290,6 +290,43 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
+> **Next agent: start here.** Phase 2a is committed (2026-10-08) and specified in
+> `openspec/changes/remote-server-phase-2a/` — read `proposal.md`, then
+> `design.md`, then work `tasks.md` top to bottom (`/opsx:apply`). Order matters:
+> **(1) kernel test binary, (2) notification actions, (3) save continuations,
+> (4) frame codec + transport, (5) daemon skeleton, (6) `proc/spawn` +
+> `RemoteProcessLauncher` as the parity suite's third locality, (7) host terminals
+> with prediction, (8) connection lifecycle and install, (9) budgets and lanes.**
+>
+> Decisions already made with the user — do not re-ask:
+> - Notification actions are **VS Code-style inline buttons**; each is an
+>   `ActionId` + args, never a closure.
+> - Quit and close-project **wait for formatter saves with a progress row and a
+>   Cancel button**; never freeze, never exit with a save in flight, never exit
+>   unformatted on a timeout.
+> - Everything in the design's § 11 table (server per uid, socket under `$HOME`,
+>   `proc/spawn` with argv arrays, one ssh channel per project, mosh-style
+>   prediction, no UDP, self-install, Phase 1 removed).
+>
+> Seams to build on, not around: `platform::ProcessLauncher` (Run owns cwd
+> mapping; `LocalPathFromHost`; `ExpandWorkspaceFolder`), `project::ProjectLocality`
+> (fixed at `OpenProjectTab`), `project::GitMetadataFor`, `HostPathTranslator`,
+> `FileReadService` with `read_path = false` for off-thread waits, and
+> `tests/parity/` (loopback launcher, recording local launcher, spawn-count check,
+> shrink-only known gaps).
+>
+> Pitfalls this codebase has already paid for:
+> - Decide a real-tool test's SKIP from a **local reference run**, never from the
+>   run under test; the gdb parity row first passed with path translation off.
+> - Never capture `this` of a `Make*Coordinator()` value in an async completion;
+>   rebuild the coordinator in the completion.
+> - Never edit source while `tools/run-checks.sh` is building a sanitizer lane.
+> - `ctest | tail` hides the exit status; check `$?` of ctest itself.
+> - Run the sanitizer lanes once at the END of a batch, with
+>   `MICROIDE_BUILD_JOBS=6` (12 jobs ran out of memory on the ASAN build).
+> - No time-based assertions while the machine is under load; parity budgets are
+>   counts.
+
 `dev-docs/design/remote-projects.md`. **Groundwork started on 2026-09-22; no remote
 code exists.** The design measures what a remote operation costs (4,957 path
 syscalls to open a project, 162 to open one file), rules out sshfs, and keeps a
