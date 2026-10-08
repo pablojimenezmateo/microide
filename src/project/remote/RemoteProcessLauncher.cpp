@@ -1,5 +1,6 @@
 #include "project/remote/RemoteProcessLauncher.h"
 
+#include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteTerminalChannel.h"
 
 #include <algorithm>
@@ -232,9 +233,14 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController {
 
 }  // namespace
 
+RemoteProcessLauncher::RemoteProcessLauncher(std::shared_ptr<RemoteConnection> connection,
+                                             RemotePathMap map, Options options)
+    : connection_(std::move(connection)), map_(std::move(map)), options_(std::move(options)) {}
+
 RemoteProcessLauncher::RemoteProcessLauncher(std::shared_ptr<RemoteServerClient> client,
                                              RemotePathMap map, Options options)
-    : client_(std::move(client)), map_(std::move(map)), options_(std::move(options)) {}
+    : RemoteProcessLauncher(std::make_shared<RemoteConnection>(std::move(client)), std::move(map),
+                            std::move(options)) {}
 
 std::filesystem::path RemoteProcessLauncher::ResolveWorkingDirectory(
     std::filesystem::path cwd) const {
@@ -247,15 +253,24 @@ std::filesystem::path RemoteProcessLauncher::ResolveWorkingDirectory(
 std::shared_ptr<terminal::TerminalHostChannel> RemoteProcessLauncher::OpenTerminal(
     const OpenRequest& request, terminal::TerminalSession& session, std::string* error) const {
   OpenRequest host_request = request;
-  host_request.working_directory = ResolveWorkingDirectory(request.working_directory);
+  // A directory outside the project's tree has no host counterpart: the host
+  // starts the shell in the user's home rather than in a path that only exists
+  // here (empty = $HOME). A terminal-only connection has no tree at all.
+  host_request.working_directory =
+      map_.host_root().empty() ? std::filesystem::path()
+                               : map_.ToHost(request.working_directory).value_or(std::filesystem::path());
   auto channel = RemoteTerminalChannel::Open(
-      client_, host_request, session,
+      connection_->client(), host_request, session,
       [map = map_](const std::filesystem::path& host_path) {
         return map.ToLocal(host_path).value_or(host_path);
       });
-  if (channel == nullptr && error != nullptr) {
-    *error = "not connected to the host";
+  if (channel == nullptr) {
+    if (error != nullptr) {
+      *error = "not connected to the host";
+    }
+    return nullptr;
   }
+  connection_->Track(channel);
   return channel;
 }
 
@@ -277,7 +292,13 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
   auto collected = std::make_shared<Collected>();
   const bool capture_out = options.capture_stdout;
   const bool capture_err = options.capture_stderr && !options.silence_stderr;
-  std::shared_ptr<RemoteServerClient> client = client_;
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  if (client == nullptr || !client->connected()) {
+    platform::SubprocessResult result;
+    result.exit_code = 127;
+    result.stderr_text = "not connected to the host";
+    return result;
+  }
   // The handle is learned only from the spawn reply, after output may have started
   // arriving; acks go out once it is known.
   auto handle = std::make_shared<std::atomic<std::uint64_t>>(0);
@@ -316,7 +337,7 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
             collected->done.notify_all();
           },
   };
-  const RemoteServerClient::Spawned spawned = client_->Spawn(
+  const RemoteServerClient::Spawned spawned = client->Spawn(
       argv, ResolveWorkingDirectory(options.cwd), EnvOf(options), false, std::move(events));
   if (spawned.handle == 0) {
     platform::SubprocessResult result;
@@ -326,16 +347,16 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
   }
   Record(argv);
   handle->store(spawned.handle);
-  client_->Ack(spawned.handle, received->first.load(), received->second.load());
+  client->Ack(spawned.handle, received->first.load(), received->second.load());
   if (!options.stdin_text.empty()) {
-    client_->WriteStdin(spawned.handle, options.stdin_text);
+    client->WriteStdin(spawned.handle, options.stdin_text);
   }
-  client_->CloseStdin(spawned.handle);
+  client->CloseStdin(spawned.handle);
 
   platform::SubprocessResult result;
   {
     std::unique_lock lock(collected->mutex);
-    const auto finished = [&]() { return collected->status.has_value() || !client_->connected(); };
+    const auto finished = [&]() { return collected->status.has_value() || !client->connected(); };
     if (options.timeout_ms > 0) {
       if (!collected->done.wait_for(lock, std::chrono::milliseconds(options.timeout_ms), finished)) {
         result.timed_out = true;
@@ -346,7 +367,7 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
     }
   }
   if (result.timed_out) {
-    client_->Signal(spawned.handle, "KILL");
+    client->Signal(spawned.handle, "KILL");
     std::unique_lock lock(collected->mutex);
     collected->done.wait_for(lock, std::chrono::seconds(5),
                              [&]() { return collected->status.has_value(); });
@@ -361,7 +382,7 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
       result.stderr_text += "\nthe connection to the host was lost";
     }
   }
-  client_->Release(spawned.handle);
+  client->Release(spawned.handle);
   return result;
 }
 
@@ -373,13 +394,17 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
   // process is confined by the host account it runs as.
   (void)sandbox;
 #if defined(__unix__) || defined(__APPLE__)
-  auto remote = std::make_shared<RemoteAsyncProcess>(client_);
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  if (client == nullptr || !client->connected()) {
+    return false;
+  }
+  auto remote = std::make_shared<RemoteAsyncProcess>(client);
   const std::optional<std::pair<int, int>> consumer = remote->MakePipes();
   if (!consumer.has_value()) {
     return false;
   }
   const RemoteServerClient::Spawned spawned =
-      client_->Spawn(argv, ResolveWorkingDirectory(cwd), {}, false, remote->Events());
+      client->Spawn(argv, ResolveWorkingDirectory(cwd), {}, false, remote->Events());
   if (spawned.handle == 0) {
     ::close(consumer->first);
     ::close(consumer->second);
@@ -408,7 +433,11 @@ std::optional<RemoteServerClient::GitMetadata> RemoteProcessLauncher::Metadata(
       return cached->second;
     }
   }
-  std::optional<RemoteServerClient::GitMetadata> answer = client_->QueryGitMetadata(*host_root);
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  if (client == nullptr || !client->connected()) {
+    return std::nullopt;
+  }
+  std::optional<RemoteServerClient::GitMetadata> answer = client->QueryGitMetadata(*host_root);
   if (answer.has_value()) {
     std::lock_guard lock(mutex_);
     metadata_[*host_root] = *answer;

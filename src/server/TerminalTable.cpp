@@ -1,6 +1,7 @@
 #include "server/TerminalTable.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <utility>
 
 #include "platform/ProcessLauncher.h"
@@ -50,11 +51,17 @@ std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::J
     return fail("term/open params must be an object");
   }
   OpenRequest request;
+  // No cwd: the user's home, as a login shell would start (a host terminal opened
+  // outside any project).
   const util::JsonValue& cwd = params["cwd"];
-  if (!cwd.IsString() || cwd.AsString().empty() || cwd.AsString().front() != '/') {
+  if (cwd.IsNull()) {
+    const char* home = std::getenv("HOME");
+    request.cwd = home != nullptr && home[0] == '/' ? home : "/";
+  } else if (!cwd.IsString() || cwd.AsString().empty() || cwd.AsString().front() != '/') {
     return fail("cwd must be an absolute path");
+  } else {
+    request.cwd = cwd.AsString();
   }
-  request.cwd = cwd.AsString();
   if (const util::JsonValue& command = params["command"]; !command.IsNull()) {
     if (!command.IsString() || command.AsString().size() > kMaxShellBytes) {
       return fail("command must be a string");

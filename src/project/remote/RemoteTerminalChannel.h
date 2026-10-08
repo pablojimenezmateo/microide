@@ -47,6 +47,10 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
       terminal::TerminalSession& session, HostToLocal host_to_local,
       std::optional<terminal::TerminalSession::HostResumePoint> resume = {});
 
+  // Carry on over `client` (a reconnect): a warm reattach from the session's own
+  // resume point. Input typed meanwhile is held and sent once it is answered.
+  void Reattach(std::shared_ptr<RemoteServerClient> client);
+
   RemoteTerminalChannel(std::shared_ptr<RemoteServerClient> client,
                         terminal::TerminalSession& session, HostToLocal host_to_local);
   ~RemoteTerminalChannel() override;
@@ -60,20 +64,27 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   std::uint64_t handle() const;
 
  private:
-  void Opened(std::uint64_t handle, std::size_t credit_bytes);
+  void Attached(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
+                std::size_t credit_bytes, bool reattach);
+  bool SendAttach(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
+                  const std::optional<terminal::TerminalSession::HostResumePoint>& resume,
+                  bool reattach);
   void OpenFailed(const std::string& error);
   void ApplyFrame(std::string_view bytes);
-  void SendResize(std::uint64_t handle, std::size_t rows, std::size_t columns);
+  static void SendResize(const std::shared_ptr<RemoteServerClient>& client, std::uint64_t handle,
+                         std::size_t rows, std::size_t columns);
+  std::shared_ptr<RemoteServerClient> Client() const;
 
-  std::shared_ptr<RemoteServerClient> client_;
   HostToLocal host_to_local_;
 
   // Guards everything below. Held while a frame is applied, so Close returning
   // means no frame is touching the session.
   mutable std::mutex mutex_;
+  std::shared_ptr<RemoteServerClient> client_;   // replaced by a reconnect
   terminal::TerminalSession* session_ = nullptr;  // null once closed
   std::uint64_t handle_ = 0;                      // 0 until term/open answers
-  std::string pending_input_;                     // encoded events before the open
+  bool attached_ = false;                         // the open/attach was answered on client_
+  std::string pending_input_;                     // encoded events before that
   std::size_t pending_rows_ = 0;
   std::size_t pending_columns_ = 0;
   std::size_t credit_bytes_ = 256 * 1024;

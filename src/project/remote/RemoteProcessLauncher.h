@@ -17,6 +17,8 @@
 
 namespace microide::project::remote {
 
+class RemoteConnection;
+
 // The project launcher of a host session (dev-docs/design/remote-projects.md § 6.5):
 // every spawn the project makes — git, the formatter, plugin tools through Run; the
 // language server and the debug adapter through StartAsync — becomes a `proc/spawn`
@@ -36,6 +38,10 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
     std::string description = "remote";
   };
 
+  // Over the host's current connection, which a reconnect replaces underneath.
+  RemoteProcessLauncher(std::shared_ptr<RemoteConnection> connection, RemotePathMap map,
+                        Options options);
+  // Over one client for good (tests, the parity suite).
   RemoteProcessLauncher(std::shared_ptr<RemoteServerClient> client, RemotePathMap map,
                         Options options);
 
@@ -71,7 +77,7 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
  private:
   std::optional<RemoteServerClient::GitMetadata> Metadata(const std::filesystem::path& root) const;
 
-  std::shared_ptr<RemoteServerClient> client_;
+  std::shared_ptr<RemoteConnection> connection_;
   RemotePathMap map_;
   Options options_;
   mutable std::mutex mutex_;
