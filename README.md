@@ -840,6 +840,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `paste`
 - `redo`
 - `type <text>`
+- `key <chord> [count]`
 - `select-all`
 - `undo`
 - `jump-to-matching-bracket`

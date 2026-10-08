@@ -844,6 +844,19 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::string text) {
                 MakeTextInputCoordinator().PasteTextIntoTerminal(std::move(text));
               },
+          .press_key =
+              [this](SDL_Keycode key, SDL_Keymod modifiers) {
+                SDL_Event event{};
+                event.type = SDL_EVENT_KEY_DOWN;
+                event.key.key = key;
+                event.key.mod = modifiers;
+                event.key.scancode = SDL_GetScancodeFromKey(key, nullptr);
+                event.key.down = true;
+                (void)HandleEvent(event);
+                event.type = SDL_EVENT_KEY_UP;
+                event.key.down = false;
+                (void)HandleEvent(event);
+              },
           .refresh_available_colorscheme_names =
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .apply_colorscheme =

@@ -1,6 +1,8 @@
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/actions/WorkspaceActionServices.h"
+#include "workspace/registries/WorkspaceKeybindingRegistry.h"
+#include "util/Parse.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -356,6 +358,30 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (target != nullptr && context_.ActiveNavigableViewport() == target &&
           target->refused_edits() > refused_before) {
         return reject("Cannot edit in read-only editor");
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::PressKey: {
+      // `key <chord> [count]`: a real key press, for a headless driver (an agent
+      // answering a TUI's prompt in the terminal) and for tests — the encoder,
+      // the shortcuts and the focused surface see exactly what the keyboard
+      // sends. `type` pastes text; this presses keys (VS Code's sendSequence
+      // writes bytes, which would skip the terminal's keyboard protocol).
+      SDL_Keycode key = SDLK_UNKNOWN;
+      SDL_Keymod modifiers = SDL_KMOD_NONE;
+      if (args.empty() || !ParseKeyChord(args[0], &key, &modifiers)) {
+        return reject("usage: key <chord> [count], e.g. key enter, key shift+tab 2");
+      }
+      int count = 1;
+      if (args.size() > 1) {
+        const std::optional<int> parsed = util::ParseInt(args[1]);
+        if (!parsed.has_value() || *parsed < 1 || *parsed > 1000) {
+          return reject("key: count must be 1-1000");
+        }
+        count = *parsed;
+      }
+      for (int i = 0; i < count; ++i) {
+        context_.PressKey(key, modifiers);
       }
       return DispatchResult::Handled;
     }

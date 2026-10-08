@@ -192,6 +192,16 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   rows trimmed. PTY output is asynchronous, so this reads what is already
   buffered: run a command with `term`, then poll until `running` is false (no exit
   code is exposed).
+- Driving an interactive program in a terminal: `type <text>` PASTES (bracketed
+  paste when the program enabled it), and `key <chord> [count]` presses keys —
+  `key enter`, `key down 3`, `key shift+enter`, `key ctrl+c` — through the
+  window's real keyboard path, so the terminal encodes them exactly as a
+  keystroke (kitty keyboard protocol included) and focus/shortcut routing
+  applies. `term <command>` runs the command through `$SHELL -lc`; an argument
+  quoted when typed stays one word (`term bash -c "make; echo done"`). Worked
+  example, used to check Claude Code runs in the terminal: `panel-maximize`,
+  `term claude`, `key down`, `key enter`, `type hello`, `key shift+enter`,
+  `terminal-output`.
 
 Agent navigation commands: `reveal <path> <line[:col]>` opens the file, puts the
 caret on the 1-based line and centres it (a large file still loading lands there

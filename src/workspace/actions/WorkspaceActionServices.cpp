@@ -1296,6 +1296,12 @@ void WorkspaceActionContext::PasteClipboard() {
   InsertTextIntoActiveSurface(std::move(*clipboard_text), /*distribute_across_carets=*/true);
 }
 
+void WorkspaceActionContext::PressKey(SDL_Keycode key, SDL_Keymod modifiers) {
+  if (operations_.press_key) {
+    operations_.press_key(key, modifiers);
+  }
+}
+
 void WorkspaceActionContext::InsertText(std::string text) {
   InsertTextIntoActiveSurface(std::move(text));
 }

@@ -319,6 +319,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Redo, "redo", "redo", "Redo", "Ctrl+Y / Ctrl+Shift+Z"},
       ActionSpec{ActionId::ReplaceInBuffer, "", "", "Replace in Buffer", "Ctrl+H"},
       ActionSpec{ActionId::InsertText, "type", "type <text>", "Insert Text", ""},
+      ActionSpec{ActionId::PressKey, "key", "key <chord> [count]", "Press Key", ""},
       ActionSpec{ActionId::SelectAll, "select-all", "select-all", "Select All", "Ctrl+A"},
       ActionSpec{ActionId::Undo, "undo", "undo", "Undo", "Ctrl+Z"},
       ActionSpec{ActionId::JumpToMatchingBracket, "jump-to-matching-bracket",

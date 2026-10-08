@@ -221,6 +221,9 @@ class WorkspaceActionContext {
     std::function<std::optional<std::string>()> selection_text_with_context;
     std::function<std::optional<std::string>()> read_clipboard_text;
     std::function<void(std::string)> paste_text_into_terminal;
+    // A key press (down then up) delivered through the window's event path, as
+    // the keyboard would: shortcuts, the focused surface, the terminal's encoder.
+    std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
     std::function<void()> refresh_available_colorscheme_names;
     // False when no theme of that name exists (built-in, on disk, or plugin).
     std::function<bool(std::string_view)> apply_colorscheme;
@@ -539,6 +542,7 @@ class WorkspaceActionContext {
   // the same active-surface insertion path as PasteClipboard. Backs the
   // `type <text>` command / control-channel verb.
   void InsertText(std::string text);
+  void PressKey(SDL_Keycode key, SDL_Keymod modifiers);
 
   void RefreshAvailableColorschemeNames();
   bool ApplyColorscheme(std::string_view name);

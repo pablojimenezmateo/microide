@@ -205,6 +205,7 @@ enum class ActionId {
   // the command line / control channel as `type <text>`; the primary way an
   // external/headless caller enters characters into the active editor.
   InsertText,
+  PressKey,
   SelectAll,
   Undo,
   // Editor essentials: structural & shape actions
