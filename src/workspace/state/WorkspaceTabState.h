@@ -110,6 +110,10 @@ struct CompareVisibleLayoutCache {
 };
 
 struct CompareTabState {
+  // A save of the editable right side whose formatter is running off the shell
+  // thread (as an editor tab's, TD-2026-09-28-304): the completion finds this tab
+  // by the run id and drops the answer if the buffer moved on meanwhile.
+  editor::AsyncBufferWork pending_format_save;
   std::filesystem::path path;
   std::filesystem::path left_path;
   std::filesystem::path right_path;
@@ -283,6 +287,8 @@ inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size
 }
 
 struct MergeTabState {
+  // The result buffer's deferred-formatter save; see CompareTabState.
+  editor::AsyncBufferWork pending_format_save;
   std::filesystem::path base_path;
   std::filesystem::path incoming_path;
   std::filesystem::path current_path;

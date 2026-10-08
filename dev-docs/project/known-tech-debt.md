@@ -1527,7 +1527,7 @@ Not covered, on purpose: the plugin data directory, persistence, the tool cache
 and the control descriptor create and remove files that are not in a project
 tree. (The editor save's own gate is TD-2026-09-29-308, resolved the same day.)
 
-### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [PARTLY RESOLVED 2026-10-08 — close, rename/delete, close-project and quit wait as save continuations; save participants and compare/merge saves remain]
+### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [PARTLY RESOLVED 2026-10-08 — close, rename/delete, close-project, quit and compare/merge saves no longer block; save participants remain]
 
 `SaveFormatterService` took the formatter off the shell thread for the INTERACTIVE
 save, which is the one that used to freeze the window on every Ctrl+S. Three things
@@ -1608,10 +1608,16 @@ completion, and therefore still blocks:
   hand off to the plugin worker and wait, so they are bounded by the plugin
   runtime's own budget rather than by a subprocess — but they are a wait, and
   moving them needs the plugin host to be callable from a second thread.
-- **compare and merge saves are still blocking.** Their post-save bookkeeping is
-  per-surface (the merge tab's disk tick and stale flag, the compare pane's
-  re-derive) and a deferred completion would have to find the pane rather than the
-  tab. Deliberately left; the formatter stall on those surfaces is rarer.
+- ~~**compare and merge saves are still blocking.**~~ Done 2026-10-08: the save
+  passes its caller's mode through, a deferred formatter run is armed on
+  `CompareTabState`/`MergeTabState::pending_format_save`, and
+  `ApplyDeferredSaveFormat` finds the tab by run id, applies the answer if the
+  buffer has not moved on, and re-enters the save with `SaveMode::SkipFormatter`
+  — so the per-surface bookkeeping (the merge tab's disk tick, the compare
+  pane's re-derive) runs in the same code as before. Continuations settle as for
+  an editor tab. Test `SaveFormatterPipeline/ACompareTabSaveDefersItsFormatter`.
+  The merge view's own "Save Result" button stays blocking: it is followed by
+  staging the result, which needs the file written.
 
 ### TD-2026-09-22-303 — the kernel has no test binary and no proof it links under a sanitizer. [RESOLVED 2026-10-08 — `microide_kernel_tests`]
 

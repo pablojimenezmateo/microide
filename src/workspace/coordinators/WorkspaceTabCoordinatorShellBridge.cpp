@@ -317,6 +317,44 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
     EditorGroup& group = context_.current_project_state.editor_groups[group_index];
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
       TabEntry& tab = group.open_tabs[tab_index];
+      // A compare tab's editable right side and a merge tab's result save the
+      // same way (TD-2026-09-28-304): their run is armed on the surface's state.
+      editor::AsyncBufferWork* surface_work = nullptr;
+      editor::TextViewport* surface_view = nullptr;
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+        surface_work = &tab.compare->pending_format_save;
+        surface_view = &tab.compare->right_viewport;
+      } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+        surface_work = &tab.merge->pending_format_save;
+        surface_view = &tab.merge->result_viewport;
+      }
+      if (surface_work != nullptr && surface_work->Holds(completion.id)) {
+        const editor::AsyncBufferWork::Claim claim =
+            surface_work->Resolve(completion.id, surface_view->content_revision());
+        if (!completion.ok) {
+          if (!completion.formatter_id.empty()) {
+            ReportSaveFormatterFailure(completion, nullptr);
+          }
+        } else if (!completion.formatted_text.empty()) {
+          if (claim == editor::AsyncBufferWork::Claim::Current) {
+            (void)surface_view->ApplyFormattedText(completion.formatted_text);
+            surface_view->SetDirty(true);
+          } else {
+            Notify(NotificationService::Tone::Info,
+                   "Buffer changed while formatting; saved unformatted");
+          }
+        }
+        const std::uint64_t tab_id = tab.stable_id;
+        // Reports its own failure (a refused or failed write) as the blocking
+        // path did.
+        const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::SkipFormatter);
+        EditorTabService& editor_tabs = MakeEditorTabService();
+        PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+        MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
+        RequestEditorSurfaceRedraw();
+        RequestTabStripRedraw();
+        return;
+      }
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
           !tab.editor_state->pending_format_save.Holds(completion.id)) {
         continue;

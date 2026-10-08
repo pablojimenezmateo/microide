@@ -1,9 +1,11 @@
 #include "TestSupport.h"
 
+#include "workspace/CompareInput.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
+#include <optional>
 #include <string_view>
 #include <string>
 #include <vector>
@@ -58,6 +60,41 @@ void TestDeferredSaveAppliesTheFormatterWhenItReturns() {
          "the completion applies the formatter's output and writes, got: " + ReadFile(file));
   Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
          "the buffer is clean once the deferred save has written");
+}
+
+// A compare tab's editable right side is the same file and the same Ctrl+S, so it
+// saves the same way: the formatter runs off the shell thread and the completion
+// finds the compare tab by its run id (TD-2026-09-28-304). It used to block.
+void TestACompareTabSaveDefersItsFormatter() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path file = root / "main.txt";
+  WriteFile(file, "hello world\n");
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  std::optional<microide::workspace::CompareInput> right =
+      microide::workspace::ReadFileCompareInput(file, /*editable=*/true);
+  Expect(right.has_value(), "the file reads as a compare side");
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(
+             shell, microide::workspace::CompareInput{.content = "old\n", .label = "old"},
+             std::move(*right)),
+         "the comparison opens");
+  auto& right_view = WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport;
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(right_view.language_id()), UppercasingFormatter());
+  right_view.MoveCursorTo(0, 0, false);
+  right_view.InsertText("x");
+
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "the save starts");
+  Expect(ReadFile(file) == "hello world\n", "nothing is written before the formatter returns");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+  Expect(ReadFile(file) == "xHELLO world\n",
+         "the completion applies the formatter's output and writes, got: " + ReadFile(file));
+  Expect(!WorkspaceShellTestAccess::ActiveCompare(shell).right_viewport.dirty(),
+         "and the right side is clean");
 }
 
 // The revision guard. A formatter's answer is about the buffer as it was when the run
@@ -556,6 +593,8 @@ void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
           TestSaveThenCloseIsImmediateWithoutAFormatter);
   AddTest(tests, "SaveFormatterPipeline/DeferredSaveAppliesTheFormatterWhenItReturns",
           TestDeferredSaveAppliesTheFormatterWhenItReturns);
+  AddTest(tests, "SaveFormatterPipeline/ACompareTabSaveDefersItsFormatter",
+          TestACompareTabSaveDefersItsFormatter);
   AddTest(tests, "SaveFormatterPipeline/DeferredSaveDropsTheFormatterWhenTheBufferChanged",
           TestDeferredSaveDropsTheFormatterWhenTheBufferChanged);
   AddTest(tests, "SaveFormatterPipeline/DeferredSaveStillWritesWhenTheFormatterFails",

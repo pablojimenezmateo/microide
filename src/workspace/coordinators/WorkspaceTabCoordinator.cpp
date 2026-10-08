@@ -84,14 +84,19 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     // Same preparation as an editor tab's save: the compare right pane is a real
     // file and this is the same Ctrl+S. Without it, save participants and
     // format-on-save applied to a buffer depending on which surface it was open in.
-    // Blocking: the compare surface's post-save bookkeeping is its own, and a
-    // deferred completion would have to re-find the pane rather than the tab.
-    if (operations_.prepare_editor_view_for_save &&
-        !operations_.prepare_editor_view_for_save(compare_tab.right_viewport.path(),
-                                                  compare_tab.right_viewport, nullptr,
-                                                  SaveMode::Blocking)
-             .ok()) {
-      return false;
+    // Deferred like an editor tab's when the caller asks: the formatter runs off
+    // the shell thread and ApplyDeferredSaveFormat finds this tab by its run id.
+    if (operations_.prepare_editor_view_for_save) {
+      const SavePreparation prepared = operations_.prepare_editor_view_for_save(
+          compare_tab.right_viewport.path(), compare_tab.right_viewport, nullptr, mode);
+      if (prepared.deferred()) {
+        compare_tab.pending_format_save.Arm(prepared.deferred_run_id,
+                                            compare_tab.right_viewport.content_revision());
+        return true;
+      }
+      if (!prepared.ok()) {
+        return false;
+      }
     }
     if (!RefuseIfChangedOnDisk(compare_tab.right_viewport,
                                compare_tab.right_viewport.path().lexically_normal())) {
@@ -122,12 +127,17 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
       }
       return false;
     }
-    if (operations_.prepare_editor_view_for_save &&
-        !operations_.prepare_editor_view_for_save(merge_tab.result_viewport.path(),
-                                                  merge_tab.result_viewport, nullptr,
-                                                  SaveMode::Blocking)
-             .ok()) {
-      return false;
+    if (operations_.prepare_editor_view_for_save) {
+      const SavePreparation prepared = operations_.prepare_editor_view_for_save(
+          merge_tab.result_viewport.path(), merge_tab.result_viewport, nullptr, mode);
+      if (prepared.deferred()) {
+        merge_tab.pending_format_save.Arm(prepared.deferred_run_id,
+                                          merge_tab.result_viewport.content_revision());
+        return true;
+      }
+      if (!prepared.ok()) {
+        return false;
+      }
     }
     if (!RefuseIfChangedOnDisk(merge_tab.result_viewport,
                                merge_tab.result_viewport.path().lexically_normal())) {
