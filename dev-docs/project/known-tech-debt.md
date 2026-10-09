@@ -420,6 +420,26 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-09-335 — `lsp_semantic_tokens_decode` is 37 % slower than v2.12.0 with identical allocations. [OPEN]
+
+Found by the 2026-10-09 release check: a full `tools/perf-compare.py` A/B of HEAD
+against v2.12.0 (base `refs/perf/v2.12.0-base` = v2.12.0 plus d123ee73's one-line
+`environ` link fix, without which v2.12.0's perf binary does not link under GCC 15
++ LTO), then the flagged scenarios again at `ITERATIONS=25`. Everything else was
+noise or an improvement (`editor_add_cursor_next_match` -39 % CPU,
+`editor_typing_minified_line` -15 % allocations); `terminal.open`'s +4
+allocations is TD-334's accepted split-pane cost. This one held: p50 5.76 →
+7.93 ms wall and CPU, p95 and max moving with it, **allocations 204 = 204**.
+
+`codec::ParseSemanticTokensData` and everything its loop calls (`JsonValue::AsInt`,
+`JsonIntInRange`) are unchanged since the release and all inline, so the same
+work compiles to slower code. The candidate is the kernel/shell PCH split
+(`MICROIDE_KERNEL_PCH_HEADERS`), which changed what `LspProtocol.cpp` is compiled
+with. Next step needs a sampling profiler (`perf_event_paranoid` is 4 on the
+machine that found it): `perf record` both binaries (`KEEP=1` keeps the
+worktrees) and diff the hot loop's disassembly. User impact is ~10 µs per 8,000
+tokens decoded; it is filed because it is a regression nobody chose.
+
 ### TD-2026-10-09-334 — four allocation gates carry the terminal split-pane cost. [OPEN — decided: rebaseline]
 
 Measured 2026-10-08 against v2.12.0 on one machine: after the per-open and
