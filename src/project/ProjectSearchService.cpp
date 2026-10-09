@@ -224,40 +224,42 @@ void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       SharedPathList indexed_files,
                                       std::uint64_t run_id,
                                       const util::CancellationToken& token) {
-  if (token.IsCancellationRequested()) {
-    return;
-  }
-  if (cancel_requested_.load(std::memory_order_relaxed)) {
-    return;
-  }
-  if (token.IsCancellationRequested()) {
+  if (token.IsCancellationRequested() || cancel_requested_.load(std::memory_order_relaxed)) {
     return;
   }
   if (query.empty()) {
-    PublishFinished(run_id, SearchCompletion{});
+    PublishFinished(run_id, ProjectSearchCompletion{});
     return;
   }
 
-  const SearchCompletion completion =
-      RunSearch(root, query, options, indexed_files, run_id, token);
+  const ProjectSearchCompletion completion = RunProjectSearch(
+      root, query, options, indexed_files,
+      ProjectSearchSink{
+          .results = [this, run_id](std::vector<ProjectSearchResult> batch) {
+            PublishResults(run_id, std::move(batch));
+          },
+          .progress = [this, run_id](std::size_t searched, std::size_t total) {
+            PublishProgress(run_id, searched, total);
+          }},
+      cancel_requested_, token);
   if (!token.IsCancellationRequested()) {
     PublishFinished(run_id, completion);
   }
 }
 
-ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
-    const std::filesystem::path& root,
-    const std::string& query,
-    const ProjectSearchOptions& options,
-    const SharedPathList& indexed_files,
-    std::uint64_t run_id,
-    const util::CancellationToken& token) {
+ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
+                                         const std::string& query,
+                                         const ProjectSearchOptions& options,
+                                         const SharedPathList& indexed_files,
+                                         const ProjectSearchSink& sink,
+                                         const std::atomic_bool& cancel,
+                                         const util::CancellationToken& token) {
   util::PerformanceTrace::Scope perf_scope("search::RunSearch");
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
   if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||
       !std::filesystem::is_directory(absolute_root, error)) {
-    return SearchCompletion{.error = "Failed to index project files"};
+    return ProjectSearchCompletion{.error = "Failed to index project files"};
   }
 
   // Reject a pathologically long query before compiling it: a giant pasted
@@ -266,7 +268,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   // near this long.
   constexpr std::size_t kMaxSearchPatternBytes = 1u << 16;  // 64 KiB
   if (query.size() > kMaxSearchPatternBytes) {
-    return SearchCompletion{.error = "Project search pattern is too long"};
+    return ProjectSearchCompletion{.error = "Project search pattern is too long"};
   }
 
   std::optional<util::CompiledRegex> regex_pattern;
@@ -274,26 +276,26 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
 
   if (options.pattern_mode == ProjectSearchPatternMode::Regex) {
     if (query.empty()) {
-      return SearchCompletion{.error = "Project search query is empty"};
+      return ProjectSearchCompletion{.error = "Project search query is empty"};
     }
 
     const uint32_t regex_options = util::SearchRegexCompileOptions(
         query, UsesCaseSensitiveSearch(query, options.case_mode));
     regex_pattern.emplace(query, regex_options, "Invalid project search pattern");
     if (!regex_pattern->valid()) {
-      return SearchCompletion{.error = regex_pattern->error()};
+      return ProjectSearchCompletion{.error = regex_pattern->error()};
     }
 
     // The compiled pattern (a JIT'd shared_ptr) is shared read-only by every
     // worker; each worker allocates its OWN match data below. Validate here that
     // allocation succeeds before spawning.
     if (!regex_pattern->CreateMatchData().valid()) {
-      return SearchCompletion{.error = "Failed to initialize project search matcher"};
+      return ProjectSearchCompletion{.error = "Failed to initialize project search matcher"};
     }
   } else {
     literal_query = std::make_unique<PreparedLiteralQuery>(query, options.case_mode);
     if (!literal_query->valid()) {
-      return SearchCompletion{.error = literal_query->error()};
+      return ProjectSearchCompletion{.error = literal_query->error()};
     }
   }
 
@@ -302,9 +304,9 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   const std::size_t total_files = candidate_files.size();
   // Publish total_files immediately so the UI can show the denominator before
   // the first match (large empty-match prefixes were otherwise invisible).
-  PublishProgress(run_id, 0, total_files);
+  sink.progress(0, total_files);
   if (total_files == 0) {
-    return SearchCompletion{};
+    return ProjectSearchCompletion{};
   }
 
   // Periodic progress wake interval — coarser than per-file to avoid event spam
@@ -352,7 +354,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     // Default stops claiming files once the display cap is reached; count-all
     // keeps scanning every file so it can report the exact total.
     while (!token.IsCancellationRequested() &&
-           !cancel_requested_.load(std::memory_order_relaxed) &&
+           !cancel.load(std::memory_order_relaxed) &&
            (count_all ||
             matches_found.load(std::memory_order_relaxed) < kMaxProjectSearchResults)) {
       const std::size_t file_index = next_file.fetch_add(1, std::memory_order_relaxed);
@@ -361,7 +363,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       }
       const std::size_t visited = files_visited.fetch_add(1, std::memory_order_relaxed) + 1;
       if (visited % kProgressTickFiles == 0) {
-        PublishProgress(run_id, visited, total_files);
+        sink.progress(visited, total_files);
       }
 
       // The index hands out normalized generic path TEXT, so the scope filter can
@@ -391,7 +393,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       // per-line allocation occurs. Matches std::getline framing: a trailing
       // newline does not yield a phantom empty final line.
       while (line_start < content.size()) {
-        if (cancel_requested_.load(std::memory_order_relaxed)) {
+        if (cancel.load(std::memory_order_relaxed)) {
           break;
         }
         const std::size_t newline = content.find('\n', line_start);
@@ -411,7 +413,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
         std::size_t match_end = 0;
         while ((regex_pattern.has_value() &&
                 search_internal::FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data,
-                                                    &match_start, &match_end, cancel_requested_)) ||
+                                                    &match_start, &match_end, cancel)) ||
                (literal_query != nullptr &&
                 literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
           // Count every match globally. The first kMaxProjectSearchResults claims
@@ -433,7 +435,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
             }
             ++local_over_cap_matches;
             if (local_over_cap_matches % search_internal::kRegexCancelPollInterval == 0 &&
-                cancel_requested_.load(std::memory_order_relaxed)) {
+                cancel.load(std::memory_order_relaxed)) {
               reached_cap = true;
               break;
             }
@@ -468,7 +470,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
               .match_preview_length = preview_match_length,
           });
           if (batch.size() >= kBatchSize) {
-            PublishResults(run_id, std::move(batch));
+            sink.results(std::move(batch));
             batch = {};
           }
         }
@@ -496,7 +498,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
 
     if (!batch.empty() && !token.IsCancellationRequested()) {
-      PublishResults(run_id, std::move(batch));
+      sink.results(std::move(batch));
     }
   };
 
@@ -538,12 +540,12 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   }
 
-  if (token.IsCancellationRequested() || cancel_requested_.load(std::memory_order_relaxed)) {
+  if (token.IsCancellationRequested() || cancel.load(std::memory_order_relaxed)) {
     return {};
   }
   // Final progress publish so the finish update carries an accurate denominator
   // and a matching searched count.
-  PublishProgress(run_id, files_visited.load(std::memory_order_relaxed), total_files);
+  sink.progress(files_visited.load(std::memory_order_relaxed), total_files);
   // Truncation by *unclaimed files*, not just by an over-cap match.
   //
   // The in-loop flag above only fires when some worker actually attempts a match
@@ -567,7 +569,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   }
   // Report the exact total only for count-all runs; a default early-stop run does
   // not scan past the cap and therefore cannot know it.
-  return SearchCompletion{
+  return ProjectSearchCompletion{
       .error = {},
       .truncated = truncated.load(std::memory_order_relaxed),
       .total_matches = count_all ? matches_found.load(std::memory_order_relaxed) : 0,
@@ -592,7 +594,7 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
     pending_update_.search_id = active_search_id_;
     pending_update_.searched_files = last_progress_searched_files_;
     pending_update_.total_files = last_progress_total_files_;
-    // The worker stops emitting matches at `kMaxProjectSearchResults` (see `RunSearch`), so
+    // The worker stops emitting matches at `kMaxProjectSearchResults` (see `RunProjectSearch`), so
     // we never need to cap here — push the whole batch and let the consumer
     // apply its own display cap.
     pending_update_.results.insert(pending_update_.results.end(),
@@ -602,7 +604,7 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
   PushWakeEvent();
 }
 
-void ProjectSearchService::PublishFinished(std::uint64_t run_id, SearchCompletion completion) {
+void ProjectSearchService::PublishFinished(std::uint64_t run_id, ProjectSearchCompletion completion) {
   {
     std::lock_guard lock(mutex_);
     if (active_run_id_ != run_id) {

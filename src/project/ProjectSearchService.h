@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -88,6 +89,31 @@ struct ProjectSearchUpdate {
   std::string error;
 };
 
+struct ProjectSearchCompletion {
+  std::string error;
+  bool truncated = false;
+  std::size_t total_matches = 0;
+};
+
+// Where a search's output goes while it runs, on the searching threads.
+struct ProjectSearchSink {
+  std::function<void(std::vector<ProjectSearchResult> batch)> results;
+  std::function<void(std::size_t searched_files, std::size_t total_files)> progress;
+};
+
+// The search itself, on the calling thread (it fans out to its own workers):
+// every candidate file under `root` (or `indexed_files`, relative to it), matched
+// against `query`. Stops early when `cancel` or `token` is set. The service runs
+// it on its worker; a host runs it in-process for a remote project's search/run
+// (remote-projects.md § 6.11), so both sides answer with one implementation.
+ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
+                                         const std::string& query,
+                                         const ProjectSearchOptions& options,
+                                         const SharedPathList& indexed_files,
+                                         const ProjectSearchSink& sink,
+                                         const std::atomic_bool& cancel,
+                                         const util::CancellationToken& token);
+
 class ProjectSearchService {
  public:
   ~ProjectSearchService();
@@ -122,26 +148,14 @@ class ProjectSearchService {
   void WaitForWorkersIdle() { task_executor_.WaitForIdle(); }
 
  private:
-  struct SearchCompletion {
-    std::string error;
-    bool truncated = false;
-    std::size_t total_matches = 0;
-  };
-
   void WorkerMain(std::filesystem::path root,
                   std::string query,
                   ProjectSearchOptions options,
                   SharedPathList indexed_files,
                   std::uint64_t run_id,
                   const util::CancellationToken& token);
-  SearchCompletion RunSearch(const std::filesystem::path& root,
-                             const std::string& query,
-                             const ProjectSearchOptions& options,
-                             const SharedPathList& indexed_files,
-                             std::uint64_t run_id,
-                             const util::CancellationToken& token);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);
-  void PublishFinished(std::uint64_t run_id, SearchCompletion completion);
+  void PublishFinished(std::uint64_t run_id, ProjectSearchCompletion completion);
   void PublishProgress(std::uint64_t run_id, std::size_t searched_files, std::size_t total_files);
   void PushWakeEvent() const;
 

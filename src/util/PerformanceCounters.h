@@ -221,7 +221,7 @@ namespace microide::util {
   /* was handed and scope-filtered says how much scoping removed, but neither says how */       \
   /* much the early stop skipped -- so a search that answered from 4% of the project */         \
   /* and one that scanned all of it read identically. Nonzero here is also exactly the */       \
-  /* condition that makes a result set truncated (ProjectSearchService::RunSearch). */          \
+  /* condition that makes a result set truncated (RunProjectSearch). */          \
   X(SearchProjectCapUnscannedFiles, "search.project_cap_unscanned_files")                       \
   /* Replace-all's candidate set and how much of it it actually opened. These are  */           \
   /* the only counters the replace path touches, and nothing else touches them --  */           \
