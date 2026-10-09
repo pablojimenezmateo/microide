@@ -36,6 +36,12 @@ namespace microide::server {
 // A terminal outlives its connection: Detach stops its frames, Attach resumes them
 // with a cold frame (screen plus prefetched history), and it ends only on Close —
 // so a shell that exited while nobody was attached keeps its output until seen.
+//
+// Several clients may attach to one terminal at once (a second machine, a second
+// window): each has its own frame builder, credit window, input sequence and
+// one-shot signals (bell, clipboard, notification), and the pty is sized to the
+// SMALLEST of them — tmux's rule (spec "Two clients share one pty at the smaller
+// size"), so neither sees a program draw past its edge.
 class TerminalTable {
  public:
   struct Sink {
@@ -91,37 +97,59 @@ class TerminalTable {
     bool alternate = false;
   };
   bool Attach(std::uint64_t connection, std::uint64_t handle, std::optional<Resume> resume = {});
-  void Input(std::uint64_t handle, const std::vector<terminal::TerminalInputEvent>& events);
-  void Resize(std::uint64_t handle, std::size_t rows, std::size_t columns);
-  // The client has received this many frame bytes in total.
-  void Ack(std::uint64_t handle, std::uint64_t received_bytes);
+  void Input(std::uint64_t connection, std::uint64_t handle,
+             const std::vector<terminal::TerminalInputEvent>& events);
+  // `connection`'s pane size; the pty takes the smallest of the attached clients'.
+  void Resize(std::uint64_t connection, std::uint64_t handle, std::size_t rows, std::size_t columns);
+  // `connection` has received this many frame bytes of this terminal in total.
+  void Ack(std::uint64_t connection, std::uint64_t handle, std::uint64_t received_bytes);
   void Close(std::uint64_t handle);
-  // A connection went away: its terminals keep running, unattached.
+  // A connection went away: its terminals keep running, without it.
   void Detach(std::uint64_t connection);
+  // Clients attached to `handle` (for tests and status).
+  std::size_t AttachedCount(std::uint64_t handle) const;
 
   std::size_t LiveCount() const;
   const Limits& limits() const { return limits_; }
 
  private:
-  struct Terminal {
-    std::uint64_t handle = 0;
-    terminal::TerminalSession session;
-    std::size_t credit_bytes = 0;
-    std::size_t prefetch_lines = 0;
-    // Guarded by the table mutex.
+  // One attached client's view of a terminal. Guarded by the table mutex.
+  struct Client {
     std::uint64_t connection = 0;
     terminal::TerminalHostFrameBuilder builder;
+    std::size_t rows = 0;  // its pane, 0 = not said yet
+    std::size_t columns = 0;
     std::chrono::steady_clock::time_point last_sent{};
     std::uint64_t sent_bytes = 0;
     std::uint64_t acked_bytes = 0;
     std::uint64_t written_seq = 0;
     std::uint64_t echo_ack = 0;
     std::chrono::steady_clock::time_point written_at{};
-    // Set from the session's reader thread.
-    std::atomic<bool> dirty{true};
-    std::atomic<bool> output_since_write{true};
+    // The terminal's output_generation this client last captured, and the one
+    // when it last wrote input: output after that answers it.
+    std::uint64_t seen_generation = 0;
+    std::uint64_t written_generation = 0;
+    // One-shot signals a capture took for every client; this one's are unsent.
+    bool bell = false;
+    std::optional<std::string> clipboard;
+    std::optional<terminal::TerminalHostNotification> notification;
+    bool signal_pending() const { return bell || clipboard || notification; }
   };
 
+  struct Terminal {
+    std::uint64_t handle = 0;
+    terminal::TerminalSession session;
+    std::size_t credit_bytes = 0;
+    std::size_t prefetch_lines = 0;
+    std::vector<Client> clients;  // guarded by the table mutex
+    // Bumped by the session's reader thread on every parsed chunk; never 0.
+    std::atomic<std::uint64_t> output_generation{1};
+
+    Client* FindClient(std::uint64_t connection);
+  };
+
+  // The pty takes the smallest pane any attached client reported. Table lock held.
+  void ApplySharedSizeLocked(Terminal& terminal);
   void Run();
   void Notify();
 

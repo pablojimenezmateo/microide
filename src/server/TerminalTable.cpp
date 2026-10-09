@@ -103,6 +103,33 @@ std::optional<TerminalTable::OpenRequest> TerminalTable::ParseOpen(const util::J
   return request;
 }
 
+TerminalTable::Client* TerminalTable::Terminal::FindClient(std::uint64_t connection) {
+  for (Client& client : clients) {
+    if (client.connection == connection) {
+      return &client;
+    }
+  }
+  return nullptr;
+}
+
+void TerminalTable::ApplySharedSizeLocked(Terminal& terminal) {
+  std::size_t rows = 0;
+  std::size_t columns = 0;
+  for (const Client& client : terminal.clients) {
+    if (client.rows == 0 || client.columns == 0) {
+      continue;
+    }
+    rows = rows == 0 ? client.rows : std::min(rows, client.rows);
+    columns = columns == 0 ? client.columns : std::min(columns, client.columns);
+  }
+  // Nobody attached, or nobody has said: keep the size it has.
+  if (rows == 0 || (rows == terminal.session.rows() && columns == terminal.session.columns())) {
+    return;
+  }
+  terminal.session.Resize(rows, columns);
+  terminal.output_generation.fetch_add(1, std::memory_order_acq_rel);
+}
+
 TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequest request) {
   auto terminal = std::make_shared<Terminal>();
   {
@@ -111,17 +138,17 @@ TerminalTable::OpenResult TerminalTable::Open(std::uint64_t connection, OpenRequ
       return OpenResult{.error = "too many terminals on this host"};
     }
     terminal->handle = next_handle_++;
-    terminal->connection = connection;
     terminal->credit_bytes =
         request.credit_bytes != 0 ? std::max<std::size_t>(request.credit_bytes, 16 * 1024)
                                   : limits_.credit_bytes;
     terminal->prefetch_lines =
         request.prefetch_lines != 0 ? request.prefetch_lines : limits_.prefetch_lines;
+    terminal->clients.push_back(
+        Client{.connection = connection, .rows = request.rows, .columns = request.columns});
   }
   Terminal* raw = terminal.get();
   terminal->session.SetOutputObserver([this, raw]() {
-    raw->dirty.store(true, std::memory_order_release);
-    raw->output_since_write.store(true, std::memory_order_release);
+    raw->output_generation.fetch_add(1, std::memory_order_acq_rel);
     Notify();
   });
   terminal->session.SetMaxScrollbackLines(request.scrollback_lines);
@@ -151,31 +178,35 @@ bool TerminalTable::Attach(std::uint64_t connection, std::uint64_t handle,
       return false;
     }
     Terminal& terminal = *it->second;
-    terminal.connection = connection;
-    if (resume.has_value()) {
-      terminal.builder.Resume(resume->screen_top, resume->alternate);
+    // The same connection attaching again (a reattach over it) starts over; any
+    // other connection is one more client, sharing the terminal.
+    Client* client = terminal.FindClient(connection);
+    if (client == nullptr) {
+      client = &terminal.clients.emplace_back();
+      client->connection = connection;
     } else {
-      terminal.builder.Reset();
+      // Input sequence numbers and credit are per client: a new start resets them.
+      *client = Client{.connection = connection, .rows = client->rows, .columns = client->columns};
     }
-    // Input sequence numbers are per client: a new client starts its own.
-    terminal.written_seq = 0;
-    terminal.echo_ack = 0;
-    terminal.sent_bytes = 0;
-    terminal.acked_bytes = 0;
-    terminal.last_sent = {};
-    terminal.dirty.store(true, std::memory_order_release);
+    if (resume.has_value()) {
+      client->builder.Resume(resume->screen_top, resume->alternate);
+    } else {
+      client->builder.Reset();
+    }
+    client->seen_generation = 0;  // due at once
   }
   Notify();
   return true;
 }
 
-void TerminalTable::Input(std::uint64_t handle,
+void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
                           const std::vector<terminal::TerminalInputEvent>& events) {
   std::shared_ptr<Terminal> terminal;
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
-    if (it == terminals_.end() || events.empty()) {
+    // Only an attached client types into a terminal.
+    if (it == terminals_.end() || events.empty() || it->second->FindClient(connection) == nullptr) {
       return;
     }
     terminal = it->second;
@@ -209,40 +240,48 @@ void TerminalTable::Input(std::uint64_t handle,
   }
   {
     std::lock_guard lock(mutex_);
-    terminal->written_seq = std::max(terminal->written_seq, events.back().seq);
-    terminal->written_at = std::chrono::steady_clock::now();
-    terminal->output_since_write.store(false, std::memory_order_release);
+    if (Client* client = terminal->FindClient(connection)) {
+      client->written_seq = std::max(client->written_seq, events.back().seq);
+      client->written_at = std::chrono::steady_clock::now();
+      client->written_generation = terminal->output_generation.load(std::memory_order_acquire);
+    }
   }
   Notify();
 }
 
-void TerminalTable::Resize(std::uint64_t handle, std::size_t rows, std::size_t columns) {
-  std::shared_ptr<Terminal> terminal;
+void TerminalTable::Resize(std::uint64_t connection, std::uint64_t handle, std::size_t rows,
+                           std::size_t columns) {
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
     if (it == terminals_.end()) {
       return;
     }
-    terminal = it->second;
+    Client* client = it->second->FindClient(connection);
+    if (client == nullptr) {
+      return;
+    }
+    client->rows = std::clamp<std::size_t>(rows, 1, terminal::kMaxHostTerminalDimension);
+    client->columns = std::clamp<std::size_t>(columns, 1, terminal::kMaxHostTerminalDimension);
+    ApplySharedSizeLocked(*it->second);
   }
-  terminal->session.Resize(std::clamp<std::size_t>(rows, 1, terminal::kMaxHostTerminalDimension),
-                           std::clamp<std::size_t>(columns, 1, terminal::kMaxHostTerminalDimension));
-  terminal->dirty.store(true, std::memory_order_release);
   Notify();
 }
 
-void TerminalTable::Ack(std::uint64_t handle, std::uint64_t received_bytes) {
+void TerminalTable::Ack(std::uint64_t connection, std::uint64_t handle,
+                        std::uint64_t received_bytes) {
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
     if (it == terminals_.end()) {
       return;
     }
-    Terminal& terminal = *it->second;
+    Client* client = it->second->FindClient(connection);
+    if (client == nullptr) {
+      return;
+    }
     // Never past what was sent, never backwards: an ack is untrusted.
-    terminal.acked_bytes =
-        std::clamp(received_bytes, terminal.acked_bytes, terminal.sent_bytes);
+    client->acked_bytes = std::clamp(received_bytes, client->acked_bytes, client->sent_bytes);
   }
   Notify();
 }
@@ -265,10 +304,19 @@ void TerminalTable::Detach(std::uint64_t connection) {
   std::lock_guard lock(mutex_);
   for (auto& [handle, terminal] : terminals_) {
     (void)handle;
-    if (terminal->connection == connection) {
-      terminal->connection = 0;
+    const auto removed = std::erase_if(terminal->clients, [connection](const Client& client) {
+      return client.connection == connection;
+    });
+    if (removed != 0) {
+      ApplySharedSizeLocked(*terminal);  // the others may have room again
     }
   }
+}
+
+std::size_t TerminalTable::AttachedCount(std::uint64_t handle) const {
+  std::lock_guard lock(mutex_);
+  const auto it = terminals_.find(handle);
+  return it == terminals_.end() ? 0 : it->second->clients.size();
 }
 
 std::size_t TerminalTable::LiveCount() const {
@@ -291,8 +339,12 @@ void TerminalTable::Run() {
     std::uint64_t handle = 0;
     std::string wire;
   };
+  struct Due {
+    std::shared_ptr<Terminal> terminal;
+    std::uint64_t connection = 0;
+  };
   std::vector<Outgoing> outgoing;
-  std::vector<std::shared_ptr<Terminal>> due;
+  std::vector<Due> due;
   terminal::TerminalSession::HostCapture capture;
   terminal::TerminalHostFrame frame;
   std::unique_lock lock(mutex_);
@@ -302,58 +354,88 @@ void TerminalTable::Run() {
     const auto wake_at = [&](Clock::time_point when) {
       next_wake = next_wake ? std::min(*next_wake, when) : when;
     };
+    const auto echo_due = [&](const Terminal& terminal, const Client& client) {
+      const bool answered =
+          terminal.output_generation.load(std::memory_order_acquire) > client.written_generation;
+      return client.written_seq > client.echo_ack &&
+             (answered || now - client.written_at >= limits_.echo_timeout);
+    };
     due.clear();
     for (auto& [handle, terminal] : terminals_) {
       (void)handle;
-      if (terminal->connection == 0) {
-        continue;
+      const std::uint64_t generation = terminal->output_generation.load(std::memory_order_acquire);
+      for (Client& client : terminal->clients) {
+        const bool echo = echo_due(*terminal, client);
+        if (client.written_seq > client.echo_ack && !echo) {
+          wake_at(client.written_at + limits_.echo_timeout);
+        }
+        if (client.seen_generation == generation && !echo && !client.signal_pending()) {
+          continue;
+        }
+        const std::uint64_t in_flight = client.sent_bytes - client.acked_bytes;
+        const auto interval = in_flight > terminal->credit_bytes / 2 ? limits_.congested_interval
+                                                                   : limits_.frame_interval;
+        if (now - client.last_sent < interval) {
+          wake_at(client.last_sent + interval);
+          continue;
+        }
+        due.push_back(Due{.terminal = terminal, .connection = client.connection});
       }
-      const bool answered = terminal->output_since_write.load(std::memory_order_acquire);
-      const bool echo_due = terminal->written_seq > terminal->echo_ack &&
-                            (answered || now - terminal->written_at >= limits_.echo_timeout);
-      if (terminal->written_seq > terminal->echo_ack && !echo_due) {
-        wake_at(terminal->written_at + limits_.echo_timeout);
-      }
-      if (!terminal->dirty.load(std::memory_order_acquire) && !echo_due) {
-        continue;
-      }
-      const std::uint64_t in_flight = terminal->sent_bytes - terminal->acked_bytes;
-      const auto interval = in_flight > terminal->credit_bytes / 2 ? limits_.congested_interval
-                                                                 : limits_.frame_interval;
-      if (now - terminal->last_sent < interval) {
-        wake_at(terminal->last_sent + interval);
-        continue;
-      }
-      due.push_back(terminal);
     }
 
-    for (const std::shared_ptr<Terminal>& terminal : due) {
-      // Read the echo state BEFORE capturing: output that answered the input is
-      // then already in the capture, so the ack never claims what it cannot show.
-      const bool answered = terminal->output_since_write.load(std::memory_order_acquire);
-      const std::uint64_t echo_ack =
-          terminal->written_seq > terminal->echo_ack &&
-                  (answered || now - terminal->written_at >= limits_.echo_timeout)
-              ? terminal->written_seq
-              : terminal->echo_ack;
-      terminal->dirty.store(false, std::memory_order_release);
-      terminal->session.CaptureForHost(
-          terminal->builder.capture_from(),
-          terminal->builder.capture_lines_before_screen(terminal->prefetch_lines), capture);
-      if (echo_ack == terminal->echo_ack && terminal->builder.UpToDate(capture)) {
+    for (const Due& item : due) {
+      Terminal& terminal = *item.terminal;
+      Client* client = terminal.FindClient(item.connection);
+      if (client == nullptr) {
         continue;
       }
-      const std::uint64_t in_flight = terminal->sent_bytes - terminal->acked_bytes;
-      const std::size_t budget =
-          in_flight >= terminal->credit_bytes ? 0
-                                              : terminal->credit_bytes - static_cast<std::size_t>(in_flight);
-      terminal->builder.Build(capture, budget, frame);
+      // Read the echo state BEFORE capturing: output that answered the input is
+      // then already in the capture, so the ack never claims what it cannot show.
+      const std::uint64_t echo_ack =
+          echo_due(terminal, *client) ? client->written_seq : client->echo_ack;
+      client->seen_generation = terminal.output_generation.load(std::memory_order_acquire);
+      terminal.session.CaptureForHost(
+          client->builder.capture_from(),
+          client->builder.capture_lines_before_screen(terminal.prefetch_lines), capture);
+      // A capture CONSUMES the one-shot signals; every client is owed them.
+      terminal::TerminalHostFrame& header = capture.header;
+      if (header.has(terminal::TerminalHostFrame::kBell) || header.clipboard || header.notification) {
+        for (Client& other : terminal.clients) {
+          other.bell = other.bell || header.has(terminal::TerminalHostFrame::kBell);
+          if (header.clipboard) {
+            other.clipboard = header.clipboard;
+          }
+          if (header.notification) {
+            other.notification = header.notification;
+          }
+        }
+        header.flags &= static_cast<std::uint16_t>(~terminal::TerminalHostFrame::kBell);
+        header.clipboard.reset();
+        header.notification.reset();
+      }
+      if (echo_ack == client->echo_ack && !client->signal_pending() &&
+          client->builder.UpToDate(capture)) {
+        continue;
+      }
+      const std::uint64_t in_flight = client->sent_bytes - client->acked_bytes;
+      const std::size_t budget = in_flight >= terminal.credit_bytes
+                                     ? 0
+                                     : terminal.credit_bytes - static_cast<std::size_t>(in_flight);
+      client->builder.Build(capture, budget, frame);
       frame.echo_ack = echo_ack;
-      terminal->echo_ack = echo_ack;
-      Outgoing out{.connection = terminal->connection, .handle = terminal->handle};
+      if (client->bell) {
+        frame.flags |= terminal::TerminalHostFrame::kBell;
+      }
+      frame.clipboard = std::move(client->clipboard);
+      frame.notification = std::move(client->notification);
+      client->bell = false;
+      client->clipboard.reset();
+      client->notification.reset();
+      client->echo_ack = echo_ack;
+      Outgoing out{.connection = client->connection, .handle = terminal.handle};
       terminal::EncodeTerminalHostFrame(out.wire, frame);
-      terminal->sent_bytes += out.wire.size();
-      terminal->last_sent = now;
+      client->sent_bytes += out.wire.size();
+      client->last_sent = now;
       outgoing.push_back(std::move(out));
     }
 

@@ -492,6 +492,15 @@ class TerminalSession {
   // local ones, which never stash — paid two allocations for this slot.
   std::optional<std::deque<TerminalLine>> host_primary_stash_;
   std::size_t host_primary_stash_screen_lines_ = 0;
+  // The scrollback lines that are a Gap rule, each standing for `count` host
+  // lines, by absolute client row (scrollback_trim_total_ + deque row), ascending.
+  // A screen that grows upward takes host lines back off the scrollback's tail,
+  // and a rule there is `count` of them, not one (TD-2026-10-08-326).
+  struct HostGap {
+    std::uint64_t row = 0;
+    std::uint64_t count = 0;
+  };
+  std::vector<HostGap> host_gaps_;
   std::function<void()> output_observer_;
   TerminalPredictionOverlay prediction_;
   TerminalPredictionOverlay::View PredictionViewLocked();

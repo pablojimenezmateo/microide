@@ -397,6 +397,51 @@ void TestCreditWindowWithholdsScrollbackAsOneCountedGap() {
          "the visible screen arrives even with no credit");
 }
 
+// A screen that grows upward takes host lines back off the client's scrollback,
+// counted in HOST lines — and a gap rule stands for many. The rule at the tail
+// shrinks by the lines that are back on screen; it is not popped as one line
+// (which dropped real scrollback above it, or left the screen one line short).
+void TestAGrowingScreenTakesBackHostLinesFromAGapRule() {
+  Mirror mirror(3, 20);
+  Expect(mirror.Sync(), "sync");
+  mirror.Write("kept\r\n");
+  Expect(mirror.Sync(), "the first line arrives in full");
+  for (int i = 0; i < 30; ++i) {
+    mirror.Write("flood " + std::to_string(i) + "\r\n");
+  }
+  Expect(mirror.Sync(/*budget=*/0), "a frame with no credit withholds the scrolled lines");
+  std::uint64_t withheld = 0;
+  for (const auto& run : mirror.frame.scrollback) {
+    withheld += run.kind == TerminalHostRun::Kind::Gap ? run.count : 0;
+  }
+  Expect(withheld > 4, "many lines are withheld behind one rule");
+
+  mirror.host.Resize(7, 20);  // four more rows: four host lines come back on screen
+  Expect(mirror.Sync(), "the taller frame applies");
+  const std::vector<TerminalLine> host_lines = mirror.host.SnapshotLines();
+  const std::vector<TerminalLine> lines = mirror.client.SnapshotLines();
+  Expect(lines.size() >= 8, "scrollback plus the taller screen");
+  if (lines.size() < 8) {
+    return;
+  }
+  const std::string rule = std::to_string(withheld - 4) + " lines not transferred";
+  bool rule_found = false;
+  bool kept_found = false;
+  for (const auto& line : lines) {
+    rule_found = rule_found || LineText(line).find(rule) != std::string::npos;
+    kept_found = kept_found || LineText(line) == "kept";
+  }
+  Expect(rule_found, "the rule now stands for four fewer lines ('" + rule + "')");
+  Expect(kept_found, "the real scrollback above the rule is untouched");
+  for (std::size_t i = 1; i <= 7; ++i) {
+    Expect(LineText(lines[lines.size() - i]) == LineText(host_lines[host_lines.size() - i]),
+           "screen row " + std::to_string(7 - i) + " matches the host");
+  }
+  Expect(mirror.client.cursor_row() - (lines.size() - 7) ==
+             mirror.host.cursor_row() - (host_lines.size() - 7),
+         "and the cursor is on the same screen row");
+}
+
 void TestHostModeInputBecomesSemanticEvents() {
   Mirror mirror(4, 20);
   TerminalSession::KeyPress up;
@@ -579,6 +624,8 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/ClientMirrorsAResize", TestClientMirrorsAResize);
   AddTest(tests, "TerminalHost/CreditWindowWithholdsScrollbackAsOneCountedGap",
           TestCreditWindowWithholdsScrollbackAsOneCountedGap);
+  AddTest(tests, "TerminalHost/AGrowingScreenTakesBackHostLinesFromAGapRule",
+          TestAGrowingScreenTakesBackHostLinesFromAGapRule);
   AddTest(tests, "TerminalHost/HostModeInputBecomesSemanticEvents",
           TestHostModeInputBecomesSemanticEvents);
   AddTest(tests, "TerminalHost/PredictionIsDrawnThenConfirmed", TestPredictionIsDrawnThenConfirmed);

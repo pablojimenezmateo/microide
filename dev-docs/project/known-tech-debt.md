@@ -704,11 +704,18 @@ Phase 2a task 7.4 left three pieces of the host-terminal protocol:
   fetchable, so scrolling up past the prefetch shows the top of what arrived.
   Fetch older pages on demand, keyed by absolute line index, without blocking the
   shell thread (and before copying a selection that reaches into it).
-- **Two clients, one pty**: `TerminalTable::Terminal` has ONE connection; a second
-  `term/attach` takes the terminal over instead of sharing it at the smaller size
-  (tmux's rule, spec "Two clients share one pty at the smaller size"). Needs a
-  frame builder, credit counters and input sequence per attached client.
-- **A gap rule at a resize**: the client draws a withheld range as ONE rule line,
+- ~~**Two clients, one pty**~~ — done 2026-10-09: a terminal holds a list of
+  attached clients, each with its own frame builder, credit window, input sequence
+  and one-shot signals (a capture consumes the bell/clipboard/notification, so they
+  are fanned out to every client); the pty takes the smallest pane any client
+  reported, and gets its room back when that client detaches. `term/input`,
+  `term/resize` and `term/ack` are per connection. The client's channel drops a
+  resize it already asked for, since a larger client re-asks every frame its pane
+  differs from the shared size. `RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize`.
+- ~~**A gap rule at a resize**~~ — done 2026-10-09: the client records which
+  scrollback rows are rules and for how many host lines, so a screen that grows
+  upward takes back host lines — shrinking a rule rather than popping it as one
+  (`TerminalHost/AGrowingScreenTakesBackHostLinesFromAGapRule`). Original: the client draws a withheld range as ONE rule line,
   so its scrollback no longer maps 1:1 to host indexes. A frame whose screen grew
   upward (`screen_top < previous_top`) pops that many lines off the client's
   scrollback — if the rule is among them, one line too many or too few is

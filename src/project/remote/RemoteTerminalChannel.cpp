@@ -214,6 +214,8 @@ void RemoteTerminalChannel::Attached(const std::shared_ptr<RemoteServerClient>& 
     input.swap(pending_input_);
     rows = pending_rows_;
     columns = pending_columns_;
+    sent_rows_ = rows;  // a new attach: the host knows nothing of this client's size
+    sent_columns_ = columns;
     session = session_;
   }
   auto events = std::make_shared<RemoteServerClient::TerminalEvents>();
@@ -335,9 +337,11 @@ void RemoteTerminalChannel::Resize(std::size_t rows, std::size_t columns) {
     }
     pending_rows_ = rows;
     pending_columns_ = columns;
-    if (!attached_) {
+    if (!attached_ || (rows == sent_rows_ && columns == sent_columns_)) {
       return;
     }
+    sent_rows_ = rows;
+    sent_columns_ = columns;
     client = client_;
     handle = handle_;
   }

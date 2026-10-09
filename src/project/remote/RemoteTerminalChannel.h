@@ -87,6 +87,12 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   std::uint64_t handle_ = 0;                      // 0 until term/open answers
   bool attached_ = false;                         // the open/attach was answered on client_
   std::string pending_input_;                     // encoded events before that
+  // What this client last asked the host for on the current attach. The panel
+  // re-asks every frame its pane differs from the session's size — which, with a
+  // second smaller client sharing the terminal, is every frame — so a repeat is
+  // dropped here rather than sent per frame.
+  std::size_t sent_rows_ = 0;
+  std::size_t sent_columns_ = 0;
   std::size_t pending_rows_ = 0;
   std::size_t pending_columns_ = 0;
   std::size_t credit_bytes_ = 256 * 1024;

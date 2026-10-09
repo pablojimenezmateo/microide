@@ -196,6 +196,63 @@ void TestWarmReattachKeepsTheMirrorAndDuplicatesNothing() {
   channel.reset();
 }
 
+// Two clients on one host terminal SHARE it (tmux's rule, spec "Two clients
+// share one pty at the smaller size"): the pty takes the smaller pane, both see
+// every byte and both can type, a one-shot signal (the bell) reaches each of
+// them, and when the smaller one leaves the other gets its room back. A second
+// attach used to take the terminal over from the first.
+void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  std::filesystem::create_directories(root);
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+
+  auto first = Connect(dir);
+  TerminalSession a;
+  TerminalSessionTestAccess::Reset(a, 20, 80);
+  auto channel_a = remote::RemoteTerminalChannel::Open(
+      first, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}},
+      a, identity);
+  Expect(channel_a != nullptr, "the terminal opens");
+  TerminalSessionTestAccess::EnterHostMode(a, channel_a);
+  a.Resize(20, 80);
+  TypeLine(a, "echo ready-$((1+1))");
+  Expect(WaitForText(a, "ready-2"), "the first client sees its shell:\n" + ScreenText(a));
+  const std::uint64_t handle = channel_a->handle();
+
+  auto second = Connect(dir);
+  TerminalSession b;
+  TerminalSessionTestAccess::Reset(b, 10, 40);
+  auto channel_b = remote::RemoteTerminalChannel::Attach(second, handle, b, identity);
+  Expect(channel_b != nullptr, "the second client attaches");
+  TerminalSessionTestAccess::EnterHostMode(b, channel_b);
+  b.Resize(10, 40);
+  Expect(WaitForText(b, "ready-2"), "the second client sees the same screen:\n" + ScreenText(b));
+
+  TypeLine(b, "stty size");
+  Expect(WaitForText(b, "10 40") && WaitForText(a, "10 40"),
+         "the pty takes the smaller pane, and both see it:\n" + ScreenText(a));
+  Expect(WaitUntil([&] { return a.rows() == 10 && a.columns() == 40; }, std::chrono::seconds(5)),
+         "the larger client mirrors the shared size");
+  TypeLine(a, "echo from-a-$((2+3))");
+  Expect(WaitForText(b, "from-a-5"), "what one client types, the other sees:\n" + ScreenText(b));
+  (void)a.ConsumeBell();
+  (void)b.ConsumeBell();
+  TypeLine(b, "printf '\\a'");
+  Expect(WaitUntil([&] { return a.ConsumeBell(); }, std::chrono::seconds(5)) &&
+             WaitUntil([&] { return b.ConsumeBell(); }, std::chrono::seconds(5)),
+         "a bell rings for both clients, not only the first frame's");
+
+  // The second machine goes away: its socket closes and the host detaches it.
+  TerminalSessionTestAccess::EnterHostMode(b, nullptr);
+  channel_b.reset();
+  second.reset();
+  TypeLine(a, "sleep 0.5; stty size");
+  Expect(WaitForText(a, "20 80"), "the remaining client gets its room back:\n" + ScreenText(a));
+  a.Stop();
+}
+
 #endif
 
 }  // namespace
@@ -208,6 +265,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestHostTerminalSurvivesADroppedConnection);
   AddTest(tests, "RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing",
           TestWarmReattachKeepsTheMirrorAndDuplicatesNothing);
+  AddTest(tests, "RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize",
+          TestTwoClientsShareAHostTerminalAtTheSmallerSize);
 #else
   (void)tests;
 #endif

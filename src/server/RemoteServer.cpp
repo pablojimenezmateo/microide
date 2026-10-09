@@ -312,7 +312,7 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
         connection.peer.Fail("malformed term input");
         return;
       }
-      terminals_->Input(handle, events);
+      terminals_->Input(connection.id, handle, events);
     }
   });
 }
@@ -362,11 +362,12 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
     return handle > 0 ? static_cast<std::uint64_t>(handle) : 0;
   };
   peer.OnNotification(remote::method::kTermResize,
-                      [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+                      [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
                         const std::int64_t rows = params["rows"].AsInt(0);
                         const std::int64_t columns = params["columns"].AsInt(0);
                         if (rows > 0 && columns > 0) {
-                          terminals_->Resize(handle_of(params), static_cast<std::size_t>(rows),
+                          terminals_->Resize(connection.id, handle_of(params),
+                                             static_cast<std::size_t>(rows),
                                              static_cast<std::size_t>(columns));
                         }
                       });
@@ -375,9 +376,9 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                         terminals_->Close(handle_of(params));
                       });
   peer.OnNotification(remote::method::kTermAck,
-                      [this, handle_of](std::uint64_t, const util::JsonValue& params) {
+                      [this, &connection, handle_of](std::uint64_t, const util::JsonValue& params) {
                         const std::int64_t bytes = params["bytes"].AsInt(0);
-                        terminals_->Ack(handle_of(params),
+                        terminals_->Ack(connection.id, handle_of(params),
                                         static_cast<std::uint64_t>(std::max<std::int64_t>(bytes, 0)));
                       });
 }

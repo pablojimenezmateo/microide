@@ -208,6 +208,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
       host_primary_stash_screen_lines_ = 0;
       host_alternate_ = false;
       host_screen_top_ = frame.previous_top;
+      host_gaps_.clear();
     }
     if (alternate && !host_alternate_) {
       host_primary_stash_ = std::move(lines_);
@@ -249,10 +250,26 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
       }
       if (frame.screen_top < frame.previous_top) {
         // The screen grew upward (a taller window): its new top rows were our
-        // scrollback, and they come again as screen rows.
-        const std::uint64_t back = frame.previous_top - frame.screen_top;
-        lines_.resize(lines_.size() - static_cast<std::size_t>(std::min<std::uint64_t>(
-                                          back, lines_.size())));
+        // scrollback, and they come again as screen rows. `back` counts HOST
+        // lines; a gap rule at the tail stands for many of them.
+        std::uint64_t back = frame.previous_top - frame.screen_top;
+        while (back > 0 && !lines_.empty()) {
+          const std::uint64_t row = scrollback_trim_total_ + lines_.size() - 1;
+          if (!host_gaps_.empty() && host_gaps_.back().row == row) {
+            HostGap& gap = host_gaps_.back();
+            if (gap.count > back) {
+              // Only the newest of the withheld lines are back on screen.
+              gap.count -= back;
+              lines_.back() = MakeGapLine(gap.count);
+              break;
+            }
+            back -= gap.count;
+            host_gaps_.pop_back();
+          } else {
+            --back;
+          }
+          lines_.pop_back();
+        }
       }
       std::uint64_t absolute = frame.previous_top;
       std::size_t next_line = 0;
@@ -269,6 +286,8 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
             }
             break;
           case TerminalHostRun::Kind::Gap:
+            host_gaps_.push_back(
+                HostGap{.row = scrollback_trim_total_ + lines_.size(), .count = run.count});
             lines_.push_back(MakeGapLine(run.count));
             break;
         }
@@ -303,6 +322,8 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
         const std::size_t trim = lines_.size() - keep;
         lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim));
         scrollback_trim_total_ += trim;
+        std::erase_if(host_gaps_,
+                      [this](const HostGap& gap) { return gap.row < scrollback_trim_total_; });
       }
     }
     cursor_row_ = lines_.size() - host_screen_lines_ + frame.cursor_row;
