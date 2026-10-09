@@ -440,6 +440,11 @@ machine that found it): `perf record` both binaries (`KEEP=1` keeps the
 worktrees) and diff the hot loop's disassembly. User impact is ~10 µs per 8,000
 tokens decoded; it is filed because it is a regression nobody chose.
 
+Tried 2026-10-09: `LspProtocol.cpp` with `SKIP_PRECOMPILE_HEADERS` in the
+`microide-perf` build — 6.4/6.8/6.8 ms against 6.7/6.0/8.4 ms with the PCH, on a
+box at load 15. Inconclusive under that load; repeat on a quiet machine before
+ruling the PCH in or out.
+
 ### TD-2026-10-09-334 — four allocation gates carry the terminal split-pane cost. [OPEN — decided: rebaseline]
 
 Measured 2026-10-08 against v2.12.0 on one machine: after the per-open and
