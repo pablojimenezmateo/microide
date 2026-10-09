@@ -3,11 +3,14 @@
 #include <chrono>
 #include <cstddef>
 #include <optional>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "terminal/TerminalCell.h"
 #include "terminal/TerminalInput.h"
 
 namespace microide::platform {
@@ -34,6 +37,17 @@ class TerminalHostChannel {
   // The link's measured round trip, for adaptive echo prediction; nullopt until
   // one has been measured.
   virtual std::optional<std::chrono::milliseconds> RoundTrip() const { return std::nullopt; }
+  // term/scrollback: up to `count` lines ending just before host-absolute line
+  // `before` (older history than the attach prefetched). `done` runs once, on any
+  // thread, with the first line's absolute index and the lines (empty: the host
+  // holds nothing older, or the request failed). False when nothing was sent.
+  using HistoryDone = std::function<void(std::uint64_t first, std::vector<TerminalLine> lines)>;
+  virtual bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) {
+    (void)before;
+    (void)count;
+    (void)done;
+    return false;
+  }
 };
 
 // A launcher whose shells run on ANOTHER machine also implements this, the way

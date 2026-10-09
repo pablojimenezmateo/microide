@@ -396,6 +396,28 @@ void RemoteServer::InstallTerminalHandlers(Connection& connection) {
                                              static_cast<std::size_t>(columns));
                         }
                       });
+  // Older history than an attach prefetched, a page at a time as the client
+  // scrolls up (§ 6.12). Bulk: it is backfill, never ahead of an echo.
+  peer.OnRequest("term/scrollback", [this, &connection, handle_of](std::uint64_t id,
+                                                                    const util::JsonValue& params) {
+    const std::int64_t before = params["before"].AsInt(-1);
+    const std::int64_t count = params["count"].AsInt(0);
+    std::uint64_t first = 0;
+    std::vector<terminal::TerminalLine> lines;
+    if (before < 0 || count <= 0 ||
+        !terminals_->History(handle_of(params), static_cast<std::uint64_t>(before),
+                             static_cast<std::size_t>(std::min<std::int64_t>(count, 5000)), &first,
+                             lines)) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams, "no such terminal");
+      return;
+    }
+    std::string bytes;
+    terminal::EncodeTerminalLines(bytes, lines);
+    util::JsonObject result;
+    result["first"] = util::JsonValue(static_cast<std::int64_t>(first));
+    result["lines"] = util::JsonValue(std::move(bytes));
+    connection.peer.Reply(id, util::JsonValue(std::move(result)), remote::Lane::Bulk);
+  });
   peer.OnNotification(remote::method::kTermClose,
                       [this, handle_of](std::uint64_t, const util::JsonValue& params) {
                         terminals_->Close(handle_of(params));

@@ -336,6 +336,19 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
   return frame;
 }
 
+void EncodeTerminalLines(std::string& out, const std::vector<TerminalLine>& lines) {
+  PutLines(out, lines);
+}
+
+std::optional<std::vector<TerminalLine>> DecodeTerminalLines(std::string_view bytes) {
+  ByteReader in(bytes);
+  std::vector<TerminalLine> lines;
+  if (!GetLines(in, lines) || !in.at_end()) {
+    return std::nullopt;
+  }
+  return lines;
+}
+
 void EncodeTerminalInputEvent(std::string& out, const TerminalInputEvent& event) {
   out.push_back(static_cast<char>(event.kind));
   PutVarint(out, event.seq);

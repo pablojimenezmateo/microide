@@ -80,7 +80,7 @@ void TerminalFindService::Refresh(TerminalPaneState* tab) {
     return;
   }
 
-  const bool same_scan = scanned_session_ == static_cast<const void*>(&tab->session) &&
+  bool same_scan = scanned_session_ == static_cast<const void*>(&tab->session) &&
                          scanned_query_ == text && scanned_case_sensitive_ == case_sensitive_ &&
                          scanned_whole_word_ == whole_word_;
   const terminal::TerminalSearchQuery query =
@@ -92,6 +92,11 @@ void TerminalFindService::Refresh(TerminalPaneState* tab) {
   // at the tail must not jump the selection back to the top. Captured after the
   // trim rebase below so it is in the same row space as the rescanned matches.
   std::optional<terminal::TerminalSearchMatch> previous;
+  // History prepended above (a host terminal's older page) is rows the settled
+  // matches never saw: scan again from the top.
+  if (same_scan && tab->session.ScrollbackTrimTotal() < scanned_trim_total_) {
+    same_scan = false;
+  }
   if (same_scan) {
     // Only the visible grid can still be rewritten, so keep the settled
     // scrollback matches and rescan from that boundary. Rebase first: scrollback

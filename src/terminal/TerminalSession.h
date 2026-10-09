@@ -6,6 +6,7 @@
 #include "terminal/TerminalCell.h"
 #include "terminal/TerminalLinkTable.h"
 #include "terminal/TerminalHostChannel.h"
+#include "terminal/TerminalHostHistory.h"
 #include "terminal/TerminalHostWire.h"
 #include "terminal/TerminalInput.h"
 #include "terminal/TerminalPredictionOverlay.h"
@@ -14,7 +15,6 @@
 #include "util/KeyModifiers.h"
 #include "util/Waker.h"
 
-#include <algorithm>
 #include <cstdint>
 #include <deque>
 #include <filesystem>
@@ -24,7 +24,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -215,6 +214,13 @@ class TerminalSession {
     bool alternate = false;
   };
   std::optional<HostResumePoint> host_resume_point() const;
+  // Ask the host for history older than what this mirror holds (term/scrollback,
+  // § 6.12) — the view reached the top of what the attach prefetched. A page is
+  // prepended when it arrives; the scrollback trim total goes DOWN by its size, so
+  // every absolute row already held keeps its index. No-op off a host terminal,
+  // on the alternate screen, while a request is out, once the host has nothing
+  // older, or when the scrollback is at this client's own cap.
+  void RequestOlderHostHistory();
   // Carry on over a new channel to the same host terminal (a reconnect), keeping
   // the mirror: the channel was attached with host_resume_point().
   void ReattachHost(std::shared_ptr<TerminalHostChannel> channel);
@@ -235,6 +241,11 @@ class TerminalSession {
     std::uint64_t generation = 0;
   };
   void CaptureForHost(std::uint64_t from, std::size_t max_lines_before_screen, HostCapture& out);
+  // Server side, term/scrollback: up to `count` primary-buffer lines ending just
+  // before absolute line `before` (only what is still held; links dropped — a page
+  // of history carries no link table). Returns the first line's absolute index.
+  std::uint64_t CaptureHostHistory(std::uint64_t before, std::size_t count,
+                                   std::vector<TerminalLine>& out) const;
   // Called on the reader thread after each parsed output chunk and on exit, with
   // no lock held. Set before Start; a host-side server drives its frames off it.
   void SetOutputObserver(std::function<void()> observer);
@@ -492,15 +503,8 @@ class TerminalSession {
   // local ones, which never stash — paid two allocations for this slot.
   std::optional<std::deque<TerminalLine>> host_primary_stash_;
   std::size_t host_primary_stash_screen_lines_ = 0;
-  // The scrollback lines that are a Gap rule, each standing for `count` host
-  // lines, by absolute client row (scrollback_trim_total_ + deque row), ascending.
-  // A screen that grows upward takes host lines back off the scrollback's tail,
-  // and a rule there is `count` of them, not one (TD-2026-10-08-326).
-  struct HostGap {
-    std::uint64_t row = 0;
-    std::uint64_t count = 0;
-  };
-  std::vector<HostGap> host_gaps_;
+  TerminalHostHistory host_history_;
+  void PrependHostHistory(std::uint64_t first, std::vector<TerminalLine> lines);
   std::function<void()> output_observer_;
   TerminalPredictionOverlay prediction_;
   TerminalPredictionOverlay::View PredictionViewLocked();

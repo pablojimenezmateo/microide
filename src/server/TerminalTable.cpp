@@ -286,6 +286,21 @@ void TerminalTable::Ack(std::uint64_t connection, std::uint64_t handle,
   Notify();
 }
 
+bool TerminalTable::History(std::uint64_t handle, std::uint64_t before, std::size_t count,
+                            std::uint64_t* first, std::vector<terminal::TerminalLine>& lines) {
+  std::shared_ptr<Terminal> terminal;
+  {
+    std::lock_guard lock(mutex_);
+    const auto it = terminals_.find(handle);
+    if (it == terminals_.end()) {
+      return false;
+    }
+    terminal = it->second;
+  }
+  *first = terminal->session.CaptureHostHistory(before, count, lines);
+  return true;
+}
+
 void TerminalTable::Close(std::uint64_t handle) {
   std::shared_ptr<Terminal> terminal;
   {

@@ -572,6 +572,11 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
     if (auto* terminal_tab = ActiveTerminalPane(); terminal_tab != nullptr) {
       terminal_tab->scroll_row = clamped_scroll;
       terminal_tab->follow_tail = clamped_scroll >= max_scroll;
+      // At the top of a host terminal's history: ask for the page before it, as
+      // VS Code's terminal reveals scrollback as you scroll. A no-op locally.
+      if (clamped_scroll == 0 && max_scroll > 0) {
+        terminal_tab->session.RequestOlderHostHistory();
+      }
     }
     return;
   }
@@ -593,8 +598,24 @@ void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
     return;
   }
   const std::uint64_t total = terminal_tab->session.ScrollbackTrimTotal();
-  if (total <= terminal_tab->observed_scrollback_trim_total) {
+  if (total == terminal_tab->observed_scrollback_trim_total) {
+    return;
+  }
+  if (total < terminal_tab->observed_scrollback_trim_total) {
+    // Older history was PREPENDED (a host terminal's term/scrollback page): every
+    // row this pane names moved down by the page, and the view stays on the same
+    // text rather than jumping to the new top.
+    const std::uint64_t added = terminal_tab->observed_scrollback_trim_total - total;
     terminal_tab->observed_scrollback_trim_total = total;
+    terminal_tab->scroll_row += static_cast<int>(added);
+    for (auto* point : {&terminal_tab->selection_anchor, &terminal_tab->selection_head}) {
+      if (point->has_value()) {
+        (*point)->row += static_cast<std::size_t>(added);
+      }
+    }
+    if (terminal_tab->has_last_command) {
+      terminal_tab->last_command_start_row += static_cast<std::size_t>(added);
+    }
     return;
   }
   const std::uint64_t delta = total - terminal_tab->observed_scrollback_trim_total;

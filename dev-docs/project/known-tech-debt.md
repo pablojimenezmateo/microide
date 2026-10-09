@@ -751,7 +751,7 @@ and re-`proc/attach` from its acknowledged offsets on Replace, as
 reconnect; not done then because no remote PROJECT exists yet (Phase 2b) to run
 a language server over it.
 
-### TD-2026-10-08-326 — host terminals: backfill, two clients, and a gap at a resize. [OPEN]
+### TD-2026-10-08-326 — host terminals: backfill, two clients, and a gap at a resize. [RESOLVED 2026-10-09]
 
 **Decided 2026-10-09 (project owner):** two clients on one host terminal **share** it
 at the smaller size, as the spec says (tmux's rule) — not "last attach wins".
@@ -759,7 +759,17 @@ Needs a frame builder, credit counters and input sequence per attached client.
 
 Phase 2a task 7.4 left three pieces of the host-terminal protocol:
 
-- **`term/scrollback`**: an attach sends the screen plus 500 lines
+- ~~**`term/scrollback`**~~ — done 2026-10-09: scrolling a host terminal to the top
+  asks for the page before the mirror's first line (`TerminalSession::
+  RequestOlderHostHistory`, 500 lines, never past this client's own cap) and
+  prepends it; the trim total goes DOWN by the page, so every row already held keeps
+  its absolute index, and the pane's scroll/selection rebase and terminal find
+  handle the decrease. The mirror's first line is tracked in host lines across
+  trims (`TerminalHostHistory`: a gap rule counts its lines, a "connection lost"
+  note counts none), and a mirror's row numbering starts at 2^40 so a prepend can
+  never underflow. `RemoteTerminal/ScrollingUpFetchesOlderHostHistory`. Not done: a
+  selection copied across a gap rule copies the rule, not the withheld lines.
+  Original: an attach sends the screen plus 500 lines
   (`remote.scrollback_prefetch_lines`); older history the host still holds is not
   fetchable, so scrolling up past the prefetch shows the top of what arrived.
   Fetch older pages on demand, keyed by absolute line index, without blocking the

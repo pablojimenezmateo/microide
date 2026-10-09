@@ -103,6 +103,9 @@ class TerminalTable {
   void Resize(std::uint64_t connection, std::uint64_t handle, std::size_t rows, std::size_t columns);
   // `connection` has received this many frame bytes of this terminal in total.
   void Ack(std::uint64_t connection, std::uint64_t handle, std::uint64_t received_bytes);
+  // term/scrollback: see TerminalSession::CaptureHostHistory. False for no such terminal.
+  bool History(std::uint64_t handle, std::uint64_t before, std::size_t count,
+               std::uint64_t* first, std::vector<terminal::TerminalLine>& lines);
   void Close(std::uint64_t handle);
   // A connection went away: its terminals keep running, without it.
   void Detach(std::uint64_t connection);

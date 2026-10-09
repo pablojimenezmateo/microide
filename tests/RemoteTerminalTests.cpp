@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <thread>
 
 namespace microide::tests {
 namespace {
@@ -253,6 +254,83 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   a.Stop();
 }
 
+// An attach prefetches only the newest history; scrolling to the top of a host
+// terminal asks for the page before it (term/scrollback), until the host holds
+// nothing older. Every line arrives exactly once and in order, and the rows the
+// mirror already held keep their absolute index (the trim total goes DOWN).
+void TestScrollingUpFetchesOlderHostHistory() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  std::filesystem::create_directories(root);
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+
+  auto first = Connect(dir);
+  std::uint64_t handle = 0;
+  {
+    TerminalSession writer;
+    TerminalSessionTestAccess::Reset(writer, 10, 40);
+    auto channel = remote::RemoteTerminalChannel::Open(
+        first,
+        terminal::HostTerminalSource::OpenRequest{
+            .working_directory = root, .shell = {"sh"}, .scrollback_lines = 5000,
+            .prefetch_lines = 100},
+        writer, identity);
+    Expect(channel != nullptr, "the terminal opens");
+    TerminalSessionTestAccess::EnterHostMode(writer, channel);
+    TypeLine(writer, "i=1; while [ $i -le 1500 ]; do echo row-$i; i=$((i+1)); done; echo done-$((2*2))");
+    Expect(WaitForText(writer, "done-4"), "the output is written:\n" + ScreenText(writer));
+    handle = channel->handle();
+    first->peer().Fail("detach");
+    TerminalSessionTestAccess::EnterHostMode(writer, nullptr);
+  }
+
+  // A second client attaches (the terminal prefetches 100 lines) and pages back.
+  auto second = Connect(dir);
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 10, 40);
+  session.SetMaxScrollbackLines(5000);
+  auto channel = remote::RemoteTerminalChannel::Attach(second, handle, session, identity);
+  Expect(channel != nullptr, "the reattach is sent");
+  TerminalSessionTestAccess::EnterHostMode(session, channel);
+  Expect(WaitForText(session, "done-4"), "the attach shows the screen");
+  const auto rows = [&]() {
+    std::vector<int> numbers;
+    for (const auto& line : session.SnapshotLines()) {
+      std::string text;
+      for (const auto& cell : line.cells) {
+        text += cell.DisplayText();
+      }
+      // "row-N", possibly after a prompt that raced the first line ("$ row-1").
+      if (const std::size_t at = text.find("row-"); at != std::string::npos &&
+                                                     text.find("echo") == std::string::npos) {
+        numbers.push_back(std::stoi(text.substr(at + 4)));
+      }
+    }
+    return numbers;
+  };
+  Expect(rows().size() < 200 && rows().front() > 1000, "only the newest history was prefetched");
+  const std::uint64_t trim_before = session.ScrollbackTrimTotal();
+  // Page back until the host has nothing older: the mirror stops growing.
+  for (int page = 0; page < 10; ++page) {
+    const std::size_t held = session.SnapshotLines().size();
+    session.RequestOlderHostHistory();
+    if (!WaitUntil([&] { return session.SnapshotLines().size() > held; }, std::chrono::seconds(3))) {
+      break;
+    }
+  }
+  const std::vector<int> numbers = rows();
+  bool contiguous = numbers.size() == 1500;
+  for (std::size_t i = 0; contiguous && i < numbers.size(); ++i) {
+    contiguous = numbers[i] == static_cast<int>(i) + 1;
+  }
+  Expect(contiguous, "every row, once, in order: got " + std::to_string(numbers.size()) +
+                         " rows from " + std::to_string(numbers.empty() ? 0 : numbers.front()));
+  Expect(session.ScrollbackTrimTotal() < trim_before, "the prepended rows took the trim total down");
+  Expect(numbers.empty() || numbers.front() == 1, "paging reached the host's first line");
+  session.Stop();
+}
+
 #endif
 
 }  // namespace
@@ -265,6 +343,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestHostTerminalSurvivesADroppedConnection);
   AddTest(tests, "RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing",
           TestWarmReattachKeepsTheMirrorAndDuplicatesNothing);
+  AddTest(tests, "RemoteTerminal/ScrollingUpFetchesOlderHostHistory",
+          TestScrollingUpFetchesOlderHostHistory);
   AddTest(tests, "RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize",
           TestTwoClientsShareAHostTerminalAtTheSmallerSize);
 #else

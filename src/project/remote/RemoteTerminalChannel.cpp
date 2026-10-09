@@ -348,6 +348,43 @@ void RemoteTerminalChannel::Resize(std::size_t rows, std::size_t columns) {
   SendResize(client, handle, rows, columns);
 }
 
+bool RemoteTerminalChannel::FetchHistory(std::uint64_t before, std::size_t count,
+                                         HistoryDone done) {
+  std::shared_ptr<RemoteServerClient> client;
+  std::uint64_t handle = 0;
+  {
+    std::lock_guard lock(mutex_);
+    if (session_ == nullptr || !attached_) {
+      return false;
+    }
+    client = client_;
+    handle = handle_;
+  }
+  return client->peer().Request(
+             "term/scrollback", HandleParams(handle, {{"before", before}, {"count", count}}),
+             Lane::Bulk,
+             [weak = weak_from_this(), done = std::move(done)](std::optional<util::JsonValue> result,
+                                                               std::optional<RemotePeer::RpcError>) {
+               // Only to a session the channel still serves, under its lock, as
+               // frames are: a reply after Close() reaches nothing.
+               const auto channel = weak.lock();
+               if (!channel) {
+                 return;
+               }
+               std::lock_guard lock(channel->mutex_);
+               if (channel->session_ == nullptr) {
+                 return;
+               }
+               std::optional<std::vector<terminal::TerminalLine>> lines;
+               std::uint64_t first = 0;
+               if (result.has_value() && (*result)["first"].IsInt() && (*result)["first"].AsInt() >= 0) {
+                 first = static_cast<std::uint64_t>((*result)["first"].AsInt());
+                 lines = terminal::DecodeTerminalLines((*result)["lines"].AsString());
+               }
+               done(first, lines.has_value() ? std::move(*lines) : std::vector<terminal::TerminalLine>{});
+             }) != 0;
+}
+
 void RemoteTerminalChannel::Close() {
   std::shared_ptr<RemoteServerClient> client;
   std::uint64_t handle = 0;

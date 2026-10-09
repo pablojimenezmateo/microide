@@ -61,6 +61,7 @@ class RemoteTerminalChannel final : public terminal::TerminalHostChannel,
   void Resize(std::size_t rows, std::size_t columns) override;
   void Close() override;
   std::optional<std::chrono::milliseconds> RoundTrip() const override;
+  bool FetchHistory(std::uint64_t before, std::size_t count, HistoryDone done) override;
 
   // The host's handle; 0 until term/open answers.
   std::uint64_t handle() const;
