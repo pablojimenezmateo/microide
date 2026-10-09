@@ -465,6 +465,24 @@ std::string WorkspaceTree::OverLimitMessage() const {
          " files (remote.max_manifest_files); narrow it with remote.exclude";
 }
 
+std::optional<std::vector<std::string>> WorkspaceTree::SearchPaths(std::string* error) {
+  std::lock_guard lock(mutex_);
+  if (built_) {
+    std::vector<std::string> paths;
+    paths.reserve(last_rows_.size());
+    for (const project::remote::ManifestRow& row : last_rows_) {
+      paths.push_back(row.path);
+    }
+    return paths;
+  }
+  bool git = false;
+  std::optional<std::vector<std::string>> paths = ContentSet(&git, error);
+  if (paths.has_value()) {
+    std::sort(paths->begin(), paths->end());
+  }
+  return paths;
+}
+
 std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     const Changes& changes, std::string* error, const std::function<bool()>& cancelled) {
   std::string scratch_error;

@@ -274,6 +274,9 @@ struct ProjectSearchState {
   // tree. Distinct from `truncated`, which is the display match-count cap
   // (TD-2026-07-17-008/033). Pinned from FileIndex::truncated() at search start.
   bool index_incomplete = false;
+  // A remote project's host could not be reached, so the local copy was searched:
+  // it may be behind the host, and the status says so (remote-projects.md § 6.11).
+  bool searched_local_copy = false;
   std::string error;
 };
 

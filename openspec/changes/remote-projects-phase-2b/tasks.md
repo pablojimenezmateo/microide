@@ -35,6 +35,6 @@
 
 ## 6. Search, conflicts, parity
 
-- [ ] 6.1 `search/run` on the host, streamed results
+- [x] 6.1 `search/run` on the host, streamed results
 - [x] 6.2 Conflict flow: Reload / Overwrite / Compare on a refused push
 - [x] 6.3 Parity rows against the real server with the mirror in place

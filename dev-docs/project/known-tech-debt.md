@@ -547,8 +547,17 @@ silent one:
   pushed). `RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation`. Left: the
   outgoing-files diff of a full refresh still spawns once, and `git/metadata` is
   still asked (once per root, cached) rather than pushed.
-- Still to do from the task list: host-side `search/run` (search reads the mirror,
-  which is complete once synced but briefly stale under churn), files over the
+- ~~Host-side `search/run`~~ — done 2026-10-09: the search core is
+  `project::RunProjectSearch` (a sink, not the service's internals), the server
+  runs it on its own two workers over `WorkspaceTree::SearchPaths` (the content
+  set: never build/ or .git) and streams `search/results` on the bulk lane; the
+  remote launcher is a `project::ProjectSearchHost`, so the panel's search runs on
+  the host, and with no host to ask it searches the mirror and the status says
+  "host offline: searched the local copy".
+  `RemoteLauncher/ProjectSearchRunsOnTheHostOverTheContentSet`. Not covered:
+  replace-in-project still edits the mirror's files (each write is pushed
+  through the gate, so it is correct; it just reads local bytes to decide).
+- Still to do from the task list: files over the
   64 MiB per-object ceiling (absent, and so invisible in the tree). Done since: the
   parity suite's `mirror` locality (every scenario against the real server with
   the mirror filled by the engine and writes through the mirror gate), the Compare choice of

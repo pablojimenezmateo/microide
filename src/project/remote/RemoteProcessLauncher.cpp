@@ -1,6 +1,7 @@
 #include "project/remote/RemoteProcessLauncher.h"
 
 #include "project/remote/RemoteConnection.h"
+#include "project/remote/RemoteSearchWire.h"
 #include "project/remote/RemoteTerminalChannel.h"
 
 #include <algorithm>
@@ -605,6 +606,47 @@ std::optional<RemoteServerClient::GitMetadata> RemoteProcessLauncher::Metadata(
     metadata_[*host_root] = *answer;
   }
   return answer;
+}
+
+std::optional<project::ProjectSearchCompletion> RemoteProcessLauncher::SearchOnHost(
+    const std::filesystem::path& root, const std::string& query,
+    const project::ProjectSearchOptions& options, const project::ProjectSearchSink& sink,
+    const std::atomic_bool& cancel, const util::CancellationToken& token) const {
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  // The host searches its workspace root: anything narrower stays local.
+  if (client == nullptr || !client->connected() ||
+      root.lexically_normal() != map_.local_root().lexically_normal()) {
+    return std::nullopt;
+  }
+  bool received = false;
+  std::string error;
+  const std::optional<util::JsonValue> result = client->RunSearch(
+      SearchRunParams(query, options),
+      [&](const util::JsonValue& params) {
+        std::vector<project::ProjectSearchResult> batch;
+        std::size_t searched = 0;
+        std::size_t total = 0;
+        if (!ParseSearchResults(params, batch, &searched, &total)) {
+          return;  // a malformed batch is dropped whole
+        }
+        received = true;
+        if (!batch.empty()) {
+          sink.results(std::move(batch));
+        }
+        sink.progress(searched, total);
+      },
+      [&]() { return cancel.load(std::memory_order_relaxed) || token.IsCancellationRequested(); },
+      &error);
+  if (result.has_value()) {
+    return ParseSearchCompletion(*result);
+  }
+  // Refused before anything arrived (the link dropped as it was sent): the local
+  // copy, labelled. Mid-stream, the results shown so far stand with the reason.
+  if (!received) {
+    return std::nullopt;
+  }
+  return project::ProjectSearchCompletion{
+      .error = "the host stopped answering" + (error.empty() ? std::string() : ": " + error)};
 }
 
 std::optional<project::GitStatusOutput> RemoteProcessLauncher::CurrentStatus(

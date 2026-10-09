@@ -1,6 +1,7 @@
 #include "project/remote/RemoteServerClient.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <thread>
 #include <utility>
 
@@ -115,6 +116,19 @@ void RemoteServerClient::InstallRouting() {
   });
   peer_.OnNotification("proc/exit", [this](std::uint64_t handle, const util::JsonValue& params) {
     DeliverExit(handle, params);
+  });
+  peer_.OnNotification("search/results", [this](std::uint64_t id, const util::JsonValue& params) {
+    std::shared_ptr<std::function<void(const util::JsonValue&)>> route;
+    {
+      std::lock_guard lock(mutex_);
+      if (const auto it = search_routes_.find(id); it != search_routes_.end()) {
+        route = it->second;
+      }
+    }
+    // A batch for a search no longer waited on (a cancelled one's tail) is dropped.
+    if (route && *route) {
+      (*route)(params);
+    }
   });
   peer_.OnNotification("git/status", [this](std::uint64_t, const util::JsonValue& params) {
     const util::JsonValue& root = params["root"];
@@ -475,6 +489,66 @@ std::optional<project::GitStatusOutput> RemoteServerClient::CurrentGitStatus(
     return std::nullopt;
   }
   return it->second.status;
+}
+
+std::optional<util::JsonValue> RemoteServerClient::RunSearch(
+    const util::JsonValue& params, std::function<void(const util::JsonValue&)> on_results,
+    const std::function<bool()>& cancelled, std::string* error) {
+  struct Outcome {
+    std::mutex mutex;
+    std::condition_variable done_cv;
+    bool done = false;
+    std::optional<util::JsonValue> result;
+    std::string error;
+  };
+  auto outcome = std::make_shared<Outcome>();
+  auto route = std::make_shared<std::function<void(const util::JsonValue&)>>(std::move(on_results));
+  std::uint64_t registered = 0;
+  const std::uint64_t id = peer_.Request(
+      "search/run", params, Lane::Bulk,
+      [outcome](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> rpc_error) {
+        std::lock_guard lock(outcome->mutex);
+        outcome->result = std::move(result);
+        if (rpc_error.has_value()) {
+          outcome->error = std::move(rpc_error->message);
+        }
+        outcome->done = true;
+        outcome->done_cv.notify_all();
+      },
+      [&](std::uint64_t allocated) {
+        std::lock_guard lock(mutex_);
+        search_routes_[allocated] = route;
+        registered = allocated;
+      });
+  const auto unregister = [&]() {
+    std::lock_guard lock(mutex_);
+    search_routes_.erase(registered);
+  };
+  if (id == 0) {
+    unregister();
+    if (error != nullptr) {
+      *error = "not connected to the host";
+    }
+    return std::nullopt;
+  }
+  bool cancel_sent = false;
+  std::unique_lock lock(outcome->mutex);
+  while (!outcome->done) {
+    outcome->done_cv.wait_for(lock, std::chrono::milliseconds(50));
+    if (!outcome->done && !cancel_sent && cancelled && cancelled()) {
+      cancel_sent = true;
+      lock.unlock();
+      peer_.Cancel(id);
+      lock.lock();
+    }
+  }
+  lock.unlock();
+  // The reply travels behind every batch on its lane: the route is finished with.
+  unregister();
+  if (!outcome->result.has_value() && error != nullptr) {
+    *error = outcome->error;
+  }
+  return std::move(outcome->result);
 }
 
 void RemoteServerClient::BeginGitMutation() {

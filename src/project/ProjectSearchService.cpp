@@ -159,7 +159,8 @@ void ProjectSearchService::SetWakeChannel(util::WakeChannel channel) {
 std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
                                           std::string query,
                                           ProjectSearchOptions options,
-                                          SharedPathList indexed_files) {
+                                          SharedPathList indexed_files,
+                                          const ProjectSearchHost* host) {
   Stop();
 
   std::uint64_t run_id = 0;
@@ -186,8 +187,8 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
       nullptr, [](void*) { util::DecrementBackgroundTaskCountAndWake(); });
   task_executor_.Submit(
       [this, root, query = std::move(query), options, indexed_files = std::move(indexed_files),
-       run_id, task_guard = std::move(task_guard)](const util::CancellationToken& token) {
-        WorkerMain(root, query, options, std::move(indexed_files), run_id, token);
+       host, run_id, task_guard = std::move(task_guard)](const util::CancellationToken& token) {
+        WorkerMain(root, query, options, std::move(indexed_files), host, run_id, token);
       });
   return run_id;
 }
@@ -222,6 +223,7 @@ void ProjectSearchService::WorkerMain(std::filesystem::path root,
                                       std::string query,
                                       ProjectSearchOptions options,
                                       SharedPathList indexed_files,
+                                      const ProjectSearchHost* host,
                                       std::uint64_t run_id,
                                       const util::CancellationToken& token) {
   if (token.IsCancellationRequested() || cancel_requested_.load(std::memory_order_relaxed)) {
@@ -232,16 +234,22 @@ void ProjectSearchService::WorkerMain(std::filesystem::path root,
     return;
   }
 
-  const ProjectSearchCompletion completion = RunProjectSearch(
-      root, query, options, indexed_files,
-      ProjectSearchSink{
-          .results = [this, run_id](std::vector<ProjectSearchResult> batch) {
-            PublishResults(run_id, std::move(batch));
-          },
-          .progress = [this, run_id](std::size_t searched, std::size_t total) {
-            PublishProgress(run_id, searched, total);
-          }},
-      cancel_requested_, token);
+  const ProjectSearchSink sink{
+      .results = [this, run_id](std::vector<ProjectSearchResult> batch) {
+        PublishResults(run_id, std::move(batch));
+      },
+      .progress = [this, run_id](std::size_t searched, std::size_t total) {
+        PublishProgress(run_id, searched, total);
+      }};
+  std::optional<ProjectSearchCompletion> on_host;
+  if (host != nullptr) {
+    on_host = host->SearchOnHost(root, query, options, sink, cancel_requested_, token);
+  }
+  ProjectSearchCompletion completion =
+      on_host.has_value()
+          ? std::move(*on_host)
+          : RunProjectSearch(root, query, options, indexed_files, sink, cancel_requested_, token);
+  completion.searched_local_copy = host != nullptr && !on_host.has_value();
   if (!token.IsCancellationRequested()) {
     PublishFinished(run_id, completion);
   }
@@ -620,6 +628,7 @@ void ProjectSearchService::PublishFinished(std::uint64_t run_id, ProjectSearchCo
     pending_update_.truncated = pending_update_.truncated || completion.truncated;
     pending_update_.total_matches = completion.total_matches;
     pending_update_.finished = true;
+    pending_update_.searched_local_copy = completion.searched_local_copy;
     pending_update_.error = std::move(completion.error);
   }
   // Publish completion to WorkerFinished() peekers after the pending state is

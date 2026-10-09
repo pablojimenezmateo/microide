@@ -117,6 +117,7 @@ struct ProjectSearchStatusKey {
   std::size_t searched_files = 0;
   std::size_t total_files = 0;
   std::size_t total_matches = 0;
+  bool searched_local_copy = false;
   bool operator==(const ProjectSearchStatusKey&) const = default;
 };
 
@@ -132,7 +133,19 @@ thread_local struct ProjectSearchStatusCache {
 // carried information. No other sidebar inlines its keys either; the search
 // panel's keys live in Help/About next to the git sidebar's, and every button
 // already carries a hover tooltip.
+std::string ComposeProjectSearchStatusCore(const ProjectSearchState& ps);
+
+// A search that fell back to the local copy says so on every result line it
+// produced: the copy may be behind the host (remote-projects.md § 6.11).
 std::string ComposeProjectSearchStatus(const ProjectSearchState& ps) {
+  std::string status = ComposeProjectSearchStatusCore(ps);
+  if (ps.searched_local_copy && !ps.editing && !ps.running) {
+    return JoinHintSegments({status, "host offline: searched the local copy"});
+  }
+  return status;
+}
+
+std::string ComposeProjectSearchStatusCore(const ProjectSearchState& ps) {
   if (ps.editing) {
     // No "Editing query"/"Editing replace" prefix: the field being edited already
     // draws with the accent border and a caret, and spelling it out here pushed
@@ -170,6 +183,7 @@ std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
       .searched_files = ps.searched_files,
       .total_files = ps.total_files,
       .total_matches = ps.total_matches,
+      .searched_local_copy = ps.searched_local_copy,
   };
   auto& cache = g_project_search_status_cache;
   if (!cache.valid || !(cache.key == key)) {

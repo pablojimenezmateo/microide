@@ -139,6 +139,7 @@ void WorkspaceShell::RefreshProjectSearch() {
   context_.current_project_state.overlay.workflow.project_search.searched_files = 0;
   context_.current_project_state.overlay.workflow.project_search.total_files = 0;
   context_.current_project_state.overlay.workflow.project_search.total_matches = 0;
+  context_.current_project_state.overlay.workflow.project_search.searched_local_copy = false;
   // A fresh search resets the selection to the top of the list.
   context_.current_project_state.sidebar.scroll_row = 0;
 
@@ -170,9 +171,12 @@ void WorkspaceShell::RefreshProjectSearch() {
       context_.current_project_state.overlay.workflow.project_search.include_globs.text();
   options.exclude_globs =
       context_.current_project_state.overlay.workflow.project_search.exclude_globs.text();
+  // A remote project searches on its host, over the real tree (§ 6.11); the
+  // mirror's index is what it falls back to when the host cannot be reached.
   project_search_runtime_.Start(context_.current_project_state.root,
                                 context_.current_project_state.overlay.workflow.project_search.query.text(),
-                                std::move(options), file_snapshot.files);
+                                std::move(options), file_snapshot.files,
+                                project::ProjectSearchHostFor(context_.current_project_state.launcher()));
   ResetOverlayScroll();
   RequestSidebarRedraw();
 }
@@ -262,6 +266,8 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   }
   if (update.finished) {
     context_.current_project_state.overlay.workflow.project_search.running = false;
+    context_.current_project_state.overlay.workflow.project_search.searched_local_copy =
+        update.searched_local_copy;
     // Arm the results cache so returning to the search sidebar with this same
     // query reuses the results instead of re-running the search.
     context_.current_project_state.overlay.workflow.project_search.searched_query =

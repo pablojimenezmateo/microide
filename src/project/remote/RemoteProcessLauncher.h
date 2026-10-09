@@ -11,6 +11,7 @@
 
 #include "platform/ProcessLauncher.h"
 #include "project/GitMetadataSource.h"
+#include "project/ProjectSearchService.h"
 #include "project/remote/RemotePathMap.h"
 #include "terminal/TerminalHostChannel.h"
 #include "project/remote/RemoteServerClient.h"
@@ -28,6 +29,7 @@ class RemoteConnection;
 // probe never costs a host process.
 class RemoteProcessLauncher final : public platform::ProcessLauncher,
                                     public project::GitMetadataSource,
+                                    public project::ProjectSearchHost,
                                     public terminal::HostTerminalSource {
  public:
   struct Options {
@@ -73,6 +75,12 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
   std::string_view description() const override { return options_.description; }
 
   project::GitAvailability Availability(const std::filesystem::path& root) const override;
+  // Project search over the host's real tree (search/run), for the project root
+  // only; nullopt (search the mirror) when not connected.
+  std::optional<project::ProjectSearchCompletion> SearchOnHost(
+      const std::filesystem::path& root, const std::string& query,
+      const project::ProjectSearchOptions& options, const project::ProjectSearchSink& sink,
+      const std::atomic_bool& cancel, const util::CancellationToken& token) const override;
   // The host's pushed `git status`, while it is current (git/subscribe).
   std::optional<project::GitStatusOutput> CurrentStatus(
       const std::filesystem::path& root) const override;

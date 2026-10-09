@@ -82,6 +82,11 @@ class WorkspaceTree {
   // Whether the last UpdateManifest fell back to a full build (tests, logs).
   bool last_update_was_full() const { return last_update_was_full_; }
 
+  // What a search over this tree may read: the content set, sorted — the last
+  // manifest's paths when there is one, else the set itself. Never the tree's
+  // build/, node_modules/ or .git (remote-projects.md § 6.11).
+  std::optional<std::vector<std::string>> SearchPaths(std::string* error);
+
   const std::filesystem::path& root() const { return root_; }
   // Files hashed (cache misses) by the most recent BuildManifest.
   std::size_t last_hashed_files() const { return last_hashed_files_; }

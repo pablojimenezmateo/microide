@@ -24,7 +24,8 @@ class WorkspaceProjectSearchRuntime {
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
                       project::ProjectSearchOptions options = {},
-                      project::SharedPathList indexed_files = nullptr);
+                      project::SharedPathList indexed_files = nullptr,
+                      const project::ProjectSearchHost* host = nullptr);
   void Stop();
   std::optional<project::ProjectSearchUpdate> ConsumeActiveUpdate();
   // True when the active search worker has finished (or none is running), without

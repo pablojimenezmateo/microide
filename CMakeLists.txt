@@ -337,10 +337,12 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/ProjectChangeNormalizer.cpp
   src/project/ProjectFileScanner.cpp
   src/project/ProjectSearchService.cpp
+  src/project/ProjectSearchHost.cpp
   src/project/ProjectTraversalFilter.cpp
   src/project/remote/RemoteFrame.cpp
   src/project/remote/RemoteFrameTransport.cpp
   src/project/remote/RemoteProtocol.cpp
+  src/project/remote/RemoteSearchWire.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/MirrorStore.cpp
   src/project/remote/MirrorSyncEngine.cpp

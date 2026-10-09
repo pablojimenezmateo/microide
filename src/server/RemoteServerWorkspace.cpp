@@ -11,6 +11,7 @@
 #include "platform/ProcessLauncher.h"
 #include "project/GitRepository.h"
 #include "project/remote/RemoteManifest.h"
+#include "project/remote/RemoteSearchWire.h"
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 #include "util/Log.h"
@@ -212,6 +213,68 @@ void RemoteServer::InstallGitHandlers(Connection& connection) {
     });
     ScheduleGitStatus(*tree);
     connection.peer.Reply(id, util::JsonValue(true));
+  });
+}
+
+void RemoteServer::InstallSearchHandlers(Connection& connection) {
+  // search/run (remote-projects.md § 6.11): the client's project search, run here
+  // over the real tree — the mirror may be behind it — restricted to the content
+  // set. Results stream as `search/results` (frame id = the request) on the bulk
+  // lane and the completion follows on the same lane; op/cancel or a closed
+  // connection stops it at the next progress tick.
+  connection.peer.OnRequest("search/run", [this, &connection](std::uint64_t id,
+                                                              const util::JsonValue& params) {
+    const std::shared_ptr<ServedTree> served = TreeOf(connection);
+    std::string error;
+    auto parsed = remote::ParseSearchRunParams(params, &error);
+    if (!served || !parsed.has_value()) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                 served ? error : "no workspace: send server/hello with a root");
+      return;
+    }
+    const std::uint64_t connection_id = connection.id;
+    search_executor_.Submit([this, served, connection_id, id, query = std::move(parsed->first),
+                             options = std::move(parsed->second)](const util::CancellationToken& token) {
+      std::string why;
+      std::optional<std::vector<std::string>> paths = served->tree.SearchPaths(&why);
+      project::ProjectSearchCompletion completion;
+      if (!paths.has_value()) {
+        completion.error = why.empty() ? "the host could not list the project" : why;
+      } else {
+        std::atomic_bool cancel{false};
+        std::size_t searched = 0;
+        std::size_t total = 0;
+        std::mutex send_mutex;  // the search's own workers call the sink concurrently
+        const project::ProjectSearchSink sink{
+            .results =
+                [&](std::vector<project::ProjectSearchResult> batch) {
+                  std::lock_guard lock(send_mutex);
+                  const util::JsonValue payload = remote::SearchResultsJson(batch, searched, total);
+                  WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+                    peer.Notify("search/results", payload, remote::Lane::Bulk, id);
+                  });
+                },
+            .progress =
+                [&](std::size_t searched_files, std::size_t total_files) {
+                  {
+                    std::lock_guard lock(send_mutex);
+                    searched = searched_files;
+                    total = total_files;
+                  }
+                  if (!RequestLive(connection_id, id)) {
+                    cancel.store(true);
+                  }
+                }};
+        completion = project::RunProjectSearch(
+            served->tree.root(), query, options,
+            std::make_shared<const std::vector<std::string>>(std::move(*paths)), sink, cancel, token);
+        // The final counters ride an empty batch, so the client's "X of Y" is exact.
+        sink.results({});
+      }
+      WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+        peer.Reply(id, remote::SearchCompletionJson(completion), remote::Lane::Bulk);
+      });
+    });
   });
 }
 

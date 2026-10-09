@@ -21,6 +21,7 @@
 #include "server/WorkspaceTree.h"
 #include "server/WorkspaceWatch.h"
 #include "util/SerialWorkQueue.h"
+#include "util/TaskExecutor.h"
 #include "util/JsonValue.h"
 #include "util/WakePipe.h"
 
@@ -121,6 +122,7 @@ class RemoteServer {
   void InstallFileHandlers(Connection& connection);
   void InstallWatchHandlers(Connection& connection);
   void InstallGitHandlers(Connection& connection);
+  void InstallSearchHandlers(Connection& connection);
   // Run `git status` for `tree` on its queue and push it to its git subscribers
   // (coalesced: one run however many changes asked).
   void ScheduleGitStatus(ServedTree& tree);
@@ -156,6 +158,9 @@ class RemoteServer {
   // Last: their threads send through connections_, so they must stop first.
   std::unique_ptr<ProcessTable> processes_;
   std::unique_ptr<TerminalTable> terminals_;
+  // search/run: its own workers, so a long search never queues a manifest, a read
+  // or a write behind it. Last of all: its jobs send through connections_.
+  util::TaskExecutor search_executor_{2};
 };
 
 }  // namespace microide::server

@@ -114,6 +114,16 @@ class RemoteServerClient {
   void BeginGitMutation();
   void EndGitMutation();
 
+  // search/run (remote-projects.md § 6.11), blocking the calling thread until the
+  // host answers: `on_results` runs on the I/O thread with each `search/results`
+  // batch, in order; `cancelled` is polled and sends op/cancel once it says so.
+  // The completion, or nullopt with *error when the request failed (the
+  // connection closed, the host refused it).
+  std::optional<util::JsonValue> RunSearch(const util::JsonValue& params,
+                                           std::function<void(const util::JsonValue&)> on_results,
+                                           const std::function<bool()>& cancelled,
+                                           std::string* error);
+
   // Host terminals (terminal/TerminalHostWire.h). `frame` runs on the I/O thread
   // with each TermFrame for `handle`, in order — including any that arrived
   // before the registration (the server's first frame races its term/open
@@ -181,6 +191,8 @@ class RemoteServerClient {
     std::uint64_t generation = 0;
   };
   std::map<std::string, PushedGitStatus, std::less<>> pushed_git_;
+  // search/results routes of in-flight RunSearch calls, by request id.
+  std::map<std::uint64_t, std::shared_ptr<std::function<void(const util::JsonValue&)>>> search_routes_;
   std::shared_ptr<std::function<void(const std::string&)>> git_status_handler_;
   int git_mutations_in_flight_ = 0;
   std::uint64_t git_required_generation_ = 0;

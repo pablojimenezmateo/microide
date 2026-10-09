@@ -128,6 +128,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallFileHandlers(ref);
   InstallWatchHandlers(ref);
   InstallGitHandlers(ref);
+  InstallSearchHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;

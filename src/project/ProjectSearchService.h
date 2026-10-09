@@ -5,12 +5,17 @@
 #include <functional>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "project/FileIndex.h"
 #include "util/TaskExecutor.h"
 #include "util/Waker.h"
+
+namespace microide::platform {
+class ProcessLauncher;
+}
 
 namespace microide::project {
 
@@ -86,6 +91,10 @@ struct ProjectSearchUpdate {
   std::size_t total_matches = 0;
   bool truncated = false;
   bool finished = false;
+  // The project's tree lives on a host that could not be reached, so the local
+  // copy was searched instead — which may be behind the host; the panel says so
+  // (remote-projects.md § 6.11).
+  bool searched_local_copy = false;
   std::string error;
 };
 
@@ -93,6 +102,7 @@ struct ProjectSearchCompletion {
   std::string error;
   bool truncated = false;
   std::size_t total_matches = 0;
+  bool searched_local_copy = false;
 };
 
 // Where a search's output goes while it runs, on the searching threads.
@@ -114,15 +124,36 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
                                          const std::atomic_bool& cancel,
                                          const util::CancellationToken& token);
 
+// A tree whose authoritative bytes are on another machine (a remote project's
+// mirror can be behind its host): the search runs THERE, over the real tree
+// (remote-projects.md § 6.11). Implemented by the launcher of such a project.
+class ProjectSearchHost {
+ public:
+  virtual ~ProjectSearchHost() = default;
+  // Blocks the calling (search worker) thread until the host's search ends, or
+  // `cancel`/`token` asks it to stop; results and progress arrive through `sink`.
+  // nullopt when the host cannot be asked (not connected): search the local copy.
+  virtual std::optional<ProjectSearchCompletion> SearchOnHost(
+      const std::filesystem::path& root, const std::string& query,
+      const ProjectSearchOptions& options, const ProjectSearchSink& sink,
+      const std::atomic_bool& cancel, const util::CancellationToken& token) const = 0;
+};
+
+// The host that searches trees whose processes `launcher` runs; null = here.
+const ProjectSearchHost* ProjectSearchHostFor(const platform::ProcessLauncher& launcher);
+
 class ProjectSearchService {
  public:
   ~ProjectSearchService();
 
   void SetWakeChannel(util::WakeChannel channel);
+  // With `host`, the search runs on it (falling back to the local tree when it
+  // cannot be reached); `host` must outlive the search.
   std::uint64_t Start(const std::filesystem::path& root,
                       std::string query,
                       ProjectSearchOptions options = {},
-                      SharedPathList indexed_files = nullptr);
+                      SharedPathList indexed_files = nullptr,
+                      const ProjectSearchHost* host = nullptr);
   void Stop();
   // Returns and clears the accumulated delta since the previous call: results
   // produced by the worker since the last `TakePendingUpdate`, plus current
@@ -152,6 +183,7 @@ class ProjectSearchService {
                   std::string query,
                   ProjectSearchOptions options,
                   SharedPathList indexed_files,
+                  const ProjectSearchHost* host,
                   std::uint64_t run_id,
                   const util::CancellationToken& token);
   void PublishResults(std::uint64_t run_id, std::vector<ProjectSearchResult> batch);

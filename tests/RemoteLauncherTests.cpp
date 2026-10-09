@@ -3,10 +3,12 @@
 #include "platform/AsyncSubprocess.h"
 #include "project/GitRepository.h"
 #include "project/GitStatusRefresh.h"
+#include "project/ProjectSearchService.h"
 #include "project/remote/RemoteProcessLauncher.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -186,6 +188,62 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
   Expect(pushes.load() >= 3, "each change was a push");
 }
 
+// Project search in a remote project runs ON THE HOST (remote-projects.md § 6.11):
+// over the host's real bytes — a mirror behind it would answer wrong without
+// saying so — and only over the content set, never build/ or .git. With no host
+// to ask, the local copy is searched and the update says so.
+void TestProjectSearchRunsOnTheHostOverTheContentSet() {
+  TemporaryDirectory temp;
+  const std::filesystem::path local = temp.path() / "mirror";
+  const std::filesystem::path host = temp.path() / "host";
+  InitializeGitRepo(host);
+  WriteFile(host / ".gitignore", "build/\n");
+  WriteFile(host / "src/a.txt", "one needle here\n");
+  WriteFile(host / "build/out.txt", "needle in an ignored file\n");
+  CommitAll(host, "init", "remote search");
+  WriteFile(host / "src/b.txt", "a fresh needle the mirror has not pulled\n");
+  // The mirror is behind: a needle the host no longer has, and no b.txt.
+  WriteFile(local / "src/a.txt", "old needle, old needle\n");
+
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = host.string()},
+                                &error),
+         "connects: " + error);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host), {});
+  const auto search = [&](const project::ProjectSearchHost* search_host) {
+    project::ProjectSearchService service;
+    service.Start(local, "needle", {},
+                  std::make_shared<const std::vector<std::string>>(std::vector<std::string>{"src/a.txt"}),
+                  search_host);
+    Expect(WaitUntil([&] { return service.WorkerFinished(); }, std::chrono::seconds(20)),
+           "the search finishes");
+    service.WaitForWorkersIdle();
+    return service.TakePendingUpdate();
+  };
+
+  const project::ProjectSearchUpdate on_host = search(project::ProjectSearchHostFor(launcher));
+  std::vector<std::string> files;
+  for (const auto& result : on_host.results) {
+    files.push_back(result.relative_path_string + ":" + std::to_string(result.line) + ":" +
+                    result.preview);
+  }
+  std::sort(files.begin(), files.end());
+  Expect(on_host.error.empty() && !on_host.searched_local_copy, "searched on the host: " + on_host.error);
+  Expect(files.size() == 2 && files[0].find("src/a.txt") == 0 && files[0].find("one needle") != std::string::npos &&
+             files[1].find("src/b.txt") == 0,
+         "the host's bytes, every content-set file, nothing under build/: " +
+             (files.empty() ? std::string("<none>") : files[0]));
+  Expect(on_host.total_files == 3, "the denominator is the host's content set (.gitignore, a, b)");
+
+  client->peer().Fail("host went away");
+  const project::ProjectSearchUpdate offline = search(project::ProjectSearchHostFor(launcher));
+  Expect(offline.searched_local_copy && offline.results.size() == 2 &&
+             offline.results[0].preview.find("old needle") != std::string::npos,
+         "offline, the local copy is searched — and labelled as such");
+}
+
 // Over a real ssh link, when one is configured: MICROIDE_TEST_SSH_HOST names a host
 // with microide-server at MICROIDE_TEST_SSH_SERVER (default ~/microide-test/microide-server).
 void TestOverARealSshLink() {
@@ -226,6 +284,8 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
           TestRunMapsCwdAndReportsLikeALocalRun);
   AddTest(tests, "RemoteLauncher/StartAsyncAdoptsAHostProcess", TestStartAsyncAdoptsAHostProcess);
   AddTest(tests, "RemoteLauncher/GitMetadataComesFromTheHost", TestGitMetadataComesFromTheHost);
+  AddTest(tests, "RemoteLauncher/ProjectSearchRunsOnTheHostOverTheContentSet",
+          TestProjectSearchRunsOnTheHostOverTheContentSet);
   AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",
           TestGitStatusIsPushedAndNeverStaleAfterAMutation);
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);
