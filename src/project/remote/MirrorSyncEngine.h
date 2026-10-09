@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "project/remote/MirrorObjects.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/RemoteWorkspace.h"
 #include "util/SerialWorkQueue.h"
@@ -54,6 +55,8 @@ class MirrorSyncEngine {
     std::uint64_t large_file_bytes = 8 * 1024 * 1024;
     // Files over this are not pulled at all: the most one streamed fetch carries.
     std::uint64_t max_file_bytes = RemoteWorkspace::kMaxStreamedObjectBytes;
+    // meta/objects is swept down to this after every sync (remote.object_store_budget).
+    std::uint64_t object_store_budget = std::uint64_t{2} << 30;
   };
 
   // A path's content state, for presentation (dimmed absent rows, a conflict mark).
@@ -84,6 +87,8 @@ class MirrorSyncEngine {
     std::string first_unreadable;  // "path: why"
     // Pulls that arrived as a delta against the tree's copy (§ 6.2), since start.
     std::size_t pulled_as_delta = 0;
+    // Pulls answered from meta/objects with no transfer at all, since start.
+    std::size_t pulled_from_store = 0;
   };
 
   struct Callbacks {
@@ -159,6 +164,8 @@ class MirrorSyncEngine {
     // The version the tree holds, when its bytes still are that version: the host
     // may send a delta against it (§ 6.2).
     std::optional<util::ContentHash> base;
+    // The host's hash for the path: what the object store is asked for first.
+    std::optional<util::ContentHash> want;
   };
 
   struct Plan {
@@ -208,6 +215,11 @@ class MirrorSyncEngine {
 
   RemoteWorkspace& workspace_;
   MirrorStore& store_;
+  MirrorObjects objects_;
+  // Pulls whose bytes meta/objects already holds, taken out of `items` and
+  // returned as fetched objects (still checked like any other by ApplyFetched).
+  std::vector<RemoteWorkspace::FetchedObject> FillFromStore(std::vector<PullItem>& items);
+  void SweepObjects();
   Options options_;
   Callbacks callbacks_;
 

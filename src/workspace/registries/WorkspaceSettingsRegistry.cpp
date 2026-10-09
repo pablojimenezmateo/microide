@@ -474,6 +474,22 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.object_store_budget",
+          .label = "Mirror Object Store (MiB)",
+          .description = "How much of a remote project's mirror may hold earlier file versions, "
+                         "so a branch switched back or a file put back costs no transfer. "
+                         "Versions no file needs are dropped, oldest first, past this.",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 2048,
+          .min_int = 0,
+          .max_int = 1 << 20,
+          .int_step = 256,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "remote.backfill_inflight_bytes",
           .label = "Host Bulk Transfer Window",
           .description = "Bytes of bulk traffic (file fetches, tree listings, scrollback) that may "

@@ -146,6 +146,12 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   config.session = SessionConfig(target);
   config.session.workspace_root = host_root;
   config.mirror_directory = tree.parent_path();
+  if (const auto budget_mib = util::ParseInt64(
+          operations_.setting ? operations_.setting("remote.object_store_budget").value_or("")
+                              : std::string());
+      budget_mib.has_value() && *budget_mib >= 0) {
+    config.engine.object_store_budget = static_cast<std::uint64_t>(*budget_mib) << 20;
+  }
   config.git_status_changed = [this, tree]() {
     mailbox_.PostLatest("remote-git:" + tree.string(), [this, tree]() {
       if (operations_.git_status_pushed) {

@@ -1,4 +1,6 @@
 #include "project/remote/MirrorSyncEngine.h"
+
+#include <unordered_set>
 #include "util/ContentHash.h"
 #include "util/TextFileIO.h"
 #include "util/Zstd.h"
@@ -26,6 +28,7 @@ MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& stor
                                    Options options, Callbacks callbacks)
     : workspace_(workspace),
       store_(store),
+      objects_(store.meta() / "objects"),
       options_(options),
       callbacks_(std::move(callbacks)),
       alive_(std::make_shared<Alive>(this)),
@@ -90,7 +93,8 @@ void MirrorSyncEngine::Prioritize(std::vector<std::string> paths) {
           continue;
         }
         if (!entry->base.has_value() || *entry->base != entry->remote.hash) {
-          items.push_back(PullItem{path, entry->remote.size});
+          items.push_back(PullItem{
+              .path = path, .size = entry->remote.size, .base = {}, .want = entry->remote.hash});
         }
       }
     }
@@ -625,11 +629,13 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan) {
     entry.base.reset();
     entry.local_known = false;
     if (entry.remote.size <= options_.max_file_bytes) {
-      plan.pulls.push_back(PullItem{path, entry.remote.size});
+      plan.pulls.push_back(PullItem{
+          .path = path, .size = entry.remote.size, .base = {}, .want = entry.remote.hash});
     }
   } else if (local == LocalState::MatchesBase) {
     if (host_moved) {
-      plan.pulls.push_back(PullItem{path, entry.remote.size, entry.base});
+      plan.pulls.push_back(PullItem{
+          .path = path, .size = entry.remote.size, .base = entry.base, .want = entry.remote.hash});
     }
   } else if (!entry.base.has_value()) {
     // Bytes with no base: a mirror rebuilt from its tree, or a file made here that
@@ -759,6 +765,7 @@ void MirrorSyncEngine::SyncNow() {
       SaveLocked();
     }
     Changed();
+    SweepObjects();
   });
 }
 
@@ -818,6 +825,11 @@ void MirrorSyncEngine::Execute(Plan plan, std::function<void()> on_done) {
   // The journal's pushes first: they are the user's saves.
   for (std::string& path : plan.pushes) {
     queue_.Post([this, path = std::move(path)]() { PushNow(path); });
+  }
+  // Bytes the mirror has held before cost nothing: a branch switched back, a file
+  // an agent restored (§ 6.2).
+  if (std::vector<RemoteWorkspace::FetchedObject> held = FillFromStore(plan.pulls); !held.empty()) {
+    ApplyFetched(std::move(held), {});
   }
   // Pulls in batches, kMaxPullsInFlight requests on the wire at once (one round
   // trip per batch, overlapped), each batch's disk writes a job of its own so a
@@ -945,7 +957,55 @@ void MirrorSyncEngine::EndExternalWork() {
   }
 }
 
+std::vector<RemoteWorkspace::FetchedObject> MirrorSyncEngine::FillFromStore(
+    std::vector<PullItem>& items) {
+  std::vector<RemoteWorkspace::FetchedObject> held;
+  std::erase_if(items, [&](const PullItem& item) {
+    if (!item.want.has_value() || item.size > MirrorObjects::kMaxObjectBytes) {
+      return false;
+    }
+    std::optional<std::string> bytes = objects_.Get(*item.want);
+    if (!bytes.has_value()) {
+      return false;
+    }
+    RemoteWorkspace::FetchedObject& object = held.emplace_back();
+    object.path = item.path;
+    object.hash = item.want;
+    object.content = std::move(*bytes);
+    return true;
+  });
+  if (!held.empty()) {
+    std::lock_guard lock(mutex_);
+    status_.pulled_from_store += held.size();
+  }
+  return held;
+}
+
+void MirrorSyncEngine::SweepObjects() {
+  // Reachable: what a path is on the host, and the base it was last in sync at.
+  std::unordered_set<std::string> reachable;
+  {
+    std::lock_guard lock(mutex_);
+    for (const auto& [path, entry] : store_.entries()) {
+      (void)path;
+      if (entry.has_remote) {
+        reachable.insert(entry.remote.hash.Hex());
+      }
+      if (entry.base.has_value()) {
+        reachable.insert(entry.base->Hex());
+      }
+    }
+  }
+  (void)objects_.Sweep(reachable, options_.object_store_budget);
+}
+
 void MirrorSyncEngine::PullNow(std::vector<PullItem> items, Lane lane) {
+  if (std::vector<RemoteWorkspace::FetchedObject> held = FillFromStore(items); !held.empty()) {
+    ApplyFetched(std::move(held), {});
+  }
+  if (items.empty()) {
+    return;
+  }
   std::vector<std::string> paths;
   paths.reserve(items.size());
   for (PullItem& item : items) {
@@ -1055,6 +1115,9 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
     if (entry == nullptr) {
       continue;
     }
+    if (result.ok() && object.staged_file.empty()) {
+      objects_.Put(*object.hash, object.content);  // checked above, or read back checked
+    }
     if (result.ok()) {
       // The bytes fetched may be newer than the manifest row: they are the host's
       // latest, and the row follows them.
@@ -1112,6 +1175,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
     if (entry != nullptr) {
       using Status = RemoteWorkspace::WriteResult::Status;
       if (result.status == Status::Ok && result.hash.has_value()) {
+        objects_.Put(*result.hash, content);
         entry->base = *result.hash;
         entry->push_pending = false;
         entry->conflict = false;

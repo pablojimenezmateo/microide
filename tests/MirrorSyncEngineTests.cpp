@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "project/remote/MirrorObjects.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/MirrorWriteGate.h"
@@ -184,6 +185,33 @@ void TestMirrorPullsAnEditAsADelta() {
          "the big edit arrived as a delta, the tiny one whole: " +
              std::to_string(session.engine->status().pulled_as_delta));
   Expect(session.engine->StateOf("big.cpp") == ContentState::Current, "and the file is current");
+}
+
+// Bytes the mirror has held once never cross the link again (§ 6.2): a file an
+// agent puts back, a branch switched back, comes out of meta/objects — checked
+// against its hash like anything fetched. The sweep keeps what a path still
+// needs and drops the rest, oldest first, down to the budget.
+void TestMirrorRefillsKnownBytesFromItsObjectStore() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", std::string(5000, 'A'));
+  session.Connect();
+  session.Sync();
+  WriteFile(session.host / "a.txt", std::string(5000, 'B'));
+  session.Sync();
+  Expect(session.engine->status().pulled_from_store == 0, "new bytes come from the host");
+  WriteFile(session.host / "a.txt", std::string(5000, 'A'));  // put back
+  session.Sync();
+  Expect(ReadFile(session.Tree("a.txt")) == std::string(5000, 'A'), "the mirror has the bytes back");
+  Expect(session.engine->status().pulled_from_store == 1,
+         "they came from the object store, not the link: " +
+             std::to_string(session.engine->status().pulled_from_store));
+  remote::MirrorObjects objects(session.mirror_dir / "meta" / "objects");
+  const util::ContentHash a = util::HashContent(std::string(5000, 'A'));
+  const util::ContentHash b = util::HashContent(std::string(5000, 'B'));
+  Expect(objects.Has(a) && objects.Has(b), "both versions are stored under the default budget");
+  const auto swept = objects.Sweep({a.Hex()}, 0);
+  Expect(objects.Has(a) && !objects.Has(b) && swept.removed == 1,
+         "a zero budget drops what nothing needs, never what a path does");
 }
 
 // A file past the old 64 MiB per-object ceiling — a dataset, a build artifact
@@ -520,6 +548,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
   AddTest(tests, "MirrorSyncEngine/PullsAnEditAsADelta", TestMirrorPullsAnEditAsADelta);
+  AddTest(tests, "MirrorSyncEngine/RefillsKnownBytesFromItsObjectStore",
+          TestMirrorRefillsKnownBytesFromItsObjectStore);
   AddTest(tests, "MirrorSyncEngine/PullsAFileOverSixtyFourMegabytes",
           TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);

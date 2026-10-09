@@ -360,6 +360,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/remote/RemoteSearchWire.cpp
   src/project/remote/LinkHeartbeat.cpp
   src/project/remote/MirrorStore.cpp
+  src/project/remote/MirrorObjects.cpp
   src/project/remote/MirrorSyncEngine.cpp
   src/project/remote/MirrorWriteGate.cpp
   src/project/remote/RemoteManifest.cpp
