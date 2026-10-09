@@ -458,6 +458,17 @@ since the release (`TerminalTabState::InsertPane`, the pane factory).
 reference runner (`perf-runner-v1`, `--update-baseline=deterministic`), not a
 developer box: setup allocation counts depend on the checkout's path length.
 
+**Checked 2026-10-09 with the release built on the same box** (A/B against
+`refs/perf/v2.12.0-base`, i.e. v2.12.0 plus d123ee73's link fix): HEAD is at or
+BELOW v2.12.0 on three of the four — `settings_change_many_tabs` 15,735 vs 15,762,
+`editor_tab_drag_burst` 14,387 = 14,387, `multi_tab_cycle` 4,531 vs 4,544 — and
+only `terminal.open` is up (30 vs 26, the accepted split-pane cost). But v2.12.0
+itself reads ~7 % above the committed baselines on that box (15,762 against
+14,674), so "above baseline" there is the machine's setup allocations, not the
+code — which is also why that box's absolute numbers cannot be written into the
+baselines. What is left of this entry: rebaseline `terminal.open` (+4) on
+`perf-runner-v1`; the other three need no code-driven change.
+
 ### TD-2026-10-08-333 — modern TUIs in the terminal: what the Claude Code check left. [RESOLVED 2026-10-09]
 
 **Decided 2026-10-09 (project owner):** clickable OSC 8 links take option **C** — a
