@@ -158,6 +158,36 @@ bool TerminalSession::SendToHost(TerminalInputEvent event) {
   return true;
 }
 
+namespace {
+
+// Client side: rewrites a host frame's link ids into this session's table.
+template <typename Intern>
+void RemapHostLinks(TerminalHostFrame& frame, Intern&& intern) {
+  // Host ids name the HOST's table; the lines get this session's ids for the
+  // same URIs. A cell naming an id the frame did not define loses its link.
+  std::vector<std::uint16_t> local(frame.links.size());
+  for (std::size_t i = 0; i < frame.links.size(); ++i) {
+    local[i] = intern(frame.links[i].uri);
+  }
+  const auto remap = [&](std::vector<TerminalLine>& lines) {
+    for (TerminalLine& line : lines) {
+      for (TerminalCell& cell : line.cells) {
+        if (cell.link == 0) {
+          continue;
+        }
+        const auto found = std::ranges::lower_bound(frame.links, cell.link, {}, &TerminalHostLink::id);
+        cell.link = found != frame.links.end() && found->id == cell.link
+                        ? local[static_cast<std::size_t>(found - frame.links.begin())]
+                        : 0;
+      }
+    }
+  };
+  remap(frame.scrollback_lines);
+  remap(frame.screen_lines);
+}
+
+}  // namespace
+
 bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
   bool consistent = true;
   {
@@ -167,6 +197,7 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     }
     // Predictions out first: Keep and Promote name CONFIRMED lines.
     prediction_.Withdraw(PredictionViewLocked());
+    RemapHostLinks(frame, [this](std::string_view uri) { return InternLinkLocked(uri); });
     const bool alternate = frame.has(TerminalHostFrame::kAlternateScreen);
     if (frame.has(TerminalHostFrame::kReset)) {
       prediction_.Clear();
@@ -297,6 +328,10 @@ bool TerminalSession::ApplyHostFrame(TerminalHostFrame frame) {
     if (frame.clipboard) {
       pending_clipboard_text_ = std::move(*frame.clipboard);
     }
+    if (frame.notification) {
+      pending_notification_ = Notification{.title = std::move(frame.notification->title),
+                                           .body = std::move(frame.notification->body)};
+    }
     prediction_.Judge(frame.echo_ack, PredictionViewLocked());
     AdvanceSnapshotGenerationLocked();
   }
@@ -392,6 +427,13 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
   header.working_directory = reported_working_directory_.string();
   header.clipboard = std::move(pending_clipboard_text_);
   pending_clipboard_text_.reset();
+  // A host session has no UI to consume a notification: the client does.
+  header.notification.reset();
+  if (pending_notification_) {
+    header.notification = TerminalHostNotification{.title = std::move(pending_notification_->title),
+                                                   .body = std::move(pending_notification_->body)};
+    pending_notification_.reset();
+  }
 
   // Lines from max(from, what is held, the cap) through the end.
   std::uint64_t first = use_alternate_screen_ ? 0 : std::max(from, scrollback_trim_total_);
@@ -410,6 +452,23 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
     dest.wrapped_from_previous = lines_[i].wrapped_from_previous;
   }
   out.generation = snapshot_generation_;
+
+  // The URIs of the links those lines carry; the frame builder sends the ones
+  // its lines use. Most captures have none and pay one pass over the cells.
+  header.links.clear();
+  if (links_.size() != 0) {
+    std::vector<bool> seen(TerminalLinkTable::kMaxLinks + 1, false);
+    for (const TerminalLine& line : out.lines) {
+      for (const TerminalCell& cell : line.cells) {
+        if (cell.link != 0 && !seen[cell.link]) {
+          seen[cell.link] = true;
+          header.links.push_back(
+              TerminalHostLink{.id = cell.link, .uri = std::string(links_.Uri(cell.link))});
+        }
+      }
+    }
+    std::ranges::sort(header.links, {}, &TerminalHostLink::id);
+  }
 }
 
 }  // namespace microide::terminal

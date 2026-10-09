@@ -1283,6 +1283,46 @@ void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
          "a path that does not exist is not a link");
 }
 
+// OSC 8: `ls --hyperlink`, gcc and Claude Code print a link whose TEXT is not a
+// URL (a file name, "docs"). The cell carries the target, so clicking the text
+// opens it — a web link externally, a file link in the editor — as VS Code's
+// terminal does.
+void TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path source = temp_dir.path() / "notes.txt";
+  WriteFile(source, "one\ntwo\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, temp_dir.path());
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(
+      session, "see \x1b]8;;https://example.com/guide\x1b\\the docs\x1b]8;;\x1b\\ or \x1b]8;;file://" +
+                   source.string() + "\x1b\\notes\x1b]8;;\x1b\\");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+    opened_url = std::string(url);
+    return true;
+  });
+  const SDL_FPoint plain = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 1);
+  Expect(!WorkspaceShellTestAccess::TerminalUrlAtPoint(shell, plain.x, plain.y).has_value(),
+         "text outside the link is not a link");
+  const SDL_FPoint docs = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
+  Expect(SendMouseDown(shell, docs.x, docs.y, SDL_BUTTON_LEFT), "clicking the link text is handled");
+  Expect(opened_url == "https://example.com/guide", "the link's target opens, not its text");
+
+  opened_url.clear();
+  const SDL_FPoint notes = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 18);
+  Expect(SendMouseDown(shell, notes.x, notes.y, SDL_BUTTON_LEFT), "clicking the file link is handled");
+  Expect(opened_url.empty(), "a file link is not handed to the external opener");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() ==
+             source.lexically_normal(),
+         "the file link opens in the editor");
+}
+
 void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2455,6 +2495,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
+  AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",
+          TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",
           TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix);
   AddTest(tests, "WorkspaceShellTerminal/FileReferenceClickOpensTheFile",

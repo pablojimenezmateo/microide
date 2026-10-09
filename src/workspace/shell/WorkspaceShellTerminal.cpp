@@ -488,6 +488,15 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   }
 
   const terminal::TerminalLine& hit_line = lines[position->row - first_row];
+  // An OSC 8 hyperlink is what the program said the text links to; it wins over
+  // anything the text looks like. A `file://` link for another machine (the
+  // session keeps those verbatim) has no local path to open.
+  if (position->column < hit_line.cells.size() && hit_line.cells[position->column].link != 0) {
+    std::string uri = terminal_tab->session.LinkUri(hit_line.cells[position->column].link);
+    if (!uri.empty() && (!uri.starts_with("file://") || uri.starts_with("file:///"))) {
+      return uri;
+    }
+  }
   const std::string line_text = TerminalLineText(hit_line);
   const std::size_t target_byte = TerminalColumnToByteOffset(hit_line, position->column);
   if (auto url = TerminalUrlAtColumn(line_text, target_byte); url.has_value()) {

@@ -4,6 +4,7 @@
 #include "platform/ProcessLauncher.h"
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
+#include "terminal/TerminalLinkTable.h"
 #include "terminal/TerminalHostChannel.h"
 #include "terminal/TerminalHostWire.h"
 #include "terminal/TerminalInput.h"
@@ -170,6 +171,9 @@ class TerminalSession {
     std::string body;
   };
   std::optional<Notification> ConsumeNotification();
+  // The URI of an OSC 8 hyperlink a cell carries (TerminalCell::link); empty for
+  // 0 or an id the session no longer holds.
+  std::string LinkUri(std::uint16_t link) const;
   // True once (then reset) when an OSC 52 clipboard sequence was dropped because it
   // overran the escape-sequence buffer cap. Lets the host surface a status instead
   // of silently swallowing a too-large clipboard write.
@@ -271,6 +275,8 @@ class TerminalSession {
   void AbandonEscapeSequenceLocked();
   void HandleEscapeSequenceLocked(std::string_view sequence);
   void HandleOscSequenceLocked(std::string_view sequence);
+  // Interns `uri`, freeing ids no buffer references when the table is full.
+  std::uint16_t InternLinkLocked(std::string_view uri);
   void HandleKittyKeyboardLocked(char prefix, char final, const std::vector<int>& params);
   void HandlePrivateModeLocked(int mode, bool enabled);
   int QueryPrivateModeStateLocked(int mode) const;
@@ -382,6 +388,9 @@ class TerminalSession {
   std::string default_launch_label_;
   std::string launch_label_;
   TerminalStyle current_style_;
+  // The pen's OSC 8 hyperlink (0 = none), stamped onto every glyph written.
+  std::uint16_t current_link_ = 0;
+  TerminalLinkTable links_;
   std::string escape_sequence_buffer_;
   util::WakeChannel wake_channel_ = 0;
   int child_pid_ = -1;

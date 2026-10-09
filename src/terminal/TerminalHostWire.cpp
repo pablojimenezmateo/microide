@@ -11,11 +11,15 @@ using util::PutVarint;
 
 constexpr std::uint8_t kHasForeground = 1u << 0;
 constexpr std::uint8_t kHasBackground = 1u << 1;
+// Not a style bit: the run's OSC 8 link id follows the colours.
+constexpr std::uint8_t kHasLink = 1u << 2;
 
 // Optional-field presence bits.
 constexpr std::uint8_t kHasTitle = 1u << 0;
 constexpr std::uint8_t kHasWorkingDirectory = 1u << 1;
 constexpr std::uint8_t kHasClipboard = 1u << 2;
+constexpr std::uint8_t kHasNotification = 1u << 3;
+constexpr std::uint8_t kHasLinks = 1u << 4;
 
 void PutRgba(std::string& out, const util::Rgba8& color) {
   out.push_back(static_cast<char>(color.r));
@@ -30,20 +34,27 @@ util::Rgba8 GetRgba(ByteReader& in) {
                      static_cast<std::uint8_t>(value >> 16), static_cast<std::uint8_t>(value >> 24)};
 }
 
-void PutStyle(std::string& out, const TerminalStyle& style) {
+// A run is one style AND one link: the link is per cell, not in the style, but
+// it changes exactly where a run would.
+void PutRunStyle(std::string& out, const TerminalCell& cell) {
+  const TerminalStyle& style = cell.style;
   PutVarint(out, style.attrs);
   out.push_back(static_cast<char>((style.foreground ? kHasForeground : 0) |
-                                  (style.background ? kHasBackground : 0)));
+                                  (style.background ? kHasBackground : 0) |
+                                  (cell.link != 0 ? kHasLink : 0)));
   if (style.foreground) {
     PutRgba(out, *style.foreground);
   }
   if (style.background) {
     PutRgba(out, *style.background);
   }
+  if (cell.link != 0) {
+    PutVarint(out, cell.link);
+  }
 }
 
-TerminalStyle GetStyle(ByteReader& in) {
-  TerminalStyle style;
+void GetRunStyle(ByteReader& in, TerminalCell& cell) {
+  TerminalStyle& style = cell.style;
   style.attrs = static_cast<std::uint16_t>(in.Varint());
   const std::uint64_t colors = in.Le(1);
   if ((colors & kHasForeground) != 0) {
@@ -52,11 +63,19 @@ TerminalStyle GetStyle(ByteReader& in) {
   if ((colors & kHasBackground) != 0) {
     style.background = GetRgba(in);
   }
-  return style;
+  if ((colors & kHasLink) != 0) {
+    const std::uint64_t link = in.Varint();
+    if (link == 0 || link > 0xffffu) {
+      in.Fail();
+      return;
+    }
+    cell.link = static_cast<std::uint16_t>(link);
+  }
 }
 
-bool SameStyle(const TerminalStyle& a, const TerminalStyle& b) {
-  return a.attrs == b.attrs && a.foreground == b.foreground && a.background == b.background;
+bool SameRun(const TerminalCell& a, const TerminalCell& b) {
+  return a.link == b.link && a.style.attrs == b.style.attrs &&
+         a.style.foreground == b.style.foreground && a.style.background == b.style.background;
 }
 
 // One cell's glyph: a printable ASCII byte stands for itself (the overwhelmingly
@@ -105,11 +124,11 @@ bool GetLine(ByteReader& in, TerminalLine& line) {
       in.Fail();
       break;
     }
-    const TerminalStyle style = GetStyle(in);
+    TerminalCell run_cell;
+    GetRunStyle(in, run_cell);
     for (std::uint64_t i = 0; i < run && !in.failed(); ++i, ++at) {
       TerminalCell& cell = line.cells[at];
-      cell = TerminalCell{};
-      cell.style = style;
+      cell = run_cell;
       GetGlyph(in, cell);
     }
   }
@@ -147,11 +166,11 @@ void EncodeTerminalLine(std::string& out, const TerminalLine& line) {
   std::size_t at = 0;
   while (at < line.cells.size()) {
     std::size_t end = at + 1;
-    while (end < line.cells.size() && SameStyle(line.cells[end].style, line.cells[at].style)) {
+    while (end < line.cells.size() && SameRun(line.cells[end], line.cells[at])) {
       ++end;
     }
     PutVarint(out, end - at);
-    PutStyle(out, line.cells[at].style);
+    PutRunStyle(out, line.cells[at]);
     for (std::size_t i = at; i < end; ++i) {
       PutGlyph(out, line.cells[i]);
     }
@@ -190,10 +209,23 @@ void EncodeTerminalHostFrame(std::string& out, const TerminalHostFrame& frame) {
 
   out.push_back(static_cast<char>((frame.title ? kHasTitle : 0) |
                                   (frame.working_directory ? kHasWorkingDirectory : 0) |
-                                  (frame.clipboard ? kHasClipboard : 0)));
+                                  (frame.clipboard ? kHasClipboard : 0) |
+                                  (frame.notification ? kHasNotification : 0) |
+                                  (frame.links.empty() ? 0 : kHasLinks)));
   for (const auto* field : {&frame.title, &frame.working_directory, &frame.clipboard}) {
     if (*field) {
       PutBytes(out, **field);
+    }
+  }
+  if (frame.notification) {
+    PutBytes(out, frame.notification->title);
+    PutBytes(out, frame.notification->body);
+  }
+  if (!frame.links.empty()) {
+    PutVarint(out, frame.links.size());
+    for (const TerminalHostLink& link : frame.links) {
+      PutVarint(out, link.id);
+      PutBytes(out, link.uri);
     }
   }
 }
@@ -275,6 +307,27 @@ std::optional<TerminalHostFrame> DecodeTerminalHostFrame(std::string_view bytes)
                             std::pair{kHasClipboard, &frame.clipboard}}) {
     if ((present & bit) != 0) {
       *field = std::string(in.Bytes(kMaxHostTerminalTextBytes));
+    }
+  }
+  if ((present & kHasNotification) != 0) {
+    TerminalHostNotification notification;
+    notification.title = std::string(in.Bytes(kMaxHostTerminalTextBytes));
+    notification.body = std::string(in.Bytes(kMaxHostTerminalTextBytes));
+    frame.notification = std::move(notification);
+  }
+  if ((present & kHasLinks) != 0) {
+    const std::uint64_t count = in.Varint();
+    if (in.failed() || count == 0 || count > 0xffffu || count > in.remaining()) {
+      return std::nullopt;
+    }
+    frame.links.resize(static_cast<std::size_t>(count));
+    for (TerminalHostLink& link : frame.links) {
+      const std::uint64_t id = in.Varint();
+      if (in.failed() || id == 0 || id > 0xffffu) {
+        return std::nullopt;
+      }
+      link.id = static_cast<std::uint16_t>(id);
+      link.uri = std::string(in.Bytes(kMaxHostTerminalTextBytes));
     }
   }
   if (in.failed() || !in.at_end()) {

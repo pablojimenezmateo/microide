@@ -117,6 +117,36 @@ void TestHostBellReachesTheClientOnce() {
   Expect(!mirror.client.ConsumeBell(), "so the client rang once");
 }
 
+// A host program's OSC 9 notification and OSC 8 link reach the client: the
+// notification once, the link under the client's own id for the same URI.
+void TestHostNotificationAndLinksReachTheClient() {
+  Mirror mirror(4, 40);
+  // A link the client already knows under id 1, so the host's id 1 must be remapped.
+  TerminalSessionTestAccess::InternLink(mirror.client, "https://unrelated.example");
+  mirror.Write("\x1b]9;needs your input\x07");
+  mirror.Write("see \x1b]8;;https://example.com/a\x1b\\docs\x1b]8;;\x1b\\ now");
+  Expect(mirror.Sync(), "the frame applies");
+  Expect(mirror.frame.notification.has_value() && mirror.frame.links.size() == 1,
+         "the frame carries the notification and the one link its lines use");
+  const auto notification = mirror.client.ConsumeNotification();
+  Expect(notification.has_value() && notification->body == "needs your input",
+         "the client gets the notification");
+  const std::vector<TerminalLine> lines = mirror.client.SnapshotLines();
+  Expect(!lines.empty() && lines[0].cells.size() > 8, "the line arrived");
+  if (lines.empty() || lines[0].cells.size() <= 8) {
+    return;
+  }
+  Expect(lines[0].cells[3].link == 0 && lines[0].cells[8].link == 0,
+         "the cells outside the link carry none");
+  Expect(mirror.client.LinkUri(lines[0].cells[4].link) == "https://example.com/a" &&
+             lines[0].cells[4].link == lines[0].cells[7].link,
+         "every cell of the link text resolves to the host's URI");
+  mirror.Write("x");
+  Expect(mirror.Sync(), "the next frame applies");
+  Expect(!mirror.frame.notification.has_value() && !mirror.client.ConsumeNotification(),
+         "the notification is not repeated");
+}
+
 void TestHostFrameRoundTripsEveryField() {
   TerminalHostFrame frame;
   frame.rows = 3;
@@ -147,6 +177,9 @@ void TestHostFrameRoundTripsEveryField() {
   frame.title = "vim";
   frame.working_directory = "/home/u/project";
   frame.clipboard = std::string("clip\0board", 10);
+  frame.notification = terminal::TerminalHostNotification{.title = "agent", .body = "done"};
+  frame.screen_lines[0].cells[1].link = 7;
+  frame.links = {{.id = 7, .uri = "https://example.com/x"}};
 
   std::string wire;
   EncodeTerminalHostFrame(wire, frame);
@@ -170,6 +203,13 @@ void TestHostFrameRoundTripsEveryField() {
   Expect(back->title == frame.title && back->working_directory == frame.working_directory &&
              back->clipboard == frame.clipboard,
          "the outward signals round-trip");
+  Expect(back->notification.has_value() && back->notification->title == "agent" &&
+             back->notification->body == "done",
+         "the notification round-trips");
+  Expect(back->links.size() == 1 && back->links[0].id == 7 &&
+             back->links[0].uri == "https://example.com/x" &&
+             terminal::SameLine(back->screen_lines[0], frame.screen_lines[0]),
+         "a cell's link id and the link table round-trip");
 
   // Every strict prefix is truncated input and must be refused, never half-applied.
   for (std::size_t length = 0; length < wire.size(); ++length) {
@@ -547,6 +587,8 @@ void RegisterTerminalHostTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TerminalHost/NothingIsPredictedWhereThePositionIsUnknown",
           TestNothingIsPredictedWhereThePositionIsUnknown);
   AddTest(tests, "TerminalHost/BellReachesTheClientOnce", TestHostBellReachesTheClientOnce);
+  AddTest(tests, "TerminalHost/NotificationAndLinksReachTheClient",
+          TestHostNotificationAndLinksReachTheClient);
   AddTest(tests, "TerminalHost/ModeChangeDuringABurstLeavesTheConfirmedScreenExact",
           TestModeChangeDuringABurstLeavesTheConfirmedScreenExact);
 }

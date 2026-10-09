@@ -1017,6 +1017,72 @@ void TestTerminalSessionQueuesDesktopNotifications() {
   Expect(!session.ConsumeNotification().has_value(), "nothing else queues one");
 }
 
+// OSC 8 hyperlinks (what `ls --hyperlink`, gcc, rg and Claude Code print): the
+// pen's link is stamped on the glyphs written while it is open and on nothing
+// else — not on an erase, and not after the closing OSC 8 ;;. Identical URIs
+// share an id, and a `file://` link for this machine keeps only its path.
+void TestTerminalSessionStampsOsc8LinksOnGlyphs() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 40);
+  TerminalSessionTestAccess::AppendOutput(
+      session, "a \x1b]8;id=1;https://example.com\x1b\\link\x1b]8;;\x1b\\ b "
+               "\x1b]8;;https://example.com\x07\xe4\xb8\xad\x1b]8;;\x07"
+               "\r\n\x1b]8;;https://example.com\x07\x1b[41m\x1b[2K\x1b[m\x1b]8;;\x07");
+  const auto lines = session.SnapshotLines();
+  Expect(lines.size() >= 2 && lines[0].cells.size() == 11 && lines[1].cells.size() == 40,
+         "both lines were written");
+  if (lines.size() < 2 || lines[0].cells.size() != 11 || lines[1].cells.size() != 40) {
+    return;
+  }
+  const auto& cells = lines[0].cells;
+  Expect(cells[0].link == 0 && cells[1].link == 0, "text before the link carries none");
+  Expect(cells[2].link != 0 && cells[2].link == cells[5].link &&
+             session.LinkUri(cells[2].link) == "https://example.com",
+         "every glyph inside the link carries its URI");
+  Expect(cells[6].link == 0 && cells[8].link == 0, "the closing OSC 8 ends it");
+  Expect(cells[9].link == cells[2].link && cells[10].link == cells[2].link,
+         "the same URI shares one id, wide spacer included");
+  Expect(TerminalSessionTestAccess::LinkCount(session) == 1, "one table entry");
+  for (const auto& erased : lines[1].cells) {
+    Expect(erased.link == 0 && erased.style.background.has_value(),
+           "an erased cell takes the background, not the open link");
+  }
+
+  TerminalSessionTestAccess::AppendOutput(
+      session, "\r\n\x1b]8;;file://localhost/tmp/a%20b.txt\x07" "f\x1b]8;;\x07"
+               "\x1b]8;;file://elsewhere.invalid/x\x07g\x1b]8;;\x07");
+  const auto after = session.SnapshotLines();
+  Expect(after.size() >= 3 && after[2].cells.size() >= 2,
+         "the third line was written: " + std::to_string(after.size()) + " lines, " +
+             std::to_string(after.size() > 2 ? after[2].cells.size() : 0) + " cells");
+  if (after.size() < 3 || after[2].cells.size() < 2) {
+    return;
+  }
+  Expect(session.LinkUri(after[2].cells[0].link) == "file:///tmp/a b.txt",
+         "a local file link keeps its decoded path");
+  Expect(session.LinkUri(after[2].cells[1].link) == "file://elsewhere.invalid/x",
+         "another machine's file link is kept verbatim");
+}
+
+// Recycling: a full table frees only the ids no buffer still shows.
+void TestTerminalLinkTableRecyclesOnlyDeadIds() {
+  microide::terminal::TerminalLinkTable table;
+  Expect(table.Intern("") == 0 && table.Intern(std::string(3000, 'x')) == 0,
+         "an empty or over-long URI is not a link");
+  const std::uint16_t a = table.Intern("https://a");
+  const std::uint16_t b = table.Intern("https://b");
+  Expect(a == 1 && b == 2 && table.Intern("https://a") == a, "identical URIs share an id");
+  std::vector<bool> live(3, false);
+  live[b] = true;
+  table.Retain(live);
+  Expect(table.Uri(a).empty() && table.Uri(b) == "https://b", "only the dead id is freed");
+  Expect(table.Intern("https://c") == a, "and its id is reused");
+  for (std::size_t i = table.size(); i < microide::terminal::TerminalLinkTable::kMaxLinks; ++i) {
+    table.Intern("https://n/" + std::to_string(i));
+  }
+  Expect(table.full() && table.Intern("https://overflow") == 0, "a full table refuses");
+}
+
 // A real modern TUI's frame, replayed: Claude Code 2.1.294's folder-trust dialog
 // as it wrote it to a 40x120 pty (tests/fixtures/terminal). It positions every
 // word with CHA, draws in truecolor, moves the cursor back up into the dialog,
@@ -2701,8 +2767,8 @@ void TestTerminalSessionBasicForegroundBrightnessTracksBold() {
   const auto lines = session.SnapshotLines();
   Expect(!lines.empty() && lines[0].cells.size() >= 4, "A,B,C,D land on the first row");
   const auto color_of = [&](std::size_t col) { return lines[0].cells[col].style.foreground; };
-  const auto same = [](const std::optional<microide::util::Rgba8>& lhs,
-                       const std::optional<microide::util::Rgba8>& rhs) {
+  const auto same = [](microide::terminal::TerminalColor lhs,
+                       microide::terminal::TerminalColor rhs) {
     return lhs.has_value() && rhs.has_value() && lhs->r == rhs->r && lhs->g == rhs->g &&
            lhs->b == rhs->b;
   };
@@ -3037,6 +3103,9 @@ void TestWideGlyphOnANarrowScreenStaysInsideTheMargin() {
 }
 
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/StampsOsc8LinksOnGlyphs", TestTerminalSessionStampsOsc8LinksOnGlyphs);
+  AddTest(tests, "TerminalSession/LinkTableRecyclesOnlyDeadIds",
+          TestTerminalLinkTableRecyclesOnlyDeadIds);
   AddTest(tests, "TerminalSession/WideGlyphOnANarrowScreenStaysInsideTheMargin",
           TestWideGlyphOnANarrowScreenStaysInsideTheMargin);
   AddTest(tests, "TerminalSession/ScreenAgreesWithPyteReference",

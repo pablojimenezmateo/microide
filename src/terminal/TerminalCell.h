@@ -39,9 +39,38 @@ enum Bit : std::uint16_t {
 };
 }  // namespace cell_attr
 
+// A cell colour, or "the default colour" (the theme's, resolved at paint time).
+// Default is encoded as alpha 0 rather than as `std::optional<Rgba8>`: an
+// optional is five bytes and costs the cell its room for a hyperlink id
+// (TD-2026-10-08-333, option C), while a terminal cell colour is opaque by
+// definition — every assignment stores alpha 0xff — so alpha has a free value.
+// The optional-like surface keeps the readers unchanged.
+class TerminalColor {
+ public:
+  constexpr TerminalColor() = default;
+  constexpr TerminalColor(std::nullopt_t) {}  // NOLINT(google-explicit-constructor)
+  constexpr TerminalColor(util::Rgba8 color)  // NOLINT(google-explicit-constructor)
+      : value_{color.r, color.g, color.b, 0xff} {}
+
+  constexpr bool has_value() const { return value_.a != 0; }
+  constexpr explicit operator bool() const { return has_value(); }
+  constexpr const util::Rgba8& operator*() const { return value_; }
+  constexpr const util::Rgba8* operator->() const { return &value_; }
+  constexpr util::Rgba8 value_or(util::Rgba8 fallback) const {
+    return has_value() ? value_ : fallback;
+  }
+  constexpr void reset() { value_ = kDefault; }
+
+  friend constexpr bool operator==(const TerminalColor&, const TerminalColor&) = default;
+
+ private:
+  static constexpr util::Rgba8 kDefault{0, 0, 0, 0};
+  util::Rgba8 value_ = kDefault;
+};
+
 struct TerminalStyle {
-  std::optional<util::Rgba8> foreground;
-  std::optional<util::Rgba8> background;
+  TerminalColor foreground;
+  TerminalColor background;
   std::uint16_t attrs = 0;
 
   constexpr bool has(std::uint16_t bit) const { return (attrs & bit) != 0; }
@@ -97,6 +126,10 @@ struct TerminalCell {
   std::array<char, 5> bytes{};
   std::uint8_t length = 0;
   TerminalStyle style;
+  // OSC 8 hyperlink: an id into the owning session's link table
+  // (TerminalSession::LinkUri), 0 for none. Not part of the style on purpose:
+  // the pen's link is written onto glyphs only, never onto erased blanks.
+  std::uint16_t link = 0;
 
   std::string_view DisplayText() const {
     return length == 0 ? std::string_view{} : std::string_view(bytes.data(), length);
@@ -128,7 +161,7 @@ struct TerminalCell {
 // What a cell SHOWS: the glyph's bytes up to its length (the tail of `bytes` is
 // whatever a reused buffer held before) and the style.
 inline bool SameCell(const TerminalCell& a, const TerminalCell& b) {
-  if (a.length != b.length || a.style.attrs != b.style.attrs ||
+  if (a.length != b.length || a.link != b.link || a.style.attrs != b.style.attrs ||
       a.style.foreground != b.style.foreground || a.style.background != b.style.background) {
     return false;
   }
@@ -139,6 +172,8 @@ inline bool SameCell(const TerminalCell& a, const TerminalCell& b) {
   }
   return true;
 }
+
+static_assert(sizeof(TerminalCell) == 18, "a terminal cell is 18 bytes; see TerminalColor");
 
 struct TerminalLine {
   std::vector<TerminalCell> cells;

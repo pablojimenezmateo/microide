@@ -264,6 +264,15 @@ void RemoteTerminalChannel::ApplyFrame(std::string_view bytes) {
       host_to_local_) {
     *frame->working_directory = host_to_local_(*frame->working_directory).string();
   }
+  // A host program's `file:///abs` link (the host session normalized its own
+  // host name away) names a host path: open it where the editor has it.
+  if (host_to_local_) {
+    for (terminal::TerminalHostLink& link : frame->links) {
+      if (link.uri.starts_with("file:///")) {
+        link.uri = "file://" + host_to_local_(link.uri.substr(7)).string();
+      }
+    }
+  }
   if (session_ == nullptr) {
     return;
   }

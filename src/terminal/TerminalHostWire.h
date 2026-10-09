@@ -39,6 +39,20 @@ struct TerminalHostRun {
   std::uint64_t count = 0;
 };
 
+// An OSC 8 hyperlink a frame's lines reference: the host session's link id and
+// its URI. The client interns the URI in its own table and rewrites the ids, so
+// host and client ids never need to agree.
+struct TerminalHostLink {
+  std::uint16_t id = 0;
+  std::string uri;
+};
+
+// An OSC 9 / OSC 777 desktop notification the host program asked for.
+struct TerminalHostNotification {
+  std::string title;
+  std::string body;
+};
+
 struct TerminalHostFrame {
   // Flag bits.
   static constexpr std::uint16_t kAlternateScreen = 1u << 0;
@@ -80,6 +94,9 @@ struct TerminalHostFrame {
   std::optional<std::string> title;
   std::optional<std::string> working_directory;  // a HOST path (OSC 7)
   std::optional<std::string> clipboard;          // OSC 52, applied under local policy
+  std::optional<TerminalHostNotification> notification;
+  // Every non-zero TerminalCell::link the frame's lines carry, sorted by id.
+  std::vector<TerminalHostLink> links;
 
   bool has(std::uint16_t bit) const { return (flags & bit) != 0; }
 };

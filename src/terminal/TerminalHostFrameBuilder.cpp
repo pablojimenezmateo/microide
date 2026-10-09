@@ -1,5 +1,6 @@
 #include "terminal/TerminalHostFrameBuilder.h"
 
+#include <algorithm>
 #include <limits>
 
 namespace microide::terminal {
@@ -29,6 +30,7 @@ std::size_t TerminalHostFrameBuilder::EstimateLineBytes(const TerminalLine& line
 
 bool TerminalHostFrameBuilder::UpToDate(const TerminalSession::HostCapture& capture) const {
   return !reset_ && capture.generation == generation_ && !capture.header.clipboard &&
+         !capture.header.notification &&
          capture.header.title.value_or(std::string()) == title_ &&
          capture.header.working_directory.value_or(std::string()) == working_directory_;
 }
@@ -48,6 +50,8 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
   frame.screen_keep.clear();
   frame.screen_lines.clear();
   frame.clipboard = header.clipboard;
+  frame.notification = header.notification;
+  frame.links.clear();
 
   const bool alternate = header.has(TerminalHostFrame::kAlternateScreen);
   // The shadow describes the client's screen only while it is the same screen:
@@ -109,6 +113,27 @@ std::size_t TerminalHostFrameBuilder::Build(const TerminalSession::HostCapture& 
     if (!keep) {
       frame.screen_lines.push_back(line);
     }
+  }
+
+  // The URIs of the links the sent lines carry (the capture's set is a superset).
+  if (!header.links.empty()) {
+    const auto add_links = [&](const std::vector<TerminalLine>& lines) {
+      for (const TerminalLine& line : lines) {
+        for (const TerminalCell& cell : line.cells) {
+          if (cell.link == 0) {
+            continue;
+          }
+          const auto def = std::ranges::lower_bound(header.links, cell.link, {}, &TerminalHostLink::id);
+          const auto have = std::ranges::lower_bound(frame.links, cell.link, {}, &TerminalHostLink::id);
+          if (def != header.links.end() && def->id == cell.link &&
+              (have == frame.links.end() || have->id != cell.link)) {
+            frame.links.insert(have, *def);
+          }
+        }
+      }
+    };
+    add_links(frame.scrollback_lines);
+    add_links(frame.screen_lines);
   }
 
   // What the client now holds.

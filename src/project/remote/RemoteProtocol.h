@@ -15,8 +15,10 @@ namespace microide::project::remote {
 // (dev-docs/design/remote-projects.md § 6.4): bumped only when the wire changes,
 // with a floor each side still accepts, so a 2.14 client talks to a 2.12 server
 // for as long as the wire has not actually moved.
-inline constexpr std::int64_t kProtocolVersion = 2;
-inline constexpr std::int64_t kMinProtocolVersion = 2;
+// 3 (2026-10-09): host terminal frames carry OSC 8 links and OSC 9/777
+// notifications, and a cell style run may carry a link id.
+inline constexpr std::int64_t kProtocolVersion = 3;
+inline constexpr std::int64_t kMinProtocolVersion = 3;
 
 // Method names. A method not listed here is answered with kErrorUnknownMethod.
 namespace method {

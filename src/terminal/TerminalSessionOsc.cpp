@@ -5,11 +5,13 @@
 #include "util/AnsiPalette.h"
 #include "util/Hex.h"
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -17,7 +19,6 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#include "util/StringUtil.h"
 #endif
 
 namespace microide::terminal {
@@ -101,6 +102,24 @@ std::string DecodeOsc7Path(std::string_view payload) {
     path = path.substr(slash);
   }
   return util::PercentDecode(path);
+}
+
+// A `file://` link names a path on the machine the program runs on. One for this
+// machine is stored as `file://` + the decoded absolute path, which is what the
+// click path opens (and what a host terminal's client maps into its tree); any
+// other URI, and a file URI for another host, is kept verbatim.
+std::string NormalizeLinkUri(std::string_view uri) {
+  constexpr std::string_view kFile = "file://";
+  if (uri.size() < kFile.size() ||
+      !util::EqualsAsciiCaseInsensitive(uri.substr(0, kFile.size()), kFile)) {
+    return std::string(uri);
+  }
+  const std::string_view rest = uri.substr(kFile.size());
+  const std::size_t slash = rest.find('/');
+  if (slash == std::string_view::npos || !Osc7HostIsLocal(rest.substr(0, slash))) {
+    return std::string(uri);
+  }
+  return std::string(kFile) + util::PercentDecode(rest.substr(slash));
 }
 
 }  // namespace
@@ -198,9 +217,46 @@ void TerminalSession::HandleOscSequenceLocked(std::string_view sequence) {
     return;
   }
 
-  // OSC 8 (hyperlinks), 133 (shell-integration prompt marks), and palette resets
-  // (104/110/111/112) are accepted and intentionally ignored so they never
-  // corrupt the screen.
+  // Hyperlinks: OSC 8 ; params ; URI opens a link on the pen, an empty URI closes
+  // it. The params (`id=…`) only group cells for hover; identical URIs share one
+  // table entry, which is all the grouping a click needs.
+  if (command == "8") {
+    const std::size_t split = payload.find(';');
+    const std::string_view uri =
+        split == std::string_view::npos ? std::string_view{} : payload.substr(split + 1);
+    current_link_ = uri.empty() ? 0 : InternLinkLocked(NormalizeLinkUri(uri));
+    return;
+  }
+
+  // 133 (shell-integration prompt marks) and palette resets (104/110/111/112)
+  // are accepted and intentionally ignored so they never corrupt the screen.
+}
+
+std::uint16_t TerminalSession::InternLinkLocked(std::string_view uri) {
+  if (const std::uint16_t id = links_.Intern(uri); id != 0 || !links_.full()) {
+    return id;
+  }
+  // Full: keep only what a buffer still shows. The pen's own link is live too.
+  std::vector<bool> live(TerminalLinkTable::kMaxLinks + 1, false);
+  live[current_link_] = true;
+  const auto mark = [&live](const std::deque<TerminalLine>& lines) {
+    for (const TerminalLine& line : lines) {
+      for (const TerminalCell& cell : line.cells) {
+        live[cell.link] = true;
+      }
+    }
+  };
+  mark(lines_);
+  mark(primary_screen_.lines);
+  mark(alternate_screen_.lines);
+  live[0] = false;
+  links_.Retain(live);
+  return links_.Intern(uri);
+}
+
+std::string TerminalSession::LinkUri(std::uint16_t link) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return std::string(links_.Uri(link));
 }
 
 }  // namespace microide::terminal

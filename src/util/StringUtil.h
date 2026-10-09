@@ -139,7 +139,8 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
   return IsAsciiLower(static_cast<unsigned char>(c)) ? static_cast<char>(c - ('a' - 'A')) : c;
 }
 
-namespace detail {
+// `text` equals `lowercase_token` ignoring ASCII case; the token must already
+// be lowercase. Allocation-free.
 [[nodiscard]] inline bool EqualsAsciiCaseInsensitive(std::string_view text,
                                                      std::string_view lowercase_token) {
   if (text.size() != lowercase_token.size()) {
@@ -152,7 +153,6 @@ namespace detail {
   }
   return true;
 }
-}  // namespace detail
 
 // The single definition of a "falsey" configuration token, shared by env-var
 // tracing switches and bool-typed settings. Four sites each carried their own
@@ -166,10 +166,10 @@ namespace detail {
   if (text.size() > 5) {
     return false;  // no falsey token is longer than "false"
   }
-  return detail::EqualsAsciiCaseInsensitive(text, "0") ||
-         detail::EqualsAsciiCaseInsensitive(text, "false") ||
-         detail::EqualsAsciiCaseInsensitive(text, "no") ||
-         detail::EqualsAsciiCaseInsensitive(text, "off");
+  return EqualsAsciiCaseInsensitive(text, "0") ||
+         EqualsAsciiCaseInsensitive(text, "false") ||
+         EqualsAsciiCaseInsensitive(text, "no") ||
+         EqualsAsciiCaseInsensitive(text, "off");
 }
 
 // The matching "explicitly truthy" set. Note this is NOT `!IsFalseyToken`: a
@@ -179,10 +179,10 @@ namespace detail {
   if (text.size() > 4) {
     return false;
   }
-  return detail::EqualsAsciiCaseInsensitive(text, "1") ||
-         detail::EqualsAsciiCaseInsensitive(text, "true") ||
-         detail::EqualsAsciiCaseInsensitive(text, "yes") ||
-         detail::EqualsAsciiCaseInsensitive(text, "on");
+  return EqualsAsciiCaseInsensitive(text, "1") ||
+         EqualsAsciiCaseInsensitive(text, "true") ||
+         EqualsAsciiCaseInsensitive(text, "yes") ||
+         EqualsAsciiCaseInsensitive(text, "on");
 }
 // Terminal display column width of a codepoint: 0 for zero-width / combining
 // marks, 2 for East Asian wide / fullwidth / emoji-presentation codepoints, and

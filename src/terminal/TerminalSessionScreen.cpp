@@ -364,6 +364,7 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
       ResizeLineLocked(line, cursor_column_ + 1);
       BreakWideGlyphPairForWriteLocked(line, cursor_column_, 1);
       line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
+      line.cells[cursor_column_].link = current_link_;
       return;
     }
   }
@@ -373,12 +374,14 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
   ResizeLineLocked(line, cursor_column_ + advance);
   BreakWideGlyphPairForWriteLocked(line, cursor_column_, advance);
   line.cells[cursor_column_] = MakeUtf8TerminalCell(effective_glyph, current_style_);
+  line.cells[cursor_column_].link = current_link_;
   if (advance == 2) {
     // Trailing spacer carries the lead's style (so background fills span both
     // columns) plus the wide-trailing marker so the renderer skips painting it.
     TerminalCell spacer;
     spacer.style = current_style_;
     spacer.style.set(cell_attr::kWideTrailing, true);
+    spacer.link = current_link_;
     line.cells[cursor_column_ + 1] = spacer;
   }
   cursor_column_ += advance;
@@ -421,6 +424,7 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
 
   TerminalCell cell;
   cell.style = current_style_;
+  cell.link = current_link_;
   cell.length = 1;
   for (std::size_t i = 0; i < length; ++i) {
     cell.bytes[0] = run[i];
@@ -622,6 +626,8 @@ void TerminalSession::ResetEmulationStateLocked() {
   // Parser state: a half-consumed escape or UTF-8 sequence from the old child
   // would otherwise be completed by the new one's first bytes.
   current_style_ = TerminalStyle{};
+  current_link_ = 0;
+  links_.Clear();
   escape_sequence_buffer_.clear();
   pending_utf8_sequence_.clear();
   escape_mode_ = EscapeMode::None;

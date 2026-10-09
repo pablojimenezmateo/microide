@@ -433,7 +433,7 @@ since the release (`TerminalTabState::InsertPane`, the pane factory).
 reference runner (`perf-runner-v1`, `--update-baseline=deterministic`), not a
 developer box: setup allocation counts depend on the checkout's path length.
 
-### TD-2026-10-08-333 — modern TUIs in the terminal: what the Claude Code check left. [OPEN]
+### TD-2026-10-08-333 — modern TUIs in the terminal: what the Claude Code check left. [RESOLVED 2026-10-09]
 
 **Decided 2026-10-09 (project owner):** clickable OSC 8 links take option **C** — a
 per-cell link id, paid for by moving "default colour" into the colour's alpha
@@ -453,11 +453,28 @@ tab), `term` argument quoting, and the `key` command that made the check
 possible. Its trust dialog, prompt box, Shift+Enter (kitty protocol), slash
 menu, Esc and Ctrl+C exit all work. Left:
 
-- **Host terminals do not carry notifications.** The host session queues an
+**Resolved 2026-10-09**, both items, as decided. `TerminalStyle`'s colours are
+`TerminalColor` (alpha 0 = default; every stored colour is opaque) and
+`TerminalCell::link` is the freed two bytes — the cell is still 18, now pinned by a
+`static_assert`. The session's `TerminalLinkTable` interns URIs (identical URIs
+share an id; a full table frees only ids no buffer shows, so a cell's id never
+changes under it); OSC 8 stamps the pen's link on written glyphs only, never on an
+erase; a `file://` link for this machine is stored as its decoded path, another
+host's verbatim and unclickable. The hit-test prefers a cell's link over text
+detection, so `the docs` opens its URL and a file link opens in the editor
+(`WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget`). The host wire is protocol
+**3** (floor 3): a style run carries a link id, a frame carries the URIs its lines
+use (`TerminalHostFrame::links`, remapped into the client's table, `file:///`
+mapped through the tree mapping like OSC 7) and an OSC 9/777 notification
+(`TerminalHost/NotificationAndLinksReachTheClient`). Not done: hover underline of
+a link — the pointer changes, the text is not underlined (VS Code underlines on
+hover); plain URLs never were either.
+
+- ~~**Host terminals do not carry notifications.**~~ The host session queues an
   OSC 9/777 like a local one, but `TerminalHostFrame` has no field for it (the
   bell rides `kBell`; a message needs payload), so a remote agent's "needs your
   input" reaches only the bell. Needs a frame field and a wire-version bump.
-- **OSC 8 hyperlinks are dropped, not clickable.** Claude Code and modern
+- ~~**OSC 8 hyperlinks are dropped, not clickable.**~~ Claude Code and modern
   `ls`/`gcc`/`rg` emit them for file paths; VS Code's terminal opens them.
   Needs a link id per cell (or a run table per line) in `TerminalCell` and the
   hover/click path the plain-URL detector already has.
