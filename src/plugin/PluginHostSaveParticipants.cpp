@@ -28,6 +28,12 @@ PluginHost::Impl::SaveParticipantResult PluginHost::Impl::RunSaveParticipantsBou
     return *shared;
   }
 
+  return WaitForSaveParticipantsOnWorker(std::move(snapshot), path, std::move(shared));
+}
+
+PluginHost::Impl::SaveParticipantResult PluginHost::Impl::WaitForSaveParticipantsOnWorker(
+    PluginHostSnapshot snapshot, const std::filesystem::path& path,
+    std::shared_ptr<SaveParticipantResult> shared) {
   worker_->EnsureStarted();
   auto done = std::make_shared<std::promise<void>>();
   std::future<void> finished = done->get_future();
@@ -54,6 +60,36 @@ PluginHost::Impl::SaveParticipantResult PluginHost::Impl::RunSaveParticipantsBou
   SaveParticipantResult timed_out;
   timed_out.timed_out = true;
   return timed_out;
+}
+
+std::function<PluginHost::SaveParticipantOutcome()> PluginHost::Impl::PrepareSaveParticipantsJob(
+    const std::filesystem::path& path, std::string text) {
+  const auto outcome_of = [](SaveParticipantResult result, std::string original) {
+    SaveParticipantOutcome outcome;
+    outcome.ok = result.ok || result.timed_out;
+    outcome.timed_out = result.timed_out;
+    outcome.text = result.timed_out ? std::move(original) : std::move(result.text);
+    outcome.error = std::move(result.error);
+    return outcome;
+  };
+  if (worker_ == nullptr || g_exec.executing) {
+    // The participants cannot leave this thread (no worker wired, or already on
+    // it), so they run here, now, exactly as the blocking path does; the job only
+    // hands their answer over.
+    std::string original = text;
+    SaveParticipantOutcome outcome =
+        outcome_of(RunSaveParticipantsBounded(path, std::move(text)), std::move(original));
+    return [outcome = std::move(outcome)]() { return outcome; };
+  }
+  // The snapshot is the only shell state a participant reads, and it is taken
+  // here, on the shell thread. The rest of the job may run on any thread.
+  return [this, snapshot = CaptureSnapshot(), path, text = std::move(text),
+          outcome_of]() mutable {
+    auto shared = std::make_shared<SaveParticipantResult>();
+    shared->text = text;
+    return outcome_of(WaitForSaveParticipantsOnWorker(std::move(snapshot), path, std::move(shared)),
+                      std::move(text));
+  };
 }
 #endif
 

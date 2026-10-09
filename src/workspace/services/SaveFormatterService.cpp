@@ -6,57 +6,84 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// Every stage of one deferred run, on the worker: the participants (a plugin
+// worker round trip, bounded by its deadline), then the formatter subprocess.
+void RunSaveStages(SaveFormatterService::Request& request, const platform::ProcessLauncher& launcher,
+                   SaveFormatterService::Completion& completion) {
+  std::string text = std::move(request.text);
+  bool participants_changed = false;
+  if (request.participants) {
+    util::PerformanceTrace::Scope perf_scope("SaveFormatterService::Participants");
+    plugin::PluginHost::SaveParticipantOutcome outcome = request.participants();
+    if (!outcome.ok) {
+      completion.cancel_save = true;
+      completion.error_text = std::move(outcome.error);
+      return;
+    }
+    completion.participants_timed_out = outcome.timed_out;
+    participants_changed = outcome.text != text;
+    text = std::move(outcome.text);
+  }
+  if (request.command.empty()) {
+    completion.ok = true;
+    if (participants_changed) {
+      completion.formatted_text = std::move(text);
+    }
+    return;
+  }
+  util::PerformanceTrace::Scope perf_scope("SaveFormatterService::Run");
+  // Non-const: the failure path MOVES stderr out of it. Left const, the move would
+  // bind to a const lvalue and silently copy the whole captured stream.
+  platform::SubprocessResult result = launcher.Run(
+      request.command, platform::SubprocessOptions{
+                           .cwd = request.cwd,  // the launcher maps it (ProcessLauncher::Run)
+                           .stdin_text = participants_changed ? text : std::move(text),
+                           .environment_overrides = {},
+                           .timeout_ms = request.timeout_ms,
+                       });
+  completion.ok = result.success();
+  completion.timed_out = result.timed_out;
+  if (completion.ok) {
+    completion.formatted_text = std::move(result.stdout_text);
+  } else {
+    completion.error_text = std::move(result.stderr_text);
+  }
+  // A formatter that failed or printed nothing leaves the participants' text.
+  if (participants_changed && completion.formatted_text.empty()) {
+    completion.formatted_text = std::move(text);
+  }
+}
+
+}  // namespace
+
 std::uint64_t SaveFormatterService::Begin(std::string coalesce_key,
                                           Request request,
                                           const platform::ProcessLauncher& launcher,
                                           std::function<void(Completion)> on_complete) {
-  if (request.command.empty()) {
+  if (request.command.empty() && !request.participants) {
     return 0;
   }
   const std::uint64_t id = next_id_.fetch_add(1, std::memory_order_acq_rel) + 1;
   pending_.fetch_add(1, std::memory_order_acq_rel);
 
   // Everything the worker touches is copied into the task: the argv, the cwd, the
-  // text, and a reference to a launcher that outlives the process. It reads no
-  // shell state and no viewport, which is what makes running it off-thread safe at
-  // all.
+  // text, the participants' captured snapshot, and a reference to a launcher that
+  // outlives the process. It reads no shell state and no viewport, which is what
+  // makes running it off-thread safe at all.
   executor_.Submit(std::move(coalesce_key),
                    [this, id, request = std::move(request), on_complete = std::move(on_complete),
                     &launcher](const util::CancellationToken& token) mutable {
                      Completion completion;
                      completion.id = id;
-                     completion.formatter_id = std::move(request.formatter_id);
-                     if (token.IsCancellationRequested()) {
-                       // A superseded queued run still reports, so the caller's
-                       // pending bookkeeping is always cleared by exactly one
-                       // completion. `ok=false` with no error text means "dropped";
-                       // the caller writes the buffer unformatted.
-                       pending_.fetch_sub(1, std::memory_order_acq_rel);
-                       mailbox_.Post([completion = std::move(completion),
-                                      on_complete = std::move(on_complete)]() mutable {
-                         if (on_complete) {
-                           on_complete(std::move(completion));
-                         }
-                       });
-                       return;
-                     }
-                     util::PerformanceTrace::Scope perf_scope("SaveFormatterService::Run");
-                     // Non-const: the failure path MOVES stderr out of it. Left
-                     // const, the move would bind to a const lvalue and silently
-                     // copy the whole captured stream.
-                     platform::SubprocessResult result = launcher.Run(
-                         request.command, platform::SubprocessOptions{
-                                              .cwd = request.cwd,  // the launcher maps it (ProcessLauncher::Run)
-                                              .stdin_text = std::move(request.text),
-                                              .environment_overrides = {},
-                                              .timeout_ms = request.timeout_ms,
-                                          });
-                     completion.ok = result.success();
-                     completion.timed_out = result.timed_out;
-                     if (completion.ok) {
-                       completion.formatted_text = result.stdout_text;
-                     } else {
-                       completion.error_text = std::move(result.stderr_text);
+                     completion.formatter_id = request.formatter_id;
+                     // A superseded queued run still reports, so the caller's
+                     // pending bookkeeping is always cleared by exactly one
+                     // completion. `ok=false` with no error text means "dropped";
+                     // the caller writes the buffer untransformed.
+                     if (!token.IsCancellationRequested()) {
+                       RunSaveStages(request, launcher, completion);
                      }
                      // Decrement BEFORE posting: FlushPendingRuns waits on the
                      // executor and then drains, so a completion must never be

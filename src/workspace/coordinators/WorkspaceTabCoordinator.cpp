@@ -202,13 +202,8 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     return false;
   }
   if (operations_.prepare_editor_view_for_save) {
-    // A completion re-enters this save with the formatter suppressed exactly once,
-    // so the flag is consumed here whether or not a formatter would have run.
-    const bool suppress_formatter = editor_state->skip_formatter_once;
-    editor_state->skip_formatter_once = false;
-    const SavePreparation prepared = operations_.prepare_editor_view_for_save(
-        candidate->path(), *candidate, nullptr,
-        suppress_formatter ? SaveMode::SkipFormatter : mode);
+    const SavePreparation prepared =
+        operations_.prepare_editor_view_for_save(candidate->path(), *candidate, nullptr, mode);
     if (!prepared.ok()) {
       return false;
     }

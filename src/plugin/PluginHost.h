@@ -694,6 +694,24 @@ class PluginHost {
   bool RunSaveParticipants(const std::filesystem::path& path,
                            std::string* text,
                            std::string* error_message = nullptr) const;
+  // What a save's participants made of its text. `ok` false is a participant
+  // that failed: the save must not happen. `timed_out` means they missed the
+  // deadline and `text` is the input, untransformed (the save goes ahead).
+  struct SaveParticipantOutcome {
+    bool ok = true;
+    bool timed_out = false;
+    std::string text;
+    std::string error;
+  };
+  // Shell thread: captures what the participants need for saving `text` to
+  // `path` and returns a job that may run on ANY thread later — it hands the text
+  // to the plugin worker and waits, bounded by the save-participant deadline —
+  // so the waiting happens off the shell thread (SaveFormatterService runs it
+  // ahead of the formatter). Empty when the runtime is disabled. With no plugin
+  // worker the participants cannot leave the shell thread: they run here, now,
+  // and the job only returns their answer.
+  std::function<SaveParticipantOutcome()> PrepareSaveParticipants(const std::filesystem::path& path,
+                                                                  std::string text) const;
   // Test-only: shorten the bounded save round-trip so the timeout fallback is
   // exercisable without a multi-second wait.
   void SetSaveParticipantDeadlineForTesting(std::chrono::milliseconds deadline);

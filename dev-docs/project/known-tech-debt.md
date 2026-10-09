@@ -1617,7 +1617,7 @@ Not covered, on purpose: the plugin data directory, persistence, the tool cache
 and the control descriptor create and remove files that are not in a project
 tree. (The editor save's own gate is TD-2026-09-29-308, resolved the same day.)
 
-### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [PARTLY RESOLVED 2026-10-08 — close, rename/delete, close-project, quit and compare/merge saves no longer block; save participants remain]
+### TD-2026-09-28-304 — a save that closes, renames or quits still waits on the formatter. [RESOLVED 2026-10-09 — save participants moved off the shell thread too]
 
 `SaveFormatterService` took the formatter off the shell thread for the INTERACTIVE
 save, which is the one that used to freeze the window on every Ctrl+S. Three things
@@ -1701,6 +1701,22 @@ completion, and therefore still blocks:
   **Decided 2026-10-09 (project owner):** run them as a **background job** on the plugin
   thread, completing the save from a continuation exactly as the deferred
   formatter does; not left blocking.
+  **Done 2026-10-09.** `PluginHost::PrepareSaveParticipants` takes the plugin
+  snapshot on the shell thread and returns a job; `SaveFormatterService` runs it as
+  the FIRST stage of the deferred run (the plugin-worker wait happens on the
+  service's worker), then the formatter on its output. One run, one completion,
+  one id — so `FlushPendingRuns`, the continuation queue and the compare/merge
+  surfaces needed nothing new. A failing participant sets `cancel_save`: nothing is
+  written, waiting continuations are cancelled, and the error is now SHOWN (the
+  blocking path's `Failed()` was silent). Found on the way and fixed: the save a
+  completion re-entered used `SaveMode::SkipFormatter`, which still ran the
+  participants, so a save with both a participant and a formatter ran its
+  participants twice — before formatting and again on the formatted text — each a
+  shell-thread wait. It is `SaveMode::SkipTransforms` now, and the per-tab
+  `skip_formatter_once` flag is gone (the mode is passed directly). Tests
+  `WorkspaceShell/DeferredSaveRunsParticipantsOnceOffThread`,
+  `…/DeferredSaveRefusedByAFailingParticipant`. Still blocking, by design: the
+  merge view's Save Result (it stages the file next).
 - ~~**compare and merge saves are still blocking.**~~ Done 2026-10-08: the save
   passes its caller's mode through, a deferred formatter run is armed on
   `CompareTabState`/`MergeTabState::pending_format_save`, and

@@ -488,6 +488,107 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
   }
 }
 
+// An interactive (deferred) save runs its participants off the shell thread, as
+// the first stage of the formatter's run (TD-2026-09-28-304), and runs them ONCE:
+// the save the completion re-enters skips every transform. It used to skip only
+// the formatter, so participants ran twice — before formatting, and again on its
+// output — each time waiting on the plugin worker from the shell thread.
+void TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WriteFile(source, "hello world\n");
+  WritePluginInit(plugins_root, "save-once",
+                  "local ide = require(\"microide\")\n"
+                  "return ide.plugin({\n"
+                  "  id = \"save-once\",\n"
+                  "  setup = function(ctx)\n"
+                  "    ctx.save_participants.add(\"bang\", function(buffer)\n"
+                  "      return { text = buffer.text:gsub(\"world\", \"world!\") }\n"
+                  "    end)\n"
+                  "  end\n"
+                  "})\n");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::SaveParticipantCount(shell) == 1, "one participant");
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()),
+      {"sed", "s/hello/HELLO/"});
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "the deferred save starts");
+  Expect(ReadFile(source) == "hello world\n", "nothing is written before the transforms return");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+  Expect(ReadFile(source) == "xHELLO world!\n",
+         "participant then formatter, each once, got: " + ReadFile(source));
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "and the buffer is clean");
+
+  // Participants alone defer too: the save does not wait on the plugin worker.
+  WorkspaceShellTestAccess::RegisterFormatterForTesting(
+      shell, std::string(WorkspaceShellTestAccess::ActiveEditor(shell).language_id()), {});
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("y");
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "the participant-only save starts");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+  Expect(ReadFile(source) == "xyHELLO world!!\n",
+         "the participant runs once more on this save, got: " + ReadFile(source));
+}
+
+// A participant that fails refuses the save — as the blocking path's Failed() does —
+// and now says so: nothing is written, the buffer stays dirty, and the error is shown.
+void TestWorkspaceShellDeferredSaveRefusedByAFailingParticipant() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  WriteFile(source, "hello\n");
+  WritePluginInit(plugins_root, "save-refuse",
+                  "local ide = require(\"microide\")\n"
+                  "return ide.plugin({\n"
+                  "  id = \"save-refuse\",\n"
+                  "  setup = function(ctx)\n"
+                  "    ctx.save_participants.add(\"refuse\", function(buffer)\n"
+                  "      error(\"lint-gate says no\")\n"
+                  "    end)\n"
+                  "  end\n"
+                  "})\n");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "the project opens");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("x");
+  Expect(WorkspaceShellTestAccess::SaveTabDeferred(shell, WorkspaceShellTestAccess::ActiveTabIndex(shell)),
+         "the deferred save starts");
+  WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
+  WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);
+  Expect(ReadFile(source) == "hello\n", "a refused save writes nothing");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the buffer stays dirty");
+  bool reported = false;
+  for (const auto& notification : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    reported = reported || (notification.message.find("save participant failed") != std::string::npos &&
+                            notification.message.find("lint-gate says no") != std::string::npos);
+  }
+  Expect(reported, "the participant's error is shown");
+}
+
 void TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6248,6 +6349,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPluginKeybindingsDispatchCommands);
   AddTest(tests, "WorkspaceShell/PluginStatusItemsRenderAndRedraw",
           TestWorkspaceShellPluginStatusItemsRenderAndRedraw);
+  AddTest(tests, "WorkspaceShell/DeferredSaveRunsParticipantsOnceOffThread",
+          TestWorkspaceShellDeferredSaveRunsParticipantsOnceOffThread);
+  AddTest(tests, "WorkspaceShell/DeferredSaveRefusedByAFailingParticipant",
+          TestWorkspaceShellDeferredSaveRefusedByAFailingParticipant);
   AddTest(tests, "WorkspaceShell/SavePipelineRunsParticipantsBeforeFormatter",
           TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter);
   AddTest(tests, "WorkspaceShell/SavePipelineFormatterFailureLeavesBufferUnchanged",

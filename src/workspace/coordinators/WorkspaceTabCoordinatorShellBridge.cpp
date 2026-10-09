@@ -318,78 +318,70 @@ void WorkspaceShell::ApplyDeferredSaveFormat(
     for (std::size_t tab_index = 0; tab_index < group.open_tabs.size(); ++tab_index) {
       TabEntry& tab = group.open_tabs[tab_index];
       // A compare tab's editable right side and a merge tab's result save the
-      // same way (TD-2026-09-28-304): their run is armed on the surface's state.
-      editor::AsyncBufferWork* surface_work = nullptr;
-      editor::TextViewport* surface_view = nullptr;
-      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-        surface_work = &tab.compare->pending_format_save;
-        surface_view = &tab.compare->right_viewport;
+      // same way as an editor (TD-2026-09-28-304): their run is armed on the
+      // surface's state.
+      editor::AsyncBufferWork* work = nullptr;
+      editor::TextViewport* view = nullptr;
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
+        work = &tab.editor_state->pending_format_save;
+        view = &tab.editor_state->viewport;
+      } else if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+        work = &tab.compare->pending_format_save;
+        view = &tab.compare->right_viewport;
       } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-        surface_work = &tab.merge->pending_format_save;
-        surface_view = &tab.merge->result_viewport;
+        work = &tab.merge->pending_format_save;
+        view = &tab.merge->result_viewport;
       }
-      if (surface_work != nullptr && surface_work->Holds(completion.id)) {
-        const editor::AsyncBufferWork::Claim claim =
-            surface_work->Resolve(completion.id, surface_view->content_revision());
-        if (!completion.ok) {
-          if (!completion.formatter_id.empty()) {
-            ReportSaveFormatterFailure(completion, nullptr);
-          }
-        } else if (!completion.formatted_text.empty()) {
-          if (claim == editor::AsyncBufferWork::Claim::Current) {
-            (void)surface_view->ApplyFormattedText(completion.formatted_text);
-            surface_view->SetDirty(true);
-          } else {
-            Notify(NotificationService::Tone::Info,
-                   "Buffer changed while formatting; saved unformatted");
-          }
-        }
-        const std::uint64_t tab_id = tab.stable_id;
-        // Reports its own failure (a refused or failed write) as the blocking
-        // path did.
-        const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::SkipFormatter);
-        EditorTabService& editor_tabs = MakeEditorTabService();
-        PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
-        MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
-        RequestEditorSurfaceRedraw();
+      if (work == nullptr || !work->Holds(completion.id)) {
+        continue;
+      }
+      const editor::AsyncBufferWork::Claim claim =
+          work->Resolve(completion.id, view->content_revision());
+      const std::uint64_t tab_id = tab.stable_id;
+      EditorTabService& editor_tabs = MakeEditorTabService();
+      PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+      if (completion.cancel_save) {
+        // A participant refused the save: nothing is written, and whatever waited
+        // on this write is cancelled — the blocking path's Failed().
+        Notify(NotificationService::Tone::Error,
+               completion.error_text.empty()
+                   ? std::string("A save participant failed; not saved")
+                   : "A save participant failed; not saved: " + completion.error_text);
+        MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, false);
         RequestTabStripRedraw();
         return;
       }
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
-          !tab.editor_state->pending_format_save.Holds(completion.id)) {
-        continue;
+      if (completion.participants_timed_out) {
+        Notify(NotificationService::Tone::Warning,
+               "save participants timed out; saved without plugin transforms");
       }
-      auto& editor_state = *tab.editor_state;
-      const editor::AsyncBufferWork::Claim claim = editor_state.pending_format_save.Resolve(
-          completion.id, editor_state.viewport.content_revision());
-      if (!completion.ok) {
-        if (!completion.formatter_id.empty()) {
-          ReportSaveFormatterFailure(completion, nullptr);
-        }
-      } else if (!completion.formatted_text.empty()) {
+      if (!completion.ok && !completion.formatter_id.empty()) {
+        ReportSaveFormatterFailure(completion, nullptr);
+      }
+      // Non-empty whenever a stage changed the text — also the participants'
+      // output under a formatter that then failed.
+      if (!completion.formatted_text.empty()) {
         if (claim == editor::AsyncBufferWork::Claim::Current) {
-          (void)editor_state.viewport.ApplyFormattedText(completion.formatted_text);
-          editor_state.viewport.SetDirty(true);
+          (void)view->ApplyFormattedText(completion.formatted_text);
+          view->SetDirty(true);
         } else {
-          // The user typed while the formatter ran. Applying its output now would
-          // silently undo that edit, so the buffer as it stands is what gets written
-          // and the formatter's answer is dropped.
+          // The user typed while the transforms ran. Applying their output now
+          // would silently undo that edit, so the buffer as it stands is what gets
+          // written and their answer is dropped.
           Notify(NotificationService::Tone::Info,
                  "Buffer changed while formatting; saved unformatted");
         }
       }
-      // One re-entry, with the formatter suppressed, so this lands exactly one write
-      // and cannot post another run.
-      const std::uint64_t tab_id = tab.stable_id;
-      editor_state.skip_formatter_once = true;
-      const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::Blocking);
-      // Whatever waited on this write — the tab's close, a rename/delete, a project
-      // close, a quit — runs now, or is cancelled when the write did not land:
-      // closing on a FAILED write would discard exactly the edits the user asked to
-      // keep (TD-2026-09-28-304).
-      EditorTabService& editor_tabs = MakeEditorTabService();
-      PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+      // One re-entry with every transform suppressed, so this lands exactly one
+      // write and cannot post another run. Whatever waited on it — the tab's
+      // close, a rename/delete, a project close, a quit — runs now, or is
+      // cancelled when the write did not land: closing on a FAILED write would
+      // discard exactly the edits the user asked to keep (TD-2026-09-28-304).
+      // A compare/merge save reports its own failure as the blocking path did.
+      const bool saved = SaveGroupTab(group_index, tab_index, SaveMode::SkipTransforms);
       MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).SettleSave(tab_id, saved);
+      RequestEditorSurfaceRedraw();
+      RequestTabStripRedraw();
       return;
     }
   }
@@ -635,6 +627,10 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     return SavePreparation::Ready();
   }
 
+  // The save a deferred completion re-enters already has every transform's answer.
+  if (mode == SaveMode::SkipTransforms) {
+    return SavePreparation::Ready();
+  }
   // Fast-return BEFORE serializing the whole buffer when no save transform can run:
   // no active plugin save participants AND no enabled formatter for this filetype.
   // The common no-plugin/no-formatter save then pays zero preparation serialization
@@ -657,7 +653,6 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
   // Autosave suppresses the formatter so a background write never blocks the UI thread
   // on an external subprocess; explicit saves still format.
   const bool format_on_save = !autosave_suppress_format_on_save_ &&
-                              mode != SaveMode::SkipFormatter &&
                               SettingFlagEnabled(GetSettingValue("editor.format_on_save"), true);
   const FormatterSpec* formatter =
       (format_on_save && !filetype.empty()) ? FindFormatter(formatter_registry_, filetype)
@@ -668,6 +663,29 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
   }
 
   std::string text = SerializeViewportText(viewport);
+  const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
+  if (mode == SaveMode::Deferred) {
+    // Both transforms run on SaveFormatterService's worker: the participants'
+    // wait for the plugin worker is its first stage (TD-2026-09-28-304), and only
+    // their snapshot is taken here. The completion decides, against the revision,
+    // whether the answer is still about this buffer.
+    constexpr int kFormatterTimeoutMs = 5000;
+    SaveFormatterService::Request request{
+        .command = has_formatter ? formatter->command : std::vector<std::string>{},
+        .cwd = context_.current_project_state.root,
+        .text = has_save_participants ? text : std::move(text),
+        .formatter_id = has_formatter ? formatter->id : std::string(),
+        .timeout_ms = kFormatterTimeoutMs,
+        .participants = has_save_participants
+                            ? plugin_runtime_.Host().PrepareSaveParticipants(path, std::move(text))
+                            : nullptr,
+    };
+    const std::uint64_t run_id = save_formatter_service_.Begin(
+        path.generic_string(), std::move(request), launcher,
+        [this](SaveFormatterService::Completion completion) { ApplyDeferredSaveFormat(completion); });
+    return run_id != 0 ? SavePreparation::Deferred(run_id) : SavePreparation::Ready();
+  }
+
   const std::string original_text = text;  // to detect whether a transform changed it
   if (has_save_participants &&
       !plugin_runtime_.Host().RunSaveParticipants(path, &text, error_message)) {
@@ -675,46 +693,25 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
   }
 
   if (has_formatter) {
-    // The formatter is a subprocess. Bounded by a deadline, yes, but starting node is
-    // a few hundred milliseconds and the cap is five seconds — inline on the shell
-    // thread that is the whole window frozen, on every save. It runs on
-    // SaveFormatterService's worker now.
+    // A save whose caller acts on completion — the merge view's Save Result, which
+    // stages the file next — still has to have it on disk when it returns. It pays
+    // the wait off the shell thread's own stack; everything else defers (above).
     constexpr int kFormatterTimeoutMs = 5000;
-    // Through the project's launcher: a formatter must run where the file it is
-    // formatting lives, or it reformats against the wrong toolchain's config.
-    const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
-    SaveFormatterService::Request request{
-        .command = formatter->command,
-        .cwd = context_.current_project_state.root,
-        .text = text,
-        .formatter_id = formatter->id,
-        .timeout_ms = kFormatterTimeoutMs,
-    };
-    if (mode == SaveMode::Deferred) {
-      // The participants' output (if any) is in `text` and goes with the run, but it
-      // is NOT applied to the viewport yet: the completion decides, against the
-      // revision, whether the formatter's answer is still about this buffer.
-      const std::uint64_t run_id = save_formatter_service_.Begin(
-          path.generic_string(), std::move(request), launcher,
-          [this](SaveFormatterService::Completion completion) {
-            ApplyDeferredSaveFormat(completion);
-          });
-      if (run_id != 0) {
-        return SavePreparation::Deferred(run_id);
-      }
-    } else {
-      // A save whose caller acts on completion — closing a tab, renaming, quitting —
-      // still has to have the file on disk when it returns. It pays the same wait the
-      // inline path always did, off the shell thread's own stack.
-      const SaveFormatterService::Completion completion =
-          save_formatter_service_.RunBlocking(std::move(request), launcher);
-      if (!completion.ok) {
-        ReportSaveFormatterFailure(completion, error_message);
-        return SavePreparation::Ready();
-      }
-      if (!completion.formatted_text.empty()) {
-        text = completion.formatted_text;
-      }
+    const SaveFormatterService::Completion completion = save_formatter_service_.RunBlocking(
+        SaveFormatterService::Request{
+            .command = formatter->command,
+            .cwd = context_.current_project_state.root,
+            .text = text,
+            .formatter_id = formatter->id,
+            .timeout_ms = kFormatterTimeoutMs,
+        },
+        launcher);
+    if (!completion.ok) {
+      ReportSaveFormatterFailure(completion, error_message);
+      return SavePreparation::Ready();
+    }
+    if (!completion.formatted_text.empty()) {
+      text = completion.formatted_text;
     }
   }
 

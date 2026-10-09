@@ -595,6 +595,19 @@ bool PluginHost::RunSaveParticipants(const std::filesystem::path& path,
 #endif
 }
 
+std::function<PluginHost::SaveParticipantOutcome()> PluginHost::PrepareSaveParticipants(
+    const std::filesystem::path& path, std::string text) const {
+  if (!impl_->enabled()) {
+    return {};
+  }
+#if MICROIDE_HAS_LUA_PLUGINS
+  return impl_->PrepareSaveParticipantsJob(path, std::move(text));
+#else
+  (void)path;
+  return [text = std::move(text)]() { return SaveParticipantOutcome{.text = text}; };
+#endif
+}
+
 void PluginHost::SetSaveParticipantDeadlineForTesting(std::chrono::milliseconds deadline) {
   impl_->save_participant_deadline_ = deadline;
 }

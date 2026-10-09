@@ -438,10 +438,6 @@ struct EditorTabState {
   // completion finds its tab by matching this id, so a tab closed mid-read
   // simply has no match and the bytes are dropped.
   editor::AsyncBufferWork pending_load;
-  // One-shot, set by that completion: the save it re-enters must not start another
-  // formatter run. Without it a deferred save would post a fresh run every time it
-  // finished one.
-  bool skip_formatter_once = false;
   // What waits on this tab's deferred save — its close, a rename/delete of its
   // path, a project close, a quit — is a SaveContinuation keyed by `stable_id`
   // (WorkspaceContext::save_continuations), not a flag here.

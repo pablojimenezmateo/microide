@@ -47,9 +47,11 @@ enum class SaveMode {
   // Hand the formatter to the worker and return. For an interactive save, which is
   // the one the user is sitting in front of.
   Deferred,
-  // Do not run a formatter at all. Set for exactly one save: the one a deferred
-  // completion re-enters, which already has the formatter's answer.
-  SkipFormatter,
+  // Run no save transform at all — neither participants nor the formatter. Set
+  // for exactly one save: the one a deferred completion re-enters, which already
+  // has their answer. (It skipped only the formatter once, so a save with both
+  // ran its participants twice: before the formatter, and again on its output.)
+  SkipTransforms,
 };
 
 }  // namespace microide::workspace

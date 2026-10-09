@@ -237,6 +237,14 @@ struct PluginHost::Impl {
   // worker job, so a late completion past a timeout is safe to abandon.
   SaveParticipantResult RunSaveParticipantsBounded(const std::filesystem::path& path,
                                                    std::string input);
+  // The worker half of the above: post, then wait at most the deadline. Callable
+  // from any thread with a worker wired; the snapshot was taken on the shell.
+  SaveParticipantResult WaitForSaveParticipantsOnWorker(
+      PluginHostSnapshot snapshot, const std::filesystem::path& path,
+      std::shared_ptr<SaveParticipantResult> shared);
+  // See PluginHost::PrepareSaveParticipants.
+  std::function<SaveParticipantOutcome()> PrepareSaveParticipantsJob(
+      const std::filesystem::path& path, std::string text);
   // `allow_registration` defaults to false: a synchronous query/provider/command
   // round-trip must NOT let its Lua PCall register contributions, because the query
   // interop iterates a live runtime vector (completion_runtimes, code_action_runtimes,
