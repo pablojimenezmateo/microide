@@ -63,6 +63,8 @@ class RemoteHostService {
     // The remote project at `root` (re)gained its connection: whatever the editor
     // asked of the host while it was down (git above all) is worth asking again.
     std::function<void(const std::filesystem::path& root)> project_reconnected;
+    // The host pushed a new git status for the remote project at `root`.
+    std::function<void(const std::filesystem::path& root)> git_status_pushed;
     // Replace output channel `id`'s lines with `text`'s and show it.
     std::function<void(std::string_view id, std::string_view label, std::string_view text)>
         show_output;

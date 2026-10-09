@@ -276,6 +276,8 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   process->err.fd = err_pipe[0];
   process->keep_on_detach = request.keep_on_detach;
   process->connection = connection;
+  process->git = std::filesystem::path(request.argv.front()).filename() == "git";
+  process->cwd = request.cwd;
   std::uint64_t handle = 0;
   {
     std::lock_guard lock(mutex_);
@@ -509,6 +511,9 @@ void ProcessTable::Pump(Process& process, std::vector<Outgoing>& outgoing) {
     Outgoing exit;
     exit.connection = process.connection;
     exit.is_exit = true;
+    if (process.git) {
+      exit.git_cwd = process.cwd;
+    }
     exit.handle = process.handle;
     exit.params = util::JsonValue(std::move(params));
     outgoing.push_back(std::move(exit));
@@ -519,6 +524,12 @@ void ProcessTable::Pump(Process& process, std::vector<Outgoing>& outgoing) {
 void ProcessTable::Flush(std::vector<Outgoing>& outgoing) {
   for (Outgoing& item : outgoing) {
     if (item.is_exit) {
+      if (item.git_cwd.has_value() && sink_.git_exited) {
+        util::JsonObject params = item.params.AsObject();
+        params["git_generation"] =
+            util::JsonValue(static_cast<std::int64_t>(sink_.git_exited(*item.git_cwd)));
+        item.params = util::JsonValue(std::move(params));
+      }
       if (sink_.notify) {
         sink_.notify(item.connection, "proc/exit", item.handle, item.params);
       }

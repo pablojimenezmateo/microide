@@ -535,9 +535,19 @@ silent one:
   (the breadcrumb via TD-2026-10-08-331; Show Status spells home as `~` and toasts wrap). (Fixed the same day: a
   restored or split copy is read-only too, typing into a read-only view says "Cannot
   edit in read-only editor", and the conflict Compare labels the host's side.)
-- Still to do from the task list: pushed `git/metadata`/`git/status` (git runs
-  through the launcher meanwhile: two host processes per git-sidebar refresh, none
-  while the sidebar is hidden), host-side `search/run` (search reads the mirror,
+- ~~Pushed `git/status`~~ — done 2026-10-09: `git/subscribe` makes the server run
+  the sidebar's `git status` (one argv, `project::kGitStatusArguments`) after every
+  watch batch, after every git process it ran exits, and when a 1 s sampler of
+  HEAD/branch ref/index/packed-refs sees a host-side commit; an identical status is
+  pushed as a few-byte `unchanged`. The client builds the sidebar from it through
+  `GitMetadataSource::CurrentStatus` with no host process. Ordering: a git command
+  the client runs that is not known read-only marks every push stale; proc/exit of
+  a git process carries the server's `git_generation`, and only a push computed at
+  or after the latest one counts (a status a git exit overlapped is re-run, not
+  pushed). `RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation`. Left: the
+  outgoing-files diff of a full refresh still spawns once, and `git/metadata` is
+  still asked (once per root, cached) rather than pushed.
+- Still to do from the task list: host-side `search/run` (search reads the mirror,
   which is complete once synced but briefly stale under churn), files over the
   64 MiB per-object ceiling (absent, and so invisible in the tree). Done since: the
   parity suite's `mirror` locality (every scenario against the real server with

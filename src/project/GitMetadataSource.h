@@ -1,7 +1,10 @@
 #pragma once
 
+#include <array>
 #include <filesystem>
 #include <optional>
+#include <string>
+#include <string_view>
 
 #include "project/GitCommandUtil.h"
 
@@ -10,6 +13,18 @@ class ProcessLauncher;
 }
 
 namespace microide::project {
+
+// The status the git sidebar is built from. One definition: the host runs the
+// same command when it pushes the status (remote-projects.md § 6.5).
+inline constexpr std::array<std::string_view, 6> kGitStatusArguments = {
+    "status", "--porcelain=v2", "-z", "--branch", "--renames", "--untracked-files=all"};
+
+// A `kGitStatusArguments` run a source already holds.
+struct GitStatusOutput {
+  int exit_code = -1;
+  std::string output;  // stdout on success, else what git said
+  bool truncated = false;
+};
 
 // What the editor knows about a repository's `.git` WITHOUT running git: whether a
 // tree is a repository at all, and where its git directory is so HEAD, MERGE_HEAD
@@ -42,6 +57,14 @@ class GitMetadataSource {
 
   bool IsRepository(const std::filesystem::path& root) const {
     return Availability(root) == GitAvailability::Repository;
+  }
+
+  // The current status of the tree at `root`, when the source already holds one
+  // it can vouch for — a host pushes it after every change, so the sidebar needs
+  // no process and no round trip. nullopt: run git.
+  virtual std::optional<GitStatusOutput> CurrentStatus(const std::filesystem::path& root) const {
+    (void)root;
+    return std::nullopt;
   }
 };
 

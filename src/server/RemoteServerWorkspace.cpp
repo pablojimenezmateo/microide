@@ -8,6 +8,8 @@
 #include <map>
 #include <utility>
 
+#include "platform/ProcessLauncher.h"
+#include "project/GitRepository.h"
 #include "project/remote/RemoteManifest.h"
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
@@ -182,7 +184,102 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
   });
 }
 
+void RemoteServer::InstallGitHandlers(Connection& connection) {
+  // git/subscribe: push `git/status` (the sidebar's porcelain status) after every
+  // change to the tree or its repository, so the client renders the git sidebar
+  // from what it holds (remote-projects.md § 6.5). Answered once the first status
+  // is queued; the push follows on the bulk lane.
+  connection.peer.OnRequest("git/subscribe", [this, &connection](std::uint64_t id,
+                                                                 const util::JsonValue&) {
+    const std::shared_ptr<ServedTree> served = TreeOf(connection);
+    if (!served) {
+      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
+                                 "no workspace: send server/hello with a root");
+      return;
+    }
+    {
+      std::lock_guard publish(served->publish_mutex);
+      served->git_subscribers.insert(connection.id);
+    }
+    ServedTree* tree = served.get();
+    tree->queue.Post([this, tree]() {
+      tree->git_last_pushed.reset();  // a new subscriber holds nothing: push in full
+      if (!tree->git_sampler && !tree->closing.load()) {
+        tree->git_sampler = std::make_unique<GitStatusSampler>(
+            tree->tree.root(), std::chrono::milliseconds(1000),
+            [this, tree]() { ScheduleGitStatus(*tree); });
+      }
+    });
+    ScheduleGitStatus(*tree);
+    connection.peer.Reply(id, util::JsonValue(true));
+  });
+}
+
+void RemoteServer::ScheduleGitStatus(ServedTree& tree) {
+  {
+    std::lock_guard publish(tree.publish_mutex);
+    if (tree.git_subscribers.empty()) {
+      return;
+    }
+  }
+  ServedTree* raw = &tree;  // ~ServedTree joins the queue before it goes
+  tree.queue.PostLatest("git", [this, raw]() { PublishGitStatus(*raw); });
+}
+
+void RemoteServer::PublishGitStatus(ServedTree& tree) {
+  if (tree.closing.load()) {
+    return;
+  }
+  const project::GitRepository repo(tree.tree.root(), platform::LocalProcessLauncher());
+  const std::vector<std::string> arguments(project::kGitStatusArguments.begin(),
+                                           project::kGitStatusArguments.end());
+  project::GitRepository::CommandResult result;
+  std::uint64_t generation = 0;
+  // A git process that exited WHILE status ran may have changed what it read, and
+  // a status from before an exit must not be pushed as the state after it.
+  for (int attempt = 0; attempt < 4; ++attempt) {
+    generation = git_generation_.load();
+    result = repo.Execute(arguments, false);
+    if (git_generation_.load() == generation || tree.closing.load()) {
+      break;
+    }
+  }
+  if (tree.closing.load()) {
+    return;
+  }
+  util::JsonObject params;
+  params["root"] = util::JsonValue(tree.tree.root().string());
+  params["generation"] = util::JsonValue(static_cast<std::int64_t>(generation));
+  const bool unchanged = tree.git_last_pushed.has_value() &&
+                         tree.git_last_pushed->exit_code == result.exit_code &&
+                         tree.git_last_pushed->truncated == result.truncated &&
+                         tree.git_last_pushed->output == result.output;
+  if (unchanged) {
+    // What the client holds is current as of `generation`: say so in a few bytes.
+    params["unchanged"] = util::JsonValue(true);
+  } else {
+    params["exit_code"] = util::JsonValue(static_cast<std::int64_t>(result.exit_code));
+    params["output"] = util::JsonValue(result.output);
+    params["truncated"] = util::JsonValue(result.truncated);
+    tree.git_last_pushed = project::GitStatusOutput{
+        .exit_code = result.exit_code, .output = std::move(result.output), .truncated = result.truncated};
+  }
+  std::vector<std::uint64_t> subscribers;
+  {
+    std::lock_guard publish(tree.publish_mutex);
+    subscribers.assign(tree.git_subscribers.begin(), tree.git_subscribers.end());
+  }
+  const util::JsonValue payload(std::move(params));
+  for (const std::uint64_t connection_id : subscribers) {
+    WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+      peer.Notify("git/status", payload, remote::Lane::Bulk);
+    });
+  }
+}
+
 void RemoteServer::PublishWatchBatch(ServedTree& tree) {
+  // A worktree change is a status change: queued behind this batch, coalesced.
+  ScheduleGitStatus(tree);
   {
     std::lock_guard publish(tree.publish_mutex);
     const bool anyone_primed =

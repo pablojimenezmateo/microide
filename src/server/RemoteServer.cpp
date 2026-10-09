@@ -38,6 +38,28 @@ RemoteServer::RemoteServer(Config config)
               peer.Notify(method, params, remote::Lane::Interactive, handle);
             });
           },
+      .git_exited =
+          [this](const std::string& cwd) {
+            const std::uint64_t generation = ++git_generation_;
+            // The trees it ran in (or under) have a status to push again. Scheduled
+            // after mutex_ is released: scheduling takes a tree's publish_mutex,
+            // which PublishWatchBatch holds while it takes mutex_.
+            std::vector<std::shared_ptr<ServedTree>> trees;
+            {
+              std::lock_guard lock(mutex_);
+              for (auto& [root, workspace] : workspaces_) {
+                if (workspace.tree &&
+                    (cwd == root || (cwd.size() > root.size() && cwd.starts_with(root) &&
+                                     (root.back() == '/' || cwd[root.size()] == '/')))) {
+                  trees.push_back(workspace.tree);
+                }
+              }
+            }
+            for (const std::shared_ptr<ServedTree>& tree : trees) {
+              ScheduleGitStatus(*tree);
+            }
+            return generation;
+          },
   });
   terminals_ = std::make_unique<TerminalTable>(TerminalTable::Sink{
       .frame =
@@ -105,6 +127,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallTreeHandlers(ref);
   InstallFileHandlers(ref);
   InstallWatchHandlers(ref);
+  InstallGitHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -194,6 +217,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
     if (const std::shared_ptr<ServedTree> tree = TreeOf(connection)) {
       std::lock_guard publish(tree->publish_mutex);
       tree->subscribers.erase(connection.id);
+      tree->git_subscribers.erase(connection.id);
     }
     std::shared_ptr<ServedTree> released;  // destroyed (worker joined) outside the lock
     {

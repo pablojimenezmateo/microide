@@ -307,6 +307,34 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
 
 #endif
 
+// Whether `argv` is a git command that may change a repository. Conservative: a
+// subcommand not known to be read-only counts, which only costs a status that
+// runs git instead of reading the pushed one.
+bool IsGitMutation(const std::vector<std::string>& argv) {
+  if (argv.empty() || std::filesystem::path(argv.front()).filename() != "git") {
+    return false;
+  }
+  static constexpr std::string_view kReadOnly[] = {
+      "status",   "diff",      "log",       "show",        "blame",       "for-each-ref",
+      "rev-parse", "rev-list", "ls-files",  "ls-tree",     "cat-file",    "merge-base",
+      "show-ref", "describe",  "name-rev",  "check-ignore", "check-attr", "grep",
+      "shortlog", "version",   "var",       "count-objects", "diff-tree", "diff-index",
+      "diff-files"};
+  for (std::size_t i = 1; i < argv.size(); ++i) {
+    const std::string& arg = argv[i];
+    if (arg == "-C" || arg == "-c" || arg == "--git-dir" || arg == "--work-tree" ||
+        arg == "--namespace") {
+      ++i;  // a global option's value
+      continue;
+    }
+    if (!arg.empty() && arg.front() == '-') {
+      continue;  // --no-pager, --literal-pathspecs, --git-dir=...
+    }
+    return std::find(std::begin(kReadOnly), std::end(kReadOnly), arg) == std::end(kReadOnly);
+  }
+  return false;  // bare `git`
+}
+
 }  // namespace
 
 RemoteProcessLauncher::RemoteProcessLauncher(std::shared_ptr<RemoteConnection> connection,
@@ -411,6 +439,19 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
     result.exit_code = 127;
     result.stderr_text = "not connected to the host";
     return result;
+  }
+  // A git command that may change a repository makes every pushed status from
+  // before it stale, until the host pushes one computed after it exits (§ 6.5).
+  struct GitMutationScope {
+    RemoteServerClient* client = nullptr;
+    ~GitMutationScope() {
+      if (client != nullptr) {
+        client->EndGitMutation();
+      }
+    }
+  } git_mutation{IsGitMutation(argv) ? client.get() : nullptr};
+  if (git_mutation.client != nullptr) {
+    git_mutation.client->BeginGitMutation();
   }
   // The handle is learned only from the spawn reply, after output may have started
   // arriving; acks go out once it is known.
@@ -564,6 +605,16 @@ std::optional<RemoteServerClient::GitMetadata> RemoteProcessLauncher::Metadata(
     metadata_[*host_root] = *answer;
   }
   return answer;
+}
+
+std::optional<project::GitStatusOutput> RemoteProcessLauncher::CurrentStatus(
+    const std::filesystem::path& root) const {
+  const std::optional<std::filesystem::path> host_root = map_.ToHost(root);
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  if (!host_root.has_value() || client == nullptr || !client->connected()) {
+    return std::nullopt;
+  }
+  return client->CurrentGitStatus(host_root->string());
 }
 
 project::GitAvailability RemoteProcessLauncher::Availability(const std::filesystem::path& root) const {

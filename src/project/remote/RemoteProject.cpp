@@ -134,6 +134,11 @@ void RemoteProject::OnSessionStatus(const RemoteHostSession::Status& status) {
       std::lock_guard lock(watch_mutex_);
       watch_native_ = native;
     }
+    // The sidebar's status, pushed rather than asked for (§ 6.5). A host that
+    // refuses it is still usable: git simply runs per refresh. Through the
+    // workspace, not session_: this runs on the session's thread, which reports
+    // once more while ~RemoteProject's reset has already cleared session_.
+    (void)workspace_->SubscribeGitStatus(config_.git_status_changed, &error);
     engine_->RequestSync();
   }
   if (listener_) {

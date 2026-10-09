@@ -146,6 +146,23 @@ std::optional<RemoteWorkspace::Manifest> RemoteWorkspace::FetchManifestSync(
   return std::move(outcome.first);
 }
 
+bool RemoteWorkspace::SubscribeGitStatus(std::function<void()> changed, std::string* error) {
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    if (error != nullptr) {
+      *error = kNotConnected;
+    }
+    return false;
+  }
+  return client->SubscribeGitStatus(
+      [changed = std::move(changed)](const std::string&) {
+        if (changed) {
+          changed();
+        }
+      },
+      error);
+}
+
 bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_delta, bool* native,
                                      std::string* error) {
   const std::shared_ptr<RemoteServerClient> client = Client();

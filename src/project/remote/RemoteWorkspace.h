@@ -56,6 +56,9 @@ class RemoteWorkspace {
     std::vector<std::string> deleted;
     std::vector<ManifestRow> rows;
   };
+  // git/subscribe on the current connection: `changed` runs on its I/O thread
+  // after every pushed git status (RemoteServerClient::SubscribeGitStatus).
+  bool SubscribeGitStatus(std::function<void()> changed, std::string* error);
   bool SubscribeWatch(std::function<void(WatchDelta delta)> on_delta, bool* native,
                       std::string* error);
 

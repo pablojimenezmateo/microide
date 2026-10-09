@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "platform/AsyncSubprocess.h"
+#include "project/GitMetadataSource.h"
 #include "project/remote/RemoteFrame.h"
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
@@ -99,6 +100,20 @@ class RemoteServerClient {
 
   std::optional<GitMetadata> QueryGitMetadata(const std::filesystem::path& host_root);
 
+  // Pushed git status (git/subscribe, remote-projects.md § 6.5): the host pushes
+  // `git status` after every change to the workspace or its repository, so the
+  // sidebar renders from what is held here. `changed` runs on the I/O thread with
+  // the host root of every push. False with *error when the host refused.
+  bool SubscribeGitStatus(std::function<void(const std::string& host_root)> changed,
+                          std::string* error);
+  // The pushed status of `host_root`, only while it is CURRENT: no git command
+  // that may change a repository is running through this client, and the push
+  // was computed after the last one exited (its proc/exit `git_generation`).
+  std::optional<project::GitStatusOutput> CurrentGitStatus(const std::string& host_root);
+  // Around a git command that may change a repository (RemoteProcessLauncher::Run).
+  void BeginGitMutation();
+  void EndGitMutation();
+
   // Host terminals (terminal/TerminalHostWire.h). `frame` runs on the I/O thread
   // with each TermFrame for `handle`, in order — including any that arrived
   // before the registration (the server's first frame races its term/open
@@ -161,6 +176,17 @@ class RemoteServerClient {
   // Content routes of in-flight RequestStream calls, by request id.
   std::map<std::uint64_t, std::shared_ptr<StreamContent>> streams_;
   std::shared_ptr<std::function<void(std::uint64_t, std::string)>> watch_handler_;
+  struct PushedGitStatus {
+    project::GitStatusOutput status;
+    std::uint64_t generation = 0;
+  };
+  std::map<std::string, PushedGitStatus, std::less<>> pushed_git_;
+  std::shared_ptr<std::function<void(const std::string&)>> git_status_handler_;
+  int git_mutations_in_flight_ = 0;
+  std::uint64_t git_required_generation_ = 0;
+  // The highest proc/exit `git_generation` seen; recorded before the exit is
+  // delivered, so a Run that returns has already raised it.
+  std::atomic<std::uint64_t> last_git_generation_{0};
 };
 
 }  // namespace microide::project::remote

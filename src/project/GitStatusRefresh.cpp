@@ -38,9 +38,19 @@ GitRepositoryState BuildGitRepositoryStateFromStatus(const GitRepository& repo,
     return state;
   }
 
-  const auto result = repo.Execute(
-      {"status", "--porcelain=v2", "-z", "--branch", "--renames", "--untracked-files=all"},
-      false);
+  // A remote project's host pushes this after every change: no process, no round
+  // trip. Anything else, and a pushed status not current, runs git.
+  const GitMetadataSource& metadata = GitMetadataFor(repo.launcher());
+  GitRepository::CommandResult result;
+  if (std::optional<GitStatusOutput> pushed = metadata.CurrentStatus(project_root)) {
+    result.exit_code = pushed->exit_code;
+    result.output = std::move(pushed->output);
+    result.truncated = pushed->truncated;
+  } else {
+    result = repo.Execute(std::vector<std::string>(kGitStatusArguments.begin(),
+                                                   kGitStatusArguments.end()),
+                          false);
+  }
   if (!result.success()) {
     state.repo_available = true;
     state.refresh_error = {
@@ -76,7 +86,6 @@ GitRepositoryState BuildGitRepositoryStateFromStatus(const GitRepository& repo,
   // not report the in-flight operation, and nothing else wrote this field, so it
   // stayed None forever and the merge resolver's rebase/cherry-pick label was
   // unreachable.
-  const GitMetadataSource& metadata = GitMetadataFor(repo.launcher());
   state.operation_state = DetectGitOperationState(project_root, metadata);
   if (state.operation_state == GitOperationStateKind::Merge) {
     state.pending_merge_head = internal::ReadPendingMergeHeadId(project_root, metadata).value_or("");
@@ -131,7 +140,6 @@ GitRepositoryState BuildGitRepositoryStateFromStatus(const GitRepository& repo,
         relative_text.substr(0, (slash == std::string_view::npos ? 0 : slash + 1) + tilde));
   }
   state.refreshing = false;
-  return state;  state.refreshing = false;
   return state;
 }
 

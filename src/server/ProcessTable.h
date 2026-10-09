@@ -43,6 +43,11 @@ class ProcessTable {
     std::function<void(std::uint64_t connection, std::string_view method, std::uint64_t handle,
                         const util::JsonValue& params)>
         notify;
+    // A `git` process exited in `cwd`, just before its proc/exit is sent. Returns
+    // the git generation that exit made (carried in proc/exit as
+    // `git_generation`): a pushed status computed from that generation on is
+    // after it (remote-projects.md § 6.5). Optional.
+    std::function<std::uint64_t(const std::string& cwd)> git_exited;
   };
 
   struct Limits {
@@ -109,6 +114,8 @@ class ProcessTable {
     Stream err;
     bool keep_on_detach = false;
     std::uint64_t connection = 0;
+    bool git = false;  // argv[0] is git: its exit may have changed a repository
+    std::string cwd;
     bool exited = false;
     int exit_code = -1;
     int exit_signal = 0;
@@ -119,6 +126,7 @@ class ProcessTable {
   struct Outgoing {
     std::uint64_t connection = 0;
     bool is_exit = false;
+    std::optional<std::string> git_cwd;  // an exit of a git process
     project::remote::FrameType type = project::remote::FrameType::ProcStdout;
     std::uint64_t handle = 0;
     std::string bytes;

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -13,6 +14,8 @@
 
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
+#include "project/GitMetadataSource.h"
+#include "server/GitStatusSampler.h"
 #include "server/ProcessTable.h"
 #include "server/TerminalTable.h"
 #include "server/WorkspaceTree.h"
@@ -83,6 +86,7 @@ class RemoteServer {
         : tree(std::move(root), std::move(options)) {}
     ~ServedTree() {
       closing.store(true);
+      git_sampler.reset();  // no more git pushes posted
       watch.reset();     // no more batches posted
       queue.Shutdown();  // before `tree`: a running job uses it
       io_queue.Shutdown();
@@ -98,6 +102,12 @@ class RemoteServer {
     WorkspaceTree::Changes watch_changes;             // since the last published batch
     util::SerialWorkQueue queue;     // manifests and watch batches
     util::SerialWorkQueue io_queue;  // reads, writes and tree ops, in arrival order
+    // Pushed git status (remote-projects.md § 6.5): the connections that asked
+    // (guarded by publish_mutex), what was last pushed (queue thread only; reset
+    // to force a full push), and the sampler that notices a host-side commit.
+    std::set<std::uint64_t> git_subscribers;
+    std::optional<project::GitStatusOutput> git_last_pushed;
+    std::unique_ptr<GitStatusSampler> git_sampler;  // created on the queue thread
   };
   struct Workspace {
     std::size_t clients = 0;
@@ -110,6 +120,11 @@ class RemoteServer {
   void InstallTreeHandlers(Connection& connection);
   void InstallFileHandlers(Connection& connection);
   void InstallWatchHandlers(Connection& connection);
+  void InstallGitHandlers(Connection& connection);
+  // Run `git status` for `tree` on its queue and push it to its git subscribers
+  // (coalesced: one run however many changes asked).
+  void ScheduleGitStatus(ServedTree& tree);
+  void PublishGitStatus(ServedTree& tree);
   // A watch batch: rebuild the manifest and send each primed subscriber its delta.
   void PublishWatchBatch(ServedTree& tree);
   std::shared_ptr<ServedTree> TreeOf(const Connection& connection);
@@ -127,6 +142,10 @@ class RemoteServer {
   std::string epoch_;
   util::WakePipe wake_;
   std::atomic<bool> shutdown_{false};
+  // Bumped when a git process this server ran exits. A status run that started at
+  // generation G reflects every git exit up to G; one a git exit overlapped is
+  // run again rather than pushed (§ 6.5).
+  std::atomic<std::uint64_t> git_generation_{0};
 
   std::mutex mutex_;  // guards everything below
   std::uint64_t next_connection_id_ = 1;

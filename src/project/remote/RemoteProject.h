@@ -45,6 +45,9 @@ class RemoteProject {
     // "" = MirrorStore::DefaultDirectory(host, root).
     std::filesystem::path mirror_directory;
     MirrorSyncEngine::Options engine;
+    // The host pushed a new git status for the tree (git/subscribe): the git
+    // sidebar can re-render from it without a host process. Any thread.
+    std::function<void()> git_status_changed;
   };
   // Something a user can see changed: the session's state or the sync's status.
   // Any thread.

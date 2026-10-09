@@ -141,6 +141,13 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
               RequestGitSidebarRefresh();
             }
           },
+      .git_status_pushed =
+          [this](const std::filesystem::path& root) {
+            // Rendered from the push: the refresh reads it instead of running git.
+            if (context_.current_project_state.root == root) {
+              RequestGitSidebarRefresh();
+            }
+          },
       .show_output =
           [this](std::string_view id, std::string_view label, std::string_view text) {
             output_channels_.Clear(id);

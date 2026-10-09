@@ -146,6 +146,13 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
   config.session = SessionConfig(target);
   config.session.workspace_root = host_root;
   config.mirror_directory = tree.parent_path();
+  config.git_status_changed = [this, tree]() {
+    mailbox_.PostLatest("remote-git:" + tree.string(), [this, tree]() {
+      if (operations_.git_status_pushed) {
+        operations_.git_status_pushed(tree);
+      }
+    });
+  };
   auto project = std::make_unique<remote::RemoteProject>(std::move(config), [this, tree]() {
     // Coalesced: only the latest state matters by the time the UI runs.
     mailbox_.PostLatest("remote-project:" + tree.string(), [this, tree]() { ApplyProject(tree); });

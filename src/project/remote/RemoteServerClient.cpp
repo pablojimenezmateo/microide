@@ -116,6 +116,36 @@ void RemoteServerClient::InstallRouting() {
   peer_.OnNotification("proc/exit", [this](std::uint64_t handle, const util::JsonValue& params) {
     DeliverExit(handle, params);
   });
+  peer_.OnNotification("git/status", [this](std::uint64_t, const util::JsonValue& params) {
+    const util::JsonValue& root = params["root"];
+    const util::JsonValue& generation = params["generation"];
+    if (!root.IsString() || !generation.IsInt() || generation.AsInt() < 0) {
+      return;  // untrusted: a malformed push is dropped, and git runs instead
+    }
+    std::shared_ptr<std::function<void(const std::string&)>> handler;
+    {
+      std::lock_guard lock(mutex_);
+      const auto it = pushed_git_.find(root.AsString());
+      if (params["unchanged"].AsBool(false)) {
+        if (it == pushed_git_.end()) {
+          return;  // nothing held to vouch for
+        }
+        it->second.generation = static_cast<std::uint64_t>(generation.AsInt());
+      } else {
+        PushedGitStatus& entry =
+            it != pushed_git_.end() ? it->second : pushed_git_[root.AsString()];
+        entry.status = project::GitStatusOutput{
+            .exit_code = static_cast<int>(params["exit_code"].AsInt(-1)),
+            .output = params["output"].AsString(),
+            .truncated = params["truncated"].AsBool(false)};
+        entry.generation = static_cast<std::uint64_t>(generation.AsInt());
+      }
+      handler = git_status_handler_;
+    }
+    if (handler && *handler) {
+      (*handler)(root.AsString());
+    }
+  });
 }
 
 bool RemoteServerClient::Handshake(const HelloRequest& hello, std::string* error) {
@@ -301,6 +331,13 @@ void RemoteServerClient::Deliver(std::uint64_t handle, FrameType type, std::stri
 }
 
 void RemoteServerClient::DeliverExit(std::uint64_t handle, const util::JsonValue& params) {
+  // Before the exit is delivered: the Run waiting on it reads this once it returns.
+  if (const util::JsonValue& generation = params["git_generation"]; generation.IsInt()) {
+    const auto value = static_cast<std::uint64_t>(std::max<std::int64_t>(generation.AsInt(), 0));
+    std::uint64_t seen = last_git_generation_.load();
+    while (value > seen && !last_git_generation_.compare_exchange_weak(seen, value)) {
+    }
+  }
   std::shared_ptr<ProcessEvents> events;
   {
     std::lock_guard lock(mutex_);
@@ -408,6 +445,47 @@ void RemoteServerClient::Release(std::uint64_t handle) {
   util::JsonObject params;
   params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
   peer_.Notify("proc/release", util::JsonValue(std::move(params)));
+}
+
+bool RemoteServerClient::SubscribeGitStatus(std::function<void(const std::string&)> changed,
+                                            std::string* error) {
+  {
+    std::lock_guard lock(mutex_);
+    git_status_handler_ =
+        std::make_shared<std::function<void(const std::string&)>>(std::move(changed));
+  }
+  std::string why;
+  if (!Call("git/subscribe", util::JsonValue(util::JsonObject{}), &why).has_value()) {
+    if (error != nullptr) {
+      *error = why;
+    }
+    return false;
+  }
+  return true;
+}
+
+std::optional<project::GitStatusOutput> RemoteServerClient::CurrentGitStatus(
+    const std::string& host_root) {
+  std::lock_guard lock(mutex_);
+  if (git_mutations_in_flight_ > 0) {
+    return std::nullopt;
+  }
+  const auto it = pushed_git_.find(host_root);
+  if (it == pushed_git_.end() || it->second.generation < git_required_generation_) {
+    return std::nullopt;
+  }
+  return it->second.status;
+}
+
+void RemoteServerClient::BeginGitMutation() {
+  std::lock_guard lock(mutex_);
+  ++git_mutations_in_flight_;
+}
+
+void RemoteServerClient::EndGitMutation() {
+  std::lock_guard lock(mutex_);
+  --git_mutations_in_flight_;
+  git_required_generation_ = std::max(git_required_generation_, last_git_generation_.load());
 }
 
 std::optional<RemoteServerClient::GitMetadata> RemoteServerClient::QueryGitMetadata(

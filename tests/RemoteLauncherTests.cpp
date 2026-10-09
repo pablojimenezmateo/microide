@@ -1,9 +1,13 @@
 #include "TestSupport.h"
 
 #include "platform/AsyncSubprocess.h"
+#include "project/GitRepository.h"
+#include "project/GitStatusRefresh.h"
 #include "project/remote/RemoteProcessLauncher.h"
+#include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -116,6 +120,72 @@ void TestGitMetadataComesFromTheHost() {
   Expect(session.launcher->spawn_count() == 0, "no host process was started to find out");
 }
 
+// The git sidebar's status is PUSHED (remote-projects.md § 6.5): the host runs
+// `git status` after every change to the worktree or the repository and the
+// client builds the sidebar from it without a host process. A git command the
+// client runs that may change the repository makes any earlier push stale until
+// one computed after it arrives — the sidebar never shows a stage as undone.
+void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
+  TemporaryDirectory temp;
+  const std::filesystem::path local = temp.path() / "mirror";
+  const std::filesystem::path host = temp.path() / "host";
+  std::filesystem::create_directories(local);
+  InitializeGitRepo(host);
+  WriteFile(host / "a.txt", "one\n");
+  CommitAll(host, "init", "pushed git status");
+  WriteFile(host / "a.txt", "two\n");
+
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = host.string()},
+                                &error),
+         "connects: " + error);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host),
+                                               {.host_paths_readable_locally = true});
+  client->SetWatchHandler([](std::uint64_t, std::string) {});
+  Expect(client->Call(remote::method::kWatchSubscribe, util::JsonValue(util::JsonObject{}), &error)
+             .has_value(),
+         "the watch is subscribed: " + error);
+  std::atomic<int> pushes{0};
+  Expect(client->SubscribeGitStatus([&](const std::string&) { ++pushes; }, &error),
+         "git status is subscribed: " + error);
+  const auto status_has = [&](std::string_view needle) {
+    const auto current = launcher.CurrentStatus(local);
+    return current.has_value() && current->output.find(needle) != std::string::npos;
+  };
+  Expect(WaitUntil([&] { return status_has("1 .M N... 100644 100644 100644"); },
+                   std::chrono::seconds(10)),
+         "the first push shows the modified file");
+
+  const std::size_t spawns = launcher.spawn_count();
+  const project::GitRepository repo(local, launcher);
+  const project::GitRepositoryState state =
+      project::BuildGitRepositoryStateFromStatus(repo, local, 1, 0);
+  Expect(launcher.spawn_count() == spawns, "the sidebar's state was built with no host process");
+  Expect(state.entries.size() == 1 && state.entries[0].path.relative_path == "a.txt",
+         "from the pushed status");
+
+  const auto added = launcher.Run({"git", "add", "a.txt"}, platform::SubprocessOptions{.cwd = local});
+  Expect(added.success(), "git add ran on the host");
+  const auto right_after = launcher.CurrentStatus(local);
+  Expect(!right_after.has_value() || right_after->output.find("1 M. N...") != std::string::npos,
+         "right after the add, the status is either unknown or staged — never the unstaged one");
+  Expect(WaitUntil([&] { return status_has("1 M. N..."); }, std::chrono::seconds(10)),
+         "and the push computed after it arrives");
+
+  // A commit made on the host by something else (an agent in a host terminal).
+  RequireGitCommandSuccess(host, {"commit", "-q", "-m", "on the host"}, "host-side commit");
+  Expect(WaitUntil([&] {
+           const auto current = launcher.CurrentStatus(local);
+           return current.has_value() && current->output.find("1 M.") == std::string::npos &&
+                  current->output.find("# branch.head") != std::string::npos;
+         },
+                   std::chrono::seconds(10)),
+         "the host's own commit is noticed and pushed");
+  Expect(pushes.load() >= 3, "each change was a push");
+}
+
 // Over a real ssh link, when one is configured: MICROIDE_TEST_SSH_HOST names a host
 // with microide-server at MICROIDE_TEST_SSH_SERVER (default ~/microide-test/microide-server).
 void TestOverARealSshLink() {
@@ -156,6 +226,8 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
           TestRunMapsCwdAndReportsLikeALocalRun);
   AddTest(tests, "RemoteLauncher/StartAsyncAdoptsAHostProcess", TestStartAsyncAdoptsAHostProcess);
   AddTest(tests, "RemoteLauncher/GitMetadataComesFromTheHost", TestGitMetadataComesFromTheHost);
+  AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",
+          TestGitStatusIsPushedAndNeverStaleAfterAMutation);
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);
 #else
   (void)tests;

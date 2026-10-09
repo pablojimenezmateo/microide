@@ -73,6 +73,9 @@ class RemoteProcessLauncher final : public platform::ProcessLauncher,
   std::string_view description() const override { return options_.description; }
 
   project::GitAvailability Availability(const std::filesystem::path& root) const override;
+  // The host's pushed `git status`, while it is current (git/subscribe).
+  std::optional<project::GitStatusOutput> CurrentStatus(
+      const std::filesystem::path& root) const override;
 
   // A terminal in a remote project is a host terminal: the pty and the shell run
   // on the host (term/open), never a local shell in a mapped directory.
