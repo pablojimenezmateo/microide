@@ -420,7 +420,29 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-09-334 — four allocation gates carry the terminal split-pane cost. [OPEN — decided: rebaseline]
+
+Measured 2026-10-08 against v2.12.0 on one machine: after the per-open and
+per-terminal regressions were fixed (de1d840b), four gates still read above the
+committed baselines — `settings_change_many_tabs`, `editor_tab_drag_burst`,
+`multi_tab_cycle` (tens to ~400 allocations, scaling with tabs) and
+`terminal.open` (24 → 28). The remainder is the split-pane bookkeeping added
+since the release (`TerminalTabState::InsertPane`, the pane factory).
+
+**Decided 2026-10-09 (project owner):** accept it and **rebaseline** these four. Do it on the
+reference runner (`perf-runner-v1`, `--update-baseline=deterministic`), not a
+developer box: setup allocation counts depend on the checkout's path length.
+
 ### TD-2026-10-08-333 — modern TUIs in the terminal: what the Claude Code check left. [OPEN]
+
+**Decided 2026-10-09 (project owner):** clickable OSC 8 links take option **C** — a
+per-cell link id, paid for by moving "default colour" into the colour's alpha
+channel (`optional<Rgba8>` → `Rgba8` with alpha 0 = default) so `TerminalCell`
+stays 18 bytes. Rejected: A (+2 bytes/cell, ~11% terminal memory) and B (a
+per-line run table every cell mutation path must keep in sync). The host
+terminal protocol is **bumped** to carry the link and the OSC 9/777
+notification (see the decision on TD-2026-10-08-328's wire): client and server
+must match; no compatibility path for an older `microide-server`.
 
 Checked 2026-10-08 by driving Claude Code 2.1.294 headlessly in microide's
 terminal (`panel-maximize`, `term claude`, `key`/`type`, `terminal-output`;
@@ -446,6 +468,13 @@ menu, Esc and Ctrl+C exit all work. Left:
   box) still needs `claude` installed and stays a manual control-channel check.
 
 ### TD-2026-10-08-328 — Phase 2b remainders: what the first remote-project slices left. [OPEN]
+
+**Decided 2026-10-09 (project owner):** do **all** of the remaining items: pushed
+`git/metadata`/`git/status` (first — two host processes per git-sidebar refresh
+today), host-side `search/run`, **zstd deltas (vendoring zstd is approved)**, the
+object store, and files over the 64 MiB per-object ceiling. Protocol changes
+these need bump the wire version; a mismatched client/server pair is refused
+rather than translated (backward compatibility is explicitly not a goal).
 
 Phase 2b (`openspec/changes/remote-projects-phase-2b/`) opens a host folder as a
 mirrored project end to end — manifest, objects, CAS writes, tree ops, the watch,
@@ -564,6 +593,9 @@ when its socket directory has been deleted, since nothing can reach it then.
 
 ### TD-2026-10-08-331 — remote trial leftovers: host-file copies show a local path, `type` reports success on a refused edit, a tab tooltip may stick. [PARTLY RESOLVED 2026-10-08 — only the tooltip report remains]
 
+**Decided 2026-10-09 (project owner):** the sticking tab tooltip is being checked by the
+owner on a real display; no change until that reproduces outside Xvfb.
+
 Resolved 2026-10-08:
 - The path bar names a cached host copy `host:/abs/path`: `ProcessLauncher::
   DisplayPathOf` (empty locally; the remote launcher maps its host-file cache
@@ -643,6 +675,10 @@ reconnect; not done then because no remote PROJECT exists yet (Phase 2b) to run
 a language server over it.
 
 ### TD-2026-10-08-326 — host terminals: backfill, two clients, and a gap at a resize. [OPEN]
+
+**Decided 2026-10-09 (project owner):** two clients on one host terminal **share** it
+at the smaller size, as the spec says (tmux's rule) — not "last attach wins".
+Needs a frame builder, credit counters and input sequence per attached client.
 
 Phase 2a task 7.4 left three pieces of the host-terminal protocol:
 
@@ -1645,6 +1681,9 @@ completion, and therefore still blocks:
   hand off to the plugin worker and wait, so they are bounded by the plugin
   runtime's own budget rather than by a subprocess — but they are a wait, and
   moving them needs the plugin host to be callable from a second thread.
+  **Decided 2026-10-09 (project owner):** run them as a **background job** on the plugin
+  thread, completing the save from a continuation exactly as the deferred
+  formatter does; not left blocking.
 - ~~**compare and merge saves are still blocking.**~~ Done 2026-10-08: the save
   passes its caller's mode through, a deferred formatter run is armed on
   `CompareTabState`/`MergeTabState::pending_format_save`, and
@@ -2544,7 +2583,7 @@ of the opened repository. Each was vacuity-checked by breaking the thing it test
   a typed `../../x`, and the user creating a file inside a symlinked subdirectory of
   their own project is a workflow, not an escape.
 
-#### TD-2026-09-07-292a — two platform `exists()` instances left alone. [OPEN — one macOS-only instance; the stat-error gate is RESOLVED 2026-09-20]
+#### TD-2026-09-07-292a — two platform `exists()` instances left alone. [WON'T DO — the macOS instance is left as is (decided 2026-10-09); the stat-error gate is RESOLVED 2026-09-20]
 
 `Trash.cpp`'s `UniquePathInDirectory` (macOS-only, under `#if defined(__APPLE__)`) picks
 a free trash name with `exists()`, so a dangling link there reads as free. Untestable on
