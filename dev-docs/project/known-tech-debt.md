@@ -518,7 +518,16 @@ mirrored project end to end — manifest, objects, CAS writes, tree ops, the wat
 the journal, Open Folder on Host — and leaves these, each a known gap rather than a
 silent one:
 
-- **No zstd deltas** (§ 6.2): a stale file transfers whole. zstd is not vendored.
+- ~~**No zstd deltas** (§ 6.2)~~ — done 2026-10-09: zstd 1.5.7 is vendored
+  (`third_party/zstd`, portable C, no asm), wrapped by `util::ZstdDelta` /
+  `ZstdApplyDelta`. A pull of a file whose tree copy still equals its base sends
+  that base; the host keeps a 64 MiB LRU of objects it recently served
+  (`server/RecentObjects.h`) and answers with a delta when it holds the base and the
+  frame is smaller (or an empty "unchanged" answer). The engine applies it on its
+  own worker to the tree's copy — only after the precondition vouched for that copy
+  — and writes only a result that hashes to the host's claim.
+  `MirrorSyncEngine/PullsAnEditAsADelta` (`Status::pulled_as_delta`). Deltas cover
+  files up to 8 MiB; larger ones stream whole to disk.
 - ~~The portable BLAKE3 only~~ — resolved 2026-10-08: the official C sources are
   vendored (`third_party/blake3`), ~2.3 GB/s against the portable ~0.94.
 - ~~A watch batch rebuilds the whole manifest~~ — fixed 2026-10-08: the watch is the
@@ -532,9 +541,13 @@ silent one:
 - ~~Tree operations are not journaled across a restart~~ — fixed 2026-10-08: mkdir,
   rename and delete are journaled in `meta/state` before they are tried and replayed
   in order before the next reconcile (`MirrorSyncEngine/TreeOpsMadeOfflineReplay`).
-- **No object store**: the mirror keeps each path's base HASH, not its bytes, so
-  there is no delta base, no three-way view of a conflict, and a branch switch
-  re-fetches files the mirror once had. Correctness does not depend on it.
+- **No object store**: the mirror keeps each path's base HASH, not its bytes. Deltas
+  no longer need it (the tree's copy is the base whenever it still matches), but
+  there is still no three-way view of a conflict, and a branch switch re-fetches
+  files the mirror once had. Correctness does not depend on it. Scope when taken:
+  `meta/objects/` by hash, written on pull and push, swept to
+  `remote.object_store_budget` (reachable = manifest rows, bases, journal), which
+  is § 6.2's design.
 - ~~`meta/state` is rewritten whole on every push~~ — fixed 2026-10-08: a small
   `meta/journal` (pending pushes, tree operations) is written before every attempt
   and the full state once per burst of engine work; Open lets the journal win.

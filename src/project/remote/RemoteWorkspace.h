@@ -73,14 +73,21 @@ class RemoteWorkspace {
     std::string content;
     // FetchObjectToFile: the bytes are in this staging file, verified, not in `content`.
     std::filesystem::path staged_file;
+    // A delta answer (remote-projects.md § 6.2): `content` is a zstd frame against
+    // this base, and `hash` is the host's CLAIM for the result — unverified until
+    // the caller, which holds the base, applies it (util::ZstdApplyDelta).
+    std::optional<util::ContentHash> delta_base;
   };
   // The largest object one fetch may stream (FetchObjectToFile); object/fetch
   // without a byte limit stops at 64 MiB, the most one answer holds in memory.
   static constexpr std::uint64_t kMaxStreamedObjectBytes = 16ull * 1024 * 1024 * 1024;
   using FetchDone =
       std::function<void(std::optional<std::vector<FetchedObject>> objects, std::string error)>;
+  // `bases[i]`, when set, is the version of paths[i] this side holds: the host may
+  // answer with a delta against it (FetchedObject::delta_base).
   std::uint64_t FetchObjects(std::vector<std::string> paths, Lane lane, FetchDone done,
-                             std::uint64_t max_bytes = 0);
+                             std::uint64_t max_bytes = 0,
+                             std::vector<std::optional<util::ContentHash>> bases = {});
   // object/fetch of ONE path written straight to `staging` (created 0600 or
   // truncated) and hashed as it arrives: a file too large to hold in memory.
   // `done` runs once, on the I/O thread, with `staged_file` set when the bytes landed
@@ -125,7 +132,8 @@ class RemoteWorkspace {
   std::shared_ptr<RemoteServerClient> Client() const;
   // object/fetch and file/read share the streaming and the checking.
   std::uint64_t StreamObjects(std::string_view method, util::JsonValue params,
-                              std::vector<std::string> names, Lane lane, FetchDone done);
+                              std::vector<std::string> names, Lane lane, FetchDone done,
+                              std::vector<std::optional<util::ContentHash>> bases = {});
 
   std::shared_ptr<RemoteConnection> connection_;
 };

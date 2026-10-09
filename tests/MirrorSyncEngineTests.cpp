@@ -155,6 +155,37 @@ void TestMirrorPullsLargeFilesLast() {
          "a file over the ceiling stays absent, and says so");
 }
 
+// The workload's most common change — an agent rewriting one function in a big
+// source file — arrives as a zstd delta against the tree's copy (§ 6.2), not as
+// the file: the host diffs against the version it last sent this mirror. A file
+// edited here as well is never patched; that is a conflict, as before.
+void TestMirrorPullsAnEditAsADelta() {
+  MirrorSession session;
+  std::string source;
+  for (int i = 0; i < 4000; ++i) {
+    source += "int function_" + std::to_string(i) + "(int x) { return x * " + std::to_string(i) + "; }\n";
+  }
+  WriteFile(session.host / "big.cpp", source);
+  WriteFile(session.host / "small.txt", "v1\n");
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->status().pulled_as_delta == 0, "a first pull has nothing to diff against");
+
+  std::string edited = source;
+  const std::size_t at = edited.find("int function_2000(");
+  edited.replace(at, edited.find('\n', at) - at, "int function_2000(int x) { return -x; }");
+  WriteFile(session.host / "big.cpp", edited);
+  WriteFile(session.host / "small.txt", "v2\n");
+  session.Sync();
+  Expect(ReadFile(session.Tree("big.cpp")) == edited && ReadFile(session.Tree("small.txt")) == "v2\n",
+         "the mirror has the host's new bytes");
+  // The 3-byte file's frame would outweigh the file, so it came whole.
+  Expect(session.engine->status().pulled_as_delta == 1,
+         "the big edit arrived as a delta, the tiny one whole: " +
+             std::to_string(session.engine->status().pulled_as_delta));
+  Expect(session.engine->StateOf("big.cpp") == ContentState::Current, "and the file is current");
+}
+
 // A file past the old 64 MiB per-object ceiling — a dataset, a build artifact
 // someone committed — is in the mirror too, with the defaults: it streams to disk
 // as it arrives (never held in memory whole), is verified against its hash, and
@@ -488,6 +519,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
+  AddTest(tests, "MirrorSyncEngine/PullsAnEditAsADelta", TestMirrorPullsAnEditAsADelta);
   AddTest(tests, "MirrorSyncEngine/PullsAFileOverSixtyFourMegabytes",
           TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);

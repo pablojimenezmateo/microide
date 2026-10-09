@@ -16,6 +16,7 @@
 #include "project/remote/RemoteProtocol.h"
 #include "project/GitMetadataSource.h"
 #include "server/GitStatusSampler.h"
+#include "server/RecentObjects.h"
 #include "server/ProcessTable.h"
 #include "server/TerminalTable.h"
 #include "server/WorkspaceTree.h"
@@ -109,6 +110,8 @@ class RemoteServer {
     std::set<std::uint64_t> git_subscribers;
     std::optional<project::GitStatusOutput> git_last_pushed;
     std::unique_ptr<GitStatusSampler> git_sampler;  // created on the queue thread
+    // What object/fetch recently sent, for the next fetch's delta base.
+    RecentObjects recent_objects{64u * 1024 * 1024};
   };
   struct Workspace {
     std::size_t clients = 0;

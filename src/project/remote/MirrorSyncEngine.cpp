@@ -1,4 +1,7 @@
 #include "project/remote/MirrorSyncEngine.h"
+#include "util/ContentHash.h"
+#include "util/TextFileIO.h"
+#include "util/Zstd.h"
 
 #include <algorithm>
 #include <utility>
@@ -626,7 +629,7 @@ void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan) {
     }
   } else if (local == LocalState::MatchesBase) {
     if (host_moved) {
-      plan.pulls.push_back(PullItem{path, entry.remote.size});
+      plan.pulls.push_back(PullItem{path, entry.remote.size, entry.base});
     }
   } else if (!entry.base.has_value()) {
     // Bytes with no base: a mirror rebuilt from its tree, or a file made here that
@@ -865,8 +868,10 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
       return;  // a large file goes alone, once the batches ahead of it are in
     }
     std::vector<std::string> paths;
+    std::vector<std::optional<util::ContentHash>> bases;
     for (PullItem& item : pipeline->batches.front()) {
       paths.push_back(std::move(item.path));
+      bases.push_back(item.base);
     }
     pipeline->batches.pop_front();
     ++pipeline->in_flight;
@@ -923,7 +928,8 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
             engine->LaunchPulls(pipeline);
           });
           engine->EndExternalWork();
-        });
+        },
+        0, std::move(bases));
   }
 }
 
@@ -1006,6 +1012,33 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
           entry->remote.mtime_ns < WallClockNowNs()) {
         mtime_ns = entry->remote.mtime_ns;
       }
+    }
+    // A delta (§ 6.2) applies to the tree's copy, which the check above just
+    // vouched for as the base it was asked against; the result must hash to what
+    // the host claimed before it is written anywhere. Either failing leaves the
+    // file as it is — the next sync asks again.
+    if (object.delta_base.has_value()) {
+      constexpr std::size_t kMaxDeltaResultBytes = 16u * 1024 * 1024;
+      std::optional<std::string> applied;
+      if (expect.kind != Precondition::Kind::Absent) {
+        std::optional<std::string> base = util::ReadTextFile(store_.tree() / object.path);
+        if (base.has_value() && util::HashContent(*base) == *object.delta_base) {
+          applied = object.content.empty()
+                        ? std::move(base)  // the host's copy is the one held here
+                        : util::ZstdApplyDelta(*base, object.content, kMaxDeltaResultBytes);
+        }
+      }
+      if (!applied.has_value() || util::HashContent(*applied) != *object.hash) {
+        std::lock_guard lock(mutex_);
+        if (status_.unreadable++ == 0) {
+          status_.first_unreadable = object.path + ": the host's delta did not apply";
+        }
+        continue;
+      }
+      object.content = std::move(*applied);
+      object.delta_base.reset();
+      std::lock_guard lock(mutex_);
+      ++status_.pulled_as_delta;
     }
     std::uint64_t size = object.content.size();
     FileOpResult result;

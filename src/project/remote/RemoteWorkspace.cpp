@@ -204,11 +204,15 @@ bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_de
 }
 
 std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane lane,
-                                            FetchDone done, std::uint64_t max_bytes) {
+                                            FetchDone done, std::uint64_t max_bytes,
+                                            std::vector<std::optional<util::ContentHash>> bases) {
   util::JsonArray requested;
-  for (const std::string& path : paths) {
+  for (std::size_t i = 0; i < paths.size(); ++i) {
     util::JsonObject object;
-    object["path"] = util::JsonValue(path);
+    object["path"] = util::JsonValue(paths[i]);
+    if (i < bases.size() && bases[i].has_value()) {
+      object["base"] = util::JsonValue(bases[i]->Hex());
+    }
     requested.push_back(util::JsonValue(std::move(object)));
   }
   util::JsonObject params;
@@ -218,7 +222,7 @@ std::uint64_t RemoteWorkspace::FetchObjects(std::vector<std::string> paths, Lane
     params["max_bytes"] = util::JsonValue(static_cast<std::int64_t>(max_bytes));
   }
   return StreamObjects(method::kObjectFetch, util::JsonValue(std::move(params)), std::move(paths),
-                       lane, std::move(done));
+                       lane, std::move(done), std::move(bases));
 }
 
 std::uint64_t RemoteWorkspace::ReadHostFile(std::string host_path, FetchDone done) {
@@ -334,7 +338,8 @@ std::uint64_t RemoteWorkspace::FetchObjectToFile(
 
 std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, util::JsonValue params,
                                              std::vector<std::string> names, Lane lane,
-                                             FetchDone done) {
+                                             FetchDone done,
+                                             std::vector<std::optional<util::ContentHash>> bases) {
   struct State {
     std::vector<FetchedObject> objects;
     bool malformed = false;
@@ -365,8 +370,8 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
         state->objects[static_cast<std::size_t>(index)].content.append(
             std::string_view(bytes).substr(bytes.size() - in.remaining()));
       },
-      [state, done](std::optional<util::JsonValue> result,
-                    std::optional<RemotePeer::RpcError> error) {
+      [state, done, bases = std::move(bases)](std::optional<util::JsonValue> result,
+                                              std::optional<RemotePeer::RpcError> error) {
         if (error.has_value() || !result.has_value()) {
           done(std::nullopt, error.has_value() ? error->message : "no answer");
           return;
@@ -385,7 +390,16 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
             object.content.clear();
             continue;
           }
-          if (answer["hash"].IsString()) {
+          if (answer["delta"].AsBool(false)) {
+            // Only against a base this side named; the caller applies and checks it.
+            const auto claimed = util::ContentHash::FromHex(answer["hash"].AsString());
+            if (claimed.has_value() && i < bases.size() && bases[i].has_value()) {
+              object.hash = claimed;
+              object.delta_base = bases[i];
+              continue;
+            }
+            object.error = "the host sent a delta for " + object.path + " against nothing asked for";
+          } else if (answer["hash"].IsString()) {
             const auto claimed = util::ContentHash::FromHex(answer["hash"].AsString());
             // The object store is keyed by this hash: it is checked, not trusted.
             if (claimed.has_value() && util::HashContent(object.content) == *claimed) {

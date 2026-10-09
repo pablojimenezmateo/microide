@@ -82,6 +82,8 @@ class MirrorSyncEngine {
     // type): not pulled, and not a failure of the sync. Retried by the next full one.
     std::size_t unreadable = 0;
     std::string first_unreadable;  // "path: why"
+    // Pulls that arrived as a delta against the tree's copy (§ 6.2), since start.
+    std::size_t pulled_as_delta = 0;
   };
 
   struct Callbacks {
@@ -154,6 +156,9 @@ class MirrorSyncEngine {
   struct PullItem {
     std::string path;
     std::uint64_t size = 0;
+    // The version the tree holds, when its bytes still are that version: the host
+    // may send a delta against it (§ 6.2).
+    std::optional<util::ContentHash> base;
   };
 
   struct Plan {

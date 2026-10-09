@@ -15,6 +15,7 @@
 #include "project/remote/RemoteWorkspace.h"
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
+#include "util/Zstd.h"
 #include "util/Log.h"
 
 namespace microide::server {
@@ -22,6 +23,9 @@ namespace {
 
 // The largest object a fetch serves unless the request asks for less.
 constexpr std::uint64_t kMaxObjectBytes = 64u * 1024 * 1024;
+// Objects up to this size are kept for, and sent as, deltas; larger ones stream
+// (and go to disk on the client) whole.
+constexpr std::uint64_t kMaxDeltaBaseBytes = 8u * 1024 * 1024;
 
 util::JsonValue OpResultJson(const remote::FileOpResult& result) {
   util::JsonObject json;
@@ -420,7 +424,8 @@ namespace {
 // Stream one file's bytes as ObjectData frames (varint `index`, then a piece) and
 // answer what object/fetch and file/read answer for it.
 template <typename Send, typename Read>
-util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& read) {
+util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& read,
+                             std::string* kept = nullptr, std::size_t keep_limit = 0) {
   std::string prefix;
   util::PutVarint(prefix, index);
   std::string frame = prefix;
@@ -430,7 +435,17 @@ util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& re
     }
     frame = prefix;
   };
+  bool keeping = kept != nullptr;
   const remote::FileOpResult result = read([&](std::string_view chunk) {
+    if (keeping) {
+      if (kept->size() + chunk.size() > keep_limit) {
+        keeping = false;
+        kept->clear();
+        kept->shrink_to_fit();
+      } else {
+        kept->append(chunk);
+      }
+    }
     while (!chunk.empty()) {
       const std::size_t room = remote::RemoteFrameTransport::kMaxBulkChunkBytes - frame.size();
       const std::size_t take = std::min(room, chunk.size());
@@ -442,6 +457,9 @@ util::JsonValue StreamObject(std::size_t index, const Send& send, const Read& re
     }
   });
   flush();
+  if (kept != nullptr && (!keeping || !result.ok())) {
+    kept->clear();
+  }
   util::JsonObject entry;
   if (result.ok()) {
     entry["hash"] = util::JsonValue(result.current->Hex());
@@ -468,8 +486,10 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
       return;
     }
     std::vector<std::string> paths;
+    std::vector<std::string> bases;  // hex; "" = the client holds no base
     for (const util::JsonValue& object : objects.AsArray()) {
       paths.push_back(object["path"].AsString());
+      bases.push_back(object["base"].AsString());
     }
     const std::int64_t asked_max = params["max_bytes"].AsInt(0);
     // Objects stream from disk in chunks, so a client that writes them to disk as
@@ -485,7 +505,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
                                                            : remote::Lane::Interactive;
     ServedTree* tree = served.get();
     const std::uint64_t connection_id = connection.id;
-    tree->io_queue.Post([this, tree, connection_id, id, paths = std::move(paths), max_bytes, lane]() {
+    tree->io_queue.Post([this, tree, connection_id, id, paths = std::move(paths),
+                         bases = std::move(bases), max_bytes, lane]() {
       util::JsonArray results;
       for (std::size_t index = 0; index < paths.size(); ++index) {
         if (tree->closing.load() || !RequestLive(connection_id, id)) {
@@ -494,16 +515,54 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
           });
           return;
         }
-        results.push_back(StreamObject(
-            index,
-            [&](std::string_view frame) {
-              WithPeer(connection_id, [&](remote::RemotePeer& peer) {
-                peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
-              });
-            },
+        const auto send = [&](std::string_view frame) {
+          WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+            peer.SendContent(remote::FrameType::ObjectData, id, frame, lane);
+          });
+        };
+        // The client holds `base` (the version this server last sent it): send
+        // what changed since, when that is smaller (remote-projects.md § 6.2).
+        if (!bases[index].empty()) {
+          if (const std::optional<std::string> base = tree->recent_objects.Get(bases[index])) {
+            std::string content;
+            const remote::FileOpResult read = remote::ReadTreeFile(
+                tree->tree.root(), paths[index], kMaxDeltaBaseBytes,
+                [&](std::string_view chunk) { content.append(chunk); });
+            if (read.ok()) {
+              const std::string hash = read.current->Hex();
+              std::optional<std::string> delta;
+              if (hash != bases[index]) {
+                delta = util::ZstdDelta(*base, content);
+              }
+              const bool unchanged = hash == bases[index];
+              if (unchanged || (delta.has_value() && delta->size() < content.size() - content.size() / 8)) {
+                util::JsonObject entry;
+                entry["hash"] = util::JsonValue(hash);
+                entry["delta"] = util::JsonValue(true);
+                (void)StreamObject(index, send, [&](const std::function<void(std::string_view)>& sink) {
+                  if (!unchanged) {
+                    sink(*delta);
+                  }
+                  return remote::FileOpResult{};
+                });
+                tree->recent_objects.Put(hash, std::move(content));
+                results.push_back(util::JsonValue(std::move(entry)));
+                continue;
+              }
+            }
+          }
+        }
+        std::string kept;
+        util::JsonValue entry = StreamObject(
+            index, send,
             [&](const std::function<void(std::string_view)>& sink) {
               return remote::ReadTreeFile(tree->tree.root(), paths[index], max_bytes, sink);
-            }));
+            },
+            &kept, kMaxDeltaBaseBytes);
+        if (!kept.empty() && entry["hash"].IsString()) {
+          tree->recent_objects.Put(entry["hash"].AsString(), std::move(kept));
+        }
+        results.push_back(std::move(entry));
       }
       util::JsonObject reply;
       reply["objects"] = util::JsonValue(std::move(results));
