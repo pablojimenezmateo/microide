@@ -7794,6 +7794,15 @@ void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheSca
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "forced-refresh ordering fixture should open the project");
+  // The live watcher is the one uncontrolled source of index changes here: its
+  // initial batch REPLACES the index, and it reacts to the files this test writes.
+  // Either landing between reading a version and applying a scan made the
+  // "current" scan stale — under parallel load the test failed on exactly that.
+  // Let the initial scan land, then stop the watcher (Unwatch joins its threads).
+  Expect(WaitForFileIndexSize(shell, 1, std::chrono::milliseconds(5000)),
+         "the project's own initial scan lands");
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "the live watcher is quiesced");
 
   // What a scan dispatched NOW would see: the project without the injected file.
   const std::uint64_t version_at_dispatch =
