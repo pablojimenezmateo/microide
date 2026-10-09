@@ -138,6 +138,9 @@ bool RemoteServerClient::Handshake(const HelloRequest& hello, std::string* error
     incompatible_ = true;
     return false;
   }
+  // The server's effective value, so both directions use one bound.
+  peer_.SetFixedBulkWindow(static_cast<std::size_t>(
+      EffectiveBackfillInflightBytes(parsed->settings.backfill_inflight_bytes)));
   hello_reply_ = std::move(*parsed);
   connected_ = true;
   return true;

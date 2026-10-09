@@ -94,6 +94,7 @@ class RemotePeer {
   bool IsCancelled(std::uint64_t id) const;
   std::optional<std::int64_t> rtt_ms() const;
   std::size_t bulk_window() const { return transport_.bulk_window(); }
+  void SetFixedBulkWindow(std::size_t bytes) { transport_.SetFixedBulkWindow(bytes); }
 
  private:
   void HandleFrame(Frame frame);

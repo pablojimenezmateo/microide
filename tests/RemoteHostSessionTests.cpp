@@ -7,6 +7,7 @@
 #include "project/remote/RemoteHostSession.h"
 #include "project/remote/RemoteProcessLauncher.h"
 #include "project/remote/RemoteServerClient.h"
+#include "project/remote/RemoteServerPaths.h"
 #include "terminal/TerminalSession.h"
 
 #include <atomic>
@@ -239,6 +240,43 @@ void TestABrokenServerCommandFailsFastWithAReason() {
          "the error names the setting to fix: " + log.Error());
 }
 
+// `remote.server_socket_dir` reaches the host server as --socket-dir (a home on
+// a filesystem without AF_UNIX support needs it), and `remote.backfill_inflight_
+// bytes` travels in the hello: the server applies it, echoes it, and the client
+// pins the same bound — one bulk window in both directions.
+void TestSocketDirAndBackfillBoundReachTheServer() {
+  FakeHost host;
+  StateLog log;
+  const std::filesystem::path socket_dir = host.dir.scratch() / "s";
+  RemoteHostSession::Config config = host.Config();
+  config.server_socket_dir = socket_dir.string();
+  config.backfill_inflight_bytes = 200 * 1024;
+  {
+    RemoteHostSession session(config, log.Listener());
+    session.Connect();
+    Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
+    Expect(std::filesystem::exists(remote::ServerSocketPath(socket_dir)),
+           "the server bound its socket in the configured directory");
+    const auto client = session.connection()->client();
+    Expect(client->hello().settings.backfill_inflight_bytes == 200 * 1024,
+           "the server echoes the bound it applied");
+    Expect(client->peer().bulk_window() == 200 * 1024, "and the client pins the same window");
+    session.Disconnect();
+  }
+  (void)platform::RunSubprocess({MICROIDE_SERVER_BINARY, "stop", "--socket-dir", socket_dir.string()},
+                                platform::SubprocessOptions{.timeout_ms = 10000});
+
+  // A directory a login shell could read as syntax never reaches the host.
+  StateLog bad_log;
+  config.server_socket_dir = "/tmp/x; rm -rf ~";
+  RemoteHostSession refused(config, bad_log.Listener());
+  refused.Connect();
+  Expect(WaitUntil([&] { return !bad_log.Error().empty(); }, std::chrono::seconds(10)),
+         "an unsafe socket directory is refused");
+  Expect(bad_log.Error().find("remote.server_socket_dir") != std::string::npos,
+         "naming the setting: " + bad_log.Error());
+}
+
 #endif
 
 }  // namespace
@@ -247,6 +285,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostSession/HostTargetsAreValidatedBeforeAnythingRuns",
           TestHostTargetsAreValidatedBeforeAnythingRuns);
 #if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "RemoteHostSession/SocketDirAndBackfillBoundReachTheServer",
+          TestSocketDirAndBackfillBoundReachTheServer);
   AddTest(tests, "RemoteHostSession/FirstConnectInstallsTheServerAndReachesReady",
           TestFirstConnectInstallsTheServerAndReachesReady);
   AddTest(tests, "RemoteHostSession/NeedsAuthWaitsForTheInteractiveMaster",

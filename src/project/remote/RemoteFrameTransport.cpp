@@ -75,6 +75,14 @@ bool RemoteFrameTransport::Start(int read_fd, int write_fd, Callbacks callbacks,
 #endif
 }
 
+void RemoteFrameTransport::SetFixedBulkWindow(std::size_t bytes) {
+  fixed_bulk_window_.store(bytes, std::memory_order_relaxed);
+  if (bytes != 0) {
+    bulk_window_.store(bytes, std::memory_order_relaxed);
+  }
+  wake_.Wake();  // a larger window may let a waiting bulk frame go
+}
+
 bool RemoteFrameTransport::Send(FrameType type, Lane lane, std::uint64_t id,
                                 std::string_view payload) {
   if (type == FrameType::Ack || closed()) {
@@ -379,7 +387,8 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
   }
   // Measure bandwidth only while bulk is actually queued: the gap between two acks
   // of an idle sender is idle time, and would shrink the window for no reason.
-  if (sender_was_waiting && last_ack_time_ != std::chrono::steady_clock::time_point{} &&
+  if (sender_was_waiting && fixed_bulk_window_.load(std::memory_order_relaxed) == 0 &&
+      last_ack_time_ != std::chrono::steady_clock::time_point{} &&
       acked - last_ack_bytes_ >= 16 * 1024) {
     const double seconds = std::chrono::duration<double>(now - last_ack_time_).count();
     if (seconds > 0.0) {

@@ -719,9 +719,15 @@ Phase 2a task 7.4 left three pieces of the host-terminal protocol:
 
 From Phase 2a group 8: ~~no Show Log action~~ (done 2026-10-08: `remote-show-log`,
 `server/log`, an output channel per host), ~~no session-survival warning row~~ (done 2026-10-08: a warning
-row once per host with a Copy Fix Command button for `loginctl enable-linger`), `remote.server_socket_dir` and
+row once per host with a Copy Fix Command button for `loginctl enable-linger`), ~~`remote.server_socket_dir` and
 `remote.backfill_inflight_bytes` are not registered because nothing reads them
-yet, the hello does not echo the effective settings (task 4.5), ~~BEL from a host
+yet, the hello does not echo the effective settings (task 4.5)~~ (done 2026-10-09:
+the socket directory reaches the host as `--socket-dir`, validated to a set no
+login shell gives a meaning to and passed as `$0` so the script text stays fixed;
+the bulk bound travels in `server/hello`'s `settings`, the server pins its
+transport's window to the effective value (0 = adaptive, else 64 KiB..64 MiB) and
+echoes it, and the client pins the same —
+`RemoteHostSession/SocketDirAndBackfillBoundReachTheServer`), ~~BEL from a host
 terminal is not surfaced (nor from a local one, active-work § 3)~~ (done
 2026-10-08: a BEL marks a background terminal tab — a larger mark in the warning
 colour where the activity dot goes — local or host, the host's carried by the

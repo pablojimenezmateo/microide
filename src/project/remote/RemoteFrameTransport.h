@@ -95,6 +95,9 @@ class RemoteFrameTransport {
   bool closed() const { return closed_.load(std::memory_order_acquire); }
   // The current bulk window (bytes of bulk payload allowed unacknowledged).
   std::size_t bulk_window() const { return bulk_window_.load(std::memory_order_relaxed); }
+  // Pin the bulk window (`remote.backfill_inflight_bytes`); 0 returns it to the
+  // adaptive bound. Any thread.
+  void SetFixedBulkWindow(std::size_t bytes);
 
  private:
   struct Queue {
@@ -122,6 +125,7 @@ class RemoteFrameTransport {
   std::atomic<bool> closed_{false};
   std::atomic<bool> close_reported_{false};
   std::atomic<std::size_t> bulk_window_{0};
+  std::atomic<std::size_t> fixed_bulk_window_{0};
 
   std::mutex queue_mutex_;  // guards the two queues and queued_bytes_
   Queue interactive_;

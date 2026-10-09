@@ -16,7 +16,8 @@ namespace microide::project::remote {
 // with a floor each side still accepts, so a 2.14 client talks to a 2.12 server
 // for as long as the wire has not actually moved.
 // 3 (2026-10-09): host terminal frames carry OSC 8 links and OSC 9/777
-// notifications, and a cell style run may carry a link id.
+// notifications, and a cell style run may carry a link id; the hello carries the
+// settings the server consumes and echoes them as applied.
 inline constexpr std::int64_t kProtocolVersion = 3;
 inline constexpr std::int64_t kMinProtocolVersion = 3;
 
@@ -103,11 +104,24 @@ struct SessionSurvival {
   bool linger = false;
 };
 
+// The settings the server consumes (§ 6.12): the client sends its values in the
+// hello, and the reply echoes what the server actually applies.
+struct HelloSettings {
+  // `remote.backfill_inflight_bytes`: bulk bytes either side may have
+  // unacknowledged. 0 = adaptive (~100 ms of measured bandwidth, 64 KiB..1 MiB).
+  std::int64_t backfill_inflight_bytes = 0;
+};
+// The bound a requested `backfill_inflight_bytes` resolves to: 0 stays adaptive;
+// anything else is clamped to [64 KiB, 64 MiB] — below one bulk chunk nothing
+// moves, and above that the bound no longer bounds an echo's wait.
+std::int64_t EffectiveBackfillInflightBytes(std::int64_t requested);
+
 struct HelloRequest {
   std::int64_t protocol = kProtocolVersion;
   std::int64_t min_protocol = kMinProtocolVersion;
   std::string release;  // the client's app version, for messages only
   std::string root;     // workspace root on the host ("" = none: a terminal-only session)
+  HelloSettings settings;
 };
 
 struct HelloReply {
@@ -119,6 +133,7 @@ struct HelloReply {
   std::string daemon_epoch;
   std::vector<std::string> capabilities;
   SessionSurvival session_survival;
+  HelloSettings settings;  // effective, as the server applies them
 };
 
 util::JsonValue ToJson(const HelloRequest& hello);

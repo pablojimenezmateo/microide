@@ -70,6 +70,10 @@ class RemoteHostSession {
     std::filesystem::path control_dir;
     // `remote.server_command`; empty = ~/.local/share/microide/server, then PATH.
     std::string server_command;
+    // `remote.server_socket_dir`; empty = the server's default
+    // (~/.local/state/microide/server). Passed to the server as --socket-dir.
+    std::string server_socket_dir;
+    std::int64_t backfill_inflight_bytes = 0;  // `remote.backfill_inflight_bytes`
     bool install = true;                   // `remote.server_install`
     std::filesystem::path server_binary;   // the local server to install ("" = none)
     std::string release;
@@ -132,6 +136,7 @@ class RemoteHostSession {
   std::vector<std::string> MasterArgv(bool batch) const;
   std::vector<std::string> RemoteArgv(std::string command) const;
   std::string AttachCommand() const;
+  std::string ServerCommand(std::string_view verb) const;
 
   // What a client's closed handler reaches the session through: a client can
   // outlive the session (a launcher call still holds it), so the handler holds

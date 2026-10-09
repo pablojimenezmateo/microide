@@ -95,6 +95,10 @@ remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
   }
   config.control_dir = ControlDirectory();
   config.server_command = setting("remote.server_command").value_or(std::string());
+  config.server_socket_dir = setting("remote.server_socket_dir").value_or(std::string());
+  config.backfill_inflight_bytes =
+      util::ParseInt64(setting("remote.backfill_inflight_bytes").value_or(std::string()))
+          .value_or(0);
   config.install = SettingFlagEnabled(setting("remote.server_install"), true);
   config.server_binary = platform::ResolveBundledServerBinary();
   return config;

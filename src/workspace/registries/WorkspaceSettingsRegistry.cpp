@@ -449,6 +449,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.server_socket_dir",
+          .label = "Host Server Socket Directory",
+          .description = "Where the host's microide-server keeps its socket, for a host whose "
+                         "home cannot hold one (some network homes). Empty: "
+                         "~/.local/state/microide/server. An absolute path; it is verified on "
+                         "every bind.",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "remote.server_install",
           .label = "Install the Host Server Automatically",
           .description = "Copy microide-server to a host that has none (or an incompatible one) "
@@ -456,6 +469,23 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .type = SettingType::Bool,
           .scope = SettingScope::User,
           .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
+          .id = "remote.backfill_inflight_bytes",
+          .label = "Host Bulk Transfer Window",
+          .description = "Bytes of bulk traffic (file fetches, tree listings, scrollback) that may "
+                         "be unacknowledged on a host connection, so a keystroke's echo never "
+                         "waits behind more (64 KiB..64 MiB; 0 = adaptive: ~100 ms of the measured "
+                         "bandwidth, 64 KiB..1 MiB). Applies at the next connect.",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 0,
+          .min_int = 0,
+          .max_int = 64 * 1024 * 1024,
+          .int_step = 65536,
           .default_string = {},
           .enum_values = {},
           .group = "Remote",

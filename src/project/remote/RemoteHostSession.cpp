@@ -41,6 +41,18 @@ bool ValidName(std::string_view text) {
          });
 }
 
+// `remote.server_socket_dir` reaches the host's argv, so it is held to a set no
+// login shell (sh, bash, zsh, fish) gives a meaning to: an absolute path of
+// letters, digits, `.`, `_`, `-` and `/`, with no component starting with `-`.
+bool ValidSocketDir(std::string_view dir) {
+  return dir.size() > 1 && dir.size() <= 4096 && dir.front() == '/' &&
+         dir.find("/-") == std::string_view::npos &&
+         std::all_of(dir.begin(), dir.end(), [](char c) {
+           return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '.' || c == '_' ||
+                  c == '-' || c == '/';
+         });
+}
+
 // `sh -c '<script>' [arg]` as ONE remote command string: ssh joins its words
 // with spaces for the login shell, so the script is single-quoted (it contains
 // no single quote) and the argument is from the validated set.
@@ -287,12 +299,23 @@ std::vector<std::string> RemoteHostSession::RemoteArgv(std::string command) cons
   return argv;
 }
 
-std::string RemoteHostSession::AttachCommand() const {
+// `verb` ("attach", "stop") for the configured server, with the socket directory
+// override when there is one (validated: ValidSocketDir). In the default chain it
+// travels as `$0`, so the script text stays fixed.
+std::string RemoteHostSession::ServerCommand(std::string_view verb) const {
+  const std::string& dir = config_.server_socket_dir;
   if (!config_.server_command.empty()) {
-    return config_.server_command + " attach";
+    return config_.server_command + " " + std::string(verb) +
+           (dir.empty() ? std::string() : " --socket-dir " + dir);
   }
-  return ShellCommand(std::string(kServerChain) + " attach");
+  if (dir.empty()) {
+    return ShellCommand(std::string(kServerChain) + " " + std::string(verb));
+  }
+  return ShellCommand(std::string(kServerChain) + " " + std::string(verb) + " --socket-dir \"$0\"",
+                      dir);
 }
+
+std::string RemoteHostSession::AttachCommand() const { return ServerCommand("attach"); }
 
 std::string RemoteHostSession::SshCommandText() const {
   return JoinForDisplay(InteractiveMasterArgv());
@@ -374,7 +397,9 @@ std::shared_ptr<RemoteServerClient> RemoteHostSession::StartServer(bool* not_ins
   });
   if (client->ConnectCommand(RemoteArgv(AttachCommand()),
                              HelloRequest{.release = config_.release,
-                                          .root = config_.workspace_root},
+                                          .root = config_.workspace_root,
+                                          .settings = {.backfill_inflight_bytes =
+                                                           config_.backfill_inflight_bytes}},
                              error)) {
     return client;
   }
@@ -402,6 +427,12 @@ bool RemoteHostSession::Install(std::string* error) {
 }
 
 bool RemoteHostSession::Attempt(bool reconnecting) {
+  if (!config_.server_socket_dir.empty() && !ValidSocketDir(config_.server_socket_dir)) {
+    Report(State::Disconnected, {},
+           "remote.server_socket_dir must be an absolute path of letters, digits, '.', '_', '-' "
+           "and '/': " + config_.server_socket_dir);
+    return false;
+  }
   if (!MasterAlive() && !BringUpMaster(reconnecting)) {
     return false;
   }
@@ -448,9 +479,7 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
 }
 
 bool RemoteHostSession::StopServer(std::string* error) {
-  const std::string command = config_.server_command.empty()
-                                  ? ShellCommand(std::string(kServerChain) + " stop")
-                                  : config_.server_command + " stop";
+  const std::string command = ServerCommand("stop");
   const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
       RemoteArgv(command), platform::SubprocessOptions{.timeout_ms = 30000});
   if (!result.success() && error != nullptr) {

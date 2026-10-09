@@ -149,12 +149,18 @@ void RemoteServer::InstallHandlers(Connection& connection) {
                        }
                      }
                    }
+                   // The client's bulk bound applies to what this side sends too;
+                   // the reply says what was applied, and the client pins the same.
+                   const std::int64_t backfill = remote::EffectiveBackfillInflightBytes(
+                       hello->settings.backfill_inflight_bytes);
+                   connection.peer.SetFixedBulkWindow(static_cast<std::size_t>(backfill));
                    connection.peer.Reply(
                        id, remote::ToJson(remote::HelloReply{
                                .release = config_.release,
                                .daemon_epoch = epoch_,
                                .capabilities = {"proc", "term", "tree", "watch"},
                                .session_survival = config_.session_survival,
+                               .settings = {.backfill_inflight_bytes = backfill},
                            }));
                  });
   peer.OnRequest("server/status", [this, &connection](std::uint64_t id, const util::JsonValue&) {

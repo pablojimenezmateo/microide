@@ -1,5 +1,6 @@
 #include "project/remote/RemoteProtocol.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace microide::project::remote {
@@ -40,7 +41,33 @@ bool ReadString(const util::JsonValue& json, std::string_view key, std::size_t m
   return true;
 }
 
+util::JsonValue SettingsJson(const HelloSettings& settings) {
+  util::JsonObject object;
+  object["backfill_inflight_bytes"] = util::JsonValue(settings.backfill_inflight_bytes);
+  return util::JsonValue(std::move(object));
+}
+
+bool ReadSettings(const util::JsonValue& json, HelloSettings* out, std::string* error) {
+  const util::JsonValue& settings = json["settings"];
+  if (settings.IsNull()) {
+    return true;
+  }
+  const util::JsonValue& bytes = settings["backfill_inflight_bytes"];
+  if (!settings.IsObject() || (!bytes.IsNull() && (!bytes.IsInt() || bytes.AsInt() < 0))) {
+    *error = "settings.backfill_inflight_bytes must be a non-negative integer";
+    return false;
+  }
+  out->backfill_inflight_bytes = bytes.IsNull() ? 0 : bytes.AsInt();
+  return true;
+}
+
 }  // namespace
+
+std::int64_t EffectiveBackfillInflightBytes(std::int64_t requested) {
+  constexpr std::int64_t kFloor = 64 * 1024;
+  constexpr std::int64_t kCap = 64 * 1024 * 1024;
+  return requested <= 0 ? 0 : std::clamp(requested, kFloor, kCap);
+}
 
 util::JsonValue ToJson(const HelloRequest& hello) {
   util::JsonObject object;
@@ -48,6 +75,7 @@ util::JsonValue ToJson(const HelloRequest& hello) {
   object["min_protocol"] = util::JsonValue(hello.min_protocol);
   object["release"] = util::JsonValue(hello.release);
   object["root"] = util::JsonValue(hello.root);
+  object["settings"] = SettingsJson(hello.settings);
   return util::JsonValue(std::move(object));
 }
 
@@ -66,6 +94,7 @@ util::JsonValue ToJson(const HelloReply& hello) {
   survival["kill_user_processes"] = util::JsonValue(hello.session_survival.kill_user_processes);
   survival["linger"] = util::JsonValue(hello.session_survival.linger);
   object["session_survival"] = util::JsonValue(std::move(survival));
+  object["settings"] = SettingsJson(hello.settings);
   return util::JsonValue(std::move(object));
 }
 
@@ -78,7 +107,8 @@ std::optional<HelloRequest> HelloRequestFromJson(const util::JsonValue& json, st
   if (!ReadVersion(json, "protocol", &hello.protocol, error) ||
       !ReadVersion(json, "min_protocol", &hello.min_protocol, error) ||
       !ReadString(json, "release", kMaxReleaseBytes, true, &hello.release, error) ||
-      !ReadString(json, "root", kMaxRootBytes, false, &hello.root, error)) {
+      !ReadString(json, "root", kMaxRootBytes, false, &hello.root, error) ||
+      !ReadSettings(json, &hello.settings, error)) {
     return std::nullopt;
   }
   if (hello.min_protocol > hello.protocol) {
@@ -97,7 +127,8 @@ std::optional<HelloReply> HelloReplyFromJson(const util::JsonValue& json, std::s
   if (!ReadVersion(json, "protocol", &hello.protocol, error) ||
       !ReadVersion(json, "min_protocol", &hello.min_protocol, error) ||
       !ReadString(json, "release", kMaxReleaseBytes, true, &hello.release, error) ||
-      !ReadString(json, "daemon_epoch", kMaxEpochBytes, true, &hello.daemon_epoch, error)) {
+      !ReadString(json, "daemon_epoch", kMaxEpochBytes, true, &hello.daemon_epoch, error) ||
+      !ReadSettings(json, &hello.settings, error)) {
     return std::nullopt;
   }
   if (hello.min_protocol > hello.protocol) {

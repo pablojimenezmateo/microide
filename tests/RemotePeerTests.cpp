@@ -56,13 +56,25 @@ void TestHelloRoundTripsAndValidates() {
   remote::HelloReply reply{.release = "2.14.0",
                            .daemon_epoch = "e-1",
                            .capabilities = {"git", "watch"},
-                           .session_survival = {.kill_user_processes = true, .linger = false}};
+                           .session_survival = {.kill_user_processes = true, .linger = false},
+                           .settings = {.backfill_inflight_bytes = 131072}};
   std::string error;
   const auto decoded = remote::HelloReplyFromJson(
       *util::ParseJson(util::SerializeJson(remote::ToJson(reply))), &error);
   Expect(decoded.has_value() && decoded->release == "2.14.0" && decoded->daemon_epoch == "e-1" &&
-             decoded->capabilities.size() == 2 && decoded->session_survival.kill_user_processes,
+             decoded->capabilities.size() == 2 && decoded->session_survival.kill_user_processes &&
+             decoded->settings.backfill_inflight_bytes == 131072,
          "a hello reply round-trips: " + error);
+  const auto request = remote::HelloRequestFromJson(
+      *util::ParseJson(util::SerializeJson(remote::ToJson(
+          remote::HelloRequest{.release = "x", .settings = {.backfill_inflight_bytes = 5}}))),
+      &error);
+  Expect(request.has_value() && request->settings.backfill_inflight_bytes == 5,
+         "the client's settings round-trip: " + error);
+  Expect(remote::EffectiveBackfillInflightBytes(0) == 0 &&
+             remote::EffectiveBackfillInflightBytes(5) == 64 * 1024 &&
+             remote::EffectiveBackfillInflightBytes(std::int64_t{1} << 40) == 64 * 1024 * 1024,
+         "0 stays adaptive; anything else is clamped");
 
   const auto bad = [](std::string_view json) {
     std::string why;
@@ -76,6 +88,8 @@ void TestHelloRoundTripsAndValidates() {
              "\"}"),
          "an oversized release is refused");
   Expect(bad("[]"), "a non-object is refused");
+  Expect(bad(R"({"protocol":1,"min_protocol":1,"release":"x","settings":{"backfill_inflight_bytes":-1}})"),
+         "a negative bulk bound is refused");
 }
 
 void TestCompatibilityNamesBothReleases() {
