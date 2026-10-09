@@ -504,7 +504,7 @@ hover); plain URLs never were either.
   screen and the three startup replies. The interactive part (keys, the prompt
   box) still needs `claude` installed and stays a manual control-channel check.
 
-### TD-2026-10-08-328 — Phase 2b remainders: what the first remote-project slices left. [OPEN]
+### TD-2026-10-08-328 — Phase 2b remainders: what the first remote-project slices left. [RESOLVED 2026-10-09 — every listed item; small follow-ups noted inline]
 
 **Decided 2026-10-09 (project owner):** do **all** of the remaining items: pushed
 `git/metadata`/`git/status` (first — two host processes per git-sidebar refresh
@@ -541,13 +541,14 @@ silent one:
 - ~~Tree operations are not journaled across a restart~~ — fixed 2026-10-08: mkdir,
   rename and delete are journaled in `meta/state` before they are tried and replayed
   in order before the next reconcile (`MirrorSyncEngine/TreeOpsMadeOfflineReplay`).
-- **No object store**: the mirror keeps each path's base HASH, not its bytes. Deltas
-  no longer need it (the tree's copy is the base whenever it still matches), but
-  there is still no three-way view of a conflict, and a branch switch re-fetches
-  files the mirror once had. Correctness does not depend on it. Scope when taken:
-  `meta/objects/` by hash, written on pull and push, swept to
-  `remote.object_store_budget` (reachable = manifest rows, bases, journal), which
-  is § 6.2's design.
+- ~~**No object store**~~ — done 2026-10-09: `MirrorObjects` keeps file contents
+  (≤ 8 MiB) by blake3 hash under `meta/objects/` (fanned out by first byte), written
+  after every verified pull and successful push; a pull whose bytes are held is
+  filled from it (checked against its hash again) with no transfer, and after every
+  sync it is swept down to `remote.object_store_budget` (MiB, default 2048) —
+  reachable (a path's host hash or base) is never swept.
+  `MirrorSyncEngine/RefillsKnownBytesFromItsObjectStore`. Not built on it yet: the
+  three-way view of a conflict (the base's bytes are now there for it).
 - ~~`meta/state` is rewritten whole on every push~~ — fixed 2026-10-08: a small
   `meta/journal` (pending pushes, tree operations) is written before every attempt
   and the full state once per burst of engine work; Open lets the journal win.

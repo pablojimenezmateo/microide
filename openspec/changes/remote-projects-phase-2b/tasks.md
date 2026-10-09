@@ -21,7 +21,7 @@
 
 ## 4. Client mirror
 
-- [ ] 4.1 `MirrorStore`: layout, object store, persisted manifest, confined materialization (`O_NOFOLLOW`, parent under `tree/`)
+- [x] 4.1 `MirrorStore`: layout, object store, persisted manifest, confined materialization (`O_NOFOLLOW`, parent under `tree/`)
 - [x] 4.2 `MirrorSyncEngine`: manifest diff, current/stale/dirty/absent with base, pull priority (open tabs first), mass-delete guard, `local-only`
 - [x] 4.3 `MirrorWriteGate` (a `project::FileWriteGate`): local write, journal, CAS push, conflict parking
 - [x] 4.4 Journal through `PersistedRecordWriter`, ordered replay on reconnect
