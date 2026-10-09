@@ -278,10 +278,14 @@ FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
 #endif
 }
 
-FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
-                                std::string_view content, const Precondition& expect,
-                                std::optional<std::uint32_t> mode,
-                                std::optional<std::int64_t> mtime_ns) {
+namespace {
+
+// WriteTreeFile's body, with the bytes supplied by `fill`: it writes them to the
+// temp file's descriptor and returns their hash (nullopt with *error on failure).
+FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_view path,
+                               const std::function<std::optional<util::ContentHash>(int fd, std::string* error)>& fill,
+                               const Precondition& expect, std::optional<std::uint32_t> mode,
+                               std::optional<std::int64_t> mtime_ns) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
@@ -304,24 +308,18 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
     }
   }
   const std::string temp = TempName(parent->name);
+  std::optional<util::ContentHash> hash;
   {
     const Fd out(::openat(parent->dir.get(), temp.c_str(),
                           O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
     if (out.get() < 0) {
       return Error(Errno("cannot create a temporary file beside " + std::string(path)));
     }
-    std::size_t written = 0;
-    while (written < content.size()) {
-      const ssize_t count = ::write(out.get(), content.data() + written, content.size() - written);
-      if (count < 0 && errno == EINTR) {
-        continue;
-      }
-      if (count <= 0) {
-        const std::string why = Errno("cannot write " + std::string(path));
-        ::unlinkat(parent->dir.get(), temp.c_str(), 0);
-        return Error(why);
-      }
-      written += static_cast<std::size_t>(count);
+    std::string fill_error;
+    hash = fill(out.get(), &fill_error);
+    if (!hash.has_value()) {
+      ::unlinkat(parent->dir.get(), temp.c_str(), 0);
+      return Error(fill_error.empty() ? Errno("cannot write " + std::string(path)) : fill_error);
     }
     if (mtime_ns.has_value()) {
       const struct timespec times[2] = {
@@ -353,17 +351,110 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
     errno = saved;
     return Error(Errno("cannot replace " + std::string(path)));
   }
-  return Ok(util::HashContent(content));
+  return Ok(*hash);
 #else
   (void)root;
   (void)path;
-  (void)content;
+  (void)fill;
   (void)expect;
   (void)mode;
   (void)mtime_ns;
   return FileOpResult{};
 #endif
 }
+
+}  // namespace
+
+FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
+                           std::string_view content, const Precondition& expect,
+                           std::optional<std::uint32_t> mode, std::optional<std::int64_t> mtime_ns) {
+  return WriteTreeFileFrom(
+      root, path,
+      [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
+        std::size_t written = 0;
+        while (written < content.size()) {
+          const ssize_t count = ::write(fd, content.data() + written, content.size() - written);
+          if (count < 0 && errno == EINTR) {
+            continue;
+          }
+          if (count <= 0) {
+            *error = Errno("cannot write " + std::string(path));
+            return std::nullopt;
+          }
+          written += static_cast<std::size_t>(count);
+        }
+        return util::HashContent(content);
+      },
+      expect, mode, mtime_ns);
+}
+
+FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_view path,
+                              const std::filesystem::path& source, const util::ContentHash& hash,
+                              const Precondition& expect, std::optional<std::uint32_t> mode,
+                              std::optional<std::int64_t> mtime_ns) {
+  return WriteTreeFileFrom(
+      root, path,
+      [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
+#if defined(__unix__) || defined(__APPLE__)
+        const Fd in(::open(source.c_str(), O_RDONLY | O_CLOEXEC));
+        if (in.get() < 0) {
+          *error = Errno("cannot open the fetched copy of " + std::string(path));
+          return std::nullopt;
+        }
+#if defined(__linux__)
+        // In the kernel, and a reflink where the filesystem can: no bytes through here.
+        for (;;) {
+          const ssize_t count = ::copy_file_range(in.get(), nullptr, fd, nullptr, 1u << 30, 0);
+          if (count == 0) {
+            return hash;
+          }
+          if (count < 0) {
+            if (errno == EINTR) {
+              continue;
+            }
+            if (errno == EXDEV || errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP) {
+              break;  // not supported here: copy by hand below, from where it got to
+            }
+            *error = Errno("cannot copy " + std::string(path));
+            return std::nullopt;
+          }
+        }
+#endif
+        char buffer[64 * 1024];
+        for (;;) {
+          const ssize_t count = ::read(in.get(), buffer, sizeof(buffer));
+          if (count < 0 && errno == EINTR) {
+            continue;
+          }
+          if (count < 0) {
+            *error = Errno("cannot read the fetched copy of " + std::string(path));
+            return std::nullopt;
+          }
+          if (count == 0) {
+            return hash;
+          }
+          for (ssize_t done = 0; done < count;) {
+            const ssize_t wrote = ::write(fd, buffer + done, static_cast<std::size_t>(count - done));
+            if (wrote < 0 && errno == EINTR) {
+              continue;
+            }
+            if (wrote <= 0) {
+              *error = Errno("cannot write " + std::string(path));
+              return std::nullopt;
+            }
+            done += wrote;
+          }
+        }
+#else
+        (void)fd;
+        (void)error;
+        return hash;
+#endif
+      },
+      expect, mode, mtime_ns);
+}
+
+
 
 FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,
                              std::string_view target) {

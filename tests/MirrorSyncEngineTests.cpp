@@ -6,6 +6,7 @@
 #include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
+#include "util/ContentHash.h"
 
 #include <chrono>
 #include <filesystem>
@@ -152,6 +153,30 @@ void TestMirrorPullsLargeFilesLast() {
   Expect(!std::filesystem::exists(capped.Tree("big.bin")) &&
              capped.engine->StateOf("big.bin") == ContentState::Absent,
          "a file over the ceiling stays absent, and says so");
+}
+
+// A file past the old 64 MiB per-object ceiling — a dataset, a build artifact
+// someone committed — is in the mirror too, with the defaults: it streams to disk
+// as it arrives (never held in memory whole), is verified against its hash, and
+// leaves no staging copy behind. It used to be absent, and invisible in the tree.
+void TestMirrorPullsAFileOverSixtyFourMegabytes() {
+  MirrorSession session;
+  std::string big(64 * 1024 * 1024 + 4097, '\0');
+  for (std::size_t i = 0; i < big.size(); i += 4093) {
+    big[i] = static_cast<char>('a' + (i / 4093) % 26);  // not one repeated page
+  }
+  WriteFile(session.host / "data/huge.bin", big);
+  WriteFile(session.host / "small.txt", "s\n");
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->status().error.empty(), "synced: " + session.engine->status().error);
+  Expect(std::filesystem::exists(session.Tree("data/huge.bin")) &&
+             util::HashFileContent(session.Tree("data/huge.bin")) == util::HashContent(big),
+         "the whole file arrived, byte for byte");
+  Expect(session.engine->StateOf("data/huge.bin") == ContentState::Current, "and it is current");
+  std::error_code ignored;
+  Expect(std::filesystem::is_empty(session.mirror_dir / "meta" / "incoming", ignored),
+         "no staging copy is left behind");
 }
 
 // A file the host cannot read has no hash, so the host leaves it out; the sync
@@ -463,6 +488,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
+  AddTest(tests, "MirrorSyncEngine/PullsAFileOverSixtyFourMegabytes",
+          TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);

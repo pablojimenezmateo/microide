@@ -49,12 +49,11 @@ class MirrorSyncEngine {
     // Backfill batches: whichever limit comes first.
     std::size_t pull_batch_files = 64;
     std::uint64_t pull_batch_bytes = 1024 * 1024;
-    // Files over this are pulled after the rest, one at a time (a few of them in
-    // flight would hold their bytes in memory together).
+    // Files over this are pulled after the rest, one at a time, streamed to disk
+    // as they arrive rather than held in memory (RemoteWorkspace::FetchObjectToFile).
     std::uint64_t large_file_bytes = 8 * 1024 * 1024;
-    // Files over this are not pulled at all (remote.max_file_bytes; the server's
-    // per-object ceiling is 64 MiB).
-    std::uint64_t max_file_bytes = 64 * 1024 * 1024;
+    // Files over this are not pulled at all: the most one streamed fetch carries.
+    std::uint64_t max_file_bytes = RemoteWorkspace::kMaxStreamedObjectBytes;
   };
 
   // A path's content state, for presentation (dimmed absent rows, a conflict mark).

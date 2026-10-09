@@ -872,6 +872,38 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
     ++pipeline->in_flight;
     pipeline->large_in_flight = large;
     BeginExternalWork();
+    if (large) {
+      // Straight to disk as it arrives: at most a chunk of it is ever in memory,
+      // so there is no in-memory ceiling on what a mirror can hold.
+      std::error_code ignored;
+      const std::filesystem::path incoming = store_.meta() / "incoming";
+      std::filesystem::create_directories(incoming, ignored);
+      workspace_.FetchObjectToFile(
+          paths.front(), incoming / "pull.part", Lane::Bulk,
+          [alive = alive_, pipeline](RemoteWorkspace::FetchedObject object, std::string error) {
+            std::lock_guard lock(alive->mutex);
+            MirrorSyncEngine* engine = alive->engine;
+            if (engine == nullptr) {
+              return;
+            }
+            std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
+            if (error.empty()) {
+              objects.emplace().push_back(std::move(object));
+            } else if (!object.staged_file.empty()) {
+              std::error_code ignored_error;
+              std::filesystem::remove(object.staged_file, ignored_error);
+            }
+            engine->queue_.Post([engine, pipeline, objects = std::move(objects),
+                                 error = std::move(error)]() mutable {
+              engine->ApplyFetched(std::move(objects), error);
+              --pipeline->in_flight;
+              pipeline->large_in_flight = false;
+              engine->LaunchPulls(pipeline);
+            });
+            engine->EndExternalWork();
+          });
+      continue;
+    }
     workspace_.FetchObjects(
         std::move(paths), Lane::Bulk,
         [alive = alive_, pipeline](std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects,
@@ -931,6 +963,16 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
   }
   std::vector<std::string> written;
   for (RemoteWorkspace::FetchedObject& object : *objects) {
+    // A streamed object's staging copy goes whatever happens to it below.
+    struct RemoveStaged {
+      const std::filesystem::path& file;
+      ~RemoveStaged() {
+        if (!file.empty()) {
+          std::error_code ignored;
+          std::filesystem::remove(file, ignored);
+        }
+      }
+    } remove_staged{object.staged_file};
     if (object.missing || !object.hash.has_value()) {
       if (!object.error.empty()) {
         // One file the host cannot read is that file's problem, not the sync's.
@@ -965,8 +1007,16 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
         mtime_ns = entry->remote.mtime_ns;
       }
     }
-    const FileOpResult result =
-        WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns);
+    std::uint64_t size = object.content.size();
+    FileOpResult result;
+    if (!object.staged_file.empty()) {
+      std::error_code ignored;
+      size = std::filesystem::file_size(object.staged_file, ignored);
+      result = CopyFileIntoTree(store_.tree(), object.path, object.staged_file, *object.hash, expect,
+                                mode, mtime_ns);
+    } else {
+      result = WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns);
+    }
     std::lock_guard lock(mutex_);
     MirrorStore::Entry* entry = store_.Find(object.path);
     if (entry == nullptr) {
@@ -977,7 +1027,7 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       // latest, and the row follows them.
       entry->base = *object.hash;
       entry->remote.hash = *object.hash;
-      entry->remote.size = object.content.size();
+      entry->remote.size = size;
       store_.RecordLocal(object.path, *entry);
       written.push_back(object.path);
     } else if (result.status == FileOpResult::Status::Conflict) {

@@ -557,8 +557,16 @@ silent one:
   `RemoteLauncher/ProjectSearchRunsOnTheHostOverTheContentSet`. Not covered:
   replace-in-project still edits the mirror's files (each write is pushed
   through the gate, so it is correct; it just reads local bytes to decide).
-- Still to do from the task list: files over the
-  64 MiB per-object ceiling (absent, and so invisible in the tree). Done since: the
+- Still to do from the task list: ~~files over the
+  64 MiB per-object ceiling (absent, and so invisible in the tree)~~ — done
+  2026-10-09: every file over `large_file_bytes` (8 MiB) streams straight to
+  `meta/incoming/` as it arrives, hashed incrementally and verified, then goes into
+  the tree through the same compare-and-swap write (`CopyFileIntoTree`,
+  `copy_file_range` — a reflink where the filesystem can); the ceiling is now the
+  16 GiB a streamed fetch may carry. This also took the 8–64 MiB files out of
+  memory. `MirrorSyncEngine/PullsAFileOverSixtyFourMegabytes`. Left: opening such a
+  file before the backfill reaches it still asks for it in memory (interactive
+  fetches keep the 64 MiB cap), so it waits for the backfill. Done since: the
   parity suite's `mirror` locality (every scenario against the real server with
   the mirror filled by the engine and writes through the mirror gate), the Compare choice of
   the conflict flow, large files (pulled last, one at a time), `host:/path` in the

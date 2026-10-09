@@ -1,6 +1,11 @@
 #include "project/remote/RemoteWorkspace.h"
 
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <condition_variable>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -223,6 +228,108 @@ std::uint64_t RemoteWorkspace::ReadHostFile(std::string host_path, FetchDone don
   names.push_back(std::move(host_path));
   return StreamObjects(method::kFileRead, util::JsonValue(std::move(params)), std::move(names),
                        Lane::Interactive, std::move(done));
+}
+
+std::uint64_t RemoteWorkspace::FetchObjectToFile(
+    std::string path, std::filesystem::path staging, Lane lane,
+    std::function<void(FetchedObject object, std::string error)> done) {
+  struct State {
+    std::filesystem::path staging;
+    FetchedObject object;
+    util::ContentHasher hasher;
+    int fd = -1;
+    bool failed = false;
+    std::string write_error;
+    ~State() {
+      if (fd >= 0) {
+        ::close(fd);
+      }
+    }
+  };
+  auto state = std::make_shared<State>();
+  state->object.path = path;
+  state->staging = staging;
+  const std::shared_ptr<RemoteServerClient> client = Client();
+  if (!client) {
+    done(std::move(state->object), kNotConnected);
+    return 0;
+  }
+  state->fd = ::open(staging.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+  if (state->fd < 0) {
+    done(std::move(state->object), "cannot create " + staging.string());
+    return 0;
+  }
+  util::JsonObject object;
+  object["path"] = util::JsonValue(path);
+  util::JsonArray requested;
+  requested.push_back(util::JsonValue(std::move(object)));
+  util::JsonObject params;
+  params["objects"] = util::JsonValue(std::move(requested));
+  params["bulk"] = util::JsonValue(lane == Lane::Bulk);
+  params["max_bytes"] = util::JsonValue(static_cast<std::int64_t>(kMaxStreamedObjectBytes));
+  RemoteServerClient* raw = client.get();
+  const std::uint64_t id = client->RequestStream(
+      method::kObjectFetch, util::JsonValue(std::move(params)), lane,
+      [state, raw](FrameType, std::string bytes) {
+        util::ByteReader in(bytes);
+        const std::uint64_t index = in.Varint();
+        if (in.failed() || index != 0) {
+          if (!state->failed) {
+            state->failed = true;
+            raw->peer().Fail("the server sent object data for no object");
+          }
+          return;
+        }
+        const std::string_view chunk = std::string_view(bytes).substr(bytes.size() - in.remaining());
+        state->hasher.Update(chunk);
+        for (std::size_t written = 0; written < chunk.size() && !state->failed;) {
+          const ssize_t count = ::write(state->fd, chunk.data() + written, chunk.size() - written);
+          if (count < 0 && errno == EINTR) {
+            continue;
+          }
+          if (count <= 0) {
+            state->failed = true;
+            state->write_error = "cannot write the fetched copy: " + std::string(std::strerror(errno));
+            break;
+          }
+          written += static_cast<std::size_t>(count);
+        }
+      },
+      [state, done](std::optional<util::JsonValue> result, std::optional<RemotePeer::RpcError> error) {
+        FetchedObject& object = state->object;
+        if (error.has_value() || !result.has_value()) {
+          done(std::move(object), error.has_value() ? error->message : "no answer");
+          return;
+        }
+        const util::JsonValue& answers = (*result)["objects"];
+        if (!answers.IsArray() || answers.AsArray().size() != 1) {
+          done(std::move(object), "the server's object/fetch answer does not match the request");
+          return;
+        }
+        const util::JsonValue& answer = answers.AsArray()[0];
+        if (answer["missing"].AsBool(false)) {
+          object.missing = true;
+        } else if (!state->write_error.empty()) {
+          object.error = state->write_error;
+        } else if (answer["hash"].IsString()) {
+          const auto claimed = util::ContentHash::FromHex(answer["hash"].AsString());
+          // Checked, not trusted, exactly as an in-memory fetch is.
+          if (claimed.has_value() && state->hasher.Finish() == *claimed &&
+              ::fsync(state->fd) == 0) {
+            object.hash = claimed;
+            object.staged_file = state->staging;
+          } else {
+            object.error = "the host's bytes for " + object.path + " do not match their hash";
+          }
+        } else {
+          object.error = answer["error"].AsString();
+        }
+        done(std::move(object), {});
+      });
+  if (id == 0) {
+    done(std::move(state->object), "not connected");
+  }
+  return id;
 }
 
 std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, util::JsonValue params,

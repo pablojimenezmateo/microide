@@ -62,6 +62,14 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
                                 std::optional<std::uint32_t> mode,
                                 std::optional<std::int64_t> mtime_ns = std::nullopt);
 
+// WriteTreeFile with the bytes copied from `source` (a fetched object staged
+// outside the tree, already verified to hash to `hash`) — for files too large to
+// hold in memory. Same precondition, temp file, fsync and rename.
+FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_view path,
+                              const std::filesystem::path& source, const util::ContentHash& hash,
+                              const Precondition& expect, std::optional<std::uint32_t> mode,
+                              std::optional<std::int64_t> mtime_ns = std::nullopt);
+
 // Make `path` a symlink to `target`. Replaces only a link (never a file or a
 // directory: those are content); creates missing parents.
 FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,

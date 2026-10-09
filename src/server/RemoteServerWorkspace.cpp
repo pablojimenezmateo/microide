@@ -12,6 +12,7 @@
 #include "project/GitRepository.h"
 #include "project/remote/RemoteManifest.h"
 #include "project/remote/RemoteSearchWire.h"
+#include "project/remote/RemoteWorkspace.h"
 #include "project/remote/TreeFiles.h"
 #include "util/ByteCodec.h"
 #include "util/Log.h"
@@ -471,8 +472,12 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
       paths.push_back(object["path"].AsString());
     }
     const std::int64_t asked_max = params["max_bytes"].AsInt(0);
+    // Objects stream from disk in chunks, so a client that writes them to disk as
+    // they come (RemoteWorkspace::FetchObjectToFile) may ask past the 64 MiB a
+    // client holding them in memory gets by default.
     const std::uint64_t max_bytes =
-        asked_max > 0 ? std::min<std::uint64_t>(static_cast<std::uint64_t>(asked_max), kMaxObjectBytes)
+        asked_max > 0 ? std::min<std::uint64_t>(static_cast<std::uint64_t>(asked_max),
+                                                remote::RemoteWorkspace::kMaxStreamedObjectBytes)
                       : kMaxObjectBytes;
     // Content and the reply travel on the lane the request came on: the file the
     // user just opened is interactive, backfill is bulk.

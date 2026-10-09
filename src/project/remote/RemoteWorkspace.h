@@ -71,11 +71,22 @@ class RemoteWorkspace {
     bool missing = false;                   // nothing at the path on the host
     std::string error;
     std::string content;
+    // FetchObjectToFile: the bytes are in this staging file, verified, not in `content`.
+    std::filesystem::path staged_file;
   };
+  // The largest object one fetch may stream (FetchObjectToFile); object/fetch
+  // without a byte limit stops at 64 MiB, the most one answer holds in memory.
+  static constexpr std::uint64_t kMaxStreamedObjectBytes = 16ull * 1024 * 1024 * 1024;
   using FetchDone =
       std::function<void(std::optional<std::vector<FetchedObject>> objects, std::string error)>;
   std::uint64_t FetchObjects(std::vector<std::string> paths, Lane lane, FetchDone done,
                              std::uint64_t max_bytes = 0);
+  // object/fetch of ONE path written straight to `staging` (created 0600 or
+  // truncated) and hashed as it arrives: a file too large to hold in memory.
+  // `done` runs once, on the I/O thread, with `staged_file` set when the bytes landed
+  // and match their hash (the staging file is then the caller's to move or delete).
+  std::uint64_t FetchObjectToFile(std::string path, std::filesystem::path staging, Lane lane,
+                                  std::function<void(FetchedObject object, std::string error)> done);
   // file/read: one ABSOLUTE host path outside the content set, read-only (a system
   // header a language server names). `done` gets one FetchedObject, as above.
   std::uint64_t ReadHostFile(std::string host_path, FetchDone done);
