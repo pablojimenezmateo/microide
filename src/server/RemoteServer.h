@@ -88,9 +88,14 @@ class RemoteServer {
         : tree(std::move(root), std::move(options)) {}
     ~ServedTree() {
       closing.store(true);
-      git_sampler.reset();  // no more git pushes posted
-      watch.reset();     // no more batches posted
-      queue.Shutdown();  // before `tree`: a running job uses it
+      // The queue first: its jobs CREATE the watch and the git sampler, so
+      // releasing either while a job may still be assigning it is a data race
+      // (TSan caught the sampler's). Shutdown joins the running job, and what the
+      // watch and the sampler post afterwards is dropped. Before `tree` too: a
+      // running job uses it.
+      queue.Shutdown();
+      git_sampler.reset();
+      watch.reset();
       io_queue.Shutdown();
     }
     WorkspaceTree tree;
