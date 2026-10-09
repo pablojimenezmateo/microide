@@ -195,8 +195,23 @@ else()
     BLAKE3_NO_SSE2 BLAKE3_NO_SSE41 BLAKE3_NO_AVX2 BLAKE3_NO_AVX512 BLAKE3_USE_NEON=0)
 endif()
 
+# zstd (third_party/zstd, the official 1.5.7 library sources): the remote mirror's
+# deltas against an object the other side already holds (remote-projects.md
+# § 6.2), reached only through util/Zstd. Portable C only (ZSTD_DISABLE_ASM), no
+# multithreading, for the same no-assembler static server build as blake3.
+file(GLOB MICROIDE_ZSTD_SOURCES CONFIGURE_DEPENDS
+  third_party/zstd/common/*.c third_party/zstd/compress/*.c third_party/zstd/decompress/*.c)
+add_library(microide_zstd STATIC ${MICROIDE_ZSTD_SOURCES})
+target_include_directories(microide_zstd SYSTEM PUBLIC third_party/zstd)
+target_compile_definitions(microide_zstd PRIVATE ZSTD_DISABLE_ASM XXH_NAMESPACE=ZSTD_)
+set_target_properties(microide_zstd PROPERTIES C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+  # Optimized in every build type, like blake3: deltas run over whole files.
+  target_compile_options(microide_zstd PRIVATE -O3 -w)
+endif()
+
 # Every link unit that carries the kernel's objects links these.
-set(MICROIDE_KERNEL_LIBS ${MICROIDE_PCRE2_TARGET} microide_blake3)
+set(MICROIDE_KERNEL_LIBS ${MICROIDE_PCRE2_TARGET} microide_blake3 microide_zstd)
 
 # Optional: fontconfig gives correct family/style matching for the
 # `editor.font_family` setting. When absent, the backend falls back to a scan of
@@ -394,6 +409,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/util/PerformanceTrace.cpp
   src/util/SerialWorkQueue.cpp
   src/util/ContentHash.cpp
+  src/util/Zstd.cpp
   src/util/Sha256.cpp
   src/util/StartupTrace.cpp
   src/util/StringUtil.cpp
@@ -1472,6 +1488,7 @@ add_executable(microide_kernel_tests
   tests/RuntimePathsTests.cpp
   tests/SerialWorkQueueTests.cpp
   tests/ContentHashTests.cpp
+  tests/ZstdTests.cpp
   tests/Sha256Tests.cpp
   tests/SmallVectorTests.cpp
   tests/StringUtilTests.cpp
