@@ -535,9 +535,9 @@ void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, P
           .message = conflicts[i] + " changed on " + host + " and here",
           .sticky = true,
           .actions = {
-              NotificationAction{.label = "Compare",
+              NotificationAction{.label = "Merge",
                                  .id = ActionId::RemoteResolveConflict,
-                                 .args = {absolute, "compare"},
+                                 .args = {absolute, "merge"},
                                  .keep_open = true},
               NotificationAction{.label = "Keep Mine",
                                  .id = ActionId::RemoteResolveConflict,
@@ -695,6 +695,66 @@ bool RemoteHostService::CompareConflict(const std::filesystem::path& path) {
           }
         });
       });
+  return true;
+}
+
+bool RemoteHostService::MergeConflict(const std::filesystem::path& path) {
+  const auto [entry, relative] = ConflictOwner(path);
+  if (entry == nullptr) {
+    return false;
+  }
+  const std::filesystem::path mirror_file = path.lexically_normal();
+  entry->project->engine().FetchMergeSides(
+      relative, [this, mirror_file](std::optional<remote::MirrorSyncEngine::MergeSides> sides, std::string error) {
+        mailbox_.Post([this, mirror_file, sides = std::move(sides), error = std::move(error)]() {
+          if (!sides.has_value()) {
+            // No base kept (a file over the object store's per-file size): the two
+            // versions side by side are the most there is to show.
+            if (!CompareConflict(mirror_file) && operations_.notify) {
+              operations_.notify(NotificationService::Request{
+                  .tone = NotificationService::Tone::Error,
+                  .message = "Cannot merge with the host's version: " + error});
+            }
+            return;
+          }
+          std::string why = "the merge editor is not available";
+          if (operations_.open_merge) {
+            // The mirror's file is both "mine" and where the result goes; Mark
+            // Resolved pushes it over exactly the host version merged against.
+            why = operations_.open_merge(sides->base, sides->host, mirror_file, mirror_file);
+            if (why.empty()) {
+              merges_[mirror_file] = sides->host_hash;
+            }
+          }
+          if (!why.empty() && operations_.notify) {
+            operations_.notify(NotificationService::Request{
+                .tone = NotificationService::Tone::Error,
+                .message = "Cannot merge with the host's version: " + why});
+          }
+        });
+      });
+  return true;
+}
+
+bool RemoteHostService::ResolveMerged(const std::filesystem::path& path) {
+  const auto [entry, relative] = ConflictOwner(path);
+  std::optional<util::ContentHash> host_hash;
+  if (const auto merge = merges_.find(path.lexically_normal()); merge != merges_.end()) {
+    host_hash = merge->second;
+    merges_.erase(merge);
+    if (entry == nullptr) {
+      return true;  // settled another way meanwhile: nothing left to push
+    }
+  } else if (entry != nullptr) {
+    // A merge tab restored from a session: its incoming side is the host copy it
+    // was opened with, still on disk.
+    host_hash = util::HashFileContent(entry->project->engine().HostCopyPath(relative));
+  }
+  if (entry == nullptr || !host_hash.has_value()) {
+    return false;
+  }
+  entry->project->engine().ResolveConflict(relative, remote::MirrorSyncEngine::Resolution::KeepMine,
+                                           *host_hash);
   return true;
 }
 

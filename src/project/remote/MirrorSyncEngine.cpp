@@ -343,12 +343,13 @@ bool MirrorSyncEngine::TreeOpNow(const LocalTreeOp& op) {
   return true;
 }
 
-void MirrorSyncEngine::ResolveConflict(std::string path, Resolution resolution) {
+void MirrorSyncEngine::ResolveConflict(std::string path, Resolution resolution,
+                                       std::optional<util::ContentHash> expect_host) {
   if (!IsSafeRelativePath(path)) {
     return;
   }
-  queue_.PostFront([this, path = std::move(path), resolution]() {
-    ResolveNow(path, resolution);
+  queue_.PostFront([this, path = std::move(path), resolution, expect_host]() {
+    ResolveNow(path, resolution, expect_host);
     {
       std::lock_guard lock(mutex_);
       RecountLocked();
@@ -358,6 +359,42 @@ void MirrorSyncEngine::ResolveConflict(std::string path, Resolution resolution) 
   });
 }
 
+std::optional<RemoteWorkspace::FetchedObject> MirrorSyncEngine::FetchCurrent(const std::string& path,
+                                                                           std::string* error) {
+  std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
+      workspace_.FetchObjectsSync({path}, Lane::Interactive, error);
+  if (!objects.has_value() || objects->size() != 1) {
+    if (error->empty()) {
+      *error = "the host did not answer";
+    }
+    return std::nullopt;
+  }
+  RemoteWorkspace::FetchedObject& object = objects->front();
+  if (object.missing) {
+    *error = path + " no longer exists on the host";
+    return std::nullopt;
+  }
+  if (!object.hash.has_value()) {
+    *error = object.error;
+    return std::nullopt;
+  }
+  return std::move(object);
+}
+
+std::optional<std::filesystem::path> MirrorSyncEngine::WriteCopy(std::string_view subdir,
+                                                                const std::string& path,
+                                                                std::string_view bytes, std::string* error) {
+  const std::filesystem::path copies = store_.meta() / "host-copies" / subdir;
+  std::error_code ec;
+  std::filesystem::create_directories(copies, ec);
+  const FileOpResult written = WriteTreeFile(copies, path, bytes, Precondition::Anything(), 0444);
+  if (!written.ok()) {
+    *error = written.error;
+    return std::nullopt;
+  }
+  return copies / path;
+}
+
 void MirrorSyncEngine::FetchHostCopy(std::string path, HostCopyDone done) {
   if (!IsSafeRelativePath(path)) {
     done(std::nullopt, "not a path in the project");
@@ -365,31 +402,51 @@ void MirrorSyncEngine::FetchHostCopy(std::string path, HostCopyDone done) {
   }
   queue_.PostFront([this, path = std::move(path), done = std::move(done)]() {
     std::string error;
-    std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
-        workspace_.FetchObjectsSync({path}, Lane::Interactive, &error);
-    if (!objects.has_value() || objects->size() != 1) {
-      done(std::nullopt, error.empty() ? "the host did not answer" : error);
+    const std::optional<RemoteWorkspace::FetchedObject> object = FetchCurrent(path, &error);
+    std::optional<std::filesystem::path> copy =
+        object.has_value() ? WriteCopy("", path, object->content, &error) : std::nullopt;
+    done(std::move(copy), std::move(error));
+  });
+}
+
+void MirrorSyncEngine::FetchMergeSides(std::string path, MergeSidesDone done) {
+  if (!IsSafeRelativePath(path)) {
+    done(std::nullopt, "not a path in the project");
+    return;
+  }
+  queue_.PostFront([this, path = std::move(path), done = std::move(done)]() {
+    std::optional<util::ContentHash> base;
+    {
+      std::lock_guard lock(mutex_);
+      if (const MirrorStore::Entry* entry = store_.Find(path); entry != nullptr && entry->conflict) {
+        base = entry->base;
+      }
+    }
+    if (!base.has_value()) {
+      done(std::nullopt, path + " has no version both sides started from");
       return;
     }
-    RemoteWorkspace::FetchedObject& object = objects->front();
-    if (object.missing) {
-      done(std::nullopt, path + " no longer exists on the host");
+    const std::optional<std::string> base_bytes = objects_.Get(*base);
+    if (!base_bytes.has_value()) {
+      done(std::nullopt, "the version both sides started from is not kept for " + path +
+                             " (too large); use Compare");
       return;
     }
-    if (!object.hash.has_value()) {
-      done(std::nullopt, object.error);
+    std::string error;
+    const std::optional<RemoteWorkspace::FetchedObject> host = FetchCurrent(path, &error);
+    if (!host.has_value()) {
+      done(std::nullopt, std::move(error));
       return;
     }
-    const std::filesystem::path copies = store_.meta() / "host-copies";
-    std::error_code ec;
-    std::filesystem::create_directories(copies, ec);
-    const FileOpResult written =
-        WriteTreeFile(copies, path, object.content, Precondition::Anything(), 0444);
-    if (!written.ok()) {
-      done(std::nullopt, written.error);
+    std::optional<std::filesystem::path> base_copy = WriteCopy(".base", path, *base_bytes, &error);
+    std::optional<std::filesystem::path> host_copy =
+        base_copy.has_value() ? WriteCopy("", path, host->content, &error) : std::nullopt;
+    if (!host_copy.has_value()) {
+      done(std::nullopt, std::move(error));
       return;
     }
-    done(copies / path, {});
+    done(MergeSides{.base = std::move(*base_copy), .host = std::move(*host_copy), .host_hash = *host->hash},
+         {});
   });
 }
 
@@ -452,7 +509,8 @@ std::vector<std::string> MirrorSyncEngine::Conflicts() const {
   return paths;
 }
 
-void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution) {
+void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution,
+                                  const std::optional<util::ContentHash>& expect_host) {
   using Status = RemoteWorkspace::WriteResult::Status;
   std::lock_guard path_lock(store_.PathLock(path));
   {
@@ -482,10 +540,13 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
           mode = entry->remote.mode;
         }
       }
-      result = workspace_.WriteFileSync(path, content, Precondition::Anything(), mode);
+      result = workspace_.WriteFileSync(
+          path, content, expect_host.has_value() ? Precondition::Of(*expect_host) : Precondition::Anything(),
+          mode);
     } else {
-      result = workspace_.ApplyTreeOpSync(RemoteWorkspace::TreeOp::Delete, path, {},
-                                          Precondition::Anything());
+      result = workspace_.ApplyTreeOpSync(
+          RemoteWorkspace::TreeOp::Delete, path, {},
+          expect_host.has_value() ? Precondition::Of(*expect_host) : Precondition::Anything());
     }
     std::lock_guard lock(mutex_);
     MirrorStore::Entry* entry = store_.Find(path);
@@ -493,7 +554,10 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
       return;
     }
     if (result.status != Status::Ok) {
-      status_.error = result.error.empty() ? "the host refused the overwrite of " + path : result.error;
+      status_.error = expect_host.has_value() && result.status == Status::Conflict
+                          ? path + " changed on the host again while it was merged; merge it again"
+                      : result.error.empty() ? "the host refused the overwrite of " + path
+                                             : result.error;
       return;
     }
     entry->conflict = false;
@@ -675,15 +739,9 @@ void MirrorSyncEngine::FetchPreviousCopy(std::string path, HostCopyDone done) {
       done(std::nullopt, "the earlier version of " + path + " is no longer kept");
       return;
     }
-    const std::filesystem::path copies = store_.meta() / "host-copies" / ".before";
-    std::error_code ec;
-    std::filesystem::create_directories(copies, ec);
-    const FileOpResult written = WriteTreeFile(copies, path, *bytes, Precondition::Anything(), 0444);
-    if (!written.ok()) {
-      done(std::nullopt, written.error);
-      return;
-    }
-    done(copies / path, {});
+    std::string error;
+    std::optional<std::filesystem::path> copy = WriteCopy(".before", path, *bytes, &error);
+    done(std::move(copy), std::move(error));
   });
 }
 

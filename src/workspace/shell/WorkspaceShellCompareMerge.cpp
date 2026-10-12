@@ -1,6 +1,7 @@
 #include <memory>
 
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/services/RemoteHostService.h"
 
 #include <algorithm>
 
@@ -340,6 +341,12 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
               },
           .stage_merge_result_path =
               [this](const std::filesystem::path& path) {
+                // A remote project's save conflict merged here: the result goes to
+                // the host, not to git's index.
+                if (glue_->remote_host_service != nullptr &&
+                    glue_->remote_host_service->ResolveMerged(path)) {
+                  return true;
+                }
                 return project::GitStagePath(context_.current_project_state.root,
                                              context_.current_project_state.launcher(), path);
               },

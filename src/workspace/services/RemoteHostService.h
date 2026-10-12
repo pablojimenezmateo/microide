@@ -80,6 +80,11 @@ class RemoteHostService {
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
     // The desktop's browser (a host-local link, once its port is forwarded).
     std::function<bool(std::string_view url)> open_url;
+    // Open the three-way merge editor (base, incoming, current) writing to
+    // `output`. Empty string on success, else why not.
+    std::function<std::string(const std::filesystem::path& base, const std::filesystem::path& incoming,
+                              const std::filesystem::path& current, const std::filesystem::path& output)>
+        open_merge;
     // The files of the remote project at `root` the mirror has not fetched yet
     // changed (null: none left): the sidebar and quick-open list them.
     std::function<void(const std::filesystem::path& root, project::SharedPendingPaths pending)>
@@ -118,6 +123,16 @@ class RemoteHostService {
   // Compare: fetch the host's bytes of the conflicted `path` and open them beside
   // the mirror's file. False when `path` is not a conflict of any remote project.
   bool CompareConflict(const std::filesystem::path& path);
+  // Merge: the conflicted `path` opens in the three-way merge editor — the version
+  // both sides started from, the host's, and the mirror's — writing into the
+  // mirror's file. With no base kept (a file over the object store's per-file
+  // size) it is the two-way Compare. False when `path` is not a conflict of any
+  // remote project.
+  bool MergeConflict(const std::filesystem::path& path);
+  // Mark Resolved on a merge MergeConflict opened: push the result, but only over
+  // the host version it was merged against (a host that moved on keeps the
+  // conflict). False when `path` is not such a merge (a git one: stage it).
+  bool ResolveMerged(const std::filesystem::path& path);
   // `path` is a host file outside a remote project (the launcher's out-of-project
   // cache): fetch its CURRENT bytes — every open, so a stale or locally changed
   // copy is never what opens — and run `opened` with it on the UI thread. False
@@ -249,6 +264,8 @@ class RemoteHostService {
   std::map<std::filesystem::path, Project> projects_;
   std::vector<std::string> survival_warned_;  // hosts already warned
   std::filesystem::path fetching_copy_;  // the host-file copy being opened right now
+  // Mirror file -> the host version its open merge is against (MergeConflict).
+  std::map<std::filesystem::path, util::ContentHash> merges_;
   // Blocking host work off the UI thread — Stop Host Server, Show Log, port
   // forwards — one at a time. Shut down (in-flight job finished, the rest dropped)
   // before the sessions its jobs use go.

@@ -440,11 +440,16 @@ doc's "Phase 3, first slices"). Left, each a known gap:
 - **No remote status block on the project home** (§ 7.3): the stages (connected,
   server version, syncing N/M) with Retry and the reproduce command are spread
   over the notification row and the status segment.
-- **A conflict is settled two-way.** Compare / Keep Mine / Take Host's matches
-  VS Code's save conflict, but the base's bytes are now in `meta/objects`, so a
-  three-way merge (base, host's, mine → the tree file) through the existing merge
-  editor is possible; the resolution would push under expect = the host hash the
-  merge started from.
+- ~~**A conflict is settled two-way.**~~ Fixed 2026-10-12: the conflict row's
+  **Merge** opens the merge editor on the base (from `meta/objects`), the host's
+  current bytes and the mirror's file, seeded with the merge (the host's clean
+  changes applied); Mark Resolved pushes the result under expect = the host
+  version the merge was made against, so a host that moved on keeps the conflict.
+  A file whose base is not kept (over the store's 8 MiB per-file limit) falls back
+  to the two-way Compare. `MirrorSyncEngine/MergesAConflictThreeWays`,
+  `RemoteHostService/ConflictMergesThreeWaysToTheHost`. The row holds three
+  buttons (NotificationService's cap), so Compare moved to `remote-resolve <path>
+  compare`.
 - ~~**Port forwards are per session, not per host.**~~ Fixed 2026-10-12: one
   `HostPortForwards` per host, shared by every session to it (they share the
   ControlMaster the ports ride on). Whichever session brings a master up applies

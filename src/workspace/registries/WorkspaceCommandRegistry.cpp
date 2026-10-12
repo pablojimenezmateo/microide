@@ -25,7 +25,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Show Output Channel…", ""},
       ActionSpec{ActionId::RemoteOpenFolder, "remote-open",
                  "remote-open [[user@]host[:port]:/path]", "Remote: Open Folder on Host\u2026", ""},
-      ActionSpec{ActionId::RemoteResolveConflict, "remote-resolve", "remote-resolve <path> <mine|host|compare>",
+      ActionSpec{ActionId::RemoteResolveConflict, "remote-resolve", "remote-resolve <path> <mine|host|compare|merge>",
                  "Remote: Resolve Conflict", ""},
       ActionSpec{ActionId::RemoteShowLog, "remote-show-log", "remote-show-log [host]",
                  "Remote: Show Host Server Log", ""},

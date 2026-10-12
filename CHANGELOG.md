@@ -107,6 +107,12 @@ project (see [README](README.md)); versions track meaningful shipped work.
   mirrored like the rest of the tree instead of arriving as an empty directory.
 - The remote status segment shows a first sync's progress (`build-box · 1204/4258`)
   and saves waiting for the host (`· 3 unsent`).
+- **Merge a remote save conflict.** A file both you and the host changed gets
+  **Merge** on its row: the merge editor opens on the version both started from,
+  the host's and yours, with the non-conflicting changes already applied. Mark
+  Resolved sends the result to the host — unless the host changed it again
+  meanwhile, which keeps the conflict. (`remote-resolve <path> compare` still opens
+  the two versions side by side.)
 - **Files not fetched yet are listed.** During a remote project's first sync the
   tree shows the host's files that have not arrived (dimmed, in folders that may not
   exist locally yet) and quick-open finds them; opening one fetches it first.
@@ -115,6 +121,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Git: Refresh refreshes git from any view.** It used to ask git only while
+  Source Control was showing, so with the explorer up the status bar kept git's
+  last answer.
+- A forwarded port stays open while any connection to its host does: closing a
+  remote project no longer takes a port down under a host terminal still using it.
 - **Remote projects stay fresh in three more places.** A tracked file under
   `build/` or `out/` that changes on the host now reaches the mirror; opening a file
   the host just changed pulls it first, and one the first sync has not reached

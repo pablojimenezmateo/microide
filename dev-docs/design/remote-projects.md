@@ -178,8 +178,12 @@ this document's § 7, what a user still missed:
   them in and `DirectoryTree` lists them dimmed under the folders they imply. A
   search does not see them. `remote.backfill_max_file_mib` keeps large files out of
   the backfill: listed, fetched when opened.
-- Still open: the remote status block on the project home (§ 7.3); a three-way
-  merge for a conflict. TD-2026-10-12-336.
+- **Three-way conflict merge** (§ 6.3): the conflict row's Merge opens the merge
+  editor on base / host / mirror; Mark Resolved pushes under expect = the merged
+  host version. **Per-host port forwards**: one `HostPortForwards` shared by a
+  host's sessions.
+- Still open: the remote status block on the project home (§ 7.3); automatic port
+  detection. TD-2026-10-12-336.
 
 ## 1. The problem
 

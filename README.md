@@ -142,7 +142,8 @@ for what is actually measured, and what is not.
   while git, language servers, debuggers, formatters and terminals run on the host. A save
   lands locally at once and is pushed under compare-and-swap, so it can never overwrite an
   edit an agent made on the host meanwhile: both versions are kept and the file gets a
-  conflict row with **Compare**, **Keep Mine** and **Take Host's** (`remote-resolve`). Host changes stream into the mirror as they happen; a sync that would delete
+  conflict row with **Merge** (a three-way merge editor: the version both started
+  from, the host's and yours), **Keep Mine** and **Take Host's** (`remote-resolve`). Host changes stream into the mirror as they happen; a sync that would delete
   most of the mirror (an unmounted host disk) is held instead of applied. Saves made while
   offline are journaled and replayed on reconnect. The mirror lives under
   `~/.local/share/microide/remote/` and reopens from the recents list as the remote project.
@@ -683,7 +684,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `notification-action <row-key|row-index> <action-label|action-index>`
 - `show-output <channel-id>`
 - `remote-open [[user@]host[:port]:/path]`
-- `remote-resolve <path> <mine|host|compare>`
+- `remote-resolve <path> <mine|host|compare|merge>`
 - `remote-show-log [host]`
 - `remote-terminal [[user@]host[:port]]`
 - `remote-status`

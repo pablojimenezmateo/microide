@@ -169,6 +169,20 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
           },
       .open_url = [this](std::string_view url) { return OpenExternalUrl(url); },
+      .open_merge =
+          [this](const std::filesystem::path& base, const std::filesystem::path& incoming,
+                 const std::filesystem::path& current, const std::filesystem::path& output) {
+            if (!MakeCompareMergeService().OpenMergeEditor(base, incoming, current, output)) {
+              return std::string("the merge editor did not open");
+            }
+            // The output is the mirror's file, which is "mine": a fresh tab starts
+            // from the merge instead, so the host's clean changes are in the result.
+            // A tab already open with edits of its own is left as it is.
+            if (MergeTabState* merge = ActiveMergeTab(); merge != nullptr && !merge->result_viewport.dirty()) {
+              RefreshMergeTabDerivedState(*merge);
+            }
+            return std::string();
+          },
       .pending_paths_changed =
           [this](const std::filesystem::path& root, project::SharedPendingPaths pending) {
             if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {

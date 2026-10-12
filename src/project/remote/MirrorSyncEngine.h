@@ -160,13 +160,35 @@ class MirrorSyncEngine {
   // deletes the host's file when the mirror's is gone. TakeHost writes the host's
   // current bytes over the mirror's, or removes the mirror's file when the host has
   // none.
+  //
+  // `expect_host` (KeepMine only): push only over that host version — a three-way
+  // merge's, made against it. A host that has moved on since keeps the conflict
+  // (and says so in status().error) rather than losing what it wrote meanwhile.
   enum class Resolution { KeepMine, TakeHost };
-  void ResolveConflict(std::string path, Resolution resolution);
+  void ResolveConflict(std::string path, Resolution resolution,
+                       std::optional<util::ContentHash> expect_host = std::nullopt);
   // The host's current bytes of `path`, written to a read-only copy outside tree/
   // (meta/host-copies/<path>) for a Compare against the mirror's file. `done` runs on
   // the engine thread with the copy's path, or nullopt and why.
   using HostCopyDone = std::function<void(std::optional<std::filesystem::path> copy, std::string error)>;
   void FetchHostCopy(std::string path, HostCopyDone done);
+  // Where FetchHostCopy (and FetchMergeSides' host side) puts `path`'s copy.
+  std::filesystem::path HostCopyPath(std::string_view path) const {
+    return store_.meta() / "host-copies" / path;
+  }
+  // The three sides of a conflict's merge: the base both sides changed (from
+  // meta/objects; meta/host-copies/.base/<path>) and the host's current bytes
+  // (meta/host-copies/<path>), each a read-only copy, and the host version they are.
+  // The mirror's own file is the third. `done` runs on the engine thread; an error
+  // when the base is not held (over the object store's per-file size) or the host
+  // has none.
+  struct MergeSides {
+    std::filesystem::path base;
+    std::filesystem::path host;
+    util::ContentHash host_hash;
+  };
+  using MergeSidesDone = std::function<void(std::optional<MergeSides> sides, std::string error)>;
+  void FetchMergeSides(std::string path, MergeSidesDone done);
   // file/read: the host file at absolute `host_path`, outside the project, written
   // read-only to `local_path` (the launcher's out-of-project cache). `done` as above.
   void FetchHostFile(std::string host_path, std::filesystem::path local_path, HostCopyDone done);
@@ -244,7 +266,13 @@ class MirrorSyncEngine {
   // Replay the journaled tree operations in order, stopping at the first that
   // cannot reach the host.
   void DrainTreeOps();
-  void ResolveNow(const std::string& path, Resolution resolution);
+  void ResolveNow(const std::string& path, Resolution resolution,
+                  const std::optional<util::ContentHash>& expect_host);
+  // The host's current bytes of `path` (the interactive lane), or nullopt and why.
+  std::optional<RemoteWorkspace::FetchedObject> FetchCurrent(const std::string& path, std::string* error);
+  // `bytes` as a read-only copy at meta/host-copies/<subdir>/<path>.
+  std::optional<std::filesystem::path> WriteCopy(std::string_view subdir, const std::string& path,
+                                                 std::string_view bytes, std::string* error);
   void RecountLocked();
   void ListPendingLocked();
   void RecordHostChangeLocked(const std::string& path, HostChange::Kind kind,

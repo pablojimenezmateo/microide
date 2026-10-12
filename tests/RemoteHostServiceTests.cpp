@@ -321,6 +321,81 @@ void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
   RemoveFakeMaster(target);
 }
 
+// A save conflict merged three ways in the merge editor: Merge opens the version
+// both started from, the host's and the mirror's; Mark Resolved pushes the result to
+// the host (not to git's index) and the conflict row goes.
+void TestConflictMergesThreeWaysToTheHost() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "merge";
+  WriteFile(host_root / "notes.txt", "a\nb\nc\n");
+  const std::string target = "dev@fake-merge-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  std::string ssh;
+  for (const std::string& word : host.SshArgv()) {
+    ssh += (ssh.empty() ? "" : " ") + word;
+  }
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh), "ssh seam");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  const std::filesystem::path file = mirror / "notes.txt";
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(file) && ReadFile(file) == "a\nb\nc\n";
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  // The agent edits the first line while the user saves an edit to the last.
+  WriteFile(host_root / "notes.txt", "A\nb\nc\n");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("X");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the save succeeds locally");
+  const std::string row_key = "remote.conflict." + file.string();
+  const auto find_row = [&]() -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == row_key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return find_row() != nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "a conflict row appears");
+  const auto* row = find_row();
+  Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Merge",
+         "with Merge first");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-resolve " + file.string() + " merge"),
+         "Merge is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::ActiveTabIsMerge(shell);
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the merge editor opens");
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.SerializeDocumentText() == "A\nb\nXc\n",
+         "both sides' edits merge cleanly: '" + WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.SerializeDocumentText() +
+             "'");
+  WorkspaceShellTestAccess::MarkMergeResolved(shell);
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).marked_resolved,
+         "Mark Resolved is accepted: " + WorkspaceShellTestAccess::ActiveMerge(shell).status_message);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return ReadFile(host_root / "notes.txt") == "A\nb\nXc\n" && find_row() == nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the result reaches the host and the row goes: '" + ReadFile(host_root / "notes.txt") + "'");
+  RemoveFakeMaster(target);
+}
+
 // Remote: Open Folder on Host… end to end: the command prepares the mirror, the
 // editor opens it as the project root with the host's launcher, the mirror fills
 // from the host, and an edit saved in the editor lands in the HOST's file. Then
@@ -400,9 +475,9 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "a conflict row appears");
   const auto* row = find_row();
-  Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Compare" &&
+  Expect(row != nullptr && row->actions.size() == 3 && row->actions[0].label == "Merge" &&
              row->actions[1].label == "Keep Mine" && row->actions[2].label == "Take Host's",
-         "with Compare, Keep Mine and Take Host's");
+         "with Merge, Keep Mine and Take Host's");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(
              shell, "remote-resolve " + (mirror / "main.c").string() + " compare"),
          "Compare is accepted");
@@ -753,6 +828,7 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
   AddTest(tests, "RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched",
           TestUnfetchedFilesAreListedAndOpenWhenFetched);
+  AddTest(tests, "RemoteHostService/ConflictMergesThreeWaysToTheHost", TestConflictMergesThreeWaysToTheHost);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
 #endif

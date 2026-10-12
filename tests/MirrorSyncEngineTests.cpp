@@ -456,6 +456,58 @@ void TestMirrorResolvesConflictsTheUsersWay() {
   Expect(session.engine->Conflicts().empty(), "a sync does not reopen them");
 }
 
+// A conflict merged three ways: the sides are the base both started from (kept in
+// meta/objects), the host's current bytes and the mirror's file; the result is
+// pushed only over the host version it was merged against.
+void TestMirrorMergesAConflictThreeWays() {
+  MirrorSession session;
+  WriteFile(session.host / "merge.txt", "one\ntwo\nthree\n");
+  session.Connect();
+  session.Sync();
+  WriteFile(session.host / "merge.txt", "ONE\ntwo\nthree\n");
+  WriteFile(session.Tree("merge.txt"), "one\ntwo\nTHREE\n");
+  session.engine->NotifyLocalWrite("merge.txt");
+  session.engine->Flush();
+  Expect(session.engine->Conflicts() == std::vector<std::string>{"merge.txt"}, "a conflict");
+
+  const auto fetch_sides = [&] {
+    std::optional<remote::MirrorSyncEngine::MergeSides> sides;
+    std::string error;
+    session.engine->FetchMergeSides("merge.txt", [&](std::optional<remote::MirrorSyncEngine::MergeSides> got,
+                                                     std::string why) {
+      sides = std::move(got);
+      error = std::move(why);
+    });
+    session.engine->Flush();
+    Expect(sides.has_value(), "the merge's sides are fetched: " + error);
+    return sides.value_or(remote::MirrorSyncEngine::MergeSides{});
+  };
+  const remote::MirrorSyncEngine::MergeSides sides = fetch_sides();
+  Expect(ReadFile(sides.base) == "one\ntwo\nthree\n" && ReadFile(sides.host) == "ONE\ntwo\nthree\n",
+         "the base and the host's version");
+  Expect(sides.host_hash == util::HashContent("ONE\ntwo\nthree\n"), "and which host version that is");
+  Expect(sides.base.string().find("/tree/") == std::string::npos &&
+             sides.host.string().find("/tree/") == std::string::npos,
+         "both outside the tree");
+
+  WriteFile(session.Tree("merge.txt"), "ONE\ntwo\nTHREE\n");  // the merge's result
+  WriteFile(session.host / "merge.txt", "ONE!\ntwo\nthree\n");  // an agent, meanwhile
+  session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepMine, sides.host_hash);
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "merge.txt") == "ONE!\ntwo\nthree\n" &&
+             session.engine->Conflicts() == std::vector<std::string>{"merge.txt"},
+         "a host that moved on is not overwritten: still a conflict");
+  Expect(session.engine->status().error.find("again") != std::string::npos,
+         "and says why: " + session.engine->status().error);
+
+  const remote::MirrorSyncEngine::MergeSides again = fetch_sides();
+  session.engine->ResolveConflict("merge.txt", remote::MirrorSyncEngine::Resolution::KeepMine, again.host_hash);
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "merge.txt") == "ONE\ntwo\nTHREE\n" && session.engine->Conflicts().empty() &&
+             session.engine->StateOf("merge.txt") == ContentState::Current,
+         "merged against the current version, the result reaches the host");
+}
+
 void TestMirrorHoldsAMassDelete() {
   MirrorSession session;
   for (int i = 0; i < 150; ++i) {
@@ -683,6 +735,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorPullsAFileOverSixtyFourMegabytes);
   AddTest(tests, "MirrorSyncEngine/PulledFilesAreTrustedAtOnce", TestMirrorPulledFilesAreTrustedAtOnce);
   AddTest(tests, "MirrorSyncEngine/ResolvesConflictsTheUsersWay", TestMirrorResolvesConflictsTheUsersWay);
+  AddTest(tests, "MirrorSyncEngine/MergesAConflictThreeWays", TestMirrorMergesAConflictThreeWays);
   AddTest(tests, "MirrorSyncEngine/JournalSurvivesARestart", TestMirrorJournalSurvivesARestart);
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
   AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
