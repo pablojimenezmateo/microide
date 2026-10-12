@@ -47,6 +47,14 @@ enum class ActionId {
   // empties it.
   RemoteShowHostChanges,
   RemoteClearHostChanges,
+  // `remote-forward-port <port> [host]` / `remote-unforward-port <port> [host]`:
+  // the host's localhost:<port> on this machine, through the ssh master (VS Code's
+  // Forward a Port). The host defaults to the active remote project's, else the
+  // only host.
+  RemoteForwardPort,
+  RemoteUnforwardPort,
+  // `open-url <http(s)-url>`: the desktop's browser (a forwarded port's button).
+  OpenUrl,
   // The Cancel button of a quit / close-project that is waiting for formatter
   // saves: `cancel-save-wait <id>` (the id rides on the button). The quit or close
   // is abandoned and the buffers still formatting stay open and dirty.

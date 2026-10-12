@@ -93,6 +93,8 @@ class WorkspaceActionContext {
                        std::string)>
         open_prompt_surface;
     std::function<bool(std::string_view)> write_clipboard_text;
+    // The desktop's opener for an http(s) URL (a forwarded port's Open in Browser).
+    std::function<bool(std::string_view)> open_external_url;
     std::function<bool(std::string_view)> write_primary_selection_text;
     std::function<bool(const std::filesystem::path&)> reveal_path_in_file_explorer;
     // Reveal a path in the in-app sidebar tree: force-expand ancestors, select it,
@@ -395,6 +397,7 @@ class WorkspaceActionContext {
   void OpenRenamePathPrompt(const std::filesystem::path& path);
   void OpenDeletePathPrompt(const std::filesystem::path& path);
   bool WriteClipboardText(std::string_view text) const;
+  bool OpenExternalUrl(std::string_view url) const;
   bool WritePrimarySelectionText(std::string_view text) const;
   bool RevealPathInFileExplorer(const std::filesystem::path& directory) const;
   bool RevealPathInTree(const std::filesystem::path& path) const;

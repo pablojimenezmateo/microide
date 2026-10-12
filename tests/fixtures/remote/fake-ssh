@@ -7,18 +7,25 @@
 #   FAKE_SSH_HOME        the host's home directory (required)
 #   FAKE_SSH_NEEDS_AUTH  set: a BatchMode master fails the way a key with a
 #                        passphrase does; an interactive one succeeds
+#
+# `-O forward|cancel -L spec` adds or removes the line `spec` in "$ctl.forwards"
+# (a forward needs the master; an identical second forward succeeds and adds
+# nothing, as OpenSSH's mux does).
 ctl=
 log=
 batch=no
 master=no
 check=no
+op=
+spec=
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) [ "$2" = BatchMode=yes ] && batch=yes; shift 2 ;;
     -S) ctl="$2"; shift 2 ;;
     -E) log="$2"; shift 2 ;;
     -p|-l) shift 2 ;;
-    -O) [ "$2" = check ] && check=yes; shift 2 ;;
+    -O) [ "$2" = check ] && check=yes; op="$2"; shift 2 ;;
+    -L) spec="$2"; shift 2 ;;
     -fN|-N|-f) master=yes; shift ;;
     --) shift; break ;;
     *) shift ;;
@@ -29,12 +36,24 @@ if [ "$check" = yes ]; then
   [ -e "$ctl" ]
   exit $?
 fi
+if [ "$op" = forward ] || [ "$op" = cancel ]; then
+  [ -e "$ctl" ] || { echo "Control socket connect($ctl): No such file or directory" >&2; exit 255; }
+  touch "$ctl.forwards"
+  if [ "$op" = forward ]; then
+    grep -qxF "$spec" "$ctl.forwards" || echo "$spec" >> "$ctl.forwards"
+  else
+    grep -vxF "$spec" "$ctl.forwards" > "$ctl.forwards.tmp"
+    mv "$ctl.forwards.tmp" "$ctl.forwards"
+  fi
+  exit 0
+fi
 if [ "$master" = yes ]; then
   if [ -n "$FAKE_SSH_NEEDS_AUTH" ] && [ "$batch" = yes ]; then
     echo "user@host: Permission denied (publickey)." > "${log:-/dev/stderr}"
     exit 255
   fi
   : > "$ctl"
+  rm -f "$ctl.forwards"  # a new master holds no forwards
   exit 0
 fi
 [ -e "$ctl" ] || { echo "ssh: no master at $ctl" >&2; exit 255; }

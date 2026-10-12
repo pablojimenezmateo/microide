@@ -511,6 +511,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 OpenPromptSurface(action, kind, path, std::move(input));
               },
           .write_clipboard_text = [this](std::string_view text) { return WriteClipboardText(text); },
+          .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
           .write_primary_selection_text =
               [this](std::string_view text) { return WritePrimarySelectionText(text); },
           .reveal_path_in_file_explorer =

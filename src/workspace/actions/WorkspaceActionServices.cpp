@@ -250,6 +250,10 @@ void WorkspaceActionContext::OpenDeletePathPrompt(const std::filesystem::path& p
                                   PromptSurfaceState::Kind::Confirm, path, {});
 }
 
+bool WorkspaceActionContext::OpenExternalUrl(std::string_view url) const {
+  return operations_.open_external_url && operations_.open_external_url(url);
+}
+
 bool WorkspaceActionContext::WriteClipboardText(std::string_view text) const {
   // Zero-copy for the common in-budget case; only an over-budget export materializes a
   // clamped copy (TD-2026-07-17A-119).

@@ -208,7 +208,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteReconnect:
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteShowHostChanges:
-    case ActionId::RemoteClearHostChanges: {
+    case ActionId::RemoteClearHostChanges:
+    case ActionId::RemoteForwardPort:
+    case ActionId::RemoteUnforwardPort: {
       RemoteHostService* hosts = context_.RemoteHosts();
       if (hosts == nullptr) {
         return reject("Remote hosts are not available here");
@@ -296,6 +298,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           context_.Notify(NotificationService::Tone::Info, "Copied: " + *text);
           return DispatchResult::Handled;
         }
+        case ActionId::RemoteForwardPort:
+        case ActionId::RemoteUnforwardPort: {
+          const bool forward = id == ActionId::RemoteForwardPort;
+          const std::optional<int> port = args.empty() ? std::nullopt : util::ParseInt(args[0]);
+          if (!port.has_value() || *port < 1 || *port > 65535) {
+            return reject(forward ? "usage: remote-forward-port <port> [host]"
+                                  : "usage: remote-unforward-port <port> [host]");
+          }
+          // The host: as given, else the active remote project's, else the only one.
+          std::string host = args.size() > 1 ? args[1] : hosts->HostOfProject(context_.ProjectRoot());
+          if (host.empty()) {
+            host = hosts->SoleHost();
+          }
+          const auto port_number = static_cast<std::uint16_t>(*port);
+          if (host.empty() || !(forward ? hosts->ForwardPort(host, port_number)
+                                        : hosts->CancelForward(host, port_number))) {
+            return reject(host.empty() ? "Name the host: remote-" + std::string(forward ? "" : "un") +
+                                             "forward-port <port> <host>"
+                                       : "No remote host \"" + host + "\"");
+          }
+          return DispatchResult::Handled;
+        }
         case ActionId::RemoteShowHostChanges:
         case ActionId::RemoteClearHostChanges: {
           const std::filesystem::path root = context_.ProjectRoot();
@@ -318,6 +342,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           return reject("unreachable");
       }
     }
+    case ActionId::OpenUrl:
+      if (args.empty() || !context_.OpenExternalUrl(args[0])) {
+        return reject(args.empty() ? "usage: open-url <url>" : "Cannot open \"" + args[0] + "\"");
+      }
+      return DispatchResult::Handled;
     case ActionId::ShowOutput:
       if (args.empty()) {
         return reject("usage: show-output <channel-id>");

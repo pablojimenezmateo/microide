@@ -99,6 +99,52 @@ void TestOpenTerminalOnHostFromTheCommand() {
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          "the shell runs on the host:\n" + ScreenText(session));
 
+  // Forward a Port: the row says where it is and offers the browser and the
+  // address; the status bar counts it; Stop Forwarding takes it away again.
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 0"),
+         "a port out of range is refused");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 39218"),
+         "the forward is accepted (the only host)");
+  const std::string forward_key = "remote.forward." + target + ".39218";
+  const auto forward_row = [&]() -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == forward_key) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return forward_row() != nullptr;
+             },
+             std::chrono::seconds(15), std::chrono::milliseconds(5)),
+         "a row reports the forward");
+  {
+    const auto* row = forward_row();
+    Expect(row != nullptr && row->message.find("is available at localhost:") != std::string::npos &&
+               row->actions.size() == 2 && row->actions[0].label == "Open in Browser" &&
+               row->actions[0].args.size() == 1 && row->actions[0].args[0].rfind("http://localhost:", 0) == 0 &&
+               row->actions[1].label == "Copy Address",
+           "with the local address, Open in Browser and Copy Address: '" +
+               (row != nullptr ? row->message : std::string()) + "'");
+  }
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) ==
+             target + " · 1 port",
+         "the status bar counts it: '" +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-unforward-port 39218"),
+         "stop forwarding is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) ==
+                      target;
+             },
+             std::chrono::seconds(15), std::chrono::milliseconds(5)),
+         "and the count goes");
+
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnect");
   Expect(WaitUntil(
              [&] {

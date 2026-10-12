@@ -129,6 +129,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteShowHostChanges:   // rejects outside a remote project
     case ActionId::RemoteClearHostChanges:
+    case ActionId::RemoteForwardPort:       // rejects naming the host it cannot find
+    case ActionId::RemoteUnforwardPort:
+    case ActionId::OpenUrl:                 // rejects a URL the opener will not take
     case ActionId::CancelSaveWait:      // rejects when nothing with that id is waiting
     case ActionId::OpenHelpAbout:
     case ActionId::OpenKeyboardShortcuts:

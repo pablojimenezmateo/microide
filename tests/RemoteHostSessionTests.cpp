@@ -182,6 +182,41 @@ void TestLinkDeathReconnectsAndTerminalsResume() {
   terminal.Stop();
 }
 
+// Port forwarding rides the ControlMaster: a forward is `ssh -O forward -L`
+// against it, asking again for a forwarded port answers the same address, a new
+// master (the old one died with the link) gets every forward back, and a cancel
+// takes it off the master and out of the list.
+void TestPortForwardsRideTheMasterAndSurviveANewOne() {
+  FakeHost host;
+  StateLog log;
+  RemoteHostSession session(host.Config(), log.Listener());
+  session.Connect();
+  Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
+  std::string error;
+  const auto forward = session.ForwardPort(39217, &error);
+  Expect(forward.has_value() && forward->host_port == 39217 && forward->local_port != 0,
+         "the port is forwarded: " + error);
+  const std::filesystem::path held = session.control_path().string() + ".forwards";
+  const std::string spec = forward.has_value()
+                               ? "127.0.0.1:" + std::to_string(forward->local_port) + ":localhost:39217"
+                               : std::string();
+  Expect(ReadFile(held) == spec + "\n", "the master holds it: '" + ReadFile(held) + "'");
+  Expect(session.ForwardPort(39217, &error) == forward && ReadFile(held) == spec + "\n",
+         "asking again answers the same address and adds no second listener");
+
+  // The master dies with the link: the new one is given the forward again.
+  std::filesystem::remove(session.control_path());
+  session.connection()->client()->peer().Fail("simulated link death");
+  Expect(WaitUntil([&] { return log.Saw(State::Reconnecting); }, std::chrono::seconds(10)),
+         "the session reconnects");
+  Expect(WaitForState(session, State::Ready), "ready again: " + log.Error());
+  Expect(ReadFile(held) == spec + "\n", "the new master forwards it too: '" + ReadFile(held) + "'");
+
+  Expect(session.CancelForward(39217, &error), "cancel: " + error);
+  Expect(ReadFile(held).empty() && session.forwards().empty(), "and it is gone from both");
+  Expect(!session.CancelForward(39217, &error), "a port that is not forwarded is refused");
+}
+
 // A language server or debug adapter on the host is a KEPT process: the link
 // dying does not end it, input written during the outage is held and delivered
 // after the reconnect, and its output keeps flowing — then a Disconnect ends it
@@ -295,6 +330,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestLinkDeathReconnectsAndTerminalsResume);
   AddTest(tests, "RemoteHostSession/HostProcessSurvivesAReconnectAndEndsOnDisconnect",
           TestHostProcessSurvivesAReconnectAndEndsOnDisconnect);
+  AddTest(tests, "RemoteHostSession/PortForwardsRideTheMasterAndSurviveANewOne",
+          TestPortForwardsRideTheMasterAndSurviveANewOne);
   AddTest(tests, "RemoteHostSession/ABrokenServerCommandFailsFastWithAReason",
           TestABrokenServerCommandFailsFastWithAReason);
 #endif

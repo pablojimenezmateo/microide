@@ -117,6 +117,22 @@ class RemoteHostSession {
   // `microide-server stop` on the host (Remote: Stop Host Server). Blocking.
   bool StopServer(std::string* error);
 
+  // Port forwarding (VS Code's Ports view): `localhost:<local>` on this machine
+  // reaches `localhost:<host_port>` on the host, through the ssh ControlMaster
+  // (`ssh -O forward`), so nothing is opened on the host and nothing new is
+  // authenticated. The local port is the host's when it is free here, else one the
+  // kernel picks. Kept by the session and applied again whenever a new master comes
+  // up (a reconnect, a master that outlived ControlPersist). Blocking (one exec of
+  // the local ssh client): call off the UI thread.
+  struct PortForward {
+    std::uint16_t host_port = 0;
+    std::uint16_t local_port = 0;
+    friend bool operator==(const PortForward&, const PortForward&) = default;
+  };
+  std::optional<PortForward> ForwardPort(std::uint16_t host_port, std::string* error);
+  bool CancelForward(std::uint16_t host_port, std::string* error);
+  std::vector<PortForward> forwards() const;
+
  private:
   enum class Wake : std::uint8_t { None, Connect, Disconnect, LinkDied, Stop };
 
@@ -136,6 +152,10 @@ class RemoteHostSession {
   std::vector<std::string> MasterArgv(bool batch) const;
   std::vector<std::string> RemoteArgv(std::string command) const;
   std::string AttachCommand() const;
+  // `ssh -O <verb> -L 127.0.0.1:<local>:localhost:<host>` against the master.
+  bool ForwardControl(std::string_view verb, const PortForward& forward, std::string* error);
+  // After a master came up: every kept forward again (a fresh master has none).
+  void ReapplyForwards();
   std::string ServerCommand(std::string_view verb) const;
 
   // What a client's closed handler reaches the session through: a client can
@@ -156,6 +176,7 @@ class RemoteHostSession {
   std::condition_variable wake_;
   Wake pending_ = Wake::None;
   Status status_;
+  std::vector<PortForward> forwards_;  // guarded by mutex_
   std::thread thread_;
 };
 

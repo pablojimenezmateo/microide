@@ -13,7 +13,10 @@
 #include "util/TextFileIO.h"
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace microide::project::remote {
@@ -474,8 +477,124 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
     return false;
   }
   connection_->Replace(std::move(client));
+  ReapplyForwards();
   Report(State::Ready, "connected to " + config_.target.Display());
   return true;
+}
+
+namespace {
+
+// A local TCP port for a forward of `wanted`: `wanted` itself when nothing here
+// listens on it (the address a host program prints then works as printed), else
+// one the kernel picks. Probed by binding, the only answer that counts; the
+// window until ssh binds it is a race ssh reports as a failed forward.
+std::optional<std::uint16_t> FreeLocalPort(std::uint16_t wanted) {
+#if defined(__unix__) || defined(__APPLE__)
+  for (const std::uint16_t candidate : {wanted, std::uint16_t{0}}) {
+    const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+      return std::nullopt;
+    }
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(candidate);
+    socklen_t length = sizeof(address);
+    const bool bound = ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+                       ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0;
+    ::close(fd);
+    if (bound) {
+      return ntohs(address.sin_port);
+    }
+  }
+#else
+  (void)wanted;
+#endif
+  return std::nullopt;
+}
+
+}  // namespace
+
+bool RemoteHostSession::ForwardControl(std::string_view verb, const PortForward& forward,
+                                       std::string* error) {
+  std::vector<std::string> argv = SshArgv(/*batch=*/true);
+  argv.insert(argv.end(), {"-O", std::string(verb), "-L",
+                           "127.0.0.1:" + std::to_string(forward.local_port) + ":localhost:" +
+                               std::to_string(forward.host_port),
+                           "--", config_.target.host});
+  const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
+      argv, platform::SubprocessOptions{.capture_stdout = false, .timeout_ms = 10000});
+  if (!result.success() && error != nullptr) {
+    *error = result.stderr_text.empty() ? "ssh exited " + std::to_string(result.exit_code)
+                                        : LastLine(result.stderr_text);
+  }
+  return result.success();
+}
+
+std::optional<RemoteHostSession::PortForward> RemoteHostSession::ForwardPort(std::uint16_t host_port,
+                                                                             std::string* error) {
+  if (host_port == 0) {
+    *error = "no port";
+    return std::nullopt;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    for (const PortForward& kept : forwards_) {
+      if (kept.host_port == host_port) {
+        return kept;  // already forwarded: the same address again
+      }
+    }
+  }
+  if (!MasterAlive()) {
+    *error = "not connected to " + config_.target.Display();
+    return std::nullopt;
+  }
+  const std::optional<std::uint16_t> local = FreeLocalPort(host_port);
+  if (!local.has_value()) {
+    *error = "no free local port";
+    return std::nullopt;
+  }
+  const PortForward forward{.host_port = host_port, .local_port = *local};
+  if (!ForwardControl("forward", forward, error)) {
+    return std::nullopt;
+  }
+  std::lock_guard lock(mutex_);
+  forwards_.push_back(forward);
+  return forward;
+}
+
+bool RemoteHostSession::CancelForward(std::uint16_t host_port, std::string* error) {
+  PortForward forward;
+  {
+    std::lock_guard lock(mutex_);
+    const auto it = std::find_if(forwards_.begin(), forwards_.end(),
+                                 [&](const PortForward& kept) { return kept.host_port == host_port; });
+    if (it == forwards_.end()) {
+      *error = "port " + std::to_string(host_port) + " is not forwarded";
+      return false;
+    }
+    forward = *it;
+    forwards_.erase(it);
+  }
+  // Gone from the list whatever ssh says: a master that already died took the
+  // listener with it.
+  (void)ForwardControl("cancel", forward, error);
+  return true;
+}
+
+std::vector<RemoteHostSession::PortForward> RemoteHostSession::forwards() const {
+  std::lock_guard lock(mutex_);
+  return forwards_;
+}
+
+void RemoteHostSession::ReapplyForwards() {
+  for (const PortForward& forward : forwards()) {
+    // A master that survived (ControlPersist) still holds it: ssh's mux answers an
+    // identical forward with success and no second listener (checked against
+    // OpenSSH 9), so no cancel first — that would close the port for a moment.
+    std::string ignored;
+    (void)ForwardControl("forward", forward, &ignored);
+  }
 }
 
 bool RemoteHostSession::StopServer(std::string* error) {

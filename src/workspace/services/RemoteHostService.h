@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -9,7 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
+#include <utility>
 #include <vector>
 
 #include "plugin/PluginHost.h"
@@ -17,6 +18,7 @@
 #include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
 #include "util/MainThreadMailbox.h"
+#include "util/SerialWorkQueue.h"
 #include "workspace/services/NotificationService.h"
 #include "workspace/services/StatusBarService.h"
 
@@ -140,7 +142,15 @@ class RemoteHostService {
   // Remote: Show Host Server Log — fetched off the UI thread, shown in an output
   // channel (VS Code's "Remote - SSH" log). False when nothing connects to `host`.
   bool ShowLog(std::string_view host);
-  // "ssh" or "install": what the matching Copy button puts on the clipboard.
+  // Forward the host's localhost:<port> here (or stop): off the UI thread, the
+  // outcome a notification row — with Open in Browser and Copy Address on success.
+  // False when nothing connects to `host`.
+  bool ForwardPort(std::string_view host, std::uint16_t port);
+  bool CancelForward(std::string_view host, std::uint16_t port);
+  // The host of the remote project at `root`, or empty.
+  std::string HostOfProject(const std::filesystem::path& root) const;
+  // "ssh", "install", "linger", or "port:<host port>" (a forward's local address):
+  // what the matching Copy button puts on the clipboard.
   std::optional<std::string> CommandText(std::string_view host, std::string_view which) const;
   // Remote: Show Status.
   std::string StatusText() const;
@@ -183,6 +193,9 @@ class RemoteHostService {
   void PublishConflictRows(const std::filesystem::path& tree, Project& entry);
   // Any session to `host`: its terminal session, else a project's.
   const project::remote::RemoteHostSession* SessionFor(std::string_view host) const;
+  project::remote::RemoteHostSession* SessionFor(std::string_view host) {
+    return const_cast<project::remote::RemoteHostSession*>(std::as_const(*this).SessionFor(host));
+  }
   // The project and relative path a conflicted mirror path belongs to.
   std::pair<Project*, std::string> ConflictOwner(const std::filesystem::path& path);
   Host* Find(std::string_view host);
@@ -203,7 +216,10 @@ class RemoteHostService {
   std::map<std::filesystem::path, Project> projects_;
   std::vector<std::string> survival_warned_;  // hosts already warned
   std::filesystem::path fetching_copy_;  // the host-file copy being opened right now
-  std::vector<std::thread> workers_;  // Stop Host Server runs, joined on destruction
+  // Blocking host work off the UI thread — Stop Host Server, Show Log, port
+  // forwards — one at a time. Shut down (in-flight job finished, the rest dropped)
+  // before the sessions its jobs use go.
+  util::SerialWorkQueue work_;
   // Last: its queued closures name `this`, and it must drop them before the
   // sessions that post them are gone — sessions are destroyed explicitly first.
   util::MainThreadMailbox mailbox_;

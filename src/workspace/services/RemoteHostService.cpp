@@ -58,9 +58,7 @@ std::shared_ptr<const platform::ProcessLauncher> LocalLauncher() {
 RemoteHostService::RemoteHostService(Operations operations) : operations_(std::move(operations)) {}
 
 RemoteHostService::~RemoteHostService() {
-  for (std::thread& worker : workers_) {
-    worker.join();
-  }
+  work_.Shutdown();
   // Sessions next: their threads post into the mailbox until they are joined.
   projects_.clear();
   hosts_.clear();
@@ -768,7 +766,7 @@ bool RemoteHostService::StopServer(std::string_view host) {
   // the sessions it uses go.
   remote::RemoteHostSession* session = entry->session.get();
   const std::string key(host);
-  workers_.emplace_back([this, session, key]() {
+  work_.Post([this, session, key]() {
     std::string error;
     const bool stopped = session->StopServer(&error);
     mailbox_.Post([this, key, stopped, error]() {
@@ -779,6 +777,74 @@ bool RemoteHostService::StopServer(std::string_view host) {
                                : "Could not stop microide-server on " + key + ": " + error,
         });
       }
+    });
+  });
+  return true;
+}
+
+std::string RemoteHostService::HostOfProject(const std::filesystem::path& root) const {
+  const auto it = projects_.find(root);
+  return it == projects_.end() ? std::string() : it->second.project->record().host;
+}
+
+bool RemoteHostService::ForwardPort(std::string_view host, std::uint16_t port) {
+  remote::RemoteHostSession* session = SessionFor(host);
+  if (session == nullptr) {
+    return false;
+  }
+  const std::string key(host);
+  work_.Post([this, session, key, port]() {
+    std::string error;
+    const std::optional<remote::RemoteHostSession::PortForward> forward = session->ForwardPort(port, &error);
+    mailbox_.Post([this, key, port, forward, error]() {
+      if (!operations_.notify) {
+        return;
+      }
+      const std::string row_key = "remote.forward." + key + "." + std::to_string(port);
+      if (!forward.has_value()) {
+        operations_.notify(NotificationService::Request{
+            .tone = NotificationService::Tone::Error,
+            .key = row_key,
+            .message = "Could not forward port " + std::to_string(port) + " on " + key + ": " + error});
+        return;
+      }
+      const std::string address = "localhost:" + std::to_string(forward->local_port);
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Info,
+          .key = row_key,
+          .message = "Port " + std::to_string(port) + " on " + key + " is available at " + address,
+          .actions = {NotificationAction{.label = "Open in Browser", .id = ActionId::OpenUrl,
+                                         .args = {"http://" + address}},
+                      NotificationAction{.label = "Copy Address", .id = ActionId::RemoteCopyCommand,
+                                         .args = {key, "port:" + std::to_string(port)},
+                                         .keep_open = true}},
+      });
+      PublishStatusSegment();
+    });
+  });
+  return true;
+}
+
+bool RemoteHostService::CancelForward(std::string_view host, std::uint16_t port) {
+  remote::RemoteHostSession* session = SessionFor(host);
+  if (session == nullptr) {
+    return false;
+  }
+  const std::string key(host);
+  work_.Post([this, session, key, port]() {
+    std::string error;
+    const bool cancelled = session->CancelForward(port, &error);
+    mailbox_.Post([this, key, port, cancelled, error]() {
+      if (operations_.dismiss_notification) {
+        operations_.dismiss_notification("remote.forward." + key + "." + std::to_string(port));
+      }
+      if (operations_.notify) {
+        operations_.notify(NotificationService::Request{
+            .tone = cancelled ? NotificationService::Tone::Info : NotificationService::Tone::Warning,
+            .message = cancelled ? "Stopped forwarding port " + std::to_string(port) + " on " + key
+                                 : error});
+      }
+      PublishStatusSegment();
     });
   });
   return true;
@@ -805,7 +871,7 @@ bool RemoteHostService::ShowLog(std::string_view host) {
     return false;
   }
   const std::string key(host);
-  workers_.emplace_back([this, client, key]() {
+  work_.Post([this, client, key]() {
     std::string error;
     const std::optional<util::JsonValue> reply =
         client->Call(remote::method::kServerLog, util::JsonValue(util::JsonObject{}), &error);
@@ -838,8 +904,30 @@ std::optional<std::string> RemoteHostService::CommandText(std::string_view host,
   if (which == "linger") {
     return session->LingerCommandText();
   }
+  if (which.rfind("port:", 0) == 0) {
+    const std::optional<int> port = util::ParseInt(which.substr(5));
+    for (const remote::RemoteHostSession::PortForward& forward : session->forwards()) {
+      if (port.has_value() && forward.host_port == *port) {
+        return "localhost:" + std::to_string(forward.local_port);
+      }
+    }
+    return std::nullopt;
+  }
   return which == "install" ? session->InstallCommandText() : session->SshCommandText();
 }
+
+namespace {
+
+// ", ports 3000→localhost:3000 8080→localhost:41733" for Show Status.
+void AppendForwards(std::string& text, const remote::RemoteHostSession& session) {
+  const std::vector<remote::RemoteHostSession::PortForward> forwards = session.forwards();
+  for (std::size_t i = 0; i < forwards.size(); ++i) {
+    text += (i == 0 ? ", ports " : " ") + std::to_string(forwards[i].host_port) + "\u2192localhost:" +
+            std::to_string(forwards[i].local_port);
+  }
+}
+
+}  // namespace
 
 std::string RemoteHostService::StatusText() const {
   if (hosts_.empty() && projects_.empty()) {
@@ -859,6 +947,7 @@ std::string RemoteHostService::StatusText() const {
             std::to_string(sync.files) + " files (" + std::to_string(sync.absent) + " to fetch, " +
             std::to_string(sync.dirty) + " to push, " + std::to_string(sync.conflicts) +
             " conflicts), mirror " + HomeAbbreviatedPath(tree, home != nullptr ? home : "");
+    AppendForwards(text, entry.project->session());
   }
   for (const auto& [key, entry] : hosts_) {
     if (!text.empty()) {
@@ -868,6 +957,7 @@ std::string RemoteHostService::StatusText() const {
     if (!entry.status.error.empty()) {
       text += " — " + entry.status.error;
     }
+    AppendForwards(text, *entry.session);
   }
   return text;
 }
@@ -999,13 +1089,16 @@ void RemoteHostService::PublishStatusSegment() {
   }
   // Every connection the editor holds: host terminals' and remote projects'.
   std::vector<std::pair<std::string, State>> connections;
+  std::size_t ports = 0;
   for (const auto& [key, entry] : hosts_) {
     connections.emplace_back(key, entry.status.state);
+    ports += entry.session->forwards().size();
   }
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     if (!entry.closed) {
       connections.emplace_back(entry.project->record().host, entry.status.state);
+      ports += entry.project->session().forwards().size();
     }
   }
   if (connections.empty()) {
@@ -1043,7 +1136,8 @@ void RemoteHostService::PublishStatusSegment() {
   value.visible = true;
   value.text = (one_host ? worst->first : std::to_string(connections.size()) + " connections") +
                (state == State::Ready ? std::string()
-                                      : " · " + std::string(remote::RemoteHostSession::StateName(state)));
+                                      : " · " + std::string(remote::RemoteHostSession::StateName(state))) +
+               (ports == 0 ? std::string() : " · " + std::to_string(ports) + (ports == 1 ? " port" : " ports"));
   value.tooltip = "Remote: Show Status";
   value.command = "remote-status";
   value.tone = rank(state) >= 3   ? StatusBarSegmentTone::Error
