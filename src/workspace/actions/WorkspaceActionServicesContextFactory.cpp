@@ -491,6 +491,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .current_window_rect = [this]() { return CurrentWindowRect(); },
           .refresh_project_files = [this]() { RefreshProjectFiles(); },
           .reload_clean_open_buffers_from_disk = [this]() { ReloadCleanOpenBuffersFromDisk(); },
+          .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .dispatch_git_operation =
               [this](ActionId id, const std::vector<std::string>& args) {
                 return DispatchGitOperationAction(id, args);

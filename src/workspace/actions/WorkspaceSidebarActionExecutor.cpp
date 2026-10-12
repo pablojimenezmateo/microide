@@ -67,18 +67,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::TreeRefresh:
-      if (!context_.HasProjectRoot()) {
-        return reject("No active project");
-      }
-      context_.RefreshProjectFiles();
-      context_.ReloadCleanOpenBuffersFromDisk();
-      return DispatchResult::Handled;
     case ActionId::GitRefresh:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
       context_.RefreshProjectFiles();
       context_.ReloadCleanOpenBuffersFromDisk();
+      if (id == ActionId::GitRefresh) {
+        // The files' refresh asks git only while Source Control is showing, and a
+        // finished snapshot waiting to be consumed answers it instead: an
+        // explicit refresh must ask git again (the status bar reads it too).
+        context_.RequestGitRefresh();
+      }
       return DispatchResult::Handled;
     case ActionId::GitSwitchBranch:
     case ActionId::GitCreateBranch:

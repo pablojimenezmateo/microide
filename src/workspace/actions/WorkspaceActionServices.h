@@ -75,6 +75,8 @@ class WorkspaceActionContext {
     std::function<std::optional<SDL_FRect>()> current_window_rect;
     std::function<void()> refresh_project_files;
     std::function<void()> reload_clean_open_buffers_from_disk;
+    // Ask git again now, whatever view is showing (Git: Refresh).
+    std::function<void()> request_git_refresh;
     // Dispatch one git write action (switch/create/fetch/pull/push/publish/sync/
     // stash/stash-pop). Returns a rejection sentence on failure to start, or an
     // empty string when the operation was dispatched to the background executor.
@@ -377,6 +379,7 @@ class WorkspaceActionContext {
   void SetSidebarWidth(float width);
   void RefreshProjectFiles();
   void ReloadCleanOpenBuffersFromDisk();
+  void RequestGitRefresh();
   std::string DispatchGitOperation(ActionId id, const std::vector<std::string>& args);
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   // The selected row of whichever debug value surface (Variables / Watch) the pane

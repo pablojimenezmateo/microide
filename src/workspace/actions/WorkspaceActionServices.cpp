@@ -207,6 +207,12 @@ void WorkspaceActionContext::ReloadCleanOpenBuffersFromDisk() {
   operations_.reload_clean_open_buffers_from_disk();
 }
 
+void WorkspaceActionContext::RequestGitRefresh() {
+  if (operations_.request_git_refresh) {
+    operations_.request_git_refresh();
+  }
+}
+
 std::string WorkspaceActionContext::DispatchGitOperation(const ActionId id,
                                                          const std::vector<std::string>& args) {
   if (operations_.dispatch_git_operation == nullptr) {

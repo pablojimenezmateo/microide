@@ -57,6 +57,33 @@ void TestWorkspaceShellGitRefreshDuringInFlightRefreshPublishes() {
   Expect(!WorkspaceShellTestAccess::GitSidebarRefreshing(shell), "and the sidebar leaves refreshing");
 }
 
+// Git: Refresh asks git again whatever the sidebar shows. It used to refresh the
+// files and leave git to the Source Control view's own refresh, which runs only
+// while that view is showing — and a finished snapshot waiting to be consumed
+// answered it instead — so with the explorer up the status bar kept what git last
+// said (a remote project's "master [dirty]" after its link went down).
+void TestWorkspaceShellGitRefreshCommandAsksGitFromAnyView() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "one\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "git refresh fixture");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "open the project");
+  Expect(WaitUntil(
+             [&] {
+               WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+               WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+               return !WorkspaceShellTestAccess::GitSidebarRefreshing(shell);
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(5)),
+         "whatever the open started settles");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-refresh"), "git-refresh runs");
+  Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
+         "and asks git again with the explorer showing");
+}
+
 // The outgoing-base ref picker now runs its branch/commit git queries on the
 // background executor; drive the mailbox drain until it leaves the loading state.
 bool SettleComparePicker(WorkspaceShell& shell) {
@@ -1385,6 +1412,8 @@ void TestWorkspaceShellUiActionRejectionNotifies() {
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/GitRefreshCommandAsksGitFromAnyView",
+          TestWorkspaceShellGitRefreshCommandAsksGitFromAnyView);
   AddTest(tests, "WorkspaceShell/GitBranchActionsSwitchHead",
           TestWorkspaceShellGitBranchActionsSwitchHead);
   AddTest(tests, "WorkspaceShell/GitOperationFailuresAreReported",
