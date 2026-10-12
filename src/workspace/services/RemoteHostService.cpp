@@ -586,7 +586,36 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
     return false;  // the fetched copy itself, opening now: open it as it is
   }
   for (auto& [tree, entry] : projects_) {
-    (void)tree;
+    // A file of the project the host has moved on from (stale), or that has not
+    // arrived yet (absent): pull it now, on the interactive lane ahead of the
+    // backfill (§ 7.3). A stale one opens at once — callers jump to a line right
+    // after the open — and the clean buffer reloads when the host's bytes land; an
+    // absent one has nothing to open yet, so it opens when it arrives (offline, the
+    // pull fails at once and the open reports the missing file as before).
+    const std::string& tree_text = tree.native();
+    const std::string& path_text = path.native();
+    if (path_text.size() > tree_text.size() + 1 && path_text.compare(0, tree_text.size(), tree_text) == 0 &&
+        path_text[tree_text.size()] == '/') {
+      std::string relative = path.lexically_normal().generic_string().substr(tree_text.size() + 1);
+      using ContentState = remote::MirrorSyncEngine::ContentState;
+      const ContentState state = entry.project->engine().StateOf(relative);
+      if (state == ContentState::Stale) {
+        entry.project->engine().Prioritize({std::move(relative)});
+        return false;
+      }
+      if (state != ContentState::Absent) {
+        return false;
+      }
+      entry.project->engine().Prioritize(
+          {std::move(relative)}, [this, file = path.lexically_normal(), opened = std::move(opened)]() {
+            mailbox_.Post([this, file, opened]() {
+              fetching_copy_ = file;
+              opened(file);
+              fetching_copy_.clear();
+            });
+          });
+      return true;
+    }
     const std::optional<std::filesystem::path> host_path =
         entry.project->launcher()->HostPathOfCached(path);
     if (!host_path.has_value()) {

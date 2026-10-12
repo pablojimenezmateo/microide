@@ -81,8 +81,8 @@ void MirrorSyncEngine::RequestSync() {
   queue_.PostLatest("sync", [this]() { SyncNow(); });
 }
 
-void MirrorSyncEngine::Prioritize(std::vector<std::string> paths) {
-  queue_.PostFront([this, paths = std::move(paths)]() {
+void MirrorSyncEngine::Prioritize(std::vector<std::string> paths, std::function<void()> done) {
+  queue_.PostFront([this, paths = std::move(paths), done = std::move(done)]() mutable {
     std::vector<PullItem> items;
     {
       std::lock_guard lock(mutex_);
@@ -102,9 +102,18 @@ void MirrorSyncEngine::Prioritize(std::vector<std::string> paths) {
     // for small things: a 100 MiB transfer there would hold up terminal echo),
     // beside the backfill rather than behind it — the backfill pulls large files
     // last, so a tab opening one would otherwise wait for the whole tree.
+    // `done` once every pull has landed: the in-memory ones below, and each
+    // streamed one when its last byte is in.
+    auto remaining = std::make_shared<std::size_t>(1);
+    const auto finished = [remaining, done]() {
+      if (--*remaining == 0 && done) {
+        done();
+      }
+    };
     for (auto it = items.begin(); it != items.end();) {
       if (it->size > options_.large_file_bytes) {
-        StreamPriorityPull(std::move(it->path));
+        ++*remaining;
+        StreamPriorityPull(std::move(it->path), finished);
         it = items.erase(it);
       } else {
         ++it;
@@ -113,10 +122,11 @@ void MirrorSyncEngine::Prioritize(std::vector<std::string> paths) {
     if (!items.empty()) {
       PullNow(std::move(items), Lane::Interactive);
     }
+    finished();
   });
 }
 
-void MirrorSyncEngine::StreamPriorityPull(std::string path) {
+void MirrorSyncEngine::StreamPriorityPull(std::string path, std::function<void()> done) {
   std::error_code ignored;
   const std::filesystem::path incoming = store_.meta() / "incoming";
   std::filesystem::create_directories(incoming, ignored);
@@ -125,7 +135,7 @@ void MirrorSyncEngine::StreamPriorityPull(std::string path) {
   BeginExternalWork();
   workspace_.FetchObjectToFile(
       path, staging, Lane::Bulk,
-      [alive = alive_](RemoteWorkspace::FetchedObject object, std::string error) {
+      [alive = alive_, done = std::move(done)](RemoteWorkspace::FetchedObject object, std::string error) {
         std::lock_guard lock(alive->mutex);
         MirrorSyncEngine* engine = alive->engine;
         if (engine == nullptr) {
@@ -138,9 +148,13 @@ void MirrorSyncEngine::StreamPriorityPull(std::string path) {
           std::error_code ignored_error;
           std::filesystem::remove(object.staged_file, ignored_error);
         }
-        engine->queue_.PostFront([engine, objects = std::move(objects), error = std::move(error)]() mutable {
-          engine->ApplyFetched(std::move(objects), error);
-        });
+        engine->queue_.PostFront(
+            [engine, done, objects = std::move(objects), error = std::move(error)]() mutable {
+              engine->ApplyFetched(std::move(objects), error);
+              if (done) {
+                done();
+              }
+            });
         engine->EndExternalWork();
       });
 }

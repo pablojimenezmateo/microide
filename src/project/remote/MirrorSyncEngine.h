@@ -136,8 +136,9 @@ class MirrorSyncEngine {
   // connection's I/O thread outlives the engine, and must never call into a dead one.
   std::function<void(RemoteWorkspace::WatchDelta)> WatchSink();
   // Pull these paths now, on the interactive lane, ahead of any backfill (a tab
-  // opening an absent or stale file).
-  void Prioritize(std::vector<std::string> paths);
+  // opening an absent or stale file). `done`, when given, runs on the engine thread
+  // once they have landed — or failed to (offline: the local copy is what there is).
+  void Prioritize(std::vector<std::string> paths, std::function<void()> done = {});
   // tree/<path> was written locally (the mirror's write gate): journal it and push.
   void NotifyLocalWrite(std::string path);
   // Tree operations already applied to tree/ (the mirror's write gate): replay them
@@ -226,7 +227,7 @@ class MirrorSyncEngine {
   void EndExternalWork();
   void PullNow(std::vector<PullItem> items, Lane lane);
   // A large file a tab is waiting for: streamed to disk now, beside the backfill.
-  void StreamPriorityPull(std::string path);
+  void StreamPriorityPull(std::string path, std::function<void()> done);
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);
   // False when the host could not be reached: the op stays journaled for later.

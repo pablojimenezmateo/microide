@@ -10,6 +10,7 @@
 #include "util/ContentHash.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -320,8 +321,10 @@ void TestMirrorPrioritizedLargeFileStreamsAtOnce() {
   Expect(!std::filesystem::exists(session.Tree("logs/big.log")) &&
              session.engine->StateOf("logs/big.log") == ContentState::Absent,
          "the backfill did not pull it");
-  session.engine->Prioritize({"logs/big.log"});
+  std::atomic<bool> landed{false};
+  session.engine->Prioritize({"logs/big.log"}, [&] { landed = true; });
   session.engine->Flush();
+  Expect(landed.load(), "the caller hears when it has landed (an editor opens it then)");
   Expect(util::HashFileContent(session.Tree("logs/big.log")) == util::HashContent(big) &&
              session.engine->StateOf("logs/big.log") == ContentState::Current,
          "opening it streams it now: " + session.engine->status().error);
