@@ -1157,6 +1157,19 @@ void RemoteHostService::OnHostPorts(const std::string& host, const std::vector<s
   if (!watch.baseline.has_value()) {
     return;  // the subscription's own answer has not arrived yet
   }
+  // A port that stopped listening: its program ended. Seen again it is news again,
+  // and a forward made for it automatically goes with it, quietly (VS Code's).
+  for (auto it = watch.baseline->begin(); it != watch.baseline->end();) {
+    if (std::binary_search(ports.begin(), ports.end(), *it)) {
+      ++it;
+      continue;
+    }
+    const std::uint16_t gone = *it;
+    it = watch.baseline->erase(it);
+    if (watch.auto_forwarded.count(gone) > 0) {
+      (void)StopForward(host, gone, /*announce=*/false);
+    }
+  }
   const auto setting = operations_.setting ? operations_.setting("remote.auto_forward_ports")
                                            : std::optional<std::string>();
   const bool forward = SettingFlagEnabled(setting, true);
@@ -1169,24 +1182,33 @@ void RemoteHostService::OnHostPorts(const std::string& host, const std::vector<s
     if (known != forwards_.end() && known->second->Find(port).has_value()) {
       continue;
     }
-    (void)StartForward(host, port, std::nullopt);
+    if (StartForward(host, port, std::nullopt)) {
+      watch.auto_forwarded.insert(port);
+    }
   }
 }
 
 bool RemoteHostService::CancelForward(std::string_view host, std::uint16_t port) {
+  return StopForward(host, port, /*announce=*/true);
+}
+
+bool RemoteHostService::StopForward(std::string_view host, std::uint16_t port, bool announce) {
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return false;
   }
+  if (const auto watch = port_watches_.find(host); watch != port_watches_.end()) {
+    watch->second.auto_forwarded.erase(port);  // the user's call from here on
+  }
   const std::string key(host);
-  work_.Post([this, session, key, port]() {
+  work_.Post([this, session, key, port, announce]() {
     std::string error;
     const bool cancelled = session->CancelForward(port, &error);
-    mailbox_.Post([this, key, port, cancelled, error]() {
+    mailbox_.Post([this, key, port, cancelled, error, announce]() {
       if (operations_.dismiss_notification) {
         operations_.dismiss_notification("remote.forward." + key + "." + std::to_string(port));
       }
-      if (operations_.notify) {
+      if (announce && operations_.notify) {
         operations_.notify(NotificationService::Request{
             .tone = cancelled ? NotificationService::Tone::Info : NotificationService::Tone::Warning,
             .message = cancelled ? "Stopped forwarding port " + std::to_string(port) + " on " + key

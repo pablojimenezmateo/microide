@@ -1,5 +1,6 @@
 #include "project/remote/RemoteServerClient.h"
 
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <thread>
@@ -22,6 +23,7 @@ std::vector<std::uint16_t> PortsFromJson(const util::JsonValue& json) {
       }
     }
   }
+  std::sort(ports.begin(), ports.end());
   return ports;
 }
 

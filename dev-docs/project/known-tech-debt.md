@@ -467,9 +467,9 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   a port ≥ 1024 that was not listening at the first connect
   (`remote.auto_forward_ports`, default on). A port the user stopped forwarding is
   not forwarded again. `RemoteServer/PortsSubscribePushesANewListener`,
-  `RemoteHostService/APortThatStartsListeningIsForwarded`. Not done: VS Code also
-  drops an auto-forward when its port stops listening; here it stays until
-  `remote-unforward-port` or the disconnect.
+  `RemoteHostService/APortThatStartsListeningIsForwarded`. An automatic forward
+  goes, quietly, when its port stops listening (VS Code's), and a port seen again
+  after that is forwarded again.
 - ~~**The pull-on-open branches have no shell-level test**~~ — the absent branch
   has one since 2026-10-12: `remote.backfill_max_file_mib` keeps a file unfetched
   deterministically (`RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched`).

@@ -252,10 +252,16 @@ class RemoteHostService {
   void OnHostPorts(const std::string& host, const std::vector<std::uint16_t>& ports);
   struct PortWatch {
     std::weak_ptr<project::remote::RemoteServerClient> client;  // subscribed through
-    // Every port seen listening (from the first connect on): only a port not in
-    // it is forwarded, so a forward the user stopped is not made again.
+    // The ports listening now (from the first connect on): only a port not in it
+    // is forwarded, so a forward the user stopped is not made again while its
+    // program runs.
     std::optional<std::set<std::uint16_t>> baseline;
+    // Forwarded by this watch rather than by the user: dropped when the port stops
+    // listening.
+    std::set<std::uint16_t> auto_forwarded;
   };
+  // CancelForward, announced or not (an automatic forward's port went away).
+  bool StopForward(std::string_view host, std::uint16_t port, bool announce);
   void PublishHostChanges(const std::filesystem::path& tree, Project& entry,
                           const project::remote::MirrorSyncEngine::Status& sync);
 

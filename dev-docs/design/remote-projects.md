@@ -188,7 +188,7 @@ this document's § 7, what a user still missed:
 - **Project home status block** (§ 7.3): the link, the server and the sync as
   stages, a failure's reason with the reproducing ssh command, and Retry.
 - Left: see TD-2026-10-12-336 (a shell-level test of the stale pull-on-open
-  branch; an auto-forward is not dropped when its port stops listening).
+  branch).
 
 ## 1. The problem
 

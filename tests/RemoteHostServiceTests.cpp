@@ -434,7 +434,8 @@ void TestAPortThatStartsListeningIsForwarded() {
   Expect(fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
              ::listen(fd, 1) == 0 && ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
          "a dev server starts listening on the host");
-  const std::string row_key = "remote.forward." + target + "." + std::to_string(ntohs(address.sin_port));
+  const std::uint16_t port = ntohs(address.sin_port);
+  const std::string row_key = "remote.forward." + target + "." + std::to_string(port);
   const auto announced = [&] {
     for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
       if (row.key == row_key) {
@@ -451,6 +452,25 @@ void TestAPortThatStartsListeningIsForwarded() {
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "it is forwarded and announced");
   ::close(fd);
+  const auto row_present = [&] {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == row_key) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               // This port's forward only: on a shared machine another test's
+               // listener may be forwarded meanwhile.
+               return !row_present() && !WorkspaceShellTestAccess::RemoteHosts(shell)
+                                             .CommandText(target, "port:" + std::to_string(port))
+                                             .has_value();
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "when it stops listening the automatic forward goes, quietly");
   RemoveFakeMaster(target);
 }
 
