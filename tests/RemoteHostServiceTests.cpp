@@ -306,6 +306,16 @@ void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
   Expect(logs != nullptr && logs->pending && logs->is_directory, "the tree lists its folder, dimmed");
 
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "logs" / "big.log");
+  const std::string fetching_key = "remote.fetching." + (mirror / "logs" / "big.log").string();
+  const auto fetching_row = [&] {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == fetching_key) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(fetching_row(), "a row says it is being fetched");
   Expect(WaitUntil(
              [&] {
                Pump(shell);
@@ -313,6 +323,7 @@ void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "opening it fetches it, then opens it");
+  Expect(!fetching_row(), "and the row goes");
   Expect(ReadFile(mirror / "logs" / "big.log") == big, "with the host's bytes");
   Expect(WaitUntil(
              [&] {

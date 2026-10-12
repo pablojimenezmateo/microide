@@ -705,9 +705,21 @@ bool RemoteHostService::OpenWhenFetched(const std::filesystem::path& path,
       if (state != ContentState::Absent) {
         return false;
       }
+      // Nothing opens until it lands, so say so (§ 7.3's "fetching from host…").
+      const std::string key = "remote.fetching." + path.lexically_normal().string();
+      if (operations_.notify) {
+        operations_.notify(NotificationService::Request{
+            .tone = NotificationService::Tone::Info,
+            .key = key,
+            .message = "Fetching " + relative + " from " + entry.project->record().host + "…",
+            .sticky = true});
+      }
       entry.project->engine().Prioritize(
-          {std::move(relative)}, [this, file = path.lexically_normal(), opened = std::move(opened)]() {
-            mailbox_.Post([this, file, opened]() {
+          {std::move(relative)}, [this, key, file = path.lexically_normal(), opened = std::move(opened)]() {
+            mailbox_.Post([this, key, file, opened]() {
+              if (operations_.dismiss_notification) {
+                operations_.dismiss_notification(key);
+              }
               fetching_copy_ = file;
               opened(file);
               fetching_copy_.clear();
