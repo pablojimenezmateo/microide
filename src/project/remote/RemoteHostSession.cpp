@@ -805,15 +805,18 @@ void RemoteHostSession::Run() {
             (void)ForwardControl("cancel", forward, &ignored);
           }
         }
-        Report(State::Disconnected, "disconnected");
         const auto client = connection_->client();
         // Kept host processes are ended over the link while it still works,
         // rather than left running on the host for nobody.
         connection_->Replace(nullptr);
         if (client != nullptr) {
-          // Fail, not Stop: every host terminal is told the link is gone.
+          // Fail, not Stop: every host terminal is told the link is gone. The
+          // LinkDied this raises finds the session Disconnected and does nothing.
           client->peer().Fail("disconnected");
         }
+        // Last, so "disconnected" means it: a git refresh or a search started on
+        // the report used to find the old client still there and reach the host.
+        Report(State::Disconnected, "disconnected");
         break;
       }
       case Wake::LinkDied: {
