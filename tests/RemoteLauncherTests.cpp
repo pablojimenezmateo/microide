@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <thread>
 #include <memory>
 #include <string>
 #include <vector>
@@ -300,6 +301,33 @@ void TestGitRepositoryCreatedOnTheHostIsSeen() {
          "the host's git init is noticed");
 }
 
+// A command running when the link drops returns at once with the link's failure,
+// timeout or not: it used to sit out its whole timeout (60 s for git), holding the
+// worker that ran it.
+void TestRunReturnsWhenTheLinkDrops() {
+  TemporaryDirectory temp;
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = temp.path().string()}, &error),
+         "connects: " + error);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap({}, {}), {});
+  std::atomic<bool> returned{false};
+  platform::SubprocessResult result;
+  std::thread runner([&] {
+    result = launcher.Run({"sleep", "30"}, platform::SubprocessOptions{.timeout_ms = 60000});
+    returned = true;
+  });
+  Expect(WaitUntil([&] { return launcher.spawn_count() == 1; }, std::chrono::seconds(10)), "the command runs");
+  client->peer().Fail("simulated link death");
+  const bool prompt = WaitUntil([&] { return returned.load(); }, std::chrono::seconds(5));
+  runner.join();
+  Expect(prompt, "it returns when the link drops, not at its timeout");
+  Expect(!result.timed_out && !result.success() &&
+             result.stderr_text.find("connection to the host was lost") != std::string::npos,
+         "and says why: " + result.stderr_text);
+}
+
 #endif
 
 }  // namespace
@@ -313,6 +341,7 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteLauncher/ProjectSearchRunsOnTheHostOverTheContentSet",
           TestProjectSearchRunsOnTheHostOverTheContentSet);
   AddTest(tests, "RemoteLauncher/GitRepositoryCreatedOnTheHostIsSeen", TestGitRepositoryCreatedOnTheHostIsSeen);
+  AddTest(tests, "RemoteLauncher/RunReturnsWhenTheLinkDrops", TestRunReturnsWhenTheLinkDrops);
   AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",
           TestGitStatusIsPushedAndNeverStaleAfterAMutation);
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);

@@ -128,6 +128,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Disconnecting from a host no longer stalls git for a minute.** A git command
+  running when the link dropped waited out its whole 60 s timeout, and every other
+  background job of the project queued behind it; it now ends at once.
 - **Git: Refresh refreshes git from any view.** It used to ask git only while
   Source Control was showing, so with the explorer up the status bar kept git's
   last answer.

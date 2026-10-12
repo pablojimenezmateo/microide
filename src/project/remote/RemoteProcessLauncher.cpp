@@ -517,14 +517,18 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
 
   platform::SubprocessResult result;
   {
+    // In slices: a link that drops notifies nobody here, so the wait looks again
+    // every slice rather than sitting out the whole timeout — a git command running
+    // when the user disconnected held its worker (and the serial background queue
+    // behind it) for its full 60 s.
+    constexpr auto kSlice = std::chrono::milliseconds(200);
     std::unique_lock lock(collected->mutex);
     const auto finished = [&]() { return collected->status.has_value() || !client->connected(); };
-    if (options.timeout_ms > 0) {
-      if (!collected->done.wait_for(lock, std::chrono::milliseconds(options.timeout_ms), finished)) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(options.timeout_ms);
+    while (!collected->done.wait_for(lock, kSlice, finished)) {
+      if (options.timeout_ms > 0 && std::chrono::steady_clock::now() >= deadline) {
         result.timed_out = true;
-      }
-    } else {
-      while (!collected->done.wait_for(lock, std::chrono::milliseconds(500), finished)) {
+        break;
       }
     }
   }
@@ -532,7 +536,7 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
     client->Signal(spawned.handle, "KILL");
     std::unique_lock lock(collected->mutex);
     collected->done.wait_for(lock, std::chrono::seconds(5),
-                             [&]() { return collected->status.has_value(); });
+                             [&]() { return collected->status.has_value() || !client->connected(); });
   }
   {
     std::lock_guard lock(collected->mutex);
