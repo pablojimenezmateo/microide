@@ -751,6 +751,14 @@ void RemoteHostSession::Run() {
         break;
       }
       case Wake::Disconnect: {
+        // The master outlives a disconnect (ControlPersist), and with it every
+        // listener: a disconnected host must not stay reachable on a local port.
+        // The list is kept, so a reconnect forwards them again. Before the report,
+        // so "disconnected" means the ports are closed.
+        for (const PortForward& forward : forwards()) {
+          std::string ignored;
+          (void)ForwardControl("cancel", forward, &ignored);
+        }
         Report(State::Disconnected, "disconnected");
         const auto client = connection_->client();
         // Kept host processes are ended over the link while it still works,

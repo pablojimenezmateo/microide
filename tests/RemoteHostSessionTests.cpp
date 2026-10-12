@@ -212,6 +212,15 @@ void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   Expect(WaitForState(session, State::Ready), "ready again: " + log.Error());
   Expect(ReadFile(held) == spec + "\n", "the new master forwards it too: '" + ReadFile(held) + "'");
 
+  // A disconnect takes the listener down (the master outlives it); a reconnect
+  // brings it back.
+  session.Disconnect();
+  Expect(WaitForState(session, State::Disconnected), "disconnected");
+  Expect(ReadFile(held).empty(), "no listener while disconnected: '" + ReadFile(held) + "'");
+  session.Connect();
+  Expect(WaitForState(session, State::Ready), "ready once more: " + log.Error());
+  Expect(ReadFile(held) == spec + "\n", "and forwarded again: '" + ReadFile(held) + "'");
+
   Expect(session.CancelForward(39217, &error), "cancel: " + error);
   Expect(ReadFile(held).empty() && session.forwards().empty(), "and it is gone from both");
   Expect(!session.CancelForward(39217, &error), "a port that is not forwarded is refused");

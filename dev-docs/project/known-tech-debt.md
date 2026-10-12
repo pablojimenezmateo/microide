@@ -449,8 +449,8 @@ doc's "Phase 3, first slices"). Left, each a known gap:
 - **Port forwards are per session, not per host.** Sessions to the same target
   share one ControlMaster, so a forward made through a project's session is live
   for the host's terminals too, but only that session's list re-applies it after
-  a new master; closing the project drops it from the list while the master may
-  keep the listener until ControlPersist expires.
+  a new master. (A session's disconnect — including a closed project's — cancels
+  its own listeners first, so a disconnected host is not left reachable.)
 - **Automatic port detection.** VS Code forwards a port when a host process
   starts listening; here a forward is a command or a clicked link.
 - **The pull-on-open branches have no shell-level test**: nothing makes a file

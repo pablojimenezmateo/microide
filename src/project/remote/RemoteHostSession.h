@@ -130,8 +130,9 @@ class RemoteHostSession {
   // (`ssh -O forward`), so nothing is opened on the host and nothing new is
   // authenticated. The local port is the host's when it is free here, else one the
   // kernel picks. Kept by the session and applied again whenever a new master comes
-  // up (a reconnect, a master that outlived ControlPersist). Blocking (one exec of
-  // the local ssh client): call off the UI thread.
+  // up (a reconnect, a master that outlived ControlPersist); Disconnect takes the
+  // listeners down but keeps the list. Blocking (one exec of the local ssh
+  // client): call off the UI thread.
   struct PortForward {
     std::uint16_t host_port = 0;
     std::uint16_t local_port = 0;
