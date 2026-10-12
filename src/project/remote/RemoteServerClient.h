@@ -110,6 +110,9 @@ class RemoteServerClient {
   // that may change a repository is running through this client, and the push
   // was computed after the last one exited (its proc/exit `git_generation`).
   std::optional<project::GitStatusOutput> CurrentGitStatus(const std::string& host_root);
+  // What the latest git/status push said `host_root` is (a repository, its git
+  // directory): current where QueryGitMetadata's answer is only as old as the ask.
+  std::optional<GitMetadata> PushedGitMetadata(const std::string& host_root);
   // The host's listening ports (ports/subscribe): the set now, then `changed` on
   // the I/O thread with every new set. nullopt with *error when the host refused
   // (a server that predates it).
@@ -194,6 +197,7 @@ class RemoteServerClient {
   struct PushedGitStatus {
     project::GitStatusOutput status;
     std::uint64_t generation = 0;
+    std::optional<GitMetadata> metadata;
   };
   std::map<std::string, PushedGitStatus, std::less<>> pushed_git_;
   // search/results routes of in-flight RunSearch calls, by request id.

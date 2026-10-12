@@ -142,6 +142,9 @@ class RemoteServer {
   // (coalesced: one run however many changes asked).
   void ScheduleGitStatus(ServedTree& tree);
   void PublishGitStatus(ServedTree& tree);
+  // `repository` and `git_dir` of `root`: git/metadata's answer, and part of every
+  // git/status push so a repository created (or removed) on the host is seen.
+  static void AddGitMetadata(const std::string& root, util::JsonObject& into);
   // A watch batch: rebuild the manifest and send each primed subscriber its delta.
   void PublishWatchBatch(ServedTree& tree);
   std::shared_ptr<ServedTree> TreeOf(const Connection& connection);

@@ -273,12 +273,8 @@ void RemoteServer::InstallProcessHandlers(Connection& connection) {
       connection.peer.ReplyError(id, remote::kErrorInvalidParams, "root must be an absolute path");
       return;
     }
-    const project::GitMetadataSource& local = project::LocalGitMetadataSource();
     util::JsonObject result;
-    result["repository"] =
-        util::JsonValue(local.Availability(root.AsString()) == project::GitAvailability::Repository);
-    const auto git_dir = local.ReadableGitDirectory(root.AsString());
-    result["git_dir"] = util::JsonValue(git_dir.has_value() ? git_dir->string() : std::string());
+    AddGitMetadata(root.AsString(), result);
     connection.peer.Reply(id, util::JsonValue(std::move(result)));
   });
   peer.OnRequest("proc/attach", [this, &connection](std::uint64_t id, const util::JsonValue& params) {

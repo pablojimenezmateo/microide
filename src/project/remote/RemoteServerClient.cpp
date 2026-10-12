@@ -162,6 +162,11 @@ void RemoteServerClient::InstallRouting() {
       return;  // untrusted: a malformed push is dropped, and git runs instead
     }
     std::shared_ptr<std::function<void(const std::string&)>> handler;
+    std::optional<GitMetadata> metadata;
+    if (params["repository"].IsBool()) {
+      metadata = GitMetadata{.repository = params["repository"].AsBool(false),
+                             .git_dir = params["git_dir"].AsString()};
+    }
     {
       std::lock_guard lock(mutex_);
       const auto it = pushed_git_.find(root.AsString());
@@ -170,6 +175,9 @@ void RemoteServerClient::InstallRouting() {
           return;  // nothing held to vouch for
         }
         it->second.generation = static_cast<std::uint64_t>(generation.AsInt());
+        if (metadata.has_value()) {
+          it->second.metadata = std::move(metadata);
+        }
       } else {
         PushedGitStatus& entry =
             it != pushed_git_.end() ? it->second : pushed_git_[root.AsString()];
@@ -178,6 +186,9 @@ void RemoteServerClient::InstallRouting() {
             .output = params["output"].AsString(),
             .truncated = params["truncated"].AsBool(false)};
         entry.generation = static_cast<std::uint64_t>(generation.AsInt());
+        if (metadata.has_value()) {
+          entry.metadata = std::move(metadata);
+        }
       }
       handler = git_status_handler_;
     }
@@ -501,6 +512,13 @@ bool RemoteServerClient::SubscribeGitStatus(std::function<void(const std::string
     return false;
   }
   return true;
+}
+
+std::optional<RemoteServerClient::GitMetadata> RemoteServerClient::PushedGitMetadata(
+    const std::string& host_root) {
+  std::lock_guard lock(mutex_);
+  const auto it = pushed_git_.find(host_root);
+  return it != pushed_git_.end() ? it->second.metadata : std::nullopt;
 }
 
 std::optional<std::vector<std::uint16_t>> RemoteServerClient::SubscribePorts(PortsHandler changed,

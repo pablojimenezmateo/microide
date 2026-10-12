@@ -298,6 +298,13 @@ void RemoteServer::ScheduleGitStatus(ServedTree& tree) {
   tree.queue.PostLatest("git", [this, raw]() { PublishGitStatus(*raw); });
 }
 
+void RemoteServer::AddGitMetadata(const std::string& root, util::JsonObject& into) {
+  const project::GitMetadataSource& local = project::LocalGitMetadataSource();
+  into["repository"] = util::JsonValue(local.Availability(root) == project::GitAvailability::Repository);
+  const auto git_dir = local.ReadableGitDirectory(root);
+  into["git_dir"] = util::JsonValue(git_dir.has_value() ? git_dir->string() : std::string());
+}
+
 void RemoteServer::PublishGitStatus(ServedTree& tree) {
   if (tree.closing.load()) {
     return;
@@ -322,6 +329,7 @@ void RemoteServer::PublishGitStatus(ServedTree& tree) {
   util::JsonObject params;
   params["root"] = util::JsonValue(tree.tree.root().string());
   params["generation"] = util::JsonValue(static_cast<std::int64_t>(generation));
+  AddGitMetadata(tree.tree.root().string(), params);
   const bool unchanged = tree.git_last_pushed.has_value() &&
                          tree.git_last_pushed->exit_code == result.exit_code &&
                          tree.git_last_pushed->truncated == result.truncated &&

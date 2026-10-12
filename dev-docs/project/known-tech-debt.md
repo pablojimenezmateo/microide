@@ -655,8 +655,12 @@ silent one:
   a git process carries the server's `git_generation`, and only a push computed at
   or after the latest one counts (a status a git exit overlapped is re-run, not
   pushed). `RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation`. Left: the
-  outgoing-files diff of a full refresh still spawns once, and `git/metadata` is
-  still asked (once per root, cached) rather than pushed.
+  outgoing-files diff of a full refresh still spawns once. ~~`git/metadata` is
+  still asked (once per root, cached) rather than pushed~~ — fixed 2026-10-12: every
+  `git/status` push carries `repository` and `git_dir`, and the launcher prefers it
+  to its cache, which had held the first answer forever: a `git init` on the host
+  after connecting stayed "no source control" until a restart
+  (`RemoteLauncher/GitRepositoryCreatedOnTheHostIsSeen`).
 - ~~Host-side `search/run`~~ — done 2026-10-09: the search core is
   `project::RunProjectSearch` (a sink, not the service's internals), the server
   runs it on its own two workers over `WorkspaceTree::SearchPaths` (the content

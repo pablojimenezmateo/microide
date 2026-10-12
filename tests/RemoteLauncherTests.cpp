@@ -274,6 +274,32 @@ void TestOverARealSshLink() {
   cat.Shutdown(1000);
 }
 
+// A repository created on the host after connecting (`git init` in a host
+// terminal) is seen: the push says what the root is, and it replaces the answer
+// the launcher asked for and held.
+void TestGitRepositoryCreatedOnTheHostIsSeen() {
+  TemporaryDirectory temp;
+  const std::filesystem::path local = temp.path() / "mirror";
+  const std::filesystem::path host = temp.path() / "host";
+  std::filesystem::create_directories(local);
+  WriteFile(host / "a.txt", "one\n");
+
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = host.string()}, &error),
+         "connects: " + error);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host), {});
+  Expect(client->SubscribeGitStatus([](const std::string&) {}, &error), "git status is subscribed: " + error);
+  Expect(WaitUntil([&] { return launcher.Availability(local) == project::GitAvailability::NotARepository; },
+                   std::chrono::seconds(10)),
+         "not a repository yet");
+  InitializeGitRepo(host);
+  Expect(WaitUntil([&] { return launcher.Availability(local) == project::GitAvailability::Repository; },
+                   std::chrono::seconds(20)),
+         "the host's git init is noticed");
+}
+
 #endif
 
 }  // namespace
@@ -286,6 +312,7 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteLauncher/GitMetadataComesFromTheHost", TestGitMetadataComesFromTheHost);
   AddTest(tests, "RemoteLauncher/ProjectSearchRunsOnTheHostOverTheContentSet",
           TestProjectSearchRunsOnTheHostOverTheContentSet);
+  AddTest(tests, "RemoteLauncher/GitRepositoryCreatedOnTheHostIsSeen", TestGitRepositoryCreatedOnTheHostIsSeen);
   AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",
           TestGitStatusIsPushedAndNeverStaleAfterAMutation);
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);

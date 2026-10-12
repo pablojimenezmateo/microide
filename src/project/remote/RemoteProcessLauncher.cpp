@@ -590,13 +590,22 @@ std::optional<RemoteServerClient::GitMetadata> RemoteProcessLauncher::Metadata(
   if (!host_root.has_value()) {
     return std::nullopt;
   }
+  const std::shared_ptr<RemoteServerClient> client = connection_->client();
+  // The host pushes what the root is with every git status (a `git init` there,
+  // a repository removed): newer than any answer held here.
+  if (client != nullptr) {
+    if (std::optional<RemoteServerClient::GitMetadata> pushed = client->PushedGitMetadata(host_root->string())) {
+      std::lock_guard lock(mutex_);
+      metadata_[*host_root] = *pushed;
+      return pushed;
+    }
+  }
   {
     std::lock_guard lock(mutex_);
     if (const auto cached = metadata_.find(*host_root); cached != metadata_.end()) {
       return cached->second;
     }
   }
-  const std::shared_ptr<RemoteServerClient> client = connection_->client();
   if (client == nullptr || !client->connected()) {
     return std::nullopt;
   }
