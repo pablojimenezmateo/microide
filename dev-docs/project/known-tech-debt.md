@@ -437,9 +437,14 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   file index's visit (quick-open) and the directory tree merge them in, dimmed in
   the tree. `DirectoryTree/ListsPendingPaths`, `FileIndex/VisitsPendingPaths`,
   `MirrorSyncEngine/ListsWhatItHasNotFetched`.
-- **No remote status block on the project home** (§ 7.3): the stages (connected,
-  server version, syncing N/M) with Retry and the reproduce command are spread
-  over the notification row and the status segment.
+- ~~**No remote status block on the project home** (§ 7.3)~~ Fixed 2026-10-12:
+  `RemoteHostService::StatusBlock` maps the session and sync state to stages (the
+  link, the server, the sync — each as far as it got), a failure's reason with the
+  ssh command that reproduces it, and Retry; it reaches the project state through
+  `project_status_changed` and the home draws it above its panels
+  (`WelcomeLayout::remote_block`, `WelcomeHitRegion::Kind::RemoteRetry`). The
+  server's version is not shown: the hello's answer is not kept anywhere the
+  block could read it.
 - ~~**A conflict is settled two-way.**~~ Fixed 2026-10-12: the conflict row's
   **Merge** opens the merge editor on the base (from `meta/objects`), the host's
   current bytes and the mirror's file, seeded with the merge (the host's clean

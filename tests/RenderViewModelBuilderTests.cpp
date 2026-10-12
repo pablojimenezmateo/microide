@@ -819,6 +819,39 @@ void TestComputeWelcomeLayoutProducesHitRegions() {
     }
     Expect(recent_file_regions == 2, "one hit region per recent file");
     Expect(saw_new && saw_open && saw_find, "ProjectHome exposes new/open/find buttons");
+    Expect(layout.remote_block.h == 0.0f, "a local project has no remote status block");
+  }
+
+  // A remote project's home: the status block sits between the header and the
+  // panels, with Retry inside it, and pushes everything else below it.
+  {
+    editor::WelcomeViewModel vm;
+    vm.kind = editor::WelcomeKind::ProjectHome;
+    const editor::WelcomeLayout local = editor::ComputeWelcomeLayout(rect, vm, 14.0f);
+    vm.remote = editor::WelcomeRemoteStatus{
+        .heading = "box:/srv",
+        .stages = {{.text = "not connected", .state = editor::WelcomeStageState::Failed}},
+        .detail = "ssh exited 255 — try: ssh box",
+        .host = "box",
+        .retry = true,
+    };
+    const editor::WelcomeLayout layout = editor::ComputeWelcomeLayout(rect, vm, 14.0f);
+    Expect(layout.remote_block.h > 0.0f && layout.remote_block.y >= layout.header.y + layout.header.h,
+           "the block is under the header");
+    Expect(layout.recents_panel.y >= layout.remote_block.y + layout.remote_block.h &&
+               layout.recents_panel.y > local.recents_panel.y,
+           "the panels move down under it");
+    std::size_t retries = 0;
+    for (const editor::WelcomeHitRegion& region : layout.hit_regions) {
+      if (region.kind == editor::WelcomeHitRegion::Kind::RemoteRetry) {
+        ++retries;
+        Expect(region.rect.y >= layout.remote_block.y &&
+                   region.rect.y + region.rect.h <= layout.remote_block.y + layout.remote_block.h,
+               "Retry is inside the block");
+      }
+      Expect(within_card(layout, region), "hit regions should stay inside the welcome card");
+    }
+    Expect(retries == 1, "one Retry");
   }
 }
 

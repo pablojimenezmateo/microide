@@ -44,9 +44,13 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                     project_root, restore_persistence, log_feedback, activate_restored_tab, resolved);
                 if (initialized && remote_project) {
                   // Reported before this state had its root: what the sync has not
-                  // fetched yet is listed from the start.
+                  // fetched yet is listed, and the connection shown, from the start.
+                  RemoteHostService& hosts = MakeRemoteHostService();
                   context_.current_project_state.SetPendingPaths(
-                      MakeRemoteHostService().PendingPathsOf(context_.current_project_state.root));
+                      hosts.PendingPathsOf(context_.current_project_state.root));
+                  context_.current_project_state.remote_status =
+                      hosts.ProjectStatusOf(context_.current_project_state.root);
+                  ++context_.current_project_state.remote_status_revision;
                 }
                 return initialized;
               },

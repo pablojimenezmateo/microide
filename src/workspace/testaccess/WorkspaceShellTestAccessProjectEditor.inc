@@ -1048,6 +1048,10 @@
   static std::uint64_t ProjectFileIndexVersion(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.file_index.version();
   }
+  // A remote project's home status block, as the home would draw it.
+  static const editor::WelcomeRemoteStatus& ProjectRemoteStatus(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.remote_status;
+  }
   // What quick-open lists: the index's paths, pending ones included.
   static std::vector<std::string> ProjectFinderPaths(const WorkspaceShell& shell) {
     std::vector<std::string> paths;

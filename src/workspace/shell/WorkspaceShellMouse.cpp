@@ -594,6 +594,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           case editor::WelcomeHitRegion::Kind::FindInProject:
             run_action(ActionId::ProjectSearch);
             break;
+          case editor::WelcomeHitRegion::Kind::RemoteRetry:
+            ActionCoordinator(MakeActionContext())
+                .Execute(ActionId::RemoteReconnect, {welcome_model->remote.host}, ActionSource::Menu);
+            break;
         }
         EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
         return true;
@@ -621,6 +625,7 @@ thread_local struct WelcomeProbeLayoutCache {
   bool valid = false;
   std::uint64_t recents_instance = 0;
   std::uint64_t recents_revision = 0;
+  std::uint64_t remote_revision = 0;
   std::filesystem::path root;
   SDL_FRect surface{};
   float line_height = 0.0f;
@@ -655,11 +660,13 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
   WelcomeProbeLayoutCache& cache = g_welcome_probe_layout_cache;
   if (!cache.valid || cache.recents_instance != recents_service_.instance_id() ||
       cache.recents_revision != recents_service_.revision() ||
+      cache.remote_revision != context_.current_project_state.remote_status_revision ||
       cache.root != context_.current_project_state.root ||
       !SameRect(cache.surface, layout->editor_surface) || cache.line_height != line_height) {
     cache.valid = true;
     cache.recents_instance = recents_service_.instance_id();
     cache.recents_revision = recents_service_.revision();
+    cache.remote_revision = context_.current_project_state.remote_status_revision;
     cache.root = context_.current_project_state.root;
     cache.surface = layout->editor_surface;
     cache.line_height = line_height;

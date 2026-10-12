@@ -24,6 +24,25 @@ struct WelcomeRecent {
   std::filesystem::path path;
 };
 
+// A remote project's connection, on its home (remote-projects.md § 7.3): one entry
+// per stage — the link, the server, the sync — each marked with how it stands.
+enum class WelcomeStageState { Done, Active, Attention, Failed };
+struct WelcomeRemoteStage {
+  std::string text;
+  WelcomeStageState state = WelcomeStageState::Active;
+  friend bool operator==(const WelcomeRemoteStage&, const WelcomeRemoteStage&) = default;
+};
+struct WelcomeRemoteStatus {
+  std::string heading;  // `host:/path`
+  std::vector<WelcomeRemoteStage> stages;
+  // A failed stage's reason and the command that reproduces it in a terminal.
+  std::string detail;
+  std::string host;     // what Retry reconnects
+  bool retry = false;   // offer Retry
+  bool empty() const { return stages.empty(); }
+  friend bool operator==(const WelcomeRemoteStatus&, const WelcomeRemoteStatus&) = default;
+};
+
 // The welcome surface renders one of two layouts depending on whether a project is
 // open. NoProject is the cold-start home (open a folder / recent projects); ProjectHome
 // is shown when a project is open but its focused editor group has no tab (recent files
@@ -52,6 +71,9 @@ struct WelcomeViewModel {
   std::string open_file_label;
   std::string find_in_project_label;
   std::string empty_recent_files_label;
+  // A remote project's connection, above the panels; empty for a local one.
+  WelcomeRemoteStatus remote;
+  std::string retry_label;
   // Shared right column.
   std::string shortcuts_heading;
   std::vector<WelcomeRecent> recent_projects;  // NoProject
@@ -62,7 +84,7 @@ struct WelcomeViewModel {
 // An interactive region on the welcome surface, produced by ComputeWelcomeLayout and
 // shared by the renderer (to draw it) and the shell (to hit-test clicks / hover).
 struct WelcomeHitRegion {
-  enum class Kind { RecentProject, OpenFolder, RecentFile, NewFile, OpenFile, FindInProject };
+  enum class Kind { RecentProject, OpenFolder, RecentFile, NewFile, OpenFile, FindInProject, RemoteRetry };
   SDL_FRect rect{};
   Kind kind = Kind::OpenFolder;
   std::size_t recent_index = 0;  // valid when kind == RecentProject or RecentFile
@@ -74,6 +96,9 @@ struct WelcomeLayout {
   SDL_FRect recents_panel{};
   SDL_FRect shortcuts_panel{};
   SDL_FRect open_folder_rect{};
+  // The remote status block (WelcomeViewModel::remote), between the header and the
+  // panels; zero-sized for a local project.
+  SDL_FRect remote_block{};
   // Y at which recent-project rows (or the empty-state caption) begin. The
   // renderer draws the empty state here so it can never collide with the
   // open-folder button, which now owns a dedicated slot above this point.

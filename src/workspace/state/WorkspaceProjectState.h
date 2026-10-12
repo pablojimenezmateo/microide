@@ -19,6 +19,7 @@
 #include "editor/PluginSurfaceStore.h"
 #include "editor/SingleLineEditor.h"
 #include "editor/TextViewport.h"
+#include "editor/WelcomeView.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/registries/WorkspaceFileIconRegistry.h"
@@ -836,6 +837,10 @@ struct ProjectWorkspaceState {
   mutable FileIconRenderCache file_icon_cache;
   project::FileIndex file_index;
   project::FileFinder file_finder;
+  // A remote project's connection, for its home's status block (§ 7.3); empty for
+  // a local project. The revision moves with every change (the home's memo key).
+  editor::WelcomeRemoteStatus remote_status;
+  std::uint64_t remote_status_revision = 0;
   // Files the project lists that are not on disk yet (a remote mirror's first
   // sync): the tree shows them dimmed and quick-open finds them.
   void SetPendingPaths(project::SharedPendingPaths pending) {

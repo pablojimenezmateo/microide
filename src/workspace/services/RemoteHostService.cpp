@@ -347,6 +347,14 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   }
   PublishConflictRows(tree, entry);
   PublishHostChanges(tree, entry, sync);
+  if (editor::WelcomeRemoteStatus block = StatusBlock(record.host, record.host_root, status, sync,
+                                                             project.session().SshCommandText());
+      block != entry.status_block) {
+    entry.status_block = std::move(block);
+    if (operations_.project_status_changed) {
+      operations_.project_status_changed(tree, entry.status_block);
+    }
+  }
   if (sync.pending_revision != entry.pending_revision) {
     entry.pending_revision = sync.pending_revision;
     if (operations_.pending_paths_changed) {
@@ -392,6 +400,71 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
 bool RemoteHostService::IsRemoteProject(const std::filesystem::path& root) const {
   const auto it = projects_.find(root);
   return it != projects_.end() && !it->second.closed;
+}
+
+editor::WelcomeRemoteStatus RemoteHostService::ProjectStatusOf(const std::filesystem::path& root) const {
+  const auto it = projects_.find(root);
+  return it != projects_.end() ? it->second.status_block : editor::WelcomeRemoteStatus{};
+}
+
+editor::WelcomeRemoteStatus RemoteHostService::StatusBlock(std::string_view host, std::string_view host_root,
+                                                           const remote::RemoteHostSession::Status& state,
+                                                           const remote::MirrorSyncEngine::Status& sync,
+                                                           std::string_view command) {
+  using Stage = editor::WelcomeStageState;
+  editor::WelcomeRemoteStatus block;
+  block.heading = std::string(host) + ":" + std::string(host_root);
+  block.host = std::string(host);
+  const auto stage = [&](std::string text, Stage how) {
+    block.stages.push_back(editor::WelcomeRemoteStage{.text = std::move(text), .state = how});
+  };
+  switch (state.state) {
+    case State::Connecting:
+      stage("connecting to " + block.host, Stage::Active);
+      return block;
+    case State::NeedsAuth:
+      stage("sign in to " + block.host + " in the terminal below", Stage::Attention);
+      return block;
+    case State::Reconnecting:
+      stage("reconnecting", Stage::Attention);
+      block.detail = "The mirror stays editable; saves are queued.";
+      return block;
+    case State::Offline:
+    case State::Disconnected:
+      if (state.error.empty()) {
+        stage("disconnected", Stage::Attention);
+      } else {
+        stage("not connected", Stage::Failed);
+        block.detail = state.error + " — try: " + std::string(command);
+      }
+      block.retry = true;
+      return block;
+    case State::StartingServer:
+    case State::Installing:
+      stage("connected", Stage::Done);
+      stage(state.state == State::Installing ? "installing the server" : "starting the server", Stage::Active);
+      return block;
+    case State::Ready:
+      break;
+  }
+  stage("connected", Stage::Done);
+  stage("server running", Stage::Done);
+  if (!sync.error.empty()) {
+    stage("sync failed", Stage::Failed);
+    block.detail = sync.error;
+  } else if (sync.held_deletes > 0) {
+    stage(std::to_string(sync.held_deletes) + " deletes held", Stage::Attention);
+  } else if (!sync.synced_once) {
+    stage("syncing " + std::to_string(sync.files - std::min(sync.absent, sync.files)) + " / " +
+              std::to_string(sync.files) + " files",
+          Stage::Active);
+  } else {
+    stage("synced " + std::to_string(sync.files) + " files" +
+              (sync.dirty > 0 ? " · " + std::to_string(sync.dirty) + " unsent" : std::string()) +
+              (sync.conflicts > 0 ? " · " + std::to_string(sync.conflicts) + " in conflict" : std::string()),
+          sync.conflicts > 0 ? Stage::Attention : Stage::Done);
+  }
+  return block;
 }
 
 project::SharedPendingPaths RemoteHostService::PendingPathsOf(const std::filesystem::path& root) const {

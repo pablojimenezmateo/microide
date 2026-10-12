@@ -91,6 +91,7 @@ thread_local struct WelcomeViewCache {
   bool valid = false;
   std::uint64_t recents_instance = 0;
   std::uint64_t recents_revision = 0;
+  std::uint64_t remote_revision = 0;
   std::filesystem::path root;
   editor::WelcomeViewModel model;
 } g_welcome_view_cache;
@@ -1861,9 +1862,10 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
   const std::filesystem::path& cache_root = context_.current_project_state.root;
   const std::uint64_t recents_instance = recents.instance_id();
   const std::uint64_t recents_revision = recents.revision();
+  const std::uint64_t remote_revision = context_.current_project_state.remote_status_revision;
   if (g_welcome_view_cache.valid && g_welcome_view_cache.recents_instance == recents_instance &&
       g_welcome_view_cache.recents_revision == recents_revision &&
-      g_welcome_view_cache.root == cache_root) {
+      g_welcome_view_cache.remote_revision == remote_revision && g_welcome_view_cache.root == cache_root) {
     ++g_welcome_view_hits;
     return g_welcome_view_cache.model;
   }
@@ -1871,6 +1873,7 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
   g_welcome_view_cache.valid = true;
   g_welcome_view_cache.recents_instance = recents_instance;
   g_welcome_view_cache.recents_revision = recents_revision;
+  g_welcome_view_cache.remote_revision = remote_revision;
   g_welcome_view_cache.root = cache_root;
   editor::WelcomeViewModel& vm = g_welcome_view_cache.model;
   vm = editor::WelcomeViewModel{};
@@ -1923,6 +1926,8 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
   vm.find_in_project_label = LabelWithChord("Find in Project…", ActionId::ProjectSearch);
   vm.recent_files =
       BuildRecentRows(recents.ExistingRecentFilesFor(root, editor::kWelcomeRecentFileLimit));
+  vm.remote = context_.current_project_state.remote_status;
+  vm.retry_label = "Retry";
   return vm;
 }
 

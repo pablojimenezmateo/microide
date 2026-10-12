@@ -107,6 +107,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
   mirrored like the rest of the tree instead of arriving as an empty directory.
 - The remote status segment shows a first sync's progress (`build-box · 1204/4258`)
   and saves waiting for the host (`· 3 unsent`).
+- **A remote project's home shows its connection**: connected, the server
+  running, the sync's progress (or what failed, the ssh command that reproduces
+  it, and **Retry**).
 - **Ports are forwarded automatically.** A program on a remote host that starts
   listening (a dev server, a notebook) is forwarded to the same port here when it
   is free, with a row saying where it is (**Open in Browser**, **Copy Address**).

@@ -157,6 +157,40 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
   const float recents_caption_y = layout.recents_rows_top - line_height - 10.0f;
 
   if (model.kind == WelcomeKind::ProjectHome) {
+    if (!model.remote.empty()) {
+      // The remote status block: `host:/path`, then each stage behind a square in
+      // its state's colour, then a failure's detail and Retry.
+      const SDL_FRect& block = layout.remote_block;
+      const float row = line_height + 6.0f;
+      text_renderer.DrawString(renderer, block.x, block.y, theme.text_secondary,
+                               text_renderer.TruncateToWidthEphemeralView(model.remote.heading, block.w));
+      const float stage_w = block.w / static_cast<float>(std::max<std::size_t>(1, model.remote.stages.size()));
+      float stage_x = block.x;
+      for (const WelcomeRemoteStage& stage : model.remote.stages) {
+        const SDL_Color marker = stage.state == WelcomeStageState::Done      ? theme.diff_added
+                                 : stage.state == WelcomeStageState::Failed  ? theme.diagnostic_error
+                                 : stage.state == WelcomeStageState::Attention ? theme.diagnostic_warning
+                                                                              : theme.diagnostic_info;
+        const float square = std::floor(line_height * 0.45f);
+        render::FillRect(renderer,
+                         SDL_FRect{stage_x, block.y + row + std::floor((line_height - square) * 0.5f), square, square},
+                         marker);
+        text_renderer.DrawString(
+            renderer, stage_x + square + 8.0f, block.y + row,
+            stage.state == WelcomeStageState::Failed ? theme.diagnostic_error : theme.surface_text,
+            text_renderer.TruncateToWidthEphemeralView(stage.text, stage_w - square - 20.0f));
+        stage_x += stage_w;
+      }
+      if (!model.remote.detail.empty()) {
+        text_renderer.DrawString(renderer, block.x, block.y + row * 2.0f, theme.text_muted,
+                                 text_renderer.TruncateToWidthEphemeralView(model.remote.detail, block.w));
+      }
+      for (const WelcomeHitRegion& region : layout.hit_regions) {
+        if (region.kind == WelcomeHitRegion::Kind::RemoteRetry) {
+          draw_button(region.rect, model.retry_label);
+        }
+      }
+    }
     // Left column flows top-down: an "Actions" caption, the three action buttons (keyed off
     // the shared hit regions), a "Recent files" caption, then the recent-file rows.
     text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,

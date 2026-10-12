@@ -26,8 +26,28 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   const float header_h = line_height * 2.0f + 24.0f;
   layout.header = SDL_FRect{layout.card.x, layout.card.y, layout.card.w, header_h};
 
-  const float panels_y = layout.card.y + header_h + 16.0f;
-  const float panels_h = std::max(line_height * 3.0f, layout.card.h - header_h - 28.0f);
+  const float button_h = line_height + 12.0f;
+  // The remote status block: the heading, one row of stages, the failure's detail,
+  // and Retry, each a line; the panels move down under it.
+  float block_h = 0.0f;
+  if (model.kind == WelcomeKind::ProjectHome && !model.remote.empty()) {
+    const float lines = 2.0f + (model.remote.detail.empty() ? 0.0f : 1.0f);
+    block_h = lines * (line_height + 6.0f) + 12.0f + (model.remote.retry ? button_h + 8.0f : 0.0f);
+    layout.remote_block =
+        SDL_FRect{layout.card.x + inset, layout.card.y + header_h + 12.0f, layout.card.w - inset * 2.0f, block_h};
+    if (model.remote.retry) {
+      layout.hit_regions.push_back(WelcomeHitRegion{
+          .rect = SDL_FRect{layout.remote_block.x, layout.remote_block.y + block_h - button_h - 4.0f,
+                            std::min(200.0f, layout.remote_block.w), button_h},
+          .kind = WelcomeHitRegion::Kind::RemoteRetry,
+          .recent_index = 0,
+      });
+    }
+    block_h += 12.0f;
+  }
+
+  const float panels_y = layout.card.y + header_h + 16.0f + block_h;
+  const float panels_h = std::max(line_height * 3.0f, layout.card.h - header_h - 28.0f - block_h);
   const float gap = 32.0f;
   const float usable_w = layout.card.w - inset * 2.0f - gap;
   const float recents_w = usable_w * 0.54f;
@@ -41,7 +61,6 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
   const float row_w = layout.recents_panel.w;
   const float row_h = row_step - 2.0f;
   const float rows_bottom = layout.recents_panel.y + layout.recents_panel.h;
-  const float button_h = line_height + 12.0f;
   const float button_w = std::min(360.0f, row_w);
 
   // A primary-action button slot at `button_y`; returns the Y below it. Each button is a

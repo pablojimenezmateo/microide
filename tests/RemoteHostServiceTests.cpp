@@ -443,6 +443,40 @@ void TestAPortThatStartsListeningIsForwarded() {
   RemoveFakeMaster(target);
 }
 
+// § 7.3's status block: each stage as far as the connection got, a failure's
+// reason with the command that reproduces it and Retry, the sync's progress.
+void TestProjectHomeStatusBlockFollowsTheConnection() {
+  using State = project::remote::RemoteHostSession::State;
+  using Stage = editor::WelcomeStageState;
+  project::remote::MirrorSyncEngine::Status sync;
+  const auto block = [&](State state, std::string error = {}) {
+    return workspace::RemoteHostService::StatusBlock(
+        "box", "/srv/app", project::remote::RemoteHostSession::Status{.state = state, .message = {}, .error = error},
+        sync, "ssh -- box");
+  };
+  const editor::WelcomeRemoteStatus failed = block(State::Offline, "Connection refused");
+  Expect(failed.heading == "box:/srv/app" && failed.stages.size() == 1 && failed.stages[0].state == Stage::Failed &&
+             failed.retry && failed.detail == "Connection refused — try: ssh -- box",
+         "a failure says why, how to reproduce it, and offers Retry: '" + failed.detail + "'");
+  const editor::WelcomeRemoteStatus starting = block(State::StartingServer);
+  Expect(starting.stages.size() == 2 && starting.stages[0].state == Stage::Done &&
+             starting.stages[1].state == Stage::Active && !starting.retry,
+         "connected, the server starting");
+  sync.files = 10;
+  sync.absent = 7;
+  const editor::WelcomeRemoteStatus syncing = block(State::Ready);
+  Expect(syncing.stages.size() == 3 && syncing.stages[2].text == "syncing 3 / 10 files" &&
+             syncing.stages[2].state == Stage::Active,
+         "a first sync's progress: '" + (syncing.stages.size() == 3 ? syncing.stages[2].text : std::string()) + "'");
+  sync.synced_once = true;
+  sync.absent = 0;
+  sync.dirty = 2;
+  const editor::WelcomeRemoteStatus synced = block(State::Ready);
+  Expect(synced.stages.size() == 3 && synced.stages[2].text == "synced 10 files · 2 unsent" &&
+             synced.stages[2].state == Stage::Done,
+         "then what it holds and what is not on the host yet");
+}
+
 // Remote: Open Folder on Host… end to end: the command prepares the mirror, the
 // editor opens it as the project root with the host's launcher, the mirror fills
 // from the host, and an edit saved in the editor lands in the HOST's file. Then
@@ -482,6 +516,16 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the mirror fills from the host");
+  // The home's status block follows it (§ 7.3).
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const editor::WelcomeRemoteStatus& block = WorkspaceShellTestAccess::ProjectRemoteStatus(shell);
+               return block.heading == target + ":" + host_root.string() && block.stages.size() == 3 &&
+                      block.stages[2].text.rfind("synced ", 0) == 0;
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the project home shows the connection and the sync");
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// edited\n");
@@ -867,6 +911,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
           TestUnfetchedFilesAreListedAndOpenWhenFetched);
   AddTest(tests, "RemoteHostService/ConflictMergesThreeWaysToTheHost", TestConflictMergesThreeWaysToTheHost);
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
+  AddTest(tests, "RemoteHostService/ProjectHomeStatusBlockFollowsTheConnection",
+          TestProjectHomeStatusBlockFollowsTheConnection);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
 #endif

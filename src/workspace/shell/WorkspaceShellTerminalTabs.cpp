@@ -183,6 +183,16 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
             return std::string();
           },
+      .project_status_changed =
+          [this](const std::filesystem::path& root, const editor::WelcomeRemoteStatus& status) {
+            if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
+              state->remote_status = status;
+              ++state->remote_status_revision;
+              if (state == &context_.current_project_state) {
+                RequestEditorSurfaceRedraw();
+              }
+            }
+          },
       .pending_paths_changed =
           [this](const std::filesystem::path& root, project::SharedPendingPaths pending) {
             if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {

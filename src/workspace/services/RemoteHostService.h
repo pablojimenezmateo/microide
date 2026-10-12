@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/WelcomeView.h"
 #include "plugin/PluginHost.h"
 #include "project/ProjectLocality.h"
 #include "project/remote/MirrorSyncEngine.h"
@@ -86,6 +87,9 @@ class RemoteHostService {
     std::function<std::string(const std::filesystem::path& base, const std::filesystem::path& incoming,
                               const std::filesystem::path& current, const std::filesystem::path& output)>
         open_merge;
+    // The remote project at `root`'s connection changed: its home's status block.
+    std::function<void(const std::filesystem::path& root, const editor::WelcomeRemoteStatus& status)>
+        project_status_changed;
     // The files of the remote project at `root` the mirror has not fetched yet
     // changed (null: none left): the sidebar and quick-open list them.
     std::function<void(const std::filesystem::path& root, project::SharedPendingPaths pending)>
@@ -152,6 +156,15 @@ class RemoteHostService {
   // for none, or any other root): for a project state created after
   // pending_paths_changed reported them.
   project::SharedPendingPaths PendingPathsOf(const std::filesystem::path& root) const;
+  // What project_status_changed last reported for `root` (empty for any other).
+  editor::WelcomeRemoteStatus ProjectStatusOf(const std::filesystem::path& root) const;
+  // The home's status block for a project in `state` with `sync` (§ 7.3): the
+  // link, the server and the sync, each as far as it got, and what to do about a
+  // failure. `command` reproduces the connection in a terminal.
+  static editor::WelcomeRemoteStatus StatusBlock(std::string_view host, std::string_view host_root,
+                                                 const project::remote::RemoteHostSession::Status& state,
+                                                 const project::remote::MirrorSyncEngine::Status& sync,
+                                                 std::string_view command);
   // Changed on Host (§ 7.9) for the remote project at `root`: one row per file the
   // host changed since connect or the last Clear, newest first; `id` is the relative
   // path. Empty for any other root.
@@ -227,6 +240,7 @@ class RemoteHostService {
     std::size_t seen_host_changes = 0;
     std::optional<std::chrono::steady_clock::time_point> host_changes_announced;
     std::uint64_t pending_revision = 0;  // the engine's, last reported
+    editor::WelcomeRemoteStatus status_block;  // last reported
   };
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
