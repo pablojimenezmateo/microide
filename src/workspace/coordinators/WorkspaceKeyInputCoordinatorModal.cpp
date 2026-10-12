@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <optional>
 
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -193,6 +194,17 @@ bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& ev
       case SDLK_KP_ENTER:
         prompts_.surface.selected_button = 0;
         operations_.confirm_prompt_surface();
+        return true;
+      case SDLK_TAB:
+        if (!prompts_.surface.completions.empty()) {
+          if (std::optional<std::string> completed = CompleteRemoteHostText(
+                  prompts_.surface.input.text(),
+                  prompts_.surface.action == PromptSurfaceState::Action::RemoteFolder,
+                  prompts_.surface.completions)) {
+            prompts_.surface.input.SetText(std::move(*completed));
+            operations_.request_prompt_redraw();
+          }
+        }
         return true;
       case SDLK_BACKSPACE:
       case SDLK_DELETE:

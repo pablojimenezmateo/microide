@@ -74,6 +74,15 @@ std::vector<CommandCompletionCandidate> CompleteFromValues(std::string_view pref
 std::vector<CommandCompletionCandidate> CompletePath(const std::filesystem::path& project_root,
                                                      std::string_view token,
                                                      bool directories_only);
+// Tab in the host prompt (Remote: Open Terminal / Open Folder on Host…): the text
+// `[user@]prefix` completed against `hosts` — one match completes (with ':' after it
+// for a folder, which asks for a path next), several extend to their common
+// prefix, and a text that already names a host moves to the next one, so repeated
+// Tabs walk the list. nullopt when there is nothing to do (no match, or a folder
+// spec already past its ':').
+std::optional<std::string> CompleteRemoteHostText(std::string_view text, bool folder,
+                                                  const std::vector<std::string>& hosts);
+
 std::string JoinCommandArguments(const std::vector<std::string>& args, std::size_t start_index);
 // For a command line that a SHELL will parse again (`term <command>` runs it as
 // `$SHELL -lc`): an argument that was one quoted word when typed — it holds

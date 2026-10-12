@@ -162,6 +162,9 @@ class RemoteHostService {
   };
   static std::optional<LoopbackUrl> ParseLoopbackUrl(std::string_view url);
   bool CancelForward(std::string_view host, std::uint16_t port);
+  // Hosts to offer when connecting: the ones in use now, then every concrete alias
+  // in ~/.ssh/config (and what it includes). Reads the config: not for a frame path.
+  std::vector<std::string> KnownHosts() const;
   // The host of the remote project at `root`, or empty.
   std::string HostOfProject(const std::filesystem::path& root) const;
   // "ssh", "install", "linger", or "port:<host port>" (a forward's local address):

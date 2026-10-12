@@ -99,6 +99,26 @@ void TestOpenTerminalOnHostFromTheCommand() {
              std::chrono::seconds(15), std::chrono::milliseconds(5)),
          "the shell runs on the host:\n" + ScreenText(session));
 
+  // The host prompt completes from the hosts in use (and ~/.ssh/config).
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal"), "the prompt opens");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "it is up");
+  WorkspaceShellTestAccess::SetPromptSurfaceInput(shell, target.substr(0, target.size() - 2));
+  {
+    SDL_Event tab{};
+    tab.type = SDL_EVENT_KEY_DOWN;
+    tab.key.key = SDLK_TAB;
+    (void)shell.HandleEvent(tab);
+  }
+  Expect(WorkspaceShellTestAccess::PromptSurfaceInput(shell).rfind(target, 0) == 0,
+         "Tab completes the connected host: '" + WorkspaceShellTestAccess::PromptSurfaceInput(shell) + "'");
+  {
+    SDL_Event escape{};
+    escape.type = SDL_EVENT_KEY_DOWN;
+    escape.key.key = SDLK_ESCAPE;
+    (void)shell.HandleEvent(escape);
+  }
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "Escape closes it");
+
   // Forward a Port: the row says where it is and offers the browser and the
   // address; the status bar counts it; Stop Forwarding takes it away again.
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-forward-port 0"),

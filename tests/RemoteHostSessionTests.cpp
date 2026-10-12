@@ -217,6 +217,35 @@ void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   Expect(!session.CancelForward(39217, &error), "a port that is not forwarded is refused");
 }
 
+// The hosts "Connect to Host…" offers: every concrete alias of every `Host` line,
+// through `Include` (relative to ~/.ssh, globbed), never a pattern.
+void TestSshConfigHostsFollowsIncludesAndSkipsPatterns() {
+  TemporaryDirectory temp;
+  const std::filesystem::path ssh = temp.path() / ".ssh";
+  WriteFile(ssh / "config",
+            "# personal\n"
+            "Host worky build-box\n"
+            "  HostName 10.0.0.7\n"
+            "Host *.internal !bastion gw?\n"
+            "  User me\n"
+            "Include config.d/*\n"
+            "include=\"~/.ssh/extra\"\n"
+            "Host worky\n"
+            "Host -oProxyCommand=x\n");
+  WriteFile(ssh / "config.d" / "b-work", "Host db\nHost cache\n");
+  WriteFile(ssh / "config.d" / "a-home", "Host nas\n");
+  WriteFile(ssh / "extra", "Host  =  pi\n");
+  const std::vector<std::string> hosts = remote::SshConfigHosts(ssh / "config", ssh);
+  const std::vector<std::string> expected = {"worky", "build-box", "nas", "db", "cache", "pi"};
+  std::string got;
+  for (const std::string& host : hosts) {
+    got += host + " ";
+  }
+  Expect(hosts == expected, "aliases in file order, includes in name order, no patterns, no "
+                            "duplicates, nothing ssh would read as an option: " + got);
+  Expect(remote::SshConfigHosts(ssh / "missing", ssh).empty(), "no config, no hosts");
+}
+
 // A language server or debug adapter on the host is a KEPT process: the link
 // dying does not end it, input written during the outage is held and delivered
 // after the reconnect, and its output keeps flowing — then a Disconnect ends it
@@ -320,6 +349,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostSession/HostTargetsAreValidatedBeforeAnythingRuns",
           TestHostTargetsAreValidatedBeforeAnythingRuns);
 #if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "RemoteHostSession/SshConfigHostsFollowsIncludesAndSkipsPatterns",
+          TestSshConfigHostsFollowsIncludesAndSkipsPatterns);
   AddTest(tests, "RemoteHostSession/SocketDirAndBackfillBoundReachTheServer",
           TestSocketDirAndBackfillBoundReachTheServer);
   AddTest(tests, "RemoteHostSession/FirstConnectInstallsTheServerAndReachesReady",

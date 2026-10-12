@@ -782,6 +782,30 @@ bool RemoteHostService::StopServer(std::string_view host) {
   return true;
 }
 
+std::vector<std::string> RemoteHostService::KnownHosts() const {
+  std::vector<std::string> hosts;
+  const auto add = [&](const std::string& host) {
+    if (std::find(hosts.begin(), hosts.end(), host) == hosts.end()) {
+      hosts.push_back(host);
+    }
+  };
+  for (const auto& [key, entry] : hosts_) {
+    (void)entry;
+    add(key);
+  }
+  for (const auto& [tree, entry] : projects_) {
+    (void)tree;
+    add(entry.project->record().host);
+  }
+  if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+    const std::filesystem::path ssh = std::filesystem::path(home) / ".ssh";
+    for (const std::string& host : remote::SshConfigHosts(ssh / "config", ssh)) {
+      add(host);
+    }
+  }
+  return hosts;
+}
+
 std::string RemoteHostService::HostOfProject(const std::filesystem::path& root) const {
   const auto it = projects_.find(root);
   return it == projects_.end() ? std::string() : it->second.project->record().host;

@@ -31,6 +31,14 @@ struct RemoteHostTarget {
 };
 std::optional<RemoteHostTarget> ParseRemoteHostTarget(std::string_view text, std::string* error);
 
+// The concrete host aliases an ssh client config names (`Host` lines, following
+// `Include`, globbed and relative to `~/.ssh` as ssh resolves them), in file order,
+// without duplicates: what "Connect to Host…" offers (VS Code reads the same file).
+// Patterns (`*`, `?`, `!negated`) are skipped, as is any alias ParseRemoteHostTarget
+// would refuse. A missing or unreadable file contributes nothing.
+std::vector<std::string> SshConfigHosts(const std::filesystem::path& config_file,
+                                        const std::filesystem::path& ssh_directory);
+
 // One host's connection lifecycle (dev-docs/design/remote-projects.md § 6.6):
 //
 //   Disconnected -> Connecting -> (NeedsAuth) -> StartingServer -> (Installing) -> Ready

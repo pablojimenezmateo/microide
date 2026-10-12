@@ -352,4 +352,44 @@ std::string JoinCommandArguments(const std::vector<std::string>& args, std::size
   return joined;
 }
 
+std::optional<std::string> CompleteRemoteHostText(std::string_view text, bool folder,
+                                                  const std::vector<std::string>& hosts) {
+  if (hosts.empty() || (folder && text.find(':') != std::string_view::npos)) {
+    return std::nullopt;
+  }
+  // A typed `user@` rides along onto an ssh-config alias; a host already in use
+  // carries its own user (`dev@build-box`) and is matched whole.
+  const std::size_t at = text.find('@');
+  const std::string user(at == std::string_view::npos ? std::string_view() : text.substr(0, at + 1));
+  std::vector<std::string> values;
+  values.reserve(hosts.size());
+  for (const std::string& host : hosts) {
+    std::string value = host.find('@') != std::string::npos ? host : user + host;
+    if (std::find(values.begin(), values.end(), value) == values.end()) {
+      values.push_back(std::move(value));
+    }
+  }
+  const std::string suffix = folder ? ":" : "";
+  if (const auto exact = std::find(values.begin(), values.end(), text); exact != values.end()) {
+    if (folder) {
+      return *exact + suffix;  // named: on to the path
+    }
+    return std::next(exact) == values.end() ? values.front() : *std::next(exact);
+  }
+  std::vector<CommandCompletionCandidate> matches;
+  for (const std::string& value : values) {
+    if (value.compare(0, text.size(), text) == 0) {
+      matches.push_back(CommandCompletionCandidate{value, false});
+    }
+  }
+  if (matches.empty()) {
+    return std::nullopt;
+  }
+  if (matches.size() == 1) {
+    return matches.front().value + suffix;
+  }
+  const std::string common = CommonPrefix(matches);
+  return common.size() > text.size() ? common : matches.front().value;
+}
+
 }  // namespace microide::workspace

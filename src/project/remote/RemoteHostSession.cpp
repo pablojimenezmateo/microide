@@ -13,6 +13,7 @@
 #include "util/TextFileIO.h"
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <fnmatch.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -113,6 +114,125 @@ std::string RemoteHostTarget::Display() const {
     out += ":" + std::to_string(port);
   }
   return out;
+}
+
+namespace {
+
+// One ssh_config line's keyword and arguments: `Keyword arg "quoted arg"`, the
+// keyword optionally followed by `=`. Comments and blank lines yield no keyword.
+std::vector<std::string> SshConfigWords(std::string_view line) {
+  std::vector<std::string> words;
+  std::size_t i = 0;
+  const auto skip_blanks = [&] {
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
+      ++i;
+    }
+  };
+  while (true) {
+    skip_blanks();
+    if (words.size() == 1 && i < line.size() && line[i] == '=') {
+      ++i;  // `Keyword=value`
+      skip_blanks();
+    }
+    if (i >= line.size() || (words.empty() && line[i] == '#')) {
+      return words;
+    }
+    std::string word;
+    if (line[i] == '"') {
+      const std::size_t close = line.find('"', i + 1);
+      word.assign(line.substr(i + 1, close == std::string_view::npos ? std::string_view::npos : close - i - 1));
+      i = close == std::string_view::npos ? line.size() : close + 1;
+    } else {
+      while (i < line.size() && line[i] != ' ' && line[i] != '\t' && !(words.empty() && line[i] == '=')) {
+        word.push_back(line[i++]);
+      }
+    }
+    words.push_back(std::move(word));
+  }
+}
+
+std::string LowerAscii(std::string_view text) {
+  std::string lowered(text);
+  for (char& c : lowered) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return lowered;
+}
+
+void CollectSshConfigHosts(const std::filesystem::path& file, const std::filesystem::path& ssh_directory,
+                           int depth, std::vector<std::string>& hosts) {
+  if (depth > 16) {
+    return;  // ssh's own include depth limit
+  }
+  const std::optional<std::string> text = util::ReadTextFile(file);
+  if (!text.has_value()) {
+    return;
+  }
+  std::string_view rest = *text;
+  while (!rest.empty()) {
+    const std::size_t end = rest.find('\n');
+    std::string_view line = rest.substr(0, end);
+    rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
+    if (!line.empty() && line.back() == '\r') {
+      line.remove_suffix(1);
+    }
+    const std::vector<std::string> words = SshConfigWords(line);
+    if (words.size() < 2) {
+      continue;
+    }
+    const std::string keyword = LowerAscii(words[0]);
+    if (keyword == "host") {
+      for (std::size_t i = 1; i < words.size(); ++i) {
+        const std::string& alias = words[i];
+        std::string ignored;
+        if (alias.find_first_of("*?!") != std::string::npos ||
+            !ParseRemoteHostTarget(alias, &ignored).has_value() ||
+            std::find(hosts.begin(), hosts.end(), alias) != hosts.end()) {
+          continue;
+        }
+        hosts.push_back(alias);
+      }
+    } else if (keyword == "include") {
+      for (std::size_t i = 1; i < words.size(); ++i) {
+        std::string pattern = words[i];
+        if (pattern.rfind("~/", 0) == 0) {
+          pattern = (ssh_directory.parent_path() / pattern.substr(2)).string();
+        }
+        std::filesystem::path path(pattern);
+        if (path.is_relative()) {
+          path = ssh_directory / path;
+        }
+        const std::string name = path.filename().string();
+        if (name.find_first_of("*?[") == std::string::npos) {
+          CollectSshConfigHosts(path, ssh_directory, depth + 1, hosts);
+          continue;
+        }
+#if defined(__unix__) || defined(__APPLE__)
+        // A glob in the last component (`config.d/*`), in name order as glob(3) gives.
+        std::vector<std::filesystem::path> matches;
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(path.parent_path(), ec)) {
+          if (::fnmatch(name.c_str(), entry.path().filename().c_str(), FNM_PERIOD) == 0) {
+            matches.push_back(entry.path());
+          }
+        }
+        std::sort(matches.begin(), matches.end());
+        for (const std::filesystem::path& match : matches) {
+          CollectSshConfigHosts(match, ssh_directory, depth + 1, hosts);
+        }
+#endif
+      }
+    }
+  }
+}
+
+}  // namespace
+
+std::vector<std::string> SshConfigHosts(const std::filesystem::path& config_file,
+                                        const std::filesystem::path& ssh_directory) {
+  std::vector<std::string> hosts;
+  CollectSshConfigHosts(config_file, ssh_directory, 0, hosts);
+  return hosts;
 }
 
 std::optional<RemoteHostTarget> ParseRemoteHostTarget(std::string_view text, std::string* error) {

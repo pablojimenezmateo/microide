@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
 #include "workspace/coordinators/SelectionAutoscroll.h"
@@ -83,6 +84,7 @@ CommandLineCoordinator& WorkspaceShell::MakeCommandLineCoordinator() {
                 return plugin_runtime_.Host().CommandNames();
               },
           .sidebar_view_ids = [this]() { return OrderedSidebarViewIds(); },
+          .remote_hosts = [this]() { return MakeRemoteHostService().KnownHosts(); },
           .execute_plugin_command =
               [this](const std::string& command, const std::vector<std::string>& args) {
                 CommandLineCoordinator::PluginCommandResult result;

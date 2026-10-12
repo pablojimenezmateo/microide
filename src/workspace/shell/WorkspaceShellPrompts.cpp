@@ -1,5 +1,6 @@
 #include <memory>
 
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "editor/BreakpointStore.h"
@@ -182,6 +183,10 @@ void WorkspaceShell::OpenPromptSurface(PromptSurfaceState::Action action,
                                        const std::filesystem::path& path,
                                        std::string input) {
   MakePromptSurfaceService().OpenPromptSurface(action, kind, path, std::move(input));
+  if (action == PromptSurfaceState::Action::RemoteHost ||
+      action == PromptSurfaceState::Action::RemoteFolder) {
+    context_.prompts.surface.completions = MakeRemoteHostService().KnownHosts();
+  }
 }
 
 void WorkspaceShell::OpenExternalUrlPrompt(std::string url) {
@@ -300,9 +305,13 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::GoToLine:
       return "Enter a line[:column] to jump to.";
     case PromptSurfaceState::Action::RemoteHost:
-      return "Enter [user@]host[:port] — reached with your ssh configuration.";
+      return context_.prompts.surface.completions.empty()
+                 ? "Enter [user@]host[:port] — reached with your ssh configuration."
+                 : "Enter [user@]host[:port] — Tab completes a host from ~/.ssh/config.";
     case PromptSurfaceState::Action::RemoteFolder:
-      return "Enter [user@]host[:port]:/path — the folder opens from a local mirror.";
+      return context_.prompts.surface.completions.empty()
+                 ? "Enter [user@]host[:port]:/path — the folder opens from a local mirror."
+                 : "Enter [user@]host[:port]:/path — Tab completes the host; the folder opens from a local mirror.";
     case PromptSurfaceState::Action::RenameSymbol:
       return "Enter a new name for the symbol under the cursor.";
     case PromptSurfaceState::Action::ConfirmRenameSave:

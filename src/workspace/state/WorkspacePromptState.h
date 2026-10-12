@@ -109,6 +109,9 @@ struct PromptSurfaceState {
   std::string capability_scope;
   int button_count = 2;
   int selected_button = 0;
+  // What Tab completes the input from (the host prompts: known ssh hosts). Empty =
+  // Tab does nothing special.
+  std::vector<std::string> completions;
 };
 
 struct PromptState {
