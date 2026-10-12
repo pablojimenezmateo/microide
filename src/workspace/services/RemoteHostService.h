@@ -216,7 +216,7 @@ class RemoteHostService {
                           const project::remote::MirrorSyncEngine::Status& sync);
 
   project::remote::RemoteHostSession::Config SessionConfig(
-      const project::remote::RemoteHostTarget& target) const;
+      const project::remote::RemoteHostTarget& target);
   Project* OpenProject(const project::remote::RemoteHostTarget& target, const std::string& host_root,
                        std::string* error);
   void ApplyProject(const std::filesystem::path& tree);
@@ -241,6 +241,9 @@ class RemoteHostService {
 
   Operations operations_;
   std::map<std::string, Host, std::less<>> hosts_;
+  // By host (`RemoteHostTarget::Display`): the ports forwarded to it, shared by
+  // its sessions. Kept after they go, so the next connection forwards them again.
+  std::map<std::string, std::shared_ptr<project::remote::HostPortForwards>, std::less<>> forwards_;
   // By mirror tree. Kept until the service goes: a project state may still hold
   // their launcher and gate (ProjectLocality's lifetime rule).
   std::map<std::filesystem::path, Project> projects_;

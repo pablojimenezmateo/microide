@@ -445,11 +445,11 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   three-way merge (base, host's, mine → the tree file) through the existing merge
   editor is possible; the resolution would push under expect = the host hash the
   merge started from.
-- **Port forwards are per session, not per host.** Sessions to the same target
-  share one ControlMaster, so a forward made through a project's session is live
-  for the host's terminals too, but only that session's list re-applies it after
-  a new master. (A session's disconnect — including a closed project's — cancels
-  its own listeners first, so a disconnected host is not left reachable.)
+- ~~**Port forwards are per session, not per host.**~~ Fixed 2026-10-12: one
+  `HostPortForwards` per host, shared by every session to it (they share the
+  ControlMaster the ports ride on). Whichever session brings a master up applies
+  them; a disconnect closes the listeners only when no other session holds the
+  host. `RemoteHostSession/PortForwardsAreTheHosts`.
 - **Automatic port detection.** VS Code forwards a port when a host process
   starts listening; here a forward is a command or a clicked link.
 - ~~**The pull-on-open branches have no shell-level test**~~ — the absent branch

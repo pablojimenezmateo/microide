@@ -226,6 +226,40 @@ void TestPortForwardsRideTheMasterAndSurviveANewOne() {
   Expect(!session.CancelForward(39217, &error), "a port that is not forwarded is refused");
 }
 
+// Two sessions to one host (a project's and a host terminal's) share its
+// ControlMaster, so they share its forwards: either one answers for a port the
+// other forwarded, and a disconnect of one leaves the ports up for the other — the
+// last one to go takes them down.
+void TestPortForwardsAreTheHosts() {
+  FakeHost host;
+  StateLog log_a;
+  StateLog log_b;
+  RemoteHostSession::Config config = host.Config();
+  config.forwards = std::make_shared<remote::HostPortForwards>();
+  RemoteHostSession a(config, log_a.Listener());
+  RemoteHostSession b(config, log_b.Listener());
+  a.Connect();
+  Expect(WaitForState(a, State::Ready), "a is ready: " + log_a.Error());
+  b.Connect();
+  Expect(WaitForState(b, State::Ready), "b is ready: " + log_b.Error());
+  std::string error;
+  const auto forward = a.ForwardPort(39219, &error);
+  Expect(forward.has_value(), "a forwards the port: " + error);
+  Expect(b.forwards().size() == 1 && b.ForwardPort(39219, &error) == forward,
+         "b knows it: the same address, no second listener");
+  const std::filesystem::path held = a.control_path().string() + ".forwards";
+  const std::string spec = forward.has_value()
+                               ? "127.0.0.1:" + std::to_string(forward->local_port) + ":localhost:39219\n"
+                               : std::string();
+  a.Disconnect();
+  Expect(WaitForState(a, State::Disconnected), "a disconnects");
+  Expect(ReadFile(held) == spec, "b still holds the host, so the port stays up: '" + ReadFile(held) + "'");
+  b.Disconnect();
+  Expect(WaitForState(b, State::Disconnected), "b disconnects");
+  Expect(ReadFile(held).empty(), "the last one closes it: '" + ReadFile(held) + "'");
+  Expect(a.forwards().size() == 1, "and the list is kept for the next connection");
+}
+
 // The hosts "Connect to Host…" offers: every concrete alias of every `Host` line,
 // through `Include` (relative to ~/.ssh, globbed), never a pattern.
 void TestSshConfigHostsFollowsIncludesAndSkipsPatterns() {
@@ -372,6 +406,7 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestHostProcessSurvivesAReconnectAndEndsOnDisconnect);
   AddTest(tests, "RemoteHostSession/PortForwardsRideTheMasterAndSurviveANewOne",
           TestPortForwardsRideTheMasterAndSurviveANewOne);
+  AddTest(tests, "RemoteHostSession/PortForwardsAreTheHosts", TestPortForwardsAreTheHosts);
   AddTest(tests, "RemoteHostSession/ABrokenServerCommandFailsFastWithAReason",
           TestABrokenServerCommandFailsFastWithAReason);
 #endif

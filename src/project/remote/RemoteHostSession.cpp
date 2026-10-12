@@ -301,8 +301,62 @@ std::string_view RemoteHostSession::StateName(State state) {
   return "?";
 }
 
+std::vector<HostPortForwards::PortForward> HostPortForwards::list() const {
+  std::lock_guard lock(mutex_);
+  return forwards_;
+}
+
+std::optional<HostPortForwards::PortForward> HostPortForwards::Find(std::uint16_t host_port) const {
+  std::lock_guard lock(mutex_);
+  for (const PortForward& forward : forwards_) {
+    if (forward.host_port == host_port) {
+      return forward;
+    }
+  }
+  return std::nullopt;
+}
+
+void HostPortForwards::Add(PortForward forward) {
+  std::lock_guard lock(mutex_);
+  for (PortForward& kept : forwards_) {
+    if (kept.host_port == forward.host_port) {
+      kept = forward;
+      return;
+    }
+  }
+  forwards_.push_back(forward);
+}
+
+std::optional<HostPortForwards::PortForward> HostPortForwards::Remove(std::uint16_t host_port) {
+  std::lock_guard lock(mutex_);
+  const auto it = std::find_if(forwards_.begin(), forwards_.end(),
+                               [&](const PortForward& kept) { return kept.host_port == host_port; });
+  if (it == forwards_.end()) {
+    return std::nullopt;
+  }
+  const PortForward removed = *it;
+  forwards_.erase(it);
+  return removed;
+}
+
+void HostPortForwards::Hold(const void* session) {
+  std::lock_guard lock(mutex_);
+  if (std::find(holders_.begin(), holders_.end(), session) == holders_.end()) {
+    holders_.push_back(session);
+  }
+}
+
+bool HostPortForwards::Release(const void* session) {
+  std::lock_guard lock(mutex_);
+  std::erase(holders_, session);
+  return holders_.empty();
+}
+
 RemoteHostSession::RemoteHostSession(Config config, Listener listener)
     : config_(std::move(config)), listener_(std::move(listener)) {
+  if (config_.forwards == nullptr) {
+    config_.forwards = std::make_shared<HostPortForwards>();
+  }
   link_signal_->session = this;
   thread_ = std::thread([this]() { Run(); });
 }
@@ -320,6 +374,7 @@ RemoteHostSession::~RemoteHostSession() {
   if (thread_.joinable()) {
     thread_.join();
   }
+  (void)config_.forwards->Release(this);
   connection_->Replace(nullptr);
 }
 
@@ -657,13 +712,8 @@ std::optional<RemoteHostSession::PortForward> RemoteHostSession::ForwardPort(std
     *error = "no port";
     return std::nullopt;
   }
-  {
-    std::lock_guard lock(mutex_);
-    for (const PortForward& kept : forwards_) {
-      if (kept.host_port == host_port) {
-        return kept;  // already forwarded: the same address again
-      }
-    }
+  if (const std::optional<PortForward> kept = config_.forwards->Find(host_port)) {
+    return kept;  // already forwarded: the same address again
   }
   if (!MasterAlive()) {
     *error = "not connected to " + config_.target.Display();
@@ -678,36 +728,28 @@ std::optional<RemoteHostSession::PortForward> RemoteHostSession::ForwardPort(std
   if (!ForwardControl("forward", forward, error)) {
     return std::nullopt;
   }
-  std::lock_guard lock(mutex_);
-  forwards_.push_back(forward);
+  config_.forwards->Add(forward);
   return forward;
 }
 
 bool RemoteHostSession::CancelForward(std::uint16_t host_port, std::string* error) {
-  PortForward forward;
-  {
-    std::lock_guard lock(mutex_);
-    const auto it = std::find_if(forwards_.begin(), forwards_.end(),
-                                 [&](const PortForward& kept) { return kept.host_port == host_port; });
-    if (it == forwards_.end()) {
-      *error = "port " + std::to_string(host_port) + " is not forwarded";
-      return false;
-    }
-    forward = *it;
-    forwards_.erase(it);
+  const std::optional<PortForward> forward = config_.forwards->Remove(host_port);
+  if (!forward.has_value()) {
+    *error = "port " + std::to_string(host_port) + " is not forwarded";
+    return false;
   }
   // Gone from the list whatever ssh says: a master that already died took the
   // listener with it.
-  (void)ForwardControl("cancel", forward, error);
+  (void)ForwardControl("cancel", *forward, error);
   return true;
 }
 
 std::vector<RemoteHostSession::PortForward> RemoteHostSession::forwards() const {
-  std::lock_guard lock(mutex_);
-  return forwards_;
+  return config_.forwards->list();
 }
 
 void RemoteHostSession::ReapplyForwards() {
+  config_.forwards->Hold(this);
   for (const PortForward& forward : forwards()) {
     // A master that survived (ControlPersist) still holds it: ssh's mux answers an
     // identical forward with success and no second listener (checked against
@@ -752,12 +794,16 @@ void RemoteHostSession::Run() {
       }
       case Wake::Disconnect: {
         // The master outlives a disconnect (ControlPersist), and with it every
-        // listener: a disconnected host must not stay reachable on a local port.
-        // The list is kept, so a reconnect forwards them again. Before the report,
-        // so "disconnected" means the ports are closed.
-        for (const PortForward& forward : forwards()) {
-          std::string ignored;
-          (void)ForwardControl("cancel", forward, &ignored);
+        // listener: a host nothing is connected to must not stay reachable on a
+        // local port. Another session to it (a host terminal beside a closed
+        // project) still holds it, and its ports. The list is kept, so a reconnect
+        // forwards them again. Before the report, so "disconnected" means the
+        // ports are closed.
+        if (config_.forwards->Release(this)) {
+          for (const PortForward& forward : forwards()) {
+            std::string ignored;
+            (void)ForwardControl("cancel", forward, &ignored);
+          }
         }
         Report(State::Disconnected, "disconnected");
         const auto client = connection_->client();

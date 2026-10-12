@@ -79,12 +79,19 @@ const RemoteHostService::Host* RemoteHostService::Find(std::string_view host) co
 }
 
 remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
-    const remote::RemoteHostTarget& target) const {
+    const remote::RemoteHostTarget& target) {
   const auto setting = [&](std::string_view name) {
     return operations_.setting ? operations_.setting(name) : std::optional<std::string>();
   };
   remote::RemoteHostSession::Config config;
   config.target = target;
+  // One list per host: every session to it shares the ControlMaster its ports
+  // ride on.
+  std::shared_ptr<remote::HostPortForwards>& forwards = forwards_[target.Display()];
+  if (forwards == nullptr) {
+    forwards = std::make_shared<remote::HostPortForwards>();
+  }
+  config.forwards = forwards;
   if (const auto ssh = setting("remote.ssh_command"); ssh.has_value() && !ssh->empty()) {
     config.ssh = util::SplitCommandLine(*ssh);
   }
@@ -1238,14 +1245,12 @@ void RemoteHostService::PublishStatusSegment() {
   std::string tooltip;
   for (const auto& [key, entry] : hosts_) {
     connections.emplace_back(key, entry.status.state);
-    ports += entry.session->forwards().size();
   }
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     if (!entry.closed) {
       const remote::RemoteProjectRecord record = entry.project->record();
       connections.emplace_back(record.host, entry.status.state);
-      ports += entry.project->session().forwards().size();
       const remote::MirrorSyncEngine::Status sync = entry.project->engine().status();
       if (sync.syncing && !sync.synced_once) {
         first_sync = true;
@@ -1260,6 +1265,13 @@ void RemoteHostService::PublishStatusSegment() {
   if (connections.empty()) {
     operations_.set_status_segment(StatusBarSegmentValue{});
     return;
+  }
+  // A host's ports once, however many of its sessions are open.
+  for (const auto& [host, forwards] : forwards_) {
+    if (std::any_of(connections.begin(), connections.end(),
+                    [&](const auto& connection) { return connection.first == host; })) {
+      ports += forwards->list().size();
+    }
   }
   // The worst state wins the segment: one offline host is what needs attention.
   const auto rank = [](State state) {

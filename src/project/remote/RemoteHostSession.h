@@ -39,6 +39,35 @@ std::optional<RemoteHostTarget> ParseRemoteHostTarget(std::string_view text, std
 std::vector<std::string> SshConfigHosts(const std::filesystem::path& config_file,
                                         const std::filesystem::path& ssh_directory);
 
+// The ports forwarded to one host (VS Code's Ports view): `localhost:<local>` on
+// this machine reaches `localhost:<host_port>` on the host through the ssh
+// ControlMaster. Every session to a target rides the same master, so the forwards
+// are the host's, not a session's: whichever session brings a master up applies
+// them all, and the listeners close only when the last session holding the host
+// disconnects. Thread-safe; shared by the sessions (RemoteHostSession::Config).
+class HostPortForwards {
+ public:
+  struct PortForward {
+    std::uint16_t host_port = 0;
+    std::uint16_t local_port = 0;
+    friend bool operator==(const PortForward&, const PortForward&) = default;
+  };
+
+  std::vector<PortForward> list() const;
+  std::optional<PortForward> Find(std::uint16_t host_port) const;
+  void Add(PortForward forward);  // replaces one for the same host port
+  std::optional<PortForward> Remove(std::uint16_t host_port);
+  // A session has the host up (idempotent) / has let it go. Release is true when
+  // no session holds it any more: the listeners are the releasing one's to close.
+  void Hold(const void* session);
+  bool Release(const void* session);
+
+ private:
+  mutable std::mutex mutex_;
+  std::vector<PortForward> forwards_;
+  std::vector<const void*> holders_;
+};
+
 // One host's connection lifecycle (dev-docs/design/remote-projects.md § 6.6):
 //
 //   Disconnected -> Connecting -> (NeedsAuth) -> StartingServer -> (Installing) -> Ready
@@ -92,6 +121,9 @@ class RemoteHostSession {
     std::chrono::milliseconds max_backoff{30000};
     std::chrono::milliseconds auth_poll{500};
     std::chrono::milliseconds auth_timeout{5 * 60 * 1000};
+    // The host's forwards, shared by every session to this target; null = this
+    // session's own.
+    std::shared_ptr<HostPortForwards> forwards;
   };
 
   struct Status {
@@ -125,19 +157,13 @@ class RemoteHostSession {
   // `microide-server stop` on the host (Remote: Stop Host Server). Blocking.
   bool StopServer(std::string* error);
 
-  // Port forwarding (VS Code's Ports view): `localhost:<local>` on this machine
-  // reaches `localhost:<host_port>` on the host, through the ssh ControlMaster
-  // (`ssh -O forward`), so nothing is opened on the host and nothing new is
-  // authenticated. The local port is the host's when it is free here, else one the
-  // kernel picks. Kept by the session and applied again whenever a new master comes
-  // up (a reconnect, a master that outlived ControlPersist); Disconnect takes the
-  // listeners down but keeps the list. Blocking (one exec of the local ssh
-  // client): call off the UI thread.
-  struct PortForward {
-    std::uint16_t host_port = 0;
-    std::uint16_t local_port = 0;
-    friend bool operator==(const PortForward&, const PortForward&) = default;
-  };
+  // Forward `host_port` (HostPortForwards). The local port is the host's when it
+  // is free here, else one the kernel picks. Kept and applied again whenever a new
+  // master comes up (a reconnect, a master that outlived ControlPersist); a
+  // Disconnect takes the listeners down if no other session holds the host, and
+  // keeps the list. Blocking (one exec of the local ssh client): call off the UI
+  // thread.
+  using PortForward = HostPortForwards::PortForward;
   std::optional<PortForward> ForwardPort(std::uint16_t host_port, std::string* error);
   bool CancelForward(std::uint16_t host_port, std::string* error);
   std::vector<PortForward> forwards() const;
@@ -185,7 +211,6 @@ class RemoteHostSession {
   std::condition_variable wake_;
   Wake pending_ = Wake::None;
   Status status_;
-  std::vector<PortForward> forwards_;  // guarded by mutex_
   std::thread thread_;
 };
 
