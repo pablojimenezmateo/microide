@@ -78,6 +78,8 @@ class RemoteHostService {
     std::function<void(const std::filesystem::path& path)> open_file;
     // The Changed on Host list of the remote project at `root` changed.
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
+    // The desktop's browser (a host-local link, once its port is forwarded).
+    std::function<bool(std::string_view url)> open_url;
   };
 
   explicit RemoteHostService(Operations operations);
@@ -146,6 +148,19 @@ class RemoteHostService {
   // outcome a notification row — with Open in Browser and Copy Address on success.
   // False when nothing connects to `host`.
   bool ForwardPort(std::string_view host, std::uint16_t port);
+  // A link clicked in a terminal that runs through `launcher`: when that is a host's
+  // and the URL names the host's own loopback (`http://localhost:3000/x`), forward
+  // the port and open the same URL at the local end — VS Code's terminal links do
+  // the same. False for anything else: the caller opens it as it is.
+  bool OpenHostLocalUrl(const platform::ProcessLauncher& launcher, std::string_view url);
+  // `scheme://<loopback>:<port><rest>` -> its parts; nullopt for any other URL (no
+  // explicit port, another host, another scheme).
+  struct LoopbackUrl {
+    std::string scheme;  // "http" or "https"
+    std::uint16_t port = 0;
+    std::string rest;  // path, query and fragment, as written
+  };
+  static std::optional<LoopbackUrl> ParseLoopbackUrl(std::string_view url);
   bool CancelForward(std::string_view host, std::uint16_t port);
   // The host of the remote project at `root`, or empty.
   std::string HostOfProject(const std::filesystem::path& root) const;
@@ -182,6 +197,9 @@ class RemoteHostService {
     std::size_t seen_host_changes = 0;
     std::optional<std::chrono::steady_clock::time_point> host_changes_announced;
   };
+  // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
+  // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
+  bool StartForward(std::string_view host, std::uint16_t port, std::optional<LoopbackUrl> then_open);
   void PublishHostChanges(const std::filesystem::path& tree, Project& entry,
                           const project::remote::MirrorSyncEngine::Status& sync);
 

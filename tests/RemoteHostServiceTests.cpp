@@ -134,6 +134,32 @@ void TestOpenTerminalOnHostFromTheCommand() {
              target + " · 1 port",
          "the status bar counts it: '" +
              WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote) + "'");
+  // A localhost link in a HOST terminal is the host's: clicking it forwards that
+  // port and opens the local end, path and query kept. A local terminal's would
+  // open as it is.
+  std::vector<std::string> opened;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+    opened.emplace_back(url);
+    return true;
+  });
+  Expect(WorkspaceShellTestAccess::RemoteHosts(shell).OpenHostLocalUrl(
+             WorkspaceShellTestAccess::TerminalTabLauncher(shell, 0), "http://localhost:39220/app?x=1"),
+         "the link is taken");
+  Expect(!WorkspaceShellTestAccess::RemoteHosts(shell).OpenHostLocalUrl(
+             platform::LocalProcessLauncher(), "http://localhost:39220/"),
+         "a local terminal's link is not the host's");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return !opened.empty();
+             },
+             std::chrono::seconds(15), std::chrono::milliseconds(5)),
+         "and opens once forwarded");
+  Expect(opened.size() == 1 && opened[0].rfind("http://localhost:", 0) == 0 &&
+             opened[0].ends_with("/app?x=1"),
+         "at the local end of the forward: '" + (opened.empty() ? std::string() : opened[0]) + "'");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-unforward-port 39220"),
+         "the clicked port's forward stops too");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-unforward-port 39218"),
          "stop forwarding is accepted");
   Expect(WaitUntil(
@@ -584,6 +610,25 @@ void TestOpenFolderOnHostEditsTheHostTree() {
 
 #endif
 
+// What counts as a host-local link: http(s), a loopback name, an explicit port.
+void TestLoopbackUrlsAreRecognized() {
+  using workspace::RemoteHostService;
+  const auto parsed = RemoteHostService::ParseLoopbackUrl("http://localhost:5173/src/main.ts?t=1#top");
+  Expect(parsed.has_value() && parsed->scheme == "http" && parsed->port == 5173 &&
+             parsed->rest == "/src/main.ts?t=1#top",
+         "a Vite address splits into scheme, port and the rest");
+  Expect(RemoteHostService::ParseLoopbackUrl("https://127.0.0.1:8443").has_value() &&
+             RemoteHostService::ParseLoopbackUrl("http://0.0.0.0:8000/").has_value() &&
+             RemoteHostService::ParseLoopbackUrl("http://[::1]:3000").has_value(),
+         "127.0.0.1, 0.0.0.0 and [::1] are loopback too");
+  Expect(!RemoteHostService::ParseLoopbackUrl("http://localhost/").has_value() &&
+             !RemoteHostService::ParseLoopbackUrl("http://example.com:3000").has_value() &&
+             !RemoteHostService::ParseLoopbackUrl("ftp://localhost:21").has_value() &&
+             !RemoteHostService::ParseLoopbackUrl("http://localhost:99999").has_value() &&
+             !RemoteHostService::ParseLoopbackUrl("http://localhost.evil.com:80").has_value(),
+         "no port, another host, another scheme or a bad port is not one");
+}
+
 // Show Status names the mirror under ~/.local/share: the home prefix is spelled
 // "~" so the part that differs survives the toast's three lines — and only a
 // whole leading component is, never a longer sibling's prefix.
@@ -604,14 +649,13 @@ void TestStatusPathsAbbreviateHome() {
 
 void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/StatusPathsAbbreviateHome", TestStatusPathsAbbreviateHome);
+  AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);
   AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
-#else
-  (void)tests;
 #endif
 }
 

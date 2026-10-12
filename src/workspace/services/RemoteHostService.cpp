@@ -788,15 +788,84 @@ std::string RemoteHostService::HostOfProject(const std::filesystem::path& root) 
 }
 
 bool RemoteHostService::ForwardPort(std::string_view host, std::uint16_t port) {
+  return StartForward(host, port, std::nullopt);
+}
+
+std::optional<RemoteHostService::LoopbackUrl> RemoteHostService::ParseLoopbackUrl(std::string_view url) {
+  LoopbackUrl parsed;
+  for (const std::string_view scheme : {"http", "https"}) {
+    if (url.size() > scheme.size() + 3 && url.substr(0, scheme.size()) == scheme &&
+        url.substr(scheme.size(), 3) == "://") {
+      parsed.scheme = scheme;
+      url.remove_prefix(scheme.size() + 3);
+      break;
+    }
+  }
+  if (parsed.scheme.empty()) {
+    return std::nullopt;
+  }
+  const std::size_t authority_end = std::min(url.find_first_of("/?#"), url.size());
+  const std::string_view authority = url.substr(0, authority_end);
+  const std::size_t colon = authority.rfind(':');
+  if (colon == std::string_view::npos) {
+    return std::nullopt;  // no explicit port: nothing a dev server printed
+  }
+  std::string_view name = authority.substr(0, colon);
+  if (name != "localhost" && name != "127.0.0.1" && name != "0.0.0.0" && name != "[::1]" &&
+      name != "[::]") {
+    return std::nullopt;
+  }
+  const std::optional<int> port = util::ParseInt(authority.substr(colon + 1));
+  if (!port.has_value() || *port < 1 || *port > 65535) {
+    return std::nullopt;
+  }
+  parsed.port = static_cast<std::uint16_t>(*port);
+  parsed.rest = std::string(url.substr(authority_end));
+  return parsed;
+}
+
+bool RemoteHostService::OpenHostLocalUrl(const platform::ProcessLauncher& launcher, std::string_view url) {
+  if (launcher.is_local()) {
+    return false;
+  }
+  std::optional<LoopbackUrl> parsed = ParseLoopbackUrl(url);
+  if (!parsed.has_value()) {
+    return false;
+  }
+  std::string host;
+  for (const auto& [key, entry] : hosts_) {
+    if (entry.launcher.get() == &launcher) {
+      host = key;
+    }
+  }
+  for (const auto& [tree, entry] : projects_) {
+    (void)tree;
+    if (entry.project->launcher().get() == &launcher) {
+      host = entry.project->record().host;
+    }
+  }
+  if (host.empty()) {
+    return false;
+  }
+  const std::uint16_t port = parsed->port;
+  return StartForward(host, port, std::move(parsed));
+}
+
+bool RemoteHostService::StartForward(std::string_view host, std::uint16_t port,
+                                     std::optional<LoopbackUrl> then_open) {
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
     return false;
   }
   const std::string key(host);
-  work_.Post([this, session, key, port]() {
+  work_.Post([this, session, key, port, then_open = std::move(then_open)]() {
     std::string error;
     const std::optional<remote::RemoteHostSession::PortForward> forward = session->ForwardPort(port, &error);
-    mailbox_.Post([this, key, port, forward, error]() {
+    mailbox_.Post([this, key, port, forward, error, then_open]() {
+      if (forward.has_value() && then_open.has_value() && operations_.open_url) {
+        (void)operations_.open_url(then_open->scheme + "://localhost:" +
+                                   std::to_string(forward->local_port) + then_open->rest);
+      }
       if (!operations_.notify) {
         return;
       }

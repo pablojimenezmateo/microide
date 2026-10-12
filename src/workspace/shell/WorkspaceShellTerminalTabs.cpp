@@ -168,6 +168,7 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
               MakeSidebarService().RefreshHostChanges();
             }
           },
+      .open_url = [this](std::string_view url) { return OpenExternalUrl(url); },
   });
   glue_->remote_host_service->SetWakeChannel(project_file_event_type_);
   return *glue_->remote_host_service;

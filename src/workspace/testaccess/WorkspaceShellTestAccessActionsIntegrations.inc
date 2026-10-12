@@ -661,6 +661,13 @@
   static std::string TerminalTabLabelPrefix(const WorkspaceShell& shell, std::size_t tab_index) {
     return shell.context_.current_project_state.terminal_tabs[tab_index]->active()->label_prefix;
   }
+  // The launcher terminal tab `tab_index` runs through: its own (a host terminal),
+  // else the project's — what the panel's link click hands RemoteHostService.
+  static const platform::ProcessLauncher& TerminalTabLauncher(WorkspaceShell& shell, std::size_t tab_index) {
+    const auto* pane = shell.context_.current_project_state.terminal_tabs[tab_index]->active();
+    return pane->launcher != nullptr ? *pane->launcher : shell.context_.current_project_state.launcher();
+  }
+  static RemoteHostService& RemoteHosts(WorkspaceShell& shell) { return shell.MakeRemoteHostService(); }
   static void OpenTerminalViaService(WorkspaceShell& shell, std::string command = {}) {
     shell.MakeTerminalPanelService().OpenTerminal(std::move(command));
   }
