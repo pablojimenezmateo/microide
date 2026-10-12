@@ -316,15 +316,25 @@ void TerminalTable::Close(std::uint64_t handle) {
 }
 
 void TerminalTable::Detach(std::uint64_t connection) {
-  std::lock_guard lock(mutex_);
-  for (auto& [handle, terminal] : terminals_) {
-    (void)handle;
-    const auto removed = std::erase_if(terminal->clients, [connection](const Client& client) {
-      return client.connection == connection;
-    });
-    if (removed != 0) {
-      ApplySharedSizeLocked(*terminal);  // the others may have room again
+  bool resized = false;
+  {
+    std::lock_guard lock(mutex_);
+    for (auto& [handle, terminal] : terminals_) {
+      (void)handle;
+      const auto removed = std::erase_if(terminal->clients, [connection](const Client& client) {
+        return client.connection == connection;
+      });
+      if (removed != 0) {
+        ApplySharedSizeLocked(*terminal);  // the others may have room again
+        resized = true;
+      }
     }
+  }
+  // Wake the frame pump as Resize does: a pty that grew back draws nothing by
+  // itself (an idle shell prints no prompt on SIGWINCH), so without this the
+  // remaining client kept the smaller size until the program next printed.
+  if (resized) {
+    Notify();
   }
 }
 

@@ -249,7 +249,13 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
   TerminalSessionTestAccess::EnterHostMode(b, nullptr);
   channel_b.reset();
   second.reset();
-  TypeLine(a, "sleep 0.5; stty size");
+  // The host's own answer, not a sleep: the remaining client's view is back at
+  // its size with no output needed (the detach used to wait for the program to
+  // print), and under a sanitizer on a loaded machine the host took longer than
+  // the half-second sleep this test once relied on.
+  Expect(WaitUntil([&] { return a.rows() == 20 && a.columns() == 80; }, std::chrono::seconds(20)),
+         "the host detaches the second client and the remaining one's view is its own size again");
+  TypeLine(a, "stty size");
   Expect(WaitForText(a, "20 80"), "the remaining client gets its room back:\n" + ScreenText(a));
   a.Stop();
 }
