@@ -110,6 +110,11 @@ class RemoteServerClient {
   // that may change a repository is running through this client, and the push
   // was computed after the last one exited (its proc/exit `git_generation`).
   std::optional<project::GitStatusOutput> CurrentGitStatus(const std::string& host_root);
+  // The host's listening ports (ports/subscribe): the set now, then `changed` on
+  // the I/O thread with every new set. nullopt with *error when the host refused
+  // (a server that predates it).
+  using PortsHandler = std::function<void(const std::vector<std::uint16_t>& ports)>;
+  std::optional<std::vector<std::uint16_t>> SubscribePorts(PortsHandler changed, std::string* error);
   // Around a git command that may change a repository (RemoteProcessLauncher::Run).
   void BeginGitMutation();
   void EndGitMutation();
@@ -194,6 +199,7 @@ class RemoteServerClient {
   // search/results routes of in-flight RunSearch calls, by request id.
   std::map<std::uint64_t, std::shared_ptr<std::function<void(const util::JsonValue&)>>> search_routes_;
   std::shared_ptr<std::function<void(const std::string&)>> git_status_handler_;
+  std::shared_ptr<PortsHandler> ports_handler_;
   int git_mutations_in_flight_ = 0;
   std::uint64_t git_required_generation_ = 0;
   // The highest proc/exit `git_generation` seen; recorded before the exit is

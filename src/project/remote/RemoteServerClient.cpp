@@ -12,6 +12,19 @@
 namespace microide::project::remote {
 namespace {
 
+// {ports: [n]} from the host, untrusted: anything not a port is dropped.
+std::vector<std::uint16_t> PortsFromJson(const util::JsonValue& json) {
+  std::vector<std::uint16_t> ports;
+  if (json["ports"].IsArray()) {
+    for (const util::JsonValue& port : json["ports"].AsArray()) {
+      if (port.IsInt() && port.AsInt() > 0 && port.AsInt() <= 0xFFFF) {
+        ports.push_back(static_cast<std::uint16_t>(port.AsInt()));
+      }
+    }
+  }
+  return ports;
+}
+
 // Output held for a handle whose spawn reply has not been handled yet. Bounded:
 // the race this covers is a few frames, not a stream.
 constexpr std::size_t kMaxOrphanBytes = 4 * 1024 * 1024;
@@ -128,6 +141,16 @@ void RemoteServerClient::InstallRouting() {
     // A batch for a search no longer waited on (a cancelled one's tail) is dropped.
     if (route && *route) {
       (*route)(params);
+    }
+  });
+  peer_.OnNotification(method::kPortsListening, [this](std::uint64_t, const util::JsonValue& params) {
+    std::shared_ptr<PortsHandler> handler;
+    {
+      std::lock_guard lock(mutex_);
+      handler = ports_handler_;
+    }
+    if (handler && *handler) {
+      (*handler)(PortsFromJson(params));
     }
   });
   peer_.OnNotification("git/status", [this](std::uint64_t, const util::JsonValue& params) {
@@ -476,6 +499,23 @@ bool RemoteServerClient::SubscribeGitStatus(std::function<void(const std::string
     return false;
   }
   return true;
+}
+
+std::optional<std::vector<std::uint16_t>> RemoteServerClient::SubscribePorts(PortsHandler changed,
+                                                                         std::string* error) {
+  {
+    std::lock_guard lock(mutex_);
+    ports_handler_ = std::make_shared<PortsHandler>(std::move(changed));
+  }
+  std::string why;
+  const std::optional<util::JsonValue> reply = Call(method::kPortsSubscribe, util::JsonValue(util::JsonObject{}), &why);
+  if (!reply.has_value()) {
+    if (error != nullptr) {
+      *error = why;
+    }
+    return std::nullopt;
+  }
+  return PortsFromJson(*reply);
 }
 
 std::optional<project::GitStatusOutput> RemoteServerClient::CurrentGitStatus(

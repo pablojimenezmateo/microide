@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -144,6 +145,9 @@ class RemoteHostService {
   bool IsHostFileCopy(const std::filesystem::path& path) const;
   // Whether `root` is an open remote project's mirror tree.
   bool IsRemoteProject(const std::filesystem::path& root) const;
+  // Whether `host`'s listening ports are being watched (its server answered
+  // ports/subscribe): from then on a port that starts listening is forwarded.
+  bool PortsWatched(std::string_view host) const;
   // The files of the remote project at `root` the mirror has not fetched yet (null
   // for none, or any other root): for a project state created after
   // pending_paths_changed reported them.
@@ -227,6 +231,17 @@ class RemoteHostService {
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.
   bool StartForward(std::string_view host, std::uint16_t port, std::optional<LoopbackUrl> then_open);
+  // Automatic port forwarding (VS Code's): subscribe to `host`'s listening ports
+  // over `session`'s connection, once per connection, and forward a port a host
+  // program starts listening on after the first connect (remote.auto_forward_ports).
+  void WatchPorts(const std::string& host, project::remote::RemoteHostSession& session);
+  void OnHostPorts(const std::string& host, const std::vector<std::uint16_t>& ports);
+  struct PortWatch {
+    std::weak_ptr<project::remote::RemoteServerClient> client;  // subscribed through
+    // Every port seen listening (from the first connect on): only a port not in
+    // it is forwarded, so a forward the user stopped is not made again.
+    std::optional<std::set<std::uint16_t>> baseline;
+  };
   void PublishHostChanges(const std::filesystem::path& tree, Project& entry,
                           const project::remote::MirrorSyncEngine::Status& sync);
 
@@ -259,6 +274,7 @@ class RemoteHostService {
   // By host (`RemoteHostTarget::Display`): the ports forwarded to it, shared by
   // its sessions. Kept after they go, so the next connection forwards them again.
   std::map<std::string, std::shared_ptr<project::remote::HostPortForwards>, std::less<>> forwards_;
+  std::map<std::string, PortWatch, std::less<>> port_watches_;  // by host
   // By mirror tree. Kept until the service goes: a project state may still hold
   // their launcher and gate (ProjectLocality's lifetime rule).
   std::map<std::filesystem::path, Project> projects_;

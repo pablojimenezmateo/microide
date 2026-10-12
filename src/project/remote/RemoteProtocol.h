@@ -65,6 +65,12 @@ inline constexpr std::string_view kFileRead = "file/read";
 // server/log {} -> {path, text}: the tail (at most 256 KiB) of the server's log
 // beside its socket; empty text for a server with no log (serve-stdio).
 inline constexpr std::string_view kServerLog = "server/log";
+// ports/subscribe {} -> {ports: [n]}: the TCP ports this user listens on at the
+// host's loopback (or every address), then a ports/listening {ports: [n]}
+// notification whenever that set changes (sampled every 2 s): the client forwards
+// a port a host program starts listening on (VS Code's auto forward).
+inline constexpr std::string_view kPortsSubscribe = "ports/subscribe";
+inline constexpr std::string_view kPortsListening = "ports/listening";
 }  // namespace method
 
 // What a write or tree operation requires of the path's current content (§ 6.3):

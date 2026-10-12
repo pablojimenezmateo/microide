@@ -893,6 +893,7 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 # builds link it statically against musl (packaging); dev and sanitizer builds link
 # it normally so every lane covers it.
 add_executable(microide-server
+  src/server/ListeningPorts.cpp
   src/server/ProcessTable.cpp
   src/server/RemoteServer.cpp
   src/server/RemoteServerWorkspace.cpp
@@ -1436,6 +1437,7 @@ add_executable(microide_kernel_tests
   tests/MirrorStoreTests.cpp
   tests/MirrorSyncEngineTests.cpp
   tests/RemoteProjectTests.cpp
+  src/server/ListeningPorts.cpp
   src/server/WorkspaceTree.cpp
   src/server/WorkspaceWatch.cpp
   tests/RemoteFrameTransportTests.cpp

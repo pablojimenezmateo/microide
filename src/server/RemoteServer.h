@@ -16,6 +16,7 @@
 #include "project/remote/RemoteProtocol.h"
 #include "project/GitMetadataSource.h"
 #include "server/GitStatusSampler.h"
+#include "server/PeriodicSampler.h"
 #include "server/RecentObjects.h"
 #include "server/ProcessTable.h"
 #include "server/TerminalTable.h"
@@ -131,6 +132,12 @@ class RemoteServer {
   void InstallWatchHandlers(Connection& connection);
   void InstallGitHandlers(Connection& connection);
   void InstallSearchHandlers(Connection& connection);
+  void InstallPortHandlers(Connection& connection);
+  // The listening ports now; pushed to every ports/subscribe connection if they
+  // changed. The port sampler's thread.
+  void SamplePorts();
+  // A connection that closed stops asking; the sampler stops with the last one.
+  void DropPortSubscriber(std::uint64_t connection_id);
   // Run `git status` for `tree` on its queue and push it to its git subscribers
   // (coalesced: one run however many changes asked).
   void ScheduleGitStatus(ServedTree& tree);
@@ -169,6 +176,12 @@ class RemoteServer {
   // search/run: its own workers, so a long search never queues a manifest, a read
   // or a write behind it. Last of all: its jobs send through connections_.
   util::TaskExecutor search_executor_{2};
+  // ports/subscribe: who asked, what they were last sent, and the sampler that
+  // runs while anyone asked. After everything its thread sends through.
+  std::mutex ports_mutex_;
+  std::set<std::uint64_t> port_subscribers_;     // guarded by ports_mutex_
+  std::vector<std::uint16_t> ports_last_;        // guarded by ports_mutex_
+  std::unique_ptr<PeriodicSampler> port_sampler_;  // guarded by ports_mutex_
 };
 
 }  // namespace microide::server

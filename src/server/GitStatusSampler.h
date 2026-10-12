@@ -1,13 +1,12 @@
 #pragma once
 
 #include <chrono>
-#include <condition_variable>
 #include <filesystem>
 #include <functional>
-#include <mutex>
-#include <thread>
+#include <optional>
 
 #include "project/GitRepositoryMetadataTracker.h"
+#include "server/PeriodicSampler.h"
 
 namespace microide::server {
 
@@ -23,39 +22,17 @@ class GitStatusSampler {
       : changed_(std::move(changed)) {
     tracker_.SetProjectRoot(root);
     (void)tracker_.SampleChanges();  // the baseline
-    thread_ = std::thread([this, interval]() { Run(interval); });
-  }
-  ~GitStatusSampler() {
-    {
-      std::lock_guard lock(mutex_);
-      stop_ = true;
-    }
-    cv_.notify_all();
-    if (thread_.joinable()) {
-      thread_.join();
-    }
-  }
-  GitStatusSampler(const GitStatusSampler&) = delete;
-  GitStatusSampler& operator=(const GitStatusSampler&) = delete;
-
- private:
-  void Run(std::chrono::milliseconds interval) {
-    std::unique_lock lock(mutex_);
-    while (!cv_.wait_for(lock, interval, [this] { return stop_; })) {
-      lock.unlock();
+    sampler_.emplace(interval, [this]() {
       if (!tracker_.SampleChanges().empty() && changed_) {
         changed_();
       }
-      lock.lock();
-    }
+    });
   }
 
+ private:
   project::GitRepositoryMetadataTracker tracker_;  // the sampler thread's alone
   std::function<void()> changed_;
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  bool stop_ = false;
-  std::thread thread_;  // last
+  std::optional<PeriodicSampler> sampler_;  // last: its thread uses the above
 };
 
 }  // namespace microide::server

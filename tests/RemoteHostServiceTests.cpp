@@ -16,6 +16,9 @@
 #include <string>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #endif
 
@@ -54,6 +57,20 @@ void Pump(WorkspaceShell& shell) {
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
 }
 
+// The shell's ssh is the fake host's shim. Automatic port forwarding is off: on a
+// shared machine (a parallel test run) another test's listener would be forwarded
+// and counted; the one test about it turns it back on.
+void PointAtFakeHost(WorkspaceShell& shell, const FakeSshHost& host) {
+  std::string ssh;
+  for (const std::string& word : host.SshArgv()) {
+    ssh += (ssh.empty() ? "" : " ") + word;
+  }
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
+         "the ssh seam is set");
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports", "false"),
+         "no automatic forwards");
+}
+
 // Remote: Open Terminal on Host… end to end, through the command a palette entry
 // or the host prompt runs: no project open, the host has no server (it is
 // installed), the tab is titled with the host, the shell is the host's, the
@@ -61,12 +78,7 @@ void Pump(WorkspaceShell& shell) {
 void TestOpenTerminalOnHostFromTheCommand() {
   FakeSshHost host;
   WorkspaceShell shell;
-  std::string ssh;
-  for (const std::string& word : host.SshArgv()) {
-    ssh += (ssh.empty() ? "" : " ") + word;
-  }
-  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
-         "the ssh seam is set");
+  PointAtFakeHost(shell, host);
   // A per-run host name: the control socket's path is derived from it.
   const std::string target = "dev@fake-" + std::to_string(::getpid());
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal " + target),
@@ -219,11 +231,7 @@ void TestMixedTerminalsSayWhereTheyRun() {
   FakeSshHost host;
   TemporaryDirectory project;
   WorkspaceShell shell;
-  std::string ssh;
-  for (const std::string& word : host.SshArgv()) {
-    ssh += (ssh.empty() ? "" : " ") + word;
-  }
-  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh), "ssh seam");
+  PointAtFakeHost(shell, host);
   Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, project.path(), {}), "a local project");
   if (WorkspaceShellTestAccess::TerminalTabCount(shell) == 0) {
     WorkspaceShellTestAccess::ExecuteCommandLine(shell, "terminal");
@@ -268,11 +276,7 @@ void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
   WriteFile(host_root / "logs" / "big.log", big);
   const std::string target = "dev@fake-lazy-" + std::to_string(::getpid());
   WorkspaceShell shell;
-  std::string ssh;
-  for (const std::string& word : host.SshArgv()) {
-    ssh += (ssh.empty() ? "" : " ") + word;
-  }
-  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh), "ssh seam");
+  PointAtFakeHost(shell, host);
   Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.backfill_max_file_mib", "1"),
          "files over 1 MiB wait to be opened");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
@@ -330,11 +334,7 @@ void TestConflictMergesThreeWaysToTheHost() {
   WriteFile(host_root / "notes.txt", "a\nb\nc\n");
   const std::string target = "dev@fake-merge-" + std::to_string(::getpid());
   WorkspaceShell shell;
-  std::string ssh;
-  for (const std::string& word : host.SshArgv()) {
-    ssh += (ssh.empty() ? "" : " ") + word;
-  }
-  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh), "ssh seam");
+  PointAtFakeHost(shell, host);
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
          "the command is accepted");
   const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
@@ -396,6 +396,53 @@ void TestConflictMergesThreeWaysToTheHost() {
   RemoveFakeMaster(target);
 }
 
+// Automatic port forwarding (VS Code's): a program on the host that starts
+// listening after the editor connected is forwarded and announced, with no
+// command; what already listened at connect is not.
+void TestAPortThatStartsListeningIsForwarded() {
+  FakeSshHost host;
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.auto_forward_ports", "true"),
+         "automatic forwards on");
+  const std::string target = "dev@fake-ports-" + std::to_string(::getpid());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-terminal " + target), "connect");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::RemoteHosts(shell).PortsWatched(target);
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(5)),
+         "connected, and the host's ports are watched");
+  // The host is this machine: a listener here is one on the host.
+  const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  socklen_t length = sizeof(address);
+  Expect(fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+             ::listen(fd, 1) == 0 && ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
+         "a dev server starts listening on the host");
+  const std::string row_key = "remote.forward." + target + "." + std::to_string(ntohs(address.sin_port));
+  const auto announced = [&] {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.key == row_key) {
+        return row.message.find("is available at localhost:") != std::string::npos;
+      }
+    }
+    return false;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return announced();
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "it is forwarded and announced");
+  ::close(fd);
+  RemoveFakeMaster(target);
+}
+
 // Remote: Open Folder on Host… end to end: the command prepares the mirror, the
 // editor opens it as the project root with the host's launcher, the mirror fills
 // from the host, and an edit saved in the editor lands in the HOST's file. Then
@@ -416,12 +463,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   std::filesystem::path mirror;
   {
   WorkspaceShell shell;
-  std::string ssh;
-  for (const std::string& word : host.SshArgv()) {
-    ssh += (ssh.empty() ? "" : " ") + word;
-  }
-  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
-         "the ssh seam is set");
+  PointAtFakeHost(shell, host);
   Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":relative"),
          "a relative host path is refused");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
@@ -766,12 +808,7 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   {
     // A later run opening the mirror as a plain folder.
     WorkspaceShell shell;
-    std::string ssh;
-    for (const std::string& word : host.SshArgv()) {
-      ssh += (ssh.empty() ? "" : " ") + word;
-    }
-    Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh),
-           "the ssh seam is set again");
+    PointAtFakeHost(shell, host);
     Expect(WorkspaceShellTestAccess::OpenProjectTabWithLocality(shell, mirror, {}),
            "the mirror opens as a path");
     Expect(!WorkspaceShellTestAccess::ProjectLauncher(shell).is_local(),
@@ -829,6 +866,7 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched",
           TestUnfetchedFilesAreListedAndOpenWhenFetched);
   AddTest(tests, "RemoteHostService/ConflictMergesThreeWaysToTheHost", TestConflictMergesThreeWaysToTheHost);
+  AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
 #endif

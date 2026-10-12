@@ -490,6 +490,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.auto_forward_ports",
+          .label = "Forward Ports Automatically",
+          .description = "Forward a port a program on a remote host starts listening on (a dev "
+                         "server, a notebook) to the same port here when it is free, and say "
+                         "where it is available.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "remote.backfill_max_file_mib",
           .label = "Fetch Larger Files Only When Opened (MiB)",
           .description = "A remote project's mirror fetches every file of the host's tree in "

@@ -308,6 +308,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
     case State::Ready:
       entry.auth_terminal_opened = false;
       WarnIfSessionsEndAtLogout(record.host, project.session());
+      WatchPorts(record.host, project.session());
       if (project.watch_native() == std::optional(false) && !entry.warned_polling && operations_.notify) {
         // Degraded freshness is reported, never presented as normal (§ 6.3).
         entry.warned_polling = true;
@@ -1032,6 +1033,61 @@ bool RemoteHostService::StartForward(std::string_view host, std::uint16_t port,
   return true;
 }
 
+void RemoteHostService::WatchPorts(const std::string& host, remote::RemoteHostSession& session) {
+  std::shared_ptr<remote::RemoteServerClient> client = session.connection()->client();
+  PortWatch& watch = port_watches_[host];
+  if (client == nullptr || watch.client.lock() == client) {
+    return;  // one subscription per connection: the host's other sessions share it
+  }
+  watch.client = client;
+  work_.Post([this, host, client]() {
+    std::string error;
+    std::optional<std::vector<std::uint16_t>> now = client->SubscribePorts(
+        [this, host](const std::vector<std::uint16_t>& ports) {
+          mailbox_.PostLatest("remote-ports:" + host, [this, host, ports]() { OnHostPorts(host, ports); });
+        },
+        &error);
+    if (!now.has_value()) {
+      return;  // a server that predates it: forwards stay a command and a click
+    }
+    mailbox_.Post([this, host, now = std::move(*now)]() {
+      PortWatch& watch = port_watches_[host];
+      if (!watch.baseline.has_value()) {
+        // What already listened when the editor first connected is not news.
+        watch.baseline = std::set<std::uint16_t>(now.begin(), now.end());
+        return;
+      }
+      OnHostPorts(host, now);  // a reconnect: what started while it was down
+    });
+  });
+}
+
+bool RemoteHostService::PortsWatched(std::string_view host) const {
+  const auto it = port_watches_.find(host);
+  return it != port_watches_.end() && it->second.baseline.has_value();
+}
+
+void RemoteHostService::OnHostPorts(const std::string& host, const std::vector<std::uint16_t>& ports) {
+  PortWatch& watch = port_watches_[host];
+  if (!watch.baseline.has_value()) {
+    return;  // the subscription's own answer has not arrived yet
+  }
+  const auto setting = operations_.setting ? operations_.setting("remote.auto_forward_ports")
+                                           : std::optional<std::string>();
+  const bool forward = SettingFlagEnabled(setting, true);
+  const auto known = forwards_.find(host);
+  for (const std::uint16_t port : ports) {
+    // Below 1024 is a system service (sshd), never a program the user started.
+    if (!watch.baseline->insert(port).second || port < 1024 || !forward) {
+      continue;
+    }
+    if (known != forwards_.end() && known->second->Find(port).has_value()) {
+      continue;
+    }
+    (void)StartForward(host, port, std::nullopt);
+  }
+}
+
 bool RemoteHostService::CancelForward(std::string_view host, std::uint16_t port) {
   remote::RemoteHostSession* session = SessionFor(host);
   if (session == nullptr) {
@@ -1222,6 +1278,7 @@ void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostS
                                                         .message = "Connected to " + host});
       }
       WarnIfSessionsEndAtLogout(host, *entry->session);
+      WatchPorts(host, *entry->session);
       OpenPendingTerminals(host, *entry);
       break;
     case State::Reconnecting:

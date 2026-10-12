@@ -455,8 +455,16 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   ControlMaster the ports ride on). Whichever session brings a master up applies
   them; a disconnect closes the listeners only when no other session holds the
   host. `RemoteHostSession/PortForwardsAreTheHosts`.
-- **Automatic port detection.** VS Code forwards a port when a host process
-  starts listening; here a forward is a command or a clicked link.
+- ~~**Automatic port detection.**~~ Fixed 2026-10-12: `ports/subscribe` — the
+  server samples `/proc/net/tcp{,6}` every 2 s (one `PeriodicSampler`, shared with
+  the git sampler, running while anyone subscribed) for this user's loopback or
+  wildcard listeners and pushes `ports/listening` on a change; the client forwards
+  a port ≥ 1024 that was not listening at the first connect
+  (`remote.auto_forward_ports`, default on). A port the user stopped forwarding is
+  not forwarded again. `RemoteServer/PortsSubscribePushesANewListener`,
+  `RemoteHostService/APortThatStartsListeningIsForwarded`. Not done: VS Code also
+  drops an auto-forward when its port stops listening; here it stays until
+  `remote-unforward-port` or the disconnect.
 - ~~**The pull-on-open branches have no shell-level test**~~ — the absent branch
   has one since 2026-10-12: `remote.backfill_max_file_mib` keeps a file unfetched
   deterministically (`RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched`).

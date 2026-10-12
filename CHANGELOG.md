@@ -107,6 +107,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
   mirrored like the rest of the tree instead of arriving as an empty directory.
 - The remote status segment shows a first sync's progress (`build-box · 1204/4258`)
   and saves waiting for the host (`· 3 unsent`).
+- **Ports are forwarded automatically.** A program on a remote host that starts
+  listening (a dev server, a notebook) is forwarded to the same port here when it
+  is free, with a row saying where it is (**Open in Browser**, **Copy Address**).
+  `remote.auto_forward_ports` turns it off.
 - **Merge a remote save conflict.** A file both you and the host changed gets
   **Merge** on its row: the merge editor opens on the version both started from,
   the host's and yours, with the non-conflicting changes already applied. Mark

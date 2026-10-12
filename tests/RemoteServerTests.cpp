@@ -6,9 +6,12 @@
 #include "project/remote/RemoteFrame.h"
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
+#include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteServerPaths.h"
+#include "server/ListeningPorts.h"
 #include "util/JsonValue.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -19,6 +22,9 @@
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -243,6 +249,73 @@ void TestAttachStartsOnDemandAndTheServerIdlesOut() {
          "the on-demand server idles out and removes its socket");
 }
 
+// /proc/net/tcp{,6}: this user's LISTEN sockets on a loopback or wildcard address,
+// whatever the table's spacing; another user's, a connected socket and one bound to
+// an outside address are not forwardable ports.
+void TestListeningPortsParseProcNetTcp() {
+  const std::string tcp =
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+      "   0: 0100007F:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 1 1\n"
+      "   1: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 2 1\n"
+      "   2: 0100007F:1F91 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 3 1\n"
+      "   3: 0100007F:1F92 0100007F:D431 01 00000000:00000000 00:00000000 00000000  1000        0 4 1\n"
+      "   4: 0A00000A:1F93 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 5 1\n"
+      "   5: garbage\n";
+  Expect((server::ParseListeningPorts(tcp, 1000) == std::vector<std::uint16_t>{3000, 8080}),
+         "loopback and wildcard listeners of this user only");
+  const std::string tcp6 =
+      "  sl  local_address                         remote_address                        st ...\n"
+      "   0: 00000000000000000000000001000000:1538 00000000000000000000000000000000:0000 0A "
+      "00000000:00000000 00:00000000 00000000  1000        0 6 1\n"
+      "   1: 00000000000000000000000000000000:2328 00000000000000000000000000000000:0000 0A "
+      "00000000:00000000 00:00000000 00000000  1000        0 7 1\n"
+      "   2: 0000000000000000FFFF00000100007F:2329 00000000000000000000000000000000:0000 0A "
+      "00000000:00000000 00:00000000 00000000  1000        0 8 1\n"
+      "   3: B80D0120000000000000000001000000:232A 00000000000000000000000000000000:0000 0A "
+      "00000000:00000000 00:00000000 00000000  1000        0 9 1\n";
+  Expect((server::ParseListeningPorts(tcp6, 1000) == std::vector<std::uint16_t>{5432, 9000, 9001}),
+         "::1, :: and ::ffff:127.0.0.1, not a global address");
+}
+
+// ports/subscribe end to end: the answer is what listens now, and a port this
+// user starts listening on afterwards is pushed (the sampler's 2 s period).
+void TestPortsSubscribePushesANewListener() {
+  TemporaryDirectory root;
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({Server(), "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = root.path().string()}, &error),
+         "connects: " + error);
+  std::mutex mutex;
+  std::vector<std::uint16_t> pushed;
+  const auto now = client->SubscribePorts(
+      [&](const std::vector<std::uint16_t>& ports) {
+        std::lock_guard lock(mutex);
+        pushed = ports;
+      },
+      &error);
+  Expect(now.has_value(), "subscribed: " + error);
+  const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  socklen_t length = sizeof(address);
+  Expect(fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+             ::listen(fd, 1) == 0 &&
+             ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length) == 0,
+         "a listener on the host's loopback");
+  const std::uint16_t port = ntohs(address.sin_port);
+  Expect(std::find(now->begin(), now->end(), port) == now->end(), "not listening when subscribed");
+  Expect(WaitUntil(
+             [&] {
+               std::lock_guard lock(mutex);
+               return std::find(pushed.begin(), pushed.end(), port) != pushed.end();
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(20)),
+         "the new listener is pushed");
+  ::close(fd);
+}
+
 #endif
 
 }  // namespace
@@ -259,6 +332,8 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestStartedServerServesWorkspacesAndDoesNotHoldStdio);
   AddTest(tests, "RemoteServer/AttachStartsOnDemandAndTheServerIdlesOut",
           TestAttachStartsOnDemandAndTheServerIdlesOut);
+  AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
+  AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);
 #else
   (void)tests;
 #endif

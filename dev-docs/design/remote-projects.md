@@ -182,8 +182,11 @@ this document's § 7, what a user still missed:
   editor on base / host / mirror; Mark Resolved pushes under expect = the merged
   host version. **Per-host port forwards**: one `HostPortForwards` shared by a
   host's sessions.
-- Still open: the remote status block on the project home (§ 7.3); automatic port
-  detection. TD-2026-10-12-336.
+- **Automatic port forwarding**: `ports/subscribe` pushes the host user's
+  listening ports (sampled from `/proc/net/tcp{,6}` every 2 s); a port that starts
+  listening after connect is forwarded (`remote.auto_forward_ports`).
+- Still open: the remote status block on the project home (§ 7.3).
+  TD-2026-10-12-336.
 
 ## 1. The problem
 
@@ -1953,6 +1956,7 @@ true.
 | `remote.server_socket_dir` | User | path | empty | override for the server's socket directory; empty means `~/.local/state/microide/server/`, owner-verified on every bind (§ 6.12) |
 | `remote.mass_delete_threshold` | User | percent | 25 | share of the manifest a single diff may delete before it prompts instead of applying; floor of 100 rows (§ 6.3) |
 | `remote.object_store_budget` | User | int | 2 GiB | per-mirror cap on `meta/objects/`; unreachable objects are swept oldest-first down to it (§ 6.2) |
+| `remote.auto_forward_ports` | User | bool | true | forward a host port that starts listening after connect (VS Code's auto forward) |
 | `remote.backfill_max_file_mib` | User | int (MiB) | 16384 | files over this are left out of the background fetch: listed dimmed, fetched when opened (§ 7.3) |
 | `remote.backfill_inflight_bytes` | User | int | 0 (= adaptive) | unacknowledged bytes bulk traffic may have outstanding; 0 means about 100 ms of measured bandwidth, floored at 64 KiB and capped at 1 MiB (§ 6.4) |
 

@@ -8,6 +8,7 @@
 
 #include "project/GitMetadataSource.h"
 #include "project/remote/RemoteServerPaths.h"
+#include "server/ListeningPorts.h"
 #include "util/ContentHash.h"
 #include "util/Log.h"
 #include "util/TextFileIO.h"
@@ -129,6 +130,7 @@ RemoteServer::Connection& RemoteServer::Accept(int read_fd, int write_fd) {
   InstallWatchHandlers(ref);
   InstallGitHandlers(ref);
   InstallSearchHandlers(ref);
+  InstallPortHandlers(ref);
   remote::RemotePeer::Options options;  // the server answers pings; it does not send them
   if (!ref.peer.Start(read_fd, write_fd, options)) {
     ref.closed = true;
@@ -234,6 +236,7 @@ void RemoteServer::InstallHandlers(Connection& connection) {
       }
     }
     released.reset();
+    DropPortSubscriber(connection.id);
     processes_->Detach(connection.id);
     terminals_->Detach(connection.id);
     connection.closed = true;
@@ -462,6 +465,65 @@ util::JsonValue RemoteServer::StatusJson() {
   survival["linger"] = util::JsonValue(config_.session_survival.linger);
   status["session_survival"] = util::JsonValue(std::move(survival));
   return util::JsonValue(std::move(status));
+}
+
+namespace {
+
+util::JsonValue PortsJson(const std::vector<std::uint16_t>& ports) {
+  util::JsonArray list;
+  list.reserve(ports.size());
+  for (const std::uint16_t port : ports) {
+    list.push_back(util::JsonValue(static_cast<std::int64_t>(port)));
+  }
+  util::JsonObject object;
+  object["ports"] = util::JsonValue(std::move(list));
+  return util::JsonValue(std::move(object));
+}
+
+}  // namespace
+
+void RemoteServer::InstallPortHandlers(Connection& connection) {
+  connection.peer.OnRequest(remote::method::kPortsSubscribe,
+                            [this, &connection](std::uint64_t id, const util::JsonValue&) {
+                              std::vector<std::uint16_t> ports = ListeningPorts();
+                              {
+                                std::lock_guard lock(ports_mutex_);
+                                port_subscribers_.insert(connection.id);
+                                ports_last_ = ports;
+                                if (port_sampler_ == nullptr) {
+                                  port_sampler_ = std::make_unique<PeriodicSampler>(
+                                      std::chrono::milliseconds(2000), [this]() { SamplePorts(); });
+                                }
+                              }
+                              connection.peer.Reply(id, PortsJson(ports));
+                            });
+}
+
+void RemoteServer::SamplePorts() {
+  std::vector<std::uint16_t> ports = ListeningPorts();
+  std::vector<std::uint64_t> subscribers;
+  {
+    std::lock_guard lock(ports_mutex_);
+    if (ports == ports_last_) {
+      return;
+    }
+    ports_last_ = ports;
+    subscribers.assign(port_subscribers_.begin(), port_subscribers_.end());
+  }
+  const util::JsonValue message = PortsJson(ports);
+  for (const std::uint64_t subscriber : subscribers) {
+    WithPeer(subscriber, [&](remote::RemotePeer& peer) { peer.Notify(remote::method::kPortsListening, message); });
+  }
+}
+
+void RemoteServer::DropPortSubscriber(std::uint64_t connection_id) {
+  std::unique_ptr<PeriodicSampler> stopped;  // joined outside the lock its thread takes
+  {
+    std::lock_guard lock(ports_mutex_);
+    if (port_subscribers_.erase(connection_id) > 0 && port_subscribers_.empty()) {
+      stopped = std::move(port_sampler_);
+    }
+  }
 }
 
 void RemoteServer::ReapClosed() {
