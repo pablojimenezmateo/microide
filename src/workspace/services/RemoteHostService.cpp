@@ -237,6 +237,16 @@ std::optional<project::ProjectLocality> RemoteHostService::LocalityForMirror(
   return project->project->locality();
 }
 
+namespace {
+
+// What the project's server said it is in its hello; "" before one answered.
+std::string ServerRelease(remote::RemoteProject& project) {
+  const std::shared_ptr<remote::RemoteServerClient> client = project.session().connection()->client();
+  return client != nullptr ? client->hello().release : std::string();
+}
+
+}  // namespace
+
 void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   const auto it = projects_.find(tree);
   if (it == projects_.end()) {
@@ -348,7 +358,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   PublishConflictRows(tree, entry);
   PublishHostChanges(tree, entry, sync);
   if (editor::WelcomeRemoteStatus block = StatusBlock(record.host, record.host_root, status, sync,
-                                                             project.session().SshCommandText());
+                                                             project.session().SshCommandText(), ServerRelease(project));
       block != entry.status_block) {
     entry.status_block = std::move(block);
     if (operations_.project_status_changed) {
@@ -410,7 +420,8 @@ editor::WelcomeRemoteStatus RemoteHostService::ProjectStatusOf(const std::filesy
 editor::WelcomeRemoteStatus RemoteHostService::StatusBlock(std::string_view host, std::string_view host_root,
                                                            const remote::RemoteHostSession::Status& state,
                                                            const remote::MirrorSyncEngine::Status& sync,
-                                                           std::string_view command) {
+                                                           std::string_view command,
+                                                           std::string_view server_release) {
   using Stage = editor::WelcomeStageState;
   editor::WelcomeRemoteStatus block;
   block.heading = std::string(host) + ":" + std::string(host_root);
@@ -448,7 +459,8 @@ editor::WelcomeRemoteStatus RemoteHostService::StatusBlock(std::string_view host
       break;
   }
   stage("connected", Stage::Done);
-  stage("server running", Stage::Done);
+  stage(server_release.empty() ? std::string("server running") : "server " + std::string(server_release),
+        Stage::Done);
   if (!sync.error.empty()) {
     stage("sync failed", Stage::Failed);
     block.detail = sync.error;

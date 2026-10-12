@@ -483,7 +483,7 @@ void TestProjectHomeStatusBlockFollowsTheConnection() {
   const auto block = [&](State state, std::string error = {}) {
     return workspace::RemoteHostService::StatusBlock(
         "box", "/srv/app", project::remote::RemoteHostSession::Status{.state = state, .message = {}, .error = error},
-        sync, "ssh -- box");
+        sync, "ssh -- box", "2.13.0");
   };
   const editor::WelcomeRemoteStatus failed = block(State::Offline, "Connection refused");
   Expect(failed.heading == "box:/srv/app" && failed.stages.size() == 1 && failed.stages[0].state == Stage::Failed &&
@@ -496,7 +496,8 @@ void TestProjectHomeStatusBlockFollowsTheConnection() {
   sync.files = 10;
   sync.absent = 7;
   const editor::WelcomeRemoteStatus syncing = block(State::Ready);
-  Expect(syncing.stages.size() == 3 && syncing.stages[2].text == "syncing 3 / 10 files" &&
+  Expect(syncing.stages.size() == 3 && syncing.stages[1].text == "server 2.13.0" &&
+             syncing.stages[2].text == "syncing 3 / 10 files" &&
              syncing.stages[2].state == Stage::Active,
          "a first sync's progress: '" + (syncing.stages.size() == 3 ? syncing.stages[2].text : std::string()) + "'");
   sync.synced_once = true;

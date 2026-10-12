@@ -442,9 +442,8 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   link, the server, the sync — each as far as it got), a failure's reason with the
   ssh command that reproduces it, and Retry; it reaches the project state through
   `project_status_changed` and the home draws it above its panels
-  (`WelcomeLayout::remote_block`, `WelcomeHitRegion::Kind::RemoteRetry`). The
-  server's version is not shown: the hello's answer is not kept anywhere the
-  block could read it.
+  (`WelcomeLayout::remote_block`, `WelcomeHitRegion::Kind::RemoteRetry`); the
+  server stage names the release its hello reported.
 - ~~**A conflict is settled two-way.**~~ Fixed 2026-10-12: the conflict row's
   **Merge** opens the merge editor on the base (from `meta/objects`), the host's
   current bytes and the mirror's file, seeded with the merge (the host's clean

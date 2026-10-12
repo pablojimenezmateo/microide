@@ -160,11 +160,12 @@ class RemoteHostService {
   editor::WelcomeRemoteStatus ProjectStatusOf(const std::filesystem::path& root) const;
   // The home's status block for a project in `state` with `sync` (§ 7.3): the
   // link, the server and the sync, each as far as it got, and what to do about a
-  // failure. `command` reproduces the connection in a terminal.
+  // failure. `command` reproduces the connection in a terminal; `server_release`
+  // is what the server's hello said it is ("" before one answered).
   static editor::WelcomeRemoteStatus StatusBlock(std::string_view host, std::string_view host_root,
                                                  const project::remote::RemoteHostSession::Status& state,
                                                  const project::remote::MirrorSyncEngine::Status& sync,
-                                                 std::string_view command);
+                                                 std::string_view command, std::string_view server_release);
   // Changed on Host (§ 7.9) for the remote project at `root`: one row per file the
   // host changed since connect or the last Clear, newest first; `id` is the relative
   // path. Empty for any other root.
