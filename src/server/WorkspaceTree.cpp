@@ -504,6 +504,33 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   last_rows_ = manifest.rows;
   last_git_ = manifest.git;
   built_ = true;
+  // Which members the watch's own filter keeps it from seeing: one filter decision
+  // per directory (memoized; an ancestor's pruning covers its subtree).
+  unwatched_members_.clear();
+  {
+    project::ProjectTraversalFilter filter(root_);
+    std::unordered_map<std::string, bool> pruned;
+    const std::function<bool(const std::string&)> is_pruned = [&](const std::string& directory) -> bool {
+      if (directory.empty()) {
+        return false;
+      }
+      if (const auto it = pruned.find(directory); it != pruned.end()) {
+        return it->second;
+      }
+      const std::size_t slash = directory.rfind('/');
+      const bool result = is_pruned(slash == std::string::npos ? std::string() : directory.substr(0, slash)) ||
+                          filter.ShouldSkipDirectory(root_ / directory);
+      pruned.emplace(directory, result);
+      return result;
+    };
+    for (const ManifestRow& row : manifest.rows) {
+      const std::size_t slash = row.path.rfind('/');
+      if (slash != std::string::npos && row.kind != ManifestEntryKind::Submodule &&
+          is_pruned(row.path.substr(0, slash))) {
+        unwatched_members_.push_back(row.path);
+      }
+    }
+  }
   return manifest;
 #else
   *error = "not supported on this platform";

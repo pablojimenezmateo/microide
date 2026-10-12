@@ -100,6 +100,9 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                      };
                      std::optional<WorkspaceTree::Manifest> manifest =
                          tree->tree.BuildManifest(&error, cancelled);
+                     if (manifest.has_value() && tree->watch) {
+                       tree->watch->SetPolledPaths(tree->tree.UnwatchedMembers());
+                     }
                      // Encode outside the server lock (WithPeer holds it).
                      std::vector<std::string> chunks;
                      if (manifest.has_value()) {
@@ -181,6 +184,7 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
               }
               tree->queue.PostLatest("watch", [this, tree]() { PublishWatchBatch(*tree); });
             });
+        tree->watch->SetPolledPaths(tree->tree.UnwatchedMembers());
       }
       util::JsonObject result;
       result["native"] = util::JsonValue(tree->watch && tree->watch->native());
@@ -368,6 +372,9 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
   if (!manifest.has_value()) {
     util::Log("watch batch for " + tree.tree.root().string() + " failed: " + error);
     return;
+  }
+  if (tree.tree.last_update_was_full() && tree.watch) {
+    tree.watch->SetPolledPaths(tree.tree.UnwatchedMembers());
   }
   auto current = std::make_shared<const std::vector<remote::ManifestRow>>(std::move(manifest->rows));
   // Subscribers primed by the same manifest share a baseline: one diff for each

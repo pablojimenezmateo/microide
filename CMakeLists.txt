@@ -1436,6 +1436,7 @@ add_executable(microide_kernel_tests
   tests/MirrorSyncEngineTests.cpp
   tests/RemoteProjectTests.cpp
   src/server/WorkspaceTree.cpp
+  src/server/WorkspaceWatch.cpp
   tests/RemoteFrameTransportTests.cpp
   tests/RemotePeerTests.cpp
   tests/RemoteServerTests.cpp

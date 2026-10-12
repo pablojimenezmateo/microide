@@ -87,6 +87,15 @@ class WorkspaceTree {
   // build/, node_modules/ or .git (remote-projects.md § 6.11).
   std::optional<std::vector<std::string>> SearchPaths(std::string* error);
 
+  // Members of the last full build's content set that sit under a directory the
+  // workspace watch prunes (the scanner's skip list, an ignored directory holding a
+  // tracked file): the watch cannot see them, so it polls them
+  // (WorkspaceWatch::SetPolledPaths). Usually empty.
+  std::vector<std::string> UnwatchedMembers() const {
+    std::lock_guard lock(mutex_);
+    return unwatched_members_;
+  }
+
   const std::filesystem::path& root() const { return root_; }
   // Files hashed (cache misses) by the most recent BuildManifest.
   std::size_t last_hashed_files() const { return last_hashed_files_; }
@@ -127,7 +136,7 @@ class WorkspaceTree {
 
   std::filesystem::path root_;
   Options options_;
-  std::mutex mutex_;  // serializes BuildManifest; guards the members below
+  mutable std::mutex mutex_;  // serializes BuildManifest; guards the members below
   std::uint64_t next_manifest_id_ = 1;
   std::unordered_map<std::string, CacheEntry> cache_;
   std::size_t last_hashed_files_ = 0;
@@ -137,6 +146,7 @@ class WorkspaceTree {
   // Checked-out gitlinks the last full listing found (sorted): which repository an
   // incremental update asks about a new path.
   std::vector<std::string> submodule_roots_;
+  std::vector<std::string> unwatched_members_;
   bool built_ = false;
   bool last_update_was_full_ = false;
   bool cache_dirty_ = false;

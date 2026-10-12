@@ -1,8 +1,11 @@
 #include "TestSupport.h"
 
 #include "server/WorkspaceTree.h"
+#include "server/WorkspaceWatch.h"
 
 #include <algorithm>
+#include <mutex>
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -285,6 +288,45 @@ void TestWorkspaceTreeDescendsIntoSubmodules() {
          "the submodule's repository admits its new file and refuses its ignored one");
 }
 
+// A TRACKED file under a directory the scanner prunes (build/ here) is invisible
+// to the native watch and the poll walk alike: the tree names it, and the watch
+// polls exactly those paths and reports a change like any other touched path.
+void TestWorkspaceWatchPollsTrackedFilesItsFilterPrunes() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "repo";
+  InitializeGitRepo(root);
+  WriteFile(root / "src/a.c", "a");
+  WriteFile(root / "build/gen.sh", "echo one\n");
+  CommitAll(root, "init", "tracked build script");
+  WorkspaceTree tree(root);
+  std::string error;
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value() && Find(*manifest, "build/gen.sh") != nullptr,
+         "the tracked build script is content: " + error);
+  Expect(tree.UnwatchedMembers() == std::vector<std::string>{"build/gen.sh"},
+         "and the only member the watch's filter hides");
+
+  std::mutex mutex;
+  std::vector<std::string> touched;
+  server::WorkspaceWatch watch(root,
+                               server::WorkspaceWatch::Options{.quiet = std::chrono::milliseconds(10),
+                                                               .max_delay = std::chrono::milliseconds(50),
+                                                               .poll_interval = std::chrono::milliseconds(20)},
+                               [&](WorkspaceTree::Changes changes) {
+                                 std::lock_guard lock(mutex);
+                                 touched.insert(touched.end(), changes.touched.begin(), changes.touched.end());
+                               });
+  watch.SetPolledPaths(tree.UnwatchedMembers());
+  WriteFile(root / "build/gen.sh", "echo two, longer\n");
+  Expect(WaitUntil(
+             [&] {
+               std::lock_guard lock(mutex);
+               return std::find(touched.begin(), touched.end(), "build/gen.sh") != touched.end();
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "the change to the polled file is reported");
+}
+
 }  // namespace
 
 void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
@@ -300,6 +342,8 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
           TestWorkspaceTreeDoesNotTrustARacyCacheEntry);
   AddTest(tests, "WorkspaceTree/Symlinks", TestWorkspaceTreeSymlinks);
   AddTest(tests, "WorkspaceTree/DescendsIntoSubmodules", TestWorkspaceTreeDescendsIntoSubmodules);
+  AddTest(tests, "WorkspaceWatch/PollsTrackedFilesItsFilterPrunes",
+          TestWorkspaceWatchPollsTrackedFilesItsFilterPrunes);
 }
 
 }  // namespace microide::tests
