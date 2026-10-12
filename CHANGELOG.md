@@ -89,8 +89,32 @@ project (see [README](README.md)); versions track meaningful shipped work.
   that never reached main, generalised to the N-pane editor grid and to terminal
   panes.
 
+- **Changed on Host.** A remote project records what the host changed after you
+  connected — an agent's edits, a branch switch — newest first. One counted row
+  ("41 files changed on build-box") with **Show** opens the list
+  (`remote-changes`); a modified file opens as a before/after compare, and
+  `remote-clear-changes` empties it.
+- **Forward a host port.** `remote-forward-port <port> [host]` makes the host's
+  `localhost:<port>` reachable here through your ssh connection (no port opened on
+  the host), with **Open in Browser** and **Copy Address**; it survives a
+  reconnect. Clicking a `http://localhost:3000` link in a host terminal forwards it
+  and opens it. The status segment counts forwarded ports;
+  `remote-unforward-port` stops one; `open-url <url>` opens a URL.
+- **Host picker.** Tab in the Open Terminal / Open Folder on Host prompts (and after
+  `remote-terminal` / `remote-open`) completes a host from the ones in use and from
+  `~/.ssh/config`, following its `Include`s.
+- **Submodules on a remote host.** A checked-out submodule of a remote project is
+  mirrored like the rest of the tree instead of arriving as an empty directory.
+- The remote status segment shows a first sync's progress (`build-box · 1204/4258`)
+  and saves waiting for the host (`· 3 unsent`).
+
 ### Fixed
 
+- **Remote projects stay fresh in three more places.** A tracked file under
+  `build/` or `out/` that changes on the host now reaches the mirror; opening a file
+  the host just changed pulls it first, and one the first sync has not reached
+  opens when it arrives — a file over 64 MiB no longer waits for the whole
+  backfill.
 - **Format-on-save keeps the undo history.** Applying a formatter's output used to
   reload the buffer, so after a save that formatted anything Ctrl+Z reached neither
   the formatting nor anything typed before it. The output is now one edit: one undo

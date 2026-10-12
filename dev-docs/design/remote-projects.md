@@ -1,6 +1,6 @@
 # Remote Projects Over SSH
 
-Last revised 2026-10-08. **Status: Phase 2a (the server, host terminals with prediction, reattach and reconnect) and most of Phase 2b (a remote PROJECT on a mirror) are on `main` — see "Phase 2a as built" and "Phase 2b as built" below.**
+Last revised 2026-10-12. **Status: Phase 2a (the server, host terminals with prediction, reattach and reconnect) and Phase 2b (a remote PROJECT on a mirror) are on `main`, and the first Phase 3 slices — see "Phase 2a as built", "Phase 2b as built" and "Phase 3, first slices" below.**
 
 **Terminology.** This document talks about two different things that were both
 called "agent" until this revision. The **server** is `microide-server`, the
@@ -148,7 +148,34 @@ tracks it; what landed and where it differs from the text above:
   mirror tree by `meta/remote`, so recents and restored sessions reconnect.
 - **Parity.** The suite's `mirror` locality runs every scenario on this stack.
 - Open: pushed `git/status`, host-side `search/run`, zstd deltas, files over the
-  64 MiB per-object ceiling — TD-2026-10-08-328.
+  64 MiB per-object ceiling — TD-2026-10-08-328 (all done 2026-10-09).
+
+**Phase 3, first slices (2026-10-12).** Measured against VS Code's Remote-SSH and
+this document's § 7, what a user still missed:
+
+- **Submodule content sets** (§ 8 Phase 3): `WorkspaceTree` lists each checked-out
+  submodule with its own `git ls-files` (four levels deep) and asks the owning
+  repository about a new path in a watch batch; an uninitialised gitlink stays an
+  empty directory row.
+- **Changed on Host** (§ 7.9): the engine records every host change after the
+  first sync (never an echo of a push), keeps the replaced version reachable in
+  `meta/objects`, and a contextual sidebar view (`remote-changes`, the Show button
+  of one counted, 30 s-throttled row; `remote-clear-changes`) opens a modified file
+  as a before/after compare.
+- **Port forwarding** (not in this design; VS Code's Ports view):
+  `remote-forward-port <port> [host]` rides the ControlMaster (`ssh -O forward`),
+  survives a new master, and a localhost link clicked in a host terminal forwards
+  its port and opens the local end. The status segment counts forwarded ports.
+- **Host picker**: Tab in the host prompts and `remote-terminal`/`remote-open`
+  complete from the hosts in use and `~/.ssh/config` (with `Include`).
+- **Freshness fixes**: a tracked file under a directory the watch prunes (`build/`)
+  is polled; opening a stale or absent file pulls it first (§ 7.3), a large one
+  streamed beside the backfill instead of behind it.
+- **Status segment** (§ 7.4): first-sync progress and unsent saves.
+- Still open: the tree and quick-open are filled from the mirror's disk, not the
+  manifest, so during a first sync not-yet-pulled files are not listed (§ 7.3's
+  dimmed rows); the remote status block on the project home (§ 7.3); a three-way
+  merge for a conflict. TD-2026-10-12-336.
 
 ## 1. The problem
 

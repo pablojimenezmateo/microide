@@ -1,5 +1,8 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-12 (§ TD-2026-10-12-336 for the remote-editing gap pass
+against VS Code's Remote-SSH: what shipped and what is left).
+
 Reviewed 2026-10-07 (§ TD-2026-10-07-320 for the remote-projects design review:
 the completion client re-requests on every keystroke because it never reads
 `isIncomplete`, which is a local inefficiency today and a round trip per keystroke
@@ -420,6 +423,40 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-12-336 — remote projects: what the 2026-10-12 gap pass found and left. [OPEN]
+
+The pass compared remote editing with VS Code's Remote-SSH and with § 7 of
+`dev-docs/design/remote-projects.md`, and shipped submodule content sets, Changed
+on Host, port forwarding (with host-terminal localhost links), the host picker,
+polling of tracked files under pruned directories, pull-on-open for stale and
+absent files, and the status segment's progress and unsent count (see the design
+doc's "Phase 3, first slices"). Left, each a known gap:
+
+- **The tree and quick-open come from the mirror's disk, not the manifest.**
+  During a first sync a file not yet pulled is neither in the sidebar nor in the
+  finder, so the user cannot open it — the pull-on-open path only helps once it
+  is listed. § 7.3 wants the manifest to feed both and pending rows dimmed. Needs
+  the file index to take a second, manifest-backed source for a remote project (or
+  the engine to report absent paths as index entries with a pending flag).
+- **No remote status block on the project home** (§ 7.3): the stages (connected,
+  server version, syncing N/M) with Retry and the reproduce command are spread
+  over the notification row and the status segment.
+- **A conflict is settled two-way.** Compare / Keep Mine / Take Host's matches
+  VS Code's save conflict, but the base's bytes are now in `meta/objects`, so a
+  three-way merge (base, host's, mine → the tree file) through the existing merge
+  editor is possible; the resolution would push under expect = the host hash the
+  merge started from.
+- **Port forwards are per session, not per host.** Sessions to the same target
+  share one ControlMaster, so a forward made through a project's session is live
+  for the host's terminals too, but only that session's list re-applies it after
+  a new master; closing the project drops it from the list while the master may
+  keep the listener until ControlPersist expires.
+- **Automatic port detection.** VS Code forwards a port when a host process
+  starts listening; here a forward is a command or a clicked link.
+- **The pull-on-open branches have no shell-level test**: nothing makes a file
+  deterministically stale or absent through `remote-open` yet (a setting for the
+  engine's `max_file_bytes` would make absent reachable).
+
 ### TD-2026-10-09-335 — `lsp_semantic_tokens_decode` is 37 % slower than v2.12.0 with identical allocations. [OPEN]
 
 Found by the 2026-10-09 release check: a full `tools/perf-compare.py` A/B of HEAD
@@ -550,10 +587,12 @@ silent one:
   kernel `FileIndexWatcher`, and a batch re-stats and re-hashes only the paths it
   names, asking git about the NEW paths only (`ls-files -- :(literal)…`); a
   `.gitignore` edit, a shape change or a truncated walk still rebuilds in full.
-- **The watch's directory filter is the scanner's**: a TRACKED file under a
+- ~~**The watch's directory filter is the scanner's**: a TRACKED file under a
   directory the default skip list prunes (`build/`, `out/`, …) does not wake the
   watch; its change arrives with the next batch something else triggers, or the
-  next reconnect.
+  next reconnect.~~ Fixed 2026-10-12: each full build names the members under a
+  pruned directory and `WorkspaceWatch` polls exactly those every 2 s (at most
+  4096). `WorkspaceWatch/PollsTrackedFilesItsFilterPrunes`.
 - ~~Tree operations are not journaled across a restart~~ — fixed 2026-10-08: mkdir,
   rename and delete are journaled in `meta/state` before they are tried and replayed
   in order before the next reconcile (`MirrorSyncEngine/TreeOpsMadeOfflineReplay`).
@@ -614,9 +653,12 @@ silent one:
   the tree through the same compare-and-swap write (`CopyFileIntoTree`,
   `copy_file_range` — a reflink where the filesystem can); the ceiling is now the
   16 GiB a streamed fetch may carry. This also took the 8–64 MiB files out of
-  memory. `MirrorSyncEngine/PullsAFileOverSixtyFourMegabytes`. Left: opening such a
+  memory. `MirrorSyncEngine/PullsAFileOverSixtyFourMegabytes`. ~~Left: opening such a
   file before the backfill reaches it still asks for it in memory (interactive
-  fetches keep the 64 MiB cap), so it waits for the backfill. Done since: the
+  fetches keep the 64 MiB cap), so it waits for the backfill.~~ Fixed 2026-10-12:
+  a prioritized large file streams to disk at once beside the backfill, and the
+  editor now prioritizes at all (nothing called `Prioritize` before).
+  `MirrorSyncEngine/PrioritizedLargeFileStreamsAtOnce`. Done since: the
   parity suite's `mirror` locality (every scenario against the real server with
   the mirror filled by the engine and writes through the mirror gate), the Compare choice of
   the conflict flow, large files (pulled last, one at a time), `host:/path` in the
