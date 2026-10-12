@@ -225,6 +225,8 @@ class MirrorSyncEngine {
   void BeginExternalWork();
   void EndExternalWork();
   void PullNow(std::vector<PullItem> items, Lane lane);
+  // A large file a tab is waiting for: streamed to disk now, beside the backfill.
+  void StreamPriorityPull(std::string path);
   void PushNow(const std::string& path);
   void DeleteNow(const std::vector<std::string>& paths);
   // False when the host could not be reached: the op stays journaled for later.

@@ -300,6 +300,36 @@ void TestMirrorPullsAFileOverSixtyFourMegabytes() {
          "no staging copy is left behind");
 }
 
+// A tab opening a large file the backfill has not reached (large files go last,
+// and this one is over what the backfill takes at all) streams it to disk at
+// once instead of waiting for the whole tree.
+void TestMirrorPrioritizedLargeFileStreamsAtOnce() {
+  MirrorSession session;
+  // Over the 64 MiB an in-memory interactive fetch may carry: before, Prioritize
+  // asked for it in memory, was refused, and the tab waited for the backfill.
+  std::string big(64 * 1024 * 1024 + 4097, '\0');
+  for (std::size_t i = 0; i < big.size(); i += 4093) {
+    big[i] = static_cast<char>('a' + (i / 4093) % 26);
+  }
+  WriteFile(session.host / "logs/big.log", big);
+  WriteFile(session.host / "small.txt", "s\n");
+  remote::MirrorSyncEngine::Options options;
+  options.max_file_bytes = 1024 * 1024;  // the backfill leaves it
+  session.Connect(options);
+  session.Sync();
+  Expect(!std::filesystem::exists(session.Tree("logs/big.log")) &&
+             session.engine->StateOf("logs/big.log") == ContentState::Absent,
+         "the backfill did not pull it");
+  session.engine->Prioritize({"logs/big.log"});
+  session.engine->Flush();
+  Expect(util::HashFileContent(session.Tree("logs/big.log")) == util::HashContent(big) &&
+             session.engine->StateOf("logs/big.log") == ContentState::Current,
+         "opening it streams it now: " + session.engine->status().error);
+  std::error_code ignored;
+  Expect(std::filesystem::is_empty(session.mirror_dir / "meta" / "incoming", ignored),
+         "no staging copy is left behind");
+}
+
 // A file the host cannot read has no hash, so the host leaves it out; the sync
 // itself succeeds, everything else arrives, and it follows once it is readable.
 void TestMirrorSkipsAnUnreadableHostFile() {
@@ -610,6 +640,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
+  AddTest(tests, "MirrorSyncEngine/PrioritizedLargeFileStreamsAtOnce",
+          TestMirrorPrioritizedLargeFileStreamsAtOnce);
   AddTest(tests, "MirrorSyncEngine/PullsAnEditAsADelta", TestMirrorPullsAnEditAsADelta);
   AddTest(tests, "MirrorSyncEngine/RefillsKnownBytesFromItsObjectStore",
           TestMirrorRefillsKnownBytesFromItsObjectStore);

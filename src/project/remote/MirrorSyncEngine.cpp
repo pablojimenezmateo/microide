@@ -98,10 +98,51 @@ void MirrorSyncEngine::Prioritize(std::vector<std::string> paths) {
         }
       }
     }
+    // A large file streams to disk now, on the bulk lane (the interactive lane is
+    // for small things: a 100 MiB transfer there would hold up terminal echo),
+    // beside the backfill rather than behind it — the backfill pulls large files
+    // last, so a tab opening one would otherwise wait for the whole tree.
+    for (auto it = items.begin(); it != items.end();) {
+      if (it->size > options_.large_file_bytes) {
+        StreamPriorityPull(std::move(it->path));
+        it = items.erase(it);
+      } else {
+        ++it;
+      }
+    }
     if (!items.empty()) {
       PullNow(std::move(items), Lane::Interactive);
     }
   });
+}
+
+void MirrorSyncEngine::StreamPriorityPull(std::string path) {
+  std::error_code ignored;
+  const std::filesystem::path incoming = store_.meta() / "incoming";
+  std::filesystem::create_directories(incoming, ignored);
+  // Its own staging name: the backfill's large pull may be streaming meanwhile.
+  const std::filesystem::path staging = incoming / ("priority-" + util::HashContent(path).Hex() + ".part");
+  BeginExternalWork();
+  workspace_.FetchObjectToFile(
+      path, staging, Lane::Bulk,
+      [alive = alive_](RemoteWorkspace::FetchedObject object, std::string error) {
+        std::lock_guard lock(alive->mutex);
+        MirrorSyncEngine* engine = alive->engine;
+        if (engine == nullptr) {
+          return;
+        }
+        std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
+        if (error.empty()) {
+          objects.emplace().push_back(std::move(object));
+        } else if (!object.staged_file.empty()) {
+          std::error_code ignored_error;
+          std::filesystem::remove(object.staged_file, ignored_error);
+        }
+        engine->queue_.PostFront([engine, objects = std::move(objects), error = std::move(error)]() mutable {
+          engine->ApplyFetched(std::move(objects), error);
+        });
+        engine->EndExternalWork();
+      });
 }
 
 void MirrorSyncEngine::NotifyLocalWrite(std::string path) {
@@ -991,6 +1032,16 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
     const bool large = next.size() == 1 && next.front().size > options_.large_file_bytes;
     if (large && pipeline->in_flight > 0) {
       return;  // a large file goes alone, once the batches ahead of it are in
+    }
+    if (large) {
+      // A tab that opened it may have streamed it already (Prioritize): current
+      // now, and too large for meta/objects to answer a second fetch from.
+      std::lock_guard lock(mutex_);
+      const MirrorStore::Entry* entry = store_.Find(next.front().path);
+      if (entry == nullptr || (entry->base.has_value() && next.front().want == entry->base)) {
+        pipeline->batches.pop_front();
+        continue;
+      }
     }
     std::vector<std::string> paths;
     std::vector<std::optional<util::ContentHash>> bases;
