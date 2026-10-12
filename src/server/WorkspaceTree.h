@@ -116,6 +116,11 @@ class WorkspaceTree {
   // Which of `candidates` (paths new to the tree) the content-set rules admit.
   std::optional<std::vector<std::string>> AdmitCandidates(const std::vector<std::string>& candidates,
                                                           std::string* error);
+  // One repository's listing, descending into checked-out submodules.
+  bool ListGitRepository(const std::filesystem::path& dir,
+                         const std::vector<std::string>& pathspecs, int depth,
+                         std::vector<std::string>& out, std::string* error,
+                         const std::string& prefix = {});
   std::string OverLimitMessage() const;
   void LoadCache();
   void SaveCacheLocked();
@@ -129,6 +134,9 @@ class WorkspaceTree {
   // The last manifest's rows, the base of the next incremental update.
   std::vector<project::remote::ManifestRow> last_rows_;
   bool last_git_ = false;
+  // Checked-out gitlinks the last full listing found (sorted): which repository an
+  // incremental update asks about a new path.
+  std::vector<std::string> submodule_roots_;
   bool built_ = false;
   bool last_update_was_full_ = false;
   bool cache_dirty_ = false;

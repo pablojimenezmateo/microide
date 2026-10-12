@@ -251,6 +251,40 @@ void TestWorkspaceTreeSymlinks() {
   Expect(Find(*manifest, "dangling") == nullptr, "a dangling out-of-root link is not content");
 }
 
+// A checked-out submodule is a mirrored subtree: its files are its own repository's
+// content set (its .gitignore applies), not an empty gitlink directory. A new file
+// inside it is admitted by asking the submodule, not the enclosing repository.
+void TestWorkspaceTreeDescendsIntoSubmodules() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "repo";
+  InitializeGitRepo(root);
+  WriteFile(root / "top.c", "top");
+  const std::filesystem::path sub = root / "vendor/lib";
+  InitializeGitRepo(sub);
+  WriteFile(sub / ".gitignore", "*.o\n");
+  WriteFile(sub / "lib.c", "lib");
+  WriteFile(sub / "lib.o", "object");
+  CommitAll(sub, "sub", "submodule");
+  CommitAll(root, "init", "with gitlink");  // `git add` records vendor/lib as a gitlink
+  WorkspaceTree tree(root, WorkspaceTree::Options{.racy_window_ns = 0});
+  std::string error;
+  const auto manifest = tree.BuildManifest(&error);
+  Expect(manifest.has_value(), "a tree with a submodule builds: " + error);
+  Expect(Paths(*manifest) == std::vector<std::string>{"top.c", "vendor/lib", "vendor/lib/.gitignore",
+                                                      "vendor/lib/lib.c"},
+         "the submodule's own content set, its ignored object file left out");
+  const ManifestRow* link = Find(*manifest, "vendor/lib");
+  Expect(link != nullptr && link->kind == ManifestEntryKind::Submodule, "the gitlink stays a row");
+
+  WriteFile(sub / "new.c", "new");
+  WriteFile(sub / "new.o", "ignored by the submodule");
+  const auto updated = tree.UpdateManifest(
+      WorkspaceTree::Changes{.touched = {"vendor/lib/new.c", "vendor/lib/new.o"}}, &error);
+  Expect(updated.has_value() && !tree.last_update_was_full(), "an incremental update: " + error);
+  Expect(Find(*updated, "vendor/lib/new.c") != nullptr && Find(*updated, "vendor/lib/new.o") == nullptr,
+         "the submodule's repository admits its new file and refuses its ignored one");
+}
+
 }  // namespace
 
 void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
@@ -265,6 +299,7 @@ void RegisterWorkspaceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceTree/DoesNotTrustARacyCacheEntry",
           TestWorkspaceTreeDoesNotTrustARacyCacheEntry);
   AddTest(tests, "WorkspaceTree/Symlinks", TestWorkspaceTreeSymlinks);
+  AddTest(tests, "WorkspaceTree/DescendsIntoSubmodules", TestWorkspaceTreeDescendsIntoSubmodules);
 }
 
 }  // namespace microide::tests

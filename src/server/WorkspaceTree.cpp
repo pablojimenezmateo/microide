@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <map>
 #include <span>
 #include <thread>
 #include <utility>
@@ -179,38 +180,89 @@ void WorkspaceTree::SaveCacheLocked() {
   }
 }
 
+namespace {
+constexpr int kMaxSubmoduleDepth = 4;
+constexpr std::size_t kLsFilesPerCall = 512;
+}  // namespace
+
+// Lists one repository's content set (`pathspecs` empty: all of it, else exactly
+// those paths) into `out`, each prefixed with `prefix` (the repository's place under
+// the root). A gitlink whose checkout exists is listed AND descended: its files are
+// the submodule repository's own tracked + unignored set, so a submodule is a
+// mirrored subtree rather than an empty directory. An untracked nested repository
+// ("dir/") is listed, not descended.
+bool WorkspaceTree::ListGitRepository(const std::filesystem::path& dir,
+                                      const std::vector<std::string>& pathspecs, int depth,
+                                      std::vector<std::string>& out, std::string* error,
+                                      const std::string& prefix) {
+  const std::size_t calls =
+      pathspecs.empty() ? 1 : (pathspecs.size() + kLsFilesPerCall - 1) / kLsFilesPerCall;
+  for (std::size_t call = 0; call < calls; ++call) {
+    std::vector<std::string> argv = {"git", "ls-files", "-z", "--cached", "--others",
+                                     "--exclude-standard"};
+    if (!pathspecs.empty()) {
+      argv.push_back("--");
+      const std::size_t end = std::min(pathspecs.size(), (call + 1) * kLsFilesPerCall);
+      for (std::size_t i = call * kLsFilesPerCall; i < end; ++i) {
+        argv.push_back(":(literal)" + pathspecs[i]);
+      }
+    }
+    platform::SubprocessOptions options;
+    options.cwd = dir;
+    options.timeout_ms = 120'000;
+    const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(argv, options);
+    if (!result.success() || result.truncated) {
+      *error = "git ls-files failed in " + dir.string() + ": " +
+               (result.timed_out ? std::string("timed out") : result.stderr_text);
+      return false;
+    }
+    std::string_view rest = result.stdout_text;
+    while (!rest.empty()) {
+      const std::size_t stop = rest.find('\0');
+      std::string_view path = rest.substr(0, stop);
+      rest = stop == std::string_view::npos ? std::string_view() : rest.substr(stop + 1);
+      const bool nested_untracked = !path.empty() && path.back() == '/';
+      while (!path.empty() && path.back() == '/') {
+        path.remove_suffix(1);
+      }
+      if (path.empty()) {
+        continue;
+      }
+      std::string full = prefix.empty() ? std::string(path) : prefix + "/" + std::string(path);
+      if (pathspecs.empty() && !nested_untracked && depth < kMaxSubmoduleDepth) {
+        // A gitlink is listed by its bare name; only a checked-out one (its own .git)
+        // is descended, or git would answer for the enclosing repository instead.
+        std::error_code ec;
+        const std::filesystem::path checkout = dir / std::string(path);
+        if (std::filesystem::is_directory(std::filesystem::symlink_status(checkout, ec)) &&
+            std::filesystem::exists(std::filesystem::symlink_status(checkout / ".git", ec))) {
+          submodule_roots_.push_back(full);
+          out.push_back(full);
+          if (!ListGitRepository(checkout, {}, depth + 1, out, error, full)) {
+            return false;
+          }
+          continue;
+        }
+      }
+      out.push_back(std::move(full));
+      if (pathspecs.empty() && out.size() > options_.max_files * 3 + 1024) {
+        return true;  // unmerged entries repeat a path; past this the set is over anyway
+      }
+    }
+  }
+  return true;
+}
+
 std::optional<std::vector<std::string>> WorkspaceTree::ContentSet(bool* git, std::string* error) {
   std::vector<std::string> paths;
   *git = project::LocalGitMetadataSource().Availability(root_) ==
          project::GitAvailability::Repository;
   if (*git) {
-    platform::SubprocessOptions options;
-    options.cwd = root_;
-    options.timeout_ms = 120'000;
-    const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
-        {"git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"}, options);
-    if (!result.success() || result.truncated) {
-      *error = "git ls-files failed in " + root_.string() + ": " +
-               (result.timed_out ? std::string("timed out") : result.stderr_text);
+    submodule_roots_.clear();
+    if (!ListGitRepository(root_, {}, 0, paths, error)) {
       return std::nullopt;
     }
-    std::string_view rest = result.stdout_text;
-    while (!rest.empty()) {
-      const std::size_t end = rest.find('\0');
-      std::string_view path = rest.substr(0, end);
-      rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
-      // `--others` names an untracked nested repository as "dir/": listed, not
-      // descended, like a submodule.
-      while (!path.empty() && path.back() == '/') {
-        path.remove_suffix(1);
-      }
-      if (!path.empty()) {
-        paths.emplace_back(path);
-      }
-      if (paths.size() > options_.max_files * 3 + 1024) {
-        break;  // unmerged entries repeat a path; past this the set is over anyway
-      }
-    }
+    std::sort(submodule_roots_.begin(), submodule_roots_.end());
     return paths;
   }
   std::error_code ec;
@@ -617,34 +669,28 @@ std::optional<std::vector<std::string>> WorkspaceTree::AdmitCandidates(
     }
     return admitted;
   }
-  // git decides, for exactly these paths: tracked, or untracked and not ignored.
-  constexpr std::size_t kPerCall = 512;
-  for (std::size_t begin = 0; begin < candidates.size(); begin += kPerCall) {
-    std::vector<std::string> argv = {"git", "ls-files", "-z", "--cached", "--others",
-                                     "--exclude-standard", "--"};
-    const std::size_t end = std::min(candidates.size(), begin + kPerCall);
-    for (std::size_t i = begin; i < end; ++i) {
-      argv.push_back(":(literal)" + candidates[i]);
+  // git decides, for exactly these paths: tracked, or untracked and not ignored. A
+  // path inside a submodule is asked of that submodule's own repository.
+  std::map<std::string, std::vector<std::string>> by_owner;  // "" = the top repository
+  for (const std::string& path : candidates) {
+    std::string_view owner;
+    for (const std::string& sub : submodule_roots_) {
+      if (path.size() > sub.size() && path.compare(0, sub.size(), sub) == 0 &&
+          path[sub.size()] == '/' && sub.size() > owner.size()) {
+        owner = sub;
+      }
     }
-    platform::SubprocessOptions options;
-    options.cwd = root_;
-    options.timeout_ms = 60'000;
-    const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(argv, options);
-    if (!result.success() || result.truncated) {
-      *error = "git ls-files failed in " + root_.string() + ": " + result.stderr_text;
+    by_owner[std::string(owner)].push_back(path);
+  }
+  for (const auto& [owner, paths] : by_owner) {
+    std::vector<std::string> relative;
+    relative.reserve(paths.size());
+    for (const std::string& path : paths) {
+      relative.push_back(owner.empty() ? path : path.substr(owner.size() + 1));
+    }
+    if (!ListGitRepository(owner.empty() ? root_ : root_ / owner, relative, 0, admitted, error,
+                           owner)) {
       return std::nullopt;
-    }
-    std::string_view rest = result.stdout_text;
-    while (!rest.empty()) {
-      const std::size_t stop = rest.find('\0');
-      std::string_view path = rest.substr(0, stop);
-      rest = stop == std::string_view::npos ? std::string_view() : rest.substr(stop + 1);
-      while (!path.empty() && path.back() == '/') {
-        path.remove_suffix(1);
-      }
-      if (!path.empty()) {
-        admitted.emplace_back(path);
-      }
     }
   }
   std::sort(admitted.begin(), admitted.end());
