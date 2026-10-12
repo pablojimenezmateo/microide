@@ -441,6 +441,18 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "the project's connection goes down: '" + segment() + "'");
+  // A save made offline is kept for the host, and the status bar counts it (§ 7.4).
+  WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// offline\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "an offline save succeeds locally");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return segment().find("1 unsent") != std::string::npos;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "the segment counts the unsent save: '" + segment() + "'");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
   Expect(WaitUntil(
              [&] {

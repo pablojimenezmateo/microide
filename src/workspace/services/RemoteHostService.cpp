@@ -1212,6 +1212,12 @@ void RemoteHostService::PublishStatusSegment() {
   // Every connection the editor holds: host terminals' and remote projects'.
   std::vector<std::pair<std::string, State>> connections;
   std::size_t ports = 0;
+  // § 7.4: a first sync's progress, and saves not yet on the host.
+  std::size_t sync_files = 0;
+  std::size_t sync_absent = 0;
+  bool first_sync = false;
+  std::size_t unsent = 0;
+  std::string tooltip;
   for (const auto& [key, entry] : hosts_) {
     connections.emplace_back(key, entry.status.state);
     ports += entry.session->forwards().size();
@@ -1219,8 +1225,18 @@ void RemoteHostService::PublishStatusSegment() {
   for (const auto& [tree, entry] : projects_) {
     (void)tree;
     if (!entry.closed) {
-      connections.emplace_back(entry.project->record().host, entry.status.state);
+      const remote::RemoteProjectRecord record = entry.project->record();
+      connections.emplace_back(record.host, entry.status.state);
       ports += entry.project->session().forwards().size();
+      const remote::MirrorSyncEngine::Status sync = entry.project->engine().status();
+      if (sync.syncing && !sync.synced_once) {
+        first_sync = true;
+        sync_files += sync.files;
+        sync_absent += sync.absent;
+      }
+      unsent += sync.dirty;
+      tooltip += record.host + ":" + record.host_root +
+                 (sync.dirty == 0 ? std::string() : " · " + std::to_string(sync.dirty) + " to push") + "\n";
     }
   }
   if (connections.empty()) {
@@ -1259,8 +1275,13 @@ void RemoteHostService::PublishStatusSegment() {
   value.text = (one_host ? worst->first : std::to_string(connections.size()) + " connections") +
                (state == State::Ready ? std::string()
                                       : " · " + std::string(remote::RemoteHostSession::StateName(state))) +
+               (first_sync && state == State::Ready
+                    ? " · " + std::to_string(sync_files - std::min(sync_absent, sync_files)) + "/" +
+                          std::to_string(sync_files)
+                    : std::string()) +
+               (unsent > 0 && state != State::Ready ? " · " + std::to_string(unsent) + " unsent" : std::string()) +
                (ports == 0 ? std::string() : " · " + std::to_string(ports) + (ports == 1 ? " port" : " ports"));
-  value.tooltip = "Remote: Show Status";
+  value.tooltip = tooltip + "Remote: Show Status";
   value.command = "remote-status";
   value.tone = rank(state) >= 3   ? StatusBarSegmentTone::Error
                : rank(state) == 2 ? StatusBarSegmentTone::Warning
