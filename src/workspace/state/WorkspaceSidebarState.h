@@ -42,7 +42,18 @@ enum class SidebarMode {
   // render, key/mouse handlers): its rows are flattened DocumentSymbol nodes from
   // the plugin language providers, and confirming a row navigates the editor.
   Outline,
+  // Remote projects' "Changed on Host" (dev-docs/design/remote-projects.md § 7.9):
+  // the files the host changed since connect or the last Clear, on the same item
+  // surface as Outline; confirming a row opens the file or its before/after compare.
+  HostChanges,
 };
+
+// The views drawn and driven by the shared plugin item-list surface
+// (`SidebarState::plugin`): one predicate instead of a disjunction per call site.
+constexpr bool UsesPluginItemSurface(SidebarMode mode) {
+  return mode == SidebarMode::Plugin || mode == SidebarMode::Outline ||
+         mode == SidebarMode::HostChanges;
+}
 
 // One clickable mode tab in the sidebar header row. `id` points at a builtin view's static
 // label/id storage, so it is allocation-free to copy.

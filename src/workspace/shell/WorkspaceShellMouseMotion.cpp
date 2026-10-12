@@ -249,6 +249,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       case SidebarMode::Tests:
       case SidebarMode::Plugin:
       case SidebarMode::Outline:
+      case SidebarMode::HostChanges:
         return std::nullopt;
     }
 

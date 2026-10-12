@@ -733,8 +733,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(lines.size()),
                             list_layout.visible_units, static_cast<float>(scroll_row),
                             context_.interaction_state.drag_target == DragTarget::SidebarScrollbar);
-  } else if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline ||
-             sidebar_mode == SidebarMode::Problems || sidebar_mode == SidebarMode::Tests) {
+  } else if (UsesPluginItemSurface(sidebar_mode) || sidebar_mode == SidebarMode::Problems || sidebar_mode == SidebarMode::Tests) {
     // One two-column list surface for every secondary sidebar view. Outline already
     // reused the plugin item surface; Problems and Tests did not, and because this
     // dispatch ends in an unguarded `else` that paints the file tree, both of them

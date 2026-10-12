@@ -333,9 +333,156 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       break;
   }
   PublishConflictRows(tree, entry);
+  PublishHostChanges(tree, entry, sync);
   PublishStatusSegment();
   if (operations_.request_redraw) {
     operations_.request_redraw();
+  }
+}
+
+void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Project& entry,
+                                           const remote::MirrorSyncEngine::Status& sync) {
+  if (sync.host_changes == entry.seen_host_changes) {
+    return;
+  }
+  const bool grew = sync.host_changes > entry.seen_host_changes;
+  entry.seen_host_changes = sync.host_changes;
+  if (operations_.host_changes_updated) {
+    operations_.host_changes_updated(tree);
+  }
+  // § 7.6: never a row per file — agents rewrite hundreds at a time. One counted
+  // row, replaced by key, raised at most every 30 s; the list itself is always
+  // current in the view it opens.
+  constexpr auto kAnnounceEvery = std::chrono::seconds(30);
+  const auto now = std::chrono::steady_clock::now();
+  if (!grew || sync.host_changed_files == 0 || !operations_.notify ||
+      (entry.host_changes_announced.has_value() && now - *entry.host_changes_announced < kAnnounceEvery)) {
+    return;
+  }
+  entry.host_changes_announced = now;
+  const std::size_t count = sync.host_changed_files;
+  operations_.notify(NotificationService::Request{
+      .tone = NotificationService::Tone::Info,
+      .key = "remote.changes." + tree.string(),
+      .message = std::to_string(count) + (count == 1 ? " file" : " files") + " changed on " +
+                 entry.project->record().host,
+      .actions = {NotificationAction{.label = "Show", .id = ActionId::RemoteShowHostChanges}},
+  });
+}
+
+bool RemoteHostService::IsRemoteProject(const std::filesystem::path& root) const {
+  const auto it = projects_.find(root);
+  return it != projects_.end() && !it->second.closed;
+}
+
+std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::HostChangeRows(
+    const std::filesystem::path& root) const {
+  std::vector<plugin::PluginHost::SidebarItem> rows;
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return rows;
+  }
+  remote::MirrorSyncEngine& engine = it->second.project->engine();
+  using Kind = remote::MirrorSyncEngine::HostChange::Kind;
+  using ContentState = remote::MirrorSyncEngine::ContentState;
+  const std::vector<remote::MirrorSyncEngine::HostChange> changes = engine.HostChanges();
+  rows.reserve(changes.size());
+  for (const remote::MirrorSyncEngine::HostChange& change : changes) {
+    plugin::PluginHost::SidebarItem row;
+    row.label = change.path;
+    row.id = change.path;
+    row.detail = change.kind == Kind::Added ? "added" : change.kind == Kind::Deleted ? "deleted" : "modified";
+    // The local copy's state, when it is not simply the host's version yet (§ 7.9).
+    switch (change.kind == Kind::Deleted ? ContentState::Current : engine.StateOf(change.path)) {
+      case ContentState::Stale:
+      case ContentState::Absent:
+        row.detail += " · syncing";
+        break;
+      case ContentState::Dirty:
+        row.detail += " · your edits";
+        break;
+      case ContentState::Conflict:
+        row.detail += " · conflict";
+        break;
+      case ContentState::Current:
+      case ContentState::Unknown:
+      case ContentState::LocalOnly:
+        break;
+    }
+    if (change.kind != Kind::Deleted) {
+      row.path = root / change.path;
+    }
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
+
+bool RemoteHostService::OpenHostChange(const std::filesystem::path& root, const std::string& relative) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return false;
+  }
+  using Kind = remote::MirrorSyncEngine::HostChange::Kind;
+  remote::MirrorSyncEngine& engine = it->second.project->engine();
+  std::optional<Kind> kind;
+  bool has_previous = false;
+  for (const remote::MirrorSyncEngine::HostChange& change : engine.HostChanges()) {
+    if (change.path == relative) {
+      kind = change.kind;
+      has_previous = change.previous.has_value();
+      break;
+    }
+  }
+  if (!kind.has_value()) {
+    return false;
+  }
+  const std::filesystem::path current = root / relative;
+  const bool deleted = *kind == Kind::Deleted;
+  if (!has_previous) {
+    if (!deleted && operations_.open_file) {
+      operations_.open_file(current);
+    } else if (deleted && operations_.notify) {
+      operations_.notify(NotificationService::Request{
+          .tone = NotificationService::Tone::Info,
+          .message = relative + " was deleted on the host before this window had its bytes"});
+    }
+    return true;
+  }
+  const std::string host = it->second.project->record().host;
+  engine.FetchPreviousCopy(relative, [this, current, deleted, host](
+                                         std::optional<std::filesystem::path> copy, std::string error) {
+    mailbox_.Post([this, current, deleted, host, copy = std::move(copy), error = std::move(error)]() {
+      std::string why = error;
+      if (copy.has_value() && deleted) {
+        if (operations_.open_file) {
+          operations_.open_file(*copy);
+        }
+      } else if (copy.has_value() && operations_.compare_files) {
+        const std::string name = current.filename().string();
+        why = operations_.compare_files(*copy, name + " (before)", current, name + " (on " + host + ")");
+      } else if (!deleted && operations_.open_file) {
+        // The earlier bytes are gone (over the object store's size, or swept): the
+        // file itself is still worth showing.
+        operations_.open_file(current);
+      }
+      if (!why.empty() && operations_.notify) {
+        operations_.notify(NotificationService::Request{
+            .tone = NotificationService::Tone::Info,
+            .message = "Cannot show what changed: " + why});
+      }
+    });
+  });
+  return true;
+}
+
+void RemoteHostService::ClearHostChanges(const std::filesystem::path& root) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end()) {
+    return;
+  }
+  it->second.project->engine().ClearHostChanges();
+  if (operations_.dismiss_notification) {
+    operations_.dismiss_notification("remote.changes." + root.string());
   }
 }
 

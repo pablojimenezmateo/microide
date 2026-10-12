@@ -8,7 +8,9 @@
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/services/EditorTabService.h"
 #include "workspace/services/PromptSurfaceService.h"
+#include "workspace/services/RemoteHostService.h"
 #include "workspace/services/SidebarService.h"
+#include "workspace/shell/ShellGlueCache.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -132,6 +134,12 @@ void SidebarCoordinator::ShowOutline() {
   RefreshOutline();
 }
 
+void SidebarCoordinator::ShowHostChanges() {
+  ShowMode(SidebarMode::HostChanges, false);
+  state_.sidebar.plugin.selected_index = 0;
+  RefreshHostChanges();
+}
+
 bool SidebarCoordinator::ShowPlugin(std::string_view id, bool temporary) {
   const auto* provider = plugin_runtime_.Host().FindSidebarProvider(id);
   if (provider == nullptr) {
@@ -220,6 +228,8 @@ void SidebarCoordinator::RestorePrevious() {
     RefreshProblems();
   } else if (ActiveSidebarMode() == SidebarMode::Tests) {
     RefreshTests();
+  } else if (ActiveSidebarMode() == SidebarMode::HostChanges) {
+    RefreshHostChanges();
   }
   operations_.request_sidebar_redraw();
 }
@@ -384,6 +394,19 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);
               },
           .open_commit_workflow = [this]() { return OpenCommitWorkflow(); },
+          .host_change_rows =
+              [this]() {
+                return glue_->remote_host_service != nullptr
+                           ? glue_->remote_host_service->HostChangeRows(
+                                 context_.current_project_state.root)
+                           : std::vector<plugin::PluginHost::SidebarItem>{};
+              },
+          .open_host_change =
+              [this](const plugin::PluginHost::SidebarItem& item) {
+                return glue_->remote_host_service != nullptr &&
+                       glue_->remote_host_service->OpenHostChange(context_.current_project_state.root,
+                                                                  item.id);
+              },
       });
 }
 

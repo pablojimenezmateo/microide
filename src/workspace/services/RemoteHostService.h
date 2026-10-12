@@ -1,6 +1,8 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
@@ -10,7 +12,9 @@
 #include <thread>
 #include <vector>
 
+#include "plugin/PluginHost.h"
 #include "project/ProjectLocality.h"
+#include "project/remote/MirrorSyncEngine.h"
 #include "project/remote/RemoteHostSession.h"
 #include "util/MainThreadMailbox.h"
 #include "workspace/services/NotificationService.h"
@@ -68,6 +72,10 @@ class RemoteHostService {
     // Replace output channel `id`'s lines with `text`'s and show it.
     std::function<void(std::string_view id, std::string_view label, std::string_view text)>
         show_output;
+    // Open `path` in an editor tab (Changed on Host's added and deleted rows).
+    std::function<void(const std::filesystem::path& path)> open_file;
+    // The Changed on Host list of the remote project at `root` changed.
+    std::function<void(const std::filesystem::path& root)> host_changes_updated;
   };
 
   explicit RemoteHostService(Operations operations);
@@ -111,6 +119,16 @@ class RemoteHostService {
   // Whether `path` is such a copy: it opens read-only, since it is not part of the
   // project and a save could only ever overwrite the copy.
   bool IsHostFileCopy(const std::filesystem::path& path) const;
+  // Whether `root` is an open remote project's mirror tree.
+  bool IsRemoteProject(const std::filesystem::path& root) const;
+  // Changed on Host (§ 7.9) for the remote project at `root`: one row per file the
+  // host changed since connect or the last Clear, newest first; `id` is the relative
+  // path. Empty for any other root.
+  std::vector<plugin::PluginHost::SidebarItem> HostChangeRows(const std::filesystem::path& root) const;
+  // Confirm a row: a modified file opens as a before/after compare (VS Code's SCM
+  // click), an added one opens, a deleted one opens its last version read-only.
+  bool OpenHostChange(const std::filesystem::path& root, const std::string& relative);
+  void ClearHostChanges(const std::filesystem::path& root);
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);
@@ -149,7 +167,13 @@ class RemoteHostService {
     bool warned_polling = false;
     bool closed = false;  // its project tab is closed: disconnected, and not shown
     std::vector<std::string> conflict_rows;  // relative paths with a row showing
+    // Changed on Host: the engine's change counter last seen, and when the "N files
+    // changed on host" row was last raised (it is raised at most every 30 s).
+    std::size_t seen_host_changes = 0;
+    std::optional<std::chrono::steady_clock::time_point> host_changes_announced;
   };
+  void PublishHostChanges(const std::filesystem::path& tree, Project& entry,
+                          const project::remote::MirrorSyncEngine::Status& sync);
 
   project::remote::RemoteHostSession::Config SessionConfig(
       const project::remote::RemoteHostTarget& target) const;

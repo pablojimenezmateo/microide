@@ -145,6 +145,12 @@ bool WorkspaceActionContext::ShowSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Outline:
       operations_.show_outline_sidebar();
       return true;
+    case SidebarMode::HostChanges:
+      if (!operations_.show_host_changes_sidebar) {
+        return false;
+      }
+      operations_.show_host_changes_sidebar();
+      return true;
     case SidebarMode::Plugin:
       return operations_.show_plugin_sidebar(view.id, false);
     case SidebarMode::None:
@@ -163,6 +169,7 @@ bool WorkspaceActionContext::ToggleSidebarView(const SidebarViewInfo& view,
     case SidebarMode::Git:
     case SidebarMode::Tests:
     case SidebarMode::Outline:
+    case SidebarMode::HostChanges:
     case SidebarMode::Plugin:
       if (same_view) {
         operations_.close_sidebar();

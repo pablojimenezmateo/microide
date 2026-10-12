@@ -386,6 +386,30 @@ bool SidebarCoordinator::RefreshOutline() {
   return true;
 }
 
+void SidebarCoordinator::RefreshHostChanges() {
+  PluginSidebarState& plugin = state_.sidebar.plugin;
+  std::string selected_path;
+  if (plugin.selected_index < plugin.items.size()) {
+    selected_path = plugin.items[plugin.selected_index].id;
+  }
+  plugin.items = operations_.host_change_rows ? operations_.host_change_rows()
+                                              : std::vector<plugin::PluginHost::SidebarItem>{};
+  plugin.error.clear();
+  // Newest first: a change arriving above the selection must not move it to a
+  // different file under the user's keyboard.
+  plugin.selected_index = 0;
+  for (std::size_t i = 0; i < plugin.items.size() && !selected_path.empty(); ++i) {
+    if (plugin.items[i].id == selected_path) {
+      plugin.selected_index = i;
+      break;
+    }
+  }
+  RecomputePluginSidebarPlaceholder();
+  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::HostChanges) {
+    operations_.request_sidebar_redraw();
+  }
+}
+
 void SidebarCoordinator::ApplyPluginOutlineResult(
     const std::filesystem::path& request_path,
     std::vector<plugin::PluginHost::DocumentSymbolNode> symbols, std::string plugin_error) {
@@ -449,8 +473,10 @@ void SidebarCoordinator::RecomputePluginSidebarPlaceholder() {
   plugin.placeholder_is_error = false;
   if (plugin.items.empty()) {
     // Outline shares this storage but reports symbols, not generic items.
-    plugin.placeholder =
-        FormatEmptyState(ActiveSidebarMode() == SidebarMode::Outline ? "symbols" : "items");
+    const SidebarMode mode = ActiveSidebarMode();
+    plugin.placeholder = mode == SidebarMode::HostChanges
+                             ? std::string("Nothing changed on the host since you connected")
+                             : FormatEmptyState(mode == SidebarMode::Outline ? "symbols" : "items");
   } else {
     plugin.placeholder.clear();
   }

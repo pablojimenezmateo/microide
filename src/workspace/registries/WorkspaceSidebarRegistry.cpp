@@ -17,6 +17,8 @@ std::span<const SidebarViewSpec> BuiltinSidebarViewSpecs() {
       SidebarViewSpec{"problems", "Problems", SidebarMode::Problems},
       SidebarViewSpec{"tests", "Tests", SidebarMode::Tests},
       SidebarViewSpec{"outline", "Outline", SidebarMode::Outline},
+      SidebarViewSpec{"host-changes", "Changed on Host", SidebarMode::HostChanges,
+                      /*contextual=*/true},
   });
   return kSpecs;
 }
@@ -120,6 +122,7 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
     case SidebarMode::Problems:
     case SidebarMode::Tests:
     case SidebarMode::Outline:
+    case SidebarMode::HostChanges:
       break;
   }
 
@@ -184,7 +187,9 @@ OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host
     ordered.push_back(Ordered{info, policy.order, ordered.size()});
   };
   for (const SidebarViewSpec& spec : builtins) {
-    consider(SidebarViewInfo{.id = spec.id, .label = spec.label, .mode = spec.mode});
+    if (!spec.contextual) {
+      consider(SidebarViewInfo{.id = spec.id, .label = spec.label, .mode = spec.mode});
+    }
   }
   for (const auto& provider : plugin_providers) {
     consider(SidebarViewInfo{

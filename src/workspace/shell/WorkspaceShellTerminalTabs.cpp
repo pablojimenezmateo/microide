@@ -7,6 +7,7 @@
 
 #include "util/Parse.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/services/SidebarService.h"
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 
@@ -158,6 +159,14 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
             (void)ActionCoordinator(MakeActionContext())
                 .Execute(ActionId::ShowOutput, {std::string(id)}, ActionSource::Shortcut);
+          },
+      .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
+      .host_changes_updated =
+          [this](const std::filesystem::path& root) {
+            if (context_.current_project_state.root == root &&
+                context_.current_project_state.sidebar.view_id == "host-changes") {
+              MakeSidebarService().RefreshHostChanges();
+            }
           },
   });
   glue_->remote_host_service->SetWakeChannel(project_file_event_type_);

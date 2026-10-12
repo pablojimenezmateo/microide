@@ -608,7 +608,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
       return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
     }
-    if (sidebar_mode == SidebarMode::Plugin || sidebar_mode == SidebarMode::Outline) {
+    if (UsesPluginItemSurface(sidebar_mode)) {
       const auto list_layout =
           ComputePluginSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.plugin.items.size());
       const auto line_index = ScrollableListIndexAtY(list_layout, y);
@@ -1114,7 +1114,8 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
                         line_map.size());
       }
       case SidebarMode::Plugin:
-      case SidebarMode::Outline: {
+      case SidebarMode::Outline:
+      case SidebarMode::HostChanges: {
         const std::size_t count = context_.current_project_state.sidebar.plugin.items.size();
         return row_band(ComputePluginSidebarListLayout(layout.sidebar, count), count);
       }

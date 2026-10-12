@@ -19,6 +19,7 @@
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/services/EditorTabService.h"
+#include "workspace/services/SidebarService.h"
 
 namespace microide::workspace {
 
@@ -482,6 +483,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
           .show_tests_sidebar = [this]() { ShowTestsSidebar(); },
           .show_outline_sidebar = [this]() { ShowOutlineSidebar(); },
+          .show_host_changes_sidebar = [this]() { MakeSidebarService().ShowHostChanges(); },
           .show_plugin_sidebar =
               [this](std::string_view id, bool temporary) {
                 return ShowPluginSidebar(id, temporary);

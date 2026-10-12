@@ -477,6 +477,9 @@ SidebarMode SidebarModeFromViewId(std::string_view view_id) {
   if (view_id == "outline") {
     return SidebarMode::Outline;
   }
+  if (view_id == "host-changes") {
+    return SidebarMode::HostChanges;
+  }
   if (view_id == "plugin") {
     return SidebarMode::Plugin;
   }

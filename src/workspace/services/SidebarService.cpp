@@ -35,6 +35,14 @@ void SidebarService::ShowOutline() {
   coordinator_.ShowOutline();
 }
 
+void SidebarService::ShowHostChanges() {
+  coordinator_.ShowHostChanges();
+}
+
+void SidebarService::RefreshHostChanges() {
+  coordinator_.RefreshHostChanges();
+}
+
 bool SidebarService::ShowPlugin(std::string_view id, bool temporary) {
   return coordinator_.ShowPlugin(id, temporary);
 }

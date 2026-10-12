@@ -17,6 +17,9 @@ struct SidebarViewSpec {
   std::string_view id;
   std::string_view label;
   SidebarMode mode = SidebarMode::None;
+  // Shown on request only (a command or a notification's button), never in the
+  // view switcher: a view that means nothing in most projects (VS Code's `when`).
+  bool contextual = false;
 };
 
 struct SidebarViewInfo {

@@ -278,6 +278,65 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              std::chrono::seconds(20), std::chrono::milliseconds(10)),
          "the mirror takes the host's bytes and the row goes");
 
+  // Changed on Host (§ 7.9): an agent adds a file and rewrites one; one counted row
+  // with Show, a view listing both newest first, and a modified row opening a
+  // before/after compare.
+  // The row is timed and raised at most every 30 s, so it is watched for while the
+  // changes arrive rather than looked for afterwards.
+  bool counted = false;
+  const auto pump_watching = [&] {
+    Pump(shell);
+    for (const auto& note : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      counted = counted || (note.key == "remote.changes." + mirror.string() && !note.actions.empty() &&
+                            note.actions[0].label == "Show");
+    }
+  };
+  WriteFile(host_root / "agent.c", "int agent;\n");
+  Expect(WaitUntil([&] { pump_watching(); return std::filesystem::exists(mirror / "agent.c"); },
+                   std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the agent's new file arrives");
+  WriteFile(host_root / "main.c", "// the agent's second version\n");
+  Expect(WaitUntil(
+             [&] {
+               pump_watching();
+               return ReadFile(mirror / "main.c") == "// the agent's second version\n";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "and its rewrite");
+  Expect(counted, "one counted 'changed on host' row with a Show button");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-changes"), "Show is accepted");
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == "host-changes", "the view opens");
+  {
+    const auto& rows = WorkspaceShellTestAccess::PluginSidebarItems(shell);
+    Expect(rows.size() >= 2 && rows[0].id == "main.c" && rows[0].detail.rfind("modified", 0) == 0 &&
+               rows[1].id == "agent.c" && rows[1].detail == "added",
+           "newest first: the rewrite, then the added file (" + std::to_string(rows.size()) + " rows)");
+  }
+  WorkspaceShellTestAccess::SetPluginSidebarSelectedIndex(shell, 0);
+  Expect(WorkspaceShellTestAccess::OpenSelectedPluginSidebarItem(shell), "the modified row opens");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::ActiveTabIsCompare(shell) &&
+                      WorkspaceShellTestAccess::ActiveCompare(shell).left_label == "main.c (before)";
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "as a compare of the version before against the host's" + [&] {
+           std::string all = WorkspaceShellTestAccess::ActiveTabIsCompare(shell)
+                                 ? " compare:" + WorkspaceShellTestAccess::ActiveCompare(shell).left_label
+                                 : std::string(" not a compare");
+           for (const auto& n : WorkspaceShellTestAccess::ActiveNotifications(shell)) all += " | " + n.message;
+           return all;
+         }());
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-clear-changes"), "Clear is accepted");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::PluginSidebarItems(shell).empty();
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "and the cleared view is empty");
+
   // Disconnect and Reconnect reach a remote project's own channel too.
   const auto segment = [&] {
     return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote);
@@ -316,8 +375,10 @@ void TestOpenFolderOnHostEditsTheHostTree() {
                    std::chrono::seconds(10), std::chrono::milliseconds(10)),
          "down again");
   (void)WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-refresh");
+  // 30 s, not 10: the refresh queues behind any one already in flight over the
+  // link, and under a parallel ctest run that took longer than 10 s.
   Expect(WaitUntil([&] { return settle_git().find("scm-unknown") != std::string::npos; },
-                   std::chrono::seconds(10), std::chrono::milliseconds(10)),
+                   std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "a git refresh that could not reach the host reads as unknown: '" + settle_git() + "'");
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-reconnect " + target), "reconnect");
   Expect(WaitUntil([&] { return settle_git().find("scm-unknown") == std::string::npos; },

@@ -21,6 +21,8 @@ class SidebarService {
   void ShowGit();
   void ShowTests();
   void ShowOutline();
+  void ShowHostChanges();
+  void RefreshHostChanges();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
   void Toggle();

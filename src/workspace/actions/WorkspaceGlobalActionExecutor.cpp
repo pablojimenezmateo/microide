@@ -10,6 +10,7 @@
 #include "util/StringUtil.h"
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/registries/WorkspaceSidebarRegistry.h"
 #include "workspace/services/RemoteHostService.h"
 namespace microide::workspace {
 
@@ -205,7 +206,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:
     case ActionId::RemoteReconnect:
-    case ActionId::RemoteCopyCommand: {
+    case ActionId::RemoteCopyCommand:
+    case ActionId::RemoteShowHostChanges:
+    case ActionId::RemoteClearHostChanges: {
       RemoteHostService* hosts = context_.RemoteHosts();
       if (hosts == nullptr) {
         return reject("Remote hosts are not available here");
@@ -291,6 +294,24 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
             return reject("No remote host \"" + args[0] + "\"");
           }
           context_.Notify(NotificationService::Tone::Info, "Copied: " + *text);
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteShowHostChanges:
+        case ActionId::RemoteClearHostChanges: {
+          const std::filesystem::path root = context_.ProjectRoot();
+          if (!hosts->IsRemoteProject(root)) {
+            return reject("The active project is not a remote project");
+          }
+          if (id == ActionId::RemoteClearHostChanges) {
+            hosts->ClearHostChanges(root);
+            return DispatchResult::Handled;
+          }
+          const SidebarViewSpec* view = FindBuiltinSidebarView(SidebarMode::HostChanges);
+          if (view == nullptr ||
+              !context_.ShowSidebarView(
+                  SidebarViewInfo{.id = view->id, .label = view->label, .mode = view->mode}, {}, {})) {
+            return reject("Cannot show Changed on Host");
+          }
           return DispatchResult::Handled;
         }
         default:

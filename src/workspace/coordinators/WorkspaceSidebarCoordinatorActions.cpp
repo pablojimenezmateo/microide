@@ -361,6 +361,12 @@ bool SidebarCoordinator::OpenPluginItem() {
   }
   const plugin::PluginHost::SidebarItem& item = *selected;
 
+  if (ActiveSidebarMode() == SidebarMode::HostChanges) {
+    // Keep sidebar focus, as the outline does: arrow keys walk the changes and each
+    // Enter shows the next one.
+    return operations_.open_host_change && operations_.open_host_change(item);
+  }
+
   // Outline rows reuse this storage but the host owns navigation: jump the active
   // editor to the symbol's location instead of invoking a plugin confirm callback.
   // Keep sidebar focus so arrow keys keep browsing the outline (VS Code-style).

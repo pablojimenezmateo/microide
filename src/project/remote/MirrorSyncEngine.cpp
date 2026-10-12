@@ -472,6 +472,11 @@ void MirrorSyncEngine::ResolveNow(const std::string& path, Resolution resolution
   const FileOpResult written =
       object.missing ? DeleteTreeEntry(store_.tree(), path, Precondition::Anything())
                      : WriteTreeFile(store_.tree(), path, object.content, Precondition::Anything(), mode);
+  if (written.ok() && !object.missing) {
+    // Like any pulled version: a later switch back, or Changed on Host's compare of
+    // what came before the host's next change, finds the bytes here.
+    objects_.Put(*object.hash, object.content);
+  }
   std::vector<std::string> materialized;
   {
     std::lock_guard lock(mutex_);
@@ -518,6 +523,100 @@ void MirrorSyncEngine::ApproveHeldDeletes() {
       SaveLocked();
     }
     Changed();
+  });
+}
+
+void MirrorSyncEngine::RecordHostChangeLocked(const std::string& path, HostChange::Kind kind,
+                                              std::optional<util::ContentHash> previous) {
+  auto [it, inserted] = host_changes_.try_emplace(path);
+  HostChange& change = it->second;
+  if (inserted) {
+    change.path = path;
+    change.previous = std::move(previous);
+    change.kind = kind;
+  } else {
+    // Keep the version the user last had across a run of changes; an add then a
+    // delete is nothing the user ever had, a delete then an add is a modification.
+    if (change.kind == HostChange::Kind::Added && kind == HostChange::Kind::Deleted) {
+      host_changes_.erase(it);
+      ++status_.host_changes;
+      status_.host_changed_files = host_changes_.size();
+      return;
+    }
+    change.kind = change.kind == HostChange::Kind::Deleted && kind == HostChange::Kind::Added
+                      ? HostChange::Kind::Modified
+                      : (change.kind == HostChange::Kind::Added ? change.kind : kind);
+  }
+  change.sequence = ++host_change_sequence_;
+  ++status_.host_changes;
+  if (host_changes_.size() > kMaxHostChanges) {
+    auto oldest = host_changes_.begin();
+    for (auto candidate = host_changes_.begin(); candidate != host_changes_.end(); ++candidate) {
+      if (candidate->second.sequence < oldest->second.sequence) {
+        oldest = candidate;
+      }
+    }
+    host_changes_.erase(oldest);
+  }
+  status_.host_changed_files = host_changes_.size();
+}
+
+std::vector<MirrorSyncEngine::HostChange> MirrorSyncEngine::HostChanges() const {
+  std::vector<HostChange> changes;
+  {
+    std::lock_guard lock(mutex_);
+    changes.reserve(host_changes_.size());
+    for (const auto& [path, change] : host_changes_) {
+      (void)path;
+      changes.push_back(change);
+    }
+  }
+  std::sort(changes.begin(), changes.end(),
+            [](const HostChange& a, const HostChange& b) { return a.sequence > b.sequence; });
+  return changes;
+}
+
+void MirrorSyncEngine::ClearHostChanges() {
+  {
+    std::lock_guard lock(mutex_);
+    host_changes_.clear();
+    status_.host_changes = 0;
+    status_.host_changed_files = 0;
+  }
+  Changed();
+}
+
+void MirrorSyncEngine::FetchPreviousCopy(std::string path, HostCopyDone done) {
+  if (!IsSafeRelativePath(path)) {
+    done(std::nullopt, "not a path in the project");
+    return;
+  }
+  queue_.PostFront([this, path = std::move(path), done = std::move(done)]() {
+    std::optional<util::ContentHash> previous;
+    {
+      std::lock_guard lock(mutex_);
+      if (const auto it = host_changes_.find(path); it != host_changes_.end()) {
+        previous = it->second.previous;
+      }
+    }
+    if (!previous.has_value()) {
+      done(std::nullopt, path + " had no earlier version here");
+      return;
+    }
+    const std::optional<std::string> bytes = objects_.Get(*previous);
+    if (!bytes.has_value()) {
+      done(std::nullopt, "the earlier version of " + path + " is no longer kept");
+      return;
+    }
+    const std::filesystem::path copies = store_.meta() / "host-copies" / ".before";
+    std::error_code ec;
+    std::filesystem::create_directories(copies, ec);
+    const FileOpResult written = WriteTreeFile(copies, path, *bytes, Precondition::Anything(), 0444);
+    if (!written.ok()) {
+      done(std::nullopt, written.error);
+      return;
+    }
+    done(copies / path, {});
   });
 }
 
@@ -600,9 +699,20 @@ void MirrorSyncEngine::JournalLocked() {
 
 void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan) {
   auto [it, inserted] = store_.entries().try_emplace(row.path);
-  (void)inserted;
   MirrorStore::Entry& entry = it->second;
   const std::string& path = it->first;
+  // The first sync is what the host held before this window saw it; after that, a
+  // row the host moved is a host change. A pushed file's echo carries the hash the
+  // push already recorded in `remote`, so it is not one.
+  if (status_.synced_once && row.kind == ManifestEntryKind::File) {
+    const bool had_file = !inserted && entry.has_remote &&
+                          entry.remote.kind == ManifestEntryKind::File;
+    if (!had_file) {
+      RecordHostChangeLocked(path, HostChange::Kind::Added, std::nullopt);
+    } else if (entry.remote.hash != row.hash) {
+      RecordHostChangeLocked(path, HostChange::Kind::Modified, entry.remote.hash);
+    }
+  }
   entry.has_remote = true;
   entry.local_only = false;
   entry.remote = std::move(row);
@@ -664,6 +774,9 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
                                                       std::less<>>::iterator it,
                                              Plan& plan) {
   MirrorStore::Entry& entry = it->second;
+  if (status_.synced_once && entry.has_remote && entry.remote.kind == ManifestEntryKind::File) {
+    RecordHostChangeLocked(it->first, HostChange::Kind::Deleted, entry.remote.hash);
+  }
   if (entry.local_only || entry.push_pending || entry.conflict) {
     if (entry.has_remote) {
       entry.has_remote = false;
@@ -993,6 +1106,13 @@ void MirrorSyncEngine::SweepObjects() {
       }
       if (entry.base.has_value()) {
         reachable.insert(entry.base->Hex());
+      }
+    }
+    // The version before each listed host change: Changed on Host compares with it.
+    for (const auto& [path, change] : host_changes_) {
+      (void)path;
+      if (change.previous.has_value()) {
+        reachable.insert(change.previous->Hex());
       }
     }
   }

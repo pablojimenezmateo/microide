@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 #include "project/remote/MirrorObjects.h"
@@ -89,7 +90,25 @@ class MirrorSyncEngine {
     std::size_t pulled_as_delta = 0;
     // Pulls answered from meta/objects with no transfer at all, since start.
     std::size_t pulled_from_store = 0;
+    // Host-side changes recorded since the first sync or the last ClearHostChanges
+    // (§ 7.9): only ever increases between clears, so a reader can tell new ones.
+    std::size_t host_changes = 0;
+    std::size_t host_changed_files = 0;  // distinct paths in HostChanges()
   };
+
+  // One file the host changed after the mirror's first sync (§ 7.9 Changed on Host):
+  // an agent or a tool on the host, never an echo of the mirror's own push.
+  struct HostChange {
+    enum class Kind { Added, Modified, Deleted };
+    std::string path;
+    Kind kind = Kind::Modified;
+    // The host's content before this change, when there was one: the version the
+    // user last had, for a Compare (meta/objects may still hold its bytes).
+    std::optional<util::ContentHash> previous;
+    std::uint64_t sequence = 0;  // newer is larger
+  };
+  // At most this many distinct paths are kept; the oldest go first.
+  static constexpr std::size_t kMaxHostChanges = 2000;
 
   struct Callbacks {
     // Something the status or a path's state reports changed. Engine thread.
@@ -150,6 +169,14 @@ class MirrorSyncEngine {
   std::vector<std::string> Conflicts() const;
   // Apply the held delete diff after all.
   void ApproveHeldDeletes();
+  // The host's changes, newest first (one row per path: its latest change).
+  std::vector<HostChange> HostChanges() const;
+  void ClearHostChanges();
+  // The version of `path` the user last had before its latest host change, from
+  // meta/objects, written to a read-only copy (meta/host-copies/.before/<path>) for
+  // a before/after compare. `done` runs on the engine thread; nullopt and why when
+  // the change has no earlier version or its bytes are no longer held.
+  void FetchPreviousCopy(std::string path, HostCopyDone done);
 
   Status status() const;
   ContentState StateOf(std::string_view path) const;
@@ -207,6 +234,8 @@ class MirrorSyncEngine {
   void DrainTreeOps();
   void ResolveNow(const std::string& path, Resolution resolution);
   void RecountLocked();
+  void RecordHostChangeLocked(const std::string& path, HostChange::Kind kind,
+                              std::optional<util::ContentHash> previous);
   // Journal now, whole state at the end of the current burst.
   void SaveLocked();
   void SaveNowLocked();
@@ -226,6 +255,9 @@ class MirrorSyncEngine {
   mutable std::mutex mutex_;  // guards store_'s entries and the members below
   Status status_;
   std::vector<std::string> held_deletes_;
+  // Path -> its latest host change (§ 7.9); `host_change_sequence_` orders them.
+  std::unordered_map<std::string, HostChange> host_changes_;
+  std::uint64_t host_change_sequence_ = 0;
   bool state_save_queued_ = false;
 
   // What an asynchronous completion holds instead of `this`.

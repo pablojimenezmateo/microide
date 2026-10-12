@@ -911,8 +911,13 @@ void TestSidebarOrderedViewsNoPolicy() {
   PluginHost host;
   const auto ordered = OrderedSidebarViews(host, {});
   const auto all = microide::workspace::SidebarViews(host);
-  Expect(ordered.size() == all.size(),
-         "with no policies all views should appear");
+  // Every view but the contextual ones (Changed on Host), which open on request only.
+  const auto listed = std::count_if(all.begin(), all.end(), [](const auto& view) {
+    const auto* spec = microide::workspace::FindBuiltinSidebarView(view.id);
+    return spec == nullptr || !spec->contextual;
+  });
+  Expect(ordered.size() == static_cast<std::size_t>(listed) && listed + 1 == static_cast<long>(all.size()),
+         "with no policies all views should appear, Changed on Host on request only");
 }
 
 void TestSidebarHideView() {

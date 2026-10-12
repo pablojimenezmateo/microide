@@ -9,11 +9,13 @@
 #include "project/remote/RemoteWorkspace.h"
 #include "util/ContentHash.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <functional>
 #include <thread>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -102,6 +104,66 @@ void TestMirrorInitialSyncAndHostChanges() {
   Expect(!std::filesystem::exists(session.Tree("doomed.txt")), "a delete on the host is applied");
   Expect(ReadFile(session.Tree("new/c.txt")) == "c\n", "a new host file arrives");
   Expect(session.engine->StateOf("doomed.txt") == ContentState::Unknown, "and the deleted one is gone");
+}
+
+// § 7.9: what the host changed after the first sync is recorded, newest first, one
+// row per path — and the mirror's own pushes coming back are not host changes.
+void TestMirrorRecordsChangedOnHost() {
+  using Kind = remote::MirrorSyncEngine::HostChange::Kind;
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "alpha\n");
+  WriteFile(session.host / "doomed.txt", "bye\n");
+  WriteFile(session.host / "mine.txt", "mine\n");
+  session.Connect();
+  session.Sync();
+  Expect(session.engine->HostChanges().empty(), "the first sync is not a list of host changes");
+
+  WriteFile(session.Tree("mine.txt"), "edited here\n");
+  session.engine->NotifyLocalWrite("mine.txt");
+  session.engine->Flush();
+  session.Sync();
+  Expect(session.engine->HostChanges().empty(), "a push the host echoes back is not a host change");
+
+  WriteFile(session.host / "a.txt", "alpha v2\n");
+  std::filesystem::remove(session.host / "doomed.txt");
+  session.Sync();
+  WriteFile(session.host / "new.txt", "n\n");
+  session.Sync();
+  const auto changes = session.engine->HostChanges();
+  Expect(changes.size() == 3, "three host changes, got " + std::to_string(changes.size()));
+  Expect(changes.size() == 3 && changes[0].path == "new.txt" && changes[0].kind == Kind::Added,
+         "newest first: the added file");
+  const auto find = [&](std::string_view path) -> const remote::MirrorSyncEngine::HostChange* {
+    for (const auto& change : changes) {
+      if (change.path == path) {
+        return &change;
+      }
+    }
+    return nullptr;
+  };
+  const auto* a = find("a.txt");
+  Expect(a != nullptr && a->kind == Kind::Modified && a->previous == util::HashContent("alpha\n"),
+         "a modification remembers the version the user last had");
+  std::optional<std::filesystem::path> before;
+  session.engine->FetchPreviousCopy("a.txt", [&](std::optional<std::filesystem::path> copy, std::string) {
+    before = std::move(copy);
+  });
+  session.engine->Flush();
+  Expect(before.has_value() && ReadFile(*before) == "alpha\n",
+         "the version before the change comes back from the object store for a compare");
+  const auto* doomed = find("doomed.txt");
+  Expect(doomed != nullptr && doomed->kind == Kind::Deleted, "a host delete is listed");
+  Expect(session.engine->status().host_changes >= 3, "the status counts them");
+
+  std::filesystem::remove(session.host / "new.txt");
+  session.Sync();
+  const auto after = session.engine->HostChanges();
+  Expect(after.size() == 2 && std::none_of(after.begin(), after.end(),
+                                           [](const auto& change) { return change.path == "new.txt"; }),
+         "added then deleted on the host is nothing the user ever had");
+  session.engine->ClearHostChanges();
+  Expect(session.engine->HostChanges().empty() && session.engine->status().host_changes == 0,
+         "Clear empties the list");
 }
 
 // A pulled file keeps the host's mtime, so its recorded stat vouches for it at
@@ -544,6 +606,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
+  AddTest(tests, "MirrorSyncEngine/RecordsChangedOnHost", TestMirrorRecordsChangedOnHost);
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);

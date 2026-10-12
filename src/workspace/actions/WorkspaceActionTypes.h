@@ -42,6 +42,11 @@ enum class ActionId {
   RemoteReconnect,    // `remote-reconnect <host>`: the Reconnect button
   // `remote-copy-command <host> <ssh|install|linger>`: the Copy buttons on a failure row.
   RemoteCopyCommand,
+  // Changed on Host (§ 7.9) for the active remote project: `remote-changes` shows the
+  // view (the Show button of the "N files changed on host" row), `remote-clear-changes`
+  // empties it.
+  RemoteShowHostChanges,
+  RemoteClearHostChanges,
   // The Cancel button of a quit / close-project that is waiting for formatter
   // saves: `cancel-save-wait <id>` (the id rides on the button). The quit or close
   // is abandoned and the buffers still formatting stay open and dirty.

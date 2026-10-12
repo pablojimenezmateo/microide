@@ -102,6 +102,11 @@ class SidebarCoordinator {
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
     std::function<bool()> open_commit_workflow;
+    // Changed on Host (§ 7.9): the active remote project's rows, newest first (empty
+    // for a local project), and what confirming one does — open the file, or its
+    // before/after compare. Null when no remote host service is wired.
+    std::function<std::vector<plugin::PluginHost::SidebarItem>()> host_change_rows;
+    std::function<bool(const plugin::PluginHost::SidebarItem&)> open_host_change;
   };
 
   SidebarCoordinator(ProjectWorkspaceState& state,
@@ -118,6 +123,7 @@ class SidebarCoordinator {
   void ShowGit();
   void ShowTests();
   void ShowOutline();
+  void ShowHostChanges();
   bool ShowPlugin(std::string_view id, bool temporary = false);
   void Close();
   void Toggle();
@@ -130,6 +136,9 @@ class SidebarCoordinator {
   // Rebuilds the outline rows from the active editable buffer's plugin document
   // symbols. Stored in the shared plugin item-tree state (see SidebarMode::Outline).
   bool RefreshOutline();
+  // Rebuilds the Changed on Host rows (same item surface), keeping the selection on
+  // the row it was on when that row is still listed.
+  void RefreshHostChanges();
   // Applies an LSP documentSymbol fallback result (adapted node tree) to the outline
   // rows, dropping it if the outline/buffer changed since the request. Called on a
   // FRESH coordinator by the shell when the async LSP response lands, so it never
