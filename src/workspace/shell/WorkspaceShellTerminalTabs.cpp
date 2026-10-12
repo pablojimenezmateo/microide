@@ -64,7 +64,7 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
           .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
           .append_terminal_pending_input =
               [this](std::string_view input) { AppendTerminalPendingInput(input); },
-          .terminal_url_at_point = [this](float x, float y) { return TerminalUrlAtPoint(x, y); },
+          .terminal_link_at_point = [this](float x, float y) { return TerminalLinkAtPoint(x, y); },
           .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },
           .sync_primary_selection_with_terminal_selection =
               [this]() { SyncPrimarySelectionWithTerminalSelection(); },

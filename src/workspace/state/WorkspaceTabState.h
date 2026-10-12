@@ -529,8 +529,23 @@ inline bool TabEntryIsDirty(const TabEntry& tab) {
 }
 static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
+// A link in a terminal pane: what it opens and where it sits (an absolute row,
+// a half-open column range). From the pointer's hit-test.
+struct TerminalLinkSpan {
+  std::size_t row = 0;
+  std::size_t begin_column = 0;
+  std::size_t end_column = 0;
+  friend bool operator==(const TerminalLinkSpan&, const TerminalLinkSpan&) = default;
+};
+struct TerminalLinkHit {
+  std::string target;  // a URL, or a file:// link with an #L<line>:<col> fragment
+  TerminalLinkSpan span;
+};
+
 struct TerminalPaneState {
   terminal::TerminalSession session;
+  // The link under the pointer, underlined while it is (VS Code's terminal).
+  std::optional<TerminalLinkSpan> hovered_link;
   terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
   std::size_t visible_lines_first_row = 0;
   std::size_t visible_lines_max_rows = 0;

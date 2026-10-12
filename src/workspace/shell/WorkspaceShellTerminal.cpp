@@ -92,7 +92,32 @@ std::size_t TerminalColumnToByteOffset(const terminal::TerminalLine& line, std::
   return byte_offset;
 }
 
-std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_t target_byte) {
+// A link found in a line's text: what it opens and the bytes of the text it is.
+struct TerminalTextLink {
+  std::string target;
+  std::size_t begin = 0;
+  std::size_t end = 0;
+};
+
+// The grid column holding byte `byte` of TerminalLineText(line): the inverse of
+// TerminalColumnToByteOffset (the line's width when `byte` is past its text).
+std::size_t TerminalByteOffsetToColumn(const terminal::TerminalLine& line, std::size_t byte) {
+  std::size_t offset = 0;
+  for (std::size_t cell_index = 0; cell_index < line.cells.size(); ++cell_index) {
+    const auto& cell = line.cells[cell_index];
+    if (cell.style.wide_trailing()) {
+      continue;
+    }
+    if (offset >= byte) {
+      return cell_index;
+    }
+    const auto display_text = cell.DisplayText();
+    offset += display_text.empty() ? 1 : display_text.size();
+  }
+  return line.cells.size();
+}
+
+std::optional<TerminalTextLink> TerminalUrlAtColumn(std::string_view text, std::size_t target_byte) {
   static constexpr std::string_view kSchemes[] = {
       "https://",
       "http://",
@@ -123,7 +148,7 @@ std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_
       // `target_byte` is a byte offset into `text` (see TerminalColumnToByteOffset
       // at the call site), so it compares directly against the URL's byte range.
       if (target_byte >= start && target_byte < trimmed_end && !url.empty()) {
-        return url;
+        return TerminalTextLink{.target = std::move(url), .begin = start, .end = trimmed_end};
       }
       start = lowered_view.find(scheme, start + 1);
     }
@@ -147,7 +172,7 @@ bool IsTerminalPathTokenTerminator(char character) {
 // existence check). Returned as a `file://` link with an `#L<line>:<col>`
 // fragment so it travels the same hover / pointer / click path as URLs; the
 // click handler opens file links in the editor rather than externally.
-std::optional<std::string> TerminalFileReferenceAtByte(
+std::optional<TerminalTextLink> TerminalFileReferenceAtByte(
     std::string_view text, std::size_t target_byte, const std::filesystem::path& root,
     const std::function<bool(const std::filesystem::path&)>& exists) {
   if (target_byte >= text.size() || IsTerminalPathTokenTerminator(text[target_byte])) {
@@ -168,6 +193,7 @@ std::optional<std::string> TerminalFileReferenceAtByte(
   if (token.empty() || token.find("://") != std::string_view::npos) {
     return std::nullopt;
   }
+  const std::size_t token_end = start + token.size();  // `path:line:col`, as printed
   // Peel up to two trailing `:<digits>` groups: column, then line.
   std::size_t line = 0;
   std::size_t column = 0;
@@ -211,7 +237,7 @@ std::optional<std::string> TerminalFileReferenceAtByte(
       url += ":" + std::to_string(column);
     }
   }
-  return url;
+  return TerminalTextLink{.target = std::move(url), .begin = start, .end = token_end};
 }
 
 struct CapturedTerminalInvocation {
@@ -441,7 +467,7 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
   return 0;
 }
 
-std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) const {
+std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, float y) const {
   const auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {
     return std::nullopt;
@@ -492,21 +518,38 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   // anything the text looks like. A `file://` link for another machine (the
   // session keeps those verbatim) has no local path to open.
   if (position->column < hit_line.cells.size() && hit_line.cells[position->column].link != 0) {
-    std::string uri = terminal_tab->session.LinkUri(hit_line.cells[position->column].link);
+    const auto id = hit_line.cells[position->column].link;
+    std::string uri = terminal_tab->session.LinkUri(id);
     if (!uri.empty() && (!uri.starts_with("file://") || uri.starts_with("file:///"))) {
-      return uri;
+      // The span is the run of cells the program marked with this link.
+      std::size_t begin = position->column;
+      while (begin > 0 && hit_line.cells[begin - 1].link == id) {
+        --begin;
+      }
+      std::size_t end = position->column + 1;
+      while (end < hit_line.cells.size() && hit_line.cells[end].link == id) {
+        ++end;
+      }
+      return TerminalLinkHit{.target = std::move(uri),
+                             .span = {.row = position->row, .begin_column = begin, .end_column = end}};
     }
   }
   const std::string line_text = TerminalLineText(hit_line);
   const std::size_t target_byte = TerminalColumnToByteOffset(hit_line, position->column);
+  const auto hit = [&](TerminalTextLink link) {
+    return TerminalLinkHit{.target = std::move(link.target),
+                           .span = {.row = position->row,
+                                    .begin_column = TerminalByteOffsetToColumn(hit_line, link.begin),
+                                    .end_column = TerminalByteOffsetToColumn(hit_line, link.end)}};
+  };
   if (auto url = TerminalUrlAtColumn(line_text, target_byte); url.has_value()) {
-    return url;
+    return hit(std::move(*url));
   }
   // This runs on every pointer move over the terminal, so the existence check
   // (a stat) is memoized on the last path it asked about.
   thread_local std::filesystem::path last_probe;
   thread_local bool last_probe_exists = false;
-  return TerminalFileReferenceAtByte(
+  std::optional<TerminalTextLink> file = TerminalFileReferenceAtByte(
       line_text, target_byte, context_.current_project_state.root,
       [](const std::filesystem::path& path) {
         if (path != last_probe) {
@@ -516,6 +559,10 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
         }
         return last_probe_exists;
       });
+  if (!file.has_value()) {
+    return std::nullopt;
+  }
+  return hit(std::move(*file));
 }
 
 bool WorkspaceShell::OpenExternalUrl(std::string_view url) {

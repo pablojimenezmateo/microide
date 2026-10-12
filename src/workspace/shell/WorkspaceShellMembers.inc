@@ -1634,7 +1634,7 @@
   void RebaseActiveTerminalForScrollbackTrim();
   void ClearTerminalSelection();
   bool TerminalHasSelection() const;
-  std::optional<std::string> TerminalUrlAtPoint(float x, float y) const;
+  std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;
   std::optional<TerminalSelectionPoint> TerminalSelectionPointAt(
       int x,
       int y,

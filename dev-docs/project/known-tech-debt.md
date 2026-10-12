@@ -558,9 +558,11 @@ detection, so `the docs` opens its URL and a file link opens in the editor
 **3** (floor 3): a style run carries a link id, a frame carries the URIs its lines
 use (`TerminalHostFrame::links`, remapped into the client's table, `file:///`
 mapped through the tree mapping like OSC 7) and an OSC 9/777 notification
-(`TerminalHost/NotificationAndLinksReachTheClient`). Not done: hover underline of
-a link — the pointer changes, the text is not underlined (VS Code underlines on
-hover); plain URLs never were either.
+(`TerminalHost/NotificationAndLinksReachTheClient`). ~~Not done: hover underline
+of a link~~ — done 2026-10-12: the hit-test returns the link's column span (an OSC 8
+run, or the URL / `path:line:col` text it matched), the pane keeps the hovered one
+and the bottom panel underlines it, plain URLs included
+(`WorkspaceShell/TerminalLinkUnderlinesOnHover`).
 
 - ~~**Host terminals do not carry notifications.**~~ The host session queues an
   OSC 9/777 like a local one, but `TerminalHostFrame` has no field for it (the

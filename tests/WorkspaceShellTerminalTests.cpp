@@ -1276,11 +1276,39 @@ void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
   TerminalSessionTestAccess::Reset(session, 24, 80);
   TerminalSessionTestAccess::AppendOutput(session, "error nope/missing.cpp:3:1 done");
   const SDL_FPoint word = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 2);
-  Expect(!WorkspaceShellTestAccess::TerminalUrlAtPoint(shell, word.x, word.y).has_value(),
+  Expect(!WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, word.x, word.y).has_value(),
          "a bare word is not a link");
   const SDL_FPoint missing = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 10);
-  Expect(!WorkspaceShellTestAccess::TerminalUrlAtPoint(shell, missing.x, missing.y).has_value(),
+  Expect(!WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, missing.x, missing.y).has_value(),
          "a path that does not exist is not a link");
+}
+
+// A link under the pointer is underlined, as VS Code's terminal does: the whole
+// link (a URL in the text, or an OSC 8 run), and only while the pointer is on it.
+void TestWorkspaceShellTerminalLinkUnderlinesOnHover() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, temp_dir.path());
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(
+      session, "go to https://example.com/x now\r\nsee \x1b]8;;https://example.com/guide\x1b\\the docs\x1b]8;;\x1b\\ ok");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FPoint url = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 12);
+  (void)SendMouseMotion(shell, url.x, url.y, 0);
+  auto hovered = WorkspaceShellTestAccess::TerminalHoveredLink(shell);
+  Expect(hovered.has_value() && hovered->row == 0 && hovered->begin_column == 6 && hovered->end_column == 27,
+         "the URL under the pointer is underlined end to end");
+  const SDL_FPoint docs = WorkspaceShellTestAccess::TerminalCellPoint(shell, 1, 9);
+  (void)SendMouseMotion(shell, docs.x, docs.y, 0);
+  hovered = WorkspaceShellTestAccess::TerminalHoveredLink(shell);
+  Expect(hovered.has_value() && hovered->row == 1 && hovered->begin_column == 4 && hovered->end_column == 12,
+         "an OSC 8 link's run of cells, not its target's length");
+  const SDL_FPoint plain = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 1);
+  (void)SendMouseMotion(shell, plain.x, plain.y, 0);
+  Expect(!WorkspaceShellTestAccess::TerminalHoveredLink(shell).has_value(), "and none off a link");
 }
 
 // OSC 8: `ls --hyperlink`, gcc and Claude Code print a link whose TEXT is not a
@@ -1308,7 +1336,7 @@ void TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget() {
     return true;
   });
   const SDL_FPoint plain = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 1);
-  Expect(!WorkspaceShellTestAccess::TerminalUrlAtPoint(shell, plain.x, plain.y).has_value(),
+  Expect(!WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, plain.x, plain.y).has_value(),
          "text outside the link is not a link");
   const SDL_FPoint docs = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
   Expect(SendMouseDown(shell, docs.x, docs.y, SDL_BUTTON_LEFT), "clicking the link text is handled");
@@ -2495,6 +2523,7 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalSelectionWritesPrimaryBufferAndMiddleClickPastes);
   AddTest(tests, "WorkspaceShell/TerminalLeftClickOpensUrls",
           TestWorkspaceShellTerminalLeftClickOpensUrls);
+  AddTest(tests, "WorkspaceShell/TerminalLinkUnderlinesOnHover", TestWorkspaceShellTerminalLinkUnderlinesOnHover);
   AddTest(tests, "WorkspaceShell/TerminalOsc8LinkClickOpensItsTarget",
           TestWorkspaceShellTerminalOsc8LinkClickOpensItsTarget);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",

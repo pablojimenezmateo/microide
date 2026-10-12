@@ -746,7 +746,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           }
         }
       }
-      if (TerminalUrlAtPoint(x, y).has_value()) {
+      if (TerminalLinkAtPoint(x, y).has_value()) {
         return CursorKind::Pointer;
       }
       return CursorKind::Text;

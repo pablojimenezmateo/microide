@@ -23,8 +23,8 @@ void TerminalPanelService::AppendTerminalPendingInput(std::string_view input) {
   operations_.append_terminal_pending_input(input);
 }
 
-std::optional<std::string> TerminalPanelService::TerminalUrlAtPoint(float x, float y) const {
-  return operations_.terminal_url_at_point(x, y);
+std::optional<TerminalLinkHit> TerminalPanelService::TerminalLinkAtPoint(float x, float y) const {
+  return operations_.terminal_link_at_point(x, y);
 }
 
 bool TerminalPanelService::OpenExternalUrl(std::string_view url) const {

@@ -31,7 +31,7 @@ class PanelMouseCoordinator {
     // it (a button or its chrome); a press anywhere else blurs the bar so the
     // keyboard goes back to the terminal, exactly like the in-file find widget.
     std::function<bool(float, float)> terminal_find_mouse_down;
-    std::function<std::optional<std::string>(float, float)> terminal_url_at_point;
+    std::function<std::optional<TerminalLinkHit>(float, float)> terminal_link_at_point;
     std::function<bool(std::string_view)> open_external_url;
     std::function<std::optional<TerminalSelectionPoint>(int,
                                                            int,

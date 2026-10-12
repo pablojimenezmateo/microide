@@ -24,7 +24,7 @@ class TerminalPanelService {
     std::function<std::optional<std::string>()> read_primary_selection_text;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;
-    std::function<std::optional<std::string>(float, float)> terminal_url_at_point;
+    std::function<std::optional<TerminalLinkHit>(float, float)> terminal_link_at_point;
     std::function<bool(std::string_view)> open_external_url;
     std::function<void()> sync_primary_selection_with_terminal_selection;
     // Build and start a pane for the current project (its launcher, `terminal.shell`,
@@ -50,7 +50,7 @@ class TerminalPanelService {
   std::optional<std::string> ReadPrimarySelectionText() const;
   void ClearTerminalSelection();
   void AppendTerminalPendingInput(std::string_view input);
-  std::optional<std::string> TerminalUrlAtPoint(float x, float y) const;
+  std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;
   bool OpenExternalUrl(std::string_view url) const;
   void SyncPrimarySelectionWithTerminalSelection();
 

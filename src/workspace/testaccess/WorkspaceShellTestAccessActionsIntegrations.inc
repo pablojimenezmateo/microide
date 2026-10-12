@@ -782,9 +782,14 @@
     return microide::workspace::BottomPanelContentRect(layout);
   }
   // The link (URL or resolved file reference) under a panel point, or nullopt.
-  static std::optional<std::string> TerminalUrlAtPoint(const WorkspaceShell& shell, float x,
+  // The active pane's underlined (hovered) link.
+  static std::optional<TerminalLinkSpan> TerminalHoveredLink(const WorkspaceShell& shell) {
+    const auto* pane = shell.ActiveTerminalPane();
+    return pane != nullptr ? pane->hovered_link : std::nullopt;
+  }
+  static std::optional<TerminalLinkHit> TerminalLinkAtPoint(const WorkspaceShell& shell, float x,
                                                        float y) {
-    return shell.TerminalUrlAtPoint(x, y);
+    return shell.TerminalLinkAtPoint(x, y);
   }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,

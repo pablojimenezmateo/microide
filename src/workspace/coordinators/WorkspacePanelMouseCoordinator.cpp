@@ -193,9 +193,10 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (auto* terminal_tab = ActivePanelTerminalPane()) {
     const SDL_FRect panel_content = operations_.bottom_panel_content_rect(layout);
     if (Contains(panel_content, event.button.x, event.button.y)) {
-      if (const auto url = operations_.terminal_url_at_point(static_cast<float>(event.button.x),
-                                                             static_cast<float>(event.button.y));
-          url.has_value()) {
+      if (const auto link = operations_.terminal_link_at_point(static_cast<float>(event.button.x),
+                                                               static_cast<float>(event.button.y));
+          link.has_value()) {
+        const std::string* url = &link->target;
         // A `file://` link -- a printed file URL, or a `path:line:col` reference
         // the hit-test resolved to an existing file -- opens in the editor at its
         // `#L<line>:<col>` fragment (VS Code's terminal links); everything else
@@ -522,6 +523,25 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
     }
   }
 
+  // The link under the pointer is underlined while it is (VS Code's terminal).
+  // Only over the terminal's body: the hit-test reads the pane's lines.
+  if (auto* terminal_tab = ActivePanelTerminalPane()) {
+    std::optional<TerminalLinkSpan> hovered;
+    if (operations_.bottom_panel_visible()) {
+      if (const auto layout = operations_.current_workspace_layout();
+          layout.has_value() &&
+          Contains(operations_.bottom_panel_content_rect(*layout), event.motion.x, event.motion.y)) {
+        if (const auto link = operations_.terminal_link_at_point(event.motion.x, event.motion.y)) {
+          hovered = link->span;
+        }
+      }
+    }
+    if (hovered != terminal_tab->hovered_link) {
+      terminal_tab->hovered_link = hovered;
+      return true;  // the bottom panel repaints
+    }
+  }
+
   return false;
 }
 
@@ -710,9 +730,9 @@ PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
               },
           .terminal_find_mouse_down =
               [this](float x, float y) { return HandleTerminalFindMouseDown(x, y); },
-          .terminal_url_at_point =
+          .terminal_link_at_point =
               [this](float x, float y) {
-                return MakeTerminalPanelService().TerminalUrlAtPoint(x, y);
+                return MakeTerminalPanelService().TerminalLinkAtPoint(x, y);
               },
           .open_external_url =
               [this](std::string_view url) {
