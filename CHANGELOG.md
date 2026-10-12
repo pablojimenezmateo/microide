@@ -128,6 +128,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Closing a shared host terminal on one machine no longer ends it on the
+  other.** With two clients attached to one host terminal, closing the tab on one
+  killed the shell the other was using (or not, depending on whether the close
+  reached the host before the connection did). Now it only detaches that client;
+  the last one to close ends it.
 - **Disconnecting from a host no longer stalls git for a minute.** A git command
   running when the link dropped waited out its whole 60 s timeout, and every other
   background job of the project queued behind it; it now ends at once.

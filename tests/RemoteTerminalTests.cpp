@@ -245,9 +245,13 @@ void TestTwoClientsShareAHostTerminalAtTheSmallerSize() {
              WaitUntil([&] { return b.ConsumeBell(); }, std::chrono::seconds(5)),
          "a bell rings for both clients, not only the first frame's");
 
-  // The second machine goes away: its socket closes and the host detaches it.
+  // The second machine closes its tab, then goes away. Its tab's term/close
+  // leaves the terminal to the first client: it does not end a shell someone else
+  // is using. (Flushed: whether the close was written before the socket closed
+  // used to decide whether the first client's shell survived.)
   TerminalSessionTestAccess::EnterHostMode(b, nullptr);
   channel_b.reset();
+  Expect(second->peer().Flush(std::chrono::seconds(5)), "the second client's close is sent");
   second.reset();
   // The host's own answer, not a sleep: the remaining client's view is back at
   // its size with no output needed (the detach used to wait for the program to

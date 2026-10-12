@@ -106,7 +106,10 @@ class TerminalTable {
   // term/scrollback: see TerminalSession::CaptureHostHistory. False for no such terminal.
   bool History(std::uint64_t handle, std::uint64_t before, std::size_t count,
                std::uint64_t* first, std::vector<terminal::TerminalLine>& lines);
-  void Close(std::uint64_t handle);
+  // term/close from `connection`: the terminal shuts down — unless another client
+  // is attached to it, when only `connection` leaves it (tmux's detach): closing a
+  // tab on one machine must not end the shell someone is using on another.
+  void Close(std::uint64_t connection, std::uint64_t handle);
   // A connection went away: its terminals keep running, without it.
   void Detach(std::uint64_t connection);
   // Clients attached to `handle` (for tests and status).

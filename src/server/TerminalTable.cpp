@@ -301,16 +301,30 @@ bool TerminalTable::History(std::uint64_t handle, std::uint64_t before, std::siz
   return true;
 }
 
-void TerminalTable::Close(std::uint64_t handle) {
+void TerminalTable::Close(std::uint64_t connection, std::uint64_t handle) {
   std::shared_ptr<Terminal> terminal;
+  bool detached = false;
   {
     std::lock_guard lock(mutex_);
     const auto it = terminals_.find(handle);
     if (it == terminals_.end()) {
       return;
     }
-    terminal = std::move(it->second);
-    terminals_.erase(it);
+    Terminal& shared = *it->second;
+    const bool others = std::any_of(shared.clients.begin(), shared.clients.end(),
+                                    [connection](const Client& client) { return client.connection != connection; });
+    if (others) {
+      std::erase_if(shared.clients, [connection](const Client& client) { return client.connection == connection; });
+      ApplySharedSizeLocked(shared);
+      detached = true;
+    } else {
+      terminal = std::move(it->second);
+      terminals_.erase(it);
+    }
+  }
+  if (detached) {
+    Notify();  // the others may have room again (see Detach)
+    return;
   }
   terminal->session.Stop();
 }

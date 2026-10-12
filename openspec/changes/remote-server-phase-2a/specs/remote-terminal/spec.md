@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The pty and the terminal model live on the host
-`term/open {cwd, shell, rows, cols}` SHALL create a pty on the host owned by the server and run the shell in it, with the terminal model parsing its output on the host. `term/resize` SHALL resize it; `term/close` SHALL shut it down. A dropped link SHALL NOT signal the shell or anything it runs.
+`term/open {cwd, shell, rows, cols}` SHALL create a pty on the host owned by the server and run the shell in it, with the terminal model parsing its output on the host. `term/resize` SHALL resize it; `term/close` SHALL shut it down — unless another client is attached, when it SHALL detach only the closing client (closing a tab on one machine does not end a shell someone is using on another). A dropped link SHALL NOT signal the shell or anything it runs.
 
 #### Scenario: A build in a host terminal survives a lid close
 - **WHEN** a host terminal is running a long command and the client machine suspends for ten minutes
