@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "project/PendingPaths.h"
 #include "util/TransparentStringHash.h"
 
 namespace microide::project {
@@ -47,6 +48,9 @@ struct TreeEntry {
   bool ignored = false;
   bool children_materialized = false;
   GitFileStatus git_status = GitFileStatus::Clean;
+  // Listed by the project but not on disk yet (SetPendingPaths): drawn dimmed;
+  // opening it fetches it first.
+  bool pending = false;
 };
 
 class DirectoryTree {
@@ -73,6 +77,10 @@ class DirectoryTree {
   // grayed (ignored), not hidden.
   void SetExcludeGlobs(std::vector<std::string> globs) { exclude_globs_ = std::move(globs); }
   void ApplyGitStatuses(SharedGitTreeStatusMap statuses);
+  // Files the project lists that are not on disk yet (a remote mirror's first
+  // sync): each directory lists its pending children beside its real ones. Rebuilds
+  // the rows when the set changed; null or empty clears it.
+  void SetPendingPaths(SharedPendingPaths pending);
   void MoveSelection(int delta);
   void SetSelectedIndex(std::size_t index);
   bool SelectPath(const std::filesystem::path& path);
@@ -120,6 +128,11 @@ class DirectoryTree {
                        int depth,
                        const std::shared_ptr<const IgnoreMatcher>& matcher,
                        SymlinkLoopGuard& loop_guard);
+  struct SortableEntry;
+  // Add `directory`'s pending children that are not on disk to `children`.
+  void AppendPendingChildren(const std::filesystem::path& directory,
+                             const std::shared_ptr<const IgnoreMatcher>& matcher,
+                             std::vector<SortableEntry>& children) const;
   // Resolve a tree entry's git badge. `scratch` is a caller-owned buffer that the
   // key is built into: this runs once per entry on every git refresh, so a fresh
   // string (let alone the lexically_relative + lexically_normal + generic_string
@@ -152,6 +165,7 @@ class DirectoryTree {
   std::vector<TreeEntry> entries_;
   std::uint64_t entries_revision_ = 0;
   SharedGitTreeStatusMap git_statuses_;
+  SharedPendingPaths pending_;  // never empty when set
   PathKeySet expanded_paths_;
   PathKeySet manually_collapsed_paths_;
   // Refreshes elapsed since the last full stale-key sweep (see MaybePruneDeletedDirectoryKeys).

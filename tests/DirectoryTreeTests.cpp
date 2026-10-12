@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "project/DirectoryTree.h"
+#include "project/PendingPaths.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -405,7 +406,46 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
          "an emptied status map should clear existing badges");
 }
 
+// A remote mirror's first sync: files the host lists that have not arrived are
+// rows too (dimmed), under folders that may not exist yet, so the user can open
+// them; a file that has landed is listed once, as itself.
+void TestDirectoryTreeListsPendingPaths() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(root / "src" / "b.cpp", "b\n");
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+  Expect(tree.SelectPath(root / "src"), "src is listed");
+  tree.ExpandSelection();
+  tree.SetPendingPaths(std::make_shared<const project::PendingPaths>(
+      std::vector<std::string>{"src/c.cpp", "src/b.cpp", "docs/guide.md", ".hidden"}));
+
+  std::string labels;
+  for (const auto& entry : tree.entries()) {
+    labels += std::string(entry.depth, ' ') + entry.label + (entry.pending ? "*" : "") + "\n";
+  }
+  Expect(labels == "project\n docs*\n src\n  b.cpp\n  c.cpp*\n a.txt\n",
+         "pending rows sit in the explorer order, a landed one is not repeated, and a "
+         "dotfile follows the usual rule:\n" + labels);
+
+  Expect(tree.SelectPath(root / "docs"), "a pending folder can be selected");
+  tree.ExpandSelection();
+  const TreeEntry* guide = FindEntry(tree, root / "docs" / "guide.md");
+  Expect(guide != nullptr && guide->pending && guide->depth == 2, "and expanded");
+  tree.Refresh();
+  Expect(FindEntry(tree, root / "docs" / "guide.md") != nullptr,
+         "a refresh does not collapse a folder only the sync knows about yet");
+  Expect(tree.SelectPath(root / "docs" / "guide.md") && tree.ActivateSelection() == root / "docs" / "guide.md",
+         "activating a pending file opens it (the open fetches it first)");
+
+  tree.SetPendingPaths(nullptr);
+  Expect(FindEntry(tree, root / "docs") == nullptr && FindEntry(tree, root / "src" / "c.cpp") == nullptr,
+         "cleared, only the disk is listed");
+}
+
 void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DirectoryTree/ListsPendingPaths", TestDirectoryTreeListsPendingPaths);
   AddTest(tests, "DirectoryTree/PrunesDeletedDirectoryKeysOnRefresh",
           TestDirectoryTreePrunesDeletedDirectoryKeysOnRefresh);
   AddTest(tests, "DirectoryTree/AmortizesDeletedKeyPruneForLargeSets",

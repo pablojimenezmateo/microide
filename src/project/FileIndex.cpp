@@ -101,6 +101,7 @@ FileIndex::FileIndex(FileIndex&& other) noexcept {
   exclude_globs_ = std::move(other.exclude_globs_);
   scan_status_ = other.scan_status_;
   files_ = std::move(other.files_);
+  pending_ = std::move(other.pending_);
   version_ = other.version_;
   // The symlink-containment flag is per-project state applied at root config time,
   // not re-applied on activation — so it MUST survive the move (a project switch
@@ -123,6 +124,7 @@ FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
   exclude_globs_ = std::move(other.exclude_globs_);
   scan_status_ = other.scan_status_;
   files_ = std::move(other.files_);
+  pending_ = std::move(other.pending_);
   version_ = other.version_;
   // See the move constructor: this per-project flag must survive the move.
   follow_out_of_root_symlinks_.store(
@@ -165,6 +167,7 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
     std::unique_lock lock(files_mutex_);
     root_ = absolute_root;
     files_.clear();
+    pending_.reset();
     // A previous root may have hit the entry budget; the new root has not been
     // scanned yet, so clear the stale truncation status (Refresh/ApplyBatch below
     // reassigns it from the real scan).
@@ -181,11 +184,12 @@ bool FileIndex::SetRoot(const std::filesystem::path& root,
 
 void FileIndex::Reset() {
   std::unique_lock lock(files_mutex_);
-  if (root_.empty() && files_.empty()) {
+  if (root_.empty() && files_.empty() && pending_ == nullptr) {
     return;
   }
   root_.clear();
   files_.clear();
+  pending_.reset();
   scan_status_ = {};
   ++version_;
   exclude_hidden_cache_ = {};
@@ -469,22 +473,52 @@ std::uint64_t FileIndex::VisitRelativePaths(
     const std::function<void(const std::filesystem::path&)>& visit) const {
   util::PerformanceTrace::Scope perf_scope("FileIndex::VisitRelativePaths");
   std::shared_lock lock(files_mutex_);
-  if (visit) {
-    for (const ProjectFile& file : files_) {
-      // The same two filters RebuildCacheLocked applies, and for the same
-      // reasons: hidden paths are a mode question, and an in-flight atomic-write
-      // staging temp exists only between a save's write and its rename, so
-      // surfacing it only ever shows the user a file that is already gone.
-      if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(file.relative_path)) {
-        continue;
-      }
-      if (IsTemporaryStagingRelativePath(file.relative_path)) {
-        continue;
-      }
-      visit(file.relative_path);
+  if (!visit) {
+    return version_;
+  }
+  const auto visit_file = [&](const std::filesystem::path& relative_path) {
+    // The same two filters RebuildCacheLocked applies, and for the same
+    // reasons: hidden paths are a mode question, and an in-flight atomic-write
+    // staging temp exists only between a save's write and its rename, so
+    // surfacing it only ever shows the user a file that is already gone.
+    if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(relative_path)) {
+      return;
     }
+    if (IsTemporaryStagingRelativePath(relative_path)) {
+      return;
+    }
+    visit(relative_path);
+  };
+  // Both lists are bytewise sorted: one merge, and a pending path that has landed
+  // on disk meanwhile is visited once, as the file it now is.
+  const std::vector<std::string> no_pending;
+  const std::vector<std::string>& pending = pending_ != nullptr ? pending_->files() : no_pending;
+  auto next_pending = pending.begin();
+  for (const ProjectFile& file : files_) {
+    for (; next_pending != pending.end() && *next_pending < file.relative_path.native(); ++next_pending) {
+      visit_file(std::filesystem::path(*next_pending));
+    }
+    if (next_pending != pending.end() && *next_pending == file.relative_path.native()) {
+      ++next_pending;
+    }
+    visit_file(file.relative_path);
+  }
+  for (; next_pending != pending.end(); ++next_pending) {
+    visit_file(std::filesystem::path(*next_pending));
   }
   return version_;
+}
+
+void FileIndex::SetPendingPaths(SharedPendingPaths pending) {
+  if (pending != nullptr && pending->empty()) {
+    pending.reset();
+  }
+  std::unique_lock lock(files_mutex_);
+  if (pending == pending_) {
+    return;
+  }
+  pending_ = std::move(pending);
+  ++version_;
 }
 
 std::uint64_t FileIndex::version() const {

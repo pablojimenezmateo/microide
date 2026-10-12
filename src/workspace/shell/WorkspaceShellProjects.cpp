@@ -33,13 +33,22 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
                 // list, a restored session, a typed path) gets its own locality and
                 // reconnects; an explicit locality always wins.
                 project::ProjectLocality resolved = locality;
+                bool remote_project = false;
                 if (resolved.launcher == &platform::LocalProcessLauncher()) {
                   if (auto remote = MakeRemoteHostService().LocalityForMirror(project_root)) {
                     resolved = *remote;
+                    remote_project = true;
                   }
                 }
-                return InitializeCurrentProject(project_root, restore_persistence, log_feedback,
-                                                activate_restored_tab, resolved);
+                const bool initialized = InitializeCurrentProject(
+                    project_root, restore_persistence, log_feedback, activate_restored_tab, resolved);
+                if (initialized && remote_project) {
+                  // Reported before this state had its root: what the sync has not
+                  // fetched yet is listed from the start.
+                  context_.current_project_state.SetPendingPaths(
+                      MakeRemoteHostService().PendingPathsOf(context_.current_project_state.root));
+                }
+                return initialized;
               },
           .sync_active_editor_tab = [this]() { SyncActiveEditorTab(); },
           .stop_project_search = [this]() { StopProjectSearch(); },

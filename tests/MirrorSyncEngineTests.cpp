@@ -627,6 +627,36 @@ void TestMirrorWriteGateReachesTheHost() {
          "a write outside tree/ stays local");
 }
 
+// § 7.3: the host's files the mirror has not fetched are published for the tree
+// and quick-open to list, with the folders they imply; each leaves the list once it
+// has landed.
+void TestMirrorListsWhatItHasNotFetched() {
+  MirrorSession session;
+  WriteFile(session.host / "small.txt", "s\n");
+  WriteFile(session.host / "logs/a.log", std::string(2 * 1024 * 1024, 'a'));
+  WriteFile(session.host / "logs/deep/b.log", std::string(2 * 1024 * 1024, 'b'));
+  remote::MirrorSyncEngine::Options options;
+  options.max_file_bytes = 1024 * 1024;  // the backfill leaves both logs
+  session.Connect(options);
+  Expect(session.engine->PendingPaths() == nullptr, "nothing is pending before the manifest");
+  session.Sync();
+  const project::SharedPendingPaths pending = session.engine->PendingPaths();
+  Expect(pending != nullptr &&
+             pending->files() == std::vector<std::string>{"logs/a.log", "logs/deep/b.log"},
+         "the files not fetched are listed");
+  Expect(session.engine->status().pending_revision > 0, "and the status says the list changed");
+  const auto root = pending->ChildrenOf("");
+  const auto logs = pending->ChildrenOf("logs");
+  Expect(root.size() == 1 && root[0].name == "logs" && root[0].is_directory, "the root holds a pending folder");
+  Expect(logs.size() == 2 && logs[0].name == "a.log" && !logs[0].is_directory && logs[1].name == "deep" &&
+             logs[1].is_directory,
+         "which holds a file and a folder");
+  session.engine->Prioritize({"logs/a.log", "logs/deep/b.log"});
+  session.engine->Flush();
+  Expect(session.engine->StateOf("logs/a.log") == ContentState::Current, "opened, it is fetched");
+  Expect(session.engine->PendingPaths() == nullptr, "and nothing is pending any more");
+}
+
 #endif
 
 }  // namespace
@@ -640,6 +670,7 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
   AddTest(tests, "MirrorSyncEngine/RecordsChangedOnHost", TestMirrorRecordsChangedOnHost);
+  AddTest(tests, "MirrorSyncEngine/ListsWhatItHasNotFetched", TestMirrorListsWhatItHasNotFetched);
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);

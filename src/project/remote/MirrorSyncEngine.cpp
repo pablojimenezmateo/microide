@@ -68,6 +68,18 @@ MirrorSyncEngine::~MirrorSyncEngine() {
 }
 
 void MirrorSyncEngine::Changed() {
+  std::optional<std::vector<std::string>> next;
+  {
+    std::lock_guard lock(mutex_);
+    next.swap(pending_next_);
+  }
+  if (next.has_value()) {
+    project::SharedPendingPaths built =
+        next->empty() ? nullptr : std::make_shared<const project::PendingPaths>(std::move(*next));
+    std::lock_guard lock(mutex_);
+    pending_ = std::move(built);
+    ++status_.pending_revision;
+  }
   if (callbacks_.changed) {
     callbacks_.changed();
   }
@@ -721,6 +733,43 @@ void MirrorSyncEngine::RecountLocked() {
     status.dirty += entry.push_pending ? 1 : 0;
     status.conflicts += entry.conflict ? 1 : 0;
   }
+  ListPendingLocked();
+}
+
+void MirrorSyncEngine::ListPendingLocked() {
+  const std::size_t listed = pending_next_.has_value() ? pending_next_->size()
+                             : pending_ != nullptr      ? pending_->files().size()
+                                                        : 0;
+  if (status_.absent == 0 && listed == 0) {
+    return;
+  }
+  // While a sync runs this changes with every batch; the sidebar needs it twice a
+  // second, not per batch. The sync's end lists it at once.
+  const auto now = std::chrono::steady_clock::now();
+  if (status_.absent != 0 && status_.syncing && now - pending_listed_ < kPendingInterval) {
+    return;
+  }
+  pending_listed_ = now;
+  std::vector<std::string> files;
+  files.reserve(status_.absent);
+  for (const auto& [path, entry] : store_.entries()) {
+    if (entry.has_remote && entry.remote.kind == ManifestEntryKind::File && !entry.base.has_value() &&
+        !entry.conflict && !entry.push_pending) {
+      files.push_back(path);  // the store's order is bytewise: already sorted
+    }
+  }
+  const std::vector<std::string> none;
+  const std::vector<std::string>& current = pending_next_.has_value() ? *pending_next_
+                                            : pending_ != nullptr     ? pending_->files()
+                                                                      : none;
+  if (files != current) {
+    pending_next_ = std::move(files);
+  }
+}
+
+project::SharedPendingPaths MirrorSyncEngine::PendingPaths() const {
+  std::lock_guard lock(mutex_);
+  return pending_;
 }
 
 void MirrorSyncEngine::SaveLocked() {

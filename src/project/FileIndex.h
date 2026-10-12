@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "platform/FileIndexWatcher.h"
+#include "project/PendingPaths.h"
 #include "project/ProjectFileScanner.h"
 
 namespace microide::project {
@@ -137,9 +138,16 @@ class FileIndex {
   // into this index (a nested unique_lock would deadlock) and should stay pure
   // CPU work: a writer — the watcher thread applying a batch — blocks for its
   // duration. That is the same window the deep copy held, doing more work.
+  //
+  // The visit includes the pending paths (SetPendingPaths) that are not on disk:
+  // it is what quick-open lists, and a file the sync has not fetched yet is one
+  // the user can open. Snapshot*() — what a search reads — does not.
   std::uint64_t VisitRelativePaths(
       ProjectFileScanMode mode,
       const std::function<void(const std::filesystem::path&)>& visit) const;
+  // Files the project lists that are not on disk yet (a remote mirror's first
+  // sync). Replaces the previous set; null or empty clears it.
+  void SetPendingPaths(SharedPendingPaths pending);
   std::uint64_t version() const;
 
   const std::filesystem::path& root() const { return root_; }
@@ -192,6 +200,7 @@ class FileIndex {
   std::vector<std::string> exclude_globs_;   // guarded by files_mutex_
   ProjectFileScanStatus scan_status_;        // guarded by files_mutex_
   std::vector<ProjectFile> files_;
+  SharedPendingPaths pending_;  // never empty when set
   std::uint64_t version_ = 0;
   mutable CacheBucket exclude_hidden_cache_;
   mutable CacheBucket include_hidden_cache_;

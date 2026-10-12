@@ -172,9 +172,13 @@ this document's § 7, what a user still missed:
   is polled; opening a stale or absent file pulls it first (§ 7.3), a large one
   streamed beside the backfill instead of behind it.
 - **Status segment** (§ 7.4): first-sync progress and unsent saves.
-- Still open: the tree and quick-open are filled from the mirror's disk, not the
-  manifest, so during a first sync not-yet-pulled files are not listed (§ 7.3's
-  dimmed rows); the remote status block on the project home (§ 7.3); a three-way
+- **Pending rows** (§ 7.3): the engine publishes its absent paths as an immutable
+  `project::PendingPaths` (built off its lock, at most every 500 ms while a sync
+  runs, at once when it ends); `FileIndex::VisitRelativePaths` (quick-open) merges
+  them in and `DirectoryTree` lists them dimmed under the folders they imply. A
+  search does not see them. `remote.backfill_max_file_mib` keeps large files out of
+  the backfill: listed, fetched when opened.
+- Still open: the remote status block on the project home (§ 7.3); a three-way
   merge for a conflict. TD-2026-10-12-336.
 
 ## 1. The problem
@@ -1945,6 +1949,7 @@ true.
 | `remote.server_socket_dir` | User | path | empty | override for the server's socket directory; empty means `~/.local/state/microide/server/`, owner-verified on every bind (§ 6.12) |
 | `remote.mass_delete_threshold` | User | percent | 25 | share of the manifest a single diff may delete before it prompts instead of applying; floor of 100 rows (§ 6.3) |
 | `remote.object_store_budget` | User | int | 2 GiB | per-mirror cap on `meta/objects/`; unreachable objects are swept oldest-first down to it (§ 6.2) |
+| `remote.backfill_max_file_mib` | User | int (MiB) | 16384 | files over this are left out of the background fetch: listed dimmed, fetched when opened (§ 7.3) |
 | `remote.backfill_inflight_bytes` | User | int | 0 (= adaptive) | unacknowledged bytes bulk traffic may have outstanding; 0 means about 100 ms of measured bandwidth, floored at 64 KiB and capped at 1 MiB (§ 6.4) |
 
 All registered in `WorkspaceSettingsRegistry` (the `CheckSettingsReadAreRegistered`

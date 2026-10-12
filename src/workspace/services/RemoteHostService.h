@@ -80,6 +80,10 @@ class RemoteHostService {
     std::function<void(const std::filesystem::path& root)> host_changes_updated;
     // The desktop's browser (a host-local link, once its port is forwarded).
     std::function<bool(std::string_view url)> open_url;
+    // The files of the remote project at `root` the mirror has not fetched yet
+    // changed (null: none left): the sidebar and quick-open list them.
+    std::function<void(const std::filesystem::path& root, project::SharedPendingPaths pending)>
+        pending_paths_changed;
   };
 
   explicit RemoteHostService(Operations operations);
@@ -125,6 +129,10 @@ class RemoteHostService {
   bool IsHostFileCopy(const std::filesystem::path& path) const;
   // Whether `root` is an open remote project's mirror tree.
   bool IsRemoteProject(const std::filesystem::path& root) const;
+  // The files of the remote project at `root` the mirror has not fetched yet (null
+  // for none, or any other root): for a project state created after
+  // pending_paths_changed reported them.
+  project::SharedPendingPaths PendingPathsOf(const std::filesystem::path& root) const;
   // Changed on Host (§ 7.9) for the remote project at `root`: one row per file the
   // host changed since connect or the last Clear, newest first; `id` is the relative
   // path. Empty for any other root.
@@ -199,6 +207,7 @@ class RemoteHostService {
     // changed on host" row was last raised (it is raised at most every 30 s).
     std::size_t seen_host_changes = 0;
     std::optional<std::chrono::steady_clock::time_point> host_changes_announced;
+    std::uint64_t pending_revision = 0;  // the engine's, last reported
   };
   // The forward job behind ForwardPort and OpenHostLocalUrl; `then_open` (a
   // LoopbackUrl's scheme and rest) opens the forwarded URL once it is up.

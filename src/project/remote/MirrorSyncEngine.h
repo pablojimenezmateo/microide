@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "project/PendingPaths.h"
 #include "project/remote/MirrorObjects.h"
 #include "project/remote/MirrorStore.h"
 #include "project/remote/RemoteWorkspace.h"
@@ -94,6 +96,8 @@ class MirrorSyncEngine {
     // (§ 7.9): only ever increases between clears, so a reader can tell new ones.
     std::size_t host_changes = 0;
     std::size_t host_changed_files = 0;  // distinct paths in HostChanges()
+    // Bumped each time PendingPaths() changes.
+    std::uint64_t pending_revision = 0;
   };
 
   // One file the host changed after the mirror's first sync (§ 7.9 Changed on Host):
@@ -181,6 +185,11 @@ class MirrorSyncEngine {
 
   Status status() const;
   ContentState StateOf(std::string_view path) const;
+  // The host's files the mirror has not fetched yet (absent), for the sidebar and
+  // quick-open to list (§ 7.3); null when there are none. Rebuilt at most every
+  // kPendingInterval while a sync runs, and at once when it ends.
+  project::SharedPendingPaths PendingPaths() const;
+  static constexpr std::chrono::milliseconds kPendingInterval{500};
   // Block until the engine is idle: every job posted, and every job those posted,
   // has run (tests, shutdown).
   void Flush();
@@ -237,6 +246,7 @@ class MirrorSyncEngine {
   void DrainTreeOps();
   void ResolveNow(const std::string& path, Resolution resolution);
   void RecountLocked();
+  void ListPendingLocked();
   void RecordHostChangeLocked(const std::string& path, HostChange::Kind kind,
                               std::optional<util::ContentHash> previous);
   // Journal now, whole state at the end of the current burst.
@@ -262,6 +272,11 @@ class MirrorSyncEngine {
   std::unordered_map<std::string, HostChange> host_changes_;
   std::uint64_t host_change_sequence_ = 0;
   bool state_save_queued_ = false;
+  // PendingPaths(): RecountLocked stages a changed list, Changed() builds the
+  // snapshot outside the lock (its directory map is O(paths)) and publishes it.
+  project::SharedPendingPaths pending_;
+  std::optional<std::vector<std::string>> pending_next_;
+  std::chrono::steady_clock::time_point pending_listed_{};
 
   // What an asynchronous completion holds instead of `this`.
   struct Alive {

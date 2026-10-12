@@ -836,6 +836,12 @@ struct ProjectWorkspaceState {
   mutable FileIconRenderCache file_icon_cache;
   project::FileIndex file_index;
   project::FileFinder file_finder;
+  // Files the project lists that are not on disk yet (a remote mirror's first
+  // sync): the tree shows them dimmed and quick-open finds them.
+  void SetPendingPaths(project::SharedPendingPaths pending) {
+    file_index.SetPendingPaths(pending);
+    directory_tree.SetPendingPaths(std::move(pending));
+  }
   // Per-file EditorConfig overrides, memoized. Resolution is a const query with a
   // cache behind it, so ApplyEditorPreferences (const, and called for every tab in
   // every group on any settings change) does no filesystem work once warm.

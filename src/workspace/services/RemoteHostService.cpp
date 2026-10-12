@@ -150,6 +150,13 @@ RemoteHostService::Project* RemoteHostService::OpenProject(const remote::RemoteH
       budget_mib.has_value() && *budget_mib >= 0) {
     config.engine.object_store_budget = static_cast<std::uint64_t>(*budget_mib) << 20;
   }
+  if (const auto max_mib = util::ParseInt64(
+          operations_.setting ? operations_.setting("remote.backfill_max_file_mib").value_or("")
+                              : std::string());
+      max_mib.has_value() && *max_mib > 0) {
+    config.engine.max_file_bytes = std::min(static_cast<std::uint64_t>(*max_mib) << 20,
+                                            remote::RemoteWorkspace::kMaxStreamedObjectBytes);
+  }
   config.git_status_changed = [this, tree]() {
     mailbox_.PostLatest("remote-git:" + tree.string(), [this, tree]() {
       if (operations_.git_status_pushed) {
@@ -332,6 +339,12 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
   }
   PublishConflictRows(tree, entry);
   PublishHostChanges(tree, entry, sync);
+  if (sync.pending_revision != entry.pending_revision) {
+    entry.pending_revision = sync.pending_revision;
+    if (operations_.pending_paths_changed) {
+      operations_.pending_paths_changed(tree, project.engine().PendingPaths());
+    }
+  }
   PublishStatusSegment();
   if (operations_.request_redraw) {
     operations_.request_redraw();
@@ -371,6 +384,11 @@ void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Pr
 bool RemoteHostService::IsRemoteProject(const std::filesystem::path& root) const {
   const auto it = projects_.find(root);
   return it != projects_.end() && !it->second.closed;
+}
+
+project::SharedPendingPaths RemoteHostService::PendingPathsOf(const std::filesystem::path& root) const {
+  const auto it = projects_.find(root);
+  return it != projects_.end() ? it->second.project->engine().PendingPaths() : nullptr;
 }
 
 std::vector<plugin::PluginHost::SidebarItem> RemoteHostService::HostChangeRows(

@@ -323,6 +323,7 @@ set(MICROIDE_KERNEL_SOURCES
   src/project/EditorConfig.cpp
   src/project/FileFinder.cpp
   src/project/FileIndex.cpp
+  src/project/PendingPaths.cpp
   src/project/LocalTreeOps.cpp
   src/project/FileReadService.cpp
   src/project/FileWriteGate.cpp

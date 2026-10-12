@@ -9,6 +9,7 @@
 #include "workspace/services/AssistService.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -254,6 +255,70 @@ void RemoveFakeMaster(const std::string& target) {
     std::filesystem::remove(control, ec);
     std::filesystem::remove(control.string() + ".log", ec);
   }
+}
+
+// § 7.3: a file the mirror has not fetched (here: over remote.backfill_max_file_mib,
+// so it stays unfetched deterministically) is still listed — dimmed in the tree, in
+// quick-open — and opening it fetches it, then opens it.
+void TestUnfetchedFilesAreListedAndOpenWhenFetched() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "lazy";
+  WriteFile(host_root / "main.c", "int main(void) { return 0; }\n");
+  const std::string big(2 * 1024 * 1024, 'x');
+  WriteFile(host_root / "logs" / "big.log", big);
+  const std::string target = "dev@fake-lazy-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  std::string ssh;
+  for (const std::string& word : host.SshArgv()) {
+    ssh += (ssh.empty() ? "" : " ") + word;
+  }
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.ssh_command", ssh), "ssh seam");
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "remote.backfill_max_file_mib", "1"),
+         "files over 1 MiB wait to be opened");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  const auto listed = [&] {
+    const std::vector<std::string> paths = WorkspaceShellTestAccess::ProjectFinderPaths(shell);
+    return std::find(paths.begin(), paths.end(), "logs/big.log") != paths.end();
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "main.c") && listed();
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the small file arrives, and quick-open lists the big one too");
+  Expect(!std::filesystem::exists(mirror / "logs" / "big.log"), "which is not on disk");
+  const auto row = [&](const std::filesystem::path& path) -> const project::TreeEntry* {
+    for (const auto& entry : WorkspaceShellTestAccess::TreeEntries(shell)) {
+      if (entry.path == path) {
+        return &entry;
+      }
+    }
+    return nullptr;
+  };
+  const project::TreeEntry* logs = row(mirror / "logs");
+  Expect(logs != nullptr && logs->pending && logs->is_directory, "the tree lists its folder, dimmed");
+
+  WorkspaceShellTestAccess::OpenFile(shell, mirror / "logs" / "big.log");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::ActiveEditor(shell).path() == mirror / "logs" / "big.log";
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "opening it fetches it, then opens it");
+  Expect(ReadFile(mirror / "logs" / "big.log") == big, "with the host's bytes");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               const project::TreeEntry* fetched = row(mirror / "logs");
+               return fetched != nullptr && !fetched->pending;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "and nothing is pending any more");
+  RemoveFakeMaster(target);
 }
 
 // Remote: Open Folder on Host… end to end: the command prepares the mirror, the
@@ -686,6 +751,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);
   AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
+  AddTest(tests, "RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched",
+          TestUnfetchedFilesAreListedAndOpenWhenFetched);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
 #endif

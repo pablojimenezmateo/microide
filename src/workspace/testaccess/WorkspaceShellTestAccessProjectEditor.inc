@@ -1048,6 +1048,14 @@
   static std::uint64_t ProjectFileIndexVersion(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.file_index.version();
   }
+  // What quick-open lists: the index's paths, pending ones included.
+  static std::vector<std::string> ProjectFinderPaths(const WorkspaceShell& shell) {
+    std::vector<std::string> paths;
+    shell.context_.current_project_state.file_index.VisitRelativePaths(
+        project::ProjectFileScanMode::IncludeHidden,
+        [&](const std::filesystem::path& path) { paths.push_back(path.generic_string()); });
+    return paths;
+  }
   // Drives the background-rescan APPLY step directly, with a caller-chosen
   // dispatch version, so the "a scan landed after a watcher batch" ordering can be
   // exercised without racing a real scan against a real watcher.

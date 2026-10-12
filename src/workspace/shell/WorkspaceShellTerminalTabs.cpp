@@ -169,6 +169,15 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
             }
           },
       .open_url = [this](std::string_view url) { return OpenExternalUrl(url); },
+      .pending_paths_changed =
+          [this](const std::filesystem::path& root, project::SharedPendingPaths pending) {
+            if (ProjectWorkspaceState* state = context_.ProjectStateForRoot(root); state != nullptr) {
+              state->SetPendingPaths(std::move(pending));
+              if (state == &context_.current_project_state) {
+                RequestSidebarRedraw();
+              }
+            }
+          },
   });
   glue_->remote_host_service->SetWakeChannel(project_file_event_type_);
   return *glue_->remote_host_service;

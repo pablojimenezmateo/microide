@@ -548,7 +548,35 @@ void TestFileIndexHidesAtomicWriteStagingFiles() {
   }
 }
 
+// Quick-open lists what a remote mirror's sync has not fetched yet (it opens by
+// fetching), once each and in order; a search, which reads the files, does not.
+void TestFileIndexVisitsPendingPaths() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(root / "b.txt", "b\n");
+  project::FileIndex index;
+  Expect(index.SetRoot(root), "the index opens the root");
+  const std::uint64_t before = index.version();
+  index.SetPendingPaths(std::make_shared<const project::PendingPaths>(
+      std::vector<std::string>{"c/d.txt", "b.txt", "0.txt"}));
+  Expect(index.version() != before, "a new pending set is a new version (the finder rebuilds)");
+  std::vector<std::string> visited;
+  index.VisitRelativePaths(project::ProjectFileScanMode::IncludeHidden,
+                           [&](const std::filesystem::path& path) { visited.push_back(path.generic_string()); });
+  Expect((visited == std::vector<std::string>{"0.txt", "a.txt", "b.txt", "c/d.txt"}),
+         "merged in order, the landed one once");
+  const auto snapshot = index.SnapshotPathsWithVersion(project::ProjectFileScanMode::IncludeHidden);
+  Expect(snapshot.files != nullptr && snapshot.files->size() == 2, "a search sees only the disk");
+  index.SetPendingPaths(nullptr);
+  visited.clear();
+  index.VisitRelativePaths(project::ProjectFileScanMode::IncludeHidden,
+                           [&](const std::filesystem::path& path) { visited.push_back(path.generic_string()); });
+  Expect(visited.size() == 2, "cleared");
+}
+
 void RegisterFileIndexTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileIndex/VisitsPendingPaths", TestFileIndexVisitsPendingPaths);
   AddTest(tests, "FileIndex/HidesAtomicWriteStagingFiles",
           TestFileIndexHidesAtomicWriteStagingFiles);
   AddTest(tests, "FileIndex/ReplaceScannedFilesCarriesTruncation",

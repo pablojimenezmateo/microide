@@ -490,6 +490,22 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Remote",
       },
       SettingSpec{
+          .id = "remote.backfill_max_file_mib",
+          .label = "Fetch Larger Files Only When Opened (MiB)",
+          .description = "A remote project's mirror fetches every file of the host's tree in "
+                         "the background, except files over this size: those are listed "
+                         "(dimmed) and fetched when opened. Applies when the project connects.",
+          .type = SettingType::Int,
+          .scope = SettingScope::User,
+          .default_int = 16384,
+          .min_int = 1,
+          .max_int = 16384,
+          .int_step = 64,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Remote",
+      },
+      SettingSpec{
           .id = "remote.backfill_inflight_bytes",
           .label = "Host Bulk Transfer Window",
           .description = "Bytes of bulk traffic (file fetches, tree listings, scrollback) that may "

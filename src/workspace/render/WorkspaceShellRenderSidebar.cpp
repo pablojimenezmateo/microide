@@ -957,7 +957,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           MakeRect(label_x, row_rect.y, label_width, row_rect.h), 0.0f,
           selected
               ? theme_.text_primary
-              : (entry.ignored ? theme_.text_muted
+              : (entry.ignored || entry.pending ? theme_.text_muted
                                : (entry.is_directory ? theme_.text_primary : theme_.text_secondary)),
           row_background,
           TruncateLabelView(entry.label, label_width));

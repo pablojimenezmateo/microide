@@ -76,6 +76,20 @@ struct WorkspaceContext {
     return index < project_catalog.entries.size() ? project_catalog.entries[index].get() : nullptr;
   }
 
+  // The open project whose root is `root`, active or not; null when none is.
+  ProjectWorkspaceState* ProjectStateForRoot(const std::filesystem::path& root) {
+    if (!current_project_state.root.empty() && current_project_state.root == root) {
+      return &current_project_state;
+    }
+    for (std::size_t i = 0; i < project_catalog.entries.size(); ++i) {
+      ProjectWorkspaceState* state = project_catalog.entries[i].get();
+      if (state != nullptr && i != project_catalog.active_index && state->root == root) {
+        return state;
+      }
+    }
+    return nullptr;
+  }
+
   // BY REFERENCE. Both real answers are a path this context already owns, and the
   // tab-strip chrome asks for one per project tab per painted frame -- returning
   // by value copied a string plus libstdc++'s component list every time, for a

@@ -432,12 +432,11 @@ polling of tracked files under pruned directories, pull-on-open for stale and
 absent files, and the status segment's progress and unsent count (see the design
 doc's "Phase 3, first slices"). Left, each a known gap:
 
-- **The tree and quick-open come from the mirror's disk, not the manifest.**
-  During a first sync a file not yet pulled is neither in the sidebar nor in the
-  finder, so the user cannot open it — the pull-on-open path only helps once it
-  is listed. § 7.3 wants the manifest to feed both and pending rows dimmed. Needs
-  the file index to take a second, manifest-backed source for a remote project (or
-  the engine to report absent paths as index entries with a pending flag).
+- ~~**The tree and quick-open come from the mirror's disk, not the manifest.**~~
+  Fixed 2026-10-12: the engine publishes its absent paths (`PendingPaths()`), the
+  file index's visit (quick-open) and the directory tree merge them in, dimmed in
+  the tree. `DirectoryTree/ListsPendingPaths`, `FileIndex/VisitsPendingPaths`,
+  `MirrorSyncEngine/ListsWhatItHasNotFetched`.
 - **No remote status block on the project home** (§ 7.3): the stages (connected,
   server version, syncing N/M) with Retry and the reproduce command are spread
   over the notification row and the status segment.
@@ -453,9 +452,11 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   its own listeners first, so a disconnected host is not left reachable.)
 - **Automatic port detection.** VS Code forwards a port when a host process
   starts listening; here a forward is a command or a clicked link.
-- **The pull-on-open branches have no shell-level test**: nothing makes a file
-  deterministically stale or absent through `remote-open` yet (a setting for the
-  engine's `max_file_bytes` would make absent reachable).
+- ~~**The pull-on-open branches have no shell-level test**~~ — the absent branch
+  has one since 2026-10-12: `remote.backfill_max_file_mib` keeps a file unfetched
+  deterministically (`RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched`).
+  The stale branch still has none: a host edit is pulled by the watch within
+  milliseconds, so "stale at the moment of the open" is a race to stage.
 
 ### TD-2026-10-09-335 — `lsp_semantic_tokens_decode` is 37 % slower than v2.12.0 with identical allocations. [OPEN]
 

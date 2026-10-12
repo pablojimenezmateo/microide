@@ -18,18 +18,6 @@ namespace microide::project {
 
 namespace {
 
-struct SortableEntry {
-  std::filesystem::path path;
-  std::string sort_key;
-  bool is_directory = false;
-  bool is_symlink = false;
-  bool ignored = false;
-  // Parent-linked matcher for descending into this directory (null for files and
-  // collapsed dirs, which are never descended); shares the ancestor rule chain
-  // instead of copying it (TD-2026-07-17A-055).
-  std::shared_ptr<const IgnoreMatcher> matcher;
-};
-
 std::string DisplayName(const std::filesystem::path& path) {
   const auto name = path.filename().string();
   if (!name.empty()) {
@@ -39,6 +27,19 @@ std::string DisplayName(const std::filesystem::path& path) {
 }
 
 }  // namespace
+
+struct DirectoryTree::SortableEntry {
+  std::filesystem::path path;
+  std::string sort_key;
+  bool is_directory = false;
+  bool is_symlink = false;
+  bool ignored = false;
+  bool pending = false;
+  // Parent-linked matcher for descending into this directory (null for files and
+  // collapsed dirs, which are never descended); shares the ancestor rule chain
+  // instead of copying it (TD-2026-07-17A-055).
+  std::shared_ptr<const IgnoreMatcher> matcher;
+};
 
 bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   util::StartupTrace::Scope trace_scope("DirectoryTree::SetRoot");
@@ -53,6 +54,9 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
     return false;
   }
 
+  if (absolute_root != root_) {
+    pending_.reset();  // another project's
+  }
   root_ = absolute_root;
   root_generic_ = root_.generic_string();
   expanded_paths_.clear();
@@ -68,6 +72,11 @@ void DirectoryTree::PruneDeletedDirectoryKeys() {
     for (auto it = keys.begin(); it != keys.end();) {
       if (*it == root_key) {
         ++it;  // Never drop the root's own expanded key.
+        continue;
+      }
+      if (pending_ != nullptr && it->size() > root_key.size() + 1 &&
+          !pending_->ChildrenOf(std::string_view(*it).substr(root_key.size() + 1)).empty()) {
+        ++it;  // a directory the sync has not created yet
         continue;
       }
       std::error_code error;
@@ -451,6 +460,9 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     });
     iterator.increment(error);
   }
+  if (pending_ != nullptr) {
+    AppendPendingChildren(directory, matcher, children);
+  }
 
   // Folders first, then the explorer order VS Code and every file manager use:
   // case-insensitive with numeric-aware digit runs ("file2" before "file10",
@@ -477,6 +489,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
         .ignored = child.ignored,
         .children_materialized = expanded,
         .git_status = EntryGitStatus(child.path, git_key_scratch),
+        .pending = child.pending,
     });
 
     if (child.is_directory) {
@@ -486,6 +499,64 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       }
     }
   }
+}
+
+void DirectoryTree::SetPendingPaths(SharedPendingPaths pending) {
+  if (pending != nullptr && pending->empty()) {
+    pending.reset();
+  }
+  if (pending == pending_) {
+    return;
+  }
+  pending_ = std::move(pending);
+  RebuildEntries();
+}
+
+void DirectoryTree::AppendPendingChildren(const std::filesystem::path& directory,
+                                          const std::shared_ptr<const IgnoreMatcher>& matcher,
+                                          std::vector<SortableEntry>& children) const {
+  // Every row's path is root_ plus the names this walk appended, so the relative
+  // text is the generic spelling past the root's.
+  const std::string directory_text = directory.generic_string();
+  const std::string_view relative =
+      directory_text.size() > root_generic_.size()
+          ? std::string_view(directory_text).substr(root_generic_.size() + 1)
+          : std::string_view();
+  const std::span<const PendingPaths::Child> pending = pending_->ChildrenOf(relative);
+  if (pending.empty()) {
+    return;
+  }
+  std::vector<std::string_view> on_disk;
+  on_disk.reserve(children.size());
+  for (const SortableEntry& child : children) {
+    on_disk.push_back(child.sort_key);
+  }
+  std::sort(on_disk.begin(), on_disk.end());
+  std::vector<SortableEntry> added;
+  for (const PendingPaths::Child& child : pending) {
+    if (std::binary_search(on_disk.begin(), on_disk.end(), child.name)) {
+      continue;  // landed meanwhile
+    }
+    std::filesystem::path path = directory / child.name;
+    const bool ignored = matcher->Ignored(path.lexically_relative(root_), child.is_directory);
+    if (child.name.starts_with('.') && !ignored) {
+      continue;  // the same rule the real entries follow
+    }
+    std::shared_ptr<const IgnoreMatcher> child_matcher;
+    if (child.is_directory && IsExpanded(path)) {
+      child_matcher = matcher;  // nothing on disk to add rules from yet
+    }
+    added.push_back(SortableEntry{
+        .path = std::move(path),
+        .sort_key = std::string(child.name),
+        .is_directory = child.is_directory,
+        .ignored = ignored,
+        .pending = true,
+        .matcher = std::move(child_matcher),
+    });
+  }
+  children.insert(children.end(), std::make_move_iterator(added.begin()),
+                  std::make_move_iterator(added.end()));
 }
 
 namespace {
