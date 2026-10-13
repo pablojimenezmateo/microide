@@ -477,7 +477,7 @@ Found fixing the stale project tree (fc6ed506) and the terminal key routing
   `context = "terminal"`. Nobody has asked yet; add a `terminal.commands_to_skip_shell`
   list setting and a manifest flag if someone does.
 
-### TD-2026-10-12-336 — remote projects: what the 2026-10-12 gap pass found and left. [OPEN]
+### TD-2026-10-12-336 — remote projects: what the 2026-10-12 gap pass found and left. [RESOLVED 2026-10-13 — every gap fixed; one test gap WON'T DO, reasoned below]
 
 The pass compared remote editing with VS Code's Remote-SSH and with § 7 of
 `dev-docs/design/remote-projects.md`, and shipped submodule content sets, Changed
@@ -528,6 +528,14 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   deterministically (`RemoteHostService/UnfetchedFilesAreListedAndOpenWhenFetched`).
   The stale branch still has none: a host edit is pulled by the watch within
   milliseconds, so "stale at the moment of the open" is a race to stage.
+  **WON'T DO (2026-10-13):** stale is transient by construction — every path
+  that marks a file stale (`ReconcileRowLocked`'s MatchesBase-and-host-moved arm,
+  from a watch delta or a full sync) queues its pull in the same plan, with no
+  size limit — so staging it needs a test-only hold inside `MirrorSyncEngine` and a
+  seam chain from the shell to reach it, to cover a branch that is three lines
+  (`StateOf == Stale` → `Prioritize`, open as usual). The engine pieces it calls
+  are covered (`MirrorSyncEngine/PrioritizedLargeFileStreamsAtOnce`, the
+  Prioritize-before-backfill test). Revisit if the branch grows.
 
 ### TD-2026-10-09-335 — `lsp_semantic_tokens_decode` is 37 % slower than v2.12.0 with identical allocations. [OPEN]
 

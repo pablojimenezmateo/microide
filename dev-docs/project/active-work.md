@@ -295,9 +295,10 @@ new terminal behaviour lands there.
 > (§ 7.9), port forwarding with host-terminal localhost links, the ssh-config host
 > picker, polling of tracked files under pruned directories, pull-on-open for stale
 > and absent files, and the status segment's progress — see
-> `dev-docs/design/remote-projects.md` § "Phase 3, first slices". Left:
-> TD-2026-10-12-336 (the tree and quick-open from the manifest during a first
-> sync, the project-home status block, a three-way conflict merge).
+> `dev-docs/design/remote-projects.md` § "Phase 3, first slices". Its
+> follow-ups (the tree and quick-open from the manifest during a first sync, the
+> project-home status block, a three-way conflict merge, per-host and automatic
+> port forwarding) shipped 2026-10-12; TD-2026-10-12-336 is closed.
 >
 > **Phase 2b (2026-10-08): a remote PROJECT opens.** `Remote: Open Folder on Host…`
 > works end to end on a mirror — see `dev-docs/design/remote-projects.md`
