@@ -36,7 +36,8 @@ inline bool IsIntegralJsonNumber(const util::JsonValue& value) {
   return false;
 }
 
-inline int JsonIntInRange(const util::JsonValue& value, int fallback = 0) {
+// JsonIntInRange for anything but an int64 (kept out of the inlined fast path).
+[[gnu::noinline]] inline int JsonIntInRangeSlow(const util::JsonValue& value, int fallback) {
   // A fractional double is not a valid protocol integer: return the fallback rather
   // than truncating 12.9 -> 12. Exact-integral doubles (12.0) still narrow normally.
   if (value.IsDouble() && !IsIntegralJsonNumber(value)) {
@@ -50,6 +51,21 @@ inline int JsonIntInRange(const util::JsonValue& value, int fallback = 0) {
     return std::numeric_limits<int>::max();
   }
   return static_cast<int>(raw);
+}
+
+// The int64 case forced inline, like JsonValue::AsInt: every position and id of
+// every LSP/DAP message comes through here (TD-2026-10-09-335).
+[[gnu::always_inline]] inline int JsonIntInRange(const util::JsonValue& value, int fallback = 0) {
+  if (const auto* n = std::get_if<std::int64_t>(&value.v)) [[likely]] {
+    if (*n < static_cast<std::int64_t>(std::numeric_limits<int>::min())) {
+      return std::numeric_limits<int>::min();
+    }
+    if (*n > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
+      return std::numeric_limits<int>::max();
+    }
+    return static_cast<int>(*n);
+  }
+  return JsonIntInRangeSlow(value, fallback);
 }
 
 }  // namespace microide::workspace::protocol_numeric

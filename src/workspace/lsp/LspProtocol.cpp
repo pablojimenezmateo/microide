@@ -532,31 +532,6 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   return {};
 }
 
-namespace {
-
-// The semantic-token decode's hot path: a token stream is 5 integers per token,
-// thousands of tokens per response. Read the int64 alternative in place and only
-// fall back to the general readers (double clamping, fractional rejection) for
-// anything else. Not left to the inliner: the same source compiled to an
-// out-of-line JsonValue::AsInt call per field after the kernel/shell PCH split,
-// 25 % slower (TD-2026-10-09-335).
-inline std::int64_t TokenInt(const JsonValue& value) {
-  if (const auto* n = std::get_if<std::int64_t>(&value.v)) [[likely]] {
-    return *n;
-  }
-  return value.AsInt();
-}
-
-inline int TokenIntInRange(const JsonValue& value) {
-  if (const auto* n = std::get_if<std::int64_t>(&value.v)) [[likely]] {
-    return static_cast<int>(std::clamp<std::int64_t>(*n, std::numeric_limits<int>::min(),
-                                                     std::numeric_limits<int>::max()));
-  }
-  return JsonIntInRange(value);
-}
-
-}  // namespace
-
 std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& result,
                                                               std::size_t max_tokens) {
   std::vector<LspClient::SemanticToken> tokens;
@@ -588,10 +563,10 @@ std::vector<LspClient::SemanticToken> ParseSemanticTokensData(const JsonValue& r
   std::int64_t line = 0;
   std::int64_t start_char = 0;
   for (std::size_t i = 0; i + 5 <= ints.size() && tokens.size() < max_tokens; i += 5) {
-    const std::int64_t delta_line = TokenInt(ints[i]);
-    const std::int64_t delta_start = TokenInt(ints[i + 1]);
-    const std::int64_t length = TokenInt(ints[i + 2]);
-    const int token_type = TokenIntInRange(ints[i + 3]);
+    const std::int64_t delta_line = ints[i].AsInt();
+    const std::int64_t delta_start = ints[i + 1].AsInt();
+    const std::int64_t length = ints[i + 2].AsInt();
+    const int token_type = JsonIntInRange(ints[i + 3]);
     if (delta_line > 0) {
       line = sat_add(line, delta_line);
       start_char = delta_start;

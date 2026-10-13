@@ -117,20 +117,16 @@ struct JsonValue {
     if (const auto* b = std::get_if<bool>(&v)) return *b;
     return fallback;
   }
-  std::int64_t AsInt(std::int64_t fallback = 0) const {
-    if (const auto* n = std::get_if<std::int64_t>(&v)) return *n;
-    if (const auto* d = std::get_if<double>(&v)) {
-      // Converting a double whose truncated magnitude does not fit int64 is UB
-      // ([conv.fpint]); this is reachable because ParseNumber stores an integer
-      // literal that overflows int64 (e.g. a uint64-range DAP variablesReference)
-      // as a double. Clamp to the representable range instead of trapping. NaN
-      // (which fails both comparisons) falls through to the fallback.
-      const double d_value = *d;
-      if (d_value >= 9223372036854775808.0) return std::numeric_limits<std::int64_t>::max();
-      if (d_value < -9223372036854775808.0) return std::numeric_limits<std::int64_t>::min();
-      if (d_value >= -9223372036854775808.0) return static_cast<std::int64_t>(d_value);
+  // The int64 case forced inline, everything else out of line. The perf build's
+  // inliner left AsInt as a call in protocol decode loops (three per semantic
+  // token, 25 % of that decode; TD-2026-10-09-335) -- and kept doing so after the
+  // double clamping moved out and the body was one branch, so the attribute is
+  // what makes it inline, not the size.
+  [[gnu::always_inline]] std::int64_t AsInt(std::int64_t fallback = 0) const {
+    if (const auto* n = std::get_if<std::int64_t>(&v)) [[likely]] {
+      return *n;
     }
-    return fallback;
+    return AsIntSlow(fallback);
   }
   double AsDouble(double fallback = 0.0) const {
     if (const auto* d = std::get_if<double>(&v)) return *d;
@@ -152,6 +148,10 @@ struct JsonValue {
     if (const auto* o = std::get_if<JsonObject>(&v)) return *o;
     return kEmpty;
   }
+
+  // AsInt for anything but an int64: a double clamped to int64 (see JsonValue.cpp),
+  // else `fallback`.
+  std::int64_t AsIntSlow(std::int64_t fallback) const;
 
   // Lookup in object; returns null JsonValue if missing or not an object.
   const JsonValue& operator[](std::string_view key) const;
