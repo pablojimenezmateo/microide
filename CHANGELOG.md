@@ -138,6 +138,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - **`terminal.commands_to_skip_shell`.** Which keybindings still run while a
   terminal has focus is now a setting (keybinding ids; `-file-finder` gives Ctrl+P
   back to the shell), and a plugin keybinding can opt in with `skips_terminal`.
+- **A host's server is updated with the editor.** When a host still runs an older
+  (compatible) `microide-server`, the editor's own release is installed beside it
+  and a row offers **Restart Server** — the old one keeps serving, with its
+  terminals, until you choose. Before, a host never got a newer server unless the
+  old one was missing or incompatible.
 - Links in every pane of a split terminal underline and show the hand cursor
   under the pointer, not only the active pane's; a right- or middle-click acts on
   the pane it lands on.

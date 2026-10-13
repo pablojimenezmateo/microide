@@ -1,5 +1,7 @@
 #include "project/remote/RemoteProtocol.h"
 
+#include "util/Parse.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -210,6 +212,47 @@ std::optional<Precondition> PreconditionFromJson(const util::JsonValue& json) {
     return Precondition::Of(*hash);
   }
   return std::nullopt;
+}
+
+namespace {
+
+std::optional<std::vector<std::uint64_t>> ParseRelease(std::string_view text) {
+  std::vector<std::uint64_t> parts;
+  while (!text.empty()) {
+    const std::size_t dot = text.find('.');
+    const std::string_view part = text.substr(0, dot);
+    const std::optional<std::size_t> value = util::ParseSize(part);
+    if (part.empty() || !value.has_value()) {
+      return std::nullopt;
+    }
+    parts.push_back(*value);
+    if (dot == std::string_view::npos) {
+      break;
+    }
+    text.remove_prefix(dot + 1);
+    if (text.empty()) {
+      return std::nullopt;  // a trailing dot
+    }
+  }
+  if (parts.empty()) {
+    return std::nullopt;
+  }
+  return parts;
+}
+
+}  // namespace
+
+bool ReleaseIsOlder(std::string_view a, std::string_view b) {
+  std::optional<std::vector<std::uint64_t>> left = ParseRelease(a);
+  std::optional<std::vector<std::uint64_t>> right = ParseRelease(b);
+  if (!left.has_value() || !right.has_value()) {
+    return false;
+  }
+  // Missing trailing parts read as 0: "2.13" == "2.13.0".
+  const std::size_t size = std::max(left->size(), right->size());
+  left->resize(size, 0);
+  right->resize(size, 0);
+  return *left < *right;
 }
 
 }  // namespace microide::project::remote

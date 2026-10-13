@@ -92,6 +92,21 @@ void TestHelloRoundTripsAndValidates() {
          "a negative bulk bound is refused");
 }
 
+// Only a release both sides can order triggers a server update, and only toward
+// a newer one: an older editor must never downgrade a host.
+void TestReleaseOrderingIsNumericAndRefusesTheUnparseable() {
+  Expect(remote::ReleaseIsOlder("2.12.0", "2.13.0"), "a minor bump is newer");
+  Expect(remote::ReleaseIsOlder("2.9.0", "2.10.0"), "numerically, not as text");
+  Expect(remote::ReleaseIsOlder("2.13", "2.13.1"), "a missing part reads as 0");
+  Expect(!remote::ReleaseIsOlder("2.13", "2.13.0"), "equal is not older");
+  Expect(!remote::ReleaseIsOlder("2.14.0", "2.13.9"), "newer is not older");
+  Expect(!remote::ReleaseIsOlder("test", "2.13.0") && !remote::ReleaseIsOlder("2.12.0", "test"),
+         "an unparseable release never orders");
+  Expect(!remote::ReleaseIsOlder("2.12.", "2.13") && !remote::ReleaseIsOlder("", "1") &&
+             !remote::ReleaseIsOlder("2.x", "3"),
+         "nor does a malformed one");
+}
+
 void TestCompatibilityNamesBothReleases() {
   Expect(!remote::CheckProtocolCompatibility(3, 2, "2.14", 2, 1, "2.12").has_value(),
          "a newer client and an older server whose wire still fits are compatible");
@@ -282,6 +297,8 @@ void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
           TestHeartbeatAnswerResetsMissesAndMeasuresRtt);
   AddTest(tests, "RemotePeer/HelloRoundTripsAndValidates", TestHelloRoundTripsAndValidates);
   AddTest(tests, "RemotePeer/CompatibilityNamesBothReleases", TestCompatibilityNamesBothReleases);
+  AddTest(tests, "RemotePeer/ReleaseOrderingIsNumericAndRefusesTheUnparseable",
+          TestReleaseOrderingIsNumericAndRefusesTheUnparseable);
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemotePeer/RequestsAndErrorsRoundTrip", TestRequestsAndErrorsRoundTrip);
   AddTest(tests, "RemotePeer/MalformedBodyIsRejectedAndTheConnectionContinues",

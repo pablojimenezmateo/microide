@@ -285,10 +285,12 @@ class RemoteHostService {
   void Apply(const std::string& host, const project::remote::RemoteHostSession::Status& status);
   void OpenPendingTerminals(const std::string& host, Host& entry);
   void PublishStatusSegment();
-  // Once per host: warn when its processes end at logout (the hello's
-  // session-survival report), which makes "terminals survive a disconnect" false.
-  void WarnIfSessionsEndAtLogout(const std::string& host,
-                                 const project::remote::RemoteHostSession& session);
+  // Once per host, when it is Ready: warn when its processes end at logout (the
+  // hello's session-survival report), which makes "terminals survive a
+  // disconnect" false; and offer to restart a server older than this editor once
+  // the new one is installed beside it (RemoteHostSession::update_installed).
+  void AdviseAboutHostServer(const std::string& host,
+                             const project::remote::RemoteHostSession& session);
 
   Operations operations_;
   std::map<std::string, Host, std::less<>> hosts_;
@@ -300,6 +302,7 @@ class RemoteHostService {
   // their launcher and gate (ProjectLocality's lifetime rule).
   std::map<std::filesystem::path, Project> projects_;
   std::vector<std::string> survival_warned_;  // hosts already warned
+  std::vector<std::string> update_offered_;   // hosts already offered a restart
   std::filesystem::path fetching_copy_;  // the host-file copy being opened right now
   // Mirror file -> the host version its open merge is against (MergeConflict).
   std::map<std::filesystem::path, util::ContentHash> merges_;

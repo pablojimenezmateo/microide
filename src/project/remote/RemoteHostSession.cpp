@@ -651,6 +651,18 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
     Report(State::Disconnected, {}, error.empty() ? "the server did not start" : error);
     return false;
   }
+  // A compatible but OLDER server keeps serving, so a release upgrade never ended
+  // its terminals -- and never reached the host either: install only ran for a
+  // missing or incompatible server. Put this release's binary beside it (an
+  // atomic rename; the running daemon keeps its inode) for the next start.
+  const bool server_older = ReleaseIsOlder(client->hello().release, config_.release);
+  if (!server_older) {
+    update_installed_ = false;  // the restart happened: this one is current
+  } else if (!update_installed_ && config_.install && config_.server_command.empty() &&
+             !config_.server_binary.empty()) {
+    std::string install_error;
+    update_installed_ = Install(&install_error);
+  }
   connection_->Replace(std::move(client));
   ReapplyForwards();
   Report(State::Ready, "connected to " + config_.target.Display());

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -156,6 +157,11 @@ class RemoteHostSession {
   std::string LingerCommandText() const;
   // `microide-server stop` on the host (Remote: Stop Host Server). Blocking.
   bool StopServer(std::string* error);
+  // The host's server is an older release than this editor, still compatible, so
+  // it kept serving (and kept its terminals); this release's binary was installed
+  // beside it for the next start. Restarting the server (StopServer, then the
+  // reconnect) switches over -- and ends its terminals, so the user decides when.
+  bool update_installed() const { return update_installed_.load(); }
 
   // Forward `host_port` (HostPortForwards). The local port is the host's when it
   // is free here, else one the kernel picks. Kept and applied again whenever a new
@@ -204,6 +210,7 @@ class RemoteHostSession {
 
   Config config_;
   Listener listener_;
+  std::atomic_bool update_installed_{false};
   std::shared_ptr<LinkSignal> link_signal_ = std::make_shared<LinkSignal>();
   std::shared_ptr<RemoteConnection> connection_ = std::make_shared<RemoteConnection>();
 

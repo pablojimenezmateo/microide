@@ -135,6 +135,39 @@ void TestFirstConnectInstallsTheServerAndReachesReady() {
   Expect(WaitForState(session, State::Disconnected), "it disconnects");
 }
 
+// A compatible but OLDER server keeps serving (and keeps its terminals), and this
+// release's binary is installed beside it for the next start; a restart picks it
+// up. A server that is not older -- equal, newer, or unorderable -- is left alone.
+void TestAnOlderServerGetsTheNewBinaryBesideIt() {
+  FakeHost host;
+  const std::filesystem::path installed = host.home / ".local/share/microide/server/microide-server";
+  {
+    StateLog log;
+    RemoteHostSession::Config config = host.Config();
+    config.release = "0.0.1";  // an editor older than the server: no downgrade
+    RemoteHostSession session(config, log.Listener());
+    session.Connect();
+    Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
+    Expect(!session.update_installed(), "a newer server is left alone");
+    session.Disconnect();
+    Expect(WaitForState(session, State::Disconnected), "disconnects");
+  }
+  std::filesystem::remove(installed);  // so a reinstall below is observable
+  {
+    StateLog log;
+    RemoteHostSession::Config config = host.Config();
+    config.release = "999.0.0";  // an editor newer than the running server
+    RemoteHostSession session(config, log.Listener());
+    session.Connect();
+    Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
+    Expect(session.update_installed(), "the older server is reported as having an update waiting");
+    Expect(std::filesystem::exists(installed), "with this release's binary installed beside it");
+    Expect(session.connection()->client() != nullptr, "while the old server keeps serving");
+    session.Disconnect();
+    Expect(WaitForState(session, State::Disconnected), "disconnects");
+  }
+}
+
 // A key with a passphrase: the batch master fails, the session reports NeedsAuth,
 // and once the user has answered in a terminal (here: the interactive master
 // command, run as the terminal would) it carries on by itself.
@@ -396,6 +429,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestSshConfigHostsFollowsIncludesAndSkipsPatterns);
   AddTest(tests, "RemoteHostSession/SocketDirAndBackfillBoundReachTheServer",
           TestSocketDirAndBackfillBoundReachTheServer);
+  AddTest(tests, "RemoteHostSession/AnOlderServerGetsTheNewBinaryBesideIt",
+          TestAnOlderServerGetsTheNewBinaryBesideIt);
   AddTest(tests, "RemoteHostSession/FirstConnectInstallsTheServerAndReachesReady",
           TestFirstConnectInstallsTheServerAndReachesReady);
   AddTest(tests, "RemoteHostSession/NeedsAuthWaitsForTheInteractiveMaster",

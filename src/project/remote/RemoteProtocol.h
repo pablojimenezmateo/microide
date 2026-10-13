@@ -159,4 +159,10 @@ std::optional<std::string> CheckProtocolCompatibility(std::int64_t local_protoco
                                                       std::int64_t remote_min_protocol,
                                                       std::string_view remote_release);
 
+// Whether release `a` is strictly older than `b`, comparing dotted numeric
+// versions ("2.12.0" < "2.13.0" < "2.13.1"). False when either is not of that form
+// (a dev build, a test's "test"): only a version both sides can order may trigger
+// an update, so an older editor never downgrades a host's server.
+bool ReleaseIsOlder(std::string_view a, std::string_view b);
+
 }  // namespace microide::project::remote

@@ -317,7 +317,7 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       break;
     case State::Ready:
       entry.auth_terminal_opened = false;
-      WarnIfSessionsEndAtLogout(record.host, project.session());
+      AdviseAboutHostServer(record.host, project.session());
       WatchPorts(record.host, project.session());
       if (project.watch_native() == std::optional(false) && !entry.warned_polling && operations_.notify) {
         // Degraded freshness is reported, never presented as normal (§ 6.3).
@@ -982,6 +982,14 @@ bool RemoteHostService::StopServer(std::string_view host) {
     std::string error;
     const bool stopped = session->StopServer(&error);
     mailbox_.Post([this, key, stopped, error]() {
+      // A stopped server takes the pending update with it: the reconnect starts
+      // the installed binary.
+      if (stopped) {
+        std::erase(update_offered_, key);
+        if (operations_.dismiss_notification) {
+          operations_.dismiss_notification("remote.update." + key);
+        }
+      }
       if (operations_.notify) {
         operations_.notify(NotificationService::Request{
             .tone = stopped ? NotificationService::Tone::Info : NotificationService::Tone::Error,
@@ -1396,7 +1404,7 @@ void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostS
         operations_.notify(NotificationService::Request{.tone = Tone::Info,
                                                         .message = "Connected to " + host});
       }
-      WarnIfSessionsEndAtLogout(host, *entry->session);
+      AdviseAboutHostServer(host, *entry->session);
       WatchPorts(host, *entry->session);
       OpenPendingTerminals(host, *entry);
       break;
@@ -1440,13 +1448,31 @@ void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostS
   }
 }
 
-void RemoteHostService::WarnIfSessionsEndAtLogout(const std::string& host,
-                                                  const remote::RemoteHostSession& session) {
-  if (std::find(survival_warned_.begin(), survival_warned_.end(), host) != survival_warned_.end()) {
-    return;
-  }
+void RemoteHostService::AdviseAboutHostServer(const std::string& host,
+                                              const remote::RemoteHostSession& session) {
   const auto client = session.connection()->client();
   if (client == nullptr) {
+    return;
+  }
+  // VS Code updates its remote server per release; here the old one keeps its
+  // terminals until the user lets it go, so the restart is offered, not done.
+  if (session.update_installed() && operations_.notify &&
+      std::find(update_offered_.begin(), update_offered_.end(), host) == update_offered_.end()) {
+    update_offered_.push_back(host);
+    operations_.notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Info,
+        .key = "remote.update." + host,
+        .message = host + " runs microide-server " + client->hello().release + "; " +
+                   session.config().release +
+                   " is installed beside it. Restart the server to switch (this ends its "
+                   "terminals and processes).",
+        .sticky = true,
+        .actions = {NotificationAction{.label = "Restart Server",
+                                       .id = ActionId::RemoteStopServer,
+                                       .args = {host}}},
+    });
+  }
+  if (std::find(survival_warned_.begin(), survival_warned_.end(), host) != survival_warned_.end()) {
     return;
   }
   survival_warned_.push_back(host);

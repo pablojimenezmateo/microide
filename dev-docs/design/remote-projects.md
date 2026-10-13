@@ -1694,8 +1694,22 @@ a process spawned as a child of ssh does not: it dies with the connection.
   reattaching client and a running server installs the matching binary (§ 6.6)
   and offers to restart the server, which ends its terminals and processes —
   stated plainly, because it is the one routine action that loses running work.
+  A release that keeps the protocol compatible does NOT restart anything: the
+  older server keeps serving and keeps its terminals, and (since 2026-10-13) the
+  client installs its own release's binary beside it (`ReleaseIsOlder`, an atomic
+  rename the running daemon does not notice) and offers **Restart Server** in a
+  row — VS Code's server-per-release update, minus the forced restart. Only an
+  editor NEWER than the server installs: an older one never downgrades a host.
   Phase 3 looks at a restart that hands its ptys and processes to the new binary
-  over the socket with `SCM_RIGHTS`, which would make it lose nothing.
+  over the socket with `SCM_RIGHTS`, which would make it lose nothing. Measured
+  2026-10-13 against what exists: the cold host frame carries only what a client
+  draws (screen, history, cursor, mouse/focus modes), not the emulator state a live
+  handoff must carry (scroll region, saved cursor, SGR pen, charsets, tab stops,
+  keyboard modes, the hidden primary screen, mid-sequence parser state), and the
+  new server could not `waitpid` children it did not fork. With restarts limited
+  to protocol-breaking releases, it is not worth a full `TerminalSession`
+  serializer yet; the rule that keeps it so is: bump `kMinProtocolVersion` only
+  when the old wire truly cannot be served.
 - **The mirror is unaffected either way.** It is local, on disk, and journaled, so
   a client that reattaches after a week is a manifest diff, not a re-clone.
 
