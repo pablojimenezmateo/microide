@@ -537,7 +537,24 @@ doc's "Phase 3, first slices"). Left, each a known gap:
   are covered (`MirrorSyncEngine/PrioritizedLargeFileStreamsAtOnce`, the
   Prioritize-before-backfill test). Revisit if the branch grows.
 
-### TD-2026-10-09-335 — `lsp_semantic_tokens_decode` is 37 % slower than v2.12.0 with identical allocations. [OPEN]
+### TD-2026-10-09-335 — `lsp_semantic_tokens_decode` is 37 % slower than v2.12.0 with identical allocations. [RESOLVED 2026-10-13]
+
+Resolved: the same source compiled to different code. v2.12.0's
+`ParseSemanticTokensData` inlined `JsonValue::AsInt`; HEAD's (0x495 bytes against
+0x5f1) called it **out of line** three times per token — an inliner decision that
+moved with the kernel/shell PCH split, as suspected. Found without `perf record`:
+`nm --size-sort` on both perf binaries, then `objdump` of the function, whose call
+list showed the three `AsInt` calls. The decode now reads the int64 alternative in
+place (`TokenInt`/`TokenIntInRange` in `LspProtocol.cpp`) and only falls back to
+the general readers for a non-integer, so the hot path no longer depends on the
+inliner. Measured interleaved, both binaries pinned to the same P-core (CPU 2;
+this i7-1365U's E-cores run the scenario 1.8x slower, which is its own trap for an
+unpinned A/B): v2.12.0 6.3–6.5 ms, HEAD before 7.9–8.2 ms, after 4.9–5.2 ms —
+21 % faster than the release. Allocations unchanged (204). The fast path's
+semantics for doubles, fractional and out-of-int values are pinned in
+`LspProtocol/DecodesSemanticTokens`.
+
+Original report:
 
 Found by the 2026-10-09 release check: a full `tools/perf-compare.py` A/B of HEAD
 against v2.12.0 (base `refs/perf/v2.12.0-base` = v2.12.0 plus d123ee73's one-line

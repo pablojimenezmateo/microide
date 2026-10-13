@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include <limits>
+
 #include "util/JsonValue.h"
 #include "workspace/lsp/LspProtocol.h"
 
@@ -176,6 +178,20 @@ void TestLspProtocolDecodesSemanticTokens() {
       Json(R"({"data":[0,9223372036854775807,3,0,0, 0,9223372036854775807,3,0,0]})"));
   Expect(col_overflow.empty(),
          "two INT64_MAX same-line column deltas are both dropped without overflow UB");
+
+  // The integer fast path (TD-2026-10-09-335) keeps the general readers' meaning
+  // for everything that is not an int64: an integral double reads as its value,
+  // a fractional token type is the fallback (0), and an out-of-int token type
+  // clamps rather than wraps.
+  const auto doubles = codec::ParseSemanticTokensData(
+      Json(R"({"data":[1.0,2.0,3.0,4.0,0, 0,1,2,2.5,0, 0,1,2,9000000000,0, 0,1,2,-9000000000,0]})"));
+  Expect(doubles.size() == 4 && doubles[0].line == 1 && doubles[0].start_char == 2 &&
+             doubles[0].length == 3 && doubles[0].token_type == 4,
+         "integral doubles decode as their integer values");
+  Expect(doubles[1].token_type == 0, "a fractional token type is the fallback, not truncated");
+  Expect(doubles[2].token_type == std::numeric_limits<int>::max() &&
+             doubles[3].token_type == std::numeric_limits<int>::min(),
+         "an out-of-int token type clamps");
 }
 
 // A hostile/buggy language server can pack ~1M minimal entries into one 64 MiB
