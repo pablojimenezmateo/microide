@@ -957,6 +957,18 @@ Phase 2a task 7.4 left three pieces of the host-terminal protocol:
   note counts none), and a mirror's row numbering starts at 2^40 so a prepend can
   never underflow. `RemoteTerminal/ScrollingUpFetchesOlderHostHistory`. Not done: a
   selection copied across a gap rule copies the rule, not the withheld lines.
+  **Assessed 2026-10-13, left with its shape recorded:** the VS Code-like fix is to
+  fill a gap when it scrolls into view (as the top already fetches older pages),
+  which also fixes the copy: `RequestOlderHostHistory()` becomes
+  `RequestHostHistory(first_row, rows)`, fetching the newest `min(count, 500)` of a
+  visible gap's lines by host index (`first_line` + rows + earlier gaps' counts).
+  What blocks it is not the fetch but the rebase: the pane anchors `scroll_row`
+  and the selection by deque-relative rows and rebases them UNIFORMLY on a trim
+  total change (`RebaseActiveTerminalForScrollbackTrim`), while a gap filled in the
+  middle moves only the rows below it -- it needs a positional "k rows inserted at
+  row R" signal, and `TerminalSession.h` is at its 300-line hard cap. Do it after
+  moving the host-mirror state (`TerminalHostHistory`, the frame apply, the
+  resume point) out of the session into its own class, which frees the facade.
   Original: an attach sends the screen plus 500 lines
   (`remote.scrollback_prefetch_lines`); older history the host still holds is not
   fetchable, so scrolling up past the prefetch shows the top of what arrived.
