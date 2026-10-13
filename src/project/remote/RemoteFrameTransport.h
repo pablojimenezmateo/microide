@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <utility>
+#include <optional>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -26,9 +28,15 @@ namespace microide::project::remote {
 // between every frame, so a keystroke waits for at most the ONE bulk frame already
 // on the wire — which is why bulk senders chunk (kMaxBulkChunkBytes). And bulk may
 // have at most bulk_window() payload bytes unacknowledged: the receiver's transport
-// answers bulk bytes with Ack frames, and the window adapts to ~100 ms of the
-// bandwidth those acks measure, between 64 KiB and 1 MiB. That bound, not a second
-// channel, is what keeps an echo from queueing behind a backfill in the network.
+// answers bulk bytes with Ack frames, and the window adapts to the bandwidth those
+// acks measure times (the base round trip + kQueueAllowance), between 64 KiB and
+// 1 MiB -- the bandwidth-delay product, which keeps the link full, plus exactly
+// the queue an echo is allowed to wait behind (the echo budget is 1 RTT + 5 ms).
+// The base round trip is the smallest bulk-frame-to-ack time seen on this
+// connection (TCP Vegas's baseRTT): a recent or smoothed one would include the
+// very queue the window controls and grow it without bound. Before a sample
+// exists the target is ~100 ms of bandwidth. That bound, not a second channel, is
+// what keeps an echo from queueing behind a backfill in the network.
 //
 // Threading: Send and Stop from any thread. Callbacks run on the I/O thread; the
 // owner marshals them to its own. on_closed runs exactly once, after which no
@@ -38,6 +46,8 @@ class RemoteFrameTransport {
   // Bulk senders cut content into frames no larger than this, so an interactive
   // frame queued behind a bulk one waits for at most this many bytes.
   static constexpr std::size_t kMaxBulkChunkBytes = 64 * 1024;
+  // The queueing an interactive frame may meet behind bulk in the network.
+  static constexpr std::chrono::milliseconds kQueueAllowance{5};
 
   struct Callbacks {
     std::function<void(Frame)> on_frame;
@@ -95,6 +105,13 @@ class RemoteFrameTransport {
   bool closed() const { return closed_.load(std::memory_order_acquire); }
   // The current bulk window (bytes of bulk payload allowed unacknowledged).
   std::size_t bulk_window() const { return bulk_window_.load(std::memory_order_relaxed); }
+  // What the window is aimed from: the smallest bulk frame-to-ack time seen (0 =
+  // none yet) and the smoothed bandwidth the acks measure (bytes/s). Diagnostics;
+  // any thread.
+  std::chrono::microseconds base_rtt() const {
+    return std::chrono::microseconds(base_rtt_us_.load(std::memory_order_relaxed));
+  }
+  double bulk_bandwidth() const { return bulk_bandwidth_seen_.load(std::memory_order_relaxed); }
   // Pin the bulk window (`remote.backfill_inflight_bytes`); 0 returns it to the
   // adaptive bound. Any thread.
   void SetFixedBulkWindow(std::size_t bytes);
@@ -146,6 +163,13 @@ class RemoteFrameTransport {
   std::chrono::steady_clock::time_point last_ack_time_{};
   std::chrono::steady_clock::time_point next_tick_{};
   std::uint64_t last_ack_bytes_ = 0;
+  // Bulk frames on the wire: (bulk_bytes_sent_ after the frame, when it went), for
+  // the frame-to-ack round trip. I/O thread only.
+  std::deque<std::pair<std::uint64_t, std::chrono::steady_clock::time_point>> bulk_in_flight_;
+  std::optional<std::chrono::steady_clock::duration> base_rtt_;
+  double bulk_bandwidth_ = 0.0;  // smoothed bytes/s the acks measure
+  std::atomic<std::int64_t> base_rtt_us_{0};       // base_rtt_, published
+  std::atomic<double> bulk_bandwidth_seen_{0.0};   // bulk_bandwidth_, published
 };
 
 }  // namespace microide::project::remote

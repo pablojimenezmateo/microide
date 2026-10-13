@@ -192,6 +192,12 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Performance
 
+- **Typing in a host terminal during a big transfer.** The bulk lane's window
+  aimed at ~100 ms of bandwidth whatever the round trip, so a backfill or a large
+  fetch queued ~25 ms in front of every keystroke's echo (60 ms / 100 Mbit/s
+  link). It now aims at the bandwidth-delay product plus 5 ms: the echo is back
+  within a frame of one round trip, at the same throughput.
+
 - Decoding semantic tokens is ~37 % faster than the previous build and ~20 % faster
   than 2.12.0: the integer read is inline on every JSON consumer's hot path again.
 

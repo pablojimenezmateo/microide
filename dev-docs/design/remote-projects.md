@@ -894,10 +894,16 @@ host notices when the link drops.
   bounds the delay is how many bulk bytes may be unacknowledged, so that is the
   mechanism: frames carry a lane (`interactive` or `bulk`), the sender on each
   side always drains interactive first, and bulk may have at most
-  `remote.backfill_inflight_bytes` outstanding — **adaptive**, defaulting to
-  about 100 ms of the bandwidth measured on the last transfer, floored at 64 KiB
-  and capped at 1 MiB, so a fast link is not throttled to a slow link's constant
-  and a slow one is not flooded. `object/fetch` backfill, `tree/rows` and
+  `remote.backfill_inflight_bytes` outstanding — **adaptive**, aimed at the
+  bandwidth-delay product plus 5 ms (`RemoteFrameTransport::kQueueAllowance`):
+  the smoothed bandwidth the acks measure times (the smallest bulk frame-to-ack
+  time seen, Vegas's base RTT, + 5 ms), less the one chunk that sample already
+  contains, floored at 64 KiB and capped at 1 MiB, so a fast link is not
+  throttled to a slow link's constant and a slow one is not flooded. (It aimed at
+  ~100 ms of bandwidth whatever the round trip until 2026-10-13, which the
+  `remote_echo_under_bulk` scenario measured as ~25 ms of queue in front of every
+  keystroke on a 60 ms / 100 Mbit/s link; now the echo is within a frame of its
+  1 RTT + 5 ms budget at the same throughput.) `object/fetch` backfill, `tree/rows` and
   `term/lines` are bulk; `term/input`, `term/screen`, `proc/*` stdio, the
   interactive `object/fetch` for the file the user just clicked, and `link/ping`
   are interactive. `op/cancel` covers the rest: an in-flight request whose reason
@@ -1974,7 +1980,7 @@ true.
 | `remote.object_store_budget` | User | int | 2 GiB | per-mirror cap on `meta/objects/`; unreachable objects are swept oldest-first down to it (§ 6.2) |
 | `remote.auto_forward_ports` | User | bool | true | forward a host port that starts listening after connect (VS Code's auto forward) |
 | `remote.backfill_max_file_mib` | User | int (MiB) | 16384 | files over this are left out of the background fetch: listed dimmed, fetched when opened (§ 7.3) |
-| `remote.backfill_inflight_bytes` | User | int | 0 (= adaptive) | unacknowledged bytes bulk traffic may have outstanding; 0 means about 100 ms of measured bandwidth, floored at 64 KiB and capped at 1 MiB (§ 6.4) |
+| `remote.backfill_inflight_bytes` | User | int | 0 (= adaptive) | unacknowledged bytes bulk traffic may have outstanding; 0 means the measured bandwidth-delay product plus 5 ms, floored at 64 KiB and capped at 1 MiB (§ 6.4) |
 
 All registered in `WorkspaceSettingsRegistry` (the `CheckSettingsReadAreRegistered`
 lint makes an unregistered one fail the build). Project-scoped values persist in

@@ -1,9 +1,12 @@
 #include "TestSupport.h"
+#include "support/DelayRelay.h"
 
 #include "project/remote/RemoteFrame.h"
 #include "project/remote/RemoteFrameTransport.h"
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <mutex>
@@ -207,6 +210,58 @@ void TestInteractiveOvertakesABulkBacklog() {
   Expect(inbox.closes.load() == 0, "and the transport is healthy");
 }
 
+// Over a link with a real round trip and bandwidth (DelayRelay: 40 ms, 100
+// Mbit/s) the adaptive bulk window settles at the bandwidth-delay product plus
+// the 5 ms an echo may wait (TD-2026-10-08-325: it used to aim at 100 ms of
+// bandwidth whatever the round trip, which queued ~20 ms in front of every
+// keystroke on this link), while the link stays full.
+void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
+  SocketPair pair;
+  constexpr auto kRtt = std::chrono::milliseconds(40);
+  constexpr double kBytesPerSecond = 12'500'000.0;
+  DelayRelay relay(pair.b, kRtt, static_cast<std::uint64_t>(kBytesPerSecond));
+  Inbox sender_inbox;
+  Inbox receiver_inbox;
+  RemoteFrameTransport sender;
+  RemoteFrameTransport receiver;
+  Expect(sender.Start(pair.a, pair.a, sender_inbox.Callbacks(), {}), "start the sender");
+  const int far = relay.TakeClientFd();
+  Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
+  const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
+  constexpr int kChunks = 200;  // 12.5 MiB: about a second on this link
+  const auto start = std::chrono::steady_clock::now();
+  for (int i = 0; i < kChunks; ++i) {
+    Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
+  }
+  Expect(WaitUntil([&] { return receiver_inbox.Count() == kChunks; }, std::chrono::seconds(30),
+                   std::chrono::milliseconds(5)),
+         "everything arrives");
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
+  const double window = static_cast<double>(sender.bulk_window());
+  const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
+  // The rule, against what the transport itself measured: bandwidth x (base RTT +
+  // the allowance), less the one chunk a frame-to-ack sample already contains.
+  const double base = std::chrono::duration<double>(sender.base_rtt()).count();
+  const double rule = sender.bulk_bandwidth() *
+                          (base + std::chrono::duration<double>(
+                                      RemoteFrameTransport::kQueueAllowance).count()) -
+                      static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
+  Expect(base > 0.0 && std::abs(window - std::clamp(rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
+         "the window follows bandwidth x (base RTT + allowance): window " + std::to_string(window) +
+             ", rule " + std::to_string(rule));
+  // The absolute bound holds only where the relay's threads were not starved
+  // (a full parallel suite can inflate every sample): then the base RTT is near
+  // the link's own and the window is near its bandwidth-delay product.
+  if (base < 2 * std::chrono::duration<double>(kRtt).count()) {
+    Expect(throughput > kBytesPerSecond * 0.8,
+           "the link stays full: " + std::to_string(throughput / 1e6) + " MB/s");
+    Expect(window >= product && window <= product + kBytesPerSecond * 0.015,
+           "the window is the bandwidth-delay product plus a few ms of queue: window " +
+               std::to_string(window) + ", product " + std::to_string(product));
+  }
+}
+
 // Garbage from the peer ends the connection once, with the decoder's reason.
 void TestGarbageFromThePeerClosesOnce() {
   SocketPair pair;
@@ -297,6 +352,8 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
           TestFramesRoundTripBetweenTwoTransports);
   AddTest(tests, "RemoteFrameTransport/InteractiveOvertakesABulkBacklog",
           TestInteractiveOvertakesABulkBacklog);
+  AddTest(tests, "RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct",
+          TestBulkWindowSettlesAtTheBandwidthDelayProduct);
   AddTest(tests, "RemoteFrameTransport/GarbageFromThePeerClosesOnce",
           TestGarbageFromThePeerClosesOnce);
   AddTest(tests, "RemoteFrameTransport/PeerHangupCloses", TestPeerHangupCloses);

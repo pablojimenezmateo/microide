@@ -266,6 +266,7 @@ bool RemoteFrameTransport::FlushWrites() {
         bulk_.frames.pop_front();
         bulk_bytes_sent_ += bulk_.bulk_payload_bytes.front();
         bulk_.bulk_payload_bytes.pop_front();
+        bulk_in_flight_.emplace_back(bulk_bytes_sent_, std::chrono::steady_clock::now());
       } else {
         return true;
       }
@@ -380,6 +381,18 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
     return;
   }
   const auto now = std::chrono::steady_clock::now();
+  // The newest frame this ack covers gives one round-trip sample.
+  std::optional<std::chrono::steady_clock::time_point> covered_sent;
+  while (!bulk_in_flight_.empty() && bulk_in_flight_.front().first <= acked) {
+    covered_sent = bulk_in_flight_.front().second;
+    bulk_in_flight_.pop_front();
+  }
+  if (covered_sent.has_value()) {
+    const auto sample = now - *covered_sent;
+    base_rtt_ = base_rtt_.has_value() ? std::min(*base_rtt_, sample) : sample;
+    base_rtt_us_.store(std::chrono::duration_cast<std::chrono::microseconds>(*base_rtt_).count(),
+                       std::memory_order_relaxed);
+  }
   bool sender_was_waiting = false;
   {
     std::lock_guard lock(queue_mutex_);
@@ -392,8 +405,25 @@ void RemoteFrameTransport::HandleAck(std::string_view payload) {
       acked - last_ack_bytes_ >= 16 * 1024) {
     const double seconds = std::chrono::duration<double>(now - last_ack_time_).count();
     if (seconds > 0.0) {
-      const double bytes_per_second = static_cast<double>(acked - last_ack_bytes_) / seconds;
-      const auto target = static_cast<std::size_t>(bytes_per_second * 0.1);
+      // Smoothed (TCP's 1/8 gain): one ack pair is ~32 KiB, and a burst of acks
+      // read raw doubles the estimate -- and the window -- for a round.
+      const double sample = static_cast<double>(acked - last_ack_bytes_) / seconds;
+      bulk_bandwidth_ = bulk_bandwidth_ > 0.0 ? bulk_bandwidth_ + (sample - bulk_bandwidth_) / 8.0
+                                              : sample;
+      const double bytes_per_second = bulk_bandwidth_;
+      bulk_bandwidth_seen_.store(bulk_bandwidth_, std::memory_order_relaxed);
+      // Bandwidth x (base RTT + the allowance): see the class comment. A window
+      // below the true product measures as window / RTT and the allowance grows it
+      // back each round, so it converges on the link from either side.
+      const double horizon =
+          base_rtt_.has_value()
+              ? std::chrono::duration<double>(*base_rtt_ + kQueueAllowance).count()
+              : 0.1;
+      // A base-RTT sample is frame-to-ack, so it includes that frame's own time on
+      // the wire: one chunk's worth of window is already in it.
+      const double chunk = base_rtt_.has_value() ? static_cast<double>(kMaxBulkChunkBytes) : 0.0;
+      const auto target =
+          static_cast<std::size_t>(std::max(0.0, bytes_per_second * horizon - chunk));
       bulk_window_.store(std::clamp(target, options_.bulk_window_floor, options_.bulk_window_cap),
                          std::memory_order_relaxed);
     }
