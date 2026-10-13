@@ -685,6 +685,12 @@
       std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher) {
     shell.open_file_dialog_state_.launcher = std::move(launcher);
   }
+  // Launch the native Open File… picker as the UI does; returns why it did not open.
+  static std::string LaunchNativeFilePicker(WorkspaceShell& shell) {
+    std::string error;
+    (void)shell.OpenNativeFilePicker(&error);
+    return error;
+  }
   static bool OpenFileDialogActive(const WorkspaceShell& shell) {
     return shell.open_file_dialog_state_.active;
   }

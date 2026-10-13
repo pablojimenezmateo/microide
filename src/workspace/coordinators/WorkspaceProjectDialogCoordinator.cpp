@@ -1,13 +1,30 @@
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "util/Waker.h"
+#include "workspace/NativeDialogTestMode.h"
 
+#include <atomic>
 #include <filesystem>
 #include <iterator>
 #include <string>
 
 namespace microide::workspace {
 namespace {
+
+std::atomic_bool g_native_dialogs_disabled{false};
+
+// Every native dialog launches through here: `show` is the SDL_Show*Dialog call.
+// Returns why it did not open (SDL's error, or the test-mode refusal); empty
+// when it did.
+template <typename Show>
+std::string ShowNativeDialog(Show&& show) {
+  if (g_native_dialogs_disabled.load(std::memory_order_relaxed)) {
+    return "Native dialogs are disabled in tests";
+  }
+  SDL_ClearError();
+  show();
+  return SDL_GetError();
+}
 
 // Decode SDL's file-dialog callback arguments into the outcome fields every
 // pending-result type shares. SDL signals three distinct things through one
@@ -78,12 +95,12 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectP
   }
 
   const std::string default_location_string = normalized_default.string();
-  SDL_ClearError();
-  SDL_ShowOpenFolderDialog(&WorkspaceShell::OnProjectOpenDialogComplete, this, dialog_window_,
-                           default_location_string.empty() ? nullptr
-                                                           : default_location_string.c_str(),
-                           false);
-  const std::string dialog_error = SDL_GetError();
+  const std::string dialog_error = ShowNativeDialog([&] {
+    SDL_ShowOpenFolderDialog(&WorkspaceShell::OnProjectOpenDialogComplete, this, dialog_window_,
+                             default_location_string.empty() ? nullptr
+                                                             : default_location_string.c_str(),
+                             false);
+  });
   if (!dialog_error.empty()) {
     project_dialog_state_.active = false;
     if (error_message != nullptr) {
@@ -165,13 +182,13 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeFilePick
   }
 
   const std::string default_location_string = normalized_default.string();
-  SDL_ClearError();
-  SDL_ShowOpenFileDialog(&WorkspaceShell::OnOpenFileDialogComplete, this, dialog_window_,
-                         /*filters=*/nullptr, /*nfilters=*/0,
-                         default_location_string.empty() ? nullptr
-                                                         : default_location_string.c_str(),
-                         /*allow_many=*/false);
-  const std::string dialog_error = SDL_GetError();
+  const std::string dialog_error = ShowNativeDialog([&] {
+    SDL_ShowOpenFileDialog(&WorkspaceShell::OnOpenFileDialogComplete, this, dialog_window_,
+                           /*filters=*/nullptr, /*nfilters=*/0,
+                           default_location_string.empty() ? nullptr
+                                                           : default_location_string.c_str(),
+                           /*allow_many=*/false);
+  });
   if (!dialog_error.empty()) {
     open_file_dialog_state_.active = false;
     if (error_message != nullptr) {
@@ -233,11 +250,11 @@ void WorkspaceShell::OpenNativeFontFilePicker(std::string setting_id) {
       {"Fonts (TTF, OTF)", "ttf;otf"},
       {"All files", "*"},
   };
-  SDL_ClearError();
-  SDL_ShowOpenFileDialog(&WorkspaceShell::OnFontFileDialogComplete, this, dialog_window_,
-                         kFontFilters, static_cast<int>(std::size(kFontFilters)),
-                         /*default_location=*/nullptr, /*allow_many=*/false);
-  const std::string dialog_error = SDL_GetError();
+  const std::string dialog_error = ShowNativeDialog([&] {
+    SDL_ShowOpenFileDialog(&WorkspaceShell::OnFontFileDialogComplete, this, dialog_window_,
+                           kFontFilters, static_cast<int>(std::size(kFontFilters)),
+                           /*default_location=*/nullptr, /*allow_many=*/false);
+  });
   if (!dialog_error.empty()) {
     font_file_dialog_state_.active = false;
   }
@@ -280,6 +297,14 @@ void WorkspaceShell::ConsumePendingFontFileDialogResult() {
   WriteSettingRespectingScope(pending.target_setting_id, pending.selected_path.string());
   RefreshSettingsOverlayCatalog();
   RequestOverlayRedraw();
+}
+
+void SetNativeDialogsDisabledForTesting(bool disabled) {
+  g_native_dialogs_disabled.store(disabled, std::memory_order_relaxed);
+}
+
+bool NativeDialogsDisabledForTesting() {
+  return g_native_dialogs_disabled.load(std::memory_order_relaxed);
 }
 
 }  // namespace microide::workspace

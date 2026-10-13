@@ -910,6 +910,23 @@ void TestWorkspaceShellOpenCommandRequiresPath() {
          "open without a path should report the missing path explicitly");
 }
 
+// No test reaches a real OS dialog: with no launcher installed, the test process
+// reports the native pickers unavailable (NativeDialogTestMode.h) instead of
+// sending an XDG portal request from the developer's session. A shortcut that
+// opened one (Ctrl+O in a terminal that skips the shell) failed an ASAN shard on
+// SDL's portal allocations.
+void TestWorkspaceShellNativeDialogsAreOffInTests() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "hello\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::LaunchNativeFilePicker(shell) ==
+             "Native dialogs are disabled in tests",
+         "the test process refuses the real dialog before SDL is asked");
+  Expect(!WorkspaceShellTestAccess::OpenFileDialogActive(shell), "and nothing is left open");
+}
+
 void TestWorkspaceShellProjectNextAndPrevCommandsCycleProjects() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root_a = temp_dir.path() / "alpha-project";
@@ -8543,6 +8560,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellUntitledTabAtTheCeilingIsRejected);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
+  AddTest(tests, "WorkspaceShell/NativeDialogsAreOffInTests",
+          TestWorkspaceShellNativeDialogsAreOffInTests);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",

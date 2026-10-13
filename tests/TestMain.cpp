@@ -1,4 +1,5 @@
 #include "TestRunner.h"
+#include "workspace/NativeDialogTestMode.h"
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
 #include "app/SdlWaker.h"
@@ -336,7 +337,11 @@ int main(int argc, char** argv) {
   // Bind the kernel's wake path to SDL's event queue, exactly as Application does.
   // Without it every producer's wake push fails and latches the shared owed bit,
   // which is correct-but-degraded behaviour that several tests assert against.
-  config.install_process_hooks = []() { microide::app::InstallSdlWaker(); };
+  config.install_process_hooks = []() {
+    microide::app::InstallSdlWaker();
+    // A test never opens a real OS dialog (see NativeDialogTestMode.h).
+    microide::workspace::SetNativeDialogsDisabledForTesting(true);
+  };
   // Establish the dummy SDL video subsystem once, before any test runs. SDL's
   // dummy driver derives the display content scale at video-init time; if any
   // test emits an SDL_Log (e.g. the redraw-trace flush exercises production

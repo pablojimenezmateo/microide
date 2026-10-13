@@ -1,6 +1,7 @@
 #include "perf/AllocationCounter.h"
 #include "perf/Baseline.h"
 #include "perf/PerfCpuAffinity.h"
+#include "workspace/NativeDialogTestMode.h"
 #include "perf/PerfHarness.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "perf/ScenarioProcessIsolation.h"
@@ -2137,6 +2138,7 @@ int main(int argc, char** argv) {
   // Placeholder terminals (no real shell spawn) during perf measurement; was a
   // compile-time MICROIDE_TESTING fork, now a runtime switch (see TestMain.cpp).
   microide::terminal::SetUsePlaceholderTerminalsForTesting(true);
+  microide::workspace::SetNativeDialogsDisabledForTesting(true);
   // Process-wide isolation floor (TD-2026-08-07-165). RunScenario establishes a
   // fresh app-root per scenario, which is what gives each scenario a clean state
   // directory — but for a long time it did so one statement after the Driver

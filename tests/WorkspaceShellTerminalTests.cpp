@@ -1112,7 +1112,9 @@ void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
 }
 
 // `terminal.commands_to_skip_shell` reaches the dispatch: handing Ctrl+P back to
-// the shell sends ^P, and listing open-file makes Ctrl+O skip it.
+// the shell sends ^P, and listing new-tab makes Ctrl+N skip it. (Not open-file:
+// its Ctrl+O opens the real native file dialog, which a test must never do and
+// which leaks inside SDL's portal code under LeakSanitizer.)
 void TestWorkspaceShellTerminalSkipShellSettingEditsTheSet() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1121,7 +1123,7 @@ void TestWorkspaceShellTerminalSkipShellSettingEditsTheSet() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetFocusPanel(shell);
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "terminal.commands_to_skip_shell",
-                                                   "-file-finder, open-file"),
+                                                   "-file-finder, new-tab"),
          "the setting is accepted");
 
   TerminalSessionTestAccess::ClearSentBytes(session);
@@ -1132,9 +1134,9 @@ void TestWorkspaceShellTerminalSkipShellSettingEditsTheSet() {
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "Go to File did not open");
 
   TerminalSessionTestAccess::ClearSentBytes(session);
-  (void)WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_O, SDL_KMOD_CTRL);
+  (void)WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_N, SDL_KMOD_CTRL);
   Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
-         "Ctrl+O skips the shell once the user lists open-file");
+         "Ctrl+N skips the shell once the user lists new-tab");
 }
 
 void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
