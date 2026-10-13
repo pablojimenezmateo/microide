@@ -551,6 +551,18 @@
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.directory_tree.entries();
   }
+  // The on-screen rect of tree row `entry_index`, or nullopt when it is scrolled out.
+  static std::optional<SDL_FRect> TreeSidebarRowRect(WorkspaceShell& shell, std::size_t entry_index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const ScrollableListLayout list = shell.ComputeTreeSidebarListLayout(
+        layout.sidebar, shell.context_.current_project_state.directory_tree.entries().size());
+    const int visible_row = static_cast<int>(entry_index) - list.scroll_row;
+    if (visible_row < 0 || visible_row >= list.visible_rows) {
+      return std::nullopt;
+    }
+    return ScrollableListRowRect(list, visible_row);
+  }
+  static void ForceCursorReassert(WorkspaceShell& shell) { shell.ForceCursorReassert(); }
   static std::filesystem::path SelectedTreePath(const WorkspaceShell& shell) {
     return shell.SelectedTreePath();
   }

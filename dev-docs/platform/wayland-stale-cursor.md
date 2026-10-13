@@ -20,7 +20,8 @@ overlay plane), so the old shape stayed on screen.
 Two-part fix:
 
 1. **Queue a present when the cursor changes.** `UpdateMouseCursor` calls
-   `RequestCursorPresent()` (a 1×1 damage rect) on a real apply at event time.
+   `RequestCursorPresent()` (a present bit, not damage — see below) on a real apply
+   at event time.
 2. **Deliver any queued redraw.** `WorkspaceEventDispatcher::finish()` now treats a
    pending redraw as "handled", so the app loop renders it instead of dropping it.
 
@@ -90,10 +91,25 @@ if (!during_frame_prepare) {
 }
 ```
 
-`RequestCursorPresent` damages a 1×1 rect; the retained scene texture is re-blit
-whole on present anyway, so the rect size is irrelevant — it exists only to make
-`Application::Render` run `SDL_RenderPresent`, which commits the surface and makes
-the compositor recomposite and re-latch the cursor plane.
+`RequestCursorPresent` sets `RenderInvalidation::present` — a bit, not a damage
+rect. The app loop answers a present with no damage by re-blitting the retained
+scene texture and calling `SDL_RenderPresent` (`Application::PresentRetainedScene`),
+which commits the surface and makes the compositor recomposite and re-latch the
+cursor plane without a render pass.
+
+### Why it is not a 1×1 damage rect (2026-10-13)
+
+It used to be: a 1×1 rect at the pointer, chosen because the retained scene is
+re-blit whole anyway. But every input handler ends in
+`EnsureRedraw(Request<Surface>Redraw)`, which repaints the surface the handler
+changed *unless damage is already queued* — and mouse-down and wheel resolve the
+cursor before they dispatch. Whenever the click or scroll also changed the cursor
+(or a reassert was forced, which Wayland's hit-test path does), that pixel
+satisfied the guard and the surface fallback never ran: expanding a directory in
+the project tree, or scrolling it, repainted one pixel and left the old rows on
+screen. `EnsureRedraw` now checks `HasDamage()`, which a present never satisfies.
+Regression tests: `WorkspaceShell/TreeExpandRepaintsSidebarWhenCursorChanges`,
+`WorkspaceShell/TreeWheelRepaintsSidebarWhenCursorChanges`.
 
 ## Why it stays fast
 
@@ -114,12 +130,16 @@ the compositor recomposite and re-latch the cursor plane.
   the caret blinks, obvious the moment it stops or on a caret-less screen.
 - Don't "fix" a recurrence by reviving a per-frame live-pointer poll or a continuous
   repaint; present only on a real apply.
+- Don't turn the present back into a damage rect, and don't let a "something is
+  already queued" guard count `present` — that is the stale-tree bug above.
 
 ## References
 
 - `src/workspace/WorkspaceEventOrchestrator.cpp` — `finish()`
 - `src/workspace/shell/WorkspaceShellCursor.cpp` — `UpdateMouseCursor`
 - `src/workspace/shell/WorkspaceShellRedraw.cpp` — `RequestCursorPresent`
+- `src/workspace/WorkspaceEventResult.h` — `RenderInvalidation::present` / `HasDamage`
+- `src/app/Application.cpp` — the present-only branch of the loop
 - `src/workspace/shell/WorkspaceShellMouseMotion.cpp` — `HandleMouseMotion` return value
 - `tests/WorkspaceShellCursorTests.cpp` — `CursorChangeRequestsPresent`
 - Inspiration: <https://gist.github.com/retroplasma/ec21767d0a8380c7ea9c2fbee1c7d6bf>

@@ -31,11 +31,11 @@ inline bool AnyRectIntersects(std::span<const SDL_FRect> rects, const SDL_FRect&
 // repainted" actually means. Use this for every hover / button / row / tooltip
 // invalidation assertion.
 //
-// AnyRectIntersects is close to free on those: a mouse-motion event already emits
-// a 1x1 dirty rect at the pointer -- which is, by construction, inside the very
-// control the test is asking about -- and neighbouring chrome rects overlap
-// generously. Three assertions written that way were found passing with the code
-// under test compiled out.
+// AnyRectIntersects is close to free on those: a mouse-motion event used to emit a
+// 1x1 dirty rect at the pointer (a cursor present, now the `present` bit) -- which
+// was, by construction, inside the very control the test asked about -- and
+// neighbouring chrome rects overlap generously. Three assertions written that way
+// were found passing with the code under test compiled out.
 inline bool AnyRectCovers(std::span<const SDL_FRect> rects, const SDL_FRect& target) {
   return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
     return rect.x <= target.x && rect.y <= target.y &&

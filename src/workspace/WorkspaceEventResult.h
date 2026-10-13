@@ -25,8 +25,33 @@ inline constexpr std::size_t kInlineRedrawRects = 8;
 struct RenderInvalidation {
   bool full = false;
   util::SmallVector<SDL_FRect, kInlineRedrawRects> rects;
+  // The frame must be presented again although nothing in it changed: a cursor
+  // shape only shows once the compositor recomposites (on Wayland it rides a
+  // hardware plane re-latched on commit; dev-docs/platform/wayland-stale-cursor.md).
+  // Deliberately NOT damage. It used to be a 1x1 rect at the pointer, and every
+  // "repaint my surface unless something is already queued" fallback took that
+  // pixel for the surface: a tree click that also changed the cursor expanded the
+  // directory and repainted one pixel of it.
+  bool present = false;
 
-  [[nodiscard]] bool HasAnyRedraw() const { return full || !rects.empty(); }
+  // Something on screen changed: a render pass is owed.
+  [[nodiscard]] bool HasDamage() const { return full || !rects.empty(); }
+  // A render pass or a bare re-present is owed.
+  [[nodiscard]] bool HasAnyRedraw() const { return HasDamage() || present; }
+
+  // Fold `other` in: full absorbs every rect, and a present is owed if either owes one.
+  void Merge(const RenderInvalidation& other) {
+    present = present || other.present;
+    if (full) {
+      return;
+    }
+    if (other.full) {
+      full = true;
+      rects.clear();
+      return;
+    }
+    rects.append(other.rects.begin(), other.rects.end());
+  }
 
   [[nodiscard]] std::optional<SDL_FRect> SingleRectIfOnlyOne() const {
     if (rects.size() != 1) {

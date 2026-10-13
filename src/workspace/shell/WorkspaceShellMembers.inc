@@ -1954,12 +1954,13 @@
   // motion handler (while dragging) and the button-up handler (on release), which
   // must agree or a released selection repaints somewhere the drag did not.
   void RequestSingleLineDragSurfaceRedraw(TextInputSurface surface);
-  // Invoke a specific Request*Redraw only when nothing else has already queued a
-  // redraw this frame. Centralizes the guard shared by every mouse/input handler;
+  // Invoke a specific Request*Redraw only when nothing else has already queued
+  // damage this frame. Centralizes the guard shared by every mouse/input handler;
   // a template (not std::function) so the call stays inlined with no heap churn.
+  // A pending cursor present is not damage and must not satisfy the guard.
   template <typename RequestRedraw>
   void EnsureRedraw(RequestRedraw request_redraw) {
-    if (!pending_render_invalidation_.HasAnyRedraw()) {
+    if (!pending_render_invalidation_.HasDamage()) {
       request_redraw();
     }
   }

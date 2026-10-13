@@ -672,7 +672,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
       context_.current_project_state, context_.prompts, context_.menu_state,
       notification_service_,
       KeyInputCoordinator::Operations{
-          .has_pending_redraw = [this]() { return pending_render_invalidation_.HasAnyRedraw(); },
+          .has_pending_redraw = [this]() { return pending_render_invalidation_.HasDamage(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },

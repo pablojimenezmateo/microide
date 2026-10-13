@@ -37,6 +37,9 @@ class Application {
   workspace::WorkspaceShell::EventResult HandleEvent(const SDL_Event& event);
   void Render(std::vector<SDL_FRect> dirty_rects = {},
               const char* reason = "full");
+  // Blit the retained scene to the window and present it, rendering nothing. The
+  // render target must be the window and the scene texture valid.
+  void PresentRetainedScene();
   bool UpdateRendererPresentation(int* logical_width = nullptr, int* logical_height = nullptr);
   // Re-seed the shell's cached pointer position from a live query, then force the
   // cursor to re-apply. Used on window resize/move/restore/maximize, where the

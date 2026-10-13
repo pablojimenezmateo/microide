@@ -178,6 +178,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
   RenderInvalidation result = std::move(pending_render_invalidation_);
   pending_render_invalidation_.full = false;
   pending_render_invalidation_.rects.clear();
+  pending_render_invalidation_.present = false;
   return result;
 }
 
@@ -224,12 +225,10 @@ void WorkspaceShell::RequestWindowRedraw() {
 }
 
 void WorkspaceShell::RequestCursorPresent() {
-  // A 1x1 damage rect at the pointer is the cheapest way to force
-  // Application::Render to run and call SDL_RenderPresent. The retained scene
-  // texture is re-blit whole on every present, so the rect's size is irrelevant to
-  // correctness — it exists only to make the compositor recomposite and re-latch
-  // the hardware cursor plane so an event-time cursor change actually shows.
-  RequestRedrawRect(SDL_FRect{last_mouse_x_, last_mouse_y_, 1.0f, 1.0f});
+  // Not damage: nothing in the scene changed, the compositor just has to commit a
+  // frame so it re-latches the hardware cursor plane and an event-time cursor
+  // change actually shows. The app loop re-presents the retained scene for it.
+  pending_render_invalidation_.present = true;
 }
 
 void WorkspaceShell::RequestChromeRedraw() {
@@ -1137,12 +1136,8 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
   // too, or those rects sit there until unrelated input arrives. Merging here is
   // the single seam that covers every wake source above.
   const RenderInvalidation pending = ConsumePendingRenderInvalidation();
-  if (pending.full) {
-    result.redraw.full = true;
-    result.redraw.rects.clear();
-    result.handled = true;
-  } else if (!pending.rects.empty() && !result.redraw.full) {
-    result.redraw.rects.append(pending.rects.begin(), pending.rects.end());
+  if (pending.HasAnyRedraw()) {
+    result.redraw.Merge(pending);
     result.handled = true;
   }
   return result;

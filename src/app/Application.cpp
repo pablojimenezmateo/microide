@@ -162,6 +162,10 @@ int Application::Run() {
 
   running_ = true;
   bool full_redraw_pending = true;
+  // A re-present with no damage (an event-time cursor change; see
+  // RenderInvalidation::present). Any render presents too, so it only drives a
+  // frame of its own when nothing else is owed.
+  bool present_pending = false;
   bool window_shown = false;
   std::vector<SDL_FRect> dirty_rects;
   const char* redraw_reason = "startup";
@@ -170,6 +174,7 @@ int Application::Run() {
     if (full_redraw_pending || !dirty_rects.empty()) {
       const bool was_first_frame = !first_render_complete_;
       Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
+      present_pending = false;
 
       // Map the window exactly once, as soon as a real frame has been painted.
       // The window was created hidden, so this is its first and only map: it
@@ -186,8 +191,7 @@ int Application::Run() {
       if (!window_shown && first_render_complete_ && window_ != nullptr) {
         SDL_ShowWindow(window_);
         if (scene_texture_.valid()) {
-          SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
-          SDL_RenderPresent(renderer_);
+          PresentRetainedScene();
         }
         window_shown = true;
       }
@@ -221,6 +225,13 @@ int Application::Run() {
       // around the (possibly newly scrolled) editor viewport so later frames
       // hit the highlight cache instead of tokenizing on the render path.
       workspace_shell_.RequestActiveHighlightPrefetch();
+    } else if (present_pending) {
+      present_pending = false;
+      if (scene_texture_.valid()) {
+        PresentRetainedScene();
+      } else {
+        Render({}, "present-without-scene");
+      }
     }
 
     SDL_Event event;
@@ -246,6 +257,7 @@ int Application::Run() {
       }
       const auto scheduled = workspace_shell_.HandleScheduledWake();
       if (scheduled.handled) {
+        present_pending = present_pending || scheduled.redraw.present;
         if (scheduled.redraw.full) {
           // A full-redraw repaints the whole scene, so any cursor surface may have
           // moved underneath a stationary pointer (tree refresh, plugin/outline
@@ -288,6 +300,7 @@ int Application::Run() {
       }
       const auto result = HandleEvent(event);
       if (result.handled) {
+        present_pending = present_pending || result.redraw.present;
         if (result.redraw.full) {
           // See the scheduled-wake path above: a full redraw can reshuffle cursor
           // surfaces under a still pointer, and the EventResult literals that drive
@@ -743,6 +756,11 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
   return result;
 }
 
+void Application::PresentRetainedScene() {
+  SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
+  SDL_RenderPresent(renderer_);
+}
+
 void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason) {
   if (renderer_ == nullptr) {
     return;
@@ -871,8 +889,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     SDL_SetRenderTarget(renderer_, nullptr);
     {
       util::PerformanceTrace::Scope present_scope("Application::PresentRetainedScene");
-      SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
-      SDL_RenderPresent(renderer_);
+      PresentRetainedScene();
     }
     util::AddPerformanceCounter(util::PerfCounterId::RenderFramesRetained);
     scene_texture_.MarkValid();

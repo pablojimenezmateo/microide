@@ -369,6 +369,92 @@ void TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette() {
   }
 }
 
+// Expanding a directory from the tree must repaint the whole sidebar, even when
+// the click also changed the cursor. Mouse-down resolves the cursor before it
+// dispatches, and a cursor change (or a forced reassert, which Wayland's hit-test
+// path triggers) queued a 1x1 "present" damage rect at the pointer. The sidebar's
+// fallback redraw only ran when nothing was queued yet, so it saw that pixel,
+// assumed the tree was covered, and the newly expanded rows never painted.
+void TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha" / "one.txt", "1\n");
+  WriteFile(root / "alpha" / "two.txt", "2\n");
+  WriteFile(root / "readme.txt", "r\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+
+  const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
+  const auto alpha = std::find_if(entries.begin(), entries.end(), [&](const project::TreeEntry& e) {
+    return e.path == (root / "alpha").lexically_normal();
+  });
+  Expect(alpha != entries.end() && alpha->is_directory && !alpha->expanded,
+         "the fixture lists a collapsed directory");
+  const std::size_t alpha_index = static_cast<std::size_t>(alpha - entries.begin());
+  const std::size_t rows_before = entries.size();
+  const auto row = WorkspaceShellTestAccess::TreeSidebarRowRect(shell, alpha_index);
+  Expect(row.has_value(), "the directory row is on screen");
+
+  (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
+  WorkspaceShellTestAccess::ForceCursorReassert(shell);
+  const WorkspaceShell::EventResult result = [&] {
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.button.button = SDL_BUTTON_LEFT;
+    event.button.x = row->x + row->w * 0.5f;
+    event.button.y = row->y + row->h * 0.5f;
+    event.button.clicks = 1;
+    return shell.HandleEvent(event);
+  }();
+
+  Expect(WorkspaceShellTestAccess::TreeEntries(shell).size() > rows_before,
+         "the click expanded the directory");
+  const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
+  Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
+         "expanding a directory repaints the whole sidebar, cursor change or not");
+}
+
+// The wheel path resolves the cursor before it dispatches too, so scrolling the
+// tree under a cursor change repainted one pixel and left the old rows on screen.
+void TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 80; ++i) {
+    WriteFile(root / ("file_" + std::to_string(100 + i) + ".txt"), "x\n");
+  }
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
+  const int scroll_before = WorkspaceShellTestAccess::SidebarScrollRow(shell);
+
+  (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
+  WorkspaceShellTestAccess::ForceCursorReassert(shell);
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_WHEEL;
+  event.wheel.y = -3.0f;
+  event.wheel.mouse_x = sidebar.x + sidebar.w * 0.5f;
+  event.wheel.mouse_y = sidebar.y + sidebar.h * 0.5f;
+  event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+  const WorkspaceShell::EventResult result = shell.HandleEvent(event);
+
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > scroll_before,
+         "the wheel scrolled the tree");
+  Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
+         "scrolling the tree repaints the whole sidebar, cursor change or not");
+}
+
 void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8415,6 +8501,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/ValueCommandsFromTheMenuSeedTheCommandPalette",
           TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette);
+  AddTest(tests, "WorkspaceShell/TreeExpandRepaintsSidebarWhenCursorChanges",
+          TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges);
+  AddTest(tests, "WorkspaceShell/TreeWheelRepaintsSidebarWhenCursorChanges",
+          TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges);
   AddTest(tests, "WorkspaceShell/ProjectOpenMaterializesTreeGitBadgesAfterFirstPaint",
           TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint);
   AddTest(tests, "WorkspaceShell/ProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses",
