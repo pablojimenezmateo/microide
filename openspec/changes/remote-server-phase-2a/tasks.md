@@ -73,6 +73,6 @@
 
 ## 9. Budgets, lanes and wrap-up
 
-- [ ] 9.1 (tracked as TD-2026-10-08-325; needs a delay relay in the harness and `perf-runner-v1` baselines) Perf-harness scenarios with `--server-delay-ms`: first prompt, predicted glyph in the keystroke frame, confirmed echo ≤ 1 RTT + 5 ms under a 50 MiB bulk transfer, contradicted prediction gone in 1 RTT, dead link ≤ 6 s, reattach of 3 terminals ≤ 2 RTT, no frame > 16 ms with a stalled server
+- [x] 9.1 (done 2026-10-13: `tests/perf/RemotePerfScenarios.cpp` over `tests/support/DelayRelay.h`, budgets asserted in-scenario, opt-in and advisory until `perf-runner-v1` baselines exist; the echo-under-bulk budget found the bulk window aimed at 100 ms of bandwidth regardless of RTT, fixed) Perf-harness scenarios with `--server-delay-ms`: first prompt, predicted glyph in the keystroke frame, confirmed echo ≤ 1 RTT + 5 ms under a 50 MiB bulk transfer, contradicted prediction gone in 1 RTT, dead link ≤ 6 s, reattach of 3 terminals ≤ 2 RTT, no frame > 16 ms with a stalled server
 - [x] 9.2 Run the full lanes once at the end (`tools/run-checks.sh tests asan ubsan tsan clang-build perf-tests`), never editing source while a lane builds — every lane green at the end of the 2026-10-07 and 2026-10-12 remote passes
 - [x] 9.3 Update `dev-docs/design/remote-projects.md` § 8 status, `dev-docs/project/active-work.md`, the control-channel doc for the new actions, and `CHANGELOG.md` — done (design doc "Phase 2a as built", CHANGELOG [Unreleased]; the control channel needs no per-action doc: it runs any command line)

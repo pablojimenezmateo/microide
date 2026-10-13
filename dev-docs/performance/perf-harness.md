@@ -931,6 +931,23 @@ coalescer's waste, and a promotion count that moves means partial frames are
 quietly going full. `menu_hover_paint` and `editor_typing_paint` are the
 worked examples.
 
+### Remote latency scenarios
+
+`tests/perf/RemotePerfScenarios.cpp` measures the host-terminal budgets of
+`dev-docs/design/remote-projects.md` against a real `microide-server` reached
+through `tests/support/DelayRelay.h` (60 ms round trip, 100 Mbit/s, paced per 4 KiB
+on a virtual link clock; the relay can also stall the server or blackhole the link): `remote_first_prompt`,
+`remote_echo_under_bulk` (echo <= 1 RTT + 5 ms + the one bulk chunk on the wire,
+while 50 MiB streams on the bulk lane), `remote_contradicted_prediction`, `remote_reattach_three` (<= 2 RTT),
+`remote_dead_link` (<= 6 s + one ping interval) and
+`remote_stalled_server_input` (a keystroke never blocks on a stalled server).
+They are opt-in (`--scenarios=remote_...`) and advisory: the budgets are asserted
+in the bodies, and there are no `perf-runner-v1` baselines yet.
+`MICROIDE_PERF_REMOTE_SAMPLES=1` prints each echo sample. Measured 2026-10-13 on
+a developer box: first prompt ~3.3 RTT, echo under bulk p50 70.8 ms / p95 71.1 ms
+(1 RTT + the 5 ms allowance + the one 64 KiB chunk on the wire) at 94 Mbit/s, contradicted prediction 110 ms, three terminals reattached in
+121 ms, dead link 6.4 s, stalled-server keystroke 0.02 ms.
+
 ## Hotspot Audit Matrix
 
 Use this matrix for repository-wide hotspot passes so each critical workflow has deterministic

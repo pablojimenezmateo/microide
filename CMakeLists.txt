@@ -1794,6 +1794,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/EditorSplitPerfScenarios.cpp
     tests/perf/SyntaxHighlightPerfScenarios.cpp
     tests/perf/PluginCapPerfScenarios.cpp
+    tests/perf/RemotePerfScenarios.cpp
     tests/perf/PerfGateCanaryScenario.cpp
     tests/perf/PerfMain.cpp
   )
@@ -1811,6 +1812,8 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     endif()
   endif()
 
+  # The remote scenarios drive the real daemon, so it must be current.
+  add_dependencies(microide_perf microide-server)
   target_include_directories(microide_perf PRIVATE src tests)
   target_include_directories(microide_perf SYSTEM PRIVATE third_party/stb)
   target_precompile_headers(microide_perf PRIVATE ${MICROIDE_PCH_HEADERS})
@@ -1831,6 +1834,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
     MICROIDE_TESTING=1
     MICROIDE_PERF_HARNESS_BUILD=1
+    MICROIDE_SERVER_BINARY="$<TARGET_FILE:microide-server>"
     MICROIDE_PERF_BUILD_CONFIG="${CMAKE_BUILD_TYPE}$<$<BOOL:${CMAKE_INTERPROCEDURAL_OPTIMIZATION}>:+lto>$<$<BOOL:${MICROIDE_PERF_TRACE_SYMBOLS}>:+no-icf>"
   )
 

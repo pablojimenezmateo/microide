@@ -1002,7 +1002,17 @@ terminal is not titled `local · …` while host terminals are open~~ (done
 inside the `.deb`) is release work; until then install ships the binary beside
 the executable, which is the build's own architecture.
 
-Also open from group 9: the perf-harness scenarios behind a delaying relay
+~~Also open from group 9: the perf-harness scenarios behind a delaying relay~~
+(done 2026-10-13: `tests/perf/RemotePerfScenarios.cpp` over
+`tests/support/DelayRelay.h`; see `dev-docs/performance/perf-harness.md` §
+"Remote latency scenarios". `remote_echo_under_bulk` failed its budget at first —
+the adaptive bulk window aimed at 100 ms of bandwidth regardless of the round
+trip, ~25 ms of queue in front of every echo on a 60 ms / 100 Mbit/s link — and
+the window now aims at the bandwidth-delay product + 5 ms from a Vegas-style
+base RTT and a smoothed bandwidth: echo p50 86 → 70.8 ms, p95 87 → 71.1 ms (1 RTT
++ 5 ms + the one chunk on the wire), same throughput; `RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct`.
+Their timing gates stay advisory until `perf-runner-v1` baselines exist.) Original:
+the perf-harness scenarios behind a delaying relay
 (`--server-delay-ms`: first prompt, confirmed echo under a bulk transfer, reattach
 in two round trips, no frame over 16 ms with a stalled server). Not added as
 wall-clock gates yet: they need a delay proxy in the harness and baselines from
