@@ -427,6 +427,25 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN]
+
+Found fixing TD-2026-10-09-335: under the perf preset (`-O2 -flto=auto`, whole
+program) GCC kept `JsonValue::AsInt` — by then a single `get_if` branch plus a
+tail call — as an out-of-line call inside a hot loop, in a translation unit
+whose own inline helper of identical shape WAS inlined. The likely cause is the
+IPA inliner's whole-unit growth budget (`inline-unit-growth`,
+`large-function-growth`): in a program this size the budget runs out and
+inlining stops being about the callee's size. `[[gnu::always_inline]]` fixed the
+two JSON accessors; nothing says they are the only ones.
+
+What to do, in order: (1) `perf record` the gated suite on a quiet box
+(`kernel.perf_event_paranoid` ≤ 1) and list hot call sites whose callee is under
+~20 instructions; (2) A/B the whole perf suite with `-O3` and, separately, with
+`--param inline-unit-growth=` raised, on `perf-runner-v1` (a build-policy change
+moves every timing baseline, so it is a rebaseline decision, not a local one);
+(3) only then decide between the flag and more attributes. Not done here: it needs
+the reference runner and a full-suite rebaseline.
+
 ### TD-2026-10-13-337 — `EnsureRedraw` trusts any damage already queued; terminal skip-shell set is not user-configurable. [RESOLVED 2026-10-13]
 
 Found fixing the stale project tree (fc6ed506) and the terminal key routing
@@ -553,6 +572,13 @@ unpinned A/B): v2.12.0 6.3–6.5 ms, HEAD before 7.9–8.2 ms, after 4.9–5.2 m
 21 % faster than the release. Allocations unchanged (204). The fast path's
 semantics for doubles, fractional and out-of-int values are pinned in
 `LspProtocol/DecodesSemanticTokens`.
+
+Generalized the same day (ae2d7366): `JsonValue::AsInt` and `JsonIntInRange`
+force-inline their int64 case (`[[gnu::always_inline]]`, slow paths out of line).
+An out-of-line `AsIntSlow` was NOT enough: the perf build still called the
+one-branch `AsInt`, so it is the attribute that inlines it. Against v2.12.0,
+pinned: semantic tokens 6.5 → 5.7 ms, diagnostics parse 32.0 → 29.8 ms, document
+symbols 101 → 91.6 ms. Why the inliner refuses is TD-2026-10-13-338.
 
 Original report:
 
