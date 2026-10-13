@@ -8,6 +8,7 @@
 
 #include "editor/TextViewport.h"
 #include "workspace/git/CommitWorkflowState.h"
+#include "workspace/WorkspaceEventResult.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"
 #include "workspace/services/NotificationService.h"
@@ -23,7 +24,8 @@ namespace microide::workspace {
 class KeyInputCoordinator {
  public:
   struct Operations {
-    std::function<bool()> has_pending_redraw;
+    // The shell's damage generation (WorkspaceShell::MarkDamage).
+    std::function<DamageMark()> damage_generation;
     std::function<void()> request_prompt_redraw;
     std::function<void()> request_chrome_redraw;
     std::function<void()> request_window_redraw;
@@ -247,12 +249,14 @@ class KeyInputCoordinator {
   // index into a match vector (command palette, launch picker, completion, code
   // actions). The pickers with extra reveal side effects keep their own helpers.
   void MoveOverlayListSelection(std::size_t& selected_index, std::size_t item_count, int delta);
-  // Requests a redraw only when none is already pending. A member rather than a
-  // local lambda so the key handlers that live in their own translation units
-  // (settings, sidebar) coalesce redraws the same way HandleKeyDown does.
+  // Requests a redraw only when the key's handler requested none itself: damage
+  // is measured from the mark HandleKeyDown takes on entry, so damage queued
+  // before the key (a focus change, a background tick) does not stand in for it.
+  // A member rather than a local lambda so the key handlers that live in their own
+  // translation units (settings, sidebar) coalesce redraws the same way.
   template <typename Fn>
   void EnsureRedraw(Fn&& request_redraw) {
-    if (!operations_.has_pending_redraw()) {
+    if (operations_.damage_generation() == key_damage_mark_) {
       request_redraw();
     }
   }
@@ -277,6 +281,7 @@ class KeyInputCoordinator {
   MenuSurfaceState& menu_state_;
   NotificationService& notifications_;
   Operations operations_;
+  DamageMark key_damage_mark_ = 0;
 };
 
 }  // namespace microide::workspace

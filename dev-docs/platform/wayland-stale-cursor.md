@@ -107,7 +107,10 @@ cursor before they dispatch. Whenever the click or scroll also changed the curso
 (or a reassert was forced, which Wayland's hit-test path does), that pixel
 satisfied the guard and the surface fallback never ran: expanding a directory in
 the project tree, or scrolling it, repainted one pixel and left the old rows on
-screen. `EnsureRedraw` now checks `HasDamage()`, which a present never satisfies.
+screen. A present is now a bit, not damage. (Since TD-2026-10-13-337 the guard
+no longer asks "is anything queued" at all: `EnsureRedraw(mark, ...)` compares the
+shell's damage generation against a mark taken before the handler ran, so only
+the handler's own requests can stand in for its fallback.)
 Regression tests: `WorkspaceShell/TreeExpandRepaintsSidebarWhenCursorChanges`,
 `WorkspaceShell/TreeWheelRepaintsSidebarWhenCursorChanges`.
 

@@ -48,19 +48,20 @@ std::optional<Uint32> WorkspaceShell::NextCaretBlinkDelayMs() const {
   return static_cast<Uint32>(std::max<Uint64>(1, std::min(remaining, until_freeze)));
 }
 
-void WorkspaceShell::RequestSingleLineDragSurfaceRedraw(TextInputSurface surface) {
+void WorkspaceShell::RequestSingleLineDragSurfaceRedraw(DamageMark mark,
+                                                        TextInputSurface surface) {
   switch (surface) {
     case TextInputSurface::PromptInput:
-      EnsureRedraw([this]() { RequestPromptRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
       break;
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::SidebarSearchInclude:
     case TextInputSurface::SidebarSearchExclude:
-      EnsureRedraw([this]() { RequestSidebarRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
       break;
     default:
-      EnsureRedraw([this]() { RequestOverlayRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
       break;
   }
 }

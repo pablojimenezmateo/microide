@@ -455,6 +455,54 @@ void TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges() {
          "scrolling the tree repaints the whole sidebar, cursor change or not");
 }
 
+// The fallback redraw answers to what the HANDLER requested, not to whatever is
+// queued (TD-2026-10-13-337). Damage queued before the event -- a background
+// tick, a focus change -- used to satisfy "something is already queued", so a
+// handler that relied on its fallback repainted nothing of its own surface.
+void TestWorkspaceShellTreeRepaintsWhenUnrelatedDamageIsQueued() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 80; ++i) {
+    WriteFile(root / ("file_" + std::to_string(100 + i) + ".txt"), "x\n");
+  }
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect sidebar = layout.sidebar;
+  const SDL_FRect unrelated{layout.status_bar.x, layout.status_bar.y, 4.0f, 4.0f};
+
+  {
+    const int scroll_before = WorkspaceShellTestAccess::SidebarScrollRow(shell);
+    (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
+    WorkspaceShellTestAccess::QueueUnrelatedDamage(shell, unrelated);
+    SDL_Event event{};
+    event.type = SDL_EVENT_MOUSE_WHEEL;
+    event.wheel.y = -3.0f;
+    event.wheel.mouse_x = sidebar.x + sidebar.w * 0.5f;
+    event.wheel.mouse_y = sidebar.y + sidebar.h * 0.5f;
+    event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+    const WorkspaceShell::EventResult result = shell.HandleEvent(event);
+    Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) > scroll_before,
+           "the wheel scrolled the tree");
+    Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
+           "a wheel over the tree repaints the sidebar though other damage was queued");
+  }
+  {
+    WorkspaceShellTestAccess::SetFocusSidebar(shell);
+    (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
+    WorkspaceShellTestAccess::QueueUnrelatedDamage(shell, unrelated);
+    const WorkspaceShell::EventResult result = SendKeyDownResult(shell, SDLK_DOWN, SDL_KMOD_NONE);
+    Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
+           "a key the tree handles repaints the sidebar though other damage was queued");
+  }
+}
+
 void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8505,6 +8553,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges);
   AddTest(tests, "WorkspaceShell/TreeWheelRepaintsSidebarWhenCursorChanges",
           TestWorkspaceShellTreeWheelRepaintsSidebarWhenCursorChanges);
+  AddTest(tests, "WorkspaceShell/TreeRepaintsWhenUnrelatedDamageIsQueued",
+          TestWorkspaceShellTreeRepaintsWhenUnrelatedDamageIsQueued);
   AddTest(tests, "WorkspaceShell/ProjectOpenMaterializesTreeGitBadgesAfterFirstPaint",
           TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint);
   AddTest(tests, "WorkspaceShell/ProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses",

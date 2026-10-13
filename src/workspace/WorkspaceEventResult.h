@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <optional>
 
 #include "util/SmallVector.h"
@@ -60,6 +61,9 @@ struct RenderInvalidation {
     return rects.front();
   }
 };
+
+// A sample of the shell's damage generation; see WorkspaceShell::MarkDamage.
+using DamageMark = std::uint64_t;
 
 struct EventResult {
   bool handled = false;

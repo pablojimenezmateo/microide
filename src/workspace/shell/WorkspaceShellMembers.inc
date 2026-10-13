@@ -1953,16 +1953,18 @@
   // Repaint whichever surface owns a single-line drag selection. Used by both the
   // motion handler (while dragging) and the button-up handler (on release), which
   // must agree or a released selection repaints somewhere the drag did not.
-  void RequestSingleLineDragSurfaceRedraw(TextInputSurface surface);
-  // Invoke a specific Request*Redraw only when nothing else has already queued
-  // damage this frame. Centralizes the guard shared by every mouse/input handler;
-  // a template (not std::function) so the call stays inlined with no heap churn.
-  // A pending cursor present is not damage and must not satisfy the guard.
+  void RequestSingleLineDragSurfaceRedraw(DamageMark mark, TextInputSurface surface);
+  // The fallback-redraw guard shared by every mouse/input handler: take a mark
+  // before dispatching, and EnsureRedraw(mark, ...) repaints the surface only when
+  // nothing asked for damage SINCE the mark. It used to ask "is anything queued?",
+  // which could not tell the handler's own precise rects from unrelated damage
+  // queued earlier (a tooltip, a focus change, a background tick) and so left a
+  // surface stale whenever something else got there first (TD-2026-10-13-337).
+  // A template (not std::function) so the call stays inlined with no heap churn.
+  [[nodiscard]] DamageMark MarkDamage() const { return damage_generation_; }
   template <typename RequestRedraw>
-  void EnsureRedraw(RequestRedraw request_redraw) {
-    if (!pending_render_invalidation_.HasDamage()) {
-      request_redraw();
-    }
+  void EnsureRedraw(DamageMark since, RequestRedraw request_redraw) {
+    if (damage_generation_ == since) request_redraw();
   }
   void QueueEditorHoverRefresh();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
@@ -2358,6 +2360,9 @@
   // saves (Ctrl+S) still format.
   bool autosave_suppress_format_on_save_ = false;
   RenderInvalidation pending_render_invalidation_;
+  // Bumped by every damage request, including one a pending full redraw absorbs;
+  // see MarkDamage.
+  DamageMark damage_generation_ = 0;
   int post_render_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;
   // When set, the next UpdateMouseCursor bypasses both the fingerprint and the

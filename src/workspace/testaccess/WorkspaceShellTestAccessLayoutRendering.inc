@@ -537,6 +537,11 @@
   static bool ConsumePendingRedraw(WorkspaceShell& shell) {
     return shell.ConsumePendingRenderInvalidation().HasAnyRedraw();
   }
+  // Queues damage that no handler asked for, the way a background tick or a
+  // focus change does before an event is dispatched.
+  static void QueueUnrelatedDamage(WorkspaceShell& shell, const SDL_FRect& rect) {
+    shell.RequestRedrawRect(rect);
+  }
   static bool CachedCursorIsDefault(const WorkspaceShell& shell) {
     return shell.cursor_kind_ == WorkspaceShell::CursorKind::Default;
   }

@@ -427,13 +427,25 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-13-337 — `EnsureRedraw` trusts any damage already queued; terminal skip-shell set is not user-configurable. [OPEN]
+### TD-2026-10-13-337 — `EnsureRedraw` trusts any damage already queued; terminal skip-shell set is not user-configurable. [OPEN — first item RESOLVED 2026-10-13]
 
 Found fixing the stale project tree (fc6ed506) and the terminal key routing
 (d6c4bdd8). Both of those shipped; what they left:
 
-- **The fallback-redraw guard is still "anything queued", not "this handler
-  queued it".** Every input path ends a handled branch in
+- [RESOLVED 2026-10-13] **The fallback-redraw guard is still "anything queued", not "this handler
+  queued it".** Fixed: the shell keeps a damage generation, bumped by every
+  `RequestRedrawRect` (non-empty, even one a pending full redraw absorbs) and
+  `RequestFullRedraw`. `EnsureRedraw(mark, fallback)` repaints only when the
+  generation still equals a `MarkDamage()` taken before dispatch. The mouse
+  handlers mark on entry and re-mark past their own pre-dispatch damage (the
+  menu-capture hover cards, the cursor resolve, the motion path's tooltip and
+  hover rects before the chrome/panel dispatch); the menu-capture branch now runs
+  its fallback BEFORE requesting the hidden hover cards. The key coordinator marks
+  on `HandleKeyDown` entry (`Operations::damage_generation` replaced
+  `has_pending_redraw`). A handler-wrapper helper was not needed: the mark is a
+  local, so the 80 call sites only gained an argument. Regression:
+  `WorkspaceShell/TreeRepaintsWhenUnrelatedDamageIsQueued` (wheel and key halves,
+  each confirmed failing with the old guard). Original note: Every input path ends a handled branch in
   `EnsureRedraw(Request<Surface>Redraw)` (102 call sites), which repaints the
   surface only when no damage is pending. The intent is "the handler already
   asked for something more precise", but the guard cannot tell the handler's own

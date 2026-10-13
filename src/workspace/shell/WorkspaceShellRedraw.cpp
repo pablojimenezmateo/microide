@@ -185,6 +185,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
 void WorkspaceShell::RequestFullRedraw() {
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceFullRedrawRequests);
   InvalidateCursorKindFingerprint();
+  ++damage_generation_;
   pending_render_invalidation_.full = true;
   pending_render_invalidation_.rects.clear();
   QueueEditorHoverRefresh();
@@ -204,7 +205,12 @@ void WorkspaceShell::Notify(NotificationService::Request request) {
 }
 
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
-  if (pending_render_invalidation_.full || rect.w <= 0.0f || rect.h <= 0.0f) {
+  if (rect.w <= 0.0f || rect.h <= 0.0f) {
+    return;
+  }
+  // Counted even when a pending full redraw absorbs the rect: the caller asked.
+  ++damage_generation_;
+  if (pending_render_invalidation_.full) {
     return;
   }
   InvalidateCursorKindFingerprint();

@@ -26,7 +26,7 @@ KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state, PromptSta
       operations_(std::move(operations)) {}
 
 bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
-  const auto ensure_redraw = [this](auto request_redraw) { EnsureRedraw(request_redraw); };
+  key_damage_mark_ = operations_.damage_generation();
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
 
@@ -41,7 +41,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (prompts_.dirty_visible) {
     const bool handled = HandleDirtyPromptKeyDown(event, modifiers);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_prompt_redraw(); });
+      EnsureRedraw([this]() { operations_.request_prompt_redraw(); });
     }
     return handled;
   }
@@ -50,7 +50,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   // it decided. Each arm used to spell that out for itself.
   const auto menu_surface_key = [&](bool handled) {
     if (handled) {
-      ensure_redraw([this]() { operations_.request_chrome_redraw(); });
+      EnsureRedraw([this]() { operations_.request_chrome_redraw(); });
     }
     return handled;
   };
@@ -75,7 +75,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (prompts_.surface_visible) {
     const bool handled = HandlePromptSurfaceKeyDown(event);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_prompt_redraw(); });
+      EnsureRedraw([this]() { operations_.request_prompt_redraw(); });
     }
     return handled;
   }
@@ -93,7 +93,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Variables) {
     if (HandleDebugVariablesKeyDown(event, modifiers)) {
-      ensure_redraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
   }
@@ -103,7 +103,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Watch) {
     if (HandleDebugWatchKeyDown(event, modifiers)) {
-      ensure_redraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
   }
@@ -114,14 +114,14 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::CallStack) {
     if (HandleDebugCallStackKeyDown(event)) {
-      ensure_redraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
   }
   if (state_.surface.focus == FocusTarget::DebugPane &&
       state_.debug_pane.mode == DebugPaneMode::Breakpoints) {
     if (HandleDebugBreakpointsKeyDown(event)) {
-      ensure_redraw([this]() { operations_.request_window_redraw(); });
+      EnsureRedraw([this]() { operations_.request_window_redraw(); });
       return true;
     }
   }
@@ -132,20 +132,20 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     return true;
   }
   if (HandleSurfaceNavigationKeyDown(event, modifiers)) {
-    ensure_redraw([this]() { operations_.request_window_redraw(); });
+    EnsureRedraw([this]() { operations_.request_window_redraw(); });
     return true;
   }
   if (state_.surface.focus == FocusTarget::Overlay) {
     const bool handled = HandleOverlayKeyDown(event, modifiers);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_overlay_redraw(); });
+      EnsureRedraw([this]() { operations_.request_overlay_redraw(); });
     }
     return handled;
   }
   if (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible) {
     const bool handled = HandleSidebarKeyDown(event, modifiers);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_sidebar_redraw(); });
+      EnsureRedraw([this]() { operations_.request_sidebar_redraw(); });
     }
     return handled;
   }
@@ -164,12 +164,12 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
       // carries over between pages.
       const int page = std::max(1, operations_.bottom_panel_visible_rows() - 1);
       operations_.scroll_bottom_panel_rows(event.key == SDLK_PAGEUP ? -page : page);
-      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
       return true;
     }
     const bool handled = operations_.text_input_handle_terminal_key_down(event, modifiers);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
     }
     return handled;
   }
@@ -177,28 +177,28 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
       state_.panel.content != PanelContentKind::None) {
     const bool handled = HandleBottomPanelKeyDown(event);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      EnsureRedraw([this]() { operations_.request_bottom_panel_content_redraw(); });
     }
     return handled;
   }
   if (state_.surface.focus == FocusTarget::Editor && active_compare_tab) {
     const bool handled = HandleCompareKeyDown(event, modifiers);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_focused_editor_redraw(); });
+      EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
     }
     return handled;
   }
   if (state_.surface.focus == FocusTarget::Editor && active_merge_tab) {
     const bool handled = HandleMergeKeyDown(event, modifiers);
     if (handled) {
-      ensure_redraw([this]() { operations_.request_focused_editor_redraw(); });
+      EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
     }
     return handled;
   }
 
   const bool handled = HandleDefaultEditorKeyDown(event, modifiers);
   if (handled) {
-    ensure_redraw([this]() { operations_.request_focused_editor_redraw(); });
+    EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
   }
   return handled;
 }
@@ -672,7 +672,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
       context_.current_project_state, context_.prompts, context_.menu_state,
       notification_service_,
       KeyInputCoordinator::Operations{
-          .has_pending_redraw = [this]() { return pending_render_invalidation_.HasDamage(); },
+          .damage_generation = [this]() { return MarkDamage(); },
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },

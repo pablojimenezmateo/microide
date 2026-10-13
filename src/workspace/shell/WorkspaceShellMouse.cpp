@@ -28,6 +28,9 @@ namespace microide::workspace {
 
 bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseButtonDown");
+  // Reassigned past each step that queues damage of its own before a handler
+  // runs, so a handler's fallback answers only to what that handler requested.
+  DamageMark mark = MarkDamage();
   if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_MIDDLE &&
       event.button.button != SDL_BUTTON_RIGHT) {
     return false;
@@ -50,11 +53,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (MenuSurfaceCapturingMouse()) {
     invalidate_menu_blocked_hover_visuals();
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
+    mark = MarkDamage();
     if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
-      EnsureRedraw([this]() { RequestChromeRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
       return true;
     }
-    EnsureRedraw([this]() { RequestChromeRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
     return true;
   }
 
@@ -81,7 +85,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         ActionCoordinator(MakeActionContext()).Execute(action->id, action->args,
                                                        ActionSource::Command);
       }
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
   }
@@ -118,7 +122,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
       std::string error_message;
       ExecuteCommandName(command, args, ActionSource::Command, &error_message);
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
   }
@@ -143,14 +147,15 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       const editor::SelectionRange range = visible_hover_popup->diagnostic->range;
       active_editor_hover_target_.reset();
       assist_service_.ShowCodeActionsOverlay(nullptr, &range);
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
     return true;
   }
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+  mark = MarkDamage();
 
   if (context_.prompts.dirty_visible) {
     const SDL_FRect dialog = ComputeDirtyPromptRect(*window_rect);
@@ -159,11 +164,11 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       if (Contains(buttons[i], event.button.x, event.button.y)) {
         context_.prompts.dirty.selected_action = static_cast<int>(i);
         ConfirmDirtyPrompt();
-        EnsureRedraw([this]() { RequestPromptRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
         return true;
       }
     }
-    EnsureRedraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
     return true;
   }
 
@@ -177,15 +182,15 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         if (event.button.button == SDL_BUTTON_LEFT) {
           ConfirmPromptSurface();
         }
-        EnsureRedraw([this]() { RequestPromptRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
         return true;
       }
     }
     if (HandleSingleLineInputMouseDown(event, layout)) {
-      EnsureRedraw([this]() { RequestPromptRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
       return true;
     }
-    EnsureRedraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
     return true;
   }
 
@@ -196,7 +201,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       case TextInputSurface::SidebarSearchInclude:
       case TextInputSurface::SidebarSearchExclude:
       case TextInputSurface::CommitSubject:
-        EnsureRedraw([this]() { RequestSidebarRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
         break;
       case TextInputSurface::FileFinder:
       case TextInputSurface::BufferSearch:
@@ -204,10 +209,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       case TextInputSurface::BufferReplaceReplace:
       case TextInputSurface::ProjectSearchOverlay:
       case TextInputSurface::CommitPicker:
-        EnsureRedraw([this]() { RequestOverlayRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
         break;
       default:
-        EnsureRedraw([this]() { RequestWindowRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
         break;
     }
     return true;
@@ -226,7 +231,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   selection_autoscroll::Disarm(context_.interaction_state);
 
   if (HandleSettingsOverlayButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
     return true;
   }
 
@@ -239,6 +244,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }();
   if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
     if (MenuSurfaceCapturingMouse()) {
+      // The fallback first: the hover cards the opened menu now hides are not
+      // the handler's damage and must not stand in for it.
+      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
       if (blocked_tooltip.has_value()) {
         RequestRedrawRect(blocked_tooltip->rect);
       }
@@ -246,9 +254,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         RequestRedrawRect(*blocked_editor_hover_popup_rect);
       }
       UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y), false);
-      EnsureRedraw([this]() { RequestChromeRedraw(); });
     } else {
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
     }
     return true;
   }
@@ -260,7 +267,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           Contains(status_item.rect, event.button.x, event.button.y)) {
         std::string error_message;
         ExecuteCommandName(status_item.item.command, {}, ActionSource::Command, &error_message);
-        EnsureRedraw([this]() { RequestChromeRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
         return true;
       }
     }
@@ -287,13 +294,13 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         std::string error_message;
         ExecuteCommandName(lens->command, {}, ActionSource::Command, &error_message);
       }
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
     if (editor_blame_overlay_service_.LineAtPosition(static_cast<float>(event.button.x),
                                                      static_cast<float>(event.button.y)) != nullptr) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
-      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
       return true;
     }
   }
@@ -329,7 +336,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           kWorkspaceDefaultRightPaneWidth, window_width, resolved_sidebar_width);
       ClearDragState();
       NoteLayoutInputsChanged();
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
     context_.interaction_state.drag_target = DragTarget::RightPaneDivider;
@@ -349,7 +356,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                                                                    divider.boundary);
           ClearDragState();
           NoteLayoutInputsChanged();
-          EnsureRedraw([this]() { RequestWindowRedraw(); });
+          EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
           return true;
         }
         context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
@@ -361,30 +368,30 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   if (MakeDebugPaneMouseCoordinator().HandleButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestDebugPaneRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestDebugPaneRedraw(); });
     return true;
   }
 
   if (MakePanelMouseCoordinator().HandleResizeButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
   if (MakeSidebarMouseCoordinator().HandleButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestSidebarRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestSidebarRedraw(); });
     return true;
   }
 
   {
     util::PerformanceTrace::Scope tab_scope("WorkspaceShell::HandleMouseButtonDown::Tabs");
     if (HandleTabMouseButtonDown(event, layout)) {
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
   }
 
   if (MakePanelMouseCoordinator().HandleButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -395,7 +402,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       Contains(layout.editor_surface, event.button.x, event.button.y)) {
     SyncActiveEditorTab();
     if (MakeEditorMouseCoordinator().HandleGutterContextMenu(event, layout)) {
-      EnsureRedraw([this]() { RequestChromeRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
       return true;
     }
   }
@@ -509,7 +516,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       ResetCaretBlink();
     }
     context_.current_project_state.surface.focus = FocusTarget::Editor;
-    EnsureRedraw([this, retargeted_cursor]() {
+    EnsureRedraw(mark, [this, retargeted_cursor]() {
       RequestChromeRedraw();
       if (retargeted_cursor) {
         RequestFocusedEditorRedraw();
@@ -526,7 +533,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (ActiveTabIsCompare()) {
     const bool handled = MakeCompareMouseCoordinator().HandleButtonDown(event, layout);
     if (handled) {
-      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }
@@ -534,7 +541,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   if (ActiveTabIsMerge()) {
     const bool handled = MakeMergeMouseCoordinator().HandleButtonDown(event, layout);
     if (handled) {
-      EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
     }
     return handled;
   }
@@ -542,7 +549,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   // Floating debug control bar sits over the top-right of the editor; intercept
   // its clicks before the editor coordinator turns them into text selection.
   if (HandleDebugToolbarButtonDown(event, layout)) {
-    EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
     return true;
   }
 
@@ -599,7 +606,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
                 .Execute(ActionId::RemoteReconnect, {welcome_model->remote.host}, ActionSource::Menu);
             break;
         }
-        EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+        EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
         return true;
       }
     }
@@ -608,7 +615,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   util::PerformanceTrace::Scope editor_scope("WorkspaceShell::HandleMouseButtonDown::Editor");
   const bool handled = MakeEditorMouseCoordinator().HandleButtonDown(event, layout);
   if (handled) {
-    EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
   }
   return handled;
 }
@@ -680,27 +687,28 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
 bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleMouseButtonUp");
   UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
+  const DamageMark mark = MarkDamage();
 
   if (context_.prompts.dirty_visible) {
-    EnsureRedraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
     return true;
   }
   if (context_.prompts.surface_visible) {
-    EnsureRedraw([this]() { RequestPromptRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestPromptRedraw(); });
     return true;
   }
 
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.tab_drag.kind != TabDragKind::None) {
     if (HandleTabMouseButtonUp(event)) {
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
       return true;
     }
-    EnsureRedraw([this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
     return true;
   }
 
   if (MakePanelMouseCoordinator().HandleButtonUp(event)) {
-    EnsureRedraw([this]() { RequestBottomPanelRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
     return true;
   }
 
@@ -716,7 +724,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
       context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
       context_.interaction_state.drag_target == DragTarget::SettingsPickerScrollbar) {
     ClearDragState();
-    EnsureRedraw([this]() { RequestOverlayRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestOverlayRedraw(); });
     return true;
   }
   if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {
@@ -724,7 +732,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     context_.interaction_state.drag_target = DragTarget::None;
     context_.interaction_state.single_line_drag_surface = TextInputSurface::None;
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
-    RequestSingleLineDragSurfaceRedraw(surface);
+    RequestSingleLineDragSurfaceRedraw(mark, surface);
     return true;
   }
   if (context_.interaction_state.drag_target != DragTarget::None) {
@@ -734,7 +742,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     context_.interaction_state.text_drag_has_drop = false;
     selection_autoscroll::Disarm(context_.interaction_state);
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
-    EnsureRedraw([this]() { RequestWindowRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
     return true;
   }
   const bool was_selecting = context_.interaction_state.mouse_selecting;
@@ -749,7 +757,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   selection_autoscroll::Disarm(context_.interaction_state);
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
-    EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
+    EnsureRedraw(mark, [this]() { RequestEditorSurfaceRedraw(); });
   }
   return was_selecting || finished_text_drag;
 }
