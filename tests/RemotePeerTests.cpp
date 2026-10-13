@@ -94,6 +94,17 @@ void TestHelloRoundTripsAndValidates() {
 
 // Only a release both sides can order triggers a server update, and only toward
 // a newer one: an older editor must never downgrade a host.
+// Raising kMinProtocolVersion is the one change that makes an editor upgrade
+// END a host's terminals (the older server is refused instead of kept serving;
+// design § 6.12). This pins it so a raise is a reviewed decision: update the
+// number here only together with a CHANGELOG line saying upgrades restart host
+// servers.
+void TestMinimumProtocolVersionIsADeliberateChoice() {
+  Expect(remote::kMinProtocolVersion == 3,
+         "kMinProtocolVersion changed: an upgrade now restarts host servers (and ends their "
+         "terminals) -- say so in CHANGELOG.md, then update this pin");
+}
+
 void TestReleaseOrderingIsNumericAndRefusesTheUnparseable() {
   Expect(remote::ReleaseIsOlder("2.12.0", "2.13.0"), "a minor bump is newer");
   Expect(remote::ReleaseIsOlder("2.9.0", "2.10.0"), "numerically, not as text");
@@ -297,6 +308,8 @@ void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
           TestHeartbeatAnswerResetsMissesAndMeasuresRtt);
   AddTest(tests, "RemotePeer/HelloRoundTripsAndValidates", TestHelloRoundTripsAndValidates);
   AddTest(tests, "RemotePeer/CompatibilityNamesBothReleases", TestCompatibilityNamesBothReleases);
+  AddTest(tests, "RemotePeer/MinimumProtocolVersionIsADeliberateChoice",
+          TestMinimumProtocolVersionIsADeliberateChoice);
   AddTest(tests, "RemotePeer/ReleaseOrderingIsNumericAndRefusesTheUnparseable",
           TestReleaseOrderingIsNumericAndRefusesTheUnparseable);
 #if defined(__unix__) || defined(__APPLE__)
