@@ -33,6 +33,32 @@ std::string TerminalLineText(const terminal::TerminalLine& line) {
   return TerminalLineSliceText(line, 0, line.cells.size(), true);
 }
 
+// The cell under (x, y) in a laid-out terminal pane whose visible lines start at
+// `first_row`. A template so it can take the shell's private LogSurfaceLayout.
+template <typename Layout>
+std::optional<TerminalSelectionPoint> CellInPaneLayout(int x, int y, const Layout& panel_layout,
+                                                       const std::vector<terminal::TerminalLine>& lines,
+                                                       std::size_t first_row, float char_width) {
+  if (lines.empty() || panel_layout.line_height <= 0.0f || y < panel_layout.text_y ||
+      y >= panel_layout.content_rect.y + panel_layout.content_rect.h) {
+    return std::nullopt;
+  }
+  const int local_row =
+      static_cast<int>((static_cast<float>(y) - panel_layout.text_y) / panel_layout.line_height);
+  if (local_row < 0 || local_row >= panel_layout.scroll.visible_rows) {
+    return std::nullopt;
+  }
+  const std::size_t row = std::min<std::size_t>(first_row + static_cast<std::size_t>(local_row),
+                                                first_row + lines.size() - 1);
+  const float local_x = std::max(0.0f, static_cast<float>(x) - panel_layout.text_x);
+  const std::size_t column = static_cast<std::size_t>(
+      std::max(0L, std::lround(local_x / std::max(1.0f, char_width))));
+  return TerminalSelectionPoint{
+      .row = row,
+      .column = std::min(column, lines[row - first_row].cells.size()),
+  };
+}
+
 std::string FirstLine(std::string_view text) {
   const std::size_t newline = text.find('\n');
   return std::string(text.substr(0, newline));
@@ -468,17 +494,23 @@ int WorkspaceShell::BottomPanelScrollRow(std::size_t line_count, int visible_row
 }
 
 std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, float y) const {
-  const auto* terminal_tab = ActiveTerminalPane();
-  if (terminal_tab == nullptr) {
-    return std::nullopt;
-  }
-
-  const std::size_t line_count = terminal_tab->session.LineCount();
+  // The pane under the point, not the active one: a link in any pane of the tab
+  // hovers and resolves (VS Code's split terminals).
+  const TerminalTabState* tab = context_.current_project_state.active_terminal_tab();
   const auto layout_state = CurrentWorkspaceLayout();
-  if (!layout_state.has_value()) {
+  if (tab == nullptr || !BottomPanelShowsTerminal() || !layout_state.has_value()) {
     return std::nullopt;
   }
-  const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(*layout_state, line_count);
+  const TerminalPaneRectsLayout pane_rects = tab->PaneRects(BottomPanelContentRect(*layout_state));
+  const std::size_t pane_index = TerminalPaneIndexAt(pane_rects, x, y);
+  if (pane_index >= tab->pane_count()) {
+    return std::nullopt;
+  }
+  const TerminalPaneState* terminal_tab = tab->panes[pane_index].get();
+  const std::size_t line_count = terminal_tab->session.LineCount();
+  const LogSurfaceLayout panel_layout =
+      ComputeTerminalPaneLogLayout(pane_rects.panes[pane_index], layout_state->bottom_panel.h,
+                                   *terminal_tab, line_count);
   const std::size_t first_row =
       static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
   const std::size_t visible_rows =
@@ -506,8 +538,8 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
   }
   const std::vector<terminal::TerminalLine>& lines = *lines_ptr;
   const auto position =
-      TerminalSelectionPointAt(static_cast<int>(std::lround(x)),
-                                        static_cast<int>(std::lround(y)), lines, first_row);
+      CellInPaneLayout(static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y)),
+                       panel_layout, lines, first_row, terminal_text_renderer_.CharWidth());
   if (!position.has_value() || position->row < first_row ||
       position->row - first_row >= lines.size()) {
     return std::nullopt;
@@ -531,7 +563,8 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
         ++end;
       }
       return TerminalLinkHit{.target = std::move(uri),
-                             .span = {.row = position->row, .begin_column = begin, .end_column = end}};
+                             .span = {.row = position->row, .begin_column = begin, .end_column = end},
+                             .pane = pane_index};
     }
   }
   const std::string line_text = TerminalLineText(hit_line);
@@ -540,7 +573,8 @@ std::optional<TerminalLinkHit> WorkspaceShell::TerminalLinkAtPoint(float x, floa
     return TerminalLinkHit{.target = std::move(link.target),
                            .span = {.row = position->row,
                                     .begin_column = TerminalByteOffsetToColumn(hit_line, link.begin),
-                                    .end_column = TerminalByteOffsetToColumn(hit_line, link.end)}};
+                                    .end_column = TerminalByteOffsetToColumn(hit_line, link.end)},
+                           .pane = pane_index};
   };
   if (auto url = TerminalUrlAtColumn(line_text, target_byte); url.has_value()) {
     return hit(std::move(*url));
@@ -831,29 +865,8 @@ WorkspaceShell::TerminalSelectionPointAt(
   if (!layout_state.has_value()) {
     return std::nullopt;
   }
-  const WorkspaceLayout layout = *layout_state;
-  const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(layout, lines.size());
-  if (panel_layout.line_height <= 0.0f || y < panel_layout.text_y ||
-      y >= panel_layout.content_rect.y + panel_layout.content_rect.h) {
-    return std::nullopt;
-  }
-
-  const int local_row =
-      static_cast<int>((static_cast<float>(y) - panel_layout.text_y) / panel_layout.line_height);
-  if (local_row < 0 || local_row >= panel_layout.scroll.visible_rows) {
-    return std::nullopt;
-  }
-
-  const std::size_t row =
-      std::min<std::size_t>(first_row + static_cast<std::size_t>(local_row),
-                            first_row + lines.size() - 1);
-  const float local_x = std::max(0.0f, static_cast<float>(x) - panel_layout.text_x);
-  const std::size_t column = static_cast<std::size_t>(
-      std::max(0L, std::lround(local_x / std::max(1.0f, terminal_text_renderer_.CharWidth()))));
-  return TerminalSelectionPoint{
-      .row = row,
-      .column = std::min(column, lines[row - first_row].cells.size()),
-  };
+  return CellInPaneLayout(x, y, ComputeBottomPanelLogLayout(*layout_state, lines.size()), lines,
+                          first_row, terminal_text_renderer_.CharWidth());
 }
 
 std::optional<WorkspaceShell::TerminalSelectionPoint>

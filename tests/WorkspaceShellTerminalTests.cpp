@@ -2149,6 +2149,44 @@ void TestWorkspaceShellTerminalPaneClickActivatesAndWheelScrollsUnderThePointer(
          "scrolling is not focusing");
 }
 
+// A link in an INACTIVE pane hovers and underlines too (VS Code's split
+// terminals); moving onto another pane's text clears it. A right-click acts on
+// the pane under the pointer, so it activates that pane first.
+void TestWorkspaceShellTerminalInactivePaneLinkHoversAndRightClickActivates() {
+  SplitTerminalFixture fixture;
+  WorkspaceShell& shell = fixture.shell;
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::TerminalSplit, {}),
+         "split");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1, "new pane active");
+  auto& left_session = WorkspaceShellTestAccess::TerminalPaneSession(shell, 0);
+  TerminalSessionTestAccess::Reset(left_session, 24, 60);
+  TerminalSessionTestAccess::AppendOutput(left_session, "go to https://example.com/x now");
+  auto& right_session = WorkspaceShellTestAccess::TerminalPaneSession(shell, 1);
+  TerminalSessionTestAccess::Reset(right_session, 24, 60);
+  TerminalSessionTestAccess::AppendOutput(right_session, "plain text only");
+
+  const SDL_FPoint url = WorkspaceShellTestAccess::TerminalPaneCellPoint(shell, 0, 0, 12);
+  const auto link = WorkspaceShellTestAccess::TerminalLinkAtPoint(shell, url.x, url.y);
+  Expect(link.has_value() && link->pane == 0 && link->target == "https://example.com/x",
+         "the link in the inactive pane resolves from that pane's lines");
+  (void)SendMouseMotion(shell, url.x, url.y, 0);
+  const auto hovered = WorkspaceShellTestAccess::TerminalPaneHoveredLink(shell, 0);
+  Expect(hovered.has_value() && hovered->begin_column == 6 && hovered->end_column == 27,
+         "the inactive pane underlines its link");
+  Expect(!WorkspaceShellTestAccess::TerminalPaneHoveredLink(shell, 1).has_value(),
+         "the active pane underlines nothing");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 1, "hovering is not focusing");
+
+  const SDL_FPoint plain = WorkspaceShellTestAccess::TerminalPaneCellPoint(shell, 1, 0, 2);
+  (void)SendMouseMotion(shell, plain.x, plain.y, 0);
+  Expect(!WorkspaceShellTestAccess::TerminalPaneHoveredLink(shell, 0).has_value(),
+         "moving to another pane clears the underline");
+
+  Expect(SendMouseDown(shell, url.x, url.y, SDL_BUTTON_RIGHT), "a right-click is handled");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(shell) == 0,
+         "a right-click activates the pane it lands on");
+}
+
 void TestWorkspaceShellTerminalPaneDividerDragResizesAndDoubleClickResets() {
   SplitTerminalFixture fixture;
   WorkspaceShell& shell = fixture.shell;
@@ -2590,6 +2628,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts);
   AddTest(tests, "WorkspaceShell/TerminalOwnsGlobalControlChords",
           TestWorkspaceShellTerminalOwnsGlobalControlChords);
+  AddTest(tests, "WorkspaceShell/TerminalInactivePaneLinkHoversAndRightClickActivates",
+          TestWorkspaceShellTerminalInactivePaneLinkHoversAndRightClickActivates);
   AddTest(tests, "WorkspaceShell/TerminalSkipShellSettingEditsTheSet",
           TestWorkspaceShellTerminalSkipShellSettingEditsTheSet);
   AddTest(tests, "WorkspaceShell/TerminalCtrlSlashReachesTheShell",

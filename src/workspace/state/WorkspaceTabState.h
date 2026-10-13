@@ -540,6 +540,7 @@ struct TerminalLinkSpan {
 struct TerminalLinkHit {
   std::string target;  // a URL, or a file:// link with an #L<line>:<col> fragment
   TerminalLinkSpan span;
+  std::size_t pane = 0;  // which pane of the active tab the link is in
 };
 
 struct TerminalPaneState {

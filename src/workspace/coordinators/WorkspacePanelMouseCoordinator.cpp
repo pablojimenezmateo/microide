@@ -74,13 +74,14 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // Terminal panes first: a press on a divider starts (or, double-clicked,
   // resets) its drag, and a press in a pane other than the active one activates
   // it BEFORE anything below reads "the active pane" — so the scrollbar grab and
-  // the selection anchor that follow land in the pane the user pressed.
-  if (event.button.button == SDL_BUTTON_LEFT && operations_.bottom_panel_visible() &&
-      state_.panel.content == PanelContentKind::Terminal &&
+  // the selection anchor that follow land in the pane the user pressed. Every
+  // button activates (VS Code's): a middle-click pastes into, and a right-click's
+  // menu acts on, the pane under the pointer.
+  if (operations_.bottom_panel_visible() && state_.panel.content == PanelContentKind::Terminal &&
       Contains(operations_.bottom_panel_content_rect(layout), event.button.x, event.button.y)) {
     const float x = static_cast<float>(event.button.x);
     const float y = static_cast<float>(event.button.y);
-    if (operations_.terminal_pane_divider_at) {
+    if (event.button.button == SDL_BUTTON_LEFT && operations_.terminal_pane_divider_at) {
       if (const auto divider = operations_.terminal_pane_divider_at(layout, x, y);
           divider.has_value()) {
         if (event.button.clicks >= 2) {
@@ -523,21 +524,31 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
     }
   }
 
-  // The link under the pointer is underlined while it is (VS Code's terminal).
-  // Only over the terminal's body: the hit-test reads the pane's lines.
-  if (auto* terminal_tab = ActivePanelTerminalPane()) {
-    std::optional<TerminalLinkSpan> hovered;
+  // The link under the pointer is underlined while it is (VS Code's terminal), in
+  // whichever pane of the tab it is -- not only the active one. Only over the
+  // terminal's body: the hit-test reads the pane's lines.
+  if (TerminalTabState* tab = state_.active_terminal_tab();
+      tab != nullptr && ActivePanelTerminalPane() != nullptr) {
+    std::optional<TerminalLinkHit> link;
     if (operations_.bottom_panel_visible()) {
       if (const auto layout = operations_.current_workspace_layout();
           layout.has_value() &&
           Contains(operations_.bottom_panel_content_rect(*layout), event.motion.x, event.motion.y)) {
-        if (const auto link = operations_.terminal_link_at_point(event.motion.x, event.motion.y)) {
-          hovered = link->span;
-        }
+        link = operations_.terminal_link_at_point(event.motion.x, event.motion.y);
       }
     }
-    if (hovered != terminal_tab->hovered_link) {
-      terminal_tab->hovered_link = hovered;
+    bool changed = false;
+    for (std::size_t i = 0; i < tab->pane_count(); ++i) {
+      std::optional<TerminalLinkSpan> hovered;
+      if (link.has_value() && link->pane == i) {
+        hovered = link->span;
+      }
+      if (hovered != tab->panes[i]->hovered_link) {
+        tab->panes[i]->hovered_link = hovered;
+        changed = true;
+      }
+    }
+    if (changed) {
       return true;  // the bottom panel repaints
     }
   }

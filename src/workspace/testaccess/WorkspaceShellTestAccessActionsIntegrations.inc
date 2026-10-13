@@ -787,6 +787,30 @@
     const auto* pane = shell.ActiveTerminalPane();
     return pane != nullptr ? pane->hovered_link : std::nullopt;
   }
+  // Pane `index`'s underlined link, active or not.
+  static std::optional<TerminalLinkSpan> TerminalPaneHoveredLink(const WorkspaceShell& shell,
+                                                                 std::size_t index) {
+    const auto* tab = shell.context_.current_project_state.active_terminal_tab();
+    return tab != nullptr && index < tab->pane_count() ? tab->panes[index]->hovered_link
+                                                       : std::nullopt;
+  }
+  // The centre of a cell in pane `index` of the active tab, active or not.
+  static SDL_FPoint TerminalPaneCellPoint(WorkspaceShell& shell, std::size_t index,
+                                          std::size_t row, std::size_t column) {
+    const auto& tab = *shell.context_.current_project_state.active_terminal_tab();
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto rects = tab.PaneRects(microide::workspace::BottomPanelContentRect(layout));
+    const auto panel_layout = shell.ComputeTerminalPaneLogLayout(
+        rects.panes[index], layout.bottom_panel.h, *tab.panes[index],
+        tab.panes[index]->session.LineCount());
+    return SDL_FPoint{
+        .x = panel_layout.text_x +
+             static_cast<float>(column) * std::max(1.0f, shell.terminal_text_renderer_.CharWidth()) +
+             1.0f,
+        .y = panel_layout.text_y + static_cast<float>(row) * panel_layout.line_height +
+             panel_layout.line_height * 0.5f,
+    };
+  }
   static std::optional<TerminalLinkHit> TerminalLinkAtPoint(const WorkspaceShell& shell, float x,
                                                        float y) {
     return shell.TerminalLinkAtPoint(x, y);

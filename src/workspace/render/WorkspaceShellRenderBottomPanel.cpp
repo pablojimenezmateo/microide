@@ -582,7 +582,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         }
         draw_terminal_line(pane_layout.text_x, line_y, pane_layout.text_width, terminal_lines[snapshot_index],
                   static_cast<std::size_t>(index));
-        if (is_active && pane->hovered_link.has_value() &&
+        if (pane->hovered_link.has_value() &&
             pane->hovered_link->row == static_cast<std::size_t>(index)) {
           // The hovered link's underline, in the text's own colour.
           const TerminalLinkSpan& link = *pane->hovered_link;

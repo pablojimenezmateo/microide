@@ -110,11 +110,12 @@ new terminal behaviour lands there.
 - fill remaining ANSI gaps only where real usage justifies them
 - keep resize, redraw, scrollback, and wake behaviour robust under long-running
   output
-- open on the pane model: an inactive pane's URL hover and selection (only the
-  active pane links and selects today), a persisted `panel.maximized` and pane
+- open on the pane model: a persisted `panel.maximized` and pane
   layout across sessions (terminals themselves are not restored, so the flag
   would come back over a fresh default terminal). (The bell indicator next to
-  the activity dot shipped 2026-10-08.)
+  the activity dot shipped 2026-10-08. Links in an inactive pane hover and
+  underline, and every mouse button activates the pane it lands on, since
+  2026-10-13; a press already activated before selecting.)
 
 ### 4. Editor correctness and scale
 
