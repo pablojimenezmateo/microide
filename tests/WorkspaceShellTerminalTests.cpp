@@ -1111,6 +1111,32 @@ void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
          "Ctrl+P still opens Go to File from the terminal");
 }
 
+// `terminal.commands_to_skip_shell` reaches the dispatch: handing Ctrl+P back to
+// the shell sends ^P, and listing open-file makes Ctrl+O skip it.
+void TestWorkspaceShellTerminalSkipShellSettingEditsTheSet() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "terminal.commands_to_skip_shell",
+                                                   "-file-finder, open-file"),
+         "the setting is accepted");
+
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_P, SDL_KMOD_CTRL),
+         "Ctrl+P in the terminal is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, '\x10'),
+         "Ctrl+P reaches the shell once the user takes it off the skip list");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "Go to File did not open");
+
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  (void)WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_O, SDL_KMOD_CTRL);
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "Ctrl+O skips the shell once the user lists open-file");
+}
+
 void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2564,6 +2590,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts);
   AddTest(tests, "WorkspaceShell/TerminalOwnsGlobalControlChords",
           TestWorkspaceShellTerminalOwnsGlobalControlChords);
+  AddTest(tests, "WorkspaceShell/TerminalSkipShellSettingEditsTheSet",
+          TestWorkspaceShellTerminalSkipShellSettingEditsTheSet);
   AddTest(tests, "WorkspaceShell/TerminalCtrlSlashReachesTheShell",
           TestWorkspaceShellTerminalCtrlSlashReachesTheShell);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",

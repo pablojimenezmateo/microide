@@ -90,6 +90,9 @@ class PluginHost {
     std::string key_chord;      // "Ctrl+S" format
     std::string context;        // "global", "editor", "sidebar", "terminal"
     std::string plugin_id;
+    // A "global" binding that still fires while a terminal has focus (see
+    // workspace::KeybindingSpec::skips_terminal). The manifest's `skips_terminal`.
+    bool skips_terminal = false;
   };
 
   struct ContributedSettingSpec {

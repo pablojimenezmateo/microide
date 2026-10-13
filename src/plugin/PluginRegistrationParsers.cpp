@@ -289,6 +289,7 @@ bool ParseKeybindingRegistration(lua_State* state,
       .key_chord = std::move(*key_opt),
       .context = std::move(context),
       .plugin_id = plugin_id,
+      .skips_terminal = lua_interop::ReadBoolField(state, table_index, "skips_terminal"),
   };
   if (error_message != nullptr) {
     error_message->clear();

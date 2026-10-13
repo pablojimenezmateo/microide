@@ -5,6 +5,7 @@
 
 #include "editor/GutterIconRegistry.h"
 
+#include "workspace/SettingFlags.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 // Completes the types the shell holds by unique_ptr, for ~WorkspaceShell.
@@ -122,11 +123,14 @@ std::vector<std::string> WorkspaceShell::DocumentedCommandUsages() {
 
 const std::vector<ResolvedKeybinding>& WorkspaceShell::ResolvedKeybindings() const {
   if (resolved_keybindings_reload_generation_ != reload_plugins_invocation_count_ ||
+      resolved_keybindings_settings_revision_ != settings_store_.Revision() ||
       resolved_keybindings_disabled_ids_snapshot_ != context_.disabled_keybinding_ids) {
-    resolved_keybindings_cache_ =
-        ResolveKeybindings(plugin_runtime_.Host(), context_.disabled_keybinding_ids);
+    resolved_keybindings_cache_ = ResolveKeybindings(
+        plugin_runtime_.Host(), context_.disabled_keybinding_ids,
+        ParseSkipShellList(GetSettingValue("terminal.commands_to_skip_shell")));
     resolved_keybindings_disabled_ids_snapshot_ = context_.disabled_keybinding_ids;
     resolved_keybindings_reload_generation_ = reload_plugins_invocation_count_;
+    resolved_keybindings_settings_revision_ = settings_store_.Revision();
   }
   return resolved_keybindings_cache_;
 }

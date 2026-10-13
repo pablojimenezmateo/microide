@@ -139,8 +139,14 @@ Global keybinding fires there only when its spec sets `skips_terminal`
 control bytes (nano's Write Out, readline's back-char), while Ctrl+P, Ctrl+Shift+P,
 Ctrl+`, Ctrl+J, zoom, the debug F-keys and the Ctrl+Shift view chords stay with the
 IDE. Terminal-context bindings (Ctrl+F find, Alt+←/→ pane focus, Ctrl+PgUp/PgDn,
-Ctrl+Shift+\ split) always fire. Plugin Global bindings do not skip the terminal; a
-plugin that wants a chord there contributes it with `context = "terminal"`.
+Ctrl+Shift+\ split) always fire. The user edits the set with
+`terminal.commands_to_skip_shell` — keybinding ids, comma-separated; `id` adds one,
+`-id` hands a default back to the shell (`-file-finder` makes Ctrl+P a ^P). A plugin
+Global binding skips the terminal when its `ctx.keybindings.add` table sets
+`skips_terminal = true` (the setting overrides that too); otherwise a plugin that
+wants a chord there contributes it with `context = "terminal"`. The edits apply
+before conflicts resolve, so a chord handed back to the shell is free for a
+plugin's terminal binding.
 
 Plain printable text continues to flow through `SDL_EVENT_TEXT_INPUT`, which is
 correct for the common Kitty flag set (disambiguate / report-event-types) where

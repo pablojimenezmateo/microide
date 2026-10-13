@@ -401,6 +401,20 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .suggests_fonts = true,
       },
       SettingSpec{
+          .id = "terminal.commands_to_skip_shell",
+          .label = "Terminal Commands to Skip Shell",
+          // VS Code's terminal.integrated.commandsToSkipShell, by keybinding id.
+          .description =
+              "Keybindings that still run while a terminal has focus instead of "
+              "reaching the shell, by id (comma-separated). Prefix an id with '-' "
+              "to give a default one (Ctrl+P, F5, Ctrl+`) back to the shell.",
+          .type = SettingType::String,
+          .scope = SettingScope::User,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Terminal",
+      },
+      SettingSpec{
           .id = "terminal.scrollback_lines",
           .label = "Terminal Scrollback",
           .description = "Maximum number of lines retained in terminal scrollback (200..100000).",

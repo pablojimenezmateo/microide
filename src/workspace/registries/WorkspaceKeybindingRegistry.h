@@ -55,16 +55,23 @@ struct ResolvedKeybinding {
   bool skips_terminal = false;  // see KeybindingSpec::skips_terminal
 };
 
+// `skip_shell` edits which Global bindings fire while a terminal holds focus
+// (VS Code's `terminal.integrated.commandsToSkipShell`): an entry naming a binding
+// id adds it to the skip-shell set, `-id` removes it; the last entry for an id
+// wins. It is applied before conflicts are resolved, so a plugin's terminal chord
+// can take a key the user has handed back to the shell.
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const plugin::PluginHost& plugin_host,
-    const std::vector<std::string>& disabled_ids = {});
+    const std::vector<std::string>& disabled_ids = {},
+    const std::vector<std::string>& skip_shell = {});
 
 // Pure seam taking the contributed keybindings directly. This is the per-reload
 // rebuild whose cost the per-kind contribution cap bounds (TD-2026-07-17-019);
 // the perf harness measures it at the cap through this overload.
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
-    const std::vector<std::string>& disabled_ids = {});
+    const std::vector<std::string>& disabled_ids = {},
+    const std::vector<std::string>& skip_shell = {});
 // First binding for (key, modifiers) active in `context`. A Global binding is
 // active in every context except Terminal, where it must also skip the terminal.
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,

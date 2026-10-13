@@ -333,6 +333,53 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
   Expect(!has_ctrl_p, "a terminal Ctrl+P contribution collides with the skip-shell Go to File");
 }
 
+// `terminal.commands_to_skip_shell` edits the skip-shell set by binding id, and a
+// plugin's Global binding opts in through its manifest flag. The edits apply
+// before conflicts resolve, so a chord handed back to the shell can be taken by
+// a plugin's terminal binding.
+void TestResolveKeybindingsSkipShellOverrides() {
+  const auto id_at = [](const std::vector<microide::workspace::ResolvedKeybinding>& bindings, SDL_Keycode key,
+                        SDL_Keymod mods) {
+    const auto* found = FindKeybinding(bindings, key, mods, KeybindingContext::Terminal);
+    return found == nullptr ? std::string("<none>") : found->id;
+  };
+  const auto edited = ResolveKeybindings(std::vector<PluginHost::ContributedKeybinding>{}, {},
+                                         {"-file-finder", "open-file"});
+  Expect(id_at(edited, SDLK_P, SDL_KMOD_CTRL) == "<none>",
+         "'-file-finder' gives Ctrl+P back to the shell");
+  Expect(id_at(edited, SDLK_O, SDL_KMOD_CTRL) == "open-file",
+         "'open-file' makes Ctrl+O skip the shell");
+  Expect(id_at(edited, SDLK_F5, SDL_KMOD_NONE) == "debug-continue",
+         "unlisted defaults keep skipping the shell");
+  const auto last_wins = ResolveKeybindings(std::vector<PluginHost::ContributedKeybinding>{}, {},
+                                            {"-file-finder", "file-finder"});
+  Expect(id_at(last_wins, SDLK_P, SDL_KMOD_CTRL) == "file-finder",
+         "the last entry for an id wins");
+
+  std::vector<PluginHost::ContributedKeybinding> contributed(3);
+  contributed[0].id = "plugin.global-skips";
+  contributed[0].key_chord = "Ctrl+Alt+Y";
+  contributed[0].action = "plugin.cmd";
+  contributed[0].skips_terminal = true;
+  contributed[1].id = "plugin.global-stays";
+  contributed[1].key_chord = "Ctrl+Alt+U";
+  contributed[1].action = "plugin.cmd";
+  contributed[2].id = "plugin.terminal-ctrl-p";
+  contributed[2].key_chord = "Ctrl+P";
+  contributed[2].action = "plugin.term";
+  contributed[2].context = "terminal";
+  const auto with_plugin = ResolveKeybindings(contributed, {}, {"-file-finder"});
+  Expect(id_at(with_plugin, SDLK_Y, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "plugin.global-skips",
+         "a plugin Global binding with skips_terminal fires in a terminal");
+  Expect(id_at(with_plugin, SDLK_U, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "<none>",
+         "a plugin Global binding without it yields to the terminal");
+  Expect(id_at(with_plugin, SDLK_P, SDL_KMOD_CTRL) == "plugin.terminal-ctrl-p",
+         "a terminal Ctrl+P contribution takes the chord the user gave back to the shell");
+  const auto overridden = ResolveKeybindings(contributed, {}, {"-plugin.global-skips"});
+  Expect(id_at(overridden, SDLK_Y, SDL_KMOD_CTRL | SDL_KMOD_ALT) == "<none>",
+         "the setting overrides a plugin's own skips_terminal");
+}
+
 // ---------------------------------------------------------------------------
 // Settings registry – built-ins
 // ---------------------------------------------------------------------------
@@ -1459,6 +1506,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
           TestResolveKeybindingsFindLeftCtrlMatch);
   AddTest(tests, "ContributionRegistry/FindKeybindingTerminalOwnsGlobalChordsUnlessSkipped",
           TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped);
+  AddTest(tests, "ContributionRegistry/ResolveKeybindingsSkipShellOverrides",
+          TestResolveKeybindingsSkipShellOverrides);
   AddTest(tests, "SettingsRegistry/BuiltinsNonEmpty", TestSettingsRegistryBuiltinsNonEmpty);
   AddTest(tests, "SettingsRegistry/FindById", TestSettingsRegistryFindById);
   AddTest(tests, "SettingsRegistry/WrapSpecAndEnumValues",

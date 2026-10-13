@@ -42,6 +42,31 @@ inline constexpr std::size_t kMaxExcludeGlobsRules = 4096;
 // up to `kMaxExcludeGlobsBytes` and at most `kMaxExcludeGlobsRules` globs are kept;
 // when either cap trims input, `*truncated` (when provided) is set so callers can
 // surface that the exclude set is incomplete.
+// Calls `entry(std::string&&)` for each entry of a list-valued setting: newline-
+// and/or comma-separated, whitespace trimmed, empty and comment (#) entries
+// dropped. `entry` returns false to stop early. The one splitter every list
+// setting uses, so they all accept the same spelling.
+template <typename Entry>
+inline void ForEachSettingListEntry(std::string_view text, Entry&& entry) {
+  for (const std::string_view line : util::SplitLineViews(text)) {
+    std::size_t start = 0;
+    while (start <= line.size()) {
+      const std::size_t comma = line.find(',', start);
+      const std::string_view piece = comma == std::string_view::npos
+                                         ? line.substr(start)
+                                         : line.substr(start, comma - start);
+      std::string trimmed = util::TrimAsciiWhitespace(piece);
+      if (!trimmed.empty() && trimmed.front() != '#' && !entry(std::move(trimmed))) {
+        return;
+      }
+      if (comma == std::string_view::npos) {
+        break;
+      }
+      start = comma + 1;
+    }
+  }
+}
+
 [[nodiscard]] inline std::vector<std::string> ParseExcludeGlobs(std::string_view text,
                                                                 bool* truncated = nullptr) {
   std::vector<std::string> globs;
@@ -54,30 +79,30 @@ inline constexpr std::size_t kMaxExcludeGlobsRules = 4096;
       *truncated = true;
     }
   }
-  for (const std::string_view line : util::SplitLineViews(text)) {
-    std::size_t start = 0;
-    while (start <= line.size()) {
-      const std::size_t comma = line.find(',', start);
-      const std::string_view piece = comma == std::string_view::npos
-                                         ? line.substr(start)
-                                         : line.substr(start, comma - start);
-      std::string trimmed = util::TrimAsciiWhitespace(piece);
-      if (!trimmed.empty() && trimmed.front() != '#') {
-        if (globs.size() >= kMaxExcludeGlobsRules) {
-          if (truncated != nullptr) {
-            *truncated = true;
-          }
-          return globs;
-        }
-        globs.push_back(std::move(trimmed));
+  ForEachSettingListEntry(text, [&](std::string&& glob) {
+    if (globs.size() >= kMaxExcludeGlobsRules) {
+      if (truncated != nullptr) {
+        *truncated = true;
       }
-      if (comma == std::string_view::npos) {
-        break;
-      }
-      start = comma + 1;
+      return false;
     }
-  }
+    globs.push_back(std::move(glob));
+    return true;
+  });
   return globs;
+}
+
+// `terminal.commands_to_skip_shell`: keybinding ids, `-id` to remove a default.
+[[nodiscard]] inline std::vector<std::string> ParseSkipShellList(
+    const std::optional<std::string>& value) {
+  std::vector<std::string> ids;
+  if (value.has_value()) {
+    ForEachSettingListEntry(*value, [&](std::string&& id) {
+      ids.push_back(std::move(id));
+      return true;
+    });
+  }
+  return ids;
 }
 
 }  // namespace microide::workspace

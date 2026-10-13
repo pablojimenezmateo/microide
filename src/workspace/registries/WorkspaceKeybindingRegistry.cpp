@@ -1070,19 +1070,31 @@ const KeybindingSpec* FindBuiltinKeybindingByKey(SDL_Keycode key,
 
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const plugin::PluginHost& plugin_host,
-    const std::vector<std::string>& disabled_ids) {
-  return ResolveKeybindings(plugin_host.ContributedKeybindings(), disabled_ids);
+    const std::vector<std::string>& disabled_ids,
+    const std::vector<std::string>& skip_shell) {
+  return ResolveKeybindings(plugin_host.ContributedKeybindings(), disabled_ids, skip_shell);
 }
 
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
-    const std::vector<std::string>& disabled_ids) {
+    const std::vector<std::string>& disabled_ids,
+    const std::vector<std::string>& skip_shell) {
   std::vector<ResolvedKeybinding> result;
   const auto builtin_specs = BuiltinKeybindingSpecs();
   result.reserve(builtin_specs.size() + contributed.size());
 
   const auto is_disabled = [&](std::string_view id) {
     return std::find(disabled_ids.begin(), disabled_ids.end(), id) != disabled_ids.end();
+  };
+  // The binding's own default, then every user entry for it in order.
+  const auto skips_terminal = [&](std::string_view id, bool skips) {
+    for (const std::string& entry : skip_shell) {
+      const bool removes = entry.starts_with('-');
+      if (std::string_view(entry).substr(removes ? 1 : 0) == id) {
+        skips = !removes;
+      }
+    }
+    return skips;
   };
 
   for (const KeybindingSpec& spec : builtin_specs) {
@@ -1100,7 +1112,7 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     }
     rb.command_name = spec.command_name;
     rb.from_plugin = false;
-    rb.skips_terminal = spec.skips_terminal;
+    rb.skips_terminal = skips_terminal(spec.id, spec.skips_terminal);
     result.push_back(std::move(rb));
   }
 
@@ -1139,14 +1151,16 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
         binding_bits(existing.context, existing.skips_terminal);
   }
   const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
-                                           KeybindingContext context) {
+                                           KeybindingContext context, bool skips) {
     const auto it = resolved_contexts.find(chord_key(key, NormalizedKeyModifiers(mods)));
     if (it == resolved_contexts.end()) {
       return false;
     }
     const std::uint8_t taken = it->second;
     if (context == KeybindingContext::Global) {
-      return true;
+      // A Global overlaps every context but Terminal, and Terminal only when it
+      // skips the shell (the rule BindingMatches applies).
+      return (taken & ~kTerminalBit) != 0 || (skips && (taken & kTerminalBit) != 0);
     }
     if (context == KeybindingContext::Terminal) {
       return (taken & (kTerminalBit | kGlobalSkipsTerminalBit)) != 0;
@@ -1175,7 +1189,9 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     // chord that collides with an already-resolved binding (a built-in or an earlier
     // plugin) would be advertised in Help/Settings yet silently dispatch the winner
     // instead. Skip the shadowed contribution so the UI never shows a dead binding.
-    if (conflicts_with_resolved(key, mods, context)) {
+    const bool skips = context == KeybindingContext::Global &&
+                       skips_terminal(contrib.id, contrib.skips_terminal);
+    if (conflicts_with_resolved(key, mods, context, skips)) {
       continue;
     }
     const ActionSpec* spec = FindWorkspaceActionByCommand(contrib.action);
@@ -1190,9 +1206,10 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.modifiers = mods;
     rb.context = context;
     rb.from_plugin = true;
+    rb.skips_terminal = skips;
     // Keep the conflict index in sync so a later plugin binding that collides
     // with this accepted one is skipped, matching the old rescan-of-result.
-    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))] |= binding_bits(context, false);
+    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))] |= binding_bits(context, skips);
     result.push_back(std::move(rb));
   }
 

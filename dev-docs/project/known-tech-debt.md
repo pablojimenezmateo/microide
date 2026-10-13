@@ -427,7 +427,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-13-337 — `EnsureRedraw` trusts any damage already queued; terminal skip-shell set is not user-configurable. [OPEN — first item RESOLVED 2026-10-13]
+### TD-2026-10-13-337 — `EnsureRedraw` trusts any damage already queued; terminal skip-shell set is not user-configurable. [RESOLVED 2026-10-13]
 
 Found fixing the stale project tree (fc6ed506) and the terminal key routing
 (d6c4bdd8). Both of those shipped; what they left:
@@ -460,7 +460,16 @@ Found fixing the stale project tree (fc6ed506) and the terminal key routing
   after (e.g. a `DispatchWithFallbackRedraw(handler, fallback)` helper replacing
   the `if (Handler()) { EnsureRedraw(...); return true; }` shape). Mechanical but
   wide; worth doing the next time a surface goes stale this way.
-- **The terminal's skip-shell set is fixed at build time.** `skips_terminal` on
+- [RESOLVED 2026-10-13] **The terminal's skip-shell set is fixed at build time.**
+  Fixed: `terminal.commands_to_skip_shell` (user scope, comma-separated keybinding
+  ids; `-id` removes a default, last entry wins) feeds `ResolveKeybindings`, whose
+  cache now also keys on the settings revision; a plugin's `ctx.keybindings.add`
+  takes `skips_terminal = true`. Overrides apply before the conflict index, and the
+  index's Global rule now matches `BindingMatches` exactly (a non-skipping Global no
+  longer "collides" with a Terminal-only chord). List settings share one splitter,
+  `ForEachSettingListEntry`, with `project.files_exclude`. Regression:
+  `ContributionRegistry/ResolveKeybindingsSkipShellOverrides`,
+  `WorkspaceShell/TerminalSkipShellSettingEditsTheSet`. Original note: `skips_terminal` on
   the built-in specs is VS Code's `terminal.integrated.commandsToSkipShell`
   default, but there is no setting to add or remove commands from it (VS Code's
   list setting, or its `terminal.integrated.sendKeybindingsToShell` escape hatch),
