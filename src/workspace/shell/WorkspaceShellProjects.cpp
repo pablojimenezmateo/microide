@@ -82,7 +82,7 @@ ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
               [this]() {
                 if (!context_.current_project_state.root.empty() &&
                     context_.current_project_state.terminal_tabs.empty()) {
-                  MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
+                  MakeTerminalPanelService().OpenTerminalsForProjectInit();
                 }
               },
           .activate_current_tab_after_state_load =

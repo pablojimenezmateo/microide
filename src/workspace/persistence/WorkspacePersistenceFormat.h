@@ -15,6 +15,7 @@
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/git/BranchReviewPersistence.h"
 #include "workspace/git/CommitWorkflowPersistence.h"
+#include "workspace/state/TerminalLayoutRecord.h"
 #include "workspace/state/WorkspaceSidebarState.h"
 
 namespace microide::workspace {
@@ -114,6 +115,9 @@ struct PersistedProjectSessionState {
   std::string selected_tree_path;  // relative to root; empty if none
   int sidebar_scroll_row = 0;
   std::string sidebar_view_id;
+  // The bottom panel (additive): maximized, and the terminal layout to revive.
+  bool panel_maximized = false;
+  TerminalLayoutRecord terminal_layout;
 };
 
 struct PersistedWorkspaceSessionState {

@@ -401,6 +401,20 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .suggests_fonts = true,
       },
       SettingSpec{
+          .id = "terminal.restore_sessions",
+          .label = "Restore Terminals",
+          // VS Code's terminal.integrated.enablePersistentSessions (revive half).
+          .description =
+              "Reopen a project's terminals as they were: the same tabs and splits, "
+              "each a fresh shell in the directory it was in.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Terminal",
+      },
+      SettingSpec{
           .id = "terminal.commands_to_skip_shell",
           .label = "Terminal Commands to Skip Shell",
           // VS Code's terminal.integrated.commandsToSkipShell, by keybinding id.

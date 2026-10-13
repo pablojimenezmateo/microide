@@ -110,12 +110,13 @@ new terminal behaviour lands there.
 - fill remaining ANSI gaps only where real usage justifies them
 - keep resize, redraw, scrollback, and wake behaviour robust under long-running
   output
-- open on the pane model: a persisted `panel.maximized` and pane
-  layout across sessions (terminals themselves are not restored, so the flag
-  would come back over a fresh default terminal). (The bell indicator next to
-  the activity dot shipped 2026-10-08. Links in an inactive pane hover and
-  underline, and every mouse button activates the pane it lands on, since
-  2026-10-13; a press already activated before selecting.)
+- the pane model is complete as of 2026-10-13: the panel is revived across
+  sessions (tabs, splits, shares, each shell's directory, maximized; fresh
+  processes, as VS Code's revive), a split inherits its pane's directory, links
+  in an inactive pane hover, and every mouse button activates the pane it lands
+  on. What VS Code has beyond that is process persistence (a terminal surviving
+  a window reload with its scrollback), which is a host-daemon feature here:
+  `microide-server` already keeps host terminals across a disconnect.
 
 ### 4. Editor correctness and scale
 

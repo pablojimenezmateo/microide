@@ -33,9 +33,10 @@ class TerminalPanelService {
     // a real process.
     // `launcher` null = the project's; otherwise the pane records it (and the
     // label prefix) for relaunches and splits.
+    // `cwd` empty = the project root.
     std::function<std::unique_ptr<TerminalPaneState>(
         std::string command, std::shared_ptr<const platform::ProcessLauncher> launcher,
-        std::string label_prefix)>
+        std::string label_prefix, std::filesystem::path cwd)>
         make_started_pane;
     // Restart an exited pane's session in place with its recorded cwd/command.
     // False when the launch failed.
@@ -43,6 +44,8 @@ class TerminalPanelService {
     std::function<void()> note_layout_inputs_changed;
     std::function<void()> request_window_redraw;
     std::function<void()> request_bottom_panel_redraw;
+    // `terminal.restore_sessions`: revive the saved terminal layout at project init.
+    std::function<bool()> revive_terminals;
   };
 
   TerminalPanelService(ProjectWorkspaceState& state, Operations operations);
@@ -63,9 +66,20 @@ class TerminalPanelService {
   // failed. Works with no project open: a host terminal needs none.
   bool OpenTerminalOn(std::shared_ptr<const platform::ProcessLauncher> launcher,
                       std::string label_prefix, std::string command = {});
-  // The default terminal at project init. In placeholder-terminal test mode it
-  // installs a bare, unstarted pane (no shell spawn); otherwise OpenTerminal.
-  void OpenDefaultTerminalForProjectInit();
+  // The terminals at project init: the restored session's layout revived (fresh
+  // shells in the same tabs, splits and directories, VS Code's revive), else the
+  // default terminal. In placeholder-terminal test mode the default is a bare,
+  // unstarted pane (no shell spawn); revived panes start as placeholders.
+  void OpenTerminalsForProjectInit();
+  // What a session saves: every tab's panes that run through the project's
+  // launcher (a terminal opened on another host is that host's to keep), each
+  // with its shell's current directory. Tabs left with no such pane are dropped.
+  TerminalLayoutRecord CaptureLayout() const;
+  // Where `pane`'s shell is now, in the editor's tree (OSC 7, else the process's
+  // own cwd for a local shell; a host's path mapped back to the mirror), or the
+  // directory it was launched in when that is unknown. Not for hot paths: the
+  // local fallback is a readlink.
+  std::filesystem::path PaneWorkingDirectory(const TerminalPaneState& pane) const;
   // Closes a whole tab, every pane included.
   void CloseTerminalTab(std::size_t index);
   bool MoveActiveTerminalTabTo(std::size_t index);

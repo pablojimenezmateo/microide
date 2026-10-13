@@ -6,6 +6,7 @@
 #include "workspace/persistence/PersistenceService.h"
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
+#include "workspace/TerminalPaneLayout.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
 #include <cmath>
@@ -425,6 +426,50 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
          "a group past the cap must be skipped before decoding, not fail the whole record");
   Expect(decoded.groups.size() == microide::workspace::kMaxEditorGroups,
          "only as many editor groups as the editor area can hold are kept");
+}
+
+// The terminal layout round-trips: tabs, panes (cwd + command), shares, the
+// active tab and pane, the maximized panel. A forged session cannot revive more
+// tabs or panes than the caps.
+void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
+  using microide::workspace::TerminalPaneRecord;
+  using microide::workspace::TerminalTabRecord;
+  PersistedProjectSessionState session;
+  session.panel_maximized = true;
+  session.terminal_layout.active_tab = 1;
+  session.terminal_layout.tabs.push_back(TerminalTabRecord{
+      .panes = {TerminalPaneRecord{.cwd = "/work/a", .command = ""},
+                TerminalPaneRecord{.cwd = "/work/b", .command = "htop"}},
+      .weights = {0.3f, 0.7f},
+      .active_pane = 1});
+  session.terminal_layout.tabs.push_back(
+      TerminalTabRecord{.panes = {TerminalPaneRecord{.cwd = "", .command = ""}}, .weights = {1.0f}});
+  std::vector<std::byte> record;
+  Expect(EncodeProjectSessionRecord(session, &record), "encode");
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(record, &decoded), "decode");
+  Expect(decoded.panel_maximized, "the maximized panel round-trips");
+  const auto& layout = decoded.terminal_layout;
+  Expect(layout.active_tab == 1 && layout.tabs.size() == 2, "both tabs and the active one");
+  Expect(layout.tabs[0].panes.size() == 2 && layout.tabs[0].panes[1].cwd == "/work/b" &&
+             layout.tabs[0].panes[1].command == "htop" && layout.tabs[0].active_pane == 1,
+         "panes keep their directory, command and the active pane");
+  Expect(layout.tabs[0].weights.size() == 2 && std::fabs(layout.tabs[0].weights[0] - 0.3f) < 1e-6f,
+         "the shares round-trip");
+
+  PersistedProjectSessionState forged;
+  TerminalTabRecord wide;
+  for (std::size_t i = 0; i < microide::workspace::kMaxTerminalPanes + 3; ++i) {
+    wide.panes.push_back(TerminalPaneRecord{.cwd = "/p" + std::to_string(i), .command = ""});
+  }
+  for (std::size_t i = 0; i < microide::workspace::kMaxRevivedTerminalTabs + 4; ++i) {
+    forged.terminal_layout.tabs.push_back(wide);
+  }
+  Expect(EncodeProjectSessionRecord(forged, &record), "encode the forged layout");
+  Expect(DecodeProjectSessionRecord(record, &decoded), "an over-cap layout still decodes");
+  Expect(decoded.terminal_layout.tabs.size() == microide::workspace::kMaxRevivedTerminalTabs &&
+             decoded.terminal_layout.tabs[0].panes.size() == microide::workspace::kMaxTerminalPanes,
+         "but only up to the tab and pane caps");
 }
 
 void TestPersistedStateProjectSessionDecodeHonorsTabCap() {
@@ -1491,6 +1536,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateConfigDedupesDisabledIds);
   AddTest(tests, "PersistedState/CommitDraftBodyBudget",
           TestPersistedStateCommitDraftBodyBudget);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionTerminalLayoutRoundTrips",
+          TestPersistedStateProjectSessionTerminalLayoutRoundTrips);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDecodeHonorsTabCap",
           TestPersistedStateProjectSessionDecodeHonorsTabCap);
   AddTest(tests, "PersistedStateRecord/ProjectSessionSkipsOverCapGroupsBeforeDecoding",

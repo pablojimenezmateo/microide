@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <string_view>
 
@@ -27,5 +28,9 @@ void IgnoreBrokenPipeSignal();
 // Test seam: overrides the platform reported by CurrentHostPlatform(). Always
 // compiled (the override defaults to unset, so production behavior is native).
 void SetHostPlatformOverrideForTesting(std::optional<HostPlatform> platform);
+
+// The current working directory of local process `pid` (/proc/<pid>/cwd), or
+// empty when it is unknown: no such process, not permitted, or not Linux.
+std::filesystem::path ProcessWorkingDirectory(int pid);
 
 }  // namespace microide::platform

@@ -576,6 +576,10 @@ bool PersistenceCoordinator::RestoreSessionState() {
     if (!persisted_session.sidebar_view_id.empty()) {
       state.sidebar.view_id = persisted_session.sidebar_view_id;
     }
+    // The panel comes back maximized if it was, and project init revives the
+    // terminals into it (TerminalPanelService::OpenTerminalsForProjectInit).
+    state.panel.maximized = persisted_session.panel_maximized;
+    state.terminal_layout_to_revive = std::move(persisted_session.terminal_layout);
   }
 
   {
@@ -635,6 +639,10 @@ void PersistenceCoordinator::SaveSessionState() {
   }
   persisted_session.sidebar_scroll_row = state.sidebar.scroll_row;
   persisted_session.sidebar_view_id = state.sidebar.view_id;
+  persisted_session.panel_maximized = state.panel.maximized;
+  if (operations_.capture_terminal_layout) {
+    persisted_session.terminal_layout = operations_.capture_terminal_layout();
+  }
 
   for (auto& group : state.editor_groups) {
     PersistedEditorGroupState persisted_group;

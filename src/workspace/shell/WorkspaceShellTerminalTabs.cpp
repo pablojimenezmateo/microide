@@ -71,14 +71,16 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
           .make_started_pane =
               [this, start_pane](std::string command,
                                  std::shared_ptr<const platform::ProcessLauncher> launcher,
-                                 std::string label_prefix) -> std::unique_ptr<TerminalPaneState> {
+                                 std::string label_prefix,
+                                 std::filesystem::path cwd) -> std::unique_ptr<TerminalPaneState> {
                 if (context_.current_project_state.root.empty() && launcher == nullptr) {
                   return nullptr;
                 }
                 auto pane = std::make_unique<TerminalPaneState>();
                 pane->launcher = std::move(launcher);
                 pane->label_prefix = std::move(label_prefix);
-                if (!start_pane(*pane, context_.current_project_state.root, command)) {
+                if (!start_pane(*pane, cwd.empty() ? context_.current_project_state.root : cwd,
+                                command)) {
                   return nullptr;
                 }
                 return pane;
@@ -90,6 +92,10 @@ TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
           .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_bottom_panel_redraw = [this]() { RequestBottomPanelRedraw(); },
+          .revive_terminals =
+              [this]() {
+                return SettingFlagEnabled(GetSettingValue("terminal.restore_sessions"), true);
+              },
       });
   return *glue_->terminal_panel_service;
 }

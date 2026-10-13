@@ -1,5 +1,7 @@
 #include "platform/HostPlatform.h"
 
+#include <string>
+
 #if !defined(_WIN32)
 #include <csignal>
 #endif
@@ -52,6 +54,22 @@ void IgnoreBrokenPipeSignal() {
 #if !defined(_WIN32)
   std::signal(SIGPIPE, SIG_IGN);
 #endif
+}
+
+std::filesystem::path ProcessWorkingDirectory(int pid) {
+#if defined(__linux__)
+  if (pid > 0) {
+    std::error_code error;
+    std::filesystem::path cwd =
+        std::filesystem::read_symlink("/proc/" + std::to_string(pid) + "/cwd", error);
+    if (!error) {
+      return cwd;
+    }
+  }
+#else
+  (void)pid;
+#endif
+  return {};
 }
 
 }  // namespace microide::platform

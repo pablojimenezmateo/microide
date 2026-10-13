@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "TerminalSessionTestAccess.h"
 #include "support/SoftwareCanvas.h"
 
 #include "platform/AppDirectories.h"
@@ -53,6 +54,77 @@ class ScopedSessionAppHomes {
   ScopedEnvVar localappdata_;
   ScopedEnvVar appdata_;
 };
+
+// The terminal panel comes back as it was (VS Code's revive): the same tabs and
+// splits, each a fresh shell in the directory it was in, the active tab and pane,
+// and the maximized panel. A split starts where the pane it splits is now.
+void TestWorkspaceShellTerminalLayoutRevivesAcrossSessions() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "readme\n");
+  WriteFile(root / "src" / "main.c", "int main;\n");
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+  using ActionId = WorkspaceShell::ActionId;
+
+  {
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, true, false), "the project opens");
+    Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) == 1, "with its default terminal");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalSplit, {}), "split");
+    // The new (active) pane's shell moves to src/ and says so (OSC 7).
+    TerminalSessionTestAccess::AppendOutput(
+        WorkspaceShellTestAccess::TerminalPaneSession(shell, 1),
+        "\x1b]7;file://localhost" + (root / "src").string() + "\x1b\\");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalSplit, {}),
+           "split the moved pane");
+    Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(shell) == root / "src",
+           "a split starts where the pane it splits is now");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalFocusPaneLeft, {}),
+           "back to the middle pane");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::Term, {}), "a second tab");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::TerminalPrev, {}),
+           "back to the split tab");
+    Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::PanelToggleMaximized, {}),
+           "maximize the panel");
+    WorkspaceShellTestAccess::SaveSessionState(shell);
+  }
+
+  WorkspaceShell restored;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(restored, root, true, false),
+         "the project reopens");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(restored) == 2, "both terminal tabs come back");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalTabIndex(restored) == 0, "on the tab that was active");
+  Expect(WorkspaceShellTestAccess::TerminalPaneCount(restored) == 3, "with its three panes");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneIndex(restored) == 1,
+         "and the pane that was active");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalPaneLaunchDirectory(restored) == root / "src",
+         "each shell starts in the directory it was in");
+  const std::vector<float> weights = WorkspaceShellTestAccess::TerminalPaneWeights(restored);
+  Expect(weights.size() == 3 && std::fabs(weights[0] - 0.5f) < 1e-4f &&
+             std::fabs(weights[1] - 0.25f) < 1e-4f,
+         "the splits keep their shares");
+  Expect(WorkspaceShellTestAccess::PanelMaximized(restored), "the panel comes back maximized");
+  Expect(WorkspaceShellTestAccess::PanelContent(restored) ==
+             WorkspaceShell::PanelContentKind::Terminal,
+         "showing the terminals");
+
+  // Off: the project opens with the one default terminal.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(restored, "terminal.restore_sessions", "false"),
+         "the setting is accepted");
+  WorkspaceShellTestAccess::SaveUserConfig(restored);
+  WorkspaceShellTestAccess::SaveSessionState(restored);  // what it revived, saved back
+  WorkspaceShell plain;
+  // The user config is restored by a launch's Initialize, as the setting would be.
+  Expect(plain.Initialize(root), "a fresh launch opens the project without reviving");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(plain) == 1 &&
+             WorkspaceShellTestAccess::TerminalPaneCount(plain) == 1,
+         "terminal.restore_sessions off opens the default terminal only");
+}
 
 void TestWorkspaceShellRestoreSessionPreservesBranchCompareState() {
   TemporaryDirectory temp_dir;
@@ -3214,6 +3286,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreRemapsActiveIndexAfterMissingProjectCulled);
   AddTest(tests, "WorkspaceShell/RestoredProjectTabBadgeColorsHydrateOnStartup",
           TestWorkspaceShellRestoredProjectTabBadgeColorsHydrateOnStartup);
+  AddTest(tests, "WorkspaceShell/TerminalLayoutRevivesAcrossSessions",
+          TestWorkspaceShellTerminalLayoutRevivesAcrossSessions);
   AddTest(tests, "WorkspaceShell/ShutdownPreservesDistinctWorkspaceProjectRoots",
           TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots);
 }

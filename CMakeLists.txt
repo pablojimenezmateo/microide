@@ -1591,6 +1591,13 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(DebugStateRecordFuzz)
 
+  add_executable(ProjectSessionRecordFuzz
+    src/persistence/PersistedRecord.cpp
+    src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp
+    tests/fuzz/ProjectSessionRecordFuzz.cpp
+  )
+  microide_configure_fuzz_target(ProjectSessionRecordFuzz)
+
   add_executable(PieceTreeEquivalenceFuzz
     src/editor/PieceTree.cpp
     tests/fuzz/PieceTreeEquivalenceFuzz.cpp

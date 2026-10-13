@@ -1,6 +1,7 @@
 #include "workspace/persistence/WorkspacePersistenceBinaryInternal.h"
 
 #include "util/PathMatch.h"
+#include "workspace/TerminalPaneLayout.h"
 
 namespace microide::workspace {
 
@@ -81,6 +82,77 @@ bool ReadSplitTree(PrimitiveReader& reader, EditorSplitTreeRecord* out) {
   return true;
 }
 
+bool EncodeTerminalTab(const TerminalTabRecord& tab, std::vector<std::byte>* out) {
+  out->clear();
+  if (!AppendRecord(TerminalTabTag::ActivePane,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, tab.active_pane); }, out)) {
+    return false;
+  }
+  for (const TerminalPaneRecord& pane : tab.panes) {
+    std::vector<std::byte> payload;
+    if (!AppendRecord(TerminalPaneTag::Cwd, [&](PrimitiveWriter& w) { return w.WritePath(pane.cwd); },
+                      &payload) ||
+        !AppendRecord(TerminalPaneTag::Command,
+                      [&](PrimitiveWriter& w) { return w.WriteString(pane.command); }, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(TerminalTabTag::Pane), payload, out)) {
+      return false;
+    }
+  }
+  for (const float weight : tab.weights) {
+    if (!AppendRecord(TerminalTabTag::Weight, [&](PrimitiveWriter& w) { return w.WriteF32(weight); },
+                      out)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Panes past kMaxTerminalPanes are dropped (with their weights, which then no
+// longer match and restore even) rather than failing the session.
+bool DecodeTerminalTab(std::span<const std::byte> input, TerminalTabRecord* tab) {
+  return ParseRecordStream<TerminalTabTag>(
+      input, [&](TerminalTabTag tag, std::span<const std::byte> payload) {
+        PrimitiveReader reader(payload);
+        switch (tag) {
+          case TerminalTabTag::ActivePane:
+            return ReadSize(reader, &tab->active_pane) && reader.remaining() == 0;
+          case TerminalTabTag::Pane: {
+            if (tab->panes.size() >= kMaxTerminalPanes) {
+              return true;
+            }
+            TerminalPaneRecord pane;
+            if (!ParseRecordStream<TerminalPaneTag>(
+                    payload, [&](TerminalPaneTag pane_tag, std::span<const std::byte> field) {
+                      PrimitiveReader field_reader(field);
+                      switch (pane_tag) {
+                        case TerminalPaneTag::Cwd:
+                          return field_reader.ReadPath(&pane.cwd) && field_reader.remaining() == 0;
+                        case TerminalPaneTag::Command:
+                          return field_reader.ReadString(&pane.command) &&
+                                 field_reader.remaining() == 0;
+                      }
+                      return true;
+                    })) {
+              return false;
+            }
+            tab->panes.push_back(std::move(pane));
+            return true;
+          }
+          case TerminalTabTag::Weight: {
+            float weight = 0.0f;
+            if (!reader.ReadF32(&weight) || reader.remaining() != 0) {
+              return false;
+            }
+            if (tab->weights.size() < kMaxTerminalPanes) {
+              tab->weights.push_back(weight);
+            }
+            return true;
+          }
+        }
+        return true;
+      });
+}
+
 }  // namespace
 
 bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
@@ -127,8 +199,20 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                     },
                     out) ||
       !AppendRecord(ProjectSessionTag::SidebarViewId,
-                    [&](PrimitiveWriter& w) { return w.WriteString(state.sidebar_view_id); }, out)) {
+                    [&](PrimitiveWriter& w) { return w.WriteString(state.sidebar_view_id); }, out) ||
+      !AppendRecord(ProjectSessionTag::PanelMaximized,
+                    [&](PrimitiveWriter& w) { return w.WriteBool(state.panel_maximized); }, out) ||
+      !AppendRecord(ProjectSessionTag::ActiveTerminalTab,
+                    [&](PrimitiveWriter& w) { return WriteSize(w, state.terminal_layout.active_tab); },
+                    out)) {
     return false;
+  }
+  for (const TerminalTabRecord& tab : state.terminal_layout.tabs) {
+    std::vector<std::byte> payload;
+    if (!EncodeTerminalTab(tab, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectSessionTag::TerminalTab), payload, out)) {
+      return false;
+    }
   }
 
   for (const auto& path : state.expanded_tree_paths) {
@@ -239,6 +323,26 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                  }
                  case ProjectSessionTag::SidebarViewId:
                    return reader.ReadString(&state->sidebar_view_id) && reader.remaining() == 0;
+                 case ProjectSessionTag::PanelMaximized:
+                   return reader.ReadBool(&state->panel_maximized) && reader.remaining() == 0;
+                 case ProjectSessionTag::ActiveTerminalTab:
+                   return ReadSize(reader, &state->terminal_layout.active_tab) &&
+                          reader.remaining() == 0;
+                 case ProjectSessionTag::TerminalTab: {
+                   // Checked before decoding, like Group: an over-cap tab is skipped
+                   // whole, never parsed.
+                   if (state->terminal_layout.tabs.size() >= kMaxRevivedTerminalTabs) {
+                     return true;
+                   }
+                   TerminalTabRecord tab;
+                   if (!DecodeTerminalTab(payload, &tab)) {
+                     return false;
+                   }
+                   if (!tab.panes.empty()) {
+                     state->terminal_layout.tabs.push_back(std::move(tab));
+                   }
+                   return true;
+                 }
                  case ProjectSessionTag::Group: {
                    // Check the group cap BEFORE decoding the payload. DecodeEditorGroup can
                    // parse up to 4096 tabs, each carrying a dirty-buffer snapshot up to the

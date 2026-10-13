@@ -52,6 +52,21 @@ drops the panel's resize handle and re-anchors the centred overlays to the panel
 editor, sidebar or debug pane takes focus (`SyncPanelMaximizedWithFocus`), and
 clears the active tab's activity dot (`NoteActiveTabShown`).
 
+**Across sessions** the panel is revived, as VS Code revives terminals: the
+project session records each tab's panes (their shell's current directory and
+launch command), the shares, the active tab and pane, and whether the panel was
+maximized (`TerminalLayoutRecord`, `state/TerminalLayoutRecord.h`;
+`ProjectSessionTag::TerminalTab`/`PanelMaximized`). At project init
+`TerminalPanelService::OpenTerminalsForProjectInit` starts a fresh shell per
+pane in that layout; the processes and their scrollback are not kept. A pane's
+current directory is OSC 7 when the shell reports it, else `/proc/<pid>/cwd` for
+a shell this machine runs (`platform::ProcessWorkingDirectory`), mapped back to
+the mirror for a remote project; a directory that is gone starts at the root. A
+terminal opened on another host is that host's to keep and is not recorded.
+`terminal.restore_sessions` (default on) turns the revive off. The same
+directory seeds a split: the new pane starts where the pane it splits is now
+(VS Code's `splitCwd: inherited`).
+
 ## Cell model
 
 `TerminalCell` (`src/terminal/TerminalCell.h`) is a trivially copyable POD so

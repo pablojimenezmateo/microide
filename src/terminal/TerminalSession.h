@@ -149,6 +149,8 @@ class TerminalSession {
   bool synchronized_output_active() const;
   // Current working directory advertised by the shell via OSC 7 (empty if none).
   std::filesystem::path reported_working_directory() const;
+  // The shell's process id on the machine that started it, or -1 when none runs.
+  int child_process_id() const { std::scoped_lock lock(mutex_); return child_pid_; }
   bool ConsumeWakeEvent();
   bool WantsMouseCapture() const;
   bool WantsMouseMotionCapture(bool buttons_down) const;

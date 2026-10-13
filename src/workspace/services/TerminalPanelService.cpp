@@ -1,8 +1,10 @@
 #include "workspace/services/TerminalPanelService.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
+#include "platform/HostPlatform.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/TabReorder.h"
 
@@ -74,7 +76,8 @@ void TerminalPanelService::OpenTerminal(std::string command, bool focus_terminal
   }
   const bool was_visible = PanelVisible();
   const bool panel_already_showing_terminal = state_.panel.content == PanelContentKind::Terminal;
-  std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(std::move(command), {}, {});
+  std::unique_ptr<TerminalPaneState> pane =
+      operations_.make_started_pane(std::move(command), {}, {}, {});
   if (pane == nullptr) {
     return;
   }
@@ -91,7 +94,7 @@ bool TerminalPanelService::OpenTerminalOn(std::shared_ptr<const platform::Proces
                                           std::string label_prefix, std::string command) {
   const bool was_visible = PanelVisible();
   std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
-      std::move(command), std::move(launcher), std::move(label_prefix));
+      std::move(command), std::move(launcher), std::move(label_prefix), {});
   if (pane == nullptr) {
     return false;
   }
@@ -103,7 +106,52 @@ bool TerminalPanelService::OpenTerminalOn(std::shared_ptr<const platform::Proces
   return true;
 }
 
-void TerminalPanelService::OpenDefaultTerminalForProjectInit() {
+void TerminalPanelService::OpenTerminalsForProjectInit() {
+  TerminalLayoutRecord layout = std::move(state_.terminal_layout_to_revive);
+  state_.terminal_layout_to_revive = {};
+  if (!layout.empty() && (!operations_.revive_terminals || operations_.revive_terminals())) {
+    for (TerminalTabRecord& record : layout.tabs) {
+      std::unique_ptr<TerminalTabState> tab;
+      for (TerminalPaneRecord& pane_record : record.panes) {
+        // A directory that is gone starts at the project root, as a fresh one does.
+        std::error_code error;
+        if (!pane_record.cwd.empty() && !std::filesystem::is_directory(pane_record.cwd, error)) {
+          pane_record.cwd.clear();
+        }
+        std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
+            std::move(pane_record.command), {}, {}, std::move(pane_record.cwd));
+        if (pane == nullptr) {
+          continue;
+        }
+        if (tab == nullptr) {
+          tab = MakeTerminalTab(std::move(pane));
+        } else {
+          (void)tab->InsertPane(tab->pane_count(), std::move(pane));  // capped by decode
+        }
+      }
+      if (tab == nullptr) {
+        continue;
+      }
+      // The saved shares only when they still describe these panes.
+      if (record.weights.size() == tab->pane_count() &&
+          std::all_of(record.weights.begin(), record.weights.end(),
+                      [](float w) { return std::isfinite(w) && w > 0.0f; })) {
+        tab->weights.clear();
+        for (const float weight : record.weights) {
+          tab->weights.push_back(std::max(weight, kTerminalPaneMinShare));
+        }
+        NormalizeTerminalPaneWeights(tab->weights);
+      }
+      tab->active_pane = std::min(record.active_pane, tab->pane_count() - 1);
+      state_.terminal_tabs.push_back(std::move(tab));
+    }
+    if (!state_.terminal_tabs.empty()) {
+      state_.active_terminal_tab_index = std::min(layout.active_tab, state_.terminal_tabs.size() - 1);
+      ShowTerminalContent(true);
+      operations_.note_layout_inputs_changed();
+      return;
+    }
+  }
   if (!terminal::UsePlaceholderTerminalsForTesting()) {
     OpenTerminal({}, true, false);
     return;
@@ -112,6 +160,56 @@ void TerminalPanelService::OpenDefaultTerminalForProjectInit() {
   state_.terminal_tabs.push_back(MakeTerminalTab(std::make_unique<TerminalPaneState>()));
   state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
   ShowTerminalContent(true);
+}
+
+TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {
+  TerminalLayoutRecord layout;
+  for (std::size_t t = 0; t < state_.terminal_tabs.size(); ++t) {
+    const TerminalTabState& tab = *state_.terminal_tabs[t];
+    TerminalTabRecord record;
+    bool all_panes_kept = true;
+    for (std::size_t p = 0; p < tab.pane_count(); ++p) {
+      const TerminalPaneState& pane = *tab.panes[p];
+      if (pane.launcher != nullptr) {
+        all_panes_kept = false;
+        continue;
+      }
+      if (p == tab.active_pane) {
+        record.active_pane = record.panes.size();
+      }
+      record.panes.push_back(
+          TerminalPaneRecord{.cwd = PaneWorkingDirectory(pane), .command = pane.launch_command});
+    }
+    if (record.panes.empty()) {
+      continue;
+    }
+    // A tab that lost a host pane keeps its panes, evenly: the shares were the
+    // whole row's.
+    if (all_panes_kept) {
+      record.weights.assign(tab.weights.begin(), tab.weights.end());
+    }
+    if (t == state_.active_terminal_tab_index) {
+      layout.active_tab = layout.tabs.size();
+    }
+    layout.tabs.push_back(std::move(record));
+  }
+  return layout;
+}
+
+std::filesystem::path TerminalPanelService::PaneWorkingDirectory(const TerminalPaneState& pane) const {
+  // OSC 7 when the shell sends it; else, for a shell this machine runs, its
+  // process's own cwd (bash sends no OSC 7 unless configured to).
+  const platform::ProcessLauncher& launcher =
+      pane.launcher != nullptr ? *pane.launcher : state_.launcher();
+  std::filesystem::path cwd = pane.session.reported_working_directory();
+  if (cwd.empty() && launcher.is_local()) {
+    cwd = platform::ProcessWorkingDirectory(pane.session.child_process_id());
+  }
+  // A host shell reports a host path; the editor's tree is the mirror.
+  if (!cwd.empty() && !launcher.is_local()) {
+    cwd = launcher.LocalPathFromHost(std::move(cwd));
+  }
+  return cwd.empty() ? pane.launch_working_directory : cwd;
 }
 
 void TerminalPanelService::CloseTerminalTab(std::size_t index) {
@@ -187,9 +285,14 @@ bool TerminalPanelService::SplitActivePane() {
   if (tab == nullptr || tab->full() || (state_.root.empty() && (active == nullptr || !active->launcher))) {
     return false;
   }
+  // The new pane starts where the one it splits is now (VS Code's default
+  // `terminal.integrated.splitCwd: inherited`). A host terminal's split starts
+  // where host terminals start: its directory is the host's, not the tree's.
   std::unique_ptr<TerminalPaneState> pane = operations_.make_started_pane(
       {}, active != nullptr ? active->launcher : nullptr,
-      active != nullptr ? active->label_prefix : std::string());
+      active != nullptr ? active->label_prefix : std::string(),
+      active != nullptr && active->launcher == nullptr ? PaneWorkingDirectory(*active)
+                                                       : std::filesystem::path());
   if (pane == nullptr) {
     return false;
   }

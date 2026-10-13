@@ -22,6 +22,7 @@
 #include "editor/WelcomeView.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/state/TerminalLayoutRecord.h"
 #include "workspace/registries/WorkspaceFileIconRegistry.h"
 #include "platform/ProcessLauncher.h"
 #include "project/DirectoryTree.h"
@@ -881,6 +882,9 @@ struct ProjectWorkspaceState {
   // side-by-side panes (see TerminalTabState).
   std::vector<std::unique_ptr<TerminalTabState>> terminal_tabs;
   std::size_t active_terminal_tab_index = 0;
+  // What the restored session's terminal panel looked like, waiting for project
+  // init to revive it (TerminalPanelService::OpenTerminalsForProjectInit).
+  TerminalLayoutRecord terminal_layout_to_revive;
 
   // Bounds-checked active terminal tab, or nullptr when there are none / the
   // stored index is stale. Mirrors clamped_focused_group_index()'s clamp-on-read

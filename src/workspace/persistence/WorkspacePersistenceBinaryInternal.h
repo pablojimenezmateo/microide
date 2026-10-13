@@ -123,6 +123,20 @@ enum class ProjectSessionTag : std::uint16_t {
   SelectedTreePath = 17,
   SidebarScrollRow = 18,
   SidebarViewId = 19,
+  PanelMaximized = 21,
+  TerminalTab = 22,         // repeated; one nested TerminalTabTag record per tab
+  ActiveTerminalTab = 23,
+};
+
+enum class TerminalTabTag : std::uint16_t {
+  ActivePane = 1,
+  Pane = 2,    // repeated; one nested TerminalPaneTag record per pane
+  Weight = 3,  // repeated; one f32 per pane, in pane order
+};
+
+enum class TerminalPaneTag : std::uint16_t {
+  Cwd = 1,
+  Command = 2,
 };
 
 enum class EditorGroupTag : std::uint16_t {

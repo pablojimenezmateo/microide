@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "workspace/services/ProjectCatalogService.h"
+#include "workspace/services/TerminalPanelService.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/coordinators/WorkspaceProjectCatalogCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -93,6 +94,7 @@ PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
           .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
           .debugger_enabled =
               [this]() { return SettingFlagEnabled(GetSettingValue("debug.enabled")); },
+          .capture_terminal_layout = [this]() { return MakeTerminalPanelService().CaptureLayout(); },
           .plugin_theme_names = [this]() { return theme_registry_.Names(); },
           .resolve_plugin_theme =
               [this](std::string_view id) { return theme_registry_.Resolve(id); },

@@ -436,7 +436,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     if (context_.current_project_state.terminal_tabs.empty()) {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
-      MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
+      MakeTerminalPanelService().OpenTerminalsForProjectInit();
     }
     {
       util::PerformanceTrace::Scope scope(
@@ -495,7 +495,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       if (context_.current_project_state.terminal_tabs.empty()) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
-        MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
+        MakeTerminalPanelService().OpenTerminalsForProjectInit();
       }
       {
         util::PerformanceTrace::Scope scope(
@@ -514,7 +514,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
   if (context_.current_project_state.terminal_tabs.empty()) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
-    MakeTerminalPanelService().OpenDefaultTerminalForProjectInit();
+    MakeTerminalPanelService().OpenTerminalsForProjectInit();
   }
   {
     util::PerformanceTrace::Scope scope(
