@@ -1,5 +1,9 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-13 (§ TD-2026-10-13-337 for the stale-tree / terminal-keyboard
+pass: the fallback-redraw guard that a cursor present could satisfy, and the
+terminal's fixed skip-shell set).
+
 Reviewed 2026-10-12 (§ TD-2026-10-12-336 for the remote-editing gap pass
 against VS Code's Remote-SSH: what shipped and what is left).
 
@@ -422,6 +426,35 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-13-337 — `EnsureRedraw` trusts any damage already queued; terminal skip-shell set is not user-configurable. [OPEN]
+
+Found fixing the stale project tree (fc6ed506) and the terminal key routing
+(d6c4bdd8). Both of those shipped; what they left:
+
+- **The fallback-redraw guard is still "anything queued", not "this handler
+  queued it".** Every input path ends a handled branch in
+  `EnsureRedraw(Request<Surface>Redraw)` (102 call sites), which repaints the
+  surface only when no damage is pending. The intent is "the handler already
+  asked for something more precise", but the guard cannot tell the handler's own
+  rects from unrelated damage queued earlier in the same event. The cursor present
+  was the instance that bit (now a `present` bit, not damage — see
+  `dev-docs/platform/wayland-stale-cursor.md`); the remaining pre-dispatch damage
+  sources are the menu-capture tooltip/hover-popup rects in
+  `HandleMouseButtonDown` and the focus-change rects
+  `WorkspaceShellBootstrapper` appends, none of which is known to precede a surface
+  mutation today. The structural fix is a damage generation counter bumped by
+  `RequestRedrawRect`/`RequestFullRedraw`, sampled before each handler and compared
+  after (e.g. a `DispatchWithFallbackRedraw(handler, fallback)` helper replacing
+  the `if (Handler()) { EnsureRedraw(...); return true; }` shape). Mechanical but
+  wide; worth doing the next time a surface goes stale this way.
+- **The terminal's skip-shell set is fixed at build time.** `skips_terminal` on
+  the built-in specs is VS Code's `terminal.integrated.commandsToSkipShell`
+  default, but there is no setting to add or remove commands from it (VS Code's
+  list setting, or its `terminal.integrated.sendKeybindingsToShell` escape hatch),
+  and a plugin's Global binding cannot opt in — it can only bind with
+  `context = "terminal"`. Nobody has asked yet; add a `terminal.commands_to_skip_shell`
+  list setting and a manifest flag if someone does.
 
 ### TD-2026-10-12-336 — remote projects: what the 2026-10-12 gap pass found and left. [OPEN]
 
