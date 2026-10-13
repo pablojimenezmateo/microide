@@ -132,6 +132,16 @@ Input is encoded by `FormatTerminalKeyPress`
   letters) are emitted in CSI-u form — this is what lets Claude/Codex bind
   Shift+Enter and similar.
 
+**Who gets the key.** A focused terminal owns the keyboard, as in VS Code: a
+Global keybinding fires there only when its spec sets `skips_terminal`
+(`WorkspaceKeybindingRegistry.cpp`, VS Code's
+`terminal.integrated.commandsToSkipShell`). So Ctrl+O/S/N/B/W/Z reach the PTY as
+control bytes (nano's Write Out, readline's back-char), while Ctrl+P, Ctrl+Shift+P,
+Ctrl+`, Ctrl+J, zoom, the debug F-keys and the Ctrl+Shift view chords stay with the
+IDE. Terminal-context bindings (Ctrl+F find, Alt+←/→ pane focus, Ctrl+PgUp/PgDn,
+Ctrl+Shift+\ split) always fire. Plugin Global bindings do not skip the terminal; a
+plugin that wants a chord there contributes it with `context = "terminal"`.
+
 Plain printable text continues to flow through `SDL_EVENT_TEXT_INPUT`, which is
 correct for the common Kitty flag set (disambiguate / report-event-types) where
 unmodified text is not escaped.

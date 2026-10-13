@@ -285,6 +285,54 @@ void TestResolveKeybindingsFindLeftCtrlMatch() {
          "left modifiers should resolve to the command palette shortcut");
 }
 
+// A Global binding yields to a focused terminal unless it skips the shell; a
+// Terminal-context binding and the skip-shell set still match there.
+void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
+  PluginHost host;
+  const auto bindings = ResolveKeybindings(host);
+  const auto id_at = [&](SDL_Keycode key, SDL_Keymod mods, KeybindingContext context) {
+    const auto* found = FindKeybinding(bindings, key, mods, context);
+    return found == nullptr ? std::string("<none>") : found->id;
+  };
+  Expect(id_at(SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Editor) == "open-file",
+         "Ctrl+O opens a file from the editor");
+  Expect(id_at(SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Sidebar) == "open-file",
+         "Ctrl+O opens a file from the sidebar");
+  Expect(id_at(SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "<none>",
+         "Ctrl+O belongs to the terminal");
+  Expect(id_at(SDLK_S, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "<none>",
+         "Ctrl+S belongs to the terminal");
+  Expect(id_at(SDLK_P, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "file-finder",
+         "Ctrl+P skips the shell");
+  Expect(id_at(SDLK_F5, SDL_KMOD_NONE, KeybindingContext::Terminal) == "debug-continue",
+         "F5 skips the shell");
+  Expect(id_at(SDLK_GRAVE, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "terminal-toggle",
+         "Ctrl+` skips the shell");
+  Expect(id_at(SDLK_F, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "terminal-find",
+         "a Terminal-context binding still matches in the terminal");
+  const auto* builtin = FindBuiltinKeybindingByKey(SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Terminal);
+  Expect(builtin == nullptr, "the built-in lookup applies the same terminal rule");
+
+  // A plugin may now claim Ctrl+O for the terminal: the Global open-file binding
+  // never fires there, so the two do not collide.
+  std::vector<PluginHost::ContributedKeybinding> contributed(2);
+  contributed[0].id = "plugin.terminal-ctrl-o";
+  contributed[0].key_chord = "Ctrl+O";
+  contributed[0].action = "plugin.term";
+  contributed[0].context = "terminal";
+  contributed[1].id = "plugin.terminal-ctrl-p";
+  contributed[1].key_chord = "Ctrl+P";
+  contributed[1].action = "plugin.term";
+  contributed[1].context = "terminal";
+  const auto with_plugin = ResolveKeybindings(contributed);
+  const auto* terminal_o = FindKeybinding(with_plugin, SDLK_O, SDL_KMOD_CTRL, KeybindingContext::Terminal);
+  Expect(terminal_o != nullptr && terminal_o->id == "plugin.terminal-ctrl-o",
+         "a terminal Ctrl+O contribution does not collide with the Global open-file");
+  const bool has_ctrl_p = std::any_of(with_plugin.begin(), with_plugin.end(),
+                                      [](const auto& rb) { return rb.id == "plugin.terminal-ctrl-p"; });
+  Expect(!has_ctrl_p, "a terminal Ctrl+P contribution collides with the skip-shell Go to File");
+}
+
 // ---------------------------------------------------------------------------
 // Settings registry – built-ins
 // ---------------------------------------------------------------------------
@@ -1409,6 +1457,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/ResolveDisabled", TestResolveKeybindingsDisabled);
   AddTest(tests, "KeybindingRegistry/ResolveLeftCtrlMatch",
           TestResolveKeybindingsFindLeftCtrlMatch);
+  AddTest(tests, "ContributionRegistry/FindKeybindingTerminalOwnsGlobalChordsUnlessSkipped",
+          TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped);
   AddTest(tests, "SettingsRegistry/BuiltinsNonEmpty", TestSettingsRegistryBuiltinsNonEmpty);
   AddTest(tests, "SettingsRegistry/FindById", TestSettingsRegistryFindById);
   AddTest(tests, "SettingsRegistry/WrapSpecAndEnumValues",

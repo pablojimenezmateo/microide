@@ -1062,6 +1062,55 @@ void TestWorkspaceShellTerminalCtrlSlashReachesTheShell() {
          "Ctrl+2 reaches the shell as NUL");
 }
 
+// A focused terminal owns the keyboard (VS Code's commandsToSkipShell model):
+// Global bindings the shell has a use for -- Ctrl+O open, Ctrl+S save, Ctrl+N
+// new tab, Ctrl+B sidebar -- reach the PTY as control bytes, so nano's ^O "Write
+// Out" works. They used to be matched before the terminal saw the key, so Ctrl+O
+// opened the file picker over a running nano. The few chords the IDE keeps
+// (Ctrl+P, Ctrl+Shift+P) still dispatch.
+void TestWorkspaceShellTerminalOwnsGlobalControlChords() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  const bool sidebar_visible = WorkspaceShellTestAccess::SidebarVisible(shell);
+
+  const struct {
+    SDL_Keycode key;
+    char byte;
+    const char* name;
+  } chords[] = {
+      {SDLK_O, '\x0f', "Ctrl+O"},
+      {SDLK_S, '\x13', "Ctrl+S"},
+      {SDLK_N, '\x0e', "Ctrl+N"},
+      {SDLK_B, '\x02', "Ctrl+B"},
+  };
+  for (const auto& chord : chords) {
+    TerminalSessionTestAccess::ClearSentBytes(session);
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, chord.key, SDL_KMOD_CTRL),
+           std::string(chord.name) + " in the terminal is handled");
+    Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, chord.byte),
+           std::string(chord.name) + " reaches the shell as its control byte");
+  }
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell),
+         "no global binding fired: nothing opened an overlay");
+  Expect(WorkspaceShellTestAccess::SidebarVisible(shell) == sidebar_visible,
+         "Ctrl+B in the terminal does not toggle the sidebar");
+  Expect(WorkspaceShellTestAccess::FocusIsPanel(shell), "the terminal keeps focus");
+
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_P, SDL_KMOD_CTRL),
+         "Ctrl+P in the terminal is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "Ctrl+P skips the shell, as in VS Code");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+                 WorkspaceShell::OverlayMode::FileFinder,
+         "Ctrl+P still opens Go to File from the terminal");
+}
+
 void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -2513,6 +2562,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge);
   AddTest(tests, "WorkspaceShell/TerminalCtrlShiftCNeverInterrupts",
           TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts);
+  AddTest(tests, "WorkspaceShell/TerminalOwnsGlobalControlChords",
+          TestWorkspaceShellTerminalOwnsGlobalControlChords);
   AddTest(tests, "WorkspaceShell/TerminalCtrlSlashReachesTheShell",
           TestWorkspaceShellTerminalCtrlSlashReachesTheShell);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",

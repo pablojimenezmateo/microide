@@ -28,6 +28,13 @@ struct KeybindingSpec {
   std::array<std::string_view, 2> args{};
   std::size_t arg_count = 0;
   std::string_view command_name;
+  // Whether a Global binding still fires while a terminal holds keyboard focus
+  // (VS Code's `terminal.integrated.commandsToSkipShell`). Off by default: a
+  // focused terminal owns the keyboard, so Ctrl+O reaches nano as ^O instead of
+  // opening a file. Set only on chords a shell has no use for (F-key debugging,
+  // Ctrl+Shift+letter, zoom) and on the few the IDE must keep (Ctrl+P, Ctrl+`,
+  // Ctrl+J). Terminal-context bindings always fire in a terminal.
+  bool skips_terminal = false;
 };
 
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs();
@@ -45,6 +52,7 @@ struct ResolvedKeybinding {
   std::vector<std::string> args;
   std::string command_name;
   bool from_plugin = false;
+  bool skips_terminal = false;  // see KeybindingSpec::skips_terminal
 };
 
 std::vector<ResolvedKeybinding> ResolveKeybindings(
@@ -57,6 +65,8 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
 std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids = {});
+// First binding for (key, modifiers) active in `context`. A Global binding is
+// active in every context except Terminal, where it must also skip the terminal.
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,
                                           SDL_Keycode key,
                                           SDL_Keymod modifiers,

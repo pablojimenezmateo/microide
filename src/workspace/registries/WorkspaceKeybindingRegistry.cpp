@@ -30,6 +30,27 @@ SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers) {
   return normalized;
 }
 
+namespace {
+
+// The one matching rule both lookups (built-in specs and resolved bindings) share.
+// `modifiers` is already normalized. A Global binding is active everywhere except
+// a focused terminal, which owns the keyboard unless the binding skips it.
+template <typename Binding>
+bool BindingMatches(const Binding& binding,
+                    SDL_Keycode key,
+                    SDL_Keymod modifiers,
+                    KeybindingContext context) {
+  if (binding.key != key || binding.modifiers != modifiers) {
+    return false;
+  }
+  if (binding.context == KeybindingContext::Global) {
+    return context != KeybindingContext::Terminal || binding.skips_terminal;
+  }
+  return binding.context == context;
+}
+
+}  // namespace
+
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
   static const auto kSpecs = std::to_array<KeybindingSpec>({
       // Global — available everywhere except modals
@@ -62,6 +83,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "zoom-reset",
@@ -72,6 +94,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"reset", {}},
           .arg_count = 1,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "zoom-out",
@@ -82,6 +105,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"down", {}},
           .arg_count = 1,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "zoom-in",
@@ -92,6 +116,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"up", {}},
           .arg_count = 1,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "sidebar-toggle",
@@ -134,6 +159,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "command-palette",
@@ -144,6 +170,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       // Debugger execution control (Phase 3). Global; the actions are gated on
       // `debug.enabled` + session state in WorkspaceActionAvailability, so these
@@ -160,6 +187,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-pause",
@@ -170,6 +198,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-continue",
@@ -180,6 +209,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-step-over",
@@ -190,6 +220,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-step-in",
@@ -200,6 +231,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-step-out",
@@ -210,6 +242,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-restart",
@@ -220,6 +253,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-pane-toggle",
@@ -230,6 +264,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       // Right-side debug pane surface switches, grouped with the toggle above
       // (Ctrl+Shift+D). Ctrl+digit is the zoom family, so these use Ctrl+Shift+digit.
@@ -242,6 +277,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-pane-variables",
@@ -252,6 +288,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-pane-watch",
@@ -262,6 +299,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-pane-breakpoints",
@@ -272,6 +310,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "debug-show-output",
@@ -282,6 +321,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       // Editor context
       KeybindingSpec{
@@ -842,6 +882,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"tree", {}},
           .arg_count = 1,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "sidebar-git",
@@ -852,6 +893,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"git", {}},
           .arg_count = 1,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "sidebar-problems",
@@ -862,6 +904,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {"problems", {}},
           .arg_count = 1,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "next-diagnostic",
@@ -917,6 +960,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "terminal-new",
@@ -927,6 +971,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "panel-toggle",
@@ -937,6 +982,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "panel-maximize",
@@ -947,6 +993,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "terminal-split",
@@ -1013,18 +1060,10 @@ const KeybindingSpec* FindBuiltinKeybindingByKey(SDL_Keycode key,
                                                   SDL_Keymod modifiers,
                                                   KeybindingContext context) {
   const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
-  const auto specs = BuiltinKeybindingSpecs();
-  for (const KeybindingSpec& spec : specs) {
-    if (spec.key != key) {
-      continue;
+  for (const KeybindingSpec& spec : BuiltinKeybindingSpecs()) {
+    if (BindingMatches(spec, key, relevant, context)) {
+      return &spec;
     }
-    if (spec.modifiers != relevant) {
-      continue;
-    }
-    if (spec.context != KeybindingContext::Global && spec.context != context) {
-      continue;
-    }
-    return &spec;
   }
   return nullptr;
 }
@@ -1061,33 +1100,43 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     }
     rb.command_name = spec.command_name;
     rb.from_plugin = false;
+    rb.skips_terminal = spec.skips_terminal;
     result.push_back(std::move(rb));
   }
 
   // Two bindings collide when they share a key + normalized modifiers and their
-  // contexts overlap. A Global binding matches in every context (see FindKeybinding),
-  // so it overlaps any context; otherwise contexts must be equal. Resolved chords
-  // are indexed by (key, normalized mods) -> context bitmask so each contributed
-  // binding checks in O(1) instead of rescanning every prior binding (the old
-  // linear rescan made a cap-sized reload quadratic; TD-2026-07-17-019).
+  // contexts overlap — the same rule BindingMatches applies. A Global binding
+  // overlaps every context but Terminal, which it overlaps only when it skips the
+  // terminal; otherwise contexts must be equal. Resolved chords are indexed by
+  // (key, normalized mods) -> context bitmask so each contributed binding checks
+  // in O(1) instead of rescanning every prior binding (the old linear rescan made
+  // a cap-sized reload quadratic; TD-2026-07-17-019).
   const auto chord_key = [](SDL_Keycode key, SDL_Keymod normalized_mods) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key)) << 16) |
            static_cast<std::uint16_t>(normalized_mods);
   };
-  // The context set is packed into a uint8 bitmask; adding a 9th context would
-  // silently shift bits out and make every binding past it look conflict-free.
-  static_assert(static_cast<unsigned>(KeybindingContext::Terminal) < 8,
+  // The context set is packed into a uint8 bitmask whose top bit marks a Global
+  // binding that skips the terminal; adding an 8th context would collide with it
+  // and make bindings past it look conflict-free.
+  static_assert(static_cast<unsigned>(KeybindingContext::Terminal) < 7,
                 "KeybindingContext no longer fits the uint8 conflict-index bitmask — widen "
                 "the mask type in ResolveKeybindings");
   const auto context_bit = [](KeybindingContext context) {
     return static_cast<std::uint8_t>(1u << static_cast<unsigned>(context));
   };
   constexpr std::uint8_t kGlobalBit = 1u << static_cast<unsigned>(KeybindingContext::Global);
+  constexpr std::uint8_t kTerminalBit = 1u << static_cast<unsigned>(KeybindingContext::Terminal);
+  constexpr std::uint8_t kGlobalSkipsTerminalBit = 1u << 7;
+  const auto binding_bits = [&](KeybindingContext context, bool skips_terminal) {
+    return static_cast<std::uint8_t>(
+        context_bit(context) |
+        (context == KeybindingContext::Global && skips_terminal ? kGlobalSkipsTerminalBit : 0));
+  };
   std::unordered_map<std::uint64_t, std::uint8_t> resolved_contexts;
   resolved_contexts.reserve(result.size());
   for (const ResolvedKeybinding& existing : result) {
     resolved_contexts[chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers))] |=
-        context_bit(existing.context);
+        binding_bits(existing.context, existing.skips_terminal);
   }
   const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
                                            KeybindingContext context) {
@@ -1095,8 +1144,14 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     if (it == resolved_contexts.end()) {
       return false;
     }
-    return (it->second & kGlobalBit) != 0 || context == KeybindingContext::Global ||
-           (it->second & context_bit(context)) != 0;
+    const std::uint8_t taken = it->second;
+    if (context == KeybindingContext::Global) {
+      return true;
+    }
+    if (context == KeybindingContext::Terminal) {
+      return (taken & (kTerminalBit | kGlobalSkipsTerminalBit)) != 0;
+    }
+    return (taken & (kGlobalBit | context_bit(context))) != 0;
   };
 
   for (const auto& contrib : contributed) {
@@ -1137,7 +1192,7 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.from_plugin = true;
     // Keep the conflict index in sync so a later plugin binding that collides
     // with this accepted one is skipped, matching the old rescan-of-result.
-    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))] |= context_bit(context);
+    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))] |= binding_bits(context, false);
     result.push_back(std::move(rb));
   }
 
@@ -1150,16 +1205,9 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
                                           KeybindingContext context) {
   const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
   for (const ResolvedKeybinding& rb : bindings) {
-    if (rb.key != key) {
-      continue;
+    if (BindingMatches(rb, key, relevant, context)) {
+      return &rb;
     }
-    if (rb.modifiers != relevant) {
-      continue;
-    }
-    if (rb.context != KeybindingContext::Global && rb.context != context) {
-      continue;
-    }
-    return &rb;
   }
   return nullptr;
 }
