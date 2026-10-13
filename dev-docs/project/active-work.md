@@ -304,7 +304,7 @@ new terminal behaviour lands there.
 > **Phase 2b (2026-10-08): a remote PROJECT opens.** `Remote: Open Folder on Host…`
 > works end to end on a mirror — see `dev-docs/design/remote-projects.md`
 > § "Phase 2b as built" and `openspec/changes/archive/2026-10-13-remote-projects-phase-2b/tasks.md`
-> (open: 5.4 pushed git status, 6.1 host search). Remainders are TD-2026-10-08-328.
+> (complete and archived 2026-10-13; its remainders, TD-2026-10-08-328, are resolved).
 >
 > **Next agent: start here.** Phase 2a is BUILT (2026-10-08): `tasks.md` in
 > `openspec/changes/remote-server-phase-2a/` is checked off except 4.5's settings
