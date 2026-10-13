@@ -86,17 +86,25 @@ class GitOperationService {
              std::string message,
              bool include_untracked);
   bool StashPop(const std::filesystem::path& repository_root);
+  // Keep one side of the conflicted `relative_path` whole and stage it
+  // (project::ResolveGitConflictWithSide). `resolved` runs on the main thread
+  // after a success (the caller closes that file's merge tab).
+  bool ResolveConflict(const std::filesystem::path& repository_root, std::string relative_path,
+                       project::GitConflictSide side, std::function<void()> resolved = {});
 
  private:
   // Dispatches `work` on the background executor and publishes its report. `label`
   // is the in-flight status text; `success_message` is the toast on a clean result.
+  // `on_success` (optional) runs on the main thread after a successful report.
   bool Dispatch(const std::filesystem::path& repository_root,
                 std::string label,
                 std::string success_message,
-                std::function<project::GitOperationReport()> work);
+                std::function<project::GitOperationReport()> work,
+                std::function<void()> on_success = {});
   void Publish(std::uint64_t generation,
                std::string success_message,
-               project::GitOperationReport report);
+               project::GitOperationReport report,
+               const std::function<void()>& on_success);
 
   project::ProjectBackgroundExecutor& background_executor_;
   util::MainThreadMailbox completion_mailbox_;

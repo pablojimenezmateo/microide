@@ -402,6 +402,9 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
       MenuItem(ActionId::GitStageToggleEntry, "Stage"),
       MenuItem(ActionId::GitDiscardEntry, "Discard…"),
       MenuSeparator(),
+      MenuItem(ActionId::GitAcceptCurrent, "Accept Current"),
+      MenuItem(ActionId::GitAcceptIncoming, "Accept Incoming"),
+      MenuSeparator(),
       MenuItem(ActionId::CopyRelativePath),
       MenuItem(ActionId::CopyAbsolutePath),
   });

@@ -122,6 +122,11 @@ enum class ActionId {
   GitOpenChanges,
   GitStageToggleEntry,
   GitDiscardEntry,
+  // Keep one side of a conflicted file whole and stage it (VS Code's Accept
+  // Current / Accept Incoming): the selected conflict row, the active merge tab's
+  // file, or a path argument.
+  GitAcceptCurrent,
+  GitAcceptIncoming,
   IndentWidth,
   Jump,
   Open,

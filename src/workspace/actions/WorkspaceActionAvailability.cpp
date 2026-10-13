@@ -203,6 +203,16 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Breakpoint-gutter context-menu items; the menu only opens when the
       // debugger is enabled, and editing works with or without a live session.
       return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::GitAcceptCurrent:
+    case ActionId::GitAcceptIncoming: {
+      // A target without an argument: a merge tab on screen, or a conflict row
+      // selected in the git sidebar (the row's context menu acts on it).
+      const ProjectWorkspaceState& state = context_.current_project_state;
+      const auto& git = state.sidebar.git;
+      const EditorGroup& group = state.focused_group();
+      return (group.has_active_tab() && group.active_tab().merge.has_value()) ||
+             (git.selected_index < git.entries.size() && git.entries[git.selected_index].conflicted);
+    }
     case ActionId::GitOpenChanges:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {

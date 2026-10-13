@@ -109,7 +109,7 @@ std::string BuildSummary(MergeFileConflictKind kind) {
     case MergeFileConflictKind::FileDirectory:
       return "One side changed the path to a file and the other to a directory.";
     case MergeFileConflictKind::Binary:
-      return "Git reported a binary conflict; text hunk actions are disabled.";
+      return "Binary conflict: keep a whole side with Accept Current or Accept Incoming.";
     case MergeFileConflictKind::Submodule:
       return "Submodule conflict; resolve in the submodule checkout.";
     case MergeFileConflictKind::Mode:

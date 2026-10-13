@@ -244,4 +244,60 @@ GitOperationReport PopGitStash(const std::filesystem::path& repository_root,
   return report;
 }
 
+GitOperationReport ResolveGitConflictWithSide(const std::filesystem::path& repository_root,
+                                              const platform::ProcessLauncher& launcher,
+                                              const std::string_view relative_path,
+                                              const GitConflictSide side) {
+  constexpr std::string_view kVerb = "conflict resolution";
+  if (repository_root.empty() || relative_path.empty()) {
+    return MakeReport(GitOperationOutcome::NotARepo, kVerb, {});
+  }
+  GitRepository repo(repository_root, launcher);
+  if (!repo.IsValid()) {
+    return MakeReport(GitOperationOutcome::NotARepo, kVerb, {});
+  }
+  // The unmerged index entries say which sides still have the file:
+  // `<mode> <object> <stage>\t<path>` per stage, NUL-terminated.
+  const GitRepository::CommandResult stages =
+      repo.Execute({"ls-files", "-u", "-z", "--", relative_path});
+  if (!stages.success()) {
+    return MakeReport(stages.timed_out ? GitOperationOutcome::TimedOut
+                                       : GitOperationOutcome::UnknownError,
+                      kVerb, stages.output);
+  }
+  bool any_stage = false;
+  bool wanted_stage = false;
+  const char wanted = side == GitConflictSide::Current ? '2' : '3';
+  const std::string& records = stages.output;
+  for (std::size_t start = 0; start < records.size();) {
+    std::size_t end = records.find('\0', start);
+    if (end == std::string::npos) {
+      end = records.size();
+    }
+    const std::size_t tab = records.find('\t', start);
+    if (tab != std::string::npos && tab < end && tab > start) {
+      any_stage = true;
+      wanted_stage = wanted_stage || records[tab - 1] == wanted;
+    }
+    start = end + 1;
+  }
+  if (!any_stage) {
+    GitOperationReport report = MakeReport(GitOperationOutcome::NothingToDo, kVerb, {});
+    report.detail = "The file is not conflicted";
+    return report;
+  }
+  const std::string path(relative_path);
+  if (!wanted_stage) {
+    // That side deleted it: keeping that side is the deletion.
+    return RunOperation(repository_root, launcher, {"rm", "--quiet", "-f", "--", path}, kVerb);
+  }
+  GitOperationReport report = RunOperation(
+      repository_root, launcher,
+      {"checkout", side == GitConflictSide::Current ? "--ours" : "--theirs", "--", path}, kVerb);
+  if (!report.success()) {
+    return report;
+  }
+  return RunOperation(repository_root, launcher, {"add", "--", path}, kVerb);
+}
+
 }  // namespace microide::project

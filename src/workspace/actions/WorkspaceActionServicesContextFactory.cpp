@@ -294,6 +294,14 @@ bool WorkspaceActionContext::DispatchSelectedGitSidebarAction(GitSidebarActionId
   return operations_.dispatch_git_sidebar_action(action, git.selected_index);
 }
 
+std::string WorkspaceActionContext::SelectedConflictedGitEntryPath() const {
+  const auto& git = state_.sidebar.git;
+  if (git.selected_index >= git.entries.size() || !git.entries[git.selected_index].conflicted) {
+    return {};
+  }
+  return git.entries[git.selected_index].path;
+}
+
 bool WorkspaceActionContext::ToggleStageSelectedGitEntry() {
   const auto& git = state_.sidebar.git;
   if (git.selected_index >= git.entries.size()) {

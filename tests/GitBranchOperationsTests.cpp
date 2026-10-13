@@ -16,7 +16,9 @@ using microide::project::CreateGitBranch;
 using microide::project::GitOperationOutcome;
 using microide::project::GitRemoteOperationKind;
 using microide::project::CollectGitBranches;
+using microide::project::GitConflictSide;
 using microide::project::PopGitStash;
+using microide::project::ResolveGitConflictWithSide;
 using microide::project::RunGitRemoteOperation;
 using microide::project::StashGitChanges;
 using microide::project::SwitchGitBranch;
@@ -227,6 +229,46 @@ void TestGitOperationsOutsideRepositoryAreRejected() {
          "an empty root should report not-a-repo");
 }
 
+// Accept Current / Accept Incoming keep one side whole and stage it, for a text
+// conflict, a binary one (the only resolution the merge tab cannot offer), and a
+// modify/delete one (where keeping the deleting side IS the deletion).
+void TestGitResolveConflictWithSide() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "base\n");
+  WriteFile(root / "img.bin", std::string("\0base\1", 6));
+  WriteFile(root / "gone.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "conflict fixture");
+  const std::string base_branch = CurrentBranchLabel(CollectGitBranches(root, Local()));
+  Expect(CreateGitBranch(root, Local(), "incoming").success(), "branch");
+  WriteFile(root / "a.txt", "incoming\n");
+  WriteFile(root / "img.bin", std::string("\0theirs\1", 8));
+  WriteFile(root / "gone.txt", "incoming edit\n");
+  CommitAll(root, "incoming side", "conflict fixture");
+  Expect(SwitchGitBranch(root, Local(), base_branch).success(), "back to base");
+  WriteFile(root / "a.txt", "current\n");
+  WriteFile(root / "img.bin", std::string("\0ours\1", 6));
+  std::filesystem::remove(root / "gone.txt");
+  CommitAll(root, "current side", "conflict fixture");
+  (void)RunGitCommand(root, {"merge", "incoming"});
+
+  Expect(ResolveGitConflictWithSide(root, Local(), "a.txt", GitConflictSide::Incoming).success(),
+         "accepting incoming resolves a text conflict");
+  Expect(ReadFile(root / "a.txt") == "incoming\n", "with the incoming bytes");
+  Expect(ResolveGitConflictWithSide(root, Local(), "img.bin", GitConflictSide::Current).success(),
+         "accepting current resolves a binary conflict");
+  Expect(ReadFile(root / "img.bin") == std::string("\0ours\1", 6), "with the current bytes");
+  Expect(ResolveGitConflictWithSide(root, Local(), "gone.txt", GitConflictSide::Current).success(),
+         "accepting the side that deleted the file resolves a modify/delete conflict");
+  Expect(!std::filesystem::exists(root / "gone.txt"), "by deleting it");
+  Expect(RunCommand("test -z \"$(git -C " + EscapedRepoPath(root) + " ls-files -u)\"") == 0,
+         "nothing is left unmerged: every choice was staged");
+  Expect(ResolveGitConflictWithSide(root, Local(), "a.txt", GitConflictSide::Current).outcome ==
+             GitOperationOutcome::NothingToDo,
+         "a file that is not conflicted is nothing to do");
+}
+
 }  // namespace
 
 void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests) {
@@ -236,6 +278,7 @@ void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitBranchOperations/SwitchRefusesToOverwriteLocalChanges",
           TestGitSwitchRefusesToOverwriteLocalChanges);
   AddTest(tests, "GitBranchOperations/StashRoundTrip", TestGitStashRoundTrip);
+  AddTest(tests, "GitBranchOperations/ResolveConflictWithSide", TestGitResolveConflictWithSide);
   AddTest(tests, "GitBranchOperations/RemoteOperationsWithoutRemote",
           TestGitRemoteOperationsWithoutRemoteAreClassified);
   AddTest(tests, "GitBranchOperations/OutsideRepositoryRejected",

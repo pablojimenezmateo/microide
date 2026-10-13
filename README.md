@@ -335,8 +335,9 @@ Current validated flow:
 
 Known workflow boundaries:
 
-- Binary, submodule, and some complex rename/file-directory conflicts are recognized but not fully
-  interactive in the three-way merge UI.
+- Binary, submodule, and some complex rename/file-directory conflicts are recognized but not
+  merged hunk by hunk in the three-way merge UI; a binary one is resolved whole with Accept
+  Current / Accept Incoming (`git-accept-current` / `git-accept-incoming`).
 - Patch staging for hunk/selected-lines can fail when the diff is stale; refresh and retry.
 - Branch review markers should not be treated as a durable review database.
 
@@ -735,6 +736,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `git-sync`
 - `git-stash [message]`
 - `git-stash-pop`
+- `git-accept-current [path]`
+- `git-accept-incoming [path]`
 - `terminal-find [query]`
 - `mark-branch-file-reviewed`
 - `unmark-branch-file-reviewed`

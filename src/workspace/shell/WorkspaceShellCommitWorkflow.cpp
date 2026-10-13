@@ -5,6 +5,7 @@
 #include "workspace/git/CommitWorkflowLayout.h"
 #include "workspace/git/CommitWorkflowService.h"
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/services/EditorTabService.h"
 #include "workspace/git/GitOperationService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
@@ -232,6 +233,66 @@ std::string WorkspaceShell::DispatchGitOperationAction(const ActionId id,
     case ActionId::GitStashPop:
       dispatched = git_operation_service_.StashPop(root);
       break;
+    case ActionId::GitAcceptCurrent:
+    case ActionId::GitAcceptIncoming: {
+      // The target: the path argument (absolute, or relative to the project), else
+      // the active merge tab's file.
+      std::filesystem::path target;
+      if (!args.empty() && !args[0].empty()) {
+        target = std::filesystem::path(args[0]);
+        if (target.is_relative()) {
+          target = root / target;
+        }
+      } else if (const MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
+        target = merge->output_path;
+      }
+      target = target.lexically_normal();
+      if (target.empty()) {
+        return "No conflicted file to resolve: select one, or name it";
+      }
+      // The repository the file is conflicted in: a git sidebar row knows it (a
+      // nested repository's rows are relative to that repository); otherwise the
+      // project's.
+      std::filesystem::path repository_root = root;
+      std::string relative = target.lexically_relative(root).generic_string();
+      const std::string target_text = target.generic_string();
+      for (const GitSidebarEntry& entry : context_.current_project_state.sidebar.git.entries) {
+        if (entry.conflicted && entry.path == target_text &&
+            entry.path.size() > entry.relative_path.size() + 1) {
+          repository_root = entry.path.substr(0, entry.path.size() - entry.relative_path.size() - 1);
+          relative = entry.relative_path;
+          break;
+        }
+      }
+      if (relative.empty() || relative.starts_with("..")) {
+        return "The file is outside the project";
+      }
+      dispatched = git_operation_service_.ResolveConflict(
+          repository_root, std::move(relative),
+          id == ActionId::GitAcceptCurrent ? project::GitConflictSide::Current
+                                           : project::GitConflictSide::Incoming,
+          // A merge tab on the file shows a conflict that no longer exists.
+          // One at a time: closing a group's last tab can remove the group.
+          [this, target]() {
+            // Bounded: a close the service declines must not spin.
+            bool closed = true;
+            for (std::size_t guard = 0; closed && guard < 64; ++guard) {
+              closed = false;
+              const auto& groups = context_.current_project_state.editor_groups;
+              for (std::size_t g = 0; g < groups.size() && !closed; ++g) {
+                for (std::size_t t = 0; t < groups[g].open_tabs.size(); ++t) {
+                  const TabEntry& tab = groups[g].open_tabs[t];
+                  if (tab.merge.has_value() && tab.merge->output_path.lexically_normal() == target) {
+                    MakeEditorTabService().CloseGroupTab(g, t);
+                    closed = true;
+                    break;
+                  }
+                }
+              }
+            }
+          });
+      break;
+    }
     default:
       return "Unsupported git operation";
   }

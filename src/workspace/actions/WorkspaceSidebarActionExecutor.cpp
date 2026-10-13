@@ -101,6 +101,27 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::GitAcceptCurrent:
+    case ActionId::GitAcceptIncoming: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      // From a conflict row's menu the row is the target; otherwise the path
+      // argument, else the active merge tab's file (resolved by the dispatcher).
+      std::vector<std::string> target = args;
+      if (target.empty() && source == ActionSource::ContextMenu) {
+        std::string selected = context_.SelectedConflictedGitEntryPath();
+        if (selected.empty()) {
+          return reject("The selected entry is not conflicted");
+        }
+        target.push_back(std::move(selected));
+      }
+      std::string rejection = context_.DispatchGitOperation(id, target);
+      if (!rejection.empty()) {
+        return reject(std::move(rejection));
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::GitOpenChanges:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {

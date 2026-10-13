@@ -154,8 +154,10 @@ void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
          "right-clicking should not open a compare/editor tab on its own");
 
   const auto labels = WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell);
-  const std::vector<std::string> expected = {"Open Changes", "Stage", "Discard…",
-                                             "Copy Relative Path", "Copy Absolute Path"};
+  const std::vector<std::string> expected = {"Open Changes",       "Stage",
+                                             "Discard…",           "Accept Current",
+                                             "Accept Incoming",    "Copy Relative Path",
+                                             "Copy Absolute Path"};
   Expect(labels == expected,
          "the git entry context menu should expose the expected action labels");
 }
@@ -989,6 +991,75 @@ void TestWorkspaceShellGitBranchActionsSwitchHead() {
   Expect(CurrentGitBranch(root) == base_branch, "git-switch-branch should move HEAD back");
 }
 
+// Accept Current / Accept Incoming (VS Code's whole-file conflict choices): the
+// only resolution a binary conflict has in the editor. From its merge tab the
+// action resolves that file and closes the tab; from a git sidebar conflict row's
+// context menu it resolves the row; with a path it resolves that path.
+void TestWorkspaceShellAcceptConflictSideResolvesWholeFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "a.txt", "base\n");
+  WriteFile(root / "b.txt", "base\n");
+  WriteFile(root / "img.bin", std::string("\0base\1", 6));
+  InitializeGitRepo(root);
+  CommitAll(root, "initial", "conflict fixture");
+  const std::string base_branch = CurrentGitBranch(root);
+  RequireGitCommandSuccess(root, {"checkout", "-b", "incoming"}, "branch");
+  WriteFile(root / "a.txt", "incoming\n");
+  WriteFile(root / "b.txt", "incoming\n");
+  WriteFile(root / "img.bin", std::string("\0theirs\1", 8));
+  CommitAll(root, "incoming side", "conflict fixture");
+  RequireGitCommandSuccess(root, {"checkout", base_branch}, "back to base");
+  WriteFile(root / "a.txt", "current\n");
+  WriteFile(root / "b.txt", "current\n");
+  WriteFile(root / "img.bin", std::string("\0ours\1", 6));
+  CommitAll(root, "current side", "conflict fixture");
+  (void)RunGitCommand(root, {"merge", "incoming"});
+
+  using ActionId = WorkspaceShell::ActionId;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3), "three conflicted files are listed");
+
+  // From the binary file's merge tab.
+  Expect(WorkspaceShellTestAccess::OpenGitConflictMerge(shell, root / "img.bin"),
+         "the binary conflict opens in a merge tab");
+  WorkspaceShellTestAccess::FlushPendingFileReads(shell);
+  Expect(WorkspaceShellTestAccess::ActiveTabIsMerge(shell), "the merge tab is on screen");
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::GitAcceptCurrent, {}),
+         "Accept Current is accepted in the merge tab");
+  Expect(SettleGitOperation(shell), "the resolution completes");
+  Expect(ReadFile(root / "img.bin") == std::string("\0ours\1", 6), "the current bytes are kept");
+  Expect(!WorkspaceShellTestAccess::ActiveTabIsMerge(shell), "and the merge tab closes");
+
+  // From a conflict row's context menu.
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2), "two conflicts are left");
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  std::size_t row = entries.size();
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    if (entries[i].relative_path == "a.txt") {
+      row = i;
+    }
+  }
+  Expect(row < entries.size() && entries[row].conflicted, "a.txt is a conflict row");
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, row);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, ActionId::GitAcceptIncoming, {},
+                                                 WorkspaceShell::ActionSource::ContextMenu),
+         "Accept Incoming is accepted on the selected conflict row");
+  Expect(SettleGitOperation(shell), "the resolution completes");
+  Expect(ReadFile(root / "a.txt") == "incoming\n", "the incoming bytes are taken");
+
+  // By path, from the command line.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-accept-current b.txt"),
+         "git-accept-current takes a path");
+  Expect(SettleGitOperation(shell), "the resolution completes");
+  Expect(ReadFile(root / "b.txt") == "current\n", "the named file keeps the current side");
+  Expect(RunCommand("test -z \"$(git -C " + EscapedRepoPath(root) + " ls-files -u)\"") == 0,
+         "every choice was staged: nothing is left unmerged");
+}
+
 // TD-2026-07-26-003: a successful commit marks the repository stale and asks for a
 // refresh, then reports plain success and returns. When that refresh fails the user
 // used to be told only by the git sidebar's "Git refresh failed: …" banner, and
@@ -1414,6 +1485,8 @@ void TestWorkspaceShellUiActionRejectionNotifies() {
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/GitRefreshCommandAsksGitFromAnyView",
           TestWorkspaceShellGitRefreshCommandAsksGitFromAnyView);
+  AddTest(tests, "WorkspaceShell/AcceptConflictSideResolvesWholeFiles",
+          TestWorkspaceShellAcceptConflictSideResolvesWholeFiles);
   AddTest(tests, "WorkspaceShell/GitBranchActionsSwitchHead",
           TestWorkspaceShellGitBranchActionsSwitchHead);
   AddTest(tests, "WorkspaceShell/GitOperationFailuresAreReported",

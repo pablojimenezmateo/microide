@@ -610,6 +610,8 @@ class WorkspaceActionContext {
   // Unstage from the selected entry's staged flag.
   bool DispatchSelectedGitSidebarAction(GitSidebarActionId action);
   bool ToggleStageSelectedGitEntry();
+  // The selected git sidebar entry's absolute path when it is a conflict, else "".
+  std::string SelectedConflictedGitEntryPath() const;
   // Headless breakpoint control: the project breakpoint store, a resend hook,
   // and named-launch start. Used by the breakpoint-* / debug-launch commands.
   editor::BreakpointStore& MutableBreakpointStore();

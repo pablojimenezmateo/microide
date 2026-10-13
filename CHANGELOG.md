@@ -125,6 +125,22 @@ project (see [README](README.md)); versions track meaningful shipped work.
   exist locally yet) and quick-open finds them; opening one fetches it first.
   `remote.backfill_max_file_mib` leaves files over a size out of the background
   fetch: they stay listed and arrive when opened.
+- **Terminals come back with the project.** Reopening a project revives its
+  terminal panel as it was, the way VS Code does: the same tabs and splits, each a
+  fresh shell in the directory it was in, the active tab and pane, and the
+  maximized panel. `terminal.restore_sessions` turns it off. A split now starts in
+  the directory of the pane it splits rather than at the project root.
+- **Accept Current / Accept Incoming.** A conflicted file can be resolved whole —
+  from its row's context menu in Source Control, from its merge tab, or with
+  `git-accept-current` / `git-accept-incoming [path]`: one side is kept and staged,
+  and when that side deleted the file the deletion is what is kept. This is the
+  resolution a binary conflict had no way to reach inside the editor.
+- **`terminal.commands_to_skip_shell`.** Which keybindings still run while a
+  terminal has focus is now a setting (keybinding ids; `-file-finder` gives Ctrl+P
+  back to the shell), and a plugin keybinding can opt in with `skips_terminal`.
+- Links in every pane of a split terminal underline and show the hand cursor
+  under the pointer, not only the active pane's; a right- or middle-click acts on
+  the pane it lands on.
 
 ### Fixed
 
@@ -162,6 +178,17 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - **A maximized panel no longer shows editor tabs over its header.** A collapsed
   editor strip still laid out its tabs (and the "Welcome" placeholder) at their
   minimum height; it now paints and hit-tests nothing.
+
+- **A surface left stale when something else repainted first.** An input
+  handler's "repaint my surface" fallback was skipped whenever any damage was
+  already queued — a tooltip, a focus change, a background tick — so the surface it
+  changed could stay as it was. The fallback now answers only to what the handler
+  itself requested.
+
+### Performance
+
+- Decoding semantic tokens is ~37 % faster than the previous build and ~20 % faster
+  than 2.12.0: the integer read is inline on every JSON consumer's hot path again.
 
 ### Changed
 

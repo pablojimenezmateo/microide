@@ -54,7 +54,8 @@ void GitOperationService::DrainCompletions() { completion_mailbox_.Drain(); }
 bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
                                    std::string label,
                                    std::string success_message,
-                                   std::function<project::GitOperationReport()> work) {
+                                   std::function<project::GitOperationReport()> work,
+                                   std::function<void()> on_success) {
   if (repository_root.empty()) {
     return false;
   }
@@ -76,13 +77,15 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
   }
 
   background_executor_.Post([this, generation, work = std::move(work),
-                             success_message = std::move(success_message)]() mutable {
+                             success_message = std::move(success_message),
+                             on_success = std::move(on_success)]() mutable {
     // Worker thread: run git and produce a value. Every field the main thread will
     // read is carried in the report; nothing here touches service state.
     project::GitOperationReport report = work();
     completion_mailbox_.Post([this, generation, success_message = std::move(success_message),
-                              report = std::move(report)]() mutable {
-      Publish(generation, std::move(success_message), std::move(report));
+                              report = std::move(report),
+                              on_success = std::move(on_success)]() mutable {
+      Publish(generation, std::move(success_message), std::move(report), on_success);
     });
   });
   return true;
@@ -90,7 +93,8 @@ bool GitOperationService::Dispatch(const std::filesystem::path& repository_root,
 
 void GitOperationService::Publish(const std::uint64_t generation,
                                   std::string success_message,
-                                  project::GitOperationReport report) {
+                                  project::GitOperationReport report,
+                                  const std::function<void()>& on_success) {
   {
     std::lock_guard lock(mutex_);
     if (generation != operation_generation_) {
@@ -120,6 +124,9 @@ void GitOperationService::Publish(const std::uint64_t generation,
     callbacks_.notify(ToneFor(report.outcome), std::move(message));
   }
 
+  if (report.outcome == project::GitOperationOutcome::Success && on_success) {
+    on_success();
+  }
   if (report.success() || TouchesWorkingTree(report.outcome)) {
     if (callbacks_.request_git_refresh != nullptr) {
       callbacks_.request_git_refresh();
@@ -238,6 +245,22 @@ bool GitOperationService::StashPop(const std::filesystem::path& repository_root)
                   [repository_root, launcher = &ProjectLauncher()]() {
                     return project::PopGitStash(repository_root, *launcher);
                   });
+}
+
+bool GitOperationService::ResolveConflict(const std::filesystem::path& repository_root,
+                                          std::string relative_path,
+                                          const project::GitConflictSide side,
+                                          std::function<void()> resolved) {
+  const bool current = side == project::GitConflictSide::Current;
+  std::string success = (current ? "Kept the current version of " : "Took the incoming version of ") +
+                        relative_path;
+  return Dispatch(repository_root, "Resolving conflict…", std::move(success),
+                  [repository_root, launcher = &ProjectLauncher(),
+                   relative_path = std::move(relative_path), side]() {
+                    return project::ResolveGitConflictWithSide(repository_root, *launcher,
+                                                               relative_path, side);
+                  },
+                  std::move(resolved));
 }
 
 }  // namespace microide::workspace
