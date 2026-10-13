@@ -113,7 +113,7 @@ from the text above:
 - Open: `term/scrollback` backfill, two clients on one pty, the perf-harness
   delay scenarios (§ 9) — TD-2026-10-08-325, -326.
 
-**Phase 2b as built (2026-10-08).** `openspec/changes/remote-projects-phase-2b/`
+**Phase 2b as built (2026-10-08).** `openspec/changes/archive/2026-10-13-remote-projects-phase-2b/`
 tracks it; what landed and where it differs from the text above:
 
 - **Hash.** `util::ContentHash` is BLAKE3 (hash mode, 32 raw bytes on the wire),

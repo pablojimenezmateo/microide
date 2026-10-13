@@ -691,7 +691,7 @@ object store, and files over the 64 MiB per-object ceiling. Protocol changes
 these need bump the wire version; a mismatched client/server pair is refused
 rather than translated (backward compatibility is explicitly not a goal).
 
-Phase 2b (`openspec/changes/remote-projects-phase-2b/`) opens a host folder as a
+Phase 2b (`openspec/changes/archive/2026-10-13-remote-projects-phase-2b/`) opens a host folder as a
 mirrored project end to end — manifest, objects, CAS writes, tree ops, the watch,
 the journal, Open Folder on Host — and leaves these, each a known gap rather than a
 silent one:
