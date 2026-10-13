@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 #include "RemoteServerTestSupport.h"
 #include "TerminalSessionTestAccess.h"
+#include "support/DelayRelay.h"
 
 #include "platform/UnixSocket.h"
 #include "project/remote/RemoteProcessLauncher.h"
@@ -150,6 +151,75 @@ void TestHostTerminalSurvivesADroppedConnection() {
   Expect(text.find("before-2") == text.rfind("before-2"),
          "nothing is duplicated by the reattach:\n" + text);
   session.Stop();
+}
+
+// Over a link with a real round trip (tests/support/DelayRelay.h): a typed
+// character is drawn in the keystroke's own call, predicted, and the host's echo
+// confirms it about one round trip later. With the server stalled the prediction
+// stays pending -- nothing is invented in its place -- and it confirms once the
+// stall clears. The relay itself is what the remote perf scenarios measure with.
+void TestPredictionLeadsTheEchoByARoundTrip() {
+  ShortServerDir dir;
+  StartServer(dir);
+  const std::filesystem::path root = dir.scratch() / "project";
+  std::filesystem::create_directories(root);
+  const auto identity = [](const std::filesystem::path& path) { return path; };
+  constexpr auto kRtt = std::chrono::milliseconds(150);
+
+  DelayRelay relay(platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path())), kRtt);
+  Expect(relay.ok(), "the relay is up");
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  const int fd = relay.TakeClientFd();
+  std::string error;
+  const auto hello_start = std::chrono::steady_clock::now();
+  Expect(client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test"}, &error),
+         "the client connects through the relay: " + error);
+  Expect(std::chrono::steady_clock::now() - hello_start >= kRtt * 9 / 10,
+         "the hello took a round trip: the relay delays");
+
+  TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 6, 60);
+  session.SetPredictionMode(terminal::TerminalPredictionOverlay::Mode::Always);
+  auto channel = remote::RemoteTerminalChannel::Open(
+      client, terminal::HostTerminalSource::OpenRequest{.working_directory = root, .shell = {"sh"}},
+      session, identity);
+  Expect(channel != nullptr, "the terminal opens");
+  TerminalSessionTestAccess::EnterHostMode(session, channel);
+  // Split so the echoed command line cannot match the prompt it sets.
+  TypeLine(session, "PS1='rea''dy> '");
+  Expect(WaitForText(session, "ready> "), "the prompt arrives:\n" + ScreenText(session));
+
+  const auto type = [&](char32_t c) {
+    TerminalSession::KeyPress press;
+    press.key = TerminalSession::KeyPress::Key::Char;
+    press.codepoint = c;
+    (void)session.SendKeyPress(press);
+  };
+  const auto typed_at = std::chrono::steady_clock::now();
+  type(U'q');
+  Expect(session.PendingPredictions() == 1 && ScreenText(session).find("ready> q") != std::string::npos,
+         "the keystroke is drawn in its own call, before any round trip");
+  Expect(WaitUntil([&] { return session.PendingPredictions() == 0; }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(2)),
+         "the echo confirms it");
+  const auto confirmed_after = std::chrono::steady_clock::now() - typed_at;
+  Expect(confirmed_after >= kRtt * 9 / 10,
+         "and the confirmation took the round trip it had to (" +
+             std::to_string(std::chrono::duration_cast<std::chrono::milliseconds>(confirmed_after).count()) +
+             " ms)");
+
+  relay.SetServerStalled(true);
+  type(U'w');
+  std::this_thread::sleep_for(kRtt * 3);
+  Expect(session.PendingPredictions() == 1, "a stalled server leaves the prediction pending");
+  Expect(ScreenText(session).find("ready> qw") != std::string::npos, "and still drawn");
+  relay.SetServerStalled(false);
+  Expect(WaitUntil([&] { return session.PendingPredictions() == 0; }, std::chrono::seconds(10),
+                   std::chrono::milliseconds(2)),
+         "it confirms once the server answers again");
+  Expect(ScreenText(session).find("ready> qw") != std::string::npos, "with the same text");
+  session.Stop();
+  channel.reset();
 }
 
 // A reconnect from the SAME session is warm: it keeps everything it already
@@ -351,6 +421,8 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestHostTerminalRunsTheShellOnTheHost);
   AddTest(tests, "RemoteTerminal/HostTerminalSurvivesADroppedConnection",
           TestHostTerminalSurvivesADroppedConnection);
+  AddTest(tests, "RemoteTerminal/PredictionLeadsTheEchoByARoundTrip",
+          TestPredictionLeadsTheEchoByARoundTrip);
   AddTest(tests, "RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing",
           TestWarmReattachKeepsTheMirrorAndDuplicatesNothing);
   AddTest(tests, "RemoteTerminal/ScrollingUpFetchesOlderHostHistory",
