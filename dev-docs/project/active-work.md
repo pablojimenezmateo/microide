@@ -137,8 +137,8 @@ new terminal behaviour lands there.
   and `WorkspaceShell/MergeEveryActionKeepsConflictTrackingHonest`. The merge
   sweep found the open half of that gap — only five call sites re-tracked the
   conflict spans, so every shaping verb left them pointing at lines that had
-  moved (fixed 2026-09-14). What remains here is the compare surface's own row
-  loop and key handler ([206](#td-2026-08-13-206)/[207](#td-2026-08-13-207)).
+  moved (fixed 2026-09-14). The compare surface's own row loop and key handler
+  (TD-2026-08-13-206/207) were folded into the editor's on 2026-08-14.
 - soft wrap is checked as a PROPERTY now, not as fixtures:
   `tests/EditorWrapNavigationPropertyTests.cpp` walks every visual row (with and
   without a collapsed fold in the way) requiring one press to be one row, and
