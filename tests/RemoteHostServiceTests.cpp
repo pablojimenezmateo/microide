@@ -896,6 +896,66 @@ void TestOpenFolderOnHostEditsTheHostTree() {
 #endif
 
 // What counts as a host-local link: http(s), a loopback name, an explicit port.
+// A mass delete the sync holds (§ 6.3) is a prompt the user can answer: its row
+// carries Apply and Disconnect, and Apply deletes what the host deleted. The row
+// once said "the deletion is held" with no button at all, so a hold lasted until
+// the next reconnect.
+void TestHeldMassDeleteIsAppliedFromItsRow() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "held";
+  for (int i = 0; i < 150; ++i) {
+    WriteFile(host_root / ("f" + std::to_string(i)), "x");
+  }
+  const std::string target = "dev@fake-held-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-open " + target + ":" + host_root.string()),
+         "the command is accepted");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "f149");
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills from the host");
+
+  // Not a repository, so nothing explains the deletes: they are held.
+  for (int i = 0; i < 140; ++i) {
+    std::filesystem::remove(host_root / ("f" + std::to_string(i)));
+  }
+  const auto held_row = [&]() -> const workspace::NotificationService::Notification* {
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.message.find("would delete 140 files") != std::string::npos) {
+        return &row;
+      }
+    }
+    return nullptr;
+  };
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return held_row() != nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the held delete is a row");
+  const workspace::NotificationService::Notification* row = held_row();
+  Expect(row->actions.size() == 2 && row->actions[0].label == "Apply" && row->actions[1].label == "Disconnect",
+         "with Apply and Disconnect");
+  Expect(std::filesystem::exists(mirror / "f0"), "and nothing was deleted yet");
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "notification-action " + row->key + " Apply"),
+         "Apply is pressed");
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return !std::filesystem::exists(mirror / "f0") && held_row() == nullptr;
+             },
+             std::chrono::seconds(20), std::chrono::milliseconds(10)),
+         "the deletes apply and the row goes");
+  Expect(std::filesystem::exists(mirror / "f149"), "what the host kept stays");
+}
+
 void TestLoopbackUrlsAreRecognized() {
   using workspace::RemoteHostService;
   const auto parsed = RemoteHostService::ParseLoopbackUrl("http://localhost:5173/src/main.ts?t=1#top");
@@ -933,6 +993,7 @@ void TestStatusPathsAbbreviateHome() {
 }  // namespace
 
 void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RemoteHostService/HeldMassDeleteIsAppliedFromItsRow", TestHeldMassDeleteIsAppliedFromItsRow);
   AddTest(tests, "RemoteHostService/StatusPathsAbbreviateHome", TestStatusPathsAbbreviateHome);
   AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);
 #if defined(__unix__) || defined(__APPLE__)

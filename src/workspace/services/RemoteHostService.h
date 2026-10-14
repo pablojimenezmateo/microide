@@ -173,6 +173,9 @@ class RemoteHostService {
   // click), an added one opens, a deleted one opens its last version read-only.
   bool OpenHostChange(const std::filesystem::path& root, const std::string& relative);
   void ClearHostChanges(const std::filesystem::path& root);
+  // The held mass delete of remote project `root`, applied (§ 6.3). False when it
+  // is not a remote project or holds none.
+  bool ApplyHeldDeletes(const std::filesystem::path& root);
   // `[user@]host[:port]:/absolute/path`, validated like a host target.
   static std::optional<std::pair<project::remote::RemoteHostTarget, std::string>> ParseRemoteFolder(
       std::string_view spec, std::string* error);

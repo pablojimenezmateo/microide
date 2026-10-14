@@ -695,6 +695,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `remote-copy-command <host> <ssh|install|linger>`
 - `remote-changes`
 - `remote-clear-changes`
+- `remote-apply-deletes [root]`
 - `remote-forward-port <port> [host]`
 - `remote-unforward-port <port> [host]`
 - `open-url <url>`

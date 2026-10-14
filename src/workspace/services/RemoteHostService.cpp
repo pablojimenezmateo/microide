@@ -332,9 +332,13 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
       if (!sync.error.empty()) {
         row(Tone::Error, "Sync with " + label + " failed: " + sync.error);
       } else if (sync.held_deletes > 0) {
-        row(Tone::Warning, label + " would delete " + std::to_string(sync.held_deletes) +
-                               " files from the mirror; the deletion is held (the host root "
-                               "may be unmounted or empty)");
+        row(Tone::Warning,
+            label + " would delete " + std::to_string(sync.held_deletes) +
+                " files from the mirror; the deletion is held (the host root may be unmounted or empty)",
+            {NotificationAction{.label = "Apply", .id = ActionId::RemoteApplyHeldDeletes,
+                                .args = {tree.string()}},
+             NotificationAction{.label = "Disconnect", .id = ActionId::RemoteDisconnect,
+                                .args = {record.host}}});
       } else if (sync.unreadable > 0 && !sync.syncing) {
         row(Tone::Warning, std::to_string(sync.unreadable) + (sync.unreadable == 1 ? " file" : " files") +
                                " on " + record.host + " could not be read and are not in the mirror (" +
@@ -590,6 +594,15 @@ void RemoteHostService::ClearHostChanges(const std::filesystem::path& root) {
   if (operations_.dismiss_notification) {
     operations_.dismiss_notification("remote.changes." + root.string());
   }
+}
+
+bool RemoteHostService::ApplyHeldDeletes(const std::filesystem::path& root) {
+  const auto it = projects_.find(root);
+  if (it == projects_.end() || it->second.closed || it->second.project->engine().status().held_deletes == 0) {
+    return false;
+  }
+  it->second.project->engine().ApproveHeldDeletes();
+  return true;
 }
 
 void RemoteHostService::PublishConflictRows(const std::filesystem::path& tree, Project& entry) {

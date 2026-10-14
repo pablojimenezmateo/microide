@@ -47,6 +47,10 @@ enum class ActionId {
   // empties it.
   RemoteShowHostChanges,
   RemoteClearHostChanges,
+  // `remote-apply-deletes [root]`: apply a mass delete the sync held (§ 6.3) -- the
+  // Apply button of its "would delete N files" row. The root defaults to the
+  // active project.
+  RemoteApplyHeldDeletes,
   // `remote-forward-port <port> [host]` / `remote-unforward-port <port> [host]`:
   // the host's localhost:<port> on this machine, through the ssh master (VS Code's
   // Forward a Port). The host defaults to the active remote project's, else the

@@ -209,6 +209,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteShowHostChanges:
     case ActionId::RemoteClearHostChanges:
+    case ActionId::RemoteApplyHeldDeletes:
     case ActionId::RemoteForwardPort:
     case ActionId::RemoteUnforwardPort: {
       RemoteHostService* hosts = context_.RemoteHosts();
@@ -319,6 +320,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
             return reject(host.empty() ? "Name the host: remote-" + std::string(forward ? "" : "un") +
                                              "forward-port <port> <host>"
                                        : "No remote host \"" + host + "\"");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteApplyHeldDeletes: {
+          const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
+                                                          : std::filesystem::path(args[0]);
+          if (!hosts->ApplyHeldDeletes(root)) {
+            return reject("No held deletes in " + root.string());
           }
           return DispatchResult::Handled;
         }

@@ -45,6 +45,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Remote: Show Changed on Host", ""},
       ActionSpec{ActionId::RemoteClearHostChanges, "remote-clear-changes", "remote-clear-changes",
                  "Remote: Clear Changed on Host", ""},
+      ActionSpec{ActionId::RemoteApplyHeldDeletes, "remote-apply-deletes", "remote-apply-deletes [root]",
+                 "Remote: Apply Held Deletes", ""},
       ActionSpec{ActionId::RemoteForwardPort, "remote-forward-port", "remote-forward-port <port> [host]",
                  "Remote: Forward a Port", ""},
       ActionSpec{ActionId::RemoteUnforwardPort, "remote-unforward-port",
