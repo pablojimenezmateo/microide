@@ -150,6 +150,20 @@ tracks it; what landed and where it differs from the text above:
 - Open: pushed `git/status`, host-side `search/run`, zstd deltas, files over the
   64 MiB per-object ceiling — TD-2026-10-08-328 (all done 2026-10-09).
 
+**Measured on a real host (2026-10-14, `worky`: x86_64 Ubuntu 26.04 on the LAN,
+raw `ssh` throughput 72 Mbit/s).** Driven headless through the control channel:
+- *Install*: with no server on the host, the client read `uname -m`, installed the
+  static x86_64 server (4.05 MB stripped) and reached Ready.
+- *Link death*: a `SIGKILL` of the ssh master mid-run reconnected in 2.1 s; a host
+  terminal printing a tick a second during the outage showed all eight ticks
+  exactly once, after the "connection to the host lost" mark.
+- *First sync*: this repository (4,521 files, 47 MB) mirrored in ~20 s, byte-for-byte
+  equal to the host (one SHA-256 over every file). That is ~22 Mbit/s against the
+  link's 72: TD-2026-10-14-340.
+- *Branch switch*: `git checkout` 300 commits back on the host (671 files changed)
+  resynced the mirror to the host's exact content in ~2.0 s, and ~2.1 s back --
+  the Phase 3 resync path is fine at this size.
+
 **Phase 3, first slices (2026-10-12).** Measured against VS Code's Remote-SSH and
 this document's § 7, what a user still missed:
 

@@ -427,6 +427,21 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-14-340 — a first sync runs at a third of the link's throughput. [OPEN]
+
+Measured on a real host (2026-10-14, see `dev-docs/design/remote-projects.md`
+"Measured on a real host"): mirroring this repository (4,521 files, 47 MB) took
+~20 s, ~22 Mbit/s, where a raw `ssh … head -c 50M /dev/urandom` moved 72 Mbit/s
+over the same link. The content was exact; the time is the gap. Not yet known
+where it goes -- candidates, to be measured rather than guessed: the host
+hashing every file for the manifest before the first pull, the pull pipeline's
+`kMaxPullsInFlight` batches against a ~1 ms LAN round trip, per-file disk work on
+the client's I/O thread, and the bulk window's slow start on a link it has not
+measured yet. Next step: time the manifest phase separately from the pulls
+(`MirrorSyncEngine` status already has the phase), then A/B the batch size. VS
+Code's Remote-SSH has no mirror, so its comparison is the time to first open,
+which the pending-row listing already makes immediate.
+
 ### TD-2026-10-14-339 — the static microide-server is 7.7 MB against a 6 MB target. [RESOLVED 2026-10-14]
 
 Resolved the same day: MICROIDE_SERVER_STATIC builds with `-ffunction-sections
