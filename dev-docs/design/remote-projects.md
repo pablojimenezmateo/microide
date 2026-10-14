@@ -2562,7 +2562,7 @@ for remote must not pay for it locally:
 | save with a formatter that takes 5 s (G5) | shell-thread frame never > 16 ms; the tab shows a saving state; a keystroke during the wait is kept and the format result is dropped |
 | save an unchanged 100 MB file (G6) | zero bytes hashed — the stat prefilter is what the gate asserts |
 | watcher reports a change to an open 100 MB file (G6) | the hash runs off the shell thread; frame never > 16 ms |
-| `microide-server` binary (G1) | static, links no SDL and no shared library — asserted by the kernel include lint and by `tools/build-server.sh` (`file` says statically linked; no dynamic section). Target ≤ 6 MB stripped; measured 2026-10-14 at 7.7 MB (x86_64) / 6.8 MB (aarch64), mostly static libstdc++ and PCRE2 |
+| `microide-server` binary (G1) | static, links no SDL and no shared library — asserted by the kernel include lint and by `tools/build-server.sh` (`file` says statically linked; no dynamic section). ≤ 6 MB stripped: 4.1 MB (x86_64) / 3.6 MB (aarch64) as built 2026-10-14, with section GC and LTO (7.7 / 6.8 MB without) |
 | `microide_kernel_tests` (G1) | runs with no display and no SDL initialization |
 | `settings_change_many_tabs` (existing) | unchanged by G8; the state-directory memo still hits |
 | a save from every `viewport.Save()` entry point (G10) | one write, one hash, no re-stat |

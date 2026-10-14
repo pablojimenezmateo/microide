@@ -427,7 +427,16 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-14-339 — the static microide-server is 7.7 MB against a 6 MB target. [OPEN]
+### TD-2026-10-14-339 — the static microide-server is 7.7 MB against a 6 MB target. [RESOLVED 2026-10-14]
+
+Resolved the same day: MICROIDE_SERVER_STATIC builds with `-ffunction-sections
+-fdata-sections`, `-Wl,--gc-sections` and LTO -- 4.5 MB from section GC alone, 4.1 MB
+(x86_64) / 3.6 MB (aarch64) with LTO. The LTO'd static server passed the 51 remote
+kernel tests (RemoteServer, RemoteTerminal, RemoteHostSession, RemoteProcess,
+MirrorSyncEngine) swapped in for the dev binary, and an aarch64 one answered an
+x86_64 client under qemu.
+
+Original entry:
 
 `tools/build-server.sh` (2026-10-14) produces stripped static binaries of 7.7 MB
 (x86_64) and 6.8 MB (aarch64); the design's table targets ≤ 6 MB, since the

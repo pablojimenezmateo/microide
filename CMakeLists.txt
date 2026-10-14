@@ -39,6 +39,15 @@ option(MICROIDE_SERVER_STATIC "Link microide-server statically" OFF)
 # (notably TextViewport ↔ EditorViewRenderer ↔ ViewState/HighlightCache)
 # cannot be inlined and per-frame regressions show up on render-heavy
 # scenarios like editor_sticky_scroll_scroll.
+if(MICROIDE_SERVER_STATIC)
+  # The server is copied to every host over ssh on install, so it is built small:
+  # per-function sections collected at link and whole-program LTO took the
+  # stripped x86_64 binary from 7.7 MB to 4.0 MB (TD-2026-10-14-339).
+  add_compile_options(-ffunction-sections -fdata-sections)
+  add_link_options(-Wl,--gc-sections)
+  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+endif()
+
 if(CMAKE_INTERPROCEDURAL_OPTIMIZATION)
   include(CheckIPOSupported)
   check_ipo_supported(RESULT _microide_ipo_supported OUTPUT _microide_ipo_output)
