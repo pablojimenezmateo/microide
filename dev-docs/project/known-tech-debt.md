@@ -1946,7 +1946,7 @@ completion, and therefore still blocks:
   `WorkspaceShell/RenameOfDirtyFileWaitsForTheFormatterNotTheWindow`.
 
   **Decided 2026-10-08 with the user, and scheduled** as part of
-  `openspec/changes/remote-server-phase-2a` (the `save-continuations` spec): quit
+  `openspec/changes/archive/2026-10-14-remote-server-phase-2a` (the `save-continuations` spec): quit
   and close-project **wait for the formatter with a progress row and a Cancel
   button** — never freeze, never exit with a save in flight, never exit
   unformatted on a timeout — through one continuation queue that also replaces

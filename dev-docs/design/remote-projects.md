@@ -77,7 +77,7 @@ why G5, whose formatter is a few hundred milliseconds on every save, went first.
 
 When a phase is committed to, it graduates into an `openspec/changes/` proposal.
 **Phase 2a was committed to on 2026-10-08** and lives at
-`openspec/changes/remote-server-phase-2a/` (proposal, design, nine spec files,
+`openspec/changes/archive/2026-10-14-remote-server-phase-2a/` (proposal, design, nine spec files,
 tasks). It folds in three small prerequisites: the kernel test binary
 (TD-2026-09-22-303), notification actions (G7) and save continuations (the quit and
 close-project half of TD-2026-09-28-304).
@@ -2834,7 +2834,7 @@ that check it agrees with local.
 | Where LSP/DAP paths are translated | At the shared stdio transport, by field name, with the launcher's two-way map — not by a mapper threaded to every `FileUriForPath` caller. No call site can forget, user text is never rewritten, and a local project pays nothing. § 6.5. |
 | Notification actions: how they look and what they are | VS Code-style **inline buttons** on the row (decided with the user 2026-10-08). Each action is an `ActionId` plus arguments, not a closure, so keyed rows can be reposted, the control channel can list and invoke them, and plugins can name them. Composed in `RenderViewModelBuilder`. |
 | Quit or close-project while a formatter-on-save runs | **Wait, with a progress row and a Cancel button** (decided with the user 2026-10-08). Never exit with a save in flight, never exit unformatted on a timeout. One continuation queue serves tab close, rename/delete, project close and quit. |
-| What Phase 2a builds first | The kernel test binary, notification actions and save continuations, then the frame codec + daemon skeleton + `proc/spawn` + `RemoteProcessLauncher`, tested as the third parity locality over a pipe, before terminals. `openspec/changes/remote-server-phase-2a/design.md`. |
+| What Phase 2a builds first | The kernel test binary, notification actions and save continuations, then the frame codec + daemon skeleton + `proc/spawn` + `RemoteProcessLauncher`, tested as the third parity locality over a pipe, before terminals. `openspec/changes/archive/2026-10-14-remote-server-phase-2a/design.md`. |
 | How remote is tested end to end | By **parity with local**: one scenario under the local launcher, a loopback non-local launcher and later the real server, with split host and mirror roots, comparing what the user sees and the round-trip count. Equality, not two independent assertions, because two independent assertions drift together. A known-gaps file that may only shrink; Phase 2b ships with it empty. The groundwork half (G11) needs no server and lands first. § 10.1, § 8. |
 | Does the server link SDL | No. Groundwork G1 splits an SDL-free kernel, so the server is a small separate binary. The coupling is only the cross-thread wake and SDL types in terminal data. This also closes the server-install question: copy one static binary. § 8. |
 | Wire format | Length-prefixed binary frames, not JSON-RPC. The traffic is content, manifests and terminal state, and JSON charges +33% on bodies, ~6 MB on a large manifest, and base64 on the latency path. The hardened transport behaviour is kept; only the codec changes. § 6.4. |

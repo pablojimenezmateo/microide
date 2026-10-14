@@ -306,16 +306,21 @@ new terminal behaviour lands there.
 > § "Phase 2b as built" and `openspec/changes/archive/2026-10-13-remote-projects-phase-2b/tasks.md`
 > (complete and archived 2026-10-13; its remainders, TD-2026-10-08-328, are resolved).
 >
-> **Next agent: start here.** Phase 2a is BUILT (2026-10-08): `tasks.md` in
-> `openspec/changes/remote-server-phase-2a/` is checked off except 4.5's settings
-> echo, 7.4's backfill and two-client rule, 9.1 (delay-proxy perf scenarios) and
-> the archive step; the remainders are TD-2026-10-08-325 and -326. What it built is
-> summarized in `dev-docs/design/remote-projects.md` § "Phase 2a as built". The
-> next phase is 2b (the mirror and a remote PROJECT). Phase 2a's original plan: Order matters:
-> **(1) kernel test binary, (2) notification actions, (3) save continuations,
-> (4) frame codec + transport, (5) daemon skeleton, (6) `proc/spawn` +
-> `RemoteProcessLauncher` as the parity suite's third locality, (7) host terminals
-> with prediction, (8) connection lifecycle and install, (9) budgets and lanes.**
+> **Phase 2a (2026-10-08): host terminals and the server.** Complete and archived
+> 2026-10-14 (`openspec/changes/archive/2026-10-14-remote-server-phase-2a/`; its
+> requirements now live in `openspec/specs/remote-*`, `notification-actions`,
+> `save-continuations`, `performance-budgets` and `workspace-architecture`). The
+> latency budgets are measured by `tests/perf/RemotePerfScenarios.cpp` over
+> `tests/support/DelayRelay.h` (opt-in, advisory until `perf-runner-v1` baselines).
+> What is left on the remote side: per-architecture static server packaging
+> (TD-2026-10-08-325), filling a mid-scrollback gap when it scrolls into view
+> (TD-2026-10-08-326, needs the host-mirror state moved out of `TerminalSession`),
+> and the Phase 3 items that need a real workload (branch-switch resync tuning).
+> Phase 2a's build order, kept for the record: **(1) kernel test binary, (2)
+> notification actions, (3) save continuations, (4) frame codec + transport, (5)
+> daemon skeleton, (6) `proc/spawn` + `RemoteProcessLauncher` as the parity suite's
+> third locality, (7) host terminals with prediction, (8) connection lifecycle and
+> install, (9) budgets and lanes.**
 >
 > Decisions already made with the user — do not re-ask:
 > - Notification actions are **VS Code-style inline buttons**; each is an
