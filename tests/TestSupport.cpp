@@ -60,6 +60,8 @@ constexpr int kWaitTimeoutScale = 1;
 
 }  // namespace
 
+bool IsSanitizerBuild() { return kWaitTimeoutScale != 1; }
+
 bool WaitUntil(const std::function<bool()>& predicate,
                std::chrono::milliseconds timeout,
                std::chrono::milliseconds poll_interval,

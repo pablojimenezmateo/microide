@@ -24,6 +24,11 @@ struct TestCase {
 void AddTest(std::vector<TestCase>& tests, std::string_view name, std::function<void()> run);
 void Expect(bool condition, std::string_view message);
 
+// True in an ASAN or TSAN build, where the code under test runs several times
+// slower: for the few assertions about absolute timing that measure the machine
+// rather than the code there (see kWaitTimeoutScale in TestSupport.cpp).
+bool IsSanitizerBuild();
+
 // Poll `predicate` until it holds or `timeout` elapses, running `pump` (if set)
 // before each check and once more after the deadline. Returns the final predicate
 // result, and returns as soon as the condition holds — no fixed over-wait. This is

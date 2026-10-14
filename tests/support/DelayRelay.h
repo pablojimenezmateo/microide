@@ -164,10 +164,15 @@ class DelayRelay {
       d.queue.pop_front();
       if (bytes_per_second_ != 0) {
         // A virtual clock: this chunk left at `due` (not when the thread woke),
-        // so timer oversleep does not eat into the modelled bandwidth.
-        link_free = due + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                              std::chrono::duration<double>(static_cast<double>(chunk.bytes.size()) /
-                                                            static_cast<double>(bytes_per_second_)));
+        // so ordinary timer oversleep does not eat into the modelled bandwidth.
+        // But it may lag real time by at most one chunk: a writer that woke very
+        // late (a sanitizer build, a loaded box) must not then send everything
+        // that came due back to back -- a burst above the link's rate, which a
+        // real link cannot produce and an ack-measured bandwidth would believe.
+        const auto transmit = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(static_cast<double>(chunk.bytes.size()) /
+                                          static_cast<double>(bytes_per_second_)));
+        link_free = std::max(due, std::chrono::steady_clock::now() - transmit) + transmit;
       }
       lock.unlock();
       if (!blackhole_) {

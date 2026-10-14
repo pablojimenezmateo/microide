@@ -250,10 +250,10 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   Expect(base > 0.0 && std::abs(window - std::clamp(rule, 64.0 * 1024, 1024.0 * 1024)) < window * 0.005,
          "the window follows bandwidth x (base RTT + allowance): window " + std::to_string(window) +
              ", rule " + std::to_string(rule));
-  // The absolute bound holds only where the relay's threads were not starved
-  // (a full parallel suite can inflate every sample): then the base RTT is near
-  // the link's own and the window is near its bandwidth-delay product.
-  if (base < 2 * std::chrono::duration<double>(kRtt).count()) {
+  // The absolute bound holds only where the simulated link behaves like one: not
+  // in a sanitizer build (the relay itself cannot pace 100 Mbit/s there), and not
+  // when a loaded box starved the relay's threads (every sample inflated).
+  if (!IsSanitizerBuild() && base < 2 * std::chrono::duration<double>(kRtt).count()) {
     Expect(throughput > kBytesPerSecond * 0.8,
            "the link stays full: " + std::to_string(throughput / 1e6) + " MB/s");
     Expect(window >= product && window <= product + kBytesPerSecond * 0.015,
