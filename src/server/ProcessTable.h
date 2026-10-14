@@ -114,7 +114,7 @@ class ProcessTable {
     Stream err;
     bool keep_on_detach = false;
     std::uint64_t connection = 0;
-    bool git = false;  // argv[0] is git: its exit may have changed a repository
+    bool git_mutation = false;  // a git that may change a repository: its exit pushes status
     std::string cwd;
     bool exited = false;
     int exit_code = -1;
@@ -126,7 +126,7 @@ class ProcessTable {
   struct Outgoing {
     std::uint64_t connection = 0;
     bool is_exit = false;
-    std::optional<std::string> git_cwd;  // an exit of a git process
+    std::optional<std::string> git_cwd;  // the exit of a git that may have changed a repository
     project::remote::FrameType type = project::remote::FrameType::ProcStdout;
     std::uint64_t handle = 0;
     std::string bytes;

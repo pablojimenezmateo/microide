@@ -13,9 +13,9 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
-#include <thread>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -189,6 +189,68 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
   Expect(pushes.load() >= 3, "each change was a push");
 }
 
+// A read-only git the client runs on the host (the sidebar's own `git diff
+// <base>...HEAD`, a blame, a log) changes nothing, so its exit must not make the
+// host compute and push a status. It did: every push refreshed the sidebar, the
+// refresh ran its outgoing diff, and that diff's exit caused the next push -- a
+// git status and a git diff ~2.5 times a second on an idle host, measured on a
+// real one (worky, 2026-10-15), with the workspace queue too busy to publish a
+// file change for 11 s.
+void TestReadOnlyGitDoesNotTriggerAStatusPush() {
+  TemporaryDirectory temp;
+  const std::filesystem::path local = temp.path() / "mirror";
+  const std::filesystem::path host = temp.path() / "host";
+  std::filesystem::create_directories(local);
+  InitializeGitRepo(host);
+  WriteFile(host / "a.txt", "one\n");
+  CommitAll(host, "init", "read-only git");
+  WriteFile(host / "a.txt", "two\n");
+
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = host.string()},
+                                &error),
+         "connects: " + error);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host),
+                                               {.host_paths_readable_locally = true});
+  client->SetWatchHandler([](std::uint64_t, std::string) {});
+  Expect(client->Call(remote::method::kWatchSubscribe, util::JsonValue(util::JsonObject{}), &error)
+             .has_value(),
+         "the watch is subscribed: " + error);
+  std::atomic<int> pushes{0};
+  Expect(client->SubscribeGitStatus([&](const std::string&) { ++pushes; }, &error),
+         "git status is subscribed: " + error);
+  Expect(WaitUntil([&] { return launcher.CurrentStatus(local).has_value(); }, std::chrono::seconds(10)),
+         "the first push arrives");
+  // A second push for the subscribe itself may still be in flight.
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  const int settled = pushes.load();
+
+  // What the sidebar does on every push: read the status, then run its own diff.
+  for (int round = 0; round < 6; ++round) {
+    for (const std::vector<std::string>& argv :
+         {std::vector<std::string>{"git", "diff", "--name-status", "-z", "HEAD"},
+          std::vector<std::string>{"git", "log", "-1", "--format=%H"},
+          std::vector<std::string>{"git", "--no-optional-locks", "status", "--porcelain=v2"}}) {
+      Expect(launcher.Run(argv, platform::SubprocessOptions{.cwd = local}).success(),
+             "read-only git ran on the host");
+    }
+  }
+  // Longer than the host's 1 s repository sampler, so a push it caused would land.
+  (void)WaitUntil([&] { return pushes.load() != settled; }, std::chrono::milliseconds(1500));
+  Expect(pushes.load() == settled,
+         "read-only git caused no status push: " + std::to_string(pushes.load() - settled));
+  Expect(client->last_git_generation() == 0, "and no exit carried a git generation");
+
+  // A mutation still does: its exit advances the generation and a push follows.
+  Expect(launcher.Run({"git", "add", "a.txt"}, platform::SubprocessOptions{.cwd = local}).success(),
+         "git add ran on the host");
+  Expect(client->last_git_generation() > 0, "the mutation's exit carried a generation");
+  Expect(WaitUntil([&] { return pushes.load() > settled; }, std::chrono::seconds(10)),
+         "and its status was pushed");
+}
+
 // Project search in a remote project runs ON THE HOST (remote-projects.md § 6.11):
 // over the host's real bytes — a mirror behind it would answer wrong without
 // saying so — and only over the content set, never build/ or .git. With no host
@@ -342,6 +404,8 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
           TestProjectSearchRunsOnTheHostOverTheContentSet);
   AddTest(tests, "RemoteLauncher/GitRepositoryCreatedOnTheHostIsSeen", TestGitRepositoryCreatedOnTheHostIsSeen);
   AddTest(tests, "RemoteLauncher/RunReturnsWhenTheLinkDrops", TestRunReturnsWhenTheLinkDrops);
+  AddTest(tests, "RemoteLauncher/ReadOnlyGitDoesNotTriggerAStatusPush",
+          TestReadOnlyGitDoesNotTriggerAStatusPush);
   AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",
           TestGitStatusIsPushedAndNeverStaleAfterAMutation);
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);

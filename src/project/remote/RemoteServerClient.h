@@ -50,6 +50,7 @@ class RemoteServerClient {
   struct GitMetadata {
     bool repository = false;
     std::string git_dir;  // a HOST path
+    bool operator==(const GitMetadata&) const = default;
   };
 
   RemoteServerClient() = default;
@@ -110,6 +111,9 @@ class RemoteServerClient {
   // that may change a repository is running through this client, and the push
   // was computed after the last one exited (its proc/exit `git_generation`).
   std::optional<project::GitStatusOutput> CurrentGitStatus(const std::string& host_root);
+  // The highest generation a git exit has carried: it advances only for a git that
+  // may have changed a repository (IsGitMutation), never for a read-only one.
+  std::uint64_t last_git_generation() const { return last_git_generation_.load(); }
   // What the latest git/status push said `host_root` is (a repository, its git
   // directory): current where QueryGitMetadata's answer is only as old as the ask.
   std::optional<GitMetadata> PushedGitMetadata(const std::string& host_root);

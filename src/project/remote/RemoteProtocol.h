@@ -165,4 +165,11 @@ std::optional<std::string> CheckProtocolCompatibility(std::int64_t local_protoco
 // an update, so an older editor never downgrades a host's server.
 bool ReleaseIsOlder(std::string_view a, std::string_view b);
 
+// Whether `argv` is a git command that may change a repository. Conservative: a
+// subcommand not known to be read-only counts. Both ends use it: the client to know
+// when the pushed git status goes stale until the host pushes one computed after
+// the command, the server to know which exits call for that push -- a read-only
+// git (the sidebar's own `git diff`) must not, or each refresh triggers the next.
+bool IsGitMutation(const std::vector<std::string>& argv);
+
 }  // namespace microide::project::remote

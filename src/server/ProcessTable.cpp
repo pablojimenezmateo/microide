@@ -7,6 +7,7 @@
 #include <cstring>
 #include <utility>
 
+#include "project/remote/RemoteProtocol.h"
 #include "util/Log.h"
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
@@ -276,7 +277,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   process->err.fd = err_pipe[0];
   process->keep_on_detach = request.keep_on_detach;
   process->connection = connection;
-  process->git = std::filesystem::path(request.argv.front()).filename() == "git";
+  process->git_mutation = project::remote::IsGitMutation(request.argv);
   process->cwd = request.cwd;
   std::uint64_t handle = 0;
   {
@@ -511,7 +512,7 @@ void ProcessTable::Pump(Process& process, std::vector<Outgoing>& outgoing) {
     Outgoing exit;
     exit.connection = process.connection;
     exit.is_exit = true;
-    if (process.git) {
+    if (process.git_mutation) {
       exit.git_cwd = process.cwd;
     }
     exit.handle = process.handle;

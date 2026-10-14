@@ -174,9 +174,20 @@ void RemoteServerClient::InstallRouting() {
         if (it == pushed_git_.end()) {
           return;  // nothing held to vouch for
         }
-        it->second.generation = static_cast<std::uint64_t>(generation.AsInt());
+        // Only news when it makes the held status current again (a mutation the
+        // client ran has exited) or the repository itself moved. Otherwise the
+        // sidebar already shows this, and refreshing it would run its own git on
+        // the host for nothing.
+        const auto new_generation = static_cast<std::uint64_t>(generation.AsInt());
+        const bool now_current = it->second.generation < git_required_generation_ &&
+                                 new_generation >= git_required_generation_;
+        const bool moved = metadata.has_value() && it->second.metadata != metadata;
+        it->second.generation = new_generation;
         if (metadata.has_value()) {
           it->second.metadata = std::move(metadata);
+        }
+        if (!now_current && !moved) {
+          return;
         }
       } else {
         PushedGitStatus& entry =
