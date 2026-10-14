@@ -138,6 +138,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - **`terminal.commands_to_skip_shell`.** Which keybindings still run while a
   terminal has focus is now a setting (keybinding ids; `-file-finder` gives Ctrl+P
   back to the shell), and a plugin keybinding can opt in with `skips_terminal`.
+- **Remote hosts on ARM.** The package carries a static `microide-server` for
+  x86_64 and for aarch64 (`/usr/lib/microide/server/`), and the editor installs the
+  one matching the host's architecture. (The package had no server at all before,
+  so self-install only worked from a build tree.)
 - **A host's server is updated with the editor.** When a host still runs an older
   (compatible) `microide-server`, the editor's own release is installed beside it
   and a row offers **Restart Server** — the old one keeps serving, with its

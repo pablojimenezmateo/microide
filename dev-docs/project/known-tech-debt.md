@@ -427,6 +427,16 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-14-339 — the static microide-server is 7.7 MB against a 6 MB target. [OPEN]
+
+`tools/build-server.sh` (2026-10-14) produces stripped static binaries of 7.7 MB
+(x86_64) and 6.8 MB (aarch64); the design's table targets ≤ 6 MB, since the
+binary is copied to every host over ssh on install. Most of it is static
+libstdc++ and PCRE2 (with its JIT). Candidates, each to be measured, not assumed:
+LTO on the static build, `-Os` for PCRE2, PCRE2 without JIT on the server (host
+search is not interactive per keystroke), `-ffunction-sections -Wl,--gc-sections`.
+Not done: the size costs one install round trip, not runtime.
+
 ### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN]
 
 Found fixing TD-2026-10-09-335: under the perf preset (`-O2 -flto=auto`, whole
@@ -992,7 +1002,23 @@ Phase 2a task 7.4 left three pieces of the host-terminal protocol:
   dropped. Only reachable with a flood that exhausted the credit window right
   before a taller resize; the next cold attach repairs it.
 
-### TD-2026-10-08-325 — remote host UI remainders. [OPEN]
+### TD-2026-10-08-325 — remote host UI remainders. [RESOLVED 2026-10-14]
+
+Resolved 2026-10-14, the last two items: the delay-relay perf scenarios (see the
+struck-through paragraph below) and the packaging. `tools/build-server.sh x86_64|aarch64`
+builds a static `microide-server` (MICROIDE_SERVER_ONLY + MICROIDE_SERVER_STATIC:
+libc, libstdc++ and a PCRE2 10.44 fetched by hash; static glibc rather than musl,
+which has no C++ runtime on Ubuntu -- portable because the server never resolves
+through NSS), cross-compiled for aarch64 (`cmake/toolchains/aarch64-linux-gnu.cmake`)
+and smoke-run under qemu; an aarch64 daemon answered an x86_64 client. Both ship in
+the `.deb` under `/usr/lib/microide/server/microide-server-<arch>` -- the package had
+NO server before, so a packaged editor's self-install would have failed -- and the
+session installs the one for the host's `uname -m`, failing with a reason naming an
+unpackaged architecture. `tools/release.sh` builds both and refuses a `.deb` without
+them. Tests: `RemoteHostSession/InstallPicksTheBinaryForTheHostsArchitecture`,
+`RuntimePaths/BundledServerBinaryIsChosenByArchitecture`.
+
+Original entry:
 
 From Phase 2a group 8: ~~no Show Log action~~ (done 2026-10-08: `remote-show-log`,
 `server/log`, an output channel per host), ~~no session-survival warning row~~ (done 2026-10-08: a warning

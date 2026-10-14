@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 
 namespace microide::platform {
@@ -22,10 +23,20 @@ std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path);
 // non-POSIX platforms it just creates the directory (different ACL model).
 bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir);
 
-// The microide-server binary this client installs on a host that has none
-// (dev-docs/design/remote-projects.md § 6.6): `$MICROIDE_SERVER_BINARY` when set,
-// else the one beside this executable (the build tree and the package both put it
-// there). Empty when there is none, which turns install into the copy command.
-std::filesystem::path ResolveBundledServerBinary();
+// The microide-server binary this client installs on a host of architecture `arch`
+// (`uname -m`: "x86_64", "aarch64"; dev-docs/design/remote-projects.md § 6.6):
+// `$MICROIDE_SERVER_BINARY` when set (any architecture: tests, a hand-built one),
+// else `microide-server-<arch>` in ../lib/microide/server (the package ships one
+// static server per architecture there, tools/build-server.sh) or beside this
+// executable, else the plain `microide-server`
+// beside it when `arch` is this machine's (a build tree). Empty when there is none.
+std::filesystem::path ResolveBundledServerBinary(std::string_view arch);
+// The same lookup against an explicit executable directory (no environment).
+std::filesystem::path ResolveBundledServerBinaryForBasePath(const std::filesystem::path& base,
+                                                            std::string_view arch);
+// This machine's architecture as `uname -m` names it.
+std::string ThisMachineArchitecture();
+// `uname -m` output reduced to the names the package uses ("arm64" is "aarch64").
+std::string NormalizeArchitecture(std::string_view uname_m);
 
 }  // namespace microide::platform

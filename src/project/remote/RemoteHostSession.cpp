@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "platform/ProcessLauncher.h"
+#include "platform/RuntimePaths.h"
 #include "platform/Subprocess.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
@@ -504,9 +505,36 @@ std::string RemoteHostSession::LingerCommandText() const {
 }
 
 std::string RemoteHostSession::InstallCommandText() const {
+  // The host's architecture is known only once something tried to install.
+  std::string arch;
+  {
+    std::lock_guard lock(mutex_);
+    arch = host_architecture_;
+  }
+  std::filesystem::path binary;
+  if (config_.server_binary && !arch.empty()) {
+    binary = config_.server_binary(arch);
+  }
   return JoinForDisplay(RemoteArgv(ShellCommand(kInstallScript, kInstallDirectory))) + " < " +
-         (config_.server_binary.empty() ? std::string("microide-server")
-                                        : config_.server_binary.string());
+         (binary.empty() ? std::string("microide-server") : binary.string());
+}
+
+std::string RemoteHostSession::HostArchitecture() {
+  {
+    std::lock_guard lock(mutex_);
+    if (!host_architecture_.empty()) {
+      return host_architecture_;
+    }
+  }
+  // The ssh round trip happens unlocked; only this (session) thread writes it.
+  const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
+      RemoteArgv("uname -m"), platform::SubprocessOptions{.timeout_ms = 20000});
+  if (!result.success()) {
+    return {};
+  }
+  std::lock_guard lock(mutex_);
+  host_architecture_ = platform::NormalizeArchitecture(result.stdout_text);
+  return host_architecture_;
 }
 
 bool RemoteHostSession::MasterAlive() {
@@ -587,9 +615,21 @@ std::shared_ptr<RemoteServerClient> RemoteHostSession::StartServer(bool* not_ins
 }
 
 bool RemoteHostSession::Install(std::string* error) {
-  const std::optional<std::string> binary = util::ReadTextFile(config_.server_binary);
+  const std::string arch = HostArchitecture();
+  if (arch.empty()) {
+    *error = "could not read the architecture of " + config_.target.Display() + " (uname -m)";
+    return false;
+  }
+  const std::filesystem::path path = config_.server_binary ? config_.server_binary(arch)
+                                                           : std::filesystem::path();
+  if (path.empty()) {
+    *error = "this build has no microide-server for " + arch + " (" + config_.target.Display() +
+             "); install one there by hand, or set remote.server_command";
+    return false;
+  }
+  const std::optional<std::string> binary = util::ReadTextFile(path);
   if (!binary.has_value() || binary->empty()) {
-    *error = "no server to install: " + config_.server_binary.string() + " is not readable";
+    *error = "no server to install: " + path.string() + " is not readable";
     return false;
   }
   const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
@@ -623,7 +663,7 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
   // Only the default chain is ever installed into: a configured server command
   // is the user's, and retrying it after an install would fail the same way.
   if (client == nullptr && config_.server_command.empty() && (not_installed || incompatible)) {
-    if (!config_.install || config_.server_binary.empty()) {
+    if (!config_.install || !config_.server_binary) {
       Report(State::Disconnected, {},
              (incompatible ? error : "no microide-server on " + config_.target.Display()) +
                  "; install it with: " + InstallCommandText());
@@ -659,7 +699,7 @@ bool RemoteHostSession::Attempt(bool reconnecting) {
   if (!server_older) {
     update_installed_ = false;  // the restart happened: this one is current
   } else if (!update_installed_ && config_.install && config_.server_command.empty() &&
-             !config_.server_binary.empty()) {
+             config_.server_binary) {
     std::string install_error;
     update_installed_ = Install(&install_error);
   }

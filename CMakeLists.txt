@@ -23,6 +23,15 @@ option(MICROIDE_PERF_HARNESS_BUILD "Enable perf harness instrumentation and targ
 # ICF is real codegen, and the timing baselines were recorded under it.
 option(MICROIDE_PERF_TRACE_SYMBOLS "Disable identical-code folding so allocation-trace symbols are trustworthy" OFF)
 option(MICROIDE_FUZZ "Enable libFuzzer targets" OFF)
+# A build of microide-server and nothing else (tools/build-server.sh): no SDL,
+# fonts or Lua are looked for, and configuring stops once the server target is
+# defined, so a cross toolchain with no GUI libraries can build it.
+option(MICROIDE_SERVER_ONLY "Configure only microide-server (packaging, cross builds)" OFF)
+# Link microide-server statically (libc, libstdc++ and a PCRE2 built from a pinned
+# release), so one binary runs on any Linux of its architecture. The server never
+# resolves a user or a host name through NSS (it reads $HOME and getuid), which is
+# what makes a static glibc binary portable.
+option(MICROIDE_SERVER_STATIC "Link microide-server statically" OFF)
 
 # When CMAKE_INTERPROCEDURAL_OPTIMIZATION is requested (e.g. via the
 # microide-perf preset or a release build), verify the toolchain actually
@@ -100,9 +109,9 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/microide")
 
 find_package(PkgConfig QUIET)
-find_package(SDL3 CONFIG QUIET)
-
 set(MICROIDE_SDL3_TARGET "")
+if(NOT MICROIDE_SERVER_ONLY)
+find_package(SDL3 CONFIG QUIET)
 
 if(TARGET SDL3::SDL3)
   set(MICROIDE_SDL3_TARGET SDL3::SDL3)
@@ -119,7 +128,7 @@ else()
   endif()
 endif()
 
-if(MICROIDE_SDL3_TARGET STREQUAL "")
+if(MICROIDE_SDL3_TARGET STREQUAL "" AND NOT MICROIDE_SERVER_ONLY)
   message(FATAL_ERROR
     "SDL3 was not found. Install SDL3 development files and rerun CMake.\n"
     "Expected either an SDL3 CMake package or pkg-config entry named 'sdl3'.")
@@ -144,7 +153,33 @@ if(MICROIDE_ENABLE_SDL3_TTF)
   endif()
 endif()
 
+endif()  # NOT MICROIDE_SERVER_ONLY (SDL / SDL_ttf)
+
 set(MICROIDE_PCRE2_TARGET "")
+if(MICROIDE_SERVER_STATIC)
+  # A static PCRE2 for the target architecture, from a pinned, hash-checked
+  # upstream release: distributions ship no cross-architecture libpcre2.
+  include(FetchContent)
+  set(PCRE2_BUILD_PCRE2_8 ON CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_PCRE2_16 OFF CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_PCRE2_32 OFF CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+  set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(PCRE2_SUPPORT_JIT ON CACHE BOOL "" FORCE)
+  set(PCRE2_STATIC_PIC ON CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  set(BUILD_STATIC_LIBS ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(microide_pcre2
+    URL https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2
+    URL_HASH SHA256=d34f02e113cf7193a1ebf2770d3ac527088d485d4e047ed10e5d217c6ef5de96
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+  FetchContent_MakeAvailable(microide_pcre2)
+  add_library(microide_pcre2_static INTERFACE)
+  target_link_libraries(microide_pcre2_static INTERFACE pcre2-8-static)
+  target_compile_definitions(microide_pcre2_static INTERFACE PCRE2_STATIC)
+  target_include_directories(microide_pcre2_static INTERFACE "${microide_pcre2_BINARY_DIR}")
+  set(MICROIDE_PCRE2_TARGET microide_pcre2_static)
+else()
 find_package(PCRE2 QUIET COMPONENTS 8BIT)
 if(TARGET PCRE2::8BIT)
   set(MICROIDE_PCRE2_TARGET PCRE2::8BIT)
@@ -154,6 +189,8 @@ elseif(PkgConfig_FOUND)
     set(MICROIDE_PCRE2_TARGET PkgConfig::PCRE2)
   endif()
 endif()
+
+endif()  # MICROIDE_SERVER_STATIC
 
 if(MICROIDE_PCRE2_TARGET STREQUAL "")
   message(FATAL_ERROR
@@ -217,7 +254,7 @@ set(MICROIDE_KERNEL_LIBS ${MICROIDE_PCRE2_TARGET} microide_blake3 microide_zstd)
 # `editor.font_family` setting. When absent, the backend falls back to a scan of
 # the standard font directories, so this is a soft dependency.
 set(MICROIDE_FONTCONFIG_TARGET "")
-if(PkgConfig_FOUND)
+if(PkgConfig_FOUND AND NOT MICROIDE_SERVER_ONLY)
   pkg_check_modules(FONTCONFIG QUIET IMPORTED_TARGET fontconfig)
   if(TARGET PkgConfig::FONTCONFIG)
     set(MICROIDE_FONTCONFIG_TARGET PkgConfig::FONTCONFIG)
@@ -226,6 +263,9 @@ endif()
 
 set(MICROIDE_LUA_TARGET "")
 
+if(MICROIDE_SERVER_ONLY)
+  set(MICROIDE_ENABLE_LUA_PLUGINS OFF)
+endif()
 if(MICROIDE_ENABLE_LUA_PLUGINS)
   if(PkgConfig_FOUND)
     pkg_check_modules(LUA54 QUIET IMPORTED_TARGET lua5.4)
@@ -889,9 +929,10 @@ add_test(NAME microide_kernel_link_probe COMMAND microide_kernel_link_probe)
 # The remote host's daemon (dev-docs/design/remote-projects.md § 6.6): the kernel
 # and its own sources, nothing else — the same link unit as the probe above plus a
 # protocol and a socket. No SDL, no fonts, no Lua; CheckServerStaysFreeOfTheShell
-# keeps the sources honest and this link line keeps the objects honest. Release
-# builds link it statically against musl (packaging); dev and sanitizer builds link
-# it normally so every lane covers it.
+# keeps the sources honest and this link line keeps the objects honest. Packaged
+# builds link it statically, one per architecture (MICROIDE_SERVER_STATIC via
+# tools/build-server.sh); dev and sanitizer builds link it normally so every lane
+# covers it.
 add_executable(microide-server
   src/server/ListeningPorts.cpp
   src/server/ProcessTable.cpp
@@ -912,6 +953,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   if(MICROIDE_WARNINGS_AS_ERRORS)
     target_compile_options(microide-server PRIVATE -Werror)
   endif()
+endif()
+if(MICROIDE_SERVER_STATIC)
+  # Stripped too: it is copied to every host over ssh on install.
+  target_link_options(microide-server PRIVATE -static -s)
+endif()
+if(MICROIDE_SERVER_ONLY)
+  # Everything below is the GUI, its tests and its tools.
+  return()
 endif()
 
 
@@ -1101,6 +1150,18 @@ if(UNIX AND NOT APPLE)
   endif()
 
   install(TARGETS microide RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  # One static microide-server per architecture, for installing on a host
+  # (platform::ResolveBundledServerBinary looks in lib/microide/server). Built by
+  # tools/build-server.sh before packaging; tools/release.sh checks both are in the
+  # .deb. OPTIONAL so a developer's `cpack` without them still packages.
+  set(MICROIDE_PACKAGED_SERVERS_ROOT "${CMAKE_SOURCE_DIR}/build" CACHE PATH
+      "Where tools/build-server.sh left server-<arch>/microide/microide-server")
+  foreach(_server_arch IN ITEMS x86_64 aarch64)
+    install(PROGRAMS "${MICROIDE_PACKAGED_SERVERS_ROOT}/server-${_server_arch}/microide/microide-server"
+            DESTINATION lib/microide/server
+            RENAME "microide-server-${_server_arch}"
+            OPTIONAL)
+  endforeach()
   install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/microide.1"
           DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")

@@ -105,7 +105,7 @@ remote::RemoteHostSession::Config RemoteHostService::SessionConfig(
       util::ParseInt64(setting("remote.backfill_inflight_bytes").value_or(std::string()))
           .value_or(0);
   config.install = SettingFlagEnabled(setting("remote.server_install"), true);
-  config.server_binary = platform::ResolveBundledServerBinary();
+  config.server_binary = [](std::string_view arch) { return platform::ResolveBundledServerBinary(arch); };
   return config;
 }
 

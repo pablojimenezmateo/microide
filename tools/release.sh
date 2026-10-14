@@ -172,10 +172,21 @@ fi
 
 # --- 7. package + checksum + sign -----------------------------------------
 log "7/9  Package .deb + checksum + GPG sign"
-( cd "$BUILD_DIR" && cpack -G DEB )
+# The static microide-server per architecture the editor installs on a host
+# (CMakeLists.txt installs them into /usr/lib/microide/server). aarch64 needs
+# g++-aarch64-linux-gnu and qemu-user-static.
+for arch in x86_64 aarch64; do
+  bash "$REPO/tools/build-server.sh" "$arch" > /dev/null \
+    || die "building the static $arch microide-server failed"
+done
+( cd "$BUILD_DIR" && cmake -DMICROIDE_PACKAGED_SERVERS_ROOT="$REPO/build" . > /dev/null && cpack -G DEB )
 DEB_PATH="$(find "$BUILD_DIR" -maxdepth 1 -name "$DEB" -print -quit)"
 [[ -n "$DEB_PATH" ]] || DEB_PATH="$(find "$BUILD_DIR" -maxdepth 1 -name 'microide_*_amd64.deb' -print -quit)"
 [[ -n "$DEB_PATH" ]] || die "cpack did not produce a .deb"
+for arch in x86_64 aarch64; do
+  dpkg -c "$DEB_PATH" | grep -q "usr/lib/microide/server/microide-server-$arch\$" \
+    || die "the .deb has no microide-server for $arch: remote install would fail on such hosts"
+done
 
 # Install-and-launch the artifact before it is signed. Building, testing and
 # signing a package says nothing about whether it starts on a machine that is not

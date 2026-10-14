@@ -1331,11 +1331,14 @@ manifest hash. So:
   the error message with the copy command instead, for a user who wants to manage
   the binary.
 
-  The binary is **statically linked against musl**, built from the SDL-free kernel
-  (Groundwork G1), so it runs on an older distribution than the client was built
-  on and needs no shared library on the host; a glibc-static build would still
-  pull in NSS at `getpwuid`, which the server avoids by reading `$HOME` and
-  `getuid()` only. The install directory is created 0700 and the binary 0700.
+  The binary is **statically linked**, built from the SDL-free kernel (Groundwork
+  G1), so it runs on an older distribution than the client was built on and needs
+  no shared library on the host. As built (2026-10-14, `tools/build-server.sh`) it
+  is static glibc, not musl: Ubuntu's musl has no C++ runtime, and glibc-static is
+  portable here because the only thing that would pull in NSS, `getpwuid`, is
+  never called -- the server reads `$HOME` and `getuid()`. The package ships one
+  per architecture (x86_64, aarch64) and the client installs the one for the
+  host's `uname -m`. The install directory is created 0700 and the binary 0700.
 - **Syncing** is § 6.2's population; the project is usable from the manifest on.
 - **Reconnecting** begins when three `link/ping`s in a row go unanswered (§ 6.4)
   or ssh exits — about six seconds after a link actually dies — and applies
@@ -2559,7 +2562,7 @@ for remote must not pay for it locally:
 | save with a formatter that takes 5 s (G5) | shell-thread frame never > 16 ms; the tab shows a saving state; a keystroke during the wait is kept and the format result is dropped |
 | save an unchanged 100 MB file (G6) | zero bytes hashed — the stat prefilter is what the gate asserts |
 | watcher reports a change to an open 100 MB file (G6) | the hash runs off the shell thread; frame never > 16 ms |
-| `microide-server` binary (G1) | static against musl, ≤ 6 MB stripped, links no SDL and no shared library — asserted by the kernel include lint and by `readelf -d` showing no `NEEDED` entry |
+| `microide-server` binary (G1) | static, links no SDL and no shared library — asserted by the kernel include lint and by `tools/build-server.sh` (`file` says statically linked; no dynamic section). Target ≤ 6 MB stripped; measured 2026-10-14 at 7.7 MB (x86_64) / 6.8 MB (aarch64), mostly static libstdc++ and PCRE2 |
 | `microide_kernel_tests` (G1) | runs with no display and no SDL initialization |
 | `settings_change_many_tabs` (existing) | unchanged by G8; the state-directory memo still hits |
 | a save from every `viewport.Save()` entry point (G10) | one write, one hash, no re-stat |
@@ -2870,7 +2873,7 @@ that check it agrees with local.
 | Where the async completion guard lives | Once, in `editor/`, introduced by G4 and consumed by G5 and G6: a completion carries the tab identity and content revision it was posted against and applies only if both still match. § 8 G4. |
 | Project identity versus filesystem root | Two fields. `ProjectId` names the project — persistence keys, presentation, the state-directory key. `ProjectWorkspaceState::root` stays a path, the mirror's `tree/`, for every I/O site. § 6.8, § 8 G8. |
 | A mosh-style UDP transport | **No.** It needs an inbound port, a firewall rule and our own encryption, none of which an unprivileged user over stock ssh can provide (§ 1). The durable half of mosh — nothing on the host notices a dropped link — comes from the server; the fast half comes from `link/ping`: about six seconds to a reattached terminal instead of zero, stated as the trade. § 6.4. |
-| How the server gets onto the host | The client installs it over the connection it has, into `~/.local/share/microide/server/`, as a static musl binary, when `server/hello` says it is missing or too old. No root, no package, no `PATH`. `remote.server_install = off` turns it into the copy command. § 6.6. |
+| How the server gets onto the host | The client installs it over the connection it has, into `~/.local/share/microide/server/`, as a static binary for the host's architecture, when it is missing, incompatible, or older than the client (then beside the running one, with a restart offered). No root, no package, no `PATH`. `remote.server_install = off` turns it into the copy command. § 6.6. |
 | What the user must be able to do on the host | Log in over stock `sshd` as themselves. Nothing else: no `sshd_config`, no `logind.conf`, no firewall, no root, no linger. Hosts that cannot keep user processes alive are detected and reported, not assumed away. § 1, § 6.12. |
 | One daemon per root or per user | Per **user**, with per-workspace budgets inside it. The drop-in requirement wants one thing to run; the isolation the per-root choice bought is accounting, not process boundaries. § 6.12. |
 | How many ssh channels a project uses | One. Two priority lanes on it and an adaptive bound on outstanding bulk bytes replace the per-process channels and the second terminal channel, which collided with `MaxSessions 10` and bought less head-of-line protection than claimed. § 6.4. |

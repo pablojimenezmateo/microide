@@ -102,11 +102,35 @@ void TestEnsureSecurePrivateDirectory() {
 #endif
 }
 
+// The server for a host's architecture: the package's lib/microide/server first,
+// then beside the executable, then -- only for this machine's architecture -- the
+// build tree's plain microide-server. Nothing for an architecture not shipped.
+void TestBundledServerBinaryIsChosenByArchitecture() {
+  TemporaryDirectory temp;
+  const std::filesystem::path usr = temp.path() / "usr";
+  const std::filesystem::path bin = usr / "bin";
+  WriteFile(usr / "lib/microide/server/microide-server-aarch64", "arm");
+  WriteFile(bin / "microide-server-riscv64", "riscv");
+  WriteFile(bin / "microide-server", "native");
+  Expect(platform::ResolveBundledServerBinaryForBasePath(bin, "aarch64") ==
+             usr / "lib/microide/server/microide-server-aarch64",
+         "the packaged per-architecture server");
+  Expect(platform::ResolveBundledServerBinaryForBasePath(bin, "riscv64") == bin / "microide-server-riscv64",
+         "else one beside the executable");
+  Expect(platform::ResolveBundledServerBinaryForBasePath(bin, platform::ThisMachineArchitecture()) ==
+             bin / "microide-server",
+         "the build tree's own server serves this machine's architecture");
+  Expect(platform::ResolveBundledServerBinaryForBasePath(bin, "mips64").empty(),
+         "and nothing serves an architecture that is not shipped");
+}
+
 }  // namespace
 
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RuntimePaths/PreferExplicitAssetRootOverride",
           TestRuntimePathsPreferExplicitAssetRootOverride);
+  AddTest(tests, "RuntimePaths/BundledServerBinaryIsChosenByArchitecture",
+          TestBundledServerBinaryIsChosenByArchitecture);
   AddTest(tests, "RuntimePaths/ResolveInstalledShareLayout",
           TestRuntimePathsResolveInstalledShareLayout);
   AddTest(tests, "RuntimePaths/EnsureSecurePrivateDirectory",

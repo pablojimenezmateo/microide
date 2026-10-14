@@ -7,6 +7,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 #endif
 
@@ -81,19 +82,58 @@ std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path) {
   return (asset_root / std::string(relative_path)).lexically_normal();
 }
 
-std::filesystem::path ResolveBundledServerBinary() {
+std::string NormalizeArchitecture(std::string_view uname_m) {
+  while (!uname_m.empty() && (uname_m.back() == '\n' || uname_m.back() == '\r' || uname_m.back() == ' ')) {
+    uname_m.remove_suffix(1);
+  }
+  if (uname_m == "arm64") {
+    return "aarch64";
+  }
+  if (uname_m == "amd64") {
+    return "x86_64";
+  }
+  return std::string(uname_m);
+}
+
+std::string ThisMachineArchitecture() {
+#if defined(__unix__) || defined(__APPLE__)
+  struct utsname name{};
+  if (::uname(&name) == 0) {
+    return NormalizeArchitecture(name.machine);
+  }
+#endif
+  return {};
+}
+
+std::filesystem::path ResolveBundledServerBinary(std::string_view arch) {
   std::error_code ec;
   if (const std::filesystem::path explicit_binary = EnvPath("MICROIDE_SERVER_BINARY");
       !explicit_binary.empty()) {
     return std::filesystem::is_regular_file(explicit_binary, ec) ? explicit_binary
                                                                  : std::filesystem::path();
   }
-  const std::filesystem::path base = BasePath();
-  if (base.empty()) {
+  return ResolveBundledServerBinaryForBasePath(BasePath(), arch);
+}
+
+std::filesystem::path ResolveBundledServerBinaryForBasePath(const std::filesystem::path& base,
+                                                            std::string_view arch) {
+  std::error_code ec;
+  if (base.empty() || arch.empty()) {
     return {};
   }
+  // The package's place (/usr/lib/microide/server, beside /usr/bin), then beside
+  // the executable.
+  const std::string name = "microide-server-" + std::string(arch);
+  for (const std::filesystem::path& packaged :
+       {base.parent_path() / "lib" / "microide" / "server" / name, base / name}) {
+    if (std::filesystem::is_regular_file(packaged, ec)) {
+      return packaged;
+    }
+  }
   const std::filesystem::path beside = base / "microide-server";
-  return std::filesystem::is_regular_file(beside, ec) ? beside : std::filesystem::path();
+  return arch == ThisMachineArchitecture() && std::filesystem::is_regular_file(beside, ec)
+             ? beside
+             : std::filesystem::path();
 }
 
 bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir) {

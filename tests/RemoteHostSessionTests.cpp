@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "platform/RuntimePaths.h"
 #include "RemoteServerTestSupport.h"
 
 #include "platform/AsyncSubprocess.h"
@@ -53,7 +54,7 @@ struct FakeHost : FakeSshHost {
     config.target = *remote::ParseRemoteHostTarget("dev@fake-host", nullptr);
     config.ssh = SshArgv(needs_auth);
     config.control_dir = dir.scratch() / "c";
-    config.server_binary = MICROIDE_SERVER_BINARY;
+    config.server_binary = [](std::string_view) { return std::filesystem::path(MICROIDE_SERVER_BINARY); };
     config.release = "test";
     config.min_backoff = std::chrono::milliseconds(50);
     config.auth_poll = std::chrono::milliseconds(20);
@@ -166,6 +167,51 @@ void TestAnOlderServerGetsTheNewBinaryBesideIt() {
     session.Disconnect();
     Expect(WaitForState(session, State::Disconnected), "disconnects");
   }
+}
+
+// Install picks the binary for the HOST's architecture (`uname -m` over the same
+// connection): the package ships one static server per architecture
+// (tools/build-server.sh). A host whose architecture this build has no server for
+// fails with a reason naming it, rather than installing one that cannot run there.
+void TestInstallPicksTheBinaryForTheHostsArchitecture() {
+  {
+    FakeHost host;
+    StateLog log;
+    std::mutex mutex;
+    std::vector<std::string> asked;
+    RemoteHostSession::Config config = host.Config();
+    config.server_binary = [&](std::string_view arch) {
+      std::lock_guard lock(mutex);
+      asked.emplace_back(arch);
+      return std::filesystem::path(MICROIDE_SERVER_BINARY);
+    };
+    RemoteHostSession session(config, log.Listener());
+    session.Connect();
+    Expect(WaitForState(session, State::Ready), "ready: " + log.Error());
+    std::lock_guard lock(mutex);
+    Expect(!asked.empty() && asked.front() == platform::ThisMachineArchitecture(),
+           "the binary was chosen for the host's own architecture (the fake host is this "
+           "machine): " + (asked.empty() ? std::string("none") : asked.front()));
+    session.Disconnect();
+    Expect(WaitForState(session, State::Disconnected), "disconnects");
+  }
+  {
+    FakeHost host;
+    StateLog log;
+    RemoteHostSession::Config config = host.Config();
+    config.server_binary = [](std::string_view) { return std::filesystem::path(); };
+    RemoteHostSession session(config, log.Listener());
+    session.Connect();
+    Expect(WaitUntil([&] { return !log.Error().empty(); }, std::chrono::seconds(20)),
+           "an unpackaged architecture fails");
+    Expect(log.Error().find("no microide-server for " + platform::ThisMachineArchitecture()) !=
+               std::string::npos,
+           "naming the architecture: " + log.Error());
+    session.Disconnect();
+  }
+  Expect(platform::NormalizeArchitecture("arm64\n") == "aarch64" &&
+             platform::NormalizeArchitecture("x86_64\n") == "x86_64",
+         "uname -m output is normalized to the package's names");
 }
 
 // A key with a passphrase: the batch master fails, the session reports NeedsAuth,
@@ -429,6 +475,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestSshConfigHostsFollowsIncludesAndSkipsPatterns);
   AddTest(tests, "RemoteHostSession/SocketDirAndBackfillBoundReachTheServer",
           TestSocketDirAndBackfillBoundReachTheServer);
+  AddTest(tests, "RemoteHostSession/InstallPicksTheBinaryForTheHostsArchitecture",
+          TestInstallPicksTheBinaryForTheHostsArchitecture);
   AddTest(tests, "RemoteHostSession/AnOlderServerGetsTheNewBinaryBesideIt",
           TestAnOlderServerGetsTheNewBinaryBesideIt);
   AddTest(tests, "RemoteHostSession/FirstConnectInstallsTheServerAndReachesReady",

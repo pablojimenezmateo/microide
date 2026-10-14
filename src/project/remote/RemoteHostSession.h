@@ -113,7 +113,10 @@ class RemoteHostSession {
     std::string server_socket_dir;
     std::int64_t backfill_inflight_bytes = 0;  // `remote.backfill_inflight_bytes`
     bool install = true;                   // `remote.server_install`
-    std::filesystem::path server_binary;   // the local server to install ("" = none)
+    // The local server to install on a host of the given architecture (`uname -m`,
+    // normalized: "x86_64", "aarch64"); an empty path means this build has none
+    // for it. Unset = never install (only the copy command is shown).
+    std::function<std::filesystem::path(std::string_view arch)> server_binary;
     std::string release;
     // The host directory this connection serves as its workspace (server/hello's
     // root): a remote project's channel. Empty for a terminal-only session.
@@ -185,6 +188,9 @@ class RemoteHostSession {
   std::shared_ptr<RemoteServerClient> StartServer(bool* not_installed, bool* incompatible,
                                                   std::string* error);
   bool Install(std::string* error);
+  // The host's `uname -m`, normalized; asked once per session (an ssh round trip)
+  // and only when something is to be installed. Empty when it could not be read.
+  std::string HostArchitecture();
   void Report(State state, std::string message, std::string error = {});
   // Sleep up to `delay`; false when woken by Disconnect or shutdown.
   bool WaitFor(std::chrono::milliseconds delay);
@@ -211,6 +217,7 @@ class RemoteHostSession {
   Config config_;
   Listener listener_;
   std::atomic_bool update_installed_{false};
+  std::string host_architecture_;  // guarded by mutex_; written by the session thread
   std::shared_ptr<LinkSignal> link_signal_ = std::make_shared<LinkSignal>();
   std::shared_ptr<RemoteConnection> connection_ = std::make_shared<RemoteConnection>();
 

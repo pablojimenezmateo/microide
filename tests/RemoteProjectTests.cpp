@@ -27,7 +27,7 @@ void TestRemoteProjectOpensAMirrorOverSsh() {
   config.session.target = *remote::ParseRemoteHostTarget("dev@fake-host", nullptr);
   config.session.ssh = host.SshArgv();
   config.session.control_dir = host.dir.scratch() / "c";
-  config.session.server_binary = MICROIDE_SERVER_BINARY;
+  config.session.server_binary = [](std::string_view) { return std::filesystem::path(MICROIDE_SERVER_BINARY); };
   config.session.release = "test";
   config.session.min_backoff = std::chrono::milliseconds(50);
   config.session.workspace_root = host_root.string();
@@ -107,7 +107,7 @@ void TestRemoteProjectBenchFirstSync() {
   config.session.target = *remote::ParseRemoteHostTarget("dev@bench-host", nullptr);
   config.session.ssh = host.SshArgv();
   config.session.control_dir = host.dir.scratch() / "c";
-  config.session.server_binary = MICROIDE_SERVER_BINARY;
+  config.session.server_binary = [](std::string_view) { return std::filesystem::path(MICROIDE_SERVER_BINARY); };
   config.session.release = "test";
   config.session.workspace_root = host_root.string();
   config.mirror_directory = host.dir.scratch() / "m";

@@ -56,7 +56,7 @@ Each server process SHALL have a `daemon_epoch` unique to it. Any resume token (
 - **THEN** the server reports the epoch mismatch and the client reopens its terminals cold, with no duplicated or silently skipped output
 
 ### Requirement: The server links only the windowing-free kernel
-`microide-server` SHALL link only `microide_kernel` objects and its own sources: no SDL, SDL_ttf or fontconfig. Release builds SHALL be statically linked against musl and SHALL resolve the user from `$HOME` and `getuid()` only, never through NSS.
+`microide-server` SHALL link only `microide_kernel` objects and its own sources: no SDL, SDL_ttf or fontconfig. Packaged builds SHALL be statically linked, one binary per supported architecture (x86_64, aarch64), selected by the host's `uname -m` at install, and SHALL resolve the user from `$HOME` and `getuid()` only, never through NSS.
 
 #### Scenario: The server binary has no windowing dependency
 - **WHEN** the release `microide-server` is inspected
