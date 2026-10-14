@@ -262,6 +262,46 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   }
 }
 
+// On a long, slower link (150 ms, 25 Mbit/s: a product of 469 KB, above the
+// 256 KiB the window starts at) the window must GROW to fill it. A window-limited
+// link measures window / RTT, so a target computed from that measurement has to
+// stay above the current window or the window can never climb out of its start.
+void TestBulkWindowFillsALongLink() {
+  SocketPair pair;
+  constexpr auto kRtt = std::chrono::milliseconds(150);
+  constexpr double kBytesPerSecond = 3'125'000.0;
+  DelayRelay relay(pair.b, kRtt, static_cast<std::uint64_t>(kBytesPerSecond));
+  Inbox sender_inbox;
+  Inbox receiver_inbox;
+  RemoteFrameTransport sender;
+  RemoteFrameTransport receiver;
+  Expect(sender.Start(pair.a, pair.a, sender_inbox.Callbacks(), {}), "start the sender");
+  const int far = relay.TakeClientFd();
+  Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
+  const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
+  constexpr int kChunks = 160;  // 10 MiB: ~3.4 s on this link
+  const auto start = std::chrono::steady_clock::now();
+  for (int i = 0; i < kChunks; ++i) {
+    Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
+  }
+  Expect(WaitUntil([&] { return receiver_inbox.Count() == kChunks; }, std::chrono::seconds(60),
+                   std::chrono::milliseconds(5)),
+         "everything arrives");
+  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
+  const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
+  const double window = static_cast<double>(sender.bulk_window());
+  Expect(window >= product * 0.9,
+         "the window grew to the link's product: window " + std::to_string(window) + ", product " +
+             std::to_string(product));
+  if (!IsSanitizerBuild()) {
+    // Slow start included: a ramp of a few round trips, then a full link.
+    Expect(throughput > kBytesPerSecond * 0.7,
+           "the link fills: " + std::to_string(throughput / 1e6) + " MB/s of " +
+               std::to_string(kBytesPerSecond / 1e6));
+  }
+}
+
 // Garbage from the peer ends the connection once, with the decoder's reason.
 void TestGarbageFromThePeerClosesOnce() {
   SocketPair pair;
@@ -354,6 +394,7 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
           TestInteractiveOvertakesABulkBacklog);
   AddTest(tests, "RemoteFrameTransport/BulkWindowSettlesAtTheBandwidthDelayProduct",
           TestBulkWindowSettlesAtTheBandwidthDelayProduct);
+  AddTest(tests, "RemoteFrameTransport/BulkWindowFillsALongLink", TestBulkWindowFillsALongLink);
   AddTest(tests, "RemoteFrameTransport/GarbageFromThePeerClosesOnce",
           TestGarbageFromThePeerClosesOnce);
   AddTest(tests, "RemoteFrameTransport/PeerHangupCloses", TestPeerHangupCloses);

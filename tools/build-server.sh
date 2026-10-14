@@ -28,6 +28,7 @@ if [[ "$arch" != "$(uname -m)" ]]; then
   runner=("qemu-$arch-static")
 fi
 
+mkdir -p "$(dirname "$build")"  # a fresh checkout has no build/ yet
 cmake "${args[@]}" > "$build.configure.log" 2>&1 || { cat "$build.configure.log" >&2; exit 1; }
 cmake --build "$build" --target microide-server -j"${MICROIDE_BUILD_JOBS:-8}"
 

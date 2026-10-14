@@ -300,6 +300,7 @@ class MirrorSyncEngine {
   std::unordered_map<std::string, HostChange> host_changes_;
   std::uint64_t host_change_sequence_ = 0;
   bool state_save_queued_ = false;
+  bool tree_unsynced_ = false;  // pulls written since the last flush (mutex_)
   // PendingPaths(): RecountLocked stages a changed list, Changed() builds the
   // snapshot outside the lock (its directory map is O(paths)) and publishes it.
   project::SharedPendingPaths pending_;

@@ -50,8 +50,20 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
 FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
                           const std::function<void(std::string_view chunk)>& sink);
 
+// Whether a tree write is flushed before it is renamed into place. Synced is the
+// default and what every user save and host write gets. Deferred is for the
+// mirror's PULLS only: the bytes are the host's and can be fetched again, and the
+// engine calls SyncTreeFilesystem once before it persists any state that records
+// them -- one flush per batch instead of one per file, which was a third of a
+// 4,521-file first sync (TD-2026-10-14-340).
+enum class Durability { Synced, Deferred };
+
+// Flush every pending write on the filesystem holding `root` (syncfs). False when
+// it could not; the caller then must not persist state that relies on the writes.
+bool SyncTreeFilesystem(const std::filesystem::path& root);
+
 // Replace `path`'s content with `content` if `expect` holds: a temp file beside it,
-// fsynced, then renamed into place (RENAME_NOREPLACE for Absent). Missing parent
+// fsynced (unless `durability` is Deferred), then renamed into place (RENAME_NOREPLACE for Absent). Missing parent
 // directories are created. `mode` (permission bits) applies when given; otherwise an
 // existing file keeps its mode and a new one gets 0644. A symlink at `path` is
 // refused rather than replaced.
@@ -60,7 +72,8 @@ FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                                 std::string_view content, const Precondition& expect,
                                 std::optional<std::uint32_t> mode,
-                                std::optional<std::int64_t> mtime_ns = std::nullopt);
+                                std::optional<std::int64_t> mtime_ns = std::nullopt,
+                                Durability durability = Durability::Synced);
 
 // WriteTreeFile with the bytes copied from `source` (a fetched object staged
 // outside the tree, already verified to hash to `hash`) — for files too large to
@@ -68,7 +81,8 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
 FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_view path,
                               const std::filesystem::path& source, const util::ContentHash& hash,
                               const Precondition& expect, std::optional<std::uint32_t> mode,
-                              std::optional<std::int64_t> mtime_ns = std::nullopt);
+                              std::optional<std::int64_t> mtime_ns = std::nullopt,
+                              Durability durability = Durability::Synced);
 
 // Make `path` a symlink to `target`. Replaces only a link (never a file or a
 // directory: those are content); creates missing parents.

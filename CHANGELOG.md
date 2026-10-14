@@ -202,6 +202,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
   link). It now aims at the bandwidth-delay product plus 5 ms: the echo is back
   within a frame of one round trip, at the same throughput.
 
+- **Opening a remote folder the first time** is ~4.5x faster (a 4,521-file
+  repository over a 55 ms link: ~20 s → 4.3 s). Each pulled file was flushed to
+  disk twice; the mirror is now flushed once per checkpoint, before the manifest
+  that records it.
+
 - Decoding semantic tokens is ~37 % faster than the previous build and ~20 % faster
   than 2.12.0: the integer read is inline on every JSON consumer's hot path again.
 

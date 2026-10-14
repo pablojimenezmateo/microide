@@ -1,5 +1,7 @@
 #include "project/remote/TreeFiles.h"
 
+#include "util/PerformanceCounters.h"
+
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
@@ -285,7 +287,7 @@ namespace {
 FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_view path,
                                const std::function<std::optional<util::ContentHash>(int fd, std::string* error)>& fill,
                                const Precondition& expect, std::optional<std::uint32_t> mode,
-                               std::optional<std::int64_t> mtime_ns) {
+                               std::optional<std::int64_t> mtime_ns, Durability durability) {
 #if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
@@ -328,7 +330,11 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
       };
       (void)::futimens(out.get(), times);  // best effort: only a fast path depends on it
     }
-    if (::fchmod(out.get(), final_mode) != 0 || ::fsync(out.get()) != 0) {
+    if (durability == Durability::Synced) {
+      util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFileFsyncs);
+    }
+    if (::fchmod(out.get(), final_mode) != 0 ||
+        (durability == Durability::Synced && ::fsync(out.get()) != 0)) {
       const std::string why = Errno("cannot finish " + std::string(path));
       ::unlinkat(parent->dir.get(), temp.c_str(), 0);
       return Error(why);
@@ -356,6 +362,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
   (void)root;
   (void)path;
   (void)fill;
+  (void)durability;
   (void)expect;
   (void)mode;
   (void)mtime_ns;
@@ -365,9 +372,25 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
 
 }  // namespace
 
+bool SyncTreeFilesystem(const std::filesystem::path& root) {
+  util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes);
+#if defined(__linux__)
+  const Fd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  return dir.get() >= 0 && ::syncfs(dir.get()) == 0;
+#elif defined(__unix__) || defined(__APPLE__)
+  ::sync();
+  (void)root;
+  return true;
+#else
+  (void)root;
+  return true;
+#endif
+}
+
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
                            std::string_view content, const Precondition& expect,
-                           std::optional<std::uint32_t> mode, std::optional<std::int64_t> mtime_ns) {
+                           std::optional<std::uint32_t> mode, std::optional<std::int64_t> mtime_ns,
+                           Durability durability) {
   return WriteTreeFileFrom(
       root, path,
       [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
@@ -385,13 +408,13 @@ FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view p
         }
         return util::HashContent(content);
       },
-      expect, mode, mtime_ns);
+      expect, mode, mtime_ns, durability);
 }
 
 FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_view path,
                               const std::filesystem::path& source, const util::ContentHash& hash,
                               const Precondition& expect, std::optional<std::uint32_t> mode,
-                              std::optional<std::int64_t> mtime_ns) {
+                              std::optional<std::int64_t> mtime_ns, Durability durability) {
   return WriteTreeFileFrom(
       root, path,
       [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
@@ -451,7 +474,7 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
         return hash;
 #endif
       },
-      expect, mode, mtime_ns);
+      expect, mode, mtime_ns, durability);
 }
 
 

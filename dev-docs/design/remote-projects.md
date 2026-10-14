@@ -157,9 +157,11 @@ raw `ssh` throughput 72 Mbit/s).** Driven headless through the control channel:
 - *Link death*: a `SIGKILL` of the ssh master mid-run reconnected in 2.1 s; a host
   terminal printing a tick a second during the outage showed all eight ticks
   exactly once, after the "connection to the host lost" mark.
-- *First sync*: this repository (4,521 files, 47 MB) mirrored in ~20 s, byte-for-byte
-  equal to the host (one SHA-256 over every file). That is ~22 Mbit/s against the
-  link's 72: TD-2026-10-14-340.
+- *First sync*: this repository (4,521 files, 47 MB) mirrored in 4.3 s, byte-for-byte
+  equal to the host (one SHA-256 over every file) -- faster than `tar` of the tree
+  over the same ssh (~6 s). It was ~20 s until a pull stopped fsyncing each file
+  twice and flushed the filesystem once per manifest save instead
+  (TD-2026-10-14-340); the link is ~55 ms away through a jump host.
 - *Branch switch*: `git checkout` 300 commits back on the host (671 files changed)
   resynced the mirror to the host's exact content in ~2.0 s, and ~2.1 s back --
   the Phase 3 resync path is fine at this size.

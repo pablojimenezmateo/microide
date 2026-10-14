@@ -8,6 +8,7 @@
 #include "project/remote/RemoteServerClient.h"
 #include "project/remote/RemoteWorkspace.h"
 #include "util/ContentHash.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <atomic>
@@ -105,6 +106,28 @@ void TestMirrorInitialSyncAndHostChanges() {
   Expect(!std::filesystem::exists(session.Tree("doomed.txt")), "a delete on the host is applied");
   Expect(ReadFile(session.Tree("new/c.txt")) == "c\n", "a new host file arrives");
   Expect(session.engine->StateOf("doomed.txt") == ContentState::Unknown, "and the deleted one is gone");
+}
+
+// A pull is not flushed per file: the tree is flushed once before the state that
+// records it is saved (Durability::Deferred). Two fsyncs per pulled file -- the
+// tree's and the object store's -- were two thirds of a 4,521-file first sync on
+// a real host (TD-2026-10-14-340).
+void TestMirrorFlushesAPullOncePerSaveNotPerFile() {
+  MirrorSession session;
+  for (int i = 0; i < 300; ++i) {
+    WriteFile(session.host / ("f" + std::to_string(i) + ".txt"), "content " + std::to_string(i) + "\n");
+  }
+  session.Connect();
+  util::ResetPerformanceCounters();
+  session.Sync();
+  Expect(session.engine->status().error.empty(), "synced: " + session.engine->status().error);
+  Expect(ReadFile(session.Tree("f299.txt")) == "content 299\n", "the files are there");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::RemoteTreeFileFsyncs) == 0,
+         "no pulled file was flushed on its own: " +
+             std::to_string(util::ReadPerformanceCounter(util::PerfCounterId::RemoteTreeFileFsyncs)));
+  const std::uint64_t flushes = util::ReadPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes);
+  Expect(flushes >= 1 && flushes <= 4,
+         "the tree is flushed once per state save: " + std::to_string(flushes));
 }
 
 // § 7.9: what the host changed after the first sync is recorded, newest first, one
@@ -726,6 +749,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);
   AddTest(tests, "MirrorSyncEngine/SkipsAnUnreadableHostFile", TestMirrorSkipsAnUnreadableHostFile);
   AddTest(tests, "MirrorSyncEngine/PullsLargeFilesLast", TestMirrorPullsLargeFilesLast);
+  AddTest(tests, "MirrorSyncEngine/FlushesAPullOncePerSaveNotPerFile",
+          TestMirrorFlushesAPullOncePerSaveNotPerFile);
   AddTest(tests, "MirrorSyncEngine/PrioritizedLargeFileStreamsAtOnce",
           TestMirrorPrioritizedLargeFileStreamsAtOnce);
   AddTest(tests, "MirrorSyncEngine/PullsAnEditAsADelta", TestMirrorPullsAnEditAsADelta);

@@ -847,6 +847,18 @@ void MirrorSyncEngine::SaveLocked() {
 
 void MirrorSyncEngine::SaveNowLocked() {
   std::string error;
+  // Pulled files were written without a flush each: flush the tree once, BEFORE
+  // the state that vouches for them, so a persisted state never describes bytes a
+  // crash could still lose. If the flush fails, keep the old state: after a crash
+  // the files then read as unrecorded, which the reconcile treats as a conflict
+  // to show, never as an edit to push.
+  if (tree_unsynced_) {
+    if (!SyncTreeFilesystem(store_.tree())) {
+      status_.error = "could not flush the mirror to disk; its state is not saved yet";
+      return;
+    }
+    tree_unsynced_ = false;
+  }
   if (!store_.Save(&error)) {
     status_.error = error;
   }
@@ -1398,11 +1410,15 @@ void MirrorSyncEngine::ApplyFetched(std::optional<std::vector<RemoteWorkspace::F
       std::error_code ignored;
       size = std::filesystem::file_size(object.staged_file, ignored);
       result = CopyFileIntoTree(store_.tree(), object.path, object.staged_file, *object.hash, expect,
-                                mode, mtime_ns);
+                                mode, mtime_ns, Durability::Deferred);
     } else {
-      result = WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns);
+      result = WriteTreeFile(store_.tree(), object.path, object.content, expect, mode, mtime_ns,
+                             Durability::Deferred);
     }
     std::lock_guard lock(mutex_);
+    // Not flushed per file: SaveNowLocked flushes the tree before any state that
+    // records these bytes is persisted (see Durability).
+    tree_unsynced_ = tree_unsynced_ || result.ok();
     MirrorStore::Entry* entry = store_.Find(object.path);
     if (entry == nullptr) {
       continue;

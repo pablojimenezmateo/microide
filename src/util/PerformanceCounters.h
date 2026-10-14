@@ -446,6 +446,8 @@ namespace microide::util {
   X(RemoteBytesSent, "remote.bytes_sent")                                                       \
   X(RemoteFramesReceived, "remote.frames_received")                                             \
   X(RemoteBytesReceived, "remote.bytes_received")                                               \
+  X(RemoteTreeFileFsyncs, "remote.tree_file_fsyncs")                                             \
+  X(RemoteTreeFlushes, "remote.tree_flushes")                                                   \
   /* --- filesystem watch / index ----------------------------------------- */                 \
   X(FileWatcherWakes, "watch.wakes")                                                            \
   X(FileWatcherPollScans, "watch.poll_scans")                                                    \

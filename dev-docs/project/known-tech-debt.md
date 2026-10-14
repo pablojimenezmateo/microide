@@ -427,7 +427,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-14-340 — a first sync runs at a third of the link's throughput. [OPEN]
+### TD-2026-10-14-340 — a first sync runs at a third of the link's throughput. [RESOLVED 2026-10-14]
+
+Resolved the same day: the time was the client's disk, not the link. Every pulled
+file was fsynced twice -- once by `WriteTreeFile` into the mirror and once by
+`MirrorObjects::Put` (`WriteTextFileAtomically`) into the object store -- and 4,521
+fsynced writes cost ~7 s locally against 0.3 s unsynced, serialized behind the I/O
+thread. A pull now writes tree and object files with temp + rename but no fsync
+(`Durability::Deferred`), and the engine `syncfs`es the mirror's filesystem once
+before it saves the manifest that records them, so a crash can still only lose
+files the manifest does not yet claim (the next sync re-pulls them). Interleaved
+A/B on worky with the same server: 22.2 / 19.8 s before, 4.34 / 4.36 s after, both
+byte-exact. The bulk window was ruled out first: pinning it at 0, 1 MiB or 4 MiB
+gave the same ~20 s, and the 2026-10-13 window rule A/B'd within noise against the
+old one. `MirrorSyncEngine/FlushesAPullOncePerSaveNotPerFile` pins the counters
+(`remote.tree_file_fsyncs` 0, `remote.tree_flushes` one per save).
+
+Original entry:
 
 Measured on a real host (2026-10-14, see `dev-docs/design/remote-projects.md`
 "Measured on a real host"): mirroring this repository (4,521 files, 47 MB) took
@@ -435,7 +451,7 @@ Measured on a real host (2026-10-14, see `dev-docs/design/remote-projects.md`
 over the same link. The content was exact; the time is the gap. Not yet known
 where it goes -- candidates, to be measured rather than guessed: the host
 hashing every file for the manifest before the first pull, the pull pipeline's
-`kMaxPullsInFlight` batches against a ~1 ms LAN round trip, per-file disk work on
+`kMaxPullsInFlight` batches against the round trip, per-file disk work on
 the client's I/O thread, and the bulk window's slow start on a link it has not
 measured yet. Next step: time the manifest phase separately from the pulls
 (`MirrorSyncEngine` status already has the phase), then A/B the batch size. VS
