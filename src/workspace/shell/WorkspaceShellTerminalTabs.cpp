@@ -122,9 +122,14 @@ RemoteHostService& WorkspaceShell::MakeRemoteHostService() {
       .setting = [this](std::string_view key) { return GetSettingValue(std::string(key)); },
       .set_status_segment =
           [this](StatusBarSegmentValue value) {
-            status_bar_service_.SetSegment(StatusBarSegmentId::Remote, std::move(value));
+            // Published from sync ticks, outside any frame: ask for one, and only
+            // for the strip (the frame adds the bar's rect itself once it runs).
+            if (status_bar_service_.SetSegment(StatusBarSegmentId::Remote, std::move(value))) {
+              if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+                RequestRedrawRect(layout->status_bar);
+              }
+            }
           },
-      .request_redraw = [this]() { RequestFullRedraw(); },
       .compare_files =
           [this](const std::filesystem::path& left, std::string left_label,
                  const std::filesystem::path& right, std::string right_label) -> std::string {

@@ -39,6 +39,8 @@ struct NotificationAction {
   // its job). Set this for an action that should leave the row up — a "Copy" next
   // to a message the user may still be reading.
   bool keep_open = false;
+
+  bool operator==(const NotificationAction&) const = default;
 };
 
 // Host-owned notifications ("toasts"). Callers post a short message; the service
@@ -139,13 +141,16 @@ class NotificationService {
   // Post a transient row expiring at now_ms + DurationMs(). Empty messages are
   // ignored. A message identical to one still on screen (same tone and text)
   // refreshes that one's expiry instead of stacking a duplicate.
-  void Show(Tone tone, std::string message, std::uint64_t now_ms);
+  bool Show(Tone tone, std::string message, std::uint64_t now_ms);
 
   // Post or update a row. A request carrying a key replaces the row with that key
   // IN PLACE — same stack position, new text/tone/progress, refreshed expiry —
   // rather than removing it and appending, so an updating row does not walk up the
   // stack under the pointer.
-  void Show(Request request, std::uint64_t now_ms);
+  // Returns whether anything on screen changed: re-posting a row exactly as it is
+  // (a sticky row republished on every state tick) only refreshes its expiry, and
+  // the caller need not repaint for it.
+  bool Show(Request request, std::uint64_t now_ms);
 
   // Remove the row with this key. Returns true if one was there (the caller should
   // then request a redraw). This is how a sticky row ends.

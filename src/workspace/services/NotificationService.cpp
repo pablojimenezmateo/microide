@@ -59,13 +59,13 @@ bool NotificationService::CapMessage(std::string& message) {
   return truncated;
 }
 
-void NotificationService::Show(Tone tone, std::string message, std::uint64_t now_ms) {
-  Show(Request{.tone = tone, .message = std::move(message)}, now_ms);
+bool NotificationService::Show(Tone tone, std::string message, std::uint64_t now_ms) {
+  return Show(Request{.tone = tone, .message = std::move(message)}, now_ms);
 }
 
-void NotificationService::Show(Request request, std::uint64_t now_ms) {
+bool NotificationService::Show(Request request, std::uint64_t now_ms) {
   if (request.message.empty()) {
-    return;
+    return false;
   }
   const bool truncated = CapMessage(request.message);
   // Progress implies sticky: the row ends when the work does. A sticky row with no
@@ -82,6 +82,11 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
   if (!request.key.empty()) {
     for (Notification& existing : notifications_) {
       if (existing.key == request.key) {
+        const bool painted_change = existing.tone != request.tone ||
+                                    existing.message != request.message ||
+                                    existing.truncated != truncated || existing.sticky != sticky ||
+                                    existing.progress != request.progress ||
+                                    !(existing.actions == actions);
         existing.tone = request.tone;
         existing.message = std::move(request.message);
         existing.expiry_ms = expiry_ms;
@@ -100,7 +105,7 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
                                         ? std::nullopt
                                         : std::optional<std::size_t>(existing.actions.size() - 1);
         }
-        return;
+        return painted_change;
       }
     }
   } else {
@@ -113,7 +118,7 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
           existing.message == request.message) {
         existing.expiry_ms = expiry_ms;
         existing.truncated = truncated;
-        return;
+        return false;
       }
     }
   }
@@ -124,7 +129,7 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
       sticky_count += existing.sticky ? 1 : 0;
     }
     if (sticky_count >= MaxSticky()) {
-      return;  // refused rather than stacked off the top of the window
+      return false;  // refused rather than stacked off the top of the window
     }
   }
 
@@ -139,6 +144,7 @@ void NotificationService::Show(Request request, std::uint64_t now_ms) {
       .actions = std::move(actions),
   });
   TrimTransientOverflow();
+  return true;
 }
 
 void NotificationService::TrimTransientOverflow() {

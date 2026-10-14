@@ -53,15 +53,17 @@ class StatusBarService {
  public:
   StatusBarService() = default;
 
-  void SetSegment(StatusBarSegmentId id, StatusBarSegmentValue value) {
+  // Returns whether a painted aspect changed, for a caller outside the frame (an
+  // asynchronous publisher) that must ask for a frame to show it.
+  bool SetSegment(StatusBarSegmentId id, StatusBarSegmentValue value) {
     StatusBarSegmentValue& slot = segments_[static_cast<std::size_t>(id)];
     // Only the painted aspects mark the bar dirty. Tooltip text and clickability
     // are hover/click state, not pixels, so a change to either must not schedule
     // a repaint.
-    if (slot.text != value.text || slot.visible != value.visible || slot.tone != value.tone) {
-      painted_state_changed_ = true;
-    }
+    const bool painted = slot.text != value.text || slot.visible != value.visible || slot.tone != value.tone;
+    painted_state_changed_ = painted_state_changed_ || painted;
     slot = std::move(value);
+    return painted;
   }
 
   // A segment's fields as VIEWS of strings the caller already owns.

@@ -33,6 +33,34 @@ void TestNotificationServiceExpiresAfterDuration() {
          "an empty service should report no scheduled wake");
 }
 
+// Show reports whether anything on screen changed, so a publisher that reposts a
+// keyed row on every state tick (remote sync's conflict rows) costs no frame when
+// the row is the same. Measured on a real host: every sync tick during agent
+// churn was a full-window repaint.
+void TestNotificationServiceShowReportsPaintedChanges() {
+  using Request = NotificationService::Request;
+  NotificationService service;
+  const auto row = [](std::string message, std::vector<workspace::NotificationAction> actions = {}) {
+    return Request{.tone = NotificationService::Tone::Warning,
+                   .key = "remote.conflict.a",
+                   .message = std::move(message),
+                   .sticky = true,
+                   .actions = std::move(actions)};
+  };
+  const workspace::NotificationAction keep{.label = "Keep Mine",
+                                           .id = workspace::ActionId::RemoteResolveConflict,
+                                           .args = {"/m/a", "mine"}};
+  Expect(service.Show(row("a changed on h and here", {keep}), 0), "a new row paints");
+  Expect(!service.Show(row("a changed on h and here", {keep}), 10), "the same row again paints nothing");
+  Expect(service.Show(row("a changed on h and here (2)", {keep}), 20), "new text paints");
+  Expect(service.Show(row("a changed on h and here (2)"), 30), "a removed button paints");
+  Expect(service.Show(Request{.tone = NotificationService::Tone::Info, .message = "hi"}, 40),
+         "a new anonymous row paints");
+  Expect(!service.Show(Request{.tone = NotificationService::Tone::Info, .message = "hi"}, 50),
+         "an anonymous repeat refreshes the one shown and paints nothing");
+  Expect(service.Active().size() == 2, "and nothing stacked");
+}
+
 void TestNotificationServiceDelayClampsToZeroWhenDue() {
   NotificationService service;
   service.Show(NotificationService::Tone::Warning, "warn", 0);
@@ -451,6 +479,8 @@ void TestNotificationServiceKeyboardFocus() {
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "NotificationService/ByteCapsOversizedMessage",
           TestNotificationServiceByteCapsOversizedMessage);
+  AddTest(tests, "NotificationService/ShowReportsPaintedChanges",
+          TestNotificationServiceShowReportsPaintedChanges);
   AddTest(tests, "NotificationService/ExpiresAfterDuration",
           TestNotificationServiceExpiresAfterDuration);
   AddTest(tests, "NotificationService/DelayClampsToZeroWhenDue",

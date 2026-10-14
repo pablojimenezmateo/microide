@@ -62,7 +62,6 @@ class RemoteHostService {
         open_terminal;
     std::function<std::optional<std::string>(std::string_view key)> setting;
     std::function<void(StatusBarSegmentValue)> set_status_segment;
-    std::function<void()> request_redraw;
     // Open a compare tab: `left` read-only, `right` editable, each side titled with
     // its label. Empty string on success, else why not.
     std::function<std::string(const std::filesystem::path& left, std::string left_label,

@@ -372,9 +372,6 @@ void RemoteHostService::ApplyProject(const std::filesystem::path& tree) {
     }
   }
   PublishStatusSegment();
-  if (operations_.request_redraw) {
-    operations_.request_redraw();
-  }
 }
 
 void RemoteHostService::PublishHostChanges(const std::filesystem::path& tree, Project& entry,
@@ -1443,9 +1440,6 @@ void RemoteHostService::Apply(const std::string& host, const remote::RemoteHostS
       break;
   }
   PublishStatusSegment();
-  if (operations_.request_redraw) {
-    operations_.request_redraw();
-  }
 }
 
 void RemoteHostService::AdviseAboutHostServer(const std::string& host,

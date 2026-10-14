@@ -200,8 +200,10 @@ void WorkspaceShell::Notify(NotificationService::Tone tone, std::string message)
 }
 
 void WorkspaceShell::Notify(NotificationService::Request request) {
-  notification_service_.Show(std::move(request), SDL_GetTicks());
-  RequestFullRedraw();
+  // A keyed row reposted unchanged (a state publisher's every tick) paints nothing.
+  if (notification_service_.Show(std::move(request), SDL_GetTicks())) {
+    RequestFullRedraw();
+  }
 }
 
 void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
