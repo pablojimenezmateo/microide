@@ -644,7 +644,8 @@ void MirrorSyncEngine::ApproveHeldDeletes() {
     std::vector<std::string> deletes;
     {
       std::lock_guard lock(mutex_);
-      deletes.swap(held_deletes_);
+      deletes.assign(held_deletes_.begin(), held_deletes_.end());
+      held_deletes_.clear();
       status_.held_deletes = 0;
     }
     DeleteNow(deletes);
@@ -980,15 +981,42 @@ bool MirrorSyncEngine::ReconcileDeleteLocked(std::map<std::string, MirrorStore::
   return false;
 }
 
+namespace {
+// How far apart a checkout's file changes and its HEAD move can be seen: the watch's
+// max delay (1 s) and the host's repository sampler (1 s), with room for a slow disk.
+constexpr auto kSameCheckout = std::chrono::seconds(10);
+}  // namespace
+
 void MirrorSyncEngine::HoldMassDeleteLocked(Plan& plan, std::size_t previously_remote) {
+  if (InBranchEventLocked()) {
+    return;  // a branch switch the tree must follow (§ 6.3)
+  }
   const std::size_t threshold = std::max<std::size_t>(
       options_.mass_delete_min_rows,
       static_cast<std::size_t>(options_.mass_delete_fraction * static_cast<double>(previously_remote)));
   if (plan.deletes.size() > threshold) {
-    held_deletes_.insert(held_deletes_.end(), plan.deletes.begin(), plan.deletes.end());
+    held_deletes_.insert(plan.deletes.begin(), plan.deletes.end());
+    held_at_ = std::chrono::steady_clock::now();
     plan.deletes.clear();
   }
   status_.held_deletes = held_deletes_.size();
+}
+
+void MirrorSyncEngine::OnRepositoryMovedLocked(Plan& plan) {
+  const auto now = std::chrono::steady_clock::now();
+  repository_moved_at_ = now;
+  // Only a hold from this checkout: an older one has been on screen as a prompt,
+  // and stays the user's to answer.
+  if (!held_deletes_.empty() && now - held_at_ <= kSameCheckout) {
+    plan.deletes.insert(plan.deletes.end(), held_deletes_.begin(), held_deletes_.end());
+    held_deletes_.clear();
+  }
+  status_.held_deletes = held_deletes_.size();
+}
+
+bool MirrorSyncEngine::InBranchEventLocked() const {
+  return repository_moved_at_.has_value() &&
+         std::chrono::steady_clock::now() - *repository_moved_at_ <= kSameCheckout;
 }
 
 std::size_t MirrorSyncEngine::RemoteCountLocked() const {
@@ -1068,6 +1096,23 @@ std::function<void(RemoteWorkspace::WatchDelta)> MirrorSyncEngine::WatchSink() {
 void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
   queue_.Post([this, delta = std::move(delta)]() mutable {
     Plan plan;
+    if (delta.repository_moved) {
+      {
+        std::lock_guard lock(mutex_);
+        OnRepositoryMovedLocked(plan);
+      }
+      if (!plan.deletes.empty()) {
+        Execute(std::move(plan), [this]() {
+          {
+            std::lock_guard lock(mutex_);
+            RecountLocked();
+            SaveLocked();
+          }
+          Changed();
+        });
+      }
+      return;
+    }
     {
       std::lock_guard lock(mutex_);
       // Older than what the mirror already holds (a delta that crossed a full
@@ -1077,6 +1122,9 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
       }
       const std::size_t previously_remote = RemoteCountLocked();
       for (ManifestRow& row : delta.rows) {
+        if (!held_deletes_.empty()) {
+          held_deletes_.erase(row.path);  // listed again: not the host's to delete any more
+        }
         ReconcileRowLocked(std::move(row), plan);
       }
       for (const std::string& path : delta.deleted) {

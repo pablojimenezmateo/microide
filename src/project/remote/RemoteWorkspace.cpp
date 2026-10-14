@@ -178,6 +178,10 @@ bool RemoteWorkspace::SubscribeWatch(std::function<void(WatchDelta delta)> on_de
     return false;
   }
   RemoteServerClient* raw = client.get();  // its own handler: it outlives the calls
+  // The same sink, in the same order: a HEAD move is a delta with nothing in it.
+  client->SetWatchMovedHandler([on_delta](std::uint64_t manifest_id) {
+    on_delta(WatchDelta{.manifest_id = manifest_id, .repository_moved = true});
+  });
   client->SetWatchHandler([raw, on_delta = std::move(on_delta)](std::uint64_t manifest_id,
                                                                 std::string bytes) {
     WatchDelta delta;

@@ -15,6 +15,7 @@
 #include "project/remote/RemotePeer.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/GitMetadataSource.h"
+#include "project/GitRepositoryMetadataTracker.h"
 #include "server/GitStatusSampler.h"
 #include "server/PeriodicSampler.h"
 #include "server/RecentObjects.h"
@@ -108,6 +109,9 @@ class RemoteServer {
     std::unique_ptr<WorkspaceWatch> watch;            // created on the first subscribe
     std::mutex watch_mutex;                           // guards watch_changes
     WorkspaceTree::Changes watch_changes;             // since the last published batch
+    // HEAD, the branch ref and packed-refs as of the last published batch (queue
+    // thread only): a batch HEAD moved with is announced as watch/moved.
+    project::GitRepositoryMetadataTracker published_head;
     util::SerialWorkQueue queue;     // manifests and watch batches
     util::SerialWorkQueue io_queue;  // reads, writes and tree ops, in arrival order
     // Pushed git status (remote-projects.md § 6.5): the connections that asked

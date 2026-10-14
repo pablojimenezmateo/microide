@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -241,6 +242,12 @@ class MirrorSyncEngine {
   bool ReconcileDeleteLocked(std::map<std::string, MirrorStore::Entry, std::less<>>::iterator it,
                              Plan& plan);
   void HoldMassDeleteLocked(Plan& plan, std::size_t previously_remote);
+  // The host's HEAD moved (watch/moved: a checkout, a reset). Deletes around it are
+  // git's, not a vanished root's: the ones held moments ago apply now, and a mass
+  // delete arriving shortly after is not held. Either order happens -- a long
+  // checkout publishes its files before HEAD moves, a short one after.
+  void OnRepositoryMovedLocked(Plan& plan);
+  bool InBranchEventLocked() const;
   std::size_t RemoteCountLocked() const;
   // `on_done` runs on the worker once every pull of the plan has landed.
   void Execute(Plan plan, std::function<void()> on_done);
@@ -295,7 +302,11 @@ class MirrorSyncEngine {
 
   mutable std::mutex mutex_;  // guards store_'s entries and the members below
   Status status_;
-  std::vector<std::string> held_deletes_;
+  // Held paths are still in the entries, as the host last listed them; a row that
+  // lists one again takes it out, so approving never deletes a file that came back.
+  std::set<std::string, std::less<>> held_deletes_;
+  std::chrono::steady_clock::time_point held_at_{};
+  std::optional<std::chrono::steady_clock::time_point> repository_moved_at_;
   // Path -> its latest host change (§ 7.9); `host_change_sequence_` orders them.
   std::unordered_map<std::string, HostChange> host_changes_;
   std::uint64_t host_change_sequence_ = 0;

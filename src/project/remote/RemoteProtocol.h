@@ -57,6 +57,11 @@ inline constexpr std::string_view kFsOp = "fs/op";
 // last sent. Subscribe first, then fetch the manifest: changes in between are in
 // the manifest, and nothing is sent before it.
 inline constexpr std::string_view kWatchSubscribe = "watch/subscribe";
+// watch/moved {manifest} notification, on the bulk lane just before that manifest's
+// WatchDelta frames: the host repository's HEAD moved since the previous batch (a
+// checkout, a reset, a commit). The client follows a mass delete that comes with
+// one instead of holding it (§ 6.3). A peer that does not know it drops it.
+inline constexpr std::string_view kWatchMoved = "watch/moved";
 // file/read {path} -> ObjectData frames (index 0) then {objects: [one answer]}, as
 // object/fetch: a READ-ONLY read of an absolute host path outside the content set —
 // a system header a language server names, a file in an ignored build/ directory.

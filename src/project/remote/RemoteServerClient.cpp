@@ -155,6 +155,20 @@ void RemoteServerClient::InstallRouting() {
       (*handler)(PortsFromJson(params));
     }
   });
+  peer_.OnNotification(method::kWatchMoved, [this](std::uint64_t, const util::JsonValue& params) {
+    const util::JsonValue& manifest = params["manifest"];
+    if (!manifest.IsInt() || manifest.AsInt() < 0) {
+      return;
+    }
+    std::shared_ptr<std::function<void(std::uint64_t)>> handler;
+    {
+      std::lock_guard lock(mutex_);
+      handler = watch_moved_handler_;
+    }
+    if (handler && *handler) {
+      (*handler)(static_cast<std::uint64_t>(manifest.AsInt()));
+    }
+  });
   peer_.OnNotification("git/status", [this](std::uint64_t, const util::JsonValue& params) {
     const util::JsonValue& root = params["root"];
     const util::JsonValue& generation = params["generation"];

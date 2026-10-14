@@ -620,6 +620,109 @@ void TestMirrorFollowsTheHostWatch() {
          "our own push echoed by the watch is current, not a change");
 }
 
+// A mass delete is held in case the host root vanished (§ 6.3), but a branch
+// switch deletes for git's reasons: when the host's HEAD moves with it
+// (watch/moved), the mirror follows. Measured on a real host before this: a
+// checkout 2,000 commits back left 2,960 files in the mirror that the host no
+// longer had, behind a prompt with no Apply button.
+void TestMirrorFollowsABranchSwitchThatDeletesMostFiles() {
+  MirrorSession session;
+  InitializeGitRepo(session.host);
+  for (int i = 0; i < 150; ++i) {
+    WriteFile(session.host / ("f" + std::to_string(i)), "x" + std::to_string(i));
+  }
+  CommitAll(session.host, "all", "branch switch");
+  RequireGitCommandSuccess(session.host, {"checkout", "-q", "-b", "small"}, "branch");
+  for (int i = 0; i < 140; ++i) {
+    std::filesystem::remove(session.host / ("f" + std::to_string(i)));
+  }
+  RequireGitCommandSuccess(session.host, {"commit", "-qam", "small"}, "commit the deletes");
+  RequireGitCommandSuccess(session.host, {"checkout", "-q", "-"}, "back to all");
+  session.Connect();
+  bool native = false;
+  std::string error;
+  Expect(session.workspace->SubscribeWatch(session.engine->WatchSink(), &native, &error),
+         "subscribes: " + error);
+  Expect(session.client->SubscribeGitStatus([](const std::string&) {}, &error), "git subscribed: " + error);
+  session.Sync();
+  Expect(std::filesystem::exists(session.Tree("f0")), "the first sync lands");
+
+  RequireGitCommandSuccess(session.host, {"checkout", "-q", "small"}, "switch to the small branch");
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return !std::filesystem::exists(session.Tree("f0")) &&
+                      std::filesystem::exists(session.Tree("f149"));
+             },
+             std::chrono::seconds(10)),
+         "the mirror follows the switch");
+  Expect(session.engine->status().held_deletes == 0, "and nothing is held");
+
+  RequireGitCommandSuccess(session.host, {"checkout", "-q", "-"}, "and back");
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return std::filesystem::exists(session.Tree("f0")) && ReadFile(session.Tree("f0")) == "x0";
+             },
+             std::chrono::seconds(10)),
+         "switching back brings the files back");
+}
+
+// The other side of the same rule: files removed with no HEAD move (an unmounted
+// directory, an rm) are still held, and a held path the host lists again is not
+// deleted when the hold is approved.
+void TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain() {
+  MirrorSession session;
+  InitializeGitRepo(session.host);
+  for (int i = 0; i < 150; ++i) {
+    WriteFile(session.host / ("f" + std::to_string(i)), "x" + std::to_string(i));
+  }
+  CommitAll(session.host, "all", "held delete");
+  session.Connect();
+  bool native = false;
+  std::string error;
+  Expect(session.workspace->SubscribeWatch(session.engine->WatchSink(), &native, &error),
+         "subscribes: " + error);
+  Expect(session.client->SubscribeGitStatus([](const std::string&) {}, &error), "git subscribed: " + error);
+  session.Sync();
+
+  for (int i = 0; i < 140; ++i) {
+    std::filesystem::remove(session.host / ("f" + std::to_string(i)));
+  }
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return session.engine->status().held_deletes == 140;
+             },
+             std::chrono::seconds(10)),
+         "removed with no HEAD move, the delete is held: " +
+             std::to_string(session.engine->status().held_deletes));
+  // Past the host's repository sampler: nothing announces a move it did not see.
+  std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+  session.engine->Flush();
+  Expect(session.engine->status().held_deletes == 140 && std::filesystem::exists(session.Tree("f0")),
+         "and stays held");
+
+  WriteFile(session.host / "f5", "back");
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return session.engine->status().held_deletes == 139;
+             },
+             std::chrono::seconds(10)),
+         "a held path the host lists again leaves the hold");
+  session.engine->ApproveHeldDeletes();
+  session.engine->Flush();
+  Expect(!std::filesystem::exists(session.Tree("f0")), "approved, the rest apply");
+  Expect(WaitFor(
+             [&] {
+               session.engine->Flush();
+               return std::filesystem::exists(session.Tree("f5")) && ReadFile(session.Tree("f5")) == "back";
+             },
+             std::chrono::seconds(10)),
+         "and the one that came back is kept, with the host's new bytes");
+}
+
 // A rename and a delete made with no connection are journaled, survive the engine
 // going away, and replay — in order, before the manifest is compared — on the next
 // connection: the deleted file is not pulled back, the renamed one lands at its
@@ -744,6 +847,10 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);
+  AddTest(tests, "MirrorSyncEngine/FollowsABranchSwitchThatDeletesMostFiles",
+          TestMirrorFollowsABranchSwitchThatDeletesMostFiles);
+  AddTest(tests, "MirrorSyncEngine/HoldsAMassDeleteTheRepositoryDidNotExplain",
+          TestMirrorHoldsAMassDeleteTheRepositoryDidNotExplain);
   AddTest(tests, "MirrorSyncEngine/RecordsChangedOnHost", TestMirrorRecordsChangedOnHost);
   AddTest(tests, "MirrorSyncEngine/ListsWhatItHasNotFetched", TestMirrorListsWhatItHasNotFetched);
   AddTest(tests, "MirrorSyncEngine/CarriesNonUtf8Names", TestMirrorCarriesNonUtf8Names);

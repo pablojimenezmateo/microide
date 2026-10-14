@@ -55,6 +55,9 @@ class RemoteWorkspace {
     std::uint64_t manifest_id = 0;
     std::vector<std::string> deleted;
     std::vector<ManifestRow> rows;
+    // A watch/moved event, not a batch (no rows): the host repository's HEAD
+    // moved -- a checkout or a reset, whose deletes are git's, not a vanished root's.
+    bool repository_moved = false;
   };
   // git/subscribe on the current connection: `changed` runs on its I/O thread
   // after every pushed git status (RemoteServerClient::SubscribeGitStatus).

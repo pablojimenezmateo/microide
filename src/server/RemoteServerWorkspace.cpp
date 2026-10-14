@@ -185,6 +185,7 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
               tree->queue.PostLatest("watch", [this, tree]() { PublishWatchBatch(*tree); });
             });
         tree->watch->SetPolledPaths(tree->tree.UnwatchedMembers());
+        tree->published_head.SetProjectRoot(tree->tree.root());  // the baseline
       }
       util::JsonObject result;
       result["native"] = util::JsonValue(tree->watch && tree->watch->native());
@@ -216,8 +217,16 @@ void RemoteServer::InstallGitHandlers(Connection& connection) {
       tree->git_last_pushed.reset();  // a new subscriber holds nothing: push in full
       if (!tree->git_sampler && !tree->closing.load()) {
         tree->git_sampler = std::make_unique<GitStatusSampler>(
-            tree->tree.root(), std::chrono::milliseconds(1000),
-            [this, tree]() { ScheduleGitStatus(*tree); });
+            tree->tree.root(), std::chrono::milliseconds(1000), [this, tree]() {
+              ScheduleGitStatus(*tree);
+              // A HEAD move with no worktree batch after it (a checkout whose files
+              // were all published before it moved) is still announced.
+              tree->queue.PostLatest("watch", [this, tree]() {
+                if (tree->watch) {  // the queue's own member: read here, not on the sampler
+                  PublishWatchBatch(*tree);
+                }
+              });
+            });
       }
     });
     ScheduleGitStatus(*tree);
@@ -360,6 +369,12 @@ void RemoteServer::PublishGitStatus(ServedTree& tree) {
 void RemoteServer::PublishWatchBatch(ServedTree& tree) {
   // A worktree change is a status change: queued behind this batch, coalesced.
   ScheduleGitStatus(tree);
+  // Sampled every batch, published or not, so the next one compares with now.
+  const std::vector<project::RepositoryChange> repository = tree.published_head.SampleChanges();
+  const bool head_moved =
+      std::any_of(repository.begin(), repository.end(), [](const project::RepositoryChange& change) {
+        return change.kind == project::RepositoryChangeKind::HeadChanged;
+      });
   {
     std::lock_guard publish(tree.publish_mutex);
     const bool anyone_primed =
@@ -422,10 +437,17 @@ void RemoteServer::PublishWatchBatch(ServedTree& tree) {
     }
     for (const auto& [connection_id, baseline] : sends) {
       const std::vector<std::string>& frames = frames_for[baseline];
-      if (frames.empty()) {
+      if (frames.empty() && !head_moved) {
         continue;  // the batch changed nothing this connection can see
       }
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
+        if (head_moved) {
+          // Ahead of the frames, on their lane, so the client has it before their
+          // deletes; sent with no frames too (the checkout's files went earlier).
+          util::JsonObject moved;
+          moved["manifest"] = util::JsonValue(static_cast<std::int64_t>(manifest->id));
+          peer.Notify(remote::method::kWatchMoved, util::JsonValue(std::move(moved)), remote::Lane::Bulk);
+        }
         for (const std::string& frame : frames) {
           peer.SendContent(remote::FrameType::WatchDelta, manifest->id, frame, remote::Lane::Bulk);
         }

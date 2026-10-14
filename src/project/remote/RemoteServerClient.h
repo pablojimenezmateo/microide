@@ -157,6 +157,12 @@ class RemoteServerClient {
 
   // WatchDelta frames (id = the manifest id they bring the client to), in order, on
   // the I/O thread. Set before watch/subscribe.
+  // watch/moved: the host repository's HEAD moved; runs on the I/O thread, in order
+  // with the watch frames.
+  void SetWatchMovedHandler(std::function<void(std::uint64_t manifest_id)> handler) {
+    std::lock_guard lock(mutex_);
+    watch_moved_handler_ = std::make_shared<std::function<void(std::uint64_t)>>(std::move(handler));
+  }
   void SetWatchHandler(std::function<void(std::uint64_t manifest_id, std::string bytes)> handler) {
     std::lock_guard lock(mutex_);
     watch_handler_ = std::make_shared<std::function<void(std::uint64_t, std::string)>>(std::move(handler));
@@ -198,6 +204,7 @@ class RemoteServerClient {
   // Content routes of in-flight RequestStream calls, by request id.
   std::map<std::uint64_t, std::shared_ptr<StreamContent>> streams_;
   std::shared_ptr<std::function<void(std::uint64_t, std::string)>> watch_handler_;
+  std::shared_ptr<std::function<void(std::uint64_t)>> watch_moved_handler_;
   struct PushedGitStatus {
     project::GitStatusOutput status;
     std::uint64_t generation = 0;
