@@ -389,7 +389,13 @@ void TestScrollingUpFetchesOlderHostHistory() {
     }
     return numbers;
   };
-  Expect(rows().size() < 200 && rows().front() > 1000, "only the newest history was prefetched");
+  // The screen and the prefetched history can land in separate frames: wait for
+  // the rows, and never read front() of an empty result (that was a TSAN SEGV).
+  Expect(WaitUntil([&] { return !rows().empty(); }, std::chrono::seconds(10)),
+         "the attach mirrors the prefetched rows:\n" + ScreenText(session));
+  const std::vector<int> prefetched = rows();
+  Expect(!prefetched.empty() && prefetched.size() < 200 && prefetched.front() > 1000,
+         "only the newest history was prefetched (" + std::to_string(prefetched.size()) + " rows)");
   const std::uint64_t trim_before = session.ScrollbackTrimTotal();
   // Page back until the host has nothing older: the mirror stops growing.
   for (int page = 0; page < 10; ++page) {
