@@ -55,35 +55,33 @@ struct RegexMatchRange {
 // Compile options for a user-facing SEARCH pattern (project-wide, in-file, and
 // replace all share this), given whether the search is case sensitive.
 //
-// The literal search path folds Unicode case — `Δ` finds `δ`, `É` finds `é` (see
-// util::Utf8CaseFold) — but the regex path only ever passed PCRE2_CASELESS,
-// which without PCRE2_UTF folds ASCII and nothing else. So the SAME query
-// matched case-insensitively as a literal and case-sensitively as a regex.
+// Search matches CHARACTERS, as VS Code's (ripgrep's) does: PCRE2_UTF makes `.`,
+// `[^...]` and a match boundary a whole code point, and PCRE2_UCP makes `\w`,
+// `\b`, `\d`, `\s` Unicode-aware and folds Unicode case (`Δ` finds `δ`, as the
+// literal path's util::Utf8CaseFold does). Byte-oriented matching -- what an
+// ASCII query used to get (TD-2026-07-25-101) -- let `caf.` match `caf` plus the
+// FIRST BYTE of `é`, so a highlight split a character and a replace-all wrote
+// invalid UTF-8.
 //
-// Turning UTF/UCP on unconditionally would slow the dominant path: essentially
-// every real query is ASCII, where PCRE2_CASELESS alone is already exactly
-// right and byte-oriented matching is faster. So enable Unicode handling only
-// when it can change the answer — a case-insensitive search whose query
-// actually carries a non-ASCII byte.
+// Speed is kept by CompiledRegex's ASCII twin (`AsciiTwin::Build`, which search
+// compiles with): UTF and UCP change nothing an all-ASCII line can observe, so
+// those lines -- nearly all of them -- run the byte-mode compilation.
 //
-// PCRE2_MATCH_INVALID_UTF (PCRE2 >= 10.34) comes along for the ride whenever UTF
-// is on: search subjects are arbitrary file bytes, and without it a single
-// invalid byte makes pcre2_match refuse the whole line, silently hiding matches
-// elsewhere in it.
+// PCRE2_MATCH_INVALID_UTF (PCRE2 >= 10.34) is what makes UTF safe here: search
+// subjects are arbitrary file bytes, and without it a single invalid byte makes
+// pcre2_match refuse the whole line. Older PCRE2 keeps the previous rule -- UTF
+// only for a case-insensitive non-ASCII query -- rather than lose such lines.
 inline std::uint32_t SearchRegexCompileOptions(std::string_view query, bool case_sensitive) {
-  if (case_sensitive) {
-    return 0u;
-  }
+  const std::uint32_t caseless = case_sensitive ? 0u : static_cast<std::uint32_t>(PCRE2_CASELESS);
+#ifdef PCRE2_MATCH_INVALID_UTF
+  (void)query;
+  return caseless | PCRE2_UTF | PCRE2_UCP | PCRE2_MATCH_INVALID_UTF;
+#else
   const bool query_has_non_ascii =
       std::any_of(query.begin(), query.end(),
                   [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
-  if (!query_has_non_ascii) {
-    return PCRE2_CASELESS;
-  }
-#ifdef PCRE2_MATCH_INVALID_UTF
-  return PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP | PCRE2_MATCH_INVALID_UTF;
-#else
-  return PCRE2_CASELESS | PCRE2_UTF | PCRE2_UCP;
+  return case_sensitive || !query_has_non_ascii ? caseless
+                                                : caseless | PCRE2_UTF | PCRE2_UCP;
 #endif
 }
 
@@ -133,11 +131,29 @@ class RegexMatchData {
   pcre2_match_data* data_ = nullptr;
 };
 
+// Whether a subject is known to hold no byte >= 0x80. Decided once per line by
+// the caller (util::IsAllAscii), so a line with many matches is scanned once.
+enum class RegexSubject : std::uint8_t { Unknown, Ascii };
+
+// Whether a UTF pattern also gets a byte-mode compilation for ASCII subjects.
+enum class AsciiTwin : std::uint8_t { None, Build };
+
 class CompiledRegex {
  public:
   CompiledRegex() = default;
 
-  CompiledRegex(std::string_view pattern, uint32_t options, std::string error_prefix = {})
+  // `twin = AsciiTwin::Build` on a PCRE2_UTF pattern also compiles it without
+  // UTF/UCP/MATCH_INVALID_UTF, and Match() runs that one for a subject the caller
+  // says is ASCII. On such a subject the two compilations match identically --
+  // UTF and UCP only change behaviour at code points >= 0x80; the syntax
+  // highlighter verified this over every built-in rule regex -- and byte mode is
+  // the faster matcher (measured over this repository's sources: up to 2x for a
+  // caseless or `\w`-heavy pattern). A pattern only UTF mode accepts (`\x{100}`)
+  // gets no twin and always runs the UTF compilation.
+  CompiledRegex(std::string_view pattern,
+                uint32_t options,
+                std::string error_prefix = {},
+                AsciiTwin twin = AsciiTwin::None)
       : utf_mode_((options & PCRE2_UTF) != 0), error_prefix_(std::move(error_prefix)) {
     if (pattern.empty()) {
       return;
@@ -186,6 +202,16 @@ class CompiledRegex {
     } else if (!error_prefix_.empty()) {
       error_ = BuildRegexErrorMessage(error_prefix_, error_code, error_offset);
     }
+    if (code_ != nullptr && utf_mode_ && twin == AsciiTwin::Build) {
+      const uint32_t byte_options = options & ~(PCRE2_UTF | PCRE2_UCP | kMatchInvalidUtf);
+      pcre2_code* ascii = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),
+                                        pattern.size(), byte_options, &error_code, &error_offset,
+                                        nullptr);
+      if (ascii != nullptr) {
+        ascii_jit_ = pcre2_jit_compile(ascii, PCRE2_JIT_COMPLETE) == 0;
+        ascii_code_ = std::shared_ptr<pcre2_code>(ascii, pcre2_code_free);
+      }
+    }
   }
 
   bool valid() const { return code_ != nullptr; }
@@ -200,12 +226,26 @@ class CompiledRegex {
                                   : nullptr);
   }
 
+  bool has_ascii_twin() const { return ascii_code_ != nullptr; }
+
   int Match(std::string_view text,
             std::size_t offset,
             RegexMatchData& match_data,
-            uint32_t options = 0) const {
+            uint32_t options = 0,
+            RegexSubject subject = RegexSubject::Unknown) const {
     if (!valid() || !match_data.valid()) {
       return PCRE2_ERROR_BADOPTION;
+    }
+    // Same capture count as the UTF compilation, so one match-data block serves
+    // both.
+    if (subject == RegexSubject::Ascii && ascii_code_ != nullptr) {
+      if (ascii_jit_ && (options & ~kJitMatchOptions) == 0) {
+        return pcre2_jit_match(ascii_code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()),
+                               text.size(), offset, options, match_data.get(),
+                               match_context_.get());
+      }
+      return pcre2_match(ascii_code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()),
+                         text.size(), offset, options, match_data.get(), match_context_.get());
     }
     // The JIT accepts only a subset of match-time options; anything outside it
     // falls back to pcre2_match rather than failing. The highlighter only ever
@@ -254,10 +294,14 @@ class CompiledRegex {
     thread_local std::vector<PCRE2_UCHAR> buffer(256);
     const uint32_t options = PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_EXTENDED |
                              PCRE2_SUBSTITUTE_OVERFLOW_LENGTH;
+    // An ASCII line substitutes through the byte-mode twin (see the constructor).
+    // A non-ASCII REPLACEMENT is fine there too: byte mode copies it through.
+    pcre2_code* code =
+        ascii_code_ != nullptr && IsAllAscii(subject) ? ascii_code_.get() : code_.get();
     for (;;) {
       PCRE2_SIZE out_length = buffer.size();
       const int rc = pcre2_substitute(
-          code_.get(), reinterpret_cast<PCRE2_SPTR>(subject.data()), subject.size(),
+          code, reinterpret_cast<PCRE2_SPTR>(subject.data()), subject.size(),
           /*startoffset=*/0, options, /*match_data=*/nullptr, match_context_.get(),
           reinterpret_cast<PCRE2_SPTR>(replacement.data()), replacement.size(), buffer.data(),
           &out_length);
@@ -309,7 +353,9 @@ class CompiledRegex {
  private:
   bool utf_mode_ = false;
   bool jit_fast_path_ = false;
+  bool ascii_jit_ = false;
   std::shared_ptr<pcre2_code> code_;
+  std::shared_ptr<pcre2_code> ascii_code_;  // AsciiTwin::Build only
   std::shared_ptr<pcre2_match_context> match_context_;
   std::string error_prefix_;
   std::string error_;
@@ -332,13 +378,18 @@ inline constexpr std::size_t kRegexMatchCancelPollInterval = 4096;
 // false leaving *search_from short of line.size()+1. Callers with no cancellation
 // need (in-memory buffer search) pass nullptr. This is the single shared match
 // engine for both project-wide and in-file regex search.
+//
+// `subject` is RegexSubject::Ascii when the caller checked that `line` holds no
+// byte >= 0x80 (util::IsAllAscii, once per line, not per match): the pattern's
+// ASCII twin then runs. Unknown is always correct, only slower.
 inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
                                      std::string_view line,
                                      std::size_t* search_from,
                                      RegexMatchData* match_data,
                                      std::size_t* match_start,
                                      std::size_t* match_end,
-                                     const std::atomic<bool>* cancel = nullptr) {
+                                     const std::atomic<bool>* cancel = nullptr,
+                                     RegexSubject subject = RegexSubject::Unknown) {
   if (!pattern.valid() || search_from == nullptr || match_data == nullptr ||
       !match_data->valid() || match_start == nullptr || match_end == nullptr) {
     return false;
@@ -350,7 +401,7 @@ inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
         cancel->load(std::memory_order_relaxed)) {
       return false;
     }
-    const int rc = pattern.Match(line, *search_from, *match_data);
+    const int rc = pattern.Match(line, *search_from, *match_data, 0, subject);
     if (rc == PCRE2_ERROR_NOMATCH) {
       return false;
     }
@@ -369,7 +420,8 @@ inline bool FindNextRegexMatchInLine(const CompiledRegex& pattern,
       // yet `foo` also starts at 0). The naive "advance one byte" idiom loses it.
       // Retry anchored at range.start rejecting an empty match to recover it.
       const int anchored_rc =
-          pattern.Match(line, range.start, *match_data, PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED);
+          pattern.Match(line, range.start, *match_data, PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED,
+                        subject);
       RegexMatchRange anchored;
       if (anchored_rc >= 0 && pattern.CaptureRange(*match_data, line.size(), &anchored) &&
           anchored.start != anchored.end) {

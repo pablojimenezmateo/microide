@@ -13610,7 +13610,23 @@ mechanical sweeps came back clean and are worth repeating: the suite passes unde
 both build `-Werror`-clean. What is left open:
 
 - **TD-2026-07-25-101 — regex search is Unicode-aware only for case folding, not for
-  pattern semantics. OPEN (needs a product decision).**
+  pattern semantics. [RESOLVED 2026-10-16 — character semantics everywhere, at
+  byte-mode speed.]** Decided VS Code's way (ripgrep is codepoint-oriented) once a
+  correctness cost turned up that the entry below did not weigh: byte matching let
+  `caf.` match `caf` plus the FIRST BYTE of `é`, so a regex replace-all over
+  non-ASCII text wrote invalid UTF-8 and a highlight split a character. Search
+  now always compiles `PCRE2_UTF|PCRE2_UCP|PCRE2_MATCH_INVALID_UTF` (older PCRE2
+  keeps the previous rule rather than lose lines with invalid bytes). The measured
+  cost of that -- over this repository's 20 MB of sources, up to +109% regex time
+  for a caseless or `\w`-heavy pattern -- is removed the way the syntax highlighter
+  already removes it: `CompiledRegex` built with `AsciiTwin::Build` also compiles the
+  pattern byte-mode, and an all-ASCII line (`util::IsAllAscii`, once per line, not
+  per match) runs that twin, on which UTF/UCP provably change nothing. So nearly
+  every line runs exactly the matcher it ran before. Regressions:
+  `RegexUtil/SearchMatchesWholeCharacters` (match and replace of `caf.`, Unicode
+  `\w`), `RegexUtil/AsciiTwinAgreesOnAsciiLines` (differential over a pattern
+  pool, both case modes), and `SearchRegexFuzz` now traps on any twin/UTF
+  divergence on an ASCII subject. Original entry:
   `util::SearchRegexCompileOptions` now adds `PCRE2_UTF|PCRE2_UCP` when a
   case-insensitive query carries a non-ASCII byte, which fixes the concrete bug (`Δ` did
   not find `δ` in regex mode even though it did in literal mode). It deliberately does

@@ -164,6 +164,81 @@ void TestRegexUtilFindNextRegexMatchInLine() {
          "the anchored-alternative recovery should surface the non-empty `foo` match");
 }
 
+// TD-2026-07-25-101: search regexes match CHARACTERS. Byte-oriented matching let
+// `caf.` take `caf` plus the first byte of `é`, so a replace-all wrote invalid
+// UTF-8 and a highlight split the character -- for an ASCII query, i.e. always.
+void TestRegexUtilSearchMatchesWholeCharacters() {
+  using microide::util::AsciiTwin;
+  using microide::util::CompiledRegex;
+  using microide::util::SearchRegexCompileOptions;
+#ifndef PCRE2_MATCH_INVALID_UTF
+  return;  // older PCRE2 keeps byte matching for ASCII queries (see the options)
+#endif
+  const std::string line = "caf\xC3\xA9 latte";
+  for (const bool case_sensitive : {true, false}) {
+    const CompiledRegex regex("caf.", SearchRegexCompileOptions("caf.", case_sensitive), {},
+                              AsciiTwin::Build);
+    auto match_data = regex.CreateMatchData();
+    std::size_t from = 0, start = 0, end = 0;
+    Expect(microide::util::FindNextRegexMatchInLine(regex, line, &from, &match_data, &start,
+                                                    &end) &&
+               start == 0 && end == 5,
+           "`caf.` should match all of `café`, not its first byte");
+    std::string replaced;
+    Expect(regex.SubstituteInto(line, "X", replaced) == 1 && replaced == "X latte",
+           "replacing `caf.` should replace the whole character");
+  }
+  // `\w` is a Unicode word character, as in VS Code's search.
+  const CompiledRegex word("\\w+", SearchRegexCompileOptions("\\w+", true), {}, AsciiTwin::Build);
+  auto word_data = word.CreateMatchData();
+  std::size_t from = 0, start = 0, end = 0;
+  Expect(microide::util::FindNextRegexMatchInLine(word, line, &from, &word_data, &start, &end) &&
+             start == 0 && end == 5,
+         "`\\w+` should take `café` whole");
+}
+
+// The ASCII twin finds exactly what the UTF compilation finds on an all-ASCII
+// line -- the property that makes running it there a pure speedup.
+void TestRegexUtilAsciiTwinAgreesOnAsciiLines() {
+  using microide::util::AsciiTwin;
+  using microide::util::CompiledRegex;
+  using microide::util::RegexSubject;
+  const std::vector<std::string> patterns = {
+      "\\w+",        "\\bfoo\\b",     "caf.",          "[^a-z ]+",   "\\d{2,}",
+      "x?|foo",      "(?i)K",         "s+",            "\\s*;$",     "[[:alpha:]]+",
+      "\\W",         "(?<=a)b",       "\\x{e9}|e",     ".",           "^\\S+",
+  };
+  const std::vector<std::string> lines = {
+      "foo bar_baz 42 KS ks;", "  int x = a_b(12);  ", "", "ab ab aab", "e E foo-foo  ;",
+  };
+  for (const bool caseless : {false, true}) {
+    for (const std::string& pattern : patterns) {
+      const std::uint32_t options = (caseless ? PCRE2_CASELESS : 0u) | PCRE2_UTF | PCRE2_UCP |
+                                    microide::util::kMatchInvalidUtf;
+      const CompiledRegex regex(pattern, options, {}, AsciiTwin::Build);
+      Expect(regex.valid(), "fixture pattern should compile: " + pattern);
+      if (!regex.has_ascii_twin()) {
+        continue;  // UTF-only syntax: always runs the UTF compilation
+      }
+      for (const std::string& line : lines) {
+        const auto collect = [&](RegexSubject subject) {
+          auto match_data = regex.CreateMatchData();
+          std::vector<std::pair<std::size_t, std::size_t>> found;
+          std::size_t from = 0, start = 0, end = 0;
+          while (microide::util::FindNextRegexMatchInLine(regex, line, &from, &match_data, &start,
+                                                          &end, nullptr, subject) &&
+                 found.size() < 64) {
+            found.emplace_back(start, end);
+          }
+          return found;
+        };
+        Expect(collect(RegexSubject::Ascii) == collect(RegexSubject::Unknown),
+               "the ASCII twin must agree with `" + pattern + "` on `" + line + "`");
+      }
+    }
+  }
+}
+
 }  // namespace
 
 // The empty-match advance in FindNextRegexMatchInLine must step a whole
@@ -272,6 +347,8 @@ void RegisterRegexUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RegexUtil/SubstituteIntoNoMatchAndBadEscape",
           TestRegexUtilSubstituteIntoNoMatchAndBadEscape);
   AddTest(tests, "RegexUtil/ExpandMatchAt", TestRegexUtilExpandMatchAt);
+  AddTest(tests, "RegexUtil/SearchMatchesWholeCharacters", TestRegexUtilSearchMatchesWholeCharacters);
+  AddTest(tests, "RegexUtil/AsciiTwinAgreesOnAsciiLines", TestRegexUtilAsciiTwinAgreesOnAsciiLines);
   AddTest(tests, "RegexUtil/FindNextRegexMatchInLine", TestRegexUtilFindNextRegexMatchInLine);
   AddTest(tests, "RegexUtil/BoundsCatastrophicBacktracking",
           TestRegexUtilBoundsCatastrophicBacktracking);

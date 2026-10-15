@@ -4,16 +4,20 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 // Fuzzes the SEARCH regex surface as the product actually uses it.
 //
 // The original harness compiled with a hardcoded PCRE2_UTF and called Match()
 // exactly once, which left the interesting code unfuzzed:
 //
-//   * util::SearchRegexCompileOptions — picks the option set from the query, and
-//     turns UTF/UCP/MATCH_INVALID_UTF on only for a case-insensitive non-ASCII
-//     query. That branch changes how PCRE2 treats malformed subject bytes, which
-//     is exactly the property a fuzzer should be attacking.
+//   * util::SearchRegexCompileOptions — UTF/UCP/MATCH_INVALID_UTF, which changes
+//     how PCRE2 treats malformed subject bytes, exactly the property a fuzzer
+//     should be attacking.
+//   * the ASCII twin (util::AsciiTwin::Build) — on an all-ASCII subject the
+//     byte-mode compilation must find exactly what the UTF one finds; a
+//     divergence traps.
 //   * util::FindNextRegexMatchInLine — the shared engine both project-wide and
 //     in-file search iterate with. It carries the subtle logic: the empty-match
 //     advance, the anchored retry that recovers a non-empty alternative at the
@@ -39,7 +43,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   const std::uint32_t options =
       microide::util::SearchRegexCompileOptions(pattern, case_sensitive);
 
-  microide::util::CompiledRegex regex(pattern, options, "fuzz regex");
+  microide::util::CompiledRegex regex(pattern, options, "fuzz regex",
+                                      microide::util::AsciiTwin::Build);
   if (!regex.valid()) {
     return 0;
   }
@@ -57,14 +62,24 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   // does. The iteration guard bounds a pathological pattern's run time; the
   // engine itself is required to always advance, so hitting the guard on a small
   // input would itself be a finding.
-  std::size_t search_from = 0;
-  std::size_t match_start = 0;
-  std::size_t match_end = 0;
-  for (int iterations = 0; iterations < 4096; ++iterations) {
-    if (!microide::util::FindNextRegexMatchInLine(regex, subject, &search_from, &match_data,
-                                                  &match_start, &match_end)) {
-      break;
+  const auto collect = [&](microide::util::RegexSubject kind) {
+    std::vector<std::pair<std::size_t, std::size_t>> found;
+    std::size_t search_from = 0;
+    std::size_t match_start = 0;
+    std::size_t match_end = 0;
+    for (int iterations = 0; iterations < 4096; ++iterations) {
+      if (!microide::util::FindNextRegexMatchInLine(regex, subject, &search_from, &match_data,
+                                                    &match_start, &match_end, nullptr, kind)) {
+        break;
+      }
+      found.emplace_back(match_start, match_end);
     }
+    return found;
+  };
+  const auto utf_matches = collect(microide::util::RegexSubject::Unknown);
+  if (regex.has_ascii_twin() && microide::util::IsAllAscii(subject) &&
+      collect(microide::util::RegexSubject::Ascii) != utf_matches) {
+    __builtin_trap();  // the twin disagrees with the pattern on an ASCII subject
   }
 
   // Replace-all and replace-one, with the fuzzer-supplied replacement driving

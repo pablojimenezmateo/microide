@@ -56,14 +56,15 @@ bool FindNextRegexMatch(const util::CompiledRegex& pattern,
                         util::RegexMatchData* match_data,
                         std::size_t* match_start,
                         std::size_t* match_end,
-                        const std::atomic<bool>& cancel_requested) {
+                        const std::atomic<bool>& cancel_requested,
+                        util::RegexSubject subject) {
   // Thin seam over the shared match engine (util::FindNextRegexMatchInLine): the
   // empty-match advance, anchored-alternative recovery, and coarse cancel polling
   // all live once in RegexUtil so project-wide and in-file regex search cannot
   // drift. This wrapper only binds the worker's cancellation flag and preserves
   // the internal test seam.
   return util::FindNextRegexMatchInLine(pattern, line, search_from, match_data, match_start,
-                                        match_end, &cancel_requested);
+                                        match_end, &cancel_requested, subject);
 }
 
 }  // namespace search_internal
@@ -289,7 +290,8 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
 
     const uint32_t regex_options = util::SearchRegexCompileOptions(
         query, UsesCaseSensitiveSearch(query, options.case_mode));
-    regex_pattern.emplace(query, regex_options, "Invalid project search pattern");
+    regex_pattern.emplace(query, regex_options, "Invalid project search pattern",
+                          util::AsciiTwin::Build);
     if (!regex_pattern->valid()) {
       return ProjectSearchCompletion{.error = regex_pattern->error()};
     }
@@ -415,13 +417,16 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
         if (literal_query != nullptr) {
           literal_query->LowerLine(line, lowered_line);
         }
+        const util::RegexSubject subject =
+            regex_pattern.has_value() && util::IsAllAscii(line) ? util::RegexSubject::Ascii
+                                                                : util::RegexSubject::Unknown;
 
         std::size_t search_from = 0;
         std::size_t match_start = 0;
         std::size_t match_end = 0;
         while ((regex_pattern.has_value() &&
                 search_internal::FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data,
-                                                    &match_start, &match_end, cancel)) ||
+                                                    &match_start, &match_end, cancel, subject)) ||
                (literal_query != nullptr &&
                 literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
           // Count every match globally. The first kMaxProjectSearchResults claims

@@ -224,8 +224,10 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
   std::size_t search_from = 0;
   std::size_t match_start = 0;
   std::size_t match_end = 0;
+  const util::RegexSubject subject =
+      util::IsAllAscii(content) ? util::RegexSubject::Ascii : util::RegexSubject::Unknown;
   while (util::FindNextRegexMatchInLine(pattern, content, &search_from, &match_data, &match_start,
-                                        &match_end, /*cancel=*/nullptr)) {
+                                        &match_end, /*cancel=*/nullptr, subject)) {
     if (matches.size() >= kMaxBufferSearchMatches) {
       if (truncated != nullptr) {
         *truncated = true;

@@ -579,7 +579,8 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   if (regex_mode) {
     const uint32_t regex_options = util::SearchRegexCompileOptions(query, case_sensitive);
     regex = std::make_shared<util::CompiledRegex>(query, regex_options,
-                                                  "Invalid project search pattern");
+                                                  "Invalid project search pattern",
+                                                  util::AsciiTwin::Build);
     if (!regex->valid()) {
       ps.error = regex->error();
       RequestSidebarRedraw();

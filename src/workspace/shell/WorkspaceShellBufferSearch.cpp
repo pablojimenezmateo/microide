@@ -25,7 +25,7 @@ namespace {
 util::CompiledRegex CompileBufferSearchRegex(const std::string& query, bool case_sensitive) {
   const std::uint32_t options =
       util::SearchRegexCompileOptions(query, case_sensitive) | PCRE2_MULTILINE;
-  return util::CompiledRegex(query, options);
+  return util::CompiledRegex(query, options, {}, util::AsciiTwin::Build);
 }
 
 BufferSearchOptions OptionsOf(const BufferSearchState& state) {
