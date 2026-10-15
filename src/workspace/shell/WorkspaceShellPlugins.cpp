@@ -58,43 +58,6 @@ bool IsVirtualDocumentUri(std::string_view text) {
   return text.starts_with("virtual://");
 }
 
-// clangd cannot find a compile_commands.json in a non-standard build dir (e.g.
-// builds/, out/, cmake-build-*). When the host discovers one, append
-// --compile-commands-dir so cross-file features work instead of silently
-// degrading. Only clangd understands the flag, so gate on the program name and
-// skip when the plugin already set it. Returns the (possibly augmented) command.
-std::vector<std::string> AugmentClangdWithCompileCommandsDir(
-    std::vector<std::string> command, const std::filesystem::path& project_root,
-    const platform::ProcessLauncher& launcher) {
-  if (command.empty()) {
-    return command;
-  }
-  const std::string program = std::filesystem::path(command.front()).filename().string();
-  if (program.rfind("clangd", 0) != 0) {
-    return command;  // not clangd; the flag would break other servers
-  }
-  for (const std::string& arg : command) {
-    if (arg.rfind("--compile-commands-dir", 0) == 0) {
-      return command;  // plugin/user already specified one
-    }
-  }
-  const std::optional<std::filesystem::path> dir =
-      project::DiscoverCompileCommandsDir(project_root);
-  if (!dir.has_value()) {
-    SDL_Log("cpp-lsp: no compile_commands.json found under %s — clangd cross-file "
-            "features will be limited until one is generated",
-            project_root.generic_string().c_str());
-    return command;
-  }
-  // As clangd -- running where the project's launcher runs it -- sees the
-  // directory, not as this machine's copy of the tree does (TD-2026-10-07-322).
-  command.push_back("--compile-commands-dir=" +
-                    launcher.ResolveWorkingDirectory(*dir).generic_string());
-  SDL_Log("cpp-lsp: pointing clangd at compile_commands.json in %s",
-          dir->generic_string().c_str());
-  return command;
-}
-
 // True when the live editor no longer matches the suggestion's anchor. Cheap
 // integer/identity checks first; the path normalize is the last resort so the
 // common "user typed / moved" case never allocates.
@@ -764,10 +727,14 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
         active_language_servers.insert(language_id);
       }
       const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
-      std::vector<std::string> command = AugmentClangdWithCompileCommandsDir(
+      project::ClangdCommandPlan plan = project::PlanClangdCommand(
           platform::ExpandWorkspaceFolder(language_server.command,
                                           context_.current_project_state.root, launcher),
           context_.current_project_state.root, launcher);
+      if (!plan.note.empty()) {
+        SDL_Log("%s", plan.note.c_str());
+      }
+      std::vector<std::string> command = std::move(plan.command);
       CurrentLspManager().RegisterServer(language_server.language_ids,
                                          context_.current_project_state.launcher(), command,
                                          // Percent-encode the rootUri the same way

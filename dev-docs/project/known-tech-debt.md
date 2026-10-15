@@ -472,7 +472,24 @@ pump the apply instead (`GitBlameServiceTests`, the editor-blame shell tests via
 `WaitForActiveEditorBlameOverlay`). Not done in the 2026-10-16 QA pass because the
 visible effect is nil and the change is a service refactor, not a fix.
 
-### TD-2026-10-16-344 — a remote project's clangd is only as good as the host's compile database, and the plugin's warning looks at the wrong machine. [OPEN]
+### TD-2026-10-16-344 — a remote project's clangd is only as good as the host's compile database, and the plugin's warning looks at the wrong machine. [RESOLVED 2026-10-16]
+
+The check was host-side, not the plugin's: `AugmentClangdWithCompileCommandsDir`
+in the shell searched `project_root` -- the mirror -- for every project. It moved
+into the kernel as `project::PlanClangdCommand` (testable, no SDL), which does
+not search for a non-local launcher: the mirror never holds the host's build
+output, so the search could only produce a false "missing" warning or point
+clangd at a stale local copy. For a remote project the log now says clangd runs
+on `<host>` and discovers the database there (root, `build/`), and that another
+directory belongs in the project's `.clangd` (`CompileFlags: CompilationDatabase:
+<dir>`) -- clangd's own configuration, read on the host, so no launcher-aware
+plugin file probe is needed. `cpp_lsp.binary`'s Settings description says it
+resolves on the host's PATH for a remote project and that cross-file navigation
+needs a compile database where clangd runs; `plugins/README.md` likewise.
+Regression: `CompileCommandsLocator/PlanLeavesRemoteClangdToItsOwnDiscovery`
+(plus the local half, `PlanPointsLocalClangdAtANonStandardBuildDir`). Original
+entry:
+
 
 Found by `tools/qa/remote.py` H on 2026-10-16. Go to definition through clangd on
 the host works (0.5 s on `worky`) for a self-contained file; in this repository's

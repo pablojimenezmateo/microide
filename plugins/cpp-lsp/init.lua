@@ -23,7 +23,7 @@ local function declare_settings(ctx)
     default = "clangd",
     scope = "project",
     label = "clangd Binary",
-    description = "Path to the clangd executable. Defaults to clangd from PATH.",
+    description = "Path to the clangd executable. Defaults to clangd from PATH -- for a remote project, the host's PATH, since clangd runs on the host. Cross-file navigation needs the build to have produced a compile_commands.json (or a compile_flags.txt) where clangd runs.",
   })
   ctx.settings.declare({
     id = "background_index",
@@ -65,7 +65,9 @@ return ide.plugin({
 
     -- One clangd process serves C, C++, and Objective-C; the host shares a
     -- single subprocess across these language ids. clangd reads
-    -- compile_commands.json from the project root automatically.
+    -- compile_commands.json from the project root and build/ automatically; the
+    -- host adds --compile-commands-dir for other build directories of a local
+    -- project (project::PlanClangdCommand).
     ctx.lsp.add({
       id = "clangd",
       language_ids = { "c", "c++", "objective-c" },

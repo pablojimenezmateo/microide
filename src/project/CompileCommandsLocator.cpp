@@ -3,6 +3,8 @@
 #include <string>
 #include <system_error>
 
+#include "platform/ProcessLauncher.h"
+
 namespace microide::project {
 
 namespace {
@@ -81,6 +83,40 @@ std::optional<std::filesystem::path> DiscoverCompileCommandsDir(
   }
 
   return best_dir;
+}
+
+ClangdCommandPlan PlanClangdCommand(std::vector<std::string> command,
+                                    const std::filesystem::path& project_root,
+                                    const platform::ProcessLauncher& launcher) {
+  ClangdCommandPlan plan{.command = std::move(command)};
+  if (plan.command.empty() ||
+      std::filesystem::path(plan.command.front()).filename().string().rfind("clangd", 0) != 0) {
+    return plan;  // not clangd; the flag would break other servers
+  }
+  for (const std::string& arg : plan.command) {
+    if (arg.rfind("--compile-commands-dir", 0) == 0) {
+      return plan;  // plugin/user already specified one
+    }
+  }
+  if (!launcher.is_local()) {
+    plan.note = "cpp-lsp: clangd runs on " + std::string(launcher.description()) +
+                " and finds compile_commands.json there itself (next to the sources or in "
+                "build/); for another build directory, name it in the project's .clangd "
+                "(CompileFlags: CompilationDatabase: <dir>)";
+    return plan;
+  }
+  const std::optional<std::filesystem::path> dir = DiscoverCompileCommandsDir(project_root);
+  if (!dir.has_value()) {
+    plan.note = "cpp-lsp: no compile_commands.json found under " + project_root.generic_string() +
+                " -- clangd cross-file features will be limited until one is generated";
+    return plan;
+  }
+  // As clangd -- running where the project's launcher runs it -- sees the
+  // directory, not as this machine's copy of the tree does (TD-2026-10-07-322).
+  plan.command.push_back("--compile-commands-dir=" +
+                         launcher.ResolveWorkingDirectory(*dir).generic_string());
+  plan.note = "cpp-lsp: pointing clangd at compile_commands.json in " + dir->generic_string();
+  return plan;
 }
 
 }  // namespace microide::project
