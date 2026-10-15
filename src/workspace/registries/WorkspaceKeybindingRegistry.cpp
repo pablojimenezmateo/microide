@@ -51,9 +51,40 @@ bool BindingMatches(const Binding& binding,
 
 }  // namespace
 
+bool KeybindingContextsOverlap(KeybindingContext a,
+                               bool a_skips_terminal,
+                               KeybindingContext b,
+                               bool b_skips_terminal) {
+  // The contexts each one is active in, by BindingMatches: a specific context is
+  // active only there; Global in every context but Terminal, and in Terminal too
+  // when it skips the shell.
+  const auto active_in = [](KeybindingContext binding, bool skips, KeybindingContext where) {
+    if (binding == KeybindingContext::Global) {
+      return where != KeybindingContext::Terminal || skips;
+    }
+    return binding == where;
+  };
+  for (const KeybindingContext where :
+       {KeybindingContext::Global, KeybindingContext::Editor, KeybindingContext::Sidebar,
+        KeybindingContext::Terminal}) {
+    if (active_in(a, a_skips_terminal, where) && active_in(b, b_skips_terminal, where)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
   static const auto kSpecs = std::to_array<KeybindingSpec>({
-      // Global — available everywhere except modals
+      // Global — available everywhere except modals.
+      //
+      // Scope follows VS Code's: a command that acts on the workbench (find in
+      // files, the editor tabs and groups, go to line, word wrap) is Global, so it
+      // works from the tree, a panel or the debug pane; Editor is for what edits or
+      // navigates the focused text. Find-in-files, close/next/previous/move tab,
+      // split and go to line were Editor, which made Ctrl+Shift+F do nothing while
+      // the tree had focus. A focused terminal still owns these keys (Ctrl+W is
+      // the shell's) unless terminal.commands_to_skip_shell names them.
       KeybindingSpec{
           .id = "new-tab",
           .action = ActionId::Tab,
@@ -401,7 +432,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::TabSwitch,
           .key = SDLK_PAGEDOWN,
           .modifiers = SDL_KMOD_CTRL,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {"+1", {}},
           .arg_count = 1,
           .command_name = {},
@@ -411,7 +442,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::TabSwitch,
           .key = SDLK_PAGEUP,
           .modifiers = SDL_KMOD_CTRL,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {"-1", {}},
           .arg_count = 1,
           .command_name = {},
@@ -425,7 +456,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::TabMove,
           .key = SDLK_PAGEDOWN,
           .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {"+1", {}},
           .arg_count = 1,
           .command_name = {},
@@ -435,7 +466,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::TabMove,
           .key = SDLK_PAGEUP,
           .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {"-1", {}},
           .arg_count = 1,
           .command_name = {},
@@ -445,7 +476,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::CloseActiveTab,
           .key = SDLK_W,
           .modifiers = SDL_KMOD_CTRL,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
           .command_name = {},
@@ -510,10 +541,13 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::ProjectSearch,
           .key = SDLK_F,
           .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
           .command_name = {},
+          // Ctrl+Shift+letter: nothing a shell reads, so find-in-files works from a
+          // focused terminal too, like Ctrl+Shift+E/G/M.
+          .skips_terminal = true,
       },
       KeybindingSpec{
           .id = "completion",
@@ -811,7 +845,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::Goto,
           .key = SDLK_G,
           .modifiers = SDL_KMOD_CTRL,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
           .command_name = {},
@@ -838,7 +872,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::Wrap,
           .key = SDLK_Z,
           .modifiers = SDL_KMOD_ALT,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
           .command_name = {},
@@ -868,7 +902,7 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .action = ActionId::SplitEditorRight,
           .key = SDLK_BACKSLASH,
           .modifiers = SDL_KMOD_CTRL,
-          .context = KeybindingContext::Editor,
+          .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
           .command_name = {},
@@ -1117,38 +1151,24 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
   }
 
   // Two bindings collide when they share a key + normalized modifiers and their
-  // contexts overlap — the same rule BindingMatches applies. A Global binding
-  // overlaps every context but Terminal, which it overlaps only when it skips the
-  // terminal; otherwise contexts must be equal. Resolved chords are indexed by
-  // (key, normalized mods) -> context bitmask so each contributed binding checks
-  // in O(1) instead of rescanning every prior binding (the old linear rescan made
-  // a cap-sized reload quadratic; TD-2026-07-17-019).
+  // contexts overlap (KeybindingContextsOverlap -- the rule BindingMatches
+  // applies). Resolved chords are indexed by (key, normalized mods) so each
+  // contributed binding checks only the handful on its own chord instead of
+  // rescanning every prior binding (the old linear rescan made a cap-sized reload
+  // quadratic; TD-2026-07-17-019).
   const auto chord_key = [](SDL_Keycode key, SDL_Keymod normalized_mods) {
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key)) << 16) |
            static_cast<std::uint16_t>(normalized_mods);
   };
-  // The context set is packed into a uint8 bitmask whose top bit marks a Global
-  // binding that skips the terminal; adding an 8th context would collide with it
-  // and make bindings past it look conflict-free.
-  static_assert(static_cast<unsigned>(KeybindingContext::Terminal) < 7,
-                "KeybindingContext no longer fits the uint8 conflict-index bitmask — widen "
-                "the mask type in ResolveKeybindings");
-  const auto context_bit = [](KeybindingContext context) {
-    return static_cast<std::uint8_t>(1u << static_cast<unsigned>(context));
+  struct TakenContext {
+    KeybindingContext context;
+    bool skips_terminal;
   };
-  constexpr std::uint8_t kGlobalBit = 1u << static_cast<unsigned>(KeybindingContext::Global);
-  constexpr std::uint8_t kTerminalBit = 1u << static_cast<unsigned>(KeybindingContext::Terminal);
-  constexpr std::uint8_t kGlobalSkipsTerminalBit = 1u << 7;
-  const auto binding_bits = [&](KeybindingContext context, bool skips_terminal) {
-    return static_cast<std::uint8_t>(
-        context_bit(context) |
-        (context == KeybindingContext::Global && skips_terminal ? kGlobalSkipsTerminalBit : 0));
-  };
-  std::unordered_map<std::uint64_t, std::uint8_t> resolved_contexts;
+  std::unordered_map<std::uint64_t, std::vector<TakenContext>> resolved_contexts;
   resolved_contexts.reserve(result.size());
   for (const ResolvedKeybinding& existing : result) {
-    resolved_contexts[chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers))] |=
-        binding_bits(existing.context, existing.skips_terminal);
+    resolved_contexts[chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers))]
+        .push_back(TakenContext{existing.context, existing.skips_terminal});
   }
   const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
                                            KeybindingContext context, bool skips) {
@@ -1156,16 +1176,9 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     if (it == resolved_contexts.end()) {
       return false;
     }
-    const std::uint8_t taken = it->second;
-    if (context == KeybindingContext::Global) {
-      // A Global overlaps every context but Terminal, and Terminal only when it
-      // skips the shell (the rule BindingMatches applies).
-      return (taken & ~kTerminalBit) != 0 || (skips && (taken & kTerminalBit) != 0);
-    }
-    if (context == KeybindingContext::Terminal) {
-      return (taken & (kTerminalBit | kGlobalSkipsTerminalBit)) != 0;
-    }
-    return (taken & (kGlobalBit | context_bit(context))) != 0;
+    return std::any_of(it->second.begin(), it->second.end(), [&](const TakenContext& taken) {
+      return KeybindingContextsOverlap(taken.context, taken.skips_terminal, context, skips);
+    });
   };
 
   for (const auto& contrib : contributed) {
@@ -1209,7 +1222,8 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.skips_terminal = skips;
     // Keep the conflict index in sync so a later plugin binding that collides
     // with this accepted one is skipped, matching the old rescan-of-result.
-    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))] |= binding_bits(context, skips);
+    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))].push_back(
+        TakenContext{context, skips});
     result.push_back(std::move(rb));
   }
 

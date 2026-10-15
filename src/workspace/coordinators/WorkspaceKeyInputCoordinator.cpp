@@ -30,10 +30,13 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
 
+  // The Ctrl+K leader is a workbench prefix, not an editor one (see
+  // HandleGlobalKeyDown): only a surface that takes the keyboard for itself -- a
+  // prompt, a menu, an overlay, a focused terminal -- drops a half-typed chord.
   const bool clears_editor_ctrl_k_chord =
       prompts_.dirty_visible || menu_state_.tree_context_menu.open ||
       menu_state_.menu_bar_open || prompts_.surface_visible || state_.overlay.visible ||
-      state_.surface.focus != FocusTarget::Editor;
+      ActiveKeybindingContext() == KeybindingContext::Terminal;
   if (clears_editor_ctrl_k_chord) {
     state_.surface.editor_ctrl_k_leader_armed = false;
   }
@@ -246,61 +249,9 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
 
   const auto& bindings = operations_.resolved_keybindings();
   const KeybindingContext key_ctx = ActiveKeybindingContext();
-  const bool editor_chord_allowed =
-      state_.surface.focus == FocusTarget::Editor && !state_.overlay.visible &&
-      key_ctx == KeybindingContext::Editor;
-
-  if (state_.surface.editor_ctrl_k_leader_armed) {
-    state_.surface.editor_ctrl_k_leader_armed = false;
-    if (editor_chord_allowed) {
-      const SDL_Keymod chord_mod = NormalizedKeyModifiers(modifiers);
-      if (chord_mod == SDL_KMOD_CTRL) {
-        if (event.key == SDLK_0 || event.key == SDLK_KP_0) {
-          return operations_.execute_action(ActionId::FoldAll, {}, ActionSource::Shortcut);
-        }
-        if (event.key == SDLK_J) {
-          return operations_.execute_action(ActionId::UnfoldAll, {}, ActionSource::Shortcut);
-        }
-        if (event.key == SDLK_O) {
-          // File > Open Folder / Project Tab… advertises Ctrl+K Ctrl+O (VS Code's
-          // chord for the same command); the leader handler used to implement only
-          // the two fold sequences, so the advertised chord did nothing.
-          return operations_.execute_action(ActionId::ProjectOpen, {}, ActionSource::Shortcut);
-        }
-      }
-      // VS Code's editor-grid chords: Ctrl+K Ctrl+<arrow> focuses the pane that
-      // way, Ctrl+K Ctrl+Shift+<arrow> moves the focused pane there. Both are
-      // no-ops with one pane, or when nothing lies in that direction.
-      if (const bool move_pane = chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
-          move_pane || chord_mod == SDL_KMOD_CTRL) {
-        switch (event.key) {
-          case SDLK_LEFT:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupLeft : ActionId::FocusEditorGroupLeft, {},
-                ActionSource::Shortcut);
-          case SDLK_RIGHT:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupRight : ActionId::FocusEditorGroupRight, {},
-                ActionSource::Shortcut);
-          case SDLK_UP:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupUp : ActionId::FocusEditorGroupUp, {},
-                ActionSource::Shortcut);
-          case SDLK_DOWN:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupDown : ActionId::FocusEditorGroupDown, {},
-                ActionSource::Shortcut);
-          default:
-            break;
-        }
-      }
-    }
-  } else if (editor_chord_allowed && event.key == SDLK_K &&
-             NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL) {
-    if (FindKeybinding(bindings, SDLK_K, modifiers, KeybindingContext::Editor) == nullptr) {
-      state_.surface.editor_ctrl_k_leader_armed = true;
-      return true;
-    }
+  if (const std::optional<bool> chord = HandleCtrlKChord(event, modifiers, key_ctx);
+      chord.has_value()) {
+    return *chord;
   }
 
   const ResolvedKeybinding* binding = FindKeybinding(bindings, event.key, modifiers, key_ctx);
@@ -308,12 +259,15 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     return false;
   }
 
+  // Text shortcuts that act on the focused editor's buffer, whatever context a
+  // user's keybindings file gives them. Workbench commands (close tab, find in
+  // files) are not here: listing them made a Global rebinding of Ctrl+W or
+  // Ctrl+Shift+F still dead outside the editor.
   const bool editor_shortcut =
       binding->action == ActionId::SelectAll || binding->action == ActionId::Undo ||
       binding->action == ActionId::Redo || binding->action == ActionId::CopySelection ||
       binding->action == ActionId::CutSelection || binding->action == ActionId::PasteClipboard ||
-      binding->action == ActionId::CloseActiveTab || binding->action == ActionId::Search ||
-      binding->action == ActionId::ReplaceInBuffer || binding->action == ActionId::ProjectSearch;
+      binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer;
 
   if (binding->action == ActionId::Tab && binding->args.empty() &&
       binding->command_name.empty() && state_.overlay.visible) {
@@ -330,8 +284,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
       (modal_overlay_visible || state_.surface.focus != FocusTarget::Editor)) {
     return false;
   }
-  if ((binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer ||
-       binding->action == ActionId::ProjectSearch) &&
+  if ((binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer) &&
       active_merge_tab) {
     return false;
   }

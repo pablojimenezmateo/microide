@@ -153,6 +153,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Workbench shortcuts work from the tree, a panel or the debug pane.** Find in
+  files (`Ctrl+Shift+F`), close/next/previous/move tab, split, go to line and word
+  wrap were bound to the editor only, so with the tree focused `Ctrl+Shift+F` did
+  nothing and the query typed next went to the tree. The `Ctrl+K` chords that act
+  on the workbench (`Ctrl+K Ctrl+O`, `Ctrl+K Ctrl+<arrow>`) work there too. A
+  focused terminal still keeps `Ctrl+W` and the other keys its shell uses.
+
 - **The editor no longer goes dark while the Edit menu is open.** A repaint under
   an open menu skipped the editor whenever it fell inside the box spanning the menu
   bar and the menu, and the menu bar is as wide as the window: with the Edit menu

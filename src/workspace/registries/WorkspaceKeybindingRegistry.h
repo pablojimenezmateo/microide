@@ -37,6 +37,16 @@ struct KeybindingSpec {
   bool skips_terminal = false;
 };
 
+// Whether two bindings on one chord can both be active in some focus context --
+// then FindKeybinding's first match leaves the other dead. The rule dispatch
+// applies: a Global binding is active everywhere but a focused terminal, and
+// there too when it skips the shell; any other context only in itself. The one
+// definition for the plugin-contribution screen and the built-in lint.
+bool KeybindingContextsOverlap(KeybindingContext a,
+                               bool a_skips_terminal,
+                               KeybindingContext b,
+                               bool b_skips_terminal);
+
 std::span<const KeybindingSpec> BuiltinKeybindingSpecs();
 const KeybindingSpec* FindBuiltinKeybinding(std::string_view id);
 const KeybindingSpec* FindBuiltinKeybindingByKey(SDL_Keycode key,

@@ -1399,7 +1399,76 @@ void TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit() {
              std::to_string(viewport.cursor_line()));
 }
 
+// Workbench shortcuts work from wherever focus is, as in VS Code. Find in files,
+// close/next tab and the rest were registered for the EDITOR context, so with the
+// tree focused Ctrl+Shift+F did nothing -- and the query the user then typed went
+// to the tree as single-key commands. A focused terminal still keeps Ctrl+W for
+// its shell.
+void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "alpha\n");
+  WriteFile(root / "b.txt", "beta\n");
+  WriteFile(root / "c.txt", "gamma\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the shortcut fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (const char* name : {"a.txt", "b.txt", "c.txt"}) {
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / name), "the fixture opens its files");
+  }
+  const std::size_t tabs = WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell);
+
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  const std::size_t active = WorkspaceShellTestAccess::ActiveTabIndex(shell);
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_CTRL), "Ctrl+PageDown is handled from the tree");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == (active + 1) % tabs,
+         "Ctrl+PageDown from the tree moves to the next tab");
+
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(SendKeyDown(shell, SDLK_W, SDL_KMOD_CTRL), "Ctrl+W is handled from the tree");
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == tabs - 1,
+         "Ctrl+W from the tree closes the active tab");
+
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(SendKeyDown(shell, SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "Ctrl+Shift+F is handled from the tree");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Search,
+         "Ctrl+Shift+F from the tree opens Search");
+
+  // Ctrl+K Ctrl+<arrow> (focus the editor pane that way) is a workbench chord too.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the fixture splits the editor");
+  if (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != 0) {
+    WorkspaceShellTestAccess::FocusOtherEditorGroup(shell);
+  }
+  // Toward the second pane, whichever way the split laid it out.
+  const auto panes = WorkspaceShellTestAccess::EditorGroupRectsFor(
+      shell, WorkspaceShellTestAccess::CurrentLayout(shell));
+  Expect(panes.groups.size() == 2, "the split has two panes");
+  const SDL_Keycode toward_second =
+      panes.groups[1].editor_surface.x > panes.groups[0].editor_surface.x ? SDLK_RIGHT : SDLK_DOWN;
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL), "the Ctrl+K leader is taken from the tree");
+  Expect(SendKeyDown(shell, toward_second, SDL_KMOD_CTRL), "Ctrl+K Ctrl+<arrow> completes the chord");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "Ctrl+K Ctrl+<arrow> from the tree focuses the pane that way");
+
+  // A focused terminal owns Ctrl+W (the shell's delete-word).
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+  const std::size_t before_terminal = WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell);
+  (void)SendKeyDown(shell, SDLK_W, SDL_KMOD_CTRL);
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) == before_terminal,
+         "Ctrl+W in a focused terminal goes to the shell, not to the editor tabs");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/WorkbenchShortcutsWorkFromTheTree",
+          TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree);
   AddTest(tests, "WorkspaceShell/FindMatchesFollowAnEditUnderTheWidget",
           TestWorkspaceShellFindMatchesFollowAnEditUnderTheWidget);
   AddTest(tests, "WorkspaceShell/FindMatchCountFollowsAnAnnouncedEdit",

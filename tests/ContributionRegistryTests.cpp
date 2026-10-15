@@ -66,32 +66,6 @@ void TestKeybindingRegistryBuiltinsNonEmpty() {
          "BuiltinKeybindingSpecs should be non-empty");
 }
 
-void TestKeybindingRegistryNoOverlaps() {
-  // Two built-in bindings collide when they share the same key + modifiers AND
-  // their contexts can be active at the same time: identical contexts, or either
-  // is Global (a Global binding matches in every context via FindKeybinding).
-  // Bindings in two different non-Global contexts (e.g. Editor vs Terminal)
-  // never fire in the same focus state, so they do not collide.
-  const auto specs = BuiltinKeybindingSpecs();
-  constexpr SDL_Keymod kRelevant = static_cast<SDL_Keymod>(
-      SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI);
-  const auto contexts_overlap = [](KeybindingContext a, KeybindingContext b) {
-    return a == b || a == KeybindingContext::Global || b == KeybindingContext::Global;
-  };
-  for (std::size_t i = 0; i < specs.size(); ++i) {
-    for (std::size_t j = i + 1; j < specs.size(); ++j) {
-      const auto& a = specs[i];
-      const auto& b = specs[j];
-      const bool same_chord =
-          a.key == b.key && (a.modifiers & kRelevant) == (b.modifiers & kRelevant);
-      const bool clash = same_chord && contexts_overlap(a.context, b.context);
-      Expect(!clash, (std::string("keybinding overlap: '") + std::string(a.id) + "' and '" +
-                      std::string(b.id) + "' share a chord in overlapping contexts")
-                         .c_str());
-    }
-  }
-}
-
 void TestKeybindingRegistryFindById() {
   const auto* spec = FindBuiltinKeybinding("save");
   Expect(spec != nullptr, "should find built-in keybinding 'save'");
@@ -106,9 +80,10 @@ void TestKeybindingRegistryFindUnknown() {
 
 
 // No two built-in bindings may claim one chord in contexts that can both be
-// active: FindKeybinding returns the FIRST match in list order, so a Global
-// binding listed before a context-specific one silently shadows it (and vice
-// versa), with nothing to say so.
+// active: FindKeybinding returns the FIRST match in list order, so the second is
+// advertised in Help and Settings and never dispatched. (This lint existed three
+// times, as KeybindingRegistry/NoOverlaps and MenuAccelerators/... too, each with
+// its own copy of the overlap rule and all three wrong about the terminal.)
 void TestBuiltinKeybindingsDoNotShadowEachOther() {
   using microide::workspace::KeybindingContext;
   using microide::workspace::ResolveKeybindings;
@@ -118,15 +93,40 @@ void TestBuiltinKeybindingsDoNotShadowEachOther() {
     for (std::size_t j = i + 1; j < bindings.size(); ++j) {
       const auto& a = bindings[i];
       const auto& b = bindings[j];
-      if (a.key != b.key || a.modifiers != b.modifiers) continue;
-      const bool overlap = a.context == b.context || a.context == KeybindingContext::Global ||
-                           b.context == KeybindingContext::Global;
-      if (!overlap) continue;
+      if (a.key != b.key || microide::workspace::NormalizedKeyModifiers(a.modifiers) !=
+                                microide::workspace::NormalizedKeyModifiers(b.modifiers)) {
+        continue;
+      }
+      // The registry's own rule, not a copy: a copy that treated Global as
+      // overlapping Terminal flagged Ctrl+PageDown (next tab) against the
+      // terminal's next tab, which a focused terminal does get.
+      if (!microide::workspace::KeybindingContextsOverlap(a.context, a.skips_terminal, b.context,
+                                                          b.skips_terminal)) {
+        continue;
+      }
       offenders += a.id + " vs " + b.id + " (" +
                    microide::workspace::FormatKeyChord(a.key, a.modifiers) + "); ";
     }
   }
   Expect(offenders.empty(), ("built-in bindings shadow each other: " + offenders).c_str());
+}
+
+// When two bindings on one chord can both fire: the rule dispatch applies.
+void TestKeybindingContextsOverlapFollowsDispatch() {
+  using microide::workspace::KeybindingContext;
+  using microide::workspace::KeybindingContextsOverlap;
+  Expect(KeybindingContextsOverlap(KeybindingContext::Global, false, KeybindingContext::Editor, false),
+         "a Global binding is active with the editor focused");
+  Expect(KeybindingContextsOverlap(KeybindingContext::Global, false, KeybindingContext::Sidebar, false),
+         "and with the tree focused");
+  Expect(!KeybindingContextsOverlap(KeybindingContext::Global, false, KeybindingContext::Terminal, false),
+         "but not in a focused terminal, which owns the keyboard");
+  Expect(KeybindingContextsOverlap(KeybindingContext::Global, true, KeybindingContext::Terminal, false),
+         "unless it skips the shell");
+  Expect(!KeybindingContextsOverlap(KeybindingContext::Editor, false, KeybindingContext::Sidebar, false),
+         "two specific contexts overlap only when equal");
+  Expect(KeybindingContextsOverlap(KeybindingContext::Terminal, false, KeybindingContext::Terminal, false),
+         "a context overlaps itself");
 }
 
 void TestParseKeyChordSingleKey() {
@@ -1480,11 +1480,12 @@ return ide.plugin({
 void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/BuiltinsNonEmpty",
           TestKeybindingRegistryBuiltinsNonEmpty);
-  AddTest(tests, "KeybindingRegistry/NoOverlaps", TestKeybindingRegistryNoOverlaps);
   AddTest(tests, "KeybindingRegistry/FindById", TestKeybindingRegistryFindById);
   AddTest(tests, "KeybindingRegistry/FindUnknown", TestKeybindingRegistryFindUnknown);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordSingleKey",
           TestParseKeyChordSingleKey);
+  AddTest(tests, "KeybindingRegistry/ContextsOverlapFollowsDispatch",
+          TestKeybindingContextsOverlapFollowsDispatch);
   AddTest(tests, "KeybindingRegistry/BuiltinKeybindingsDoNotShadowEachOther",
           TestBuiltinKeybindingsDoNotShadowEachOther);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordWithModifiers",

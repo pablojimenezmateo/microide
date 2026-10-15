@@ -599,6 +599,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/actions/WorkspaceGlobalActionExecutor.cpp
   src/workspace/WorkspaceIndentDetectApply.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinator.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorChords.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorModal.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorSurfaces.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorSettings.cpp
