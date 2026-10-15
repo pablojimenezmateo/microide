@@ -975,6 +975,14 @@
             .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_);
     return index < vm.rows.size() ? vm.rows[index].row_rect : SDL_FRect{};
   }
+  // The filter bar, and the text width its query is painted at.
+  static std::pair<SDL_FRect, float> SettingsOverlayFilterRectAndTextWidth(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    const SettingsOverlayViewModel vm =
+        RenderViewModelBuilder(shell.context_)
+            .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_);
+    return {vm.filter_rect, shell.text_renderer_.MeasureWidth(vm.query_display())};
+  }
   static int SettingsOverlaySelectedRowIndex(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.SelectedRow();
   }

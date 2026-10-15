@@ -132,14 +132,13 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     DrawRect(renderer, vm.filter_rect, focused ? theme_.accent : theme_.border);
     const float text_x = vm.filter_rect.x + 8.0f;
     const float text_y = vm.filter_rect.y + 5.0f;
-    const std::string_view shown = vm.query_empty ? vm.filter_placeholder : vm.query;
+    // The scrolled slice the builder kept in view (the whole query when it fits).
+    const std::string_view shown = vm.query_empty ? vm.filter_placeholder : vm.query_display();
     text_renderer_.DrawStringOn(renderer, text_x, text_y,
                                 vm.query_empty ? theme_.text_disabled : theme_.text_primary,
                                 theme_.editor_background, shown);
     if (focused) {
-      const std::size_t caret = settings_overlay_service_.QueryEditor().caret();
-      const std::string_view prefix = vm.query.substr(0, std::min(caret, vm.query.size()));
-      const float caret_x = text_x + text_renderer_.MeasureWidth(prefix);
+      const float caret_x = text_x + vm.query_caret_x;
       render::SetDrawColor(renderer, theme_.accent);
       SDL_RenderLine(renderer, caret_x, vm.filter_rect.y + 4.0f, caret_x,
                      vm.filter_rect.y + vm.filter_rect.h - 4.0f);

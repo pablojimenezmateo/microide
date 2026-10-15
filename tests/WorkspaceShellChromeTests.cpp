@@ -2872,6 +2872,34 @@ void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
                           MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
 }
 
+// The Settings filter keeps its text inside the bar, scrolled to the caret, as
+// every single-line input does. Drawn whole, a long query ran out of the bar and
+// the card, over the pane beside the overlay that no Settings repaint covers (QA
+// monkey seed 4).
+void TestWorkspaceShellSettingsFilterTextStaysInItsBar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  const std::string long_query(400, 'x');
+  (void)shell.HandleEvent(TextInputEvent(long_query.c_str()));
+
+  const auto [bar, text_width] = WorkspaceShellTestAccess::SettingsOverlayFilterRectAndTextWidth(shell);
+  Expect(bar.w > 0.0f, "the filter bar should be laid out");
+  Expect(text_width > bar.w / 2.0f, "the query should fill the bar");
+  Expect(text_width <= bar.w - 16.0f + 0.5f,
+         "the shown query must fit inside the bar's insets, not run past it");
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5663,6 +5691,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSaveAsRepaintsTheTabTitle);
   AddTest(tests, "WorkspaceShell/APromptOverSettingsOwnsThePointer",
           TestWorkspaceShellAPromptOverSettingsOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/SettingsFilterTextStaysInItsBar",
+          TestWorkspaceShellSettingsFilterTextStaysInItsBar);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",

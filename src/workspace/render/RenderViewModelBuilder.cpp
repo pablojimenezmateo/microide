@@ -1988,6 +1988,8 @@ namespace {
 constexpr float kSettingsPad = 12.0f;
 constexpr float kSettingsHeaderH = 38.0f;
 constexpr float kSettingsFilterH = 26.0f;
+// Left and right inset of the filter text inside its bar.
+constexpr float kSettingsFilterTextInset = 8.0f;
 constexpr float kSettingsCatRowH = 28.0f;
 // Value rows are variable-height: a fixed head band (title + controls) plus one
 // line per wrapped description line, so the full help text is always visible.
@@ -2086,11 +2088,31 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
                        ? "↑↓ scroll · Esc close"
                        : "Tab pane · ↑↓ move · Enter edit · Esc close";
 
+  // The filter bar, the same in both modes: full width just below the header.
+  // Its text scrolls with the caret, as every single-line input does -- drawn
+  // whole, a long query ran past the bar and out of the card, over whatever lay
+  // beside the overlay (QA monkey).
+  vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
+                            vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
+  if (!vm.query_empty) {
+    const editor::SingleLineEditor& editor = service.QueryEditor();
+    const float available = std::max(0.0f, vm.filter_rect.w - 2.0f * kSettingsFilterTextInset);
+    if (text_renderer.MeasureWidth(vm.query) <= available) {
+      vm.query_display_view = vm.query;  // fits: a view, no copy
+      vm.query_caret_x = text_renderer.MeasureWidth(
+          vm.query.substr(0, std::min(editor.caret(), vm.query.size())));
+    } else {
+      SingleLineViewMetrics metrics =
+          ComputeSingleLineViewMetrics(text_renderer, editor, "", available);
+      vm.query_display_storage = std::move(metrics.displayed_text);
+      vm.query_display_owned = true;
+      vm.query_caret_x = metrics.cursor_x;
+    }
+  }
+
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
     vm.title = "Help / About";
     vm.filter_placeholder = "Type to filter commands and shortcuts…";
-    vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
-                              vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
     vm.help_rows = std::span<const HelpAboutRow>(service.HelpRows());
 
     // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
@@ -2145,9 +2167,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   vm.title = "Settings";
   vm.filter_placeholder = "Type to filter settings…";
 
-  // Header carries the title; a full-width filter bar sits just below it.
-  vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
-                            vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
   const float content_top = vm.filter_rect.y + vm.filter_rect.h + 8.0f;
   const float content_bottom = vm.footer_rect.y - kSettingsPad;
   const float content_height = std::max(0.0f, content_bottom - content_top);

@@ -505,6 +505,16 @@ struct SettingsOverlayViewModel {
   SettingsPane focused_pane = SettingsPane::Filter;
   std::string_view title;
   std::string_view query;             // view into the service-owned filter text
+  // The part of the query the bar shows, scrolled to keep the caret in view, and
+  // the caret's x from the text start. Borrowed from `query` when it fits, owned
+  // when it had to be cut (never a view into this struct: it is returned by value).
+  std::string_view query_display() const {
+    return query_display_owned ? std::string_view(query_display_storage) : query_display_view;
+  }
+  std::string_view query_display_view;
+  std::string query_display_storage;
+  bool query_display_owned = false;
+  float query_caret_x = 0.0f;
   std::string_view filter_placeholder;
   bool query_empty = true;
   std::vector<SettingsCategoryViewModel> categories;
