@@ -113,7 +113,12 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
   }
   if (runtime_.git_blame_event_type != 0 && event.type == runtime_.git_blame_event_type) {
     util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::GitBlameEvent");
-    operations_.request_focused_editor_redraw();
+    // The blame becomes state here, with the repaint that shows it, rather than
+    // whenever the worker wrote it -- which could be between two clips of one
+    // partial frame (TD-2026-10-16-345).
+    if (operations_.apply_git_blame_results()) {
+      operations_.request_focused_editor_redraw();
+    }
     return finish(true);
   }
   if (runtime_.git_sidebar_event_type != 0 && event.type == runtime_.git_sidebar_event_type) {

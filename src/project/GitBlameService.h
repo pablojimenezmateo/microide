@@ -82,7 +82,15 @@ class GitBlameService {
 
   void SetWakeChannel(util::WakeChannel channel);
   void Request(const GitBlameRequest& request);
+  // What has been APPLIED, never what the worker produced since: a partial
+  // frame's clips all read the same blame (TD-2026-10-16-345).
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const;
+  // Makes the results the worker finished since the last call visible to
+  // Snapshot. Main thread, at a point that then repaints -- the blame wake's
+  // handler -- so blame changes between frames, never inside one, like every
+  // other async source's results. Returns whether anything it applied can
+  // change what Snapshot returns.
+  bool ApplyReadyResults();
   void InvalidatePath(const std::filesystem::path& root,
                       const std::filesystem::path& absolute_path);
   void Clear();
@@ -92,6 +100,10 @@ class GitBlameService {
   // Test seam: lets tests deterministically interpose before cache application.
   // Always compiled; the hook defaults to empty so production is unaffected.
   void SetBeforeCacheApplyHook(std::function<void()> hook);
+  // Test seams: whether finished results wait for ApplyReadyResults, and whether
+  // no request is queued or running.
+  bool HasReadyResults() const;
+  bool WorkerIdle() const;
 
   struct Impl;
   Impl* impl_ = nullptr;

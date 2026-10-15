@@ -438,7 +438,21 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-16-345 — blame results become visible on the worker thread, not when their wake is handled. [OPEN]
+### TD-2026-10-16-345 — blame results become visible on the worker thread, not when their wake is handled. [RESOLVED 2026-10-16]
+
+Fixed as proposed. The worker no longer writes blame lines anywhere `Snapshot`
+reads: its `FileCache` keeps only what it has FETCHED (spans, head, stamp,
+verdict), and each finished piece -- a verdict change, a span's lines, a budget
+eviction -- is queued as a `ReadyResult` carrying the generations it was produced
+under. `GitBlameService::ApplyReadyResults()` moves them into the main thread's
+published copy and is called from the blame wake's handler
+(`WorkspaceEventOrchestrator`), which repaints only when something applied; a
+result overtaken by `InvalidatePath`/`Clear` is dropped at apply. Unapplied
+results read as `loading`. The cache budget is now counted in loaded span lines,
+which the worker can see. Regression: `GitBlame/ResultsWaitForApply` (finished
+blame invisible until applied); the shell's blame waits pump the apply through
+`TestAccess::ApplyGitBlameResults`, as the wake handler does. Original entry:
+
 
 Found by the QA monkey (seed 10, `tools/qa/run.py monkey --seed 10`): a partial
 frame painted between a blame worker writing a result into `GitBlameService`'s

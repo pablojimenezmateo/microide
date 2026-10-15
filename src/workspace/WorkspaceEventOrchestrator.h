@@ -40,6 +40,8 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_project_search_updates;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> consume_git_sidebar_refresh;
+    // Makes finished blame visible; true when what the overlay reads changed.
+    std::function<bool()> apply_git_blame_results;
     std::function<void()> consume_highlight_prefetch_results;
     std::function<void()> consume_lsp_callbacks;
     std::function<void()> consume_dap_callbacks;

@@ -112,7 +112,10 @@ void TestTruncatedStatusIsNotACompleteChangeList() {
   // user resolves what they are shown and believes they are finished.
   ScriptedProcessLauncher launcher;
   launcher.standing_response.exit_code = 0;
-  launcher.standing_response.stdout_text = std::string("UU conflicted.txt") + '\0';
+  // One literal with its NUL, sized explicitly: `std::string(...) + '\0'` trips
+  // GCC 13's -Warray-bounds false positive on the inlined SSO append.
+  using namespace std::string_literals;
+  launcher.standing_response.stdout_text = "UU conflicted.txt\0"s;
   launcher.standing_response.truncated = true;
   const project::GitRepository repo("/nonexistent/project", launcher);
 
@@ -429,7 +432,11 @@ void TestBlameRunsThroughTheRequestsLauncher() {
 
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
   service.Request(request);
-  while (service.Snapshot(request).loading && std::chrono::steady_clock::now() < deadline) {
+  while (std::chrono::steady_clock::now() < deadline) {
+    service.ApplyReadyResults();
+    if (!service.Snapshot(request).loading) {
+      break;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
   }
   service.Stop();  // joins nothing in flight after this; the worker is quiescent

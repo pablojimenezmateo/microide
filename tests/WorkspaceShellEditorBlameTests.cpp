@@ -25,6 +25,7 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOver
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
   WaitUntil([&shell, minimum_line_count]() {
+    WorkspaceShellTestAccess::ApplyGitBlameResults(shell);
     const auto overlay = WorkspaceShellTestAccess::ActiveEditorBlameOverlay(shell);
     return overlay.has_value() && overlay->lines.size() >= minimum_line_count;
   }, std::chrono::seconds(2), std::chrono::milliseconds(10));

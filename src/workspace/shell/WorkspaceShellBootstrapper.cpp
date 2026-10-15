@@ -218,6 +218,8 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
               [shell]() { shell->RequestFocusedEditorRedraw(); },
           .consume_git_sidebar_refresh =
               [shell]() { shell->ConsumeGitSidebarRefresh(); },
+          .apply_git_blame_results =
+              [shell]() { return shell->git_blame_service_.ApplyReadyResults(); },
           .consume_highlight_prefetch_results =
               [shell]() { shell->ConsumeHighlightPrefetchResults(); },
           .consume_lsp_callbacks =

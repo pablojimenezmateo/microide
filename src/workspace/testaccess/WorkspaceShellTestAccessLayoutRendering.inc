@@ -331,6 +331,11 @@
   }
   static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
   static float TextLineHeight(WorkspaceShell& shell) { return shell.text_renderer_.LineHeight(); }
+  // What the blame wake's handler does: finished blame becomes visible. A test
+  // polling an overlay with no event loop pumps this in its wait.
+  static bool ApplyGitBlameResults(WorkspaceShell& shell) {
+    return shell.git_blame_service_.ApplyReadyResults();
+  }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveEditorBlameOverlay(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);

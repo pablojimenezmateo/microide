@@ -27,6 +27,7 @@ microide::project::GitBlameSnapshot WaitForSnapshot(GitBlameService& service,
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
     service.Request(request);
+    service.ApplyReadyResults();
     const auto snapshot = service.Snapshot(request);
     if (!snapshot.loading) {
       return snapshot;
@@ -388,6 +389,7 @@ void TestGitBlameServiceInvalidateDropsInFlightResults() {
   const auto stale_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   microide::project::GitBlameSnapshot stale_snapshot;
   while (std::chrono::steady_clock::now() < stale_deadline) {
+    service.ApplyReadyResults();
     stale_snapshot = service.Snapshot(request);
     if (!stale_snapshot.loading) {
       break;
@@ -461,6 +463,7 @@ void TestGitBlameServiceClearDropsInFlightResults() {
   const auto stale_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   microide::project::GitBlameSnapshot stale_snapshot;
   while (std::chrono::steady_clock::now() < stale_deadline) {
+    service.ApplyReadyResults();
     stale_snapshot = service.Snapshot(request);
     if (!stale_snapshot.loading) {
       break;
@@ -574,6 +577,52 @@ void TestGitBlameServiceLatestRequestSupersedesPendingWindow() {
          "re-requesting a banked window should be answered from cache, not re-probed");
 }
 
+
+// TD-2026-10-16-345: a finished blame is NOT visible until the main thread applies
+// it. The worker used to write straight into the cache Snapshot reads, so a
+// partial frame painted while a result landed read the new blame in one clip and
+// the old in another.
+void TestGitBlameServiceResultsWaitForApply() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto file_path = repo_path / "main.cpp";
+  WriteFile(file_path, "line 1\nline 2\nline 3\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Add apply fixture", "apply fixture");
+
+  GitBlameService service;
+  const GitBlameRequest request{
+      .root = repo_path,
+      .absolute_path = file_path,
+      .visible_start_line = 0,
+      .visible_line_count = 3,
+      .total_line_count = 3,
+      .dirty = false,
+  };
+  service.Request(request);
+  // Wait for the worker to have finished everything this request starts: the
+  // verdict and the span, queued, with nothing still running.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (std::chrono::steady_clock::now() < deadline &&
+         !(GitBlameServiceTestAccess::HasReadyResults(service) &&
+           GitBlameServiceTestAccess::WorkerIdle(service))) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(GitBlameServiceTestAccess::HasReadyResults(service),
+         "the worker should have queued its results");
+
+  const auto before = service.Snapshot(request);
+  Expect(before.lines.empty(), "finished blame must not be visible before it is applied");
+  Expect(before.loading, "unapplied results still read as loading");
+
+  Expect(service.ApplyReadyResults(), "applying queued blame reports a change");
+  const auto after = service.Snapshot(request);
+  Expect(after.eligible && !after.loading && after.lines.size() == 3,
+         "applied blame is visible in full");
+  Expect(!service.ApplyReadyResults(), "a second apply with nothing queued changes nothing");
+  service.Stop();
+}
+
 }  // namespace
 
 void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
@@ -581,6 +630,7 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameIncrementalParserAcceptsSha256ObjectIds);
   AddTest(tests, "GitBlame/IncrementalParserHandlesRepeatedCommitsAndBoundary",
           TestGitBlameIncrementalParserHandlesRepeatedCommitsAndBoundary);
+  AddTest(tests, "GitBlame/ResultsWaitForApply", TestGitBlameServiceResultsWaitForApply);
   AddTest(tests, "GitBlame/LoadsVisibleLinesForCleanTrackedFile",
           TestGitBlameServiceLoadsVisibleLinesForCleanTrackedFile);
   AddTest(tests, "GitBlame/SuppressesDirtyAndUntrackedFiles",

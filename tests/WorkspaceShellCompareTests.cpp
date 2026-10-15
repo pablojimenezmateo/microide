@@ -72,6 +72,7 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveCompareBlameOve
     std::size_t minimum_line_count = 1) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ApplyGitBlameResults(shell);
     const auto overlay = WorkspaceShellTestAccess::ActiveCompareBlameOverlay(shell);
     if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
       return overlay;
@@ -86,6 +87,7 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveMergeBlameOverl
     std::size_t minimum_line_count = 1) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
+    WorkspaceShellTestAccess::ApplyGitBlameResults(shell);
     const auto overlay = WorkspaceShellTestAccess::ActiveMergeBlameOverlay(shell);
     if (overlay.has_value() && overlay->lines.size() >= minimum_line_count) {
       return overlay;

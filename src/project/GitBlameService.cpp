@@ -81,7 +81,6 @@ struct FileCache {
   std::string head_id;
   FileStamp stamp;
   std::vector<Span> loaded_spans;
-  std::unordered_map<std::size_t, GitBlameLine> blame_by_line;
   std::uint64_t last_access_generation = 0;
   Clock::time_point last_validated_at = Clock::time_point::min();
   // Which (file, clear) generation `last_validated_at` speaks for. The
@@ -91,6 +90,42 @@ struct FileCache {
   std::uint64_t validated_file_generation = 0;
   std::uint64_t validated_clear_generation = 0;
 };
+
+// What Snapshot() reads: the main thread's copy of a file's blame, changed only by
+// ApplyReadyResults() (TD-2026-10-16-345). The worker's FileCache above says what
+// it has fetched; this says what the user may see, and the two differ exactly by
+// the results queued between a worker finishing and the wake being handled.
+struct PublishedFile {
+  bool eligible = false;
+  std::vector<Span> loaded_spans;
+  std::unordered_map<std::size_t, GitBlameLine> lines;
+};
+
+// One finished piece of worker output, queued for ApplyReadyResults(). Carries the
+// generations it was produced under so a result overtaken by an InvalidatePath or
+// Clear on the main thread is dropped at apply instead of resurrecting stale blame.
+struct ReadyResult {
+  enum class Kind : std::uint8_t {
+    State,  // the file's verdict changed: set `eligible`, drop every line
+    Lines,  // `lines` for `span` arrived (implies eligible)
+    Erase,  // the cache budget evicted the file
+  };
+  Kind kind = Kind::State;
+  std::string file_key;
+  std::uint64_t file_generation = 0;
+  std::uint64_t clear_generation = 0;
+  bool eligible = false;
+  Span span;
+  std::vector<GitBlameLine> lines;
+};
+
+std::size_t SpanLineCount(const std::vector<Span>& spans) {
+  std::size_t count = 0;
+  for (const Span& span : spans) {
+    count += span.end - span.start + 1;
+  }
+  return count;
+}
 
 bool FileIsTracked(const platform::ProcessLauncher& launcher,
                    const std::filesystem::path& root,
@@ -548,27 +583,29 @@ struct GitBlameService::Impl {
     const std::string& request_key = BuildRequestKey(file_key, normalized_window,
                                                      CurrentFileGenerationLocked(file_key),
                                                      clear_generation);
-    const auto cache_it = file_caches.find(file_key);
-    if (cache_it != file_caches.end()) {
+    // Results the worker finished but the main thread has not applied are still
+    // loading as far as the caller can tell: they are not visible yet.
+    const bool in_flight = request_key == active_request_key ||
+                           pending_request_keys.count(request_key) > 0 || !ready_results.empty();
+    const auto published_it = published.find(file_key);
+    if (published_it != published.end()) {
       util::AddPerformanceCounter(util::PerfCounterId::GitBlameCacheHits);
-      const FileCache& cache = cache_it->second;
-      snapshot.eligible = cache.eligible;
+      const PublishedFile& file = published_it->second;
+      snapshot.eligible = file.eligible;
       if (result_window.start <= result_window.end) {
         for (std::size_t line = result_window.start; line <= result_window.end; ++line) {
-          const auto blame_it = cache.blame_by_line.find(line);
-          if (blame_it != cache.blame_by_line.end()) {
+          const auto blame_it = file.lines.find(line);
+          if (blame_it != file.lines.end()) {
             snapshot.lines.push_back(blame_it->second);
           }
         }
       }
       snapshot.loading =
-          cache.eligible &&
-          (!SpansCoverWindow(cache.loaded_spans, visible_window) ||
-           request_key == active_request_key || pending_request_keys.count(request_key) > 0);
+          file.eligible && (!SpansCoverWindow(file.loaded_spans, visible_window) || in_flight);
       return snapshot;
     }
 
-    snapshot.loading = request_key == active_request_key || pending_request_keys.count(request_key) > 0;
+    snapshot.loading = in_flight;
     return snapshot;
   }
 
@@ -582,6 +619,7 @@ struct GitBlameService::Impl {
     std::lock_guard lock(mutex);
     ++file_generations[file_key];
     file_caches.erase(file_key);
+    published.erase(file_key);
     latest_request_keys.erase(file_key);
     RemovePendingRequestsForFileLocked(file_key);
   }
@@ -591,6 +629,8 @@ struct GitBlameService::Impl {
       std::lock_guard lock(mutex);
       ++clear_generation;
       file_caches.clear();
+      published.clear();
+      ready_results.clear();
       file_generations.clear();
       latest_request_keys.clear();
       pending_request_keys.clear();
@@ -598,6 +638,58 @@ struct GitBlameService::Impl {
       active_request_key.clear();
     }
     executor.CancelAll();
+  }
+
+  bool ApplyReadyResults() {
+    std::lock_guard lock(mutex);
+    if (ready_results.empty()) {
+      return false;
+    }
+    bool changed = false;
+    for (ReadyResult& result : ready_results) {
+      if (result.kind == ReadyResult::Kind::Erase) {
+        changed = published.erase(result.file_key) > 0 || changed;
+        continue;
+      }
+      // Overtaken on the main thread since the worker queued it.
+      if (result.clear_generation != clear_generation ||
+          result.file_generation != CurrentFileGenerationLocked(result.file_key)) {
+        continue;
+      }
+      PublishedFile& file = published[result.file_key];
+      if (result.kind == ReadyResult::Kind::State) {
+        file.eligible = result.eligible;
+        file.loaded_spans.clear();
+        file.lines.clear();
+      } else {
+        file.eligible = true;
+        for (GitBlameLine& line : result.lines) {
+          const std::size_t index = line.line;
+          file.lines.insert_or_assign(index, std::move(line));
+        }
+        MergeSpan(&file.loaded_spans, result.span);
+      }
+      changed = true;
+    }
+    ready_results.clear();
+    return changed;
+  }
+
+  bool HasReadyResults() const {
+    std::lock_guard lock(mutex);
+    return !ready_results.empty();
+  }
+
+  bool WorkerIdle() const {
+    std::lock_guard lock(mutex);
+    return active_request_key.empty() && pending_request_keys.empty();
+  }
+
+  void QueueResultLocked(const PendingRequest& request, ReadyResult result) {
+    result.file_key = request.file_key;
+    result.file_generation = request.file_generation;
+    result.clear_generation = request.clear_generation;
+    ready_results.push_back(std::move(result));
   }
 
   void Stop() {
@@ -646,7 +738,7 @@ struct GitBlameService::Impl {
     // meant a continuous scroll never wrote a cache entry, so the re-validation
     // throttle had nothing to hit and every window re-spawned `git rev-parse`.
     if (!GitMetadataFor(*request.request.launcher).IsRepository(request.request.root)) {
-      changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {},
+      changed = UpdateEligibility(request, false, std::nullopt, std::nullopt,
                                   /*require_latest_request=*/false);
       if (changed) {
         PushWakeEvent();
@@ -661,7 +753,7 @@ struct GitBlameService::Impl {
     }
     if (!head_id.has_value() || !stamp.has_value() ||
         !FileIsTracked(launcher, request.request.root, request.relative_path)) {
-      changed = UpdateEligibility(request, false, head_id, stamp, {}, {},
+      changed = UpdateEligibility(request, false, head_id, stamp,
                                   /*require_latest_request=*/false);
       if (changed) {
         PushWakeEvent();
@@ -692,9 +784,15 @@ struct GitBlameService::Impl {
       cache.absolute_path = request.request.absolute_path.lexically_normal();
       cache.relative_path = request.relative_path;
       cache.last_access_generation = ++access_generation;
-      if (cache.head_id != *head_id || !(cache.stamp == *stamp)) {
+      const bool content_moved = cache.head_id != *head_id || !(cache.stamp == *stamp);
+      if (content_moved) {
         cache.loaded_spans.clear();
-        cache.blame_by_line.clear();
+      }
+      if (content_moved || !cache.eligible) {
+        // Every line already shown is about content that is gone (or there were
+        // none): the published copy drops them when this is applied.
+        QueueResultLocked(request, ReadyResult{.kind = ReadyResult::Kind::State, .eligible = true});
+        changed = true;
       }
       cache.head_id = *head_id;
       cache.stamp = *stamp;
@@ -739,7 +837,7 @@ struct GitBlameService::Impl {
         return;
       }
       if (!output.success()) {
-        const bool now_changed = UpdateEligibility(request, false, head_id, stamp, {}, {});
+        const bool now_changed = UpdateEligibility(request, false, head_id, stamp);
         changed = changed || now_changed;
         if (changed) {
           PushWakeEvent();
@@ -749,6 +847,13 @@ struct GitBlameService::Impl {
 
       const std::vector<GitBlameAttribution> attributions =
           ParseGitBlameIncrementalOutput(output.output);
+      ReadyResult lines{.kind = ReadyResult::Kind::Lines, .span = span};
+      for (const GitBlameAttribution& attribution : attributions) {
+        for (std::size_t offset = 0; offset < attribution.line_count; ++offset) {
+          const std::size_t line = attribution.result_line + offset;
+          lines.lines.push_back(MakeBlameLine(line, attribution));
+        }
+      }
       RunBeforeCacheApplyHook();  // no-op unless a test installed a hook
       std::lock_guard lock(mutex);
       if (token.IsCancellationRequested() || !GenerationsStillCurrentLocked(request)) {
@@ -756,12 +861,7 @@ struct GitBlameService::Impl {
       }
       util::AddPerformanceCounter(util::PerfCounterId::GitBlameSpansLoaded);
       auto& cache = file_caches[request.file_key];
-      for (const GitBlameAttribution& attribution : attributions) {
-        for (std::size_t offset = 0; offset < attribution.line_count; ++offset) {
-          const std::size_t line = attribution.result_line + offset;
-          cache.blame_by_line[line] = MakeBlameLine(line, attribution);
-        }
-      }
+      QueueResultLocked(request, std::move(lines));
       MergeSpan(&cache.loaded_spans, span);
       cache.last_access_generation = ++access_generation;
       MarkValidatedLocked(cache, request);
@@ -806,8 +906,6 @@ struct GitBlameService::Impl {
                          bool eligible,
                          const std::optional<std::string>& head_id,
                          const std::optional<FileStamp>& stamp,
-                         std::vector<Span> loaded_spans,
-                         std::unordered_map<std::size_t, GitBlameLine> blame_by_line,
                          bool require_latest_request = true) {
     std::lock_guard lock(mutex);
     // A window-independent verdict only needs the generations to still match; the
@@ -819,7 +917,7 @@ struct GitBlameService::Impl {
     auto& cache = file_caches[request.file_key];
     const bool changed = cache.eligible != eligible || cache.head_id != head_id.value_or("") ||
                          (stamp.has_value() && !(cache.stamp == *stamp)) ||
-                         cache.loaded_spans != loaded_spans || cache.blame_by_line != blame_by_line;
+                         !cache.loaded_spans.empty();
     cache.root = request.request.root.lexically_normal();
     cache.absolute_path = request.request.absolute_path.lexically_normal();
     cache.relative_path = request.relative_path;
@@ -828,10 +926,12 @@ struct GitBlameService::Impl {
     if (stamp.has_value()) {
       cache.stamp = *stamp;
     }
-    cache.loaded_spans = std::move(loaded_spans);
-    cache.blame_by_line = std::move(blame_by_line);
+    cache.loaded_spans.clear();
     cache.last_access_generation = ++access_generation;
     MarkValidatedLocked(cache, request);
+    if (changed) {
+      QueueResultLocked(request, ReadyResult{.kind = ReadyResult::Kind::State, .eligible = eligible});
+    }
     EnforceCacheBudgets();
     return changed;
   }
@@ -867,10 +967,12 @@ struct GitBlameService::Impl {
       return;
     }
 
+    // A file's loaded spans are exactly the lines its published copy holds once
+    // applied, so the budget is counted where the worker can see it.
     auto total_lines = [&]() {
       std::size_t sum = 0;
       for (const auto& [_, cache] : file_caches) {
-        sum += cache.blame_by_line.size();
+        sum += SpanLineCount(cache.loaded_spans);
       }
       return sum;
     };
@@ -883,15 +985,16 @@ struct GitBlameService::Impl {
       if (oldest == file_caches.end()) {
         break;
       }
+      ready_results.push_back(ReadyResult{.kind = ReadyResult::Kind::Erase, .file_key = oldest->first});
       file_caches.erase(oldest);
     }
   }
 
   void PushWakeEvent() const {
     std::lock_guard lock(mutex);
-    // Route through the checked pusher: on a rejected push the ready blame stays in
-    // the cache (shared state) and the shared "wake owed" bit is latched so the idle
-    // poll schedules a fallback wait instead of stranding the overlay stale.
+    // Route through the checked pusher: on a rejected push the ready blame stays
+    // queued and the shared "wake owed" bit is latched so the idle poll schedules a
+    // fallback wait instead of stranding the overlay stale.
     util::PushWake(wake_channel);
   }
 
@@ -901,6 +1004,10 @@ struct GitBlameService::Impl {
   std::unordered_map<std::string, std::string> pending_request_files;
   std::string active_request_key;
   std::unordered_map<std::string, FileCache> file_caches;
+  // Main-thread view (Snapshot, ApplyReadyResults); the worker only appends to
+  // ready_results. Both under `mutex` all the same.
+  std::unordered_map<std::string, PublishedFile> published;
+  std::vector<ReadyResult> ready_results;
   std::unordered_map<std::string, std::uint64_t, util::TransparentStringHash, std::equal_to<>>
       file_generations;
   std::unordered_map<std::string, std::string> latest_request_keys;
@@ -934,6 +1041,18 @@ GitBlameSnapshot GitBlameService::Snapshot(const GitBlameRequest& request) const
     return {};
   }
   return impl_->Snapshot(request);
+}
+
+bool GitBlameService::ApplyReadyResults() {
+  return impl_ != nullptr && impl_->ApplyReadyResults();
+}
+
+bool GitBlameService::HasReadyResults() const {
+  return impl_ != nullptr && impl_->HasReadyResults();
+}
+
+bool GitBlameService::WorkerIdle() const {
+  return impl_ == nullptr || impl_->WorkerIdle();
 }
 
 void GitBlameService::InvalidatePath(const std::filesystem::path& root,
