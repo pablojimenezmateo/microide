@@ -1815,6 +1815,62 @@ void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
                                 DescribePixelDiff(hover));
 }
 
+// Opening a menu suspends the caret, and the frame that opens it takes the caret
+// off the screen. Each transition that moves the caret (focus elsewhere, a menu or
+// prompt suspending the blink) used to need its own damage request, and a menu
+// opened by click had none for the caret: the editor (or terminal) caret stayed on
+// screen beside the menu until something else repainted it. Found by the QA
+// redraw verifier (an 8x18 terminal caret in every frame of `suite menus`).
+void TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::string body;
+  for (int line = 0; line < 40; ++line) {
+    body += "int value_" + std::to_string(line) + " = " + std::to_string(line) + ";\n";
+  }
+  WriteFile(root / "alpha.cpp", body);
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the caret fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  // The caret low in the editor, below anything the File menu's own repaint
+  // reaches (the menu bar and popup's bounding box).
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_END, SDL_KMOD_CTRL)});
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "the editor caret should be showing");
+
+  const std::optional<SDL_FRect> file = WorkspaceShellTestAccess::MenuBarItemRect(shell, WorkspaceShell::MenuId::File);
+  Expect(file.has_value(), "the File menu should be on the menu bar");
+  const float x = file->x + file->w / 2.0f;
+  const float y = file->y + file->h / 2.0f;
+  const auto open = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(x, y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+      pin_caret);
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "the click should open the File menu");
+  Expect(open.identical(), "opening a menu should take the caret off screen in that frame; " +
+                               DescribePixelDiff(open));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4494,6 +4550,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/OpeningAMenuTakesTheCaretOffScreen",
+          TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen);
   AddTest(tests, "WorkspaceShell/RowUnderAnOpenMenuDoesNotHoverThroughIt",
           TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt);
   AddTest(tests, "WorkspaceShell/EscapeFromFindInFilesRepaintsTheField",

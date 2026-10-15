@@ -578,6 +578,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     PrepareCommitBodyViewportForFrame(layout.sidebar);
   }
   prepared_frame_caret_visible_ = CaretVisibleNow();
+  // Whatever moves the caret away -- focus to another surface, a menu or prompt
+  // that suspends the blink, the blink's own phase -- this frame repaints both the
+  // caret region the last frame painted and the one it paints now. Each such
+  // transition used to need its own damage request, and several had none: a menu
+  // opened over a focused terminal left its caret on screen (QA redraw verifier).
+  if (const std::optional<SDL_FRect> caret_rect =
+          prepared_frame_caret_visible_ ? CurrentCaretDirtyRect() : std::nullopt;
+      caret_rect.has_value() != painted_caret_rect_.has_value() ||
+      (caret_rect.has_value() && !RectsEqual(*caret_rect, *painted_caret_rect_))) {
+    if (painted_caret_rect_.has_value()) {
+      RequestRedrawRect(*painted_caret_rect_);
+    }
+    if (caret_rect.has_value()) {
+      RequestRedrawRect(*caret_rect);
+    }
+    painted_caret_rect_ = caret_rect;
+  }
   prepared_frame_pointer_occluder_.reset();
   if (last_mouse_position_valid_) {
     // Later pieces paint over earlier ones (a submenu over its popup), so the last

@@ -2191,6 +2191,8 @@
   // card) the pointer is over this frame, if any: PointerOver lights up only what
   // lies inside it, so a row under an open menu does not hover through it.
   std::optional<SDL_FRect> prepared_frame_pointer_occluder_;
+  // The caret region the last prepared frame painted (nullopt: no caret).
+  std::optional<SDL_FRect> painted_caret_rect_;
   std::uint64_t prepared_frame_id_ = 0;
   // Frame-scoped memo for the menu's LSP-readiness probe. Menu layout, each row's
   // label and each row's enablement all asked for readiness independently, and every
