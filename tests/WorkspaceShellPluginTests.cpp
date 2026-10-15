@@ -968,6 +968,56 @@ return ide.plugin({
          "plugin commands should receive shell-split arguments");
 }
 
+// `plugins-reload` reports the reload it ran, not the one before it. The reload runs
+// on the plugin worker, and the summary used to be read at dispatch: a plugin
+// installed and reloaded at once announced "Loaded 0 plugins", and the next reload
+// "Loaded 1 plugin" (seen driving the editor headlessly, 2026-10-16).
+void TestWorkspaceShellPluginsReloadReportsTheReloadItRan() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "reload fixture\n");
+  std::filesystem::create_directories(plugins_root);  // empty: nothing to load yet
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "the project opens with no plugins");
+
+  // Installed after the project opened, then reloaded at once.
+  WritePluginInit(
+      plugins_root, "late",
+      R"(local ide = require("microide")
+return ide.plugin({ id = "late", setup = function(ctx) end })
+)");
+  // The app has a plugin worker; a project opened with no plugins did not spawn it
+  // here, and the inline completion it falls back to cannot show the bug.
+  WorkspaceShellTestAccess::EnsurePluginWorkerStarted(shell);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "plugins-reload"), "the reload runs");
+  // The completion lands on the UI thread through the plugin thread's mailbox:
+  // drain until the summary is this reload's.
+  for (int i = 0; i < 200 && WorkspaceShellTestAccess::CommandFeedbackText(shell).find("Loaded ") ==
+                                 std::string::npos; ++i) {
+    WorkspaceShellTestAccess::DrainPluginThreadActions(shell);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("Loaded 1 plugin") !=
+             std::string::npos,
+         "the feedback is this reload's summary: " + WorkspaceShellTestAccess::CommandFeedbackText(shell));
+  bool stale_toast = false;
+  bool fresh_toast = false;
+  for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+    stale_toast = stale_toast || row.message.find("Loaded 0 plugins") != std::string::npos;
+    fresh_toast = fresh_toast || row.message.find("Loaded 1 plugin") != std::string::npos;
+  }
+  Expect(!stale_toast, "no toast reports the previous reload's count");
+  Expect(fresh_toast, "the toast reports this reload's count");
+}
+
 void TestWorkspaceShellPluginsReloadCommandRefreshesCommands() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6367,6 +6417,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellVirtualDocumentsOpenAndRefresh);
   AddTest(tests, "WorkspaceShell/LoadsPluginsAndRunsBufferHooks",
           TestWorkspaceShellLoadsPluginsAndRunsBufferHooks);
+  AddTest(tests, "WorkspaceShell/PluginsReloadReportsTheReloadItRan",
+          TestWorkspaceShellPluginsReloadReportsTheReloadItRan);
   AddTest(tests, "WorkspaceShell/PluginsReloadCommandRefreshesCommands",
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
   AddTest(tests, "WorkspaceShell/PluginsReloadRefreshesRuntimeSyntaxHighlighting",

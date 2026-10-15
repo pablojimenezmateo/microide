@@ -291,8 +291,12 @@ class Suite:
             shutil.copytree(REPO / "plugins" / "cpp-lsp", plugins / "cpp-lsp", dirs_exist_ok=True)
             app.settle(0.5)
             reply = app.send("plugins-reload")
-            self.record("H.cpp-lsp-plugin-loaded", "Loaded 1 plugin" in reply.get("feedback", ""), str(reply))
-            app.settle(1.5)
+            # The reload runs on the plugin worker; its summary arrives as a toast.
+            toast, dt = wait_for(lambda: next((n["message"] for n in self.notifs()
+                                               if "Loaded 1 plugin" in n["message"]), None), 10, 0.25)
+            self.record("H.cpp-lsp-plugin-loaded", toast is not None,
+                        f"{reply} toast={toast!r} after {dt:.1f}s")
+            app.settle(1.0)
             host.ssh(f"mkdir -p {host.root}/qa && printf 'static int helper(int x) {{\\n  return x + 1;\\n}}\\n"
                      f"\\nint main(void) {{\\n  return helper(41);\\n}}\\n' > {host.root}/qa/qa_gd.c")
             ok, dt = self.mirror_has("qa/qa_gd.c", "helper(41)", 20)

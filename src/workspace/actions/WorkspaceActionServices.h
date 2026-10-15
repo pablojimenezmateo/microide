@@ -264,8 +264,8 @@ class WorkspaceActionContext {
     std::function<void()> request_toggle_fullscreen;
     std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<bool()> plugin_runtime_enabled;
-    std::function<void()> reload_plugins_for_current_project;
-    std::function<std::string()> plugin_runtime_reload_summary;
+    // `announce`: report the completed reload's summary (see PluginReloadRequest).
+    std::function<void(bool announce)> reload_plugins_for_current_project;
     std::function<void()> request_quit;
     // Debugger (DAP). start_debugging builds a default launch config from the
     // current project's registered adapters; it returns an error string (empty

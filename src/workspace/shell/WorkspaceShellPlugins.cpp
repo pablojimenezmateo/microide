@@ -986,6 +986,19 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
         "WorkspaceShell::ReloadPluginsForCurrentProject::RequestEditorSurfaceRedraw");
     RequestEditorSurfaceRedraw();
   }
+  if (request.announce) {
+    // The user asked for this reload: its own summary, now that it has landed.
+    std::string summary = PluginRuntimeReloadSummary();
+    context_.current_project_state.panel.feedback.text = summary;
+    if (!summary.empty()) {
+      // Heuristic: surface failures/warnings as Warning, otherwise Info.
+      const bool looks_problematic =
+          summary.find("error") != std::string::npos || summary.find("fail") != std::string::npos ||
+          summary.find("warn") != std::string::npos;
+      Notify(looks_problematic ? NotificationService::Tone::Warning : NotificationService::Tone::Info,
+             std::move(summary));
+    }
+  }
 }
 
 void WorkspaceShell::RefreshPluginSurfacesForReactivation() {

@@ -928,6 +928,13 @@
   }
   // Deliver plugin-worker query results (definition/references/...) that were
   // posted back to the main thread; the frame loop does this once per frame.
+  // Spawn the plugin worker as a project with plugins would have: a reload then
+  // runs off the UI thread and completes through the mailbox, as in the app.
+  static void EnsurePluginWorkerStarted(WorkspaceShell& shell) {
+    // What WorkspaceLifecycleCoordinator's wake registration does in the app.
+    shell.plugin_runtime_.Host().SetWorker(&shell.plugin_runtime_.Thread());
+    shell.plugin_runtime_.Thread().EnsureStarted();
+  }
   static void DrainPluginThreadActions(WorkspaceShell& shell) {
     shell.plugin_runtime_.DrainPluginThreadActions();
   }

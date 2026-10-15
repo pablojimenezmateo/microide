@@ -29,18 +29,10 @@ bool WorkspaceActionContext::PluginRuntimeEnabled() const {
 }
 
 void WorkspaceActionContext::ReloadPluginsWithFeedback() {
-  operations_.reload_plugins_for_current_project();
-  std::string summary = operations_.plugin_runtime_reload_summary();
-  state_.panel.feedback.text = summary;
-  if (operations_.notify && !summary.empty()) {
-    // Heuristic: surface failures/warnings as Warning, otherwise Info.
-    const bool looks_problematic =
-        summary.find("error") != std::string::npos || summary.find("fail") != std::string::npos ||
-        summary.find("warn") != std::string::npos;
-    operations_.notify(looks_problematic ? NotificationService::Tone::Warning
-                                         : NotificationService::Tone::Info,
-                       std::move(summary));
-  }
+  // The summary lands with the reload's completion (inline when no worker is
+  // wired, so this placeholder is overwritten before the command returns there).
+  state_.panel.feedback.text = "Reloading plugins\u2026";
+  operations_.reload_plugins_for_current_project(/*announce=*/true);
 }
 
 void WorkspaceActionContext::RequestQuit() {
@@ -968,8 +960,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .plugin_runtime_enabled = [this]() { return plugin_runtime_.enabled(); },
-          .reload_plugins_for_current_project = [this]() { ReloadPluginsForCurrentProject(); },
-          .plugin_runtime_reload_summary = [this]() { return PluginRuntimeReloadSummary(); },
+          .reload_plugins_for_current_project =
+              [this](bool announce) {
+                ReloadPluginsForCurrentProject(PluginReloadRequest{.announce = announce});
+              },
           .request_quit = [this]() { RequestQuit(); },
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
