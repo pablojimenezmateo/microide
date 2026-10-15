@@ -104,10 +104,14 @@ bool WorkspaceShell::ShouldBlinkCaret() const {
     case TextInputSurface::SettingsQuery:
     case TextInputSurface::SettingsValueEdit:
       // The Settings overlay renders its own static (non-blinking) caret; it does
-      // not participate in the shared caret-blink machinery.
+      // not participate in the shared caret-blink machinery. And nothing under it
+      // blinks either: these cases fell through to the focus checks below, so with
+      // the panel focused the terminal caret blinked under the modal while the
+      // blink damage named the Settings field (found by the QA monkey).
     case TextInputSurface::DebugVariableEdit:
       // The Variables value field likewise renders its own static caret in the
       // bottom-panel TU, so it stays out of the blink machinery (no idle wake-ups).
+      return false;
     case TextInputSurface::None:
     case TextInputSurface::Editor:
     case TextInputSurface::Terminal:

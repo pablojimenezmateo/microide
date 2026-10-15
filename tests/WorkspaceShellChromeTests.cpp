@@ -2055,6 +2055,66 @@ void TestWorkspaceShellAStatusSegmentModalOwnsThePointer() {
        {MouseMotionEvent(encoding->x + encoding->w / 2.0f, encoding->y + encoding->h / 2.0f)});
 }
 
+// Opening Settings over a focused terminal takes the terminal's caret off the
+// screen (Settings owns the keyboard; its query field has its own static caret),
+// and typing into Settings leaves the terminal alone. Found by the QA monkey
+// (seed 1: the terminal caret differed under Settings while typing).
+void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the terminal fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 8, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "the terminal caret should be showing");
+
+  // The indent status segment opens Settings, as a click does.
+  const std::optional<SDL_FRect> indent =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::Indent);
+  Expect(indent.has_value(), "the indent segment should show");
+  const float x = indent->x + indent->w / 2.0f;
+  const float y = indent->y + indent->h / 2.0f;
+  const auto open = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+      pin_caret);
+  Expect(open.identical(), "opening Settings over a focused terminal should paint what a full "
+                           "repaint paints; " + DescribePixelDiff(open));
+  // Nothing under the modal blinks: the terminal caret is off whatever the phase.
+  // (It used to keep blinking while the blink damage named the Settings field, so
+  // the frame that typed into Settings could paint the terminal caret's region
+  // from a different phase than the one on screen.)
+  Expect(!WorkspaceShellTestAccess::ShouldBlinkCaret(shell),
+         "no caret should blink under the Settings overlay");
+  const auto typed = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent("x")}), pin_caret);
+  Expect(typed.identical(), "typing in Settings over a terminal should paint what a full "
+                            "repaint paints; " + DescribePixelDiff(typed));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4776,6 +4836,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/SettingsOverAFocusedTerminalHidesItsCaret",
+          TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret);
   AddTest(tests, "WorkspaceShell/MaximizedPanelPaintsNoHiddenSurface",
           TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface);
   AddTest(tests, "WorkspaceShell/TerminalIsFixedForAPreparedFrame",
