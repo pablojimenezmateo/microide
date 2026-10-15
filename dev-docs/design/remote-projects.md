@@ -1880,6 +1880,15 @@ plugin-owned or render-TU product logic.
 | Command line / control channel | `project-open ssh://[user@]host/abs/path` and `project-open-remote [user@]host:/abs/path`. The `ssh://` form is canonical; the scp form is accepted when the string is not an existing local path. This is also what the headless tests drive. |
 | CLI | `microide ssh://host/path` opens straight into a remote project. |
 
+The entry points as built (2026-10-16): the command palette's `Remote:` verbs, the
+File menu (`Remote: Open Folder on Host…` under Open Folder…), the Terminal menu
+(`Remote: Open Terminal on Host…` under New Terminal), the welcome page's second
+start button, and `remote-open` on the command line and control channel. The
+`ssh://` CLI form and `Remote: Resync`, `Reinstall Server`, `Open Local Terminal`
+are not built; `Remote: Remove Mirror` is (`remote-remove-mirror`). The durable
+contract is `openspec/changes/remote-project-mirror` (its specs move to
+`openspec/specs/remote-project-mirror` at archive).
+
 ### 7.2 The Open Remote overlay
 
 A quick-open card (`OverlayMode::RemoteOpen`, `OverlayIsQuickOpen == true`), so it

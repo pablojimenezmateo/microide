@@ -1,7 +1,7 @@
 ## 1. The spec and what already pins it
 
-- [ ] 1.1 Map each `remote-project-mirror` requirement to the test(s) that pin it (`RemoteHostServiceTests`, kernel `MirrorSyncEngine`/`RemoteProject`/`RemoteHostSession`, `tests/parity/`); add a unit test for any requirement with none
-- [ ] 1.2 Point `dev-docs/design/remote-projects.md` § 7.1 and § 6.8 at the spec and mark the palette-only entry points as shipped 2026-10-16
+- [x] 1.1 Map each `remote-project-mirror` requirement to the test(s) that pin it (`RemoteHostServiceTests`, kernel `MirrorSyncEngine`/`RemoteProject`/`RemoteHostSession`, `tests/parity/`); add a unit test for any requirement with none
+- [x] 1.2 Point `dev-docs/design/remote-projects.md` § 7.1 and § 6.8 at the spec and mark the palette-only entry points as shipped 2026-10-16
 
 ## 2. Remove Mirror
 
