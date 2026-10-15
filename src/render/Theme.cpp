@@ -224,7 +224,11 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles) {
       theme.surface_background, 4.5f);
   theme.editor_background = default_background;
   theme.gutter_background = line_number_background;
-  theme.overlay_background = WithAlpha(theme.surface_raised, 0xf6);
+  // Opaque, like every other surface: menus and overlays repaint on their own
+  // (a hover moves, a caret blinks) without what lies beneath them, which is
+  // exact only over an opaque fill. At 0xf6 each such repaint blended the popup
+  // over its own retained pixels; the QA redraw verifier reported it.
+  theme.overlay_background = theme.surface_raised;
   theme.overlay_backdrop =
       WithAlpha(Darken(default_background, IsLight(default_background) ? 0.28f : 0.36f), 0x94);
   theme.border = EnsureContrast(BlendColors(default_foreground, default_background, 0.72f),
@@ -302,7 +306,7 @@ Theme MakeDefaultTheme() {
       .surface_text = SDL_Color{0xd7, 0xde, 0xea, 0xff},
       .editor_background = SDL_Color{0x0f, 0x13, 0x1b, 0xff},
       .gutter_background = SDL_Color{0x0c, 0x10, 0x17, 0xff},
-      .overlay_background = SDL_Color{0x1a, 0x21, 0x30, 0xf6},
+      .overlay_background = SDL_Color{0x1a, 0x21, 0x30, 0xff},
       .overlay_backdrop = SDL_Color{0x05, 0x07, 0x0c, 0xaa},
       .border = SDL_Color{0x2a, 0x35, 0x48, 0xff},
       .accent = SDL_Color{0x72, 0x9e, 0xd8, 0xff},
@@ -356,7 +360,7 @@ Theme MakeLightTheme() {
       .surface_text = SDL_Color{0x23, 0x29, 0x34, 0xff},
       .editor_background = SDL_Color{0xfb, 0xfc, 0xfe, 0xff},
       .gutter_background = SDL_Color{0xef, 0xf2, 0xf6, 0xff},
-      .overlay_background = SDL_Color{0xff, 0xff, 0xff, 0xf8},
+      .overlay_background = SDL_Color{0xff, 0xff, 0xff, 0xff},
       .overlay_backdrop = SDL_Color{0x37, 0x40, 0x50, 0x44},
       .border = SDL_Color{0xc3, 0xcb, 0xd7, 0xff},
       .accent = SDL_Color{0x2f, 0x6f, 0xd6, 0xff},

@@ -157,6 +157,26 @@ void ExpectClassicDarkThemeAssetLoads() {
                         4.5f);
 }
 
+// Menus, quick-open overlays and other floating surfaces repaint on their own (a
+// hover moves, a caret blinks) without repainting what lies beneath them -- exact
+// only over an opaque fill. A translucent overlay background re-blended over its
+// own retained pixels on every such repaint (found by the QA redraw verifier).
+void ExpectOverlayBackgroundsAreOpaque() {
+  Expect(render::MakeDefaultTheme().overlay_background.a == SDL_ALPHA_OPAQUE,
+         "the default theme's overlay background should be opaque");
+  Expect(render::MakeLightTheme().overlay_background.a == SDL_ALPHA_OPAQUE,
+         "the light theme's overlay background should be opaque");
+  Expect(render::BuildThemeFromStyles({}).overlay_background.a == SDL_ALPHA_OPAQUE,
+         "a colorscheme-derived overlay background should be opaque");
+  const std::filesystem::path theme_directory = TestRoot().parent_path() / "assets" / "themes";
+  render::Theme theme;
+  std::string error;
+  Expect(render::LoadThemeByName("microide-classic-dark", theme, nullptr, &error, theme_directory),
+         "classic dark theme asset should load: " + error);
+  Expect(theme.overlay_background.a == SDL_ALPHA_OPAQUE,
+         "a theme asset's overlay background should be opaque");
+}
+
 void ExpectAnsi256ColorClampsOutOfRangeIndices() {
   using microide::util::Ansi256Color;
   const util::Rgba8 fallback = Ansi256Color(-1);
@@ -420,6 +440,7 @@ void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme project accent decoration underlays stay readable",
           ExpectProjectAccentDecorationUnderlaysStayReadable);
   AddTest(tests, "Theme classic dark asset loads", ExpectClassicDarkThemeAssetLoads);
+  AddTest(tests, "Theme overlay backgrounds are opaque", ExpectOverlayBackgroundsAreOpaque);
 }
 
 }  // namespace microide::tests
