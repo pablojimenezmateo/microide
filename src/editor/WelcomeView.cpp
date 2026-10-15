@@ -110,10 +110,14 @@ WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel
     return layout;
   }
 
-  // NoProject: "Start" caption, the open-folder button, a "Recent" caption, recent rows.
-  const float button_y = layout.recents_panel.y + line_height + 8.0f;
+  // NoProject: "Start" caption, the open-folder and open-remote-folder buttons, a
+  // "Recent" caption, recent rows.
+  float button_y = layout.recents_panel.y + line_height + 8.0f;
   layout.open_folder_rect = SDL_FRect{row_x, button_y, button_w, button_h};
   push_button(button_y, WelcomeHitRegion::Kind::OpenFolder);
+  button_y += button_h + 8.0f;
+  layout.open_remote_folder_rect = SDL_FRect{row_x, button_y, button_w, button_h};
+  push_button(button_y, WelcomeHitRegion::Kind::OpenRemoteFolder);
 
   const float recents_caption_y = button_y + button_h + 16.0f;
   push_recent_rows(recents_caption_y + line_height + 10.0f, WelcomeHitRegion::Kind::RecentProject,

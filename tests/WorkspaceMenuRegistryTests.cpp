@@ -96,6 +96,12 @@ void TestMenuRegistryExpandedMenusExposeExpectedEntries() {
          "File menu should expose Open File");
   Expect(MenuContainsLabel(MenuId::File, "Open Folder…"),
          "File menu should expose Open Folder");
+  // VS Code lists its remote entry points beside the local ones; a feature reachable
+  // only from the palette is one a user has to already know about.
+  Expect(MenuContainsLabel(MenuId::File, "Remote: Open Folder on Host…"),
+         "File menu should expose opening a folder on a host beside Open Folder");
+  Expect(MenuContainsLabel(MenuId::Terminal, "Remote: Open Terminal on Host…"),
+         "Terminal menu should expose opening a terminal on a host beside New Terminal");
   Expect(MenuContainsLabel(MenuId::Go, "Go to File…"),
          "Go menu should expose file navigation");
   Expect(MenuContainsLabel(MenuId::Go, "Find in Buffer"),

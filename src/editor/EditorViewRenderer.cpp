@@ -228,6 +228,7 @@ void DrawPlaceholderView(SDL_Renderer* renderer,
     text_renderer.DrawString(renderer, caption_x, layout.recents_panel.y, theme.text_muted,
                              model.start_heading);
     draw_button(layout.open_folder_rect, model.open_folder_label);
+    draw_button(layout.open_remote_folder_rect, model.open_remote_folder_label);
     text_renderer.DrawString(renderer, caption_x, recents_caption_y, theme.text_muted,
                              model.recents_heading);
     bool drew_recent = false;

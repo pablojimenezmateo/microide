@@ -1908,6 +1908,7 @@ const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
     vm.recents_heading = "Recent";
     vm.empty_recents_label = "No recent projects yet.";
     vm.open_folder_label = LabelWithChord("Open Folder…", ActionId::ProjectOpen);
+    vm.open_remote_folder_label = LabelWithChord("Open Folder on Host…", ActionId::RemoteOpenFolder);
     vm.recent_projects =
         BuildRecentRows(recents.ExistingRecentProjects(), recents.ExistingRecentProjectDisplays());
     return vm;

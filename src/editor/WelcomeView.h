@@ -63,6 +63,7 @@ struct WelcomeViewModel {
   std::string start_heading;
   std::string recents_heading;
   std::string open_folder_label;
+  std::string open_remote_folder_label;
   std::string empty_recents_label;
   // ProjectHome captions/labels.
   std::string actions_heading;
@@ -84,7 +85,16 @@ struct WelcomeViewModel {
 // An interactive region on the welcome surface, produced by ComputeWelcomeLayout and
 // shared by the renderer (to draw it) and the shell (to hit-test clicks / hover).
 struct WelcomeHitRegion {
-  enum class Kind { RecentProject, OpenFolder, RecentFile, NewFile, OpenFile, FindInProject, RemoteRetry };
+  enum class Kind {
+    RecentProject,
+    OpenFolder,
+    OpenRemoteFolder,
+    RecentFile,
+    NewFile,
+    OpenFile,
+    FindInProject,
+    RemoteRetry
+  };
   SDL_FRect rect{};
   Kind kind = Kind::OpenFolder;
   std::size_t recent_index = 0;  // valid when kind == RecentProject or RecentFile
@@ -96,6 +106,7 @@ struct WelcomeLayout {
   SDL_FRect recents_panel{};
   SDL_FRect shortcuts_panel{};
   SDL_FRect open_folder_rect{};
+  SDL_FRect open_remote_folder_rect{};  // NoProject: the slot under open_folder_rect
   // The remote status block (WelcomeViewModel::remote), between the header and the
   // panels; zero-sized for a local project.
   SDL_FRect remote_block{};

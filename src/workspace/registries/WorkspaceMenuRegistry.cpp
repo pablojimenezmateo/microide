@@ -85,6 +85,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::Tab, {}, "Ctrl+N"),
       MenuItem(ActionId::Open, {}, "Ctrl+O"),
       MenuItem(ActionId::ProjectOpen, {}, "Ctrl+K Ctrl+O"),
+      MenuItem(ActionId::RemoteOpenFolder),
       MenuSeparator(),
       MenuItem(ActionId::Save),
       MenuItem(ActionId::CloseActiveTab),
@@ -214,6 +215,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),
+      MenuItem(ActionId::RemoteOpenTerminal),
       MenuItem(ActionId::TerminalSplit, {}, "Ctrl+Shift+\\"),
       MenuItem(ActionId::TerminalRelaunch),
       MenuSeparator(),

@@ -5,6 +5,8 @@
 #include "editor/EditorViewModel.h"
 #include "editor/TextViewport.h"
 #include "editor/WelcomeView.h"
+
+#include <algorithm>
 #include "render/TextRenderer.h"
 #include "workspace/debug/DebugViewModel.h"
 #include "workspace/persistence/RecentsService.h"
@@ -633,6 +635,24 @@ void TestBuilderWelcomeViewIsRegistrySourcedWithRecents() {
   const editor::WelcomeViewModel vm = builder.BuildWelcomeView(recents);
 
   Expect(vm.kind == editor::WelcomeKind::NoProject, "no open project => NoProject variant");
+  Expect(vm.open_remote_folder_label.rfind("Open Folder on Host", 0) == 0,
+         "the cold-start home offers a host folder beside Open Folder: " +
+             vm.open_remote_folder_label);
+  // The two start buttons are separate slots that never overlap each other or the
+  // recent rows (the open-folder button once collided with the empty-state caption).
+  const editor::WelcomeLayout layout =
+      editor::ComputeWelcomeLayout(SDL_FRect{0.0f, 0.0f, 1200.0f, 800.0f}, vm, 18.0f);
+  Expect(layout.open_remote_folder_rect.y >=
+             layout.open_folder_rect.y + layout.open_folder_rect.h,
+         "the host-folder button sits below the open-folder button");
+  Expect(layout.recents_rows_top >=
+             layout.open_remote_folder_rect.y + layout.open_remote_folder_rect.h,
+         "the recent rows start below the host-folder button");
+  Expect(std::any_of(layout.hit_regions.begin(), layout.hit_regions.end(),
+                     [](const editor::WelcomeHitRegion& region) {
+                       return region.kind == editor::WelcomeHitRegion::Kind::OpenRemoteFolder;
+                     }),
+         "the host-folder button is a hit region");
   // Recents map to folder name + full path, preserved in order.
   Expect(vm.recent_projects.size() == 2, "every existing recent project should be surfaced");
   Expect(vm.recent_projects[0].name == "alpha" && vm.recent_projects[0].path == alpha,
@@ -781,8 +801,11 @@ void TestComputeWelcomeLayoutProducesHitRegions() {
         ++recent_regions;
         Expect(region.recent_index < vm.recent_projects.size(),
                "recent hit regions index into the model");
-      } else {
+      } else if (region.kind == editor::WelcomeHitRegion::Kind::OpenFolder) {
         ++open_folder_regions;
+      } else {
+        Expect(region.kind == editor::WelcomeHitRegion::Kind::OpenRemoteFolder,
+               "the only other NoProject affordance is the host-folder button");
       }
       Expect(within_card(layout, region), "hit regions should stay inside the welcome card");
     }

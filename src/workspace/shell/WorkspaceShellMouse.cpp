@@ -583,6 +583,9 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           case editor::WelcomeHitRegion::Kind::OpenFolder:
             run_action(ActionId::ProjectOpen);
             break;
+          case editor::WelcomeHitRegion::Kind::OpenRemoteFolder:
+            run_action(ActionId::RemoteOpenFolder);
+            break;
           case editor::WelcomeHitRegion::Kind::RecentFile:
             if (region.recent_index < welcome_model->recent_files.size()) {
               // Copied for the same reason as RecentProject above: opening a file
