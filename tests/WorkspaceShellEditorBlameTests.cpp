@@ -109,6 +109,74 @@ void TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame() {
                                DescribePixelDiff(diff));
 }
 
+// The blame card goes when the pointer leaves for the tab strip. Leaving cleared
+// the card's target and repainted only the strip, so the card stayed over the
+// editor. Found by the QA monkey (seed 7).
+void TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1, "the fixture should have inline blame");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto& blame_line = overlay->lines[0];
+  const float bx = blame_line.rect.x + 4.0f;
+  const float by = blame_line.rect.y + blame_line.rect.h * 0.5f;
+  const auto shown = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(bx, by), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, bx, by),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, bx, by)}),
+      pin_caret);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "hovering blame text should open the blame card");
+  Expect(shown.identical(), "showing the blame card should paint what a full repaint paints; " +
+                                DescribePixelDiff(shown));
+  const SDL_FRect strip = WorkspaceShellTestAccess::CurrentLayout(shell).tab_strip;
+  const auto left = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(strip.x + strip.w * 0.6f, strip.y + strip.h * 0.5f)}),
+      pin_caret);
+  Expect(left.identical(), "leaving for the tab strip should take the blame card off screen; " +
+                               DescribePixelDiff(left));
+
+  // The same card, left by a pointer that moved with no motion event (a window
+  // move or resize re-seeds it and queues a hover refresh): the refresh used to
+  // run inside RenderClip, only when it painted the editor, so a partial frame
+  // elsewhere kept the card while a full render of that frame dropped it.
+  const auto back = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(bx, by)}), pin_caret);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "hovering the blame text again should show the card");
+  Expect(back.identical(), "showing the card again should paint what a full repaint paints; " +
+                               DescribePixelDiff(back));
+  shell.SeedPointerPosition(strip.x + strip.w * 0.6f, strip.y + strip.h * 0.5f);
+  microide::workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(SDL_FRect{strip.x, strip.y, 40.0f, strip.h});
+  const auto seeded = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, elsewhere, pin_caret);
+  Expect(seeded.identical(), "a re-seeded pointer should take the blame card off screen; " +
+                                 DescribePixelDiff(seeded));
+}
+
 void TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -432,6 +500,8 @@ void TestWorkspaceShellHoverWrapMemoKeysOnEveryInput() {
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverWrapMemoKeysOnEveryInput",
           TestWorkspaceShellHoverWrapMemoKeysOnEveryInput);
+  AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWhenThePointerLeaves",
+          TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves);
   AddTest(tests, "WorkspaceShell/EditorBlameIsFixedForAPreparedFrame",
           TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",

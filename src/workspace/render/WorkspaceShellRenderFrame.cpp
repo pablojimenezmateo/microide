@@ -668,6 +668,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
   }
+  // A queued editor-hover refresh (the content under a still pointer changed)
+  // runs here, not in paint: RenderClip ran it only when it painted the editor, so
+  // a partial frame that skipped the editor kept the old hover card while a full
+  // render of the same frame dropped it (QA monkey, seed 7).
+  if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshHover");
+    UpdateEditorHover(last_mouse_x_, last_mouse_y_);
+    editor_hover_refresh_pending_ = false;
+  }
   // The element painted hovered and the tooltip card, as this frame paints them.
   // Pointer motion damages its own hover changes; this catches the ones nothing
   // moved -- a modal opening over a hovered status segment and its tooltip, an
@@ -706,6 +715,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     };
     repaint_if_moved(frame_state_.painted_hover_rect, hover_rect);
     repaint_if_moved(frame_state_.painted_tooltip_rect, tooltip_rect);
+    // The editor hover card goes when its target does -- the pointer leaving for
+    // the tab strip cleared the blame card's target and repainted only the strip
+    // (QA monkey, seed 7).
+    std::optional<SDL_FRect> hover_popup_rect;
+    if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
+      hover_popup_rect = MakeRect(popup->rect.x - 2.0f, popup->rect.y - 2.0f, popup->rect.w + 4.0f,
+                                  popup->rect.h + 4.0f);
+    }
+    repaint_if_moved(frame_state_.painted_hover_popup_rect, hover_popup_rect);
   }
   // The editor (and the compare/merge editable panes) paint the caret only while
   // the editor OWNS the blinking caret -- the condition under which the blink

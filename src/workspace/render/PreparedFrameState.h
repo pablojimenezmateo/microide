@@ -36,6 +36,8 @@ struct PreparedFrameState {
   // The element painted hovered and the tooltip card painted, under the pointer.
   std::optional<SDL_FRect> painted_hover_rect;
   std::optional<SDL_FRect> painted_tooltip_rect;
+  // The editor hover card painted (hover docs, diagnostics, the blame card).
+  std::optional<SDL_FRect> painted_hover_popup_rect;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
   // The tab strips painted mid-slide (kind None: none). A new drag can take a

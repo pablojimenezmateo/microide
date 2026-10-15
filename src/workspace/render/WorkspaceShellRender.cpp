@@ -149,11 +149,6 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
                                    &active_editor_pane_rect, *clip_cached_frame_vm_,
                                    *clip_cached_overlay_vm_);
     }
-    if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
-      util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::RefreshHover");
-      UpdateEditorHover(last_mouse_x_, last_mouse_y_);
-      editor_hover_refresh_pending_ = false;
-    }
     RenderEditorHoverPopup(renderer);
     MaybeExpireSignatureHelp();
     RenderSignatureHelpPopup(renderer);
