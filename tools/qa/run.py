@@ -138,17 +138,25 @@ def cmd_remote(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
+    # --binary and --out are accepted before or after the mode: the subparsers
+    # take them with SUPPRESS defaults, so a value given after the mode wins and
+    # an absent one leaves the top-level default alone.
+    def common(defaults: bool) -> argparse.ArgumentParser:
+        p = argparse.ArgumentParser(add_help=False)
+        p.add_argument("--binary", type=Path, default=(
+            Path(os.environ.get("MICROIDE_BIN", q.REPO / "build/microide/microide"))
+            if defaults else argparse.SUPPRESS))
+        p.add_argument("--out", type=Path, default=(
+            Path(f"/tmp/mqa-out-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}")
+            if defaults else argparse.SUPPRESS))
+        return p
+
+    parser = argparse.ArgumentParser(description=__doc__, parents=[common(True)],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--binary", type=Path,
-                        default=Path(os.environ.get("MICROIDE_BIN",
-                                                    q.REPO / "build/microide/microide")))
-    parser.add_argument("--out", type=Path,
-                        default=Path(f"/tmp/mqa-out-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"))
     sub = parser.add_subparsers(dest="mode", required=True)
-    suite = sub.add_parser("suite")
+    suite = sub.add_parser("suite", parents=[common(False)])
     suite.add_argument("names", nargs="*")
-    monkey = sub.add_parser("monkey")
+    monkey = sub.add_parser("monkey", parents=[common(False)])
     monkey.add_argument("--seed", type=int, default=1)
     monkey.add_argument("--seeds", help="a range like 1-8 (overrides --seed)")
     monkey.add_argument("--steps", type=int, default=300)
@@ -162,9 +170,9 @@ def main() -> int:
                              "is painted between them")
     monkey.add_argument("--no-churn", action="store_true",
                         help="commands/editor profiles: do not rewrite files under the editor")
-    replay = sub.add_parser("replay")
+    replay = sub.add_parser("replay", parents=[common(False)])
     replay.add_argument("file")
-    remote = sub.add_parser("remote")
+    remote = sub.add_parser("remote", parents=[common(False)])
     remote.add_argument("names", nargs="*")
     args = parser.parse_args()
 
