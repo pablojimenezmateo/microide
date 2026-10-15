@@ -58,6 +58,11 @@ class RedrawVerifier {
   static bool EnabledFromEnvironment();
 
   void Configure(bool enabled);
+  // Where to save the two images of a stale frame (retained and reference, as
+  // BMP), for the first kMaxDumpedFrames of them: a finding's bounding box says
+  // where, the images say what. MICROIDE_QA_STALE_DUMP_DIR, read at startup.
+  void SetDumpDirectory(std::string directory) { dump_directory_ = std::move(directory); }
+  static constexpr std::size_t kMaxDumpedFrames = 8;
   bool enabled() const { return enabled_; }
 
   // Compare the retained scene (the bound render target, clip cleared) with a full
@@ -109,6 +114,7 @@ class RedrawVerifier {
   std::size_t stale_frame_count_ = 0;
   std::size_t verified_frame_count_ = 0;
   std::string last_report_;
+  std::string dump_directory_;
 };
 
 }  // namespace microide::app

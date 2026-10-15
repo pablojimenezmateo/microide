@@ -588,6 +588,9 @@ bool Application::Initialize() {
   redraw_trace_.Configure(util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW"),
                           util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW_VERBOSE"));
   redraw_verifier_.Configure(RedrawVerifier::EnabledFromEnvironment());
+  if (const char* dump = SDL_getenv("MICROIDE_QA_STALE_DUMP_DIR"); dump != nullptr) {
+    redraw_verifier_.SetDumpDirectory(dump);
+  }
   return true;
 }
 

@@ -82,6 +82,12 @@ std::optional<render::PixelDiffResult> RedrawVerifier::CompareWithReference(
       ++stale_frame_count_;
       last_report_ = FormatStaleFrameReport(*result, frame);
       SDL_Log("%s", last_report_.c_str());
+      if (!dump_directory_.empty() && stale_frame_count_ <= kMaxDumpedFrames) {
+        const std::string stem =
+            dump_directory_ + "/frame-" + std::to_string(frame.frame_index);
+        (void)SDL_SaveBMP(retained, (stem + "-retained.bmp").c_str());
+        (void)SDL_SaveBMP(reference, (stem + "-reference.bmp").c_str());
+      }
     }
   }
   SDL_DestroySurface(reference);
