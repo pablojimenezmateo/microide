@@ -13343,7 +13343,14 @@ Still open from this sweep:
     `GitRepositoryEntry::submodule`, and it outranks every content kind — there is
     no text to three-way merge, and `TextHunksAvailable` already returned false.
   - **`MergeFileConflictKind::Mode` is NOT reachable and should not be "fixed"
-    the obvious way. OPEN, and probably WON'T-DO.** Comparing the per-stage modes
+    the obvious way. [RESOLVED 2026-10-16 — deleted.]** Decided what it would
+    mean, as asked below, and the answer is nothing git produces: the kind's own
+    message ("review executable and permission bits") describes a conflict that
+    cannot happen, and the distinct-types case arrives as two ordinary records
+    (`UA` on `thing`, `UD` on `thing~HEAD`) that AddedByThem/DeletedByThem
+    already classify with the existence choice the user needs -- which is how
+    VS Code presents it too. A kind for it would only rename what is already
+    shown. Original analysis: Comparing the per-stage modes
     on an unmerged record looks like the way to spot an executable-bit conflict.
     It is not, and an attempt at it in this sweep shipped briefly before being
     backed out. Two reasons, both confirmed against real git:

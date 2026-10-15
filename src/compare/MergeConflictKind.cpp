@@ -112,8 +112,6 @@ std::string BuildSummary(MergeFileConflictKind kind) {
       return "Binary conflict: keep a whole side with Accept Current or Accept Incoming.";
     case MergeFileConflictKind::Submodule:
       return "Submodule conflict; resolve in the submodule checkout.";
-    case MergeFileConflictKind::Mode:
-      return "File mode conflict; review executable and permission bits.";
     case MergeFileConflictKind::LineEndingHeavy:
       // "or whitespace" was never true: the detector normalizes line endings and
       // nothing else, so a whitespace-only conflict does not reach this kind.

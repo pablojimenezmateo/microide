@@ -20,7 +20,9 @@ enum class MergeFileConflictKind {
   FileDirectory,
   Binary,
   Submodule,
-  Mode,
+  // No `Mode`: git never conflicts on permission bits (two regular-file modes
+  // always auto-merge), and a file-vs-symlink clash arrives as two ordinary
+  // records the kinds above already describe (TD-2026-07-26-004).
   LineEndingHeavy,
   Unknown,
 };
