@@ -180,6 +180,21 @@ void TestUiQueryIsReadOnly() {
          "answering the ui query should not request a redraw");
 }
 
+// Typing in the file tree navigates, as in VS Code's explorer, and bare letters
+// run nothing: `d` used to open the compare picker and `r` to refresh, so a query
+// typed into the tree by mistake ran commands (TD-2026-10-15-342).
+void TestTypingInTheTreeNavigates() {
+  UiFixture fixture;
+  TestAccess::SetFocusSidebar(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_B)});
+  const auto beta = Find(TestAccess::ControlUi(fixture.shell), "row:tree/beta.cpp");
+  Expect(beta.has_value() && beta->selected == true, "typing b should select beta.cpp");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_D)});
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(!ui["overlay"]["visible"].AsBool(), "d in the tree should not open the compare picker");
+  Expect(Find(ui, "row:tree/beta.cpp")->selected == true, "and with no row starting with d, the selection stays");
+}
+
 void TestUiNamesAreMadeUnique() {
   ControlUiElements elements;
   workspace::AddControlUiElement(elements, "tab", "0/main.cpp", SDL_FRect{0, 0, 10, 10});
@@ -200,6 +215,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/HitsWhatItNames", TestUiQueryHitsWhatItNames);
   AddTest(tests, "ControlUiQuery/IsReadOnly", TestUiQueryIsReadOnly);
   AddTest(tests, "ControlUiQuery/ReportsTheModal", TestUiQueryReportsTheModal);
+  AddTest(tests, "ControlUiQuery/TypingInTheTreeNavigates", TestTypingInTheTreeNavigates);
   AddTest(tests, "ControlUiQuery/NamesAreMadeUnique", TestUiNamesAreMadeUnique);
 }
 

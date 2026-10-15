@@ -382,15 +382,30 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       }
       return true;
     }
-    case SDLK_R:
-      operations_.refresh_project_files();
-      return true;
-    case SDLK_D:
-      operations_.open_compare_picker();
-      return true;
     default:
-      return false;
+      break;
   }
+  // Typing navigates, as in VS Code's explorer: the next entry whose name starts
+  // with what was typed. Bare letters used to be commands here (`r` refreshed, `d`
+  // opened the compare picker), so a query typed into the tree by mistake ran them
+  // one letter at a time (TD-2026-10-15-342); Refresh and Compare are on the
+  // tree's context menu, its header button and the palette.
+  if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
+    const char typed = operations_.keycode_to_ascii(event.key, modifiers);
+    if (typed > ' ' && typed < 127) {
+      const auto& entries = state_.directory_tree.entries();
+      if (const auto index = TypeNavigate(
+              state_.sidebar.tree_type_navigation, typed, event.timestamp,
+              state_.directory_tree.selected_index(), entries.size(),
+              [&entries](std::size_t i) { return std::string_view(entries[i].label); });
+          index.has_value()) {
+        state_.directory_tree.SetSelectedIndex(*index);
+        operations_.reveal_selected_tree_sidebar_line();
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 

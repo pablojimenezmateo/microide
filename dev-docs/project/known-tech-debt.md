@@ -529,7 +529,7 @@ launch on a freshly generated fixture), where the window may present before the
 retained scene holds a full frame. If it recurs, the finding directory now
 carries the frame lines and the verifier's images.
 
-### TD-2026-10-15-342 — typing in the tree runs commands instead of navigating. [OPEN]
+### TD-2026-10-15-342 — typing in the tree runs commands instead of navigating. [RESOLVED 2026-10-16]
 
 Found while fixing Ctrl+Shift+F from a focused tree (db16f4a2): when that shortcut
 did nothing, the query typed next ("Scheduler") went to the tree, where bare
@@ -542,6 +542,14 @@ Wants: type-to-navigate in Tree mode, the two letter commands moved (`d` to the
 context menu plus a chord, `r` to the existing Refresh button and
 `tree-refresh`), README/hints updated. Not done in the pass that found it: it
 changes advertised keys, so it is a product decision, not a fix.
+
+RESOLVED 2026-10-16 the VS Code way (the loop's standing instruction for product
+questions): printable keys without Ctrl/Alt/Super select the next tree entry whose
+name starts with what was typed within a second, a repeated letter steps through
+the entries starting with it (workspace/TypeNavigation.h, unit-tested); bare `r`
+and `d` are gone from the tree (Refresh: header button, context menu,
+`tree-refresh`; Compare: context menu, palette). Pinned by
+`ControlUiQuery/TypingInTheTreeNavigates` and `TypeNavigation/*`.
 
 ### TD-2026-10-15-341 — a project-change batch repaints the whole window. [RESOLVED 2026-10-15]
 

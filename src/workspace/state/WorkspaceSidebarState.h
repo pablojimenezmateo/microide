@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "editor/DiagnosticsStore.h"
+#include "workspace/TypeNavigation.h"
 #include "plugin/PluginHost.h"
 #include "project/GitStatusService.h"
 #include "workspace/git/CommitWorkflowState.h"
@@ -245,6 +246,8 @@ struct SidebarState {
   ProblemsSidebarState problems;
   TestsSidebarState tests;
   PluginSidebarState plugin;
+  // The file tree's type navigation (workspace/TypeNavigation.h).
+  TypeNavigationState tree_type_navigation;
 };
 
 }  // namespace microide::workspace

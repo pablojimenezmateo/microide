@@ -759,8 +759,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
           .refresh_plugin_sidebar = [this]() { return RefreshPluginSidebar(); },
           .reveal_selected_tree_sidebar_line = [this]() { RevealSelectedTreeSidebarLine(); },
-          .refresh_project_files = [this]() { RefreshProjectFiles(); },
-          .open_compare_picker = [this]() { OpenComparePicker(); },
           .move_compare_selection = [this](int delta) { MoveCompareSelection(delta); },
           .jump_compare_hunk = [this](int delta) { JumpCompareHunk(delta); },
           .stage_compare_hunk = [this]() { StageCompareHunk(); },

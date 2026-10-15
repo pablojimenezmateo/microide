@@ -163,8 +163,6 @@ class KeyInputCoordinator {
     std::function<bool()> toggle_plugin_sidebar_item;
     std::function<bool()> refresh_plugin_sidebar;
     std::function<void()> reveal_selected_tree_sidebar_line;
-    std::function<void()> refresh_project_files;
-    std::function<void()> open_compare_picker;
     std::function<void(int)> move_compare_selection;
     std::function<void(int)> jump_compare_hunk;
     std::function<void()> stage_compare_hunk;
