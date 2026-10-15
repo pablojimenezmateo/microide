@@ -109,6 +109,9 @@ class ProcessTable {
   struct Process {
     std::uint64_t handle = 0;
     int pid = -1;
+    // Readable when the process exits (Linux pidfd_open), so the exit is reaped and
+    // sent the moment it happens; -1 where there is none, and the loop polls.
+    int pid_fd = -1;
     int stdin_fd = -1;
     Stream out;
     Stream err;

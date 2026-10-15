@@ -189,6 +189,42 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
   Expect(pushes.load() >= 3, "each change was a push");
 }
 
+// A process's exit is sent when it happens. The server found exits by polling
+// every 50 ms, and a process's pipes reach EOF a moment before it can be reaped:
+// on a real host (worky, 2026-10-15) every remote process -- each git the sidebar
+// runs -- waited out the poll, 50 ms after its output, a round trip on that link.
+// The exit now wakes the loop (a pidfd). Deterministic here: the child closes its
+// output, then exits 20 ms later, so polling cannot see the exit before 50 ms.
+void TestHostProcessExitIsSentWhenItHappens() {
+  TemporaryDirectory temp;
+  const std::filesystem::path local = temp.path() / "mirror";
+  const std::filesystem::path host = temp.path() / "host";
+  std::filesystem::create_directories(local);
+  std::filesystem::create_directories(host);
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = host.string()},
+                                &error),
+         "connects: " + error);
+  const remote::RemoteProcessLauncher launcher(client, remote::RemotePathMap(local, host),
+                                               {.host_paths_readable_locally = true});
+  std::vector<double> ms;
+  for (int i = 0; i < 9; ++i) {
+    const auto start = std::chrono::steady_clock::now();
+    const auto result = launcher.Run({"/bin/sh", "-c", "exec >&- 2>&-; sleep 0.02; exit 3"},
+                                     platform::SubprocessOptions{.cwd = local});
+    ms.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+    Expect(result.exit_code == 3, "the exit status arrives: " + std::to_string(result.exit_code));
+  }
+  std::sort(ms.begin(), ms.end());
+  const double median = ms[ms.size() / 2];
+  if (!IsSanitizerBuild()) {
+    // ~20 ms of sleep plus a few of spawn; polled, the exit waited for the 50 ms tick.
+    Expect(median < 40.0, "the median run is " + std::to_string(median) + " ms");
+  }
+}
+
 // A read-only git the client runs on the host (the sidebar's own `git diff
 // <base>...HEAD`, a blame, a log) changes nothing, so its exit must not make the
 // host compute and push a status. It did: every push refreshed the sidebar, the
@@ -404,6 +440,8 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
           TestProjectSearchRunsOnTheHostOverTheContentSet);
   AddTest(tests, "RemoteLauncher/GitRepositoryCreatedOnTheHostIsSeen", TestGitRepositoryCreatedOnTheHostIsSeen);
   AddTest(tests, "RemoteLauncher/RunReturnsWhenTheLinkDrops", TestRunReturnsWhenTheLinkDrops);
+  AddTest(tests, "RemoteLauncher/HostProcessExitIsSentWhenItHappens",
+          TestHostProcessExitIsSentWhenItHappens);
   AddTest(tests, "RemoteLauncher/ReadOnlyGitDoesNotTriggerAStatusPush",
           TestReadOnlyGitDoesNotTriggerAStatusPush);
   AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",

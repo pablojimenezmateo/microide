@@ -38,6 +38,20 @@ constexpr std::size_t kChunkBytes = 64 * 1024;
 // After the process exits, how long its pipes may stay open (a grandchild holding
 // stdout) before the exit is reported anyway.
 constexpr auto kExitDrainGrace = std::chrono::seconds(5);
+
+#if defined(__linux__) && defined(SYS_pidfd_open)
+// A descriptor that turns readable when `pid` exits. Close-on-exec by definition
+// (pidfd_open(2) always sets it), so no spawned process inherits it. -1 on a
+// kernel older than 5.3, and the loop falls back to polling for the exit.
+int OpenPidFd(int pid) {
+  return static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
+}
+#else
+int OpenPidFd(int) {
+  return -1;
+}
+#endif
+
 // How long a terminated process gets between SIGTERM and SIGKILL.
 constexpr auto kKillGrace = std::chrono::seconds(2);
 
@@ -119,7 +133,7 @@ ProcessTable::~ProcessTable() {
       ::kill(-process->pid, SIGKILL);
       ::waitpid(process->pid, nullptr, 0);
     }
-    for (int fd : {process->stdin_fd, process->out.fd, process->err.fd}) {
+    for (int fd : {process->stdin_fd, process->out.fd, process->err.fd, process->pid_fd}) {
       if (fd >= 0) {
         ::close(fd);
       }
@@ -279,6 +293,7 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   process->connection = connection;
   process->git_mutation = project::remote::IsGitMutation(request.argv);
   process->cwd = request.cwd;
+  process->pid_fd = OpenPidFd(pid);
   std::uint64_t handle = 0;
   {
     std::lock_guard lock(mutex_);
@@ -554,6 +569,10 @@ void ProcessTable::Reap() {
       continue;
     }
     process->exited = true;
+    if (process->pid_fd >= 0) {
+      ::close(process->pid_fd);
+      process->pid_fd = -1;
+    }
     if (WIFSIGNALED(status)) {
       process->exit_signal = WTERMSIG(status);
     } else {
@@ -577,17 +596,31 @@ void ProcessTable::Run() {
     fds.clear();
     owners.clear();
     fds.push_back(pollfd{wake_.read_fd(), POLLIN, 0});
-    bool any_running = false;
+    // Exits announce themselves through their pid fds, placed right after the wake
+    // fd; nothing is read from them -- the next pass's Reap collects the status.
+    std::size_t exit_fds = 0;
+    bool any_unwatched = false;  // running with no pid fd: its exit must be polled for
+    std::optional<std::chrono::steady_clock::time_point> next_kill;
     {
       std::lock_guard lock(mutex_);
       Reap();
       const auto now = std::chrono::steady_clock::now();
       for (auto it = processes_.begin(); it != processes_.end();) {
         Process& process = *it->second;
-        any_running = any_running || !process.exited;
         if (!process.exited && process.kill_at.has_value() && now >= *process.kill_at) {
           ::kill(-process.pid, SIGKILL);
           process.kill_at.reset();
+        }
+        if (!process.exited) {
+          if (process.pid_fd >= 0) {
+            fds.insert(fds.begin() + 1 + static_cast<std::ptrdiff_t>(exit_fds), pollfd{process.pid_fd, POLLIN, 0});
+            ++exit_fds;
+          } else {
+            any_unwatched = true;
+          }
+          if (process.kill_at.has_value() && (!next_kill.has_value() || *process.kill_at < *next_kill)) {
+            next_kill = process.kill_at;
+          }
         }
         if (process.exited) {
           auto [mark, inserted] = exited_at.try_emplace(process.handle, now);
@@ -624,8 +657,18 @@ void ProcessTable::Run() {
       }
     }
     Flush(outgoing);
-    // No portable child-exit descriptor: while anything runs, re-check every 50 ms.
-    const int timeout_ms = any_running ? 50 : (exited_at.empty() ? -1 : 500);
+    // Where a running process has no pid fd, re-check for its exit every 50 ms. With
+    // one, an exit wakes the loop itself: polling for it cost every remote process
+    // (a git the sidebar runs, a formatter) up to 50 ms after its output -- a round
+    // trip on a 50 ms link (measured on worky, 2026-10-15).
+    int timeout_ms = any_unwatched ? 50 : (exited_at.empty() ? -1 : 500);
+    if (next_kill.has_value()) {
+      const auto until = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             *next_kill - std::chrono::steady_clock::now())
+                             .count();
+      const int kill_ms = static_cast<int>(std::clamp<std::int64_t>(until + 1, 0, 60'000));
+      timeout_ms = timeout_ms < 0 ? kill_ms : std::min(timeout_ms, kill_ms);
+    }
     if (::poll(fds.data(), fds.size(), timeout_ms) < 0 && errno != EINTR) {
       util::Log("process table: poll failed");
       return;
@@ -634,15 +677,16 @@ void ProcessTable::Run() {
       wake_.Drain();
     }
     std::lock_guard lock(mutex_);
-    for (std::size_t i = 1; i < fds.size(); ++i) {
+    for (std::size_t i = 1 + exit_fds; i < fds.size(); ++i) {
       if ((fds[i].revents & (POLLIN | POLLHUP | POLLERR)) == 0) {
         continue;
       }
-      const auto it = processes_.find(owners[i - 1].first);
+      const auto& owner = owners[i - 1 - exit_fds];
+      const auto it = processes_.find(owner.first);
       if (it == processes_.end()) {
         continue;
       }
-      Stream& stream = owners[i - 1].second ? it->second->err : it->second->out;
+      Stream& stream = owner.second ? it->second->err : it->second->out;
       char buffer[kChunkBytes];
       const ssize_t n = ::read(stream.fd, buffer, sizeof(buffer));
       if (n > 0) {
