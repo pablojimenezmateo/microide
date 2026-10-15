@@ -464,8 +464,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   }
 
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
-      editor_blame_overlay_service_.BuildEditorOverlay(project_root,
-                                                       text_renderer_, git_blame_service_,
+      editor_blame_overlay_service_.EditorOverlayForFrame(prepared_frame_id_, project_root,
+                                                          text_renderer_, git_blame_service_,
                                                        merge_tab->result_viewport,
                                                        interaction.result.rect, 280.0f, 0,
                                                        LineNumbersEnabled());

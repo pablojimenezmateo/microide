@@ -1,5 +1,8 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
 
+#include "support/RetainedRedraw.h"
+#include "support/SoftwareCanvas.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -62,6 +65,48 @@ void TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile() {
                                WorkspaceShellTestAccess::TextCharWidth(shell);
   Expect(std::fabs(overlay->lines[0].rect.x - expected_x) < 0.5f,
          "editor blame overlay should anchor eight columns after the visible line end");
+}
+
+// One prepared frame paints one blame. The blame cache is filled by a worker
+// thread and inline blame read it on every render, so a result landing between
+// two renders of the same frame -- the clips of one partial frame, or the QA redraw
+// verifier's full reference -- painted blame in one and not the other: a torn
+// frame. Found by the QA redraw verifier (QA-STALE over the inline blame text on
+// the frame that opened a file).
+void TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\nint beta() {\n  return 2;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(2, 0);
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+
+  // The blame result lands (the worker fills the cache) before the frame's next render.
+  Expect(WaitForActiveEditorBlameOverlay(shell, 1).has_value(), "the blame should load");
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const auto diff = DiffSurfaces(first, canvas.surface());
+  SDL_DestroySurface(first);
+  Expect(diff.identical(), "two renders of one prepared frame should paint the same blame; " +
+                               DescribePixelDiff(diff));
 }
 
 void TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile() {
@@ -387,6 +432,8 @@ void TestWorkspaceShellHoverWrapMemoKeysOnEveryInput() {
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverWrapMemoKeysOnEveryInput",
           TestWorkspaceShellHoverWrapMemoKeysOnEveryInput);
+  AddTest(tests, "WorkspaceShell/EditorBlameIsFixedForAPreparedFrame",
+          TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",
           TestWorkspaceShellEditorBlameLoadsForCleanTrackedFile);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForLargeTrackedFile",

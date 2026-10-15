@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <filesystem>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -57,6 +58,22 @@ class EditorBlameOverlayService {
       std::size_t sticky_scroll_rows,
       bool show_line_numbers) const;
 
+  // BuildEditorOverlay at most once per prepared frame for one pane: every render
+  // of frame `frame_id` (each clip of a partial frame, and the QA redraw
+  // verifier's full reference) gets the same overlay. The blame cache is filled by
+  // a worker thread, so reading it per render let one frame paint blame in some
+  // clips and not others when a result landed mid-frame.
+  const std::optional<editor::EditorBlameOverlay>& EditorOverlayForFrame(
+      std::uint64_t frame_id,
+      const std::filesystem::path& project_root,
+      render::TextRenderer& text_renderer,
+      project::GitBlameService& git_blame_service,
+      editor::TextViewport& viewport,
+      const SDL_FRect& rect,
+      float minimum_pane_width,
+      std::size_t sticky_scroll_rows,
+      bool show_line_numbers) const;
+
   std::optional<editor::EditorBlameOverlay> BuildCompareOverlay(
       const std::filesystem::path& project_root,
       render::TextRenderer& text_renderer,
@@ -96,6 +113,11 @@ class EditorBlameOverlayService {
   // is written by a single caller, and inline blame renders only the ACTIVE pane,
   // so a split does not make two viewports fight over one descriptor.
   mutable project::GitBlameRequest editor_request_;
+  // EditorOverlayForFrame's one slot: the frame, pane and rect it was built for.
+  mutable std::uint64_t frame_overlay_frame_id_ = 0;
+  mutable const editor::TextViewport* frame_overlay_viewport_ = nullptr;
+  mutable SDL_FRect frame_overlay_rect_{};
+  mutable std::optional<editor::EditorBlameOverlay> frame_overlay_;
   mutable project::GitBlameRequest compare_request_;
 };
 

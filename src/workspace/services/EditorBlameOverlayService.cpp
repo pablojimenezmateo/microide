@@ -278,6 +278,30 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
   return overlay;
 }
 
+const std::optional<editor::EditorBlameOverlay>& EditorBlameOverlayService::EditorOverlayForFrame(
+    std::uint64_t frame_id,
+    const std::filesystem::path& project_root,
+    render::TextRenderer& text_renderer,
+    project::GitBlameService& git_blame_service,
+    editor::TextViewport& viewport,
+    const SDL_FRect& rect,
+    float minimum_pane_width,
+    std::size_t sticky_scroll_rows,
+    bool show_line_numbers) const {
+  const bool same_frame = frame_id != 0 && frame_id == frame_overlay_frame_id_ &&
+                          &viewport == frame_overlay_viewport_ && rect.x == frame_overlay_rect_.x &&
+                          rect.y == frame_overlay_rect_.y && rect.w == frame_overlay_rect_.w &&
+                          rect.h == frame_overlay_rect_.h;
+  if (!same_frame) {
+    frame_overlay_ = BuildEditorOverlay(project_root, text_renderer, git_blame_service, viewport, rect,
+                                        minimum_pane_width, sticky_scroll_rows, show_line_numbers);
+    frame_overlay_frame_id_ = frame_id;
+    frame_overlay_viewport_ = &viewport;
+    frame_overlay_rect_ = rect;
+  }
+  return frame_overlay_;
+}
+
 void EditorBlameOverlayService::SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay) {
   visible_overlay_ = std::move(overlay);
 }

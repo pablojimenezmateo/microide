@@ -993,8 +993,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         util::PerformanceTrace::Scope blame_scope(
             "WorkspaceShell::Render::EditorPane::BlameOverlay");
         return (pane.active && blame_inline_enabled)
-                   ? editor_blame_overlay_service_.BuildEditorOverlay(
-                         project_state.root, text_renderer_, git_blame_service_, *viewport,
+                   ? editor_blame_overlay_service_.EditorOverlayForFrame(
+                         prepared_frame_id_, project_state.root, text_renderer_,
+                         git_blame_service_, *viewport,
                          pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size(),
                          line_numbers_enabled)
                    : std::nullopt;
