@@ -1909,6 +1909,52 @@ void TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument() {
                                 DescribePixelDiff(typed));
 }
 
+// One prepared frame paints one terminal. The session is written by its PTY
+// reader thread, and paint read it live (line count, lines, cursor -- three
+// separate locks) and even persisted the scroll mid-paint, so output landing
+// between two renders of one frame -- a partial frame's clips, or the QA redraw
+// verifier's reference -- painted different text and a different caret. Found by
+// the QA redraw verifier (a 16x18 caret cell stale behind each typed character).
+void TestWorkspaceShellTerminalIsFixedForAPreparedFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the terminal fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 8, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+
+  // Output lands (the reader thread writes the session) before the frame's next render.
+  TerminalSessionTestAccess::AppendOutput(session, "echo hello");
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const auto diff = DiffSurfaces(first, canvas.surface());
+  SDL_DestroySurface(first);
+  Expect(diff.identical(), "two renders of one prepared frame should paint the same terminal; " +
+                               DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4628,6 +4674,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/TerminalIsFixedForAPreparedFrame",
+          TestWorkspaceShellTerminalIsFixedForAPreparedFrame);
   AddTest(tests, "WorkspaceShell/BlinkInALowerPaneKeepsTheDivider",
           TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider);
   AddTest(tests, "WorkspaceShell/EditRepaintsEveryPaneOfTheDocument",

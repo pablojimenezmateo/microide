@@ -548,6 +548,11 @@ struct TerminalPaneState {
   // The link under the pointer, underlined while it is (VS Code's terminal).
   std::optional<TerminalLinkSpan> hovered_link;
   terminal::TerminalLineRangeSnapshot visible_lines_snapshot;
+  // What this pane paints this frame, sampled once in frame prep (with the lines
+  // above): the session is written by its PTY reader thread, and paint reading it
+  // live let one frame's renders disagree about the caret and the line count.
+  terminal::TerminalCursorSnapshot frame_cursor{};
+  std::size_t frame_line_count = 0;
   std::size_t visible_lines_first_row = 0;
   std::size_t visible_lines_max_rows = 0;
   int scroll_row = 0;

@@ -1635,6 +1635,7 @@
   // view or a held selection. Cumulative-delta based, so a background tab catches up in
   // one call when it next becomes active.
   void RebaseActiveTerminalForScrollbackTrim();
+  void PrepareTerminalPanesForFrame(TerminalTabState& tab, const TerminalPaneRectsLayout& rects, float panel_height);
   void ClearTerminalSelection();
   bool TerminalHasSelection() const;
   std::optional<TerminalLinkHit> TerminalLinkAtPoint(float x, float y) const;

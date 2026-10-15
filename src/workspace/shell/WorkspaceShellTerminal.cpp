@@ -673,6 +673,49 @@ void WorkspaceShell::SetBottomPanelScrollRow(int scroll_row,
   }
 }
 
+// Samples every pane of the terminal tab on screen once per prepared frame -- the
+// line count, the clamped scroll (persisted, as paint used to do mid-frame), the
+// visible lines and the cursor -- so every render of the frame paints the same
+// terminal. The sessions are written by their PTY reader threads; paint reading
+// them live let a partial frame's clips, and the QA redraw verifier's reference,
+// see different output and a different caret.
+void WorkspaceShell::PrepareTerminalPanesForFrame(TerminalTabState& tab,
+                                                  const TerminalPaneRectsLayout& rects,
+                                                  float panel_height) {
+  // Before the layouts read scroll_row, so a scrolled-up view tracks the same
+  // content instead of jumping forward by a trimmed batch.
+  RebaseActiveTerminalForScrollbackTrim();
+  for (std::size_t pane_index = 0; pane_index < tab.panes.size() && pane_index < rects.panes.size();
+       ++pane_index) {
+    TerminalPaneState* pane = tab.panes[pane_index].get();
+    if (pane == nullptr) {
+      continue;
+    }
+    const std::size_t line_count = pane->session.LineCount();
+    const LogSurfaceLayout pane_layout =
+        ComputeTerminalPaneLogLayout(rects.panes[pane_index], panel_height, *pane, line_count);
+    if (pane_index == tab.active_pane) {
+      SetBottomPanelScrollRow(pane_layout.scroll.vertical_scroll, line_count,
+                              pane_layout.scroll.visible_rows);
+    } else {
+      pane->scroll_row = pane_layout.scroll.vertical_scroll;
+      pane->follow_tail = pane_layout.scroll.vertical_scroll >= pane_layout.scroll.max_vertical_scroll;
+    }
+    const std::size_t first_row = static_cast<std::size_t>(std::max(0, pane_layout.scroll.vertical_scroll));
+    const std::size_t visible_rows = static_cast<std::size_t>(std::max(0, pane_layout.scroll.visible_rows));
+    const bool same_visible_range =
+        pane->visible_lines_first_row == first_row && pane->visible_lines_max_rows == visible_rows;
+    const std::uint64_t previous_generation =
+        same_visible_range ? pane->visible_lines_snapshot.generation : 0;
+    pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
+                                             &pane->visible_lines_snapshot);
+    pane->visible_lines_first_row = first_row;
+    pane->visible_lines_max_rows = visible_rows;
+    pane->frame_cursor = pane->session.CursorSnapshot();
+    pane->frame_line_count = line_count;
+  }
+}
+
 void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
   auto* terminal_tab = ActiveTerminalPane();
   if (terminal_tab == nullptr) {

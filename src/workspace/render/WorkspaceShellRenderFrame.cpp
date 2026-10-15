@@ -514,6 +514,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // rects instead of carving the body itself.
     if (TerminalTabState* tab = prepare_cached_bottom_panel_vm_->terminal_tab; tab != nullptr) {
       prepare_cached_bottom_panel_vm_->terminal_panes = tab->PaneRects(BottomPanelContentRect(layout));
+      PrepareTerminalPanesForFrame(*tab, prepare_cached_bottom_panel_vm_->terminal_panes,
+                                   layout.bottom_panel.h);
     }
   }
   // 1a) Terminal find bar: rescan and lay the bar out here, where the panel rect

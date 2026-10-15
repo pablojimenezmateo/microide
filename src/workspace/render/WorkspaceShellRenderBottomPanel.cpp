@@ -482,11 +482,9 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       }
       return;
     }
-    // Rebase the active pane's absolute-row mirrors for any scrollback trimmed since
-    // the last frame BEFORE the layout reads scroll_row, so a scrolled-up view /
-    // selection tracks the same content instead of jumping forward by the trimmed batch.
-    RebaseActiveTerminalForScrollbackTrim();
-
+    // Every pane was sampled once for this frame (PrepareTerminalPanesForFrame):
+    // its line count, persisted scroll, visible lines and cursor. Nothing below
+    // reads the live session or writes pane state.
     const TerminalPaneRectsLayout& rects = panel_vm.terminal_panes;
     const float panel_height = layout.bottom_panel.h;
     for (std::size_t pane_index = 0; pane_index < tab->panes.size() && pane_index < rects.panes.size();
@@ -498,32 +496,11 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       const bool is_active = pane_index == tab->active_pane;
       pane_emphasis_enabled = is_active;
       const SDL_FRect& body = rects.panes[pane_index];
-      const std::size_t line_count = pane->session.LineCount();
+      const std::size_t line_count = pane->frame_line_count;
       const LogSurfaceLayout pane_layout =
           ComputeTerminalPaneLogLayout(body, panel_height, *pane, line_count);
-      // Persist the clamped scroll the same way the single-pane path always did, so
-      // the stored row never points past the content.
-      if (is_active) {
-        SetBottomPanelScrollRow(pane_layout.scroll.vertical_scroll, line_count,
-                                pane_layout.scroll.visible_rows);
-      } else {
-        pane->scroll_row = pane_layout.scroll.vertical_scroll;
-        pane->follow_tail =
-            pane_layout.scroll.vertical_scroll >= pane_layout.scroll.max_vertical_scroll;
-      }
-
       const std::size_t first_row =
           static_cast<std::size_t>(std::max(0, pane_layout.scroll.vertical_scroll));
-      const std::size_t visible_rows =
-          static_cast<std::size_t>(std::max(0, pane_layout.scroll.visible_rows));
-      const bool same_visible_range = pane->visible_lines_first_row == first_row &&
-                                      pane->visible_lines_max_rows == visible_rows;
-      const std::uint64_t previous_generation =
-          same_visible_range ? pane->visible_lines_snapshot.generation : 0;
-      pane->session.SnapshotLineRangeIfChanged(first_row, visible_rows, previous_generation,
-                                               &pane->visible_lines_snapshot);
-      pane->visible_lines_first_row = first_row;
-      pane->visible_lines_max_rows = visible_rows;
       const std::vector<terminal::TerminalLine>& terminal_lines = pane->visible_lines_snapshot.lines;
 
       // Find highlights (active pane only): the match list is (row, column)-ordered,
@@ -603,7 +580,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                panel_vm.empty_label);
       }
 
-      const terminal::TerminalCursorSnapshot cursor = pane->session.CursorSnapshot();
+      const terminal::TerminalCursorSnapshot& cursor = pane->frame_cursor;
       // Same rect the blink invalidation asks for (TerminalCaretRectIn), so the
       // dirty region and the painted caret cannot disagree.
       const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(pane_layout, cursor);

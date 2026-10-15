@@ -211,9 +211,11 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveTerminalCaretRect(
   if (terminal_tab == nullptr) {
     return std::nullopt;
   }
-  const std::size_t line_count = terminal_tab->session.LineCount();
-  return TerminalCaretRectIn(ComputeBottomPanelLogLayout(layout, line_count),
-                             terminal_tab->session.CursorSnapshot());
+  // The caret as the last prepared frame sampled and painted it
+  // (PrepareTerminalPanesForFrame), not the live session: the blink repaints what
+  // is on screen, and output that moved the caret since repaints its own rows.
+  return TerminalCaretRectIn(ComputeBottomPanelLogLayout(layout, terminal_tab->frame_line_count),
+                             terminal_tab->frame_cursor);
 }
 
 std::optional<SDL_FRect> WorkspaceShell::TerminalCaretRectIn(
