@@ -61,6 +61,14 @@ inline SDL_Event KeyDownEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_N
   return event;
 }
 
+// Typed text, as SDL delivers it after a key press. `text` must outlive dispatch.
+inline SDL_Event TextInputEvent(const char* text) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_TEXT_INPUT;
+  event.text.text = text;
+  return event;
+}
+
 inline SDL_Event MouseMotionEvent(float x, float y) {
   SDL_Event event{};
   event.type = SDL_EVENT_MOUSE_MOTION;

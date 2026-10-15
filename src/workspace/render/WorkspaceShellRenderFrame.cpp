@@ -595,6 +595,27 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
     painted_caret_rect_ = caret_rect;
   }
+  // A document shown in more than one pane is edited through one of them, and the
+  // edit's damage names lines of the FOCUSED pane. Any other pane whose document
+  // changed since it was painted repaints here, whatever made the change (typing,
+  // undo, a plugin or LSP edit, a reload): typing in one half of a split left the
+  // other half showing the old line (found by the QA redraw verifier).
+  {
+    const EditorGroupRectsLayout pane_rects = ComputeEditorGroupRectsForState(layout);
+    const std::size_t focused_group = project_state.clamped_focused_group_index();
+    for (std::size_t gi = 0; gi < project_state.editor_groups.size() && gi < kMaxEditorGroups; ++gi) {
+      const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[gi]);
+      const std::uint64_t content =
+          viewport == nullptr ? 0
+                              : (reinterpret_cast<std::uintptr_t>(viewport) * 0x9E3779B97F4A7C15ull) ^
+                                    viewport->content_revision();
+      if (content != painted_pane_content_[gi] && gi != focused_group && gi < pane_rects.groups.size() &&
+          painted_pane_content_[gi] != 0) {
+        RequestRedrawRect(pane_rects.groups[gi].editor_surface);
+      }
+      painted_pane_content_[gi] = content;
+    }
+  }
   prepared_frame_pointer_occluder_.reset();
   if (last_mouse_position_valid_) {
     // Later pieces paint over earlier ones (a submenu over its popup), so the last

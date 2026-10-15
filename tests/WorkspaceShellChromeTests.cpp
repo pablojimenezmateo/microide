@@ -1871,6 +1871,44 @@ void TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen() {
                                DescribePixelDiff(open));
 }
 
+// An edit repaints every pane that shows the document. With a file split into
+// two panes, typing in one repainted only the focused pane, so the other pane kept
+// the old line until something else repainted it. VS Code updates both. Found by
+// the QA redraw verifier (tools/qa suite split-and-close).
+void TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\nint other = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the split fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Vertical) ||
+             WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "the editor should split");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto typed = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent("xyz")}), pin_caret);
+  Expect(typed.identical(), "typing in one pane should repaint the other pane of the document; " +
+                                DescribePixelDiff(typed));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4550,6 +4588,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/EditRepaintsEveryPaneOfTheDocument",
+          TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument);
   AddTest(tests, "WorkspaceShell/OpeningAMenuTakesTheCaretOffScreen",
           TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen);
   AddTest(tests, "WorkspaceShell/RowUnderAnOpenMenuDoesNotHoverThroughIt",

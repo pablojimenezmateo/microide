@@ -37,12 +37,7 @@ SDL_Event EditingEvent(const char* text, int start = 0, int length = 0) {
   return event;
 }
 
-SDL_Event InputEvent(const char* text) {
-  SDL_Event event{};
-  event.type = SDL_EVENT_TEXT_INPUT;
-  event.text.text = text;
-  return event;
-}
+SDL_Event InputEvent(const char* text) { return TextInputEvent(text); }
 
 // Opens a real editor tab, as the surrounding shell tests do: the composition
 // path only runs when a text-input surface is actually focused.
