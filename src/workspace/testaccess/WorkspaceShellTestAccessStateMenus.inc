@@ -1090,6 +1090,9 @@
   static void SetFocusEditor(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
+  static void InvalidateEditorBlamePath(WorkspaceShell& shell, const std::filesystem::path& path) {
+    shell.InvalidateEditorBlamePath(path);
+  }
   static void SetPanelContentTerminal(WorkspaceShell& shell) {
     shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
   }

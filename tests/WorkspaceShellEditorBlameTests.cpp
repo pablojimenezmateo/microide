@@ -177,6 +177,42 @@ void TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves() {
                                  DescribePixelDiff(seeded));
 }
 
+// Invalidating the blame of the file on screen (the tree's Refresh, a change on
+// disk) repaints the editor: the inline blame drops until the re-fetch lands, and
+// it used to stay painted. Found by the QA monkey (seed 4).
+void TestWorkspaceShellInvalidatedBlameRepaintsTheEditor() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  Expect(WaitForActiveEditorBlameOverlay(shell, 1).has_value(), "the fixture should have inline blame");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::InvalidateEditorBlamePath(shell, source);
+  microide::workspace::RenderInvalidation redraw = shell.ConsumePendingRenderInvalidation();
+  redraw.rects.push_back(SDL_FRect{0.0f, 0.0f, 20.0f, 20.0f});  // some frame happens
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin_caret);
+  Expect(diff.identical(), "invalidated blame should repaint the editor; " + DescribePixelDiff(diff));
+}
+
 void TestWorkspaceShellEditorBlameLoadsForLargeTrackedFile() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -500,6 +536,8 @@ void TestWorkspaceShellHoverWrapMemoKeysOnEveryInput() {
 void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverWrapMemoKeysOnEveryInput",
           TestWorkspaceShellHoverWrapMemoKeysOnEveryInput);
+  AddTest(tests, "WorkspaceShell/InvalidatedBlameRepaintsTheEditor",
+          TestWorkspaceShellInvalidatedBlameRepaintsTheEditor);
   AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWhenThePointerLeaves",
           TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves);
   AddTest(tests, "WorkspaceShell/EditorBlameIsFixedForAPreparedFrame",

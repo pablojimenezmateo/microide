@@ -49,13 +49,22 @@ void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path
   if (context_.current_project_state.root.empty() || path.empty()) {
     return;
   }
-  git_blame_service_.InvalidatePath(context_.current_project_state.root, path.lexically_normal());
+  const std::filesystem::path normalized = path.lexically_normal();
+  git_blame_service_.InvalidatePath(context_.current_project_state.root, normalized);
+  // The inline blame on screen is about to change (it drops until the re-fetch
+  // lands): the tree's Refresh invalidated it and nothing repainted the editor
+  // (found by the QA monkey).
+  if (const editor::TextViewport* viewport = ActiveEditorViewport();
+      viewport != nullptr && viewport->path().lexically_normal() == normalized) {
+    RequestFocusedEditorRedraw();
+  }
 }
 
 void WorkspaceShell::ClearEditorBlame() {
   editor_blame_overlay_service_.ClearVisibleOverlay();
   active_editor_hover_target_.reset();
   git_blame_service_.Clear();
+  RequestFocusedEditorRedraw();
 }
 
 void WorkspaceShell::SetStartupOptions(WorkspaceStartupOptions options) {
