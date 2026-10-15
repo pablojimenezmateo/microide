@@ -1668,6 +1668,45 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
              std::to_string(differences) + " pixels differ");
 }
 
+// The first frame after focus moves to a text input paints that input's caret.
+// Frame prep built the text-input view model and only THEN synced the active
+// surface, so the frame that opened the command palette still described the
+// editor: no caret in the palette until the next blink repaint, half a second
+// later. Found by the QA redraw work (a blink test was vacuous for it).
+void TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1024;
+  static constexpr int kHeight = 640;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the palette fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differences = CountPixelDifferences(first, canvas.surface());
+  SDL_DestroySurface(first);
+  Expect(differences == 0, "the palette's first frame should paint what its second paints; " +
+                               std::to_string(differences) + " pixels differ");
+}
+
 // A repaint of the editor under an open menu must repaint the editor. RenderClip
 // skips the editor, sidebar and panels when a dirty rect lies inside the open
 // chrome ("only a popup row changed"), and tested that against the BOUNDING BOX
@@ -4184,6 +4223,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/OpenedPaletteShowsItsCaretOnTheFirstFrame",
+          TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/OpeningAMenuByClickKeepsTheSidebar",

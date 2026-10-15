@@ -349,6 +349,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
+  // Before any view model is built: they read the active text-input surface, and
+  // a frame that synced it AFTER building them painted the surface focus had
+  // just left -- the first frame of a freshly opened palette had no caret.
+  SDL_Window* render_window = SDL_GetRenderWindow(renderer);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::SyncTextInputSurface");
+    MakeTextInputCoordinator().SyncTextInputSurface(render_window);
+  }
   const RenderViewModelBuilder view_models(context_);
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::BuildSurfaceViewModels");
@@ -461,11 +469,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshSettingsOverlayCatalog");
     RefreshSettingsOverlayCatalog();
-  }
-  SDL_Window* render_window = SDL_GetRenderWindow(renderer);
-  {
-    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::SyncTextInputSurface");
-    MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   }
   if (panel_vm.content == PanelContentKind::Terminal && panel_vm.terminal_tab != nullptr) {
     const SDL_FRect& panel = layout.bottom_panel;
