@@ -844,6 +844,11 @@ void WorkspaceShell::OpenHelpAboutOverlay() {
 }
 
 void WorkspaceShell::CloseSettingsOverlay() {
+  // The region Settings covered (its card and the backdrop it dimmed), taken while
+  // it is still up: after Close, an overlay repaint resolves to whatever overlay is
+  // left -- the find widget -- and the area Settings covered stayed on screen
+  // (found by the QA monkey).
+  const std::optional<SDL_FRect> covered = CurrentOverlayRedrawRect();
   settings_overlay_service_.Close();
   if (context_.interaction_state.drag_target == DragTarget::SettingsScrollbar ||
       context_.interaction_state.drag_target == DragTarget::SettingsCategoryScrollbar ||
@@ -851,6 +856,9 @@ void WorkspaceShell::CloseSettingsOverlay() {
     context_.interaction_state.drag_target = DragTarget::None;
   }
   InvalidateCursorKindFingerprint();
+  if (covered.has_value()) {
+    RequestRedrawRect(*covered);
+  }
   RequestOverlayRedraw();
 }
 

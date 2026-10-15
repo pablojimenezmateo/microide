@@ -2371,6 +2371,44 @@ void TestWorkspaceShellDroppingAPanelTabClearsItsGhost() {
   step("dropping the editor tab", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, ex - 40.0f, ey)});
 }
 
+// Closing Settings repaints the area it covered, whatever overlay is left. With
+// the find widget up, closing Settings repainted only the find widget, and the
+// dimmed Settings card stayed on screen. Found by the QA monkey (seed 1).
+void TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the settings fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto step = [&](std::string_view what, const microide::workspace::RenderInvalidation& redraw) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  step("opening the find widget", DispatchEvents(shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)}));
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  step("opening Settings", shell.ConsumePendingRenderInvalidation());
+  step("closing Settings", DispatchEvents(shell, {KeyDownEvent(SDLK_ESCAPE)}));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5092,6 +5130,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
+          TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",
           TestWorkspaceShellDroppingAPanelTabClearsItsGhost);
   AddTest(tests, "WorkspaceShell/PanelHeaderButtonRepaintsItsHover",
