@@ -427,6 +427,20 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-15-342 — typing in the tree runs commands instead of navigating. [OPEN]
+
+Found while fixing Ctrl+Shift+F from a focused tree (db16f4a2): when that shortcut
+did nothing, the query typed next ("Scheduler") went to the tree, where bare
+letters are commands -- `d` opens the compare picker (README "`d` on sidebar
+file"), `r` refreshes -- so the remaining letters landed in the picker and Enter
+opened a working-tree compare. VS Code's explorer treats typed characters as
+type-to-navigate (select the next visible entry whose name starts with what was
+typed within ~1 s) and keeps commands on modified chords or the context menu.
+Wants: type-to-navigate in Tree mode, the two letter commands moved (`d` to the
+context menu plus a chord, `r` to the existing Refresh button and
+`tree-refresh`), README/hints updated. Not done in the pass that found it: it
+changes advertised keys, so it is a product decision, not a fix.
+
 ### TD-2026-10-15-341 — a project-change batch repaints the whole window. [RESOLVED 2026-10-15]
 
 Resolved: the apply requests the surfaces it changed and the two wake paths
