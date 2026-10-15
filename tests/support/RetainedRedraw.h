@@ -43,19 +43,25 @@ inline SDL_Rect InflateClipRect(const SDL_FRect& rect,
   };
 }
 
-// The same comparison the app's QA redraw verifier runs (render/PixelDiff), over
-// two surfaces of one 4-byte format -- every canvas here is RGBA8888.
+// The same comparison the app's QA redraw verifier runs (render/PixelDiff). It is
+// bytewise, so two surfaces of different formats (a TTF render against an RGBA32
+// canvas) are compared after converting the right one to the left one's format.
 inline render::PixelDiffResult DiffSurfaces(SDL_Surface* lhs, SDL_Surface* rhs) {
   Expect(lhs != nullptr && rhs != nullptr, "pixel comparisons should receive readable surfaces");
-  Expect(lhs->format == rhs->format && SDL_BYTESPERPIXEL(lhs->format) == 4,
-         "pixel comparisons should use canvases of one 4-byte pixel format");
-  Expect(!SDL_MUSTLOCK(lhs) && !SDL_MUSTLOCK(rhs),
-         "pixel comparisons should read surfaces that need no lock");
+  Expect(SDL_BYTESPERPIXEL(lhs->format) == 4 && !SDL_MUSTLOCK(lhs),
+         "pixel comparisons should read a 4-byte surface that needs no lock");
+  SDL_Surface* converted = nullptr;
+  if (rhs->format != lhs->format) {
+    converted = SDL_ConvertSurface(rhs, lhs->format);
+    Expect(converted != nullptr, "pixel comparisons should convert the reference surface");
+    rhs = converted;
+  }
   const render::PixelDiffResult diff = render::DiffPixels(
       render::PixelImageView{static_cast<const std::uint8_t*>(lhs->pixels), lhs->w, lhs->h,
                              lhs->pitch},
       render::PixelImageView{static_cast<const std::uint8_t*>(rhs->pixels), rhs->w, rhs->h,
                              rhs->pitch});
+  SDL_DestroySurface(converted);
   Expect(!diff.size_mismatch, "pixel comparisons should use canvases with matching dimensions");
   return diff;
 }
