@@ -2303,6 +2303,74 @@ void TestWorkspaceShellPanelHeaderButtonRepaintsItsHover() {
   }
 }
 
+// Dragging a bottom-panel tab and dropping it repaints the strip: the drag ghost
+// is gone after the drop. Found by the QA monkey (seed 3: the dragged "bash" tab's
+// ghost stayed on the strip after the drop).
+void TestWorkspaceShellDroppingAPanelTabClearsItsGhost() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  WriteFile(root / "beta.cpp", "int beta = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the panel fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  WorkspaceShellTestAccess::AddTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 8, 80);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect tab = WorkspaceShellTestAccess::TerminalTabRect(shell, 1);
+  Expect(tab.w > 0.0f, "the panel should show the terminal tab");
+  const float x = tab.x + tab.w / 3.0f;
+  const float y = tab.y + tab.h / 2.0f;
+  SDL_Event held = MouseMotionEvent(x, y);
+  const auto step = [&](std::string_view what, std::initializer_list<SDL_Event> events) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, events), pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  step("pressing the tab", {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y)});
+  for (float dx : {12.0f, 30.0f, 58.0f}) {
+    held = MouseMotionEvent(x + dx, y);
+    held.motion.state = SDL_BUTTON_LMASK;
+    step("dragging the tab", {held});
+  }
+  step("dropping the tab", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x + 58.0f, y)});
+
+  // An editor-tab drag that starts while the dropped panel tab still glides home
+  // takes the slide slot; the panel strip must not keep its in-flight offset.
+  WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "beta.cpp");
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);  // the test-access open requests no damage
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect editor_tab = WorkspaceShellTestAccess::EditorTabRect(shell, 1);
+  const float ex = editor_tab.x + editor_tab.w / 3.0f;
+  const float ey = editor_tab.y + editor_tab.h / 2.0f;
+  step("pressing an editor tab", {MouseMotionEvent(ex, ey), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, ex, ey)});
+  for (float dx : {-12.0f, -40.0f}) {
+    held = MouseMotionEvent(ex + dx, ey);
+    held.motion.state = SDL_BUTTON_LMASK;
+    step("dragging the editor tab", {held});
+  }
+  step("dropping the editor tab", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, ex - 40.0f, ey)});
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5024,6 +5092,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",
+          TestWorkspaceShellDroppingAPanelTabClearsItsGhost);
   AddTest(tests, "WorkspaceShell/PanelHeaderButtonRepaintsItsHover",
           TestWorkspaceShellPanelHeaderButtonRepaintsItsHover);
   AddTest(tests, "WorkspaceShell/MenuArrowsWalkOnlyTheMenuBar",

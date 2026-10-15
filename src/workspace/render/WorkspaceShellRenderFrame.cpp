@@ -618,6 +618,26 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_pane_content[gi] = content;
     }
   }
+  // A tab strip painted mid-slide that is no longer animating repaints at rest.
+  {
+    const TabSlideState& slide = context_.interaction_state.tab_slide;
+    for (const PreparedFrameState::SlideStrip& painted : frame_state_.painted_slide_strips) {
+      if (painted.kind == TabDragKind::None ||
+          !slide.OffsetsFor(painted.kind, painted.group_index).empty()) {
+        continue;
+      }
+      if (const auto strip = TabStripRectForKind(painted.kind, painted.group_index); strip.has_value()) {
+        RequestRedrawRect(*strip);
+      }
+    }
+    for (std::size_t i = 0; i < slide.strips.size(); ++i) {
+      frame_state_.painted_slide_strips[i] = slide.strips[i].idle()
+                                                 ? PreparedFrameState::SlideStrip{}
+                                                 : PreparedFrameState::SlideStrip{
+                                                       .kind = slide.strips[i].kind,
+                                                       .group_index = slide.strips[i].group_index};
+    }
+  }
   frame_state_.pointer_occluder.reset();
   // A modal owns the pointer: inside it, only its own rects hover; outside it,
   // nothing does (an empty occluder contains no rect).

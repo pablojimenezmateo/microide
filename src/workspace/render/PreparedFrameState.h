@@ -18,6 +18,7 @@
 #include <optional>
 
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/state/WorkspaceInteractionState.h"
 
 namespace microide::workspace {
 
@@ -37,6 +38,14 @@ struct PreparedFrameState {
   std::optional<SDL_FRect> painted_tooltip_rect;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
+  // The tab strips painted mid-slide (kind None: none). A new drag can take a
+  // strip's animation slot while it still glides, and that strip's tabs then
+  // snap back with no frame of their own.
+  struct SlideStrip {
+    TabDragKind kind = TabDragKind::None;
+    std::size_t group_index = 0;
+  };
+  std::array<SlideStrip, kMaxAnimatingTabStrips> painted_slide_strips{};
 };
 
 }  // namespace microide::workspace
