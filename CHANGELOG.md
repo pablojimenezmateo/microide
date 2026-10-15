@@ -153,6 +153,12 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **An open file changed by a large checkout now reloads.** Past 1,024 changes in
+  one burst (a branch switch, a generator) only the first 1,024 were handled per
+  file, and the open-buffer re-check that was meant to cover the rest only ran for
+  a rescan naming no file at all. An open file whose change fell past the cap kept
+  its old text.
+
 - **Text drawn over itself on partial repaints.** A surface that set its own clip
   (the editor's "reloaded from disk" banner, the status bar, the bottom panel's
   strip, plugin surfaces) replaced the repaint's clip instead of narrowing it, so

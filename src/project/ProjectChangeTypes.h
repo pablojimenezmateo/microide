@@ -32,6 +32,11 @@ struct ProjectChangeBatch {
   std::vector<RepositoryChange> repository_changes;
   std::uint64_t generation = 0;
   bool tree_rescan_requested = false;
+  // The coalescer stopped itemizing: `file_changes` is the first
+  // kMaxPendingFileChanges of a flood, not all of it. A path past the cap changed
+  // too and is named nowhere, so whatever acts per path (reloading open buffers)
+  // has to re-check everything instead.
+  bool file_changes_truncated = false;
 };
 
 }  // namespace microide::project

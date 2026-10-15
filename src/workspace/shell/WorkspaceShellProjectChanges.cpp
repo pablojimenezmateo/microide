@@ -128,7 +128,9 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   }
 
   if (batch.tree_rescan_requested) {
-    if (batch.file_changes.empty()) {
+    // A rescan names no file, or names only the first part of a flood: either
+    // way an open file may have changed with no per-path entry above.
+    if (batch.file_changes.empty() || batch.file_changes_truncated) {
       // Any open buffer may reload and any compare/merge restage: that is the
       // editor column, not the window (the sidebar is RefreshProjectFileViews').
       RequestActiveTabRedraw();

@@ -35,6 +35,8 @@ void ProjectChangeCoalescer::Ingest(ProjectChangeBatch batch) {
   std::scoped_lock lock(mutex_);
   pending_.tree_rescan_requested =
       pending_.tree_rescan_requested || batch.tree_rescan_requested;
+  pending_.file_changes_truncated =
+      pending_.file_changes_truncated || batch.file_changes_truncated;
   for (ProjectFileChange& change : batch.file_changes) {
     MergeFileChange(std::move(change));
   }
@@ -66,10 +68,14 @@ void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
   // Past the cap, collapse to a full-tree rescan and stop tracking individual
   // paths. This is the O(1) short-circuit that keeps a flood from turning the
   // scan below into O(N^2) on the watcher thread and from growing pending_
-  // without bound. The rescan (already handled downstream) supersedes the
-  // dropped changes; the first kMaxPendingFileChanges keep per-file handling.
+  // without bound. The first kMaxPendingFileChanges keep per-file handling; the
+  // dropped ones are covered by `file_changes_truncated`, on which the apply
+  // re-checks every open buffer. A rescan alone did not cover them: the apply
+  // re-checked buffers only for a rescan with NO itemized change, which a flood
+  // never is, so an open file past the cap kept its old text.
   if (pending_.file_changes.size() >= kMaxPendingFileChanges) {
     pending_.tree_rescan_requested = true;
+    pending_.file_changes_truncated = true;
     return;
   }
   // Normalized ONCE, outside the scan. This comparison used to normalize both

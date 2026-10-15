@@ -93,6 +93,23 @@ void TestProjectChangeCoalescerCollapsesFloodToRescan() {
          "an over-cap flood must collapse to a full-tree rescan");
   Expect(ready->file_changes.size() <= 1024,
          "pending file changes must stay bounded under a flood");
+  // The rescan alone does not say that paths were DROPPED: a rescan that still
+  // carries 1024 itemized changes looked to the apply like a complete list, and an
+  // open file past the cap was never reloaded.
+  Expect(ready->file_changes_truncated,
+         "a flood past the cap must say its itemized list is incomplete");
+
+  project::ProjectChangeBatch small;
+  small.file_changes.push_back(project::ProjectFileChange{
+      .kind = project::ProjectFileChangeKind::Modified,
+      .relative_path = "a.txt",
+      .absolute_path = "/tmp/a.txt",
+  });
+  small.tree_rescan_requested = true;
+  coalescer.Ingest(std::move(small));
+  const std::optional<project::ProjectChangeBatch> next = coalescer.ConsumeReady();
+  Expect(next.has_value() && !next->file_changes_truncated,
+         "the flag clears with the batch that carried it; a rescan under the cap is complete");
 }
 
 void TestProjectChangeCoalescerSuppressesStaleGeneration() {

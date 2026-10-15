@@ -9,8 +9,10 @@
 
 #include "editor/TextBuffer.h"
 #include "platform/FileIndexWatcher.h"
+#include "platform/Filesystem.h"
 
 #include <chrono>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -679,6 +681,56 @@ void TestWorkspaceShellCleanReloadRaisesNotice() {
          "a silent clean reload should surface a passive reloaded-from-disk notice");
 }
 
+// A flood past the coalescer's 1024-change cap keeps the first 1024 itemized and
+// asks for a rescan. The apply re-checked open buffers only for a rescan with NO
+// itemized change, so an open file whose change came after the cap -- a branch
+// switch touching a few thousand files -- kept showing its old text.
+void TestWorkspaceShellFloodPastTheCapReloadsAnOpenFileItDidNotName() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path open_file = root / "zz-open.txt";
+  WriteFile(open_file, "before\n");
+  constexpr int kFlood = 1100;
+  for (int i = 0; i < kFlood; ++i) {
+    WriteFile(root / "gen" / ("f" + std::to_string(i) + ".txt"), "x\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "flood fixture should open the project");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, open_file);
+  Expect(WaitUntil([&]() { return WorkspaceShellTestAccess::ProjectFileIndexVersion(shell) > 0; },
+                   std::chrono::seconds(5), std::chrono::milliseconds(5)),
+         "flood fixture's initial index should land");
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "flood fixture should have a live watcher to quiesce");
+  DrainProjectChanges(shell);
+
+  WriteFile(open_file, "after\n");
+  platform::IndexUpdateBatch flood;
+  const auto modified = [&](const std::filesystem::path& absolute) {
+    const std::optional<platform::FileMetadata> metadata = platform::ReadFileMetadata(absolute);
+    Expect(metadata.has_value(), "a flood fixture file should exist");
+    return platform::IndexUpdateBatch::Change{
+        .kind = platform::IndexUpdateBatch::Kind::CreatedOrModified,
+        .entry = platform::IndexFileEntry{.relative_path = absolute.lexically_relative(root),
+                                          .mtime = metadata->mtime,
+                                          .size = metadata->size},
+    };
+  };
+  for (int i = 0; i < kFlood; ++i) {
+    flood.changes.push_back(modified(root / "gen" / ("f" + std::to_string(i) + ".txt")));
+  }
+  flood.changes.push_back(modified(open_file));  // past the cap
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell, std::move(flood)),
+         "flood fixture should deliver its batch");
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+         "the flood should be applied");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "after",
+         "an open file the flood changed past the cap must reload, not keep its old text");
+}
+
 void TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -826,6 +878,8 @@ void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBannerKeepPreservesBoth);
   AddTest(tests, "ExternalRepoChange/CleanReloadRaisesNotice",
           TestWorkspaceShellCleanReloadRaisesNotice);
+  AddTest(tests, "ExternalRepoChange/FloodPastTheCapReloadsAnOpenFileItDidNotName",
+          TestWorkspaceShellFloodPastTheCapReloadsAnOpenFileItDidNotName);
   AddTest(tests, "ExternalRepoChange/MarksGitSnapshotStaleOnHeadChange",
           TestWorkspaceShellExternalHeadChangeMarksGitSnapshotStale);
 }
