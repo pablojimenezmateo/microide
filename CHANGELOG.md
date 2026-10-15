@@ -153,6 +153,17 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Remote: switching branches on the host no longer leaves deleted files in the
+  mirror.** A checkout that deleted more than a quarter of the files was held as a
+  possible unmounted disk. The host now says when its HEAD moved, and the mirror
+  follows; files removed without one are still held — and the held-delete row now
+  has **Apply** and **Disconnect** (`remote-apply-deletes`), where before it had no
+  way to answer it.
+
+- **Remote: an idle project no longer runs git on the host several times a
+  second.** Each pushed git status refreshed the sidebar, whose own `git diff`
+  made the host push status again.
+
 - **Closing a shared host terminal on one machine no longer ends it on the
   other.** With two clients attached to one host terminal, closing the tab on one
   killed the shell the other was using (or not, depending on whether the close
@@ -201,6 +212,11 @@ project (see [README](README.md)); versions track meaningful shipped work.
   fetch queued ~25 ms in front of every keystroke's echo (60 ms / 100 Mbit/s
   link). It now aims at the bandwidth-delay product plus 5 ms: the echo is back
   within a frame of one round trip, at the same throughput.
+
+- **Every command run on a remote host returns up to 50 ms sooner** — git for the
+  sidebar, formatters, tasks: the server noticed a process's exit on a 50 ms poll
+  and now gets a wakeup from the kernel. Agent activity on the host also no longer
+  repaints the whole window on every sync tick.
 
 - **Opening a remote folder the first time** is ~4.5x faster (a 4,521-file
   repository over a 55 ms link: ~20 s → 4.3 s). Each pulled file was flushed to

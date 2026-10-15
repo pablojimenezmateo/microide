@@ -427,6 +427,22 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-15-341 — a project-change batch repaints the whole window. [OPEN]
+
+Measured under simulated agents on a real host (2026-10-15,
+`dev-docs/design/remote-projects.md` § "Phase 3 against a multi-agent workload"):
+with 8 agents writing the tree, ~2 frames a second were full-window repaints, and
+after the remote service's own blanket redraw was removed (b933c84e) every one of
+them came from `HandleScheduledWakeSources` returning `RenderInvalidation{.full =
+true}` when `ReloadProjectIfFilesChanged` applied a batch. Not remote-specific: a
+LOCAL project written by agents pays the same. What a batch can change on screen is
+known at apply time -- the tree sidebar, a tab whose file reloaded, git
+decorations, open search results -- so the apply could return those regions
+instead. Not done in the pass that found it because each of those surfaces has had
+a stale-pixel bug when narrowed before (see the partial-redraw entries in the
+archive); it wants its own pass with redraw-rect tests per surface. Cost today: on a
+GPU a full frame is a few ms, so this is CPU under heavy churn, not latency.
+
 ### TD-2026-10-14-340 — a first sync runs at a third of the link's throughput. [RESOLVED 2026-10-14]
 
 Resolved the same day: the time was the client's disk, not the link. Every pulled

@@ -292,6 +292,16 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
+> **Phase 3 done (2026-10-15).** Tuned on a real host (worky) under simulated
+> agents: a git status loop on idle hosts, branch switches held as mass deletes
+> (and a held-delete prompt with no Apply button), a 50 ms exit poll on every host
+> process, and a full-window repaint per sync tick were found and fixed. Numbers
+> and what was decided not to build (the resync threshold, the read-only git
+> pool, the pty-handing restart) are in `dev-docs/design/remote-projects.md`
+> § "Phase 3 against a multi-agent workload". Left: the perf scenarios stay
+> advisory until `perf-runner-v1` (TD-2026-10-13-334), and the mid-scrollback gap
+> fill (TD-2026-10-08-326). Phase 4 waits on a tree too big to mirror.
+>
 > **Phase 3, first slices (2026-10-12).** Submodule content sets, Changed on Host
 > (§ 7.9), port forwarding with host-terminal localhost links, the ssh-config host
 > picker, polling of tracked files under pruned directories, pull-on-open for stale
@@ -315,7 +325,7 @@ new terminal behaviour lands there.
 > What is left on the remote side: per-architecture static server packaging
 > (TD-2026-10-08-325), filling a mid-scrollback gap when it scrolls into view
 > (TD-2026-10-08-326, needs the host-mirror state moved out of `TerminalSession`),
-> and the Phase 3 items that need a real workload (branch-switch resync tuning).
+> and the Phase 3 items that needed a real workload (done 2026-10-15, above).
 > Phase 2a's build order, kept for the record: **(1) kernel test binary, (2)
 > notification actions, (3) save continuations, (4) frame codec + transport, (5)
 > daemon skeleton, (6) `proc/spawn` + `RemoteProcessLauncher` as the parity suite's

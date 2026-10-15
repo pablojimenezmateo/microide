@@ -1,6 +1,6 @@
 # Remote Projects Over SSH
 
-Last revised 2026-10-12. **Status: Phase 2a (the server, host terminals with prediction, reattach and reconnect) and Phase 2b (a remote PROJECT on a mirror) are on `main`, and the first Phase 3 slices — see "Phase 2a as built", "Phase 2b as built" and "Phase 3, first slices" below.**
+Last revised 2026-10-15. **Status: Phase 2a (the server, host terminals with prediction, reattach and reconnect), Phase 2b (a remote PROJECT on a mirror) and Phase 3 are on `main` — see "Phase 2a as built", "Phase 2b as built", "Phase 3, first slices" and "Phase 3 against a multi-agent workload" below. Phase 4 (an on-demand tier) waits on a tree too big to mirror.**
 
 **Terminology.** This document talks about two different things that were both
 called "agent" until this revision. The **server** is `microide-server`, the
@@ -150,8 +150,9 @@ tracks it; what landed and where it differs from the text above:
 - Open: pushed `git/status`, host-side `search/run`, zstd deltas, files over the
   64 MiB per-object ceiling — TD-2026-10-08-328 (all done 2026-10-09).
 
-**Measured on a real host (2026-10-14, `worky`: x86_64 Ubuntu 26.04 on the LAN,
-raw `ssh` throughput 72 Mbit/s).** Driven headless through the control channel:
+**Measured on a real host (2026-10-14, `worky`: x86_64 Ubuntu 26.04 behind a jump
+host, ~55 ms minimum round trip with a jittery median, raw `ssh` throughput
+50–72 Mbit/s).** Driven headless through the control channel:
 - *Install*: with no server on the host, the client read `uname -m`, installed the
   static x86_64 server (4.05 MB stripped) and reached Ready.
 - *Link death*: a `SIGKILL` of the ssh master mid-run reconnected in 2.1 s; a host
@@ -165,6 +166,48 @@ raw `ssh` throughput 72 Mbit/s).** Driven headless through the control channel:
 - *Branch switch*: `git checkout` 300 commits back on the host (671 files changed)
   resynced the mirror to the host's exact content in ~2.0 s, and ~2.1 s back --
   the Phase 3 resync path is fine at this size.
+
+**Phase 3 against a multi-agent workload (2026-10-15, same host).** A simulator
+on the host (`agents.py`: N processes editing functions in tracked files, creating
+and deleting their own files, one of them committing every ~10 s) against a
+headless client; every timing is from the driver's ssh returning (the host write
+is done) to the mirror holding the bytes, and every run ended with one SHA-256
+over the whole tree equal on both sides.
+
+| workload | measured | budget (§ 9) |
+| --- | --- | --- |
+| one host write → bytes in the mirror | 0.33–0.43 s | 1 RTT + 250 ms coalesce + the pull |
+| 500-file agent burst → tree consistent, content included | 0.65 s | ≤ 2 RTT (tree) |
+| branch switch, 1,911 files | 1.1 s (3.2 s the first time: new content) | ≤ 3 RTT + manifest |
+| branch switch, 4,708 files (above the 25% mass-delete line) | 0.8 s (6.7 s the first time) | — |
+| 8 agents for 60 s → consistent after they stop | 0.8–1.3 s | — |
+| host server CPU during that | ~2.6% of a core | — |
+| mirror after 100 bursts | tree 48 MB + meta 170 MB | ≤ 2× tree + object budget |
+| idle host, git processes per second | 0 (was ~5) | — |
+
+What the workload found, each fixed with a regression test:
+- **A git status loop**: every pushed status refreshed the sidebar, whose outgoing
+  diff ran on the host, and any git exit made the server push status again -- a
+  `git status` and a `git diff` ~2.5 times a second on an idle host. The server
+  now pushes only after a git that may change a repository (`IsGitMutation`, shared
+  by both ends), and the client surfaces an "unchanged" push only when it makes a
+  held status current.
+- **A branch switch was held as a mass delete**: a checkout deleting > 25% of the
+  mirror sat behind the vanished-root prompt (and the prompt had no Apply button
+  at all). The server announces a HEAD move (`watch/moved`); deletes around one
+  apply. Files removed with no HEAD move are still held, now with Apply and
+  Disconnect on the row.
+- **Every host process paid a 50 ms poll**: the process table found exits by
+  polling; a pidfd now wakes it (request to exit flushed in ~5 ms on the host).
+- **A full-window repaint per sync tick**: the remote service's blanket redraw is
+  gone (full frames under churn 306 → 199 a minute). The rest are the generic
+  project-change apply, which a local project written by agents pays the same.
+
+Tuning constants (§ 13): the 250 ms coalesce window held; `remote.resync_threshold`
+was never built and is not needed -- a 4,708-file switch through watch deltas is
+under a second; `pull_concurrency` 4 left the 4.3 s first sync faster than `tar`.
+A read-only git pool (§ 9's sidebar gate) is not needed: a refresh is the pushed
+status (0 RTT) plus one host `git diff` (1 RTT).
 
 **Phase 3, first slices (2026-10-12).** Measured against VS Code's Remote-SSH and
 this document's § 7, what a user still missed:
@@ -669,7 +712,9 @@ host notices when the link drops.
   just clicked. If a batch exceeds `remote.resync_threshold` rows (default 2,000)
   the engine stops applying rows one by one and requests a fresh `tree/manifest`
   to diff wholesale — the remote counterpart of the "tree shape changed" escape
-  hatch `FileIndexWatcher` already has.
+  hatch `FileIndexWatcher` already has. *(Not built: measured unnecessary on a real
+  host, where a 4,708-row batch applied as watch deltas in under a second; the
+  server rebuilds its manifest itself when a batch is a shape change.)*
 - **Watch exhaustion on the host is reported, not absorbed.** `FileWatcher`'s Linux
   path returns false if any `inotify_add_watch` fails
   (`platform/FileWatcher.cpp:231`), which drops the whole watcher to polling. That
@@ -1987,7 +2032,7 @@ true.
 | `remote.predict` | User | enum `adaptive`/`always`/`never` | `adaptive` | mosh-style predicted echo in remote terminals; `adaptive` predicts only while the RTT estimate exceeds 30 ms (§ 6.5) |
 | `remote.reconnect` | User | bool | on | automatic reconnect |
 | `remote.search` | Project | enum `host`/`local` | `host` | where project search runs (§ 6.11) |
-| `remote.resync_threshold` | User | int | 2000 | change-batch size above which the engine re-diffs a full manifest instead of applying rows |
+| `remote.resync_threshold` | User | int | 2000 | change-batch size above which the engine re-diffs a full manifest instead of applying rows. **Not built** — measured unnecessary (Phase 3) |
 | `remote.pull_concurrency` | User | int | 4 | content fetches in flight |
 | `remote.server_idle_timeout` | User | int (min) | 30 | workspace close delay with no client and no live terminal or kept process; a server started by hand never idle-exits (§ 6.12) |
 | `remote.scrollback_prefetch_lines` | User | int | 500 | scrollback sent on attach before lazy backfill (§ 6.12) |
@@ -2418,6 +2463,12 @@ Each phase is independently useful and independently measurable.
   mirrored subtree rather than an empty gitlink row (§ 6.2) — and the completion
   list's local refiltering (TD-2026-10-07-320), a local win that remote makes
   urgent because every keystroke in a completion is otherwise a round trip.
+  **Done 2026-10-15**: tuned on a real host under simulated agents (see "Phase 3
+  against a multi-agent workload"); the read-only git pool was not needed; the
+  pty-handing restart was judged not worth it (§ 6.12: an older compatible server
+  keeps running and the new one is installed beside it); the perf scenarios
+  (`tests/perf/RemotePerfScenarios.cpp`) stay advisory until `perf-runner-v1`
+  baselines them (TD-2026-10-13-334).
 - **Phase 4 — on-demand tier.** Only if measurements show a tree too big to
   mirror: a per-directory lazy mode where the manifest is fetched but content is
   never pre-pulled. The existing lazy population is most of it already.
@@ -2839,7 +2890,7 @@ that check it agrees with local.
 | Terminal scrollback ownership | The **host** holds the authoritative scrollback, sized by the existing `terminal.scrollback_lines`; the local terminal renders a view of it, resumes by trim-total offset, and backfills older history lazily. § 6.12. |
 | Mixing local and remote projects in one window | Supported, and free: per-project isolation already covers terminals, LSP, DAP, index, tree and search. A single *project* is never half-remote. § 6.13. |
 | Local terminals in a remote project | Available through an explicit command and labelled `local · …`; never the default. § 6.5. |
-| Churn tuning constants | Settled as defaults, not left open: 250 ms coalesce window, `remote.resync_threshold` 2,000 rows, `remote.pull_concurrency` 4. All three are settings, so a host that disagrees is a config change rather than a redesign; § 13 measures them when a multi-agent host is available. |
+| Churn tuning constants | Settled as defaults, not left open: 250 ms coalesce window, `remote.resync_threshold` 2,000 rows, `remote.pull_concurrency` 4. All three are settings, so a host that disagrees is a config change rather than a redesign. Measured on a real host under simulated agents on 2026-10-15: the coalesce window and pull concurrency held, and the resync threshold was never needed (a 4,708-file switch through watch deltas is under a second), so it was not built. |
 | Does Phase 1 exist | **No.** Folded into Phase 2 on 2026-10-07: the groundwork made the translation layer three interface implementations, and the loopback server exercises them without a host. Phase 2a — the server, surviving terminals with prediction, reattach — is the first user-visible slice instead, and it opens no remote project. § 8. |
 | Compare over a stale mirror | Pulls both sides first. The two-file pull is one round trip, so § 6.11's rule is satisfied by fetching rather than by relocating. `CompareMergeService` stays remote-unaware. § 6.13. |
 | Precondition for creating a file | `expect: absent`, implemented with `O_EXCL`. Without it a locally-`absent` file created through the sidebar or Save As overwrites host content the user never saw — the only path in this design that destroys bytes rather than parking a conflict. § 6.3. |
