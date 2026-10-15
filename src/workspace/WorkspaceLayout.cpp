@@ -439,10 +439,13 @@ std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, 
     case DragTarget::MergeRightDivider:
     case DragTarget::EditorVerticalScrollbar:
     case DragTarget::EditorHorizontalScrollbar:
-    case DragTarget::EditorSplitDivider:
     case DragTarget::CompareVerticalScrollbar:
     case DragTarget::CompareHorizontalScrollbar:
       return surface(layout.editor_surface);
+    // A split divider runs the split's full height, through every pane's tab
+    // strip and breadcrumb, not only the text surfaces.
+    case DragTarget::EditorSplitDivider:
+      return surface(layout.editor_area);
     case DragTarget::OverlayScrollbar:
     case DragTarget::SettingsScrollbar:
     case DragTarget::SettingsCategoryScrollbar:
