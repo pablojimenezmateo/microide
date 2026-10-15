@@ -291,8 +291,21 @@ void TestBulkWindowFillsALongLink() {
   const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
   const double window = static_cast<double>(sender.bulk_window());
-  Expect(window >= product * 0.9,
-         "the window grew to the link's product: window " + std::to_string(window) + ", product " +
+  // What this test is for: the window climbs out of its start at all.
+  Expect(window > static_cast<double>(RemoteFrameTransport::Options{}.bulk_window_initial),
+         "the window grew past its start: window " + std::to_string(window));
+  // And where it settles is the rule's answer for this link: bandwidth x (RTT +
+  // the allowance), less the one chunk a frame-to-ack sample already contains --
+  // ~419 KB here. This used to demand 90 % of the bare 469 KB product, i.e. 422 KB,
+  // ABOVE the rule's own nominal answer, so it passed only while relay overhead
+  // inflated the measured RTT and failed under a loaded parallel ctest (415 KB).
+  const double nominal_rule =
+      kBytesPerSecond * (std::chrono::duration<double>(kRtt).count() +
+                         std::chrono::duration<double>(RemoteFrameTransport::kQueueAllowance).count()) -
+      static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
+  Expect(window >= nominal_rule * 0.95,
+         "the window grew to the link's product: window " + std::to_string(window) +
+             ", rule at the link's nominal rate " + std::to_string(nominal_rule) + ", product " +
              std::to_string(product));
   if (!IsSanitizerBuild()) {
     // Slow start included: a ramp of a few round trips, then a full link.
