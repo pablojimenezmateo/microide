@@ -76,6 +76,7 @@
 #include "workspace/git/CommitWorkflowService.h"
 #include "workspace/git/GitOperationService.h"
 #include "workspace/render/NotificationLayout.h"
+#include "workspace/render/PreparedFrameState.h"
 #include "workspace/SavePreparation.h"
 #include "workspace/services/NotificationService.h"
 #include "project/FileReadService.h"

@@ -1995,6 +1995,66 @@ void TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface() {
                                DescribePixelDiff(diff));
 }
 
+// Clicking a status-bar segment that opens a modal (the indent segment opens
+// Settings) takes its hover and tooltip off the screen, and moving under the
+// modal shows none: a modal owns the pointer. The status bar painted hover and a
+// tooltip from the raw pointer under Settings, and the frame that opened Settings
+// left the segment's hover and tooltip behind. Found by the QA redraw verifier
+// (tools/qa suite chrome: the indent tooltip on screen after the pointer moved on).
+void TestWorkspaceShellAStatusSegmentModalOwnsThePointer() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the status fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const std::optional<SDL_FRect> indent =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::Indent);
+  const std::optional<SDL_FRect> encoding =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::Encoding);
+  Expect(indent.has_value() && encoding.has_value(), "the indent and encoding segments should show");
+  const float x = indent->x + indent->w / 2.0f;
+  const float y = indent->y + indent->h / 2.0f;
+  const auto step = [&](std::string_view what, std::initializer_list<SDL_Event> events) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, events), pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  const std::optional<SDL_FRect> project =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::Project);
+  if (project.has_value()) {
+    const float px = project->x + project->w / 2.0f;
+    const float py = project->y + project->h / 2.0f;
+    step("clicking the project segment", {MouseMotionEvent(px, py),
+                                          MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, px, py),
+                                          MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, px, py)});
+  }
+  step("hovering the indent segment", {MouseMotionEvent(x, y)});
+  step("clicking it", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                       MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+  step("moving to the encoding segment",
+       {MouseMotionEvent(encoding->x + encoding->w / 2.0f, encoding->y + encoding->h / 2.0f)});
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4714,6 +4774,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
+          TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
   AddTest(tests, "WorkspaceShell/MaximizedPanelPaintsNoHiddenSurface",
           TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface);
   AddTest(tests, "WorkspaceShell/TerminalIsFixedForAPreparedFrame",

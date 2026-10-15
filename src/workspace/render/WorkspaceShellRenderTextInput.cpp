@@ -439,7 +439,7 @@ void WorkspaceShell::RenderActiveTextInputCaret(
     return;
   }
 
-  if (!prepared_frame_caret_visible_) {
+  if (!frame_state_.caret_visible) {
     return;
   }
 

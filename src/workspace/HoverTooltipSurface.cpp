@@ -57,7 +57,12 @@ constexpr std::string_view kFindReplaceAllTooltip = "Replace All";
 }  // namespace
 
 std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout& layout) const {
-  if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse()) {
+  // A modal (Settings / Help, a prompt, the unsaved-changes prompt) owns the
+  // pointer: nothing under it shows a tooltip (QA redraw verifier: a status-bar
+  // tooltip painted under Settings on full frames only).
+  if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse() ||
+      settings_overlay_service_.Visible() || context_.prompts.surface_visible ||
+      context_.prompts.dirty_visible) {
     return std::nullopt;
   }
   // A live tab drag hides every tooltip. The one that was up when the gesture

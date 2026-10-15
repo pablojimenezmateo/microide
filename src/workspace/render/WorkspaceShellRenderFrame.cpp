@@ -579,23 +579,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   if (sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Git) {
     PrepareCommitBodyViewportForFrame(layout.sidebar);
   }
-  prepared_frame_caret_visible_ = CaretVisibleNow();
+  frame_state_.caret_visible = CaretVisibleNow();
   // Whatever moves the caret away -- focus to another surface, a menu or prompt
   // that suspends the blink, the blink's own phase -- this frame repaints both the
   // caret region the last frame painted and the one it paints now. Each such
   // transition used to need its own damage request, and several had none: a menu
   // opened over a focused terminal left its caret on screen (QA redraw verifier).
   if (const std::optional<SDL_FRect> caret_rect =
-          prepared_frame_caret_visible_ ? CurrentCaretDirtyRect() : std::nullopt;
-      caret_rect.has_value() != painted_caret_rect_.has_value() ||
-      (caret_rect.has_value() && !RectsEqual(*caret_rect, *painted_caret_rect_))) {
-    if (painted_caret_rect_.has_value()) {
-      RequestRedrawRect(*painted_caret_rect_);
+          frame_state_.caret_visible ? CurrentCaretDirtyRect() : std::nullopt;
+      caret_rect.has_value() != frame_state_.painted_caret_rect.has_value() ||
+      (caret_rect.has_value() && !RectsEqual(*caret_rect, *frame_state_.painted_caret_rect))) {
+    if (frame_state_.painted_caret_rect.has_value()) {
+      RequestRedrawRect(*frame_state_.painted_caret_rect);
     }
     if (caret_rect.has_value()) {
       RequestRedrawRect(*caret_rect);
     }
-    painted_caret_rect_ = caret_rect;
+    frame_state_.painted_caret_rect = caret_rect;
   }
   // A document shown in more than one pane is edited through one of them, and the
   // edit's damage names lines of the FOCUSED pane. Any other pane whose document
@@ -611,28 +611,81 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           viewport == nullptr ? 0
                               : (reinterpret_cast<std::uintptr_t>(viewport) * 0x9E3779B97F4A7C15ull) ^
                                     viewport->content_revision();
-      if (content != painted_pane_content_[gi] && gi != focused_group && gi < pane_rects.groups.size() &&
-          painted_pane_content_[gi] != 0) {
+      if (content != frame_state_.painted_pane_content[gi] && gi != focused_group && gi < pane_rects.groups.size() &&
+          frame_state_.painted_pane_content[gi] != 0) {
         RequestRedrawRect(pane_rects.groups[gi].editor_surface);
       }
-      painted_pane_content_[gi] = content;
+      frame_state_.painted_pane_content[gi] = content;
     }
   }
-  prepared_frame_pointer_occluder_.reset();
-  if (last_mouse_position_valid_) {
+  frame_state_.pointer_occluder.reset();
+  // A modal owns the pointer: inside it, only its own rects hover; outside it,
+  // nothing does (an empty occluder contains no rect).
+  std::optional<SDL_FRect> modal;
+  if (settings_overlay_service_.Visible()) {
+    modal = layout.editor_area;
+  } else if (context_.prompts.dirty_visible) {
+    modal = ComputeDirtyPromptRect(layout.full);
+  } else if (context_.prompts.surface_visible) {
+    modal = ComputePromptSurfaceRect(layout.full);
+  }
+  if (modal.has_value()) {
+    frame_state_.pointer_occluder =
+        last_mouse_position_valid_ && Contains(*modal, last_mouse_x_, last_mouse_y_) ? *modal
+                                                                                      : SDL_FRect{};
+  } else if (last_mouse_position_valid_) {
     // Later pieces paint over earlier ones (a submenu over its popup), so the last
     // one under the pointer is the one it is over.
     for (const SDL_FRect& piece : CurrentChromeRects()) {
       if (Contains(piece, last_mouse_x_, last_mouse_y_)) {
-        prepared_frame_pointer_occluder_ = piece;
+        frame_state_.pointer_occluder = piece;
       }
     }
-    if (!prepared_frame_pointer_occluder_.has_value() && project_state.overlay.visible) {
+    if (!frame_state_.pointer_occluder.has_value() && project_state.overlay.visible) {
       const SDL_FRect card = ComputeOverlayRect(layout.overlay_anchor);
       if (Contains(card, last_mouse_x_, last_mouse_y_)) {
-        prepared_frame_pointer_occluder_ = card;
+        frame_state_.pointer_occluder = card;
       }
     }
+  }
+  // The element painted hovered and the tooltip card, as this frame paints them.
+  // Pointer motion damages its own hover changes; this catches the ones nothing
+  // moved -- a modal opening over a hovered status segment and its tooltip, an
+  // overlay closing back onto one -- by repainting what the last frame painted and
+  // what this one paints whenever they differ.
+  {
+    std::optional<SDL_FRect> hover_rect;
+    if (last_mouse_position_valid_) {
+      std::optional<SDL_FRect> rect = HoveredStatusBarSegmentRect(layout, last_mouse_x_, last_mouse_y_);
+      if (!rect.has_value()) {
+        rect = HoveredInteractiveRect(layout, last_mouse_x_, last_mouse_y_);
+      }
+      if (rect.has_value() && PointerOver(*rect)) {
+        // Hover fills run a few px past the element (the status-bar segments').
+        hover_rect = MakeRect(rect->x - 6.0f, rect->y - 1.0f, rect->w + 12.0f, rect->h + 2.0f);
+      }
+    }
+    std::optional<SDL_FRect> tooltip_rect;
+    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
+      tooltip_rect = MakeRect(tooltip->rect.x - 1.0f, tooltip->rect.y - 1.0f, tooltip->rect.w + 2.0f,
+                              tooltip->rect.h + 2.0f);
+    }
+    const auto repaint_if_moved = [this](std::optional<SDL_FRect>& painted,
+                                         const std::optional<SDL_FRect>& now) {
+      if (painted.has_value() == now.has_value() &&
+          (!now.has_value() || RectsEqual(*painted, *now))) {
+        return;
+      }
+      if (painted.has_value()) {
+        RequestRedrawRect(*painted);
+      }
+      if (now.has_value()) {
+        RequestRedrawRect(*now);
+      }
+      painted = now;
+    };
+    repaint_if_moved(frame_state_.painted_hover_rect, hover_rect);
+    repaint_if_moved(frame_state_.painted_tooltip_rect, tooltip_rect);
   }
   // The editor (and the compare/merge editable panes) paint the caret only while
   // the editor OWNS the blinking caret -- the condition under which the blink
@@ -640,7 +693,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // input's blink phase, with only that input's rect repainted, froze the editor
   // caret in whatever phase the last editor repaint caught.
   prepared_frame_draw_editor_caret_ =
-      prepared_frame_caret_visible_ &&
+      frame_state_.caret_visible &&
       project_state.surface.focus == FocusTarget::Editor &&
       context_.text_input.active_surface == TextInputSurface::Editor &&
       context_.text_input.composition.text.empty();

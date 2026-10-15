@@ -1038,11 +1038,11 @@ bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
   if (!last_mouse_position_valid_ || !Contains(rect, last_mouse_x_, last_mouse_y_)) {
     return false;
   }
-  if (!prepared_frame_pointer_occluder_.has_value()) {
+  if (!frame_state_.pointer_occluder.has_value()) {
     return true;
   }
-  const SDL_FRect& occluder = *prepared_frame_pointer_occluder_;
-  return rect.x >= occluder.x && rect.y >= occluder.y &&
+  const SDL_FRect& occluder = *frame_state_.pointer_occluder;
+  return occluder.w > 0.0f && occluder.h > 0.0f && rect.x >= occluder.x && rect.y >= occluder.y &&
          rect.x + rect.w <= occluder.x + occluder.w && rect.y + rect.h <= occluder.y + occluder.h;
 }
 
