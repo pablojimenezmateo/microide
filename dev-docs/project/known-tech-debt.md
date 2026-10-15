@@ -438,6 +438,26 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-16-345 — blame results become visible on the worker thread, not when their wake is handled. [OPEN]
+
+Found by the QA monkey (seed 10, `tools/qa/run.py monkey --seed 10`): a partial
+frame painted between a blame worker writing a result into `GitBlameService`'s
+cache and the main thread handling that result's wake read the NEW blame in one
+render and not in another -- the clips of one partial frame can disagree, and the
+redraw verifier's full reference did. The wake then repaints the focused editor
+(`WorkspaceEventDispatcher`'s blame branch), so on screen this is one frame at
+most; `EditorOverlayForFrame` (f825c8cc) already fixes the overlay within a frame
+once it is BUILT, but the first build of a frame can happen in any clip.
+
+The shape every other async source now has: results become state on the main
+thread at a defined point. Here that means the worker queues finished results and
+`GitBlameService::ApplyReadyResults()` -- called from the blame wake handler, which
+then requests the redraw -- moves them into the cache; `Snapshot` reads only
+applied results. The cost is the service's tests, which poll `Snapshot` and must
+pump the apply instead (`GitBlameServiceTests`, the editor-blame shell tests via
+`WaitForActiveEditorBlameOverlay`). Not done in the 2026-10-16 QA pass because the
+visible effect is nil and the change is a service refactor, not a fix.
+
 ### TD-2026-10-16-344 — a remote project's clangd is only as good as the host's compile database, and the plugin's warning looks at the wrong machine. [OPEN]
 
 Found by `tools/qa/remote.py` H on 2026-10-16. Go to definition through clangd on
@@ -491,6 +511,23 @@ repaint dropped between an async tree/git completion and the menu open. What
 would have settled it is the frame trace of the blank runs, which was not on; the
 harness turns that on for every run (design decision 8) and task 6.2 re-finds
 this first.
+
+2026-10-16, with the harness built: not re-found. Every run had the frame trace,
+the menu-hover trace and the redraw verifier on: `tools/qa/run.py suite menus`
+(every menu opened by click and every row hovered, under editor, tree and terminal
+focus) about ten times, the full suite about six times, and ~25 monkey runs of 300
+steps across seeds 1-10 -- several thousand menu opens. The verifier reported
+twenty-odd stale-paint bugs on the way (all fixed, see the 2026-10-15/16 fix
+commits), including two that put WRONG pixels in the sidebar under an open menu
+(9512efcd: rows hovered through the popup; cddaf68c: the caret region), but no
+frame with a blank sidebar, and no full-window fallback frame
+(`reason=fallback-full`) after startup in any trace. What that rules out: a
+damage or skip bug on the click path (the verifier would have caught a partial
+frame leaving the sidebar blank) and a recurring condition. What it leaves: the
+first-launch window mapping on a cold Xvfb (the original four were each the first
+launch on a freshly generated fixture), where the window may present before the
+retained scene holds a full frame. If it recurs, the finding directory now
+carries the frame lines and the verifier's images.
 
 ### TD-2026-10-15-342 — typing in the tree runs commands instead of navigating. [OPEN]
 
