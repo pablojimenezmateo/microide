@@ -2588,6 +2588,49 @@ void TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer() {
                                 DescribePixelDiff(moved));
 }
 
+// A narrow source-control view keeps its labels inside it. "nothing staged",
+// beside the Commit button, was truncated to the sidebar's whole width though it
+// starts after the button, so it painted across the sidebar edge into the editor
+// -- on full frames; a sidebar repaint, clipped to the sidebar, did not. Found by
+// the QA monkey (seed 4).
+void TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add narrow git fixture", "narrow git fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the git fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  // Inline blame loads asynchronously and would land between the two paints.
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.blame.inline.enabled", "false");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(SettleGitSidebarRefresh(shell), "the git view should settle");
+  WorkspaceShellTestAccess::SetSidebarWidth(shell, 190.0f);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  // An editor repaint paints over anything the sidebar spilled into it; a full
+  // repaint spills it again.
+  microide::workspace::RenderInvalidation editor_only;
+  editor_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface);
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, editor_only, pin_caret);
+  Expect(diff.identical(), "a narrow git view should paint inside itself; " + DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5309,6 +5352,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/NarrowGitViewKeepsItsLabelsInside",
+          TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside);
   AddTest(tests, "WorkspaceShell/TabTooltipFollowsATabMovedUnderThePointer",
           TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer);
   AddTest(tests, "WorkspaceShell/AStackedModalRedimsTheWindow",

@@ -457,13 +457,15 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         draw_action_button(commit_rect, "Commit", git_vm.commit_ready, ButtonTone::Accent);
         if (!git_vm.commit_ready && !git_vm.commit_blocked_reason.empty()) {
           const float reason_x = commit_rect.x + commit_rect.w + 8.0f;
-          DrawVCenteredTextOn(
-              text_renderer_, renderer,
-              MakeRect(reason_x, commit_rect.y,
-                       std::max(0.0f, layout.sidebar.x + layout.sidebar.w - kSidebarInset - reason_x),
-                       commit_rect.h),
-              0.0f, theme_.text_muted, theme_.surface_background,
-              TruncateLabelView(git_vm.commit_blocked_reason, text_width));
+          // Truncated to the room right of the button, not the sidebar's whole
+          // width: a narrow sidebar painted "nothing staged" across its own edge
+          // into the editor (QA monkey, seed 4).
+          const float reason_width =
+              std::max(0.0f, layout.sidebar.x + layout.sidebar.w - kSidebarInset - reason_x);
+          DrawVCenteredTextOn(text_renderer_, renderer,
+                              MakeRect(reason_x, commit_rect.y, reason_width, commit_rect.h), 0.0f,
+                              theme_.text_muted, theme_.surface_background,
+                              TruncateLabelView(git_vm.commit_blocked_reason, reason_width));
         }
         detail_y += kCommitButtonHeight + kCommitButtonGap;
       } else if (!git_vm.commit_summary_line.empty()) {
