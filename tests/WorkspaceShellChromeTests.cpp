@@ -1668,6 +1668,22 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
              std::to_string(differences) + " pixels differ");
 }
 
+// A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
+// is a past tick, so the process must have been up for a blink interval or two.
+Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
+  while (SDL_GetTicks() < 2000) {
+    SDL_Delay(50);
+  }
+  for (Uint64 back = 50; back < 2000; back += 50) {
+    WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - back);
+    if (!WorkspaceShellTestAccess::CaretVisibleNow(shell)) {
+      return SDL_GetTicks() - back;
+    }
+  }
+  Expect(false, "the focused input's caret should blink");
+  return 0;
+}
+
 // The caret blink is decided once per prepared frame. Paint sites used to read the
 // clock themselves (the single-line input, the terminal, the commit fields, the
 // compare and merge carets), so two renders of ONE prepared frame could disagree
@@ -1698,19 +1714,7 @@ void TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame() {
   WorkspaceShellTestAccess::OpenCommandPalette(shell);
   shell.Render(canvas.renderer(), kWidth, kHeight);
 
-  // An epoch that puts the blink in its hidden phase right now. The epoch is a
-  // past tick, so the process must have been up for a blink interval or two.
-  while (SDL_GetTicks() < 2000) {
-    SDL_Delay(50);
-  }
-  Uint64 hidden_epoch = 0;
-  for (Uint64 back = 50; back < 2000 && hidden_epoch == 0; back += 50) {
-    WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - back);
-    if (!WorkspaceShellTestAccess::CaretVisibleNow(shell)) {
-      hidden_epoch = SDL_GetTicks() - back;
-    }
-  }
-  Expect(hidden_epoch != 0, "the quick-open caret should blink");
+  const Uint64 hidden_epoch = HiddenCaretBlinkEpoch(shell);
 
   WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
   Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "a fresh epoch shows the caret");
@@ -1765,6 +1769,57 @@ void TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame() {
   const std::size_t differences = CountPixelDifferences(first, canvas.surface());
   SDL_DestroySurface(first);
   Expect(differences == 0, "the palette's first frame should paint what its second paints; " +
+                               std::to_string(differences) + " pixels differ");
+}
+
+// The editor paints its caret only while it owns the blinking caret. The blink
+// repaint names ONE caret's rect -- the focused input's -- but the editor drew its
+// caret in that blink phase whenever its pane was the active one, focused or not.
+// With the terminal or a sidebar field focused, the editor caret froze in whatever
+// phase the last editor repaint caught. Found by the QA redraw verifier
+// (QA-STALE 1x18 at the editor's first column while the terminal blinked).
+void TestWorkspaceShellUnfocusedEditorDoesNotPaintTheBlinkingCaret() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1024;
+  static constexpr int kHeight = 640;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the caret fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "");
+  Expect(WorkspaceShellTestAccess::CurrentTextInputSurface(shell) ==
+             microide::workspace::TextInputSurface::SidebarSearchQuery,
+         "the search view's query field should own the keyboard");
+
+  // Hidden phase painted in full; then the blink turns visible and repaints the
+  // rect it names, as the blink wake does.
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, HiddenCaretBlinkEpoch(shell));
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  const std::optional<SDL_FRect> blink = shell.CurrentCaretDirtyRect();
+  Expect(blink.has_value(), "the focused query field should name its caret rect");
+  WorkspaceShell::RenderInvalidation invalidation;
+  invalidation.rects.push_back(*blink);
+  PaintInvalidation(shell, canvas, kWidth, kHeight, invalidation);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differences = CountPixelDifferences(retained, canvas.surface());
+  SDL_DestroySurface(retained);
+  Expect(differences == 0, "a blink repaint should leave what a full repaint paints; " +
                                std::to_string(differences) + " pixels differ");
 }
 
@@ -4286,6 +4341,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenedPaletteShowsItsCaretOnTheFirstFrame",
           TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame);
+  AddTest(tests, "WorkspaceShell/UnfocusedEditorDoesNotPaintTheBlinkingCaret",
+          TestWorkspaceShellUnfocusedEditorDoesNotPaintTheBlinkingCaret);
   AddTest(tests, "WorkspaceShell/CaretBlinkIsDecidedOncePerFrame",
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",

@@ -578,10 +578,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     PrepareCommitBodyViewportForFrame(layout.sidebar);
   }
   prepared_frame_caret_visible_ = CaretVisibleNow();
+  // The editor (and the compare/merge editable panes) paint the caret only while
+  // the editor OWNS the blinking caret -- the condition under which the blink
+  // repaint names the editor (CurrentCaretDirtyRect). Drawing it in another
+  // input's blink phase, with only that input's rect repainted, froze the editor
+  // caret in whatever phase the last editor repaint caught.
   prepared_frame_draw_editor_caret_ =
       prepared_frame_caret_visible_ &&
-      !(context_.text_input.active_surface == TextInputSurface::Editor &&
-        !context_.text_input.composition.text.empty());
+      project_state.surface.focus == FocusTarget::Editor &&
+      context_.text_input.active_surface == TextInputSurface::Editor &&
+      context_.text_input.composition.text.empty();
   FrameToken::VisibleLineRange visible_line_range{};
   if (auto* viewport = ActiveEditorViewport(); viewport != nullptr && !viewport->is_placeholder()) {
     visible_line_range.viewport = viewport;
@@ -746,10 +752,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                             : EditorPaneLayouts{};
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
-        project_state.surface.focus == FocusTarget::Editor && active_compare_tab->right_view_active &&
-        prepared_frame_caret_visible_ &&
-        !(overlay_vm.current_surface == TextInputSurface::Editor &&
-          !context_.text_input.composition.text.empty());
+        active_compare_tab->right_view_active && prepared_frame_draw_editor_caret_;
     // Plugin decorations for the EDITABLE right pane only, and resolved here
     // because the compare render TU may not read project state itself. The left
     // pane is a different revision of the file, so a decoration published against
@@ -772,8 +775,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                              .right_plugin_decorations = compare_right_decorations,
                          });
   } else if (active_merge_tab != nullptr) {
-    const bool draw_merge_caret =
-        project_state.surface.focus == FocusTarget::Editor && prepared_frame_caret_visible_;
+    const bool draw_merge_caret = prepared_frame_draw_editor_caret_;
     RenderMergeSurface(renderer, layout.editor_surface, project_state.root, draw_merge_caret,
                        project_state.diagnostics_store);
   } else {
