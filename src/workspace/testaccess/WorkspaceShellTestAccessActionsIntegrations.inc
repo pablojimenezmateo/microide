@@ -670,6 +670,9 @@
   static bool TerminalTabHasUnseenOutput(const WorkspaceShell& shell, std::size_t tab_index) {
     return shell.context_.current_project_state.terminal_tabs[tab_index]->has_unseen_output;
   }
+  static void TogglePanelMaximizedForTest(WorkspaceShell& shell) {
+    shell.MakeTerminalPanelService().TogglePanelMaximized();
+  }
   static bool PanelMaximized(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.maximized;
   }

@@ -1955,6 +1955,46 @@ void TestWorkspaceShellTerminalIsFixedForAPreparedFrame() {
                                DescribePixelDiff(diff));
 }
 
+// A maximized panel paints the same frame whether or not a clip hint lets the
+// render skip the surfaces the panel replaced. The editor column collapses under a
+// maximized panel; a hinted pass skipped it, an unhinted full render painted it at
+// its collapsed rect anyway and left marks under the menu bar. Found by the QA
+// redraw verifier (tools/qa suite terminal: a 94x94 patch at the top-left on every
+// frame after Maximize).
+void TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the panel fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 8, 80);
+  WorkspaceShellTestAccess::TogglePanelMaximizedForTest(shell);
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell), "the panel should be maximized");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShell::RenderInvalidation whole;
+  whole.rects.push_back(SDL_FRect{0.0f, 0.0f, static_cast<float>(kWidth), static_cast<float>(kHeight)});
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, whole, pin_caret);
+  Expect(diff.identical(), "a hinted and an unhinted render of a maximized panel should agree; " +
+                               DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4674,6 +4714,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/MaximizedPanelPaintsNoHiddenSurface",
+          TestWorkspaceShellMaximizedPanelPaintsNoHiddenSurface);
   AddTest(tests, "WorkspaceShell/TerminalIsFixedForAPreparedFrame",
           TestWorkspaceShellTerminalIsFixedForAPreparedFrame);
   AddTest(tests, "WorkspaceShell/BlinkInALowerPaneKeepsTheDivider",

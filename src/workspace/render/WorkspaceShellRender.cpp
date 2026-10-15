@@ -25,6 +25,8 @@ bool RectContains(const SDL_FRect& outer, const SDL_FRect& inner) {
          inner.y + inner.h <= outer.y + outer.h;
 }
 
+bool HasPositiveArea(const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; }
+
 // Returns true when the dirty rect, if provided, doesn't overlap `surface`.
 // A null hint means "render everything" (full redraw).
 bool DirtyHintSkips(const std::optional<SDL_FRect>& hint, const SDL_FRect& surface) {
@@ -70,10 +72,18 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   // Layout zeroes the sidebar/bottom panel rects when they're hidden, so
   // RectsIntersect (which requires positive w and h) already short-circuits
   // those — no need to peek at project state from a render TU.
-  bool skip_editor_surface = DirtyHintSkips(dirty_rect_hint, layout.editor_surface);
-  bool skip_sidebar = DirtyHintSkips(dirty_rect_hint, layout.sidebar);
-  bool skip_right_pane = DirtyHintSkips(dirty_rect_hint, layout.right_pane);
-  bool skip_bottom_panel = DirtyHintSkips(dirty_rect_hint, layout.bottom_panel);
+  // A surface the layout collapsed (zero area) paints nothing, hinted or not: under
+  // a maximized panel the editor column collapses, and an unhinted full render
+  // painted the editor at its collapsed rect anyway, leaving marks under the menu
+  // bar that a hinted pass (which skips it) never drew (QA redraw verifier).
+  bool skip_editor_surface = DirtyHintSkips(dirty_rect_hint, layout.editor_surface) ||
+                             !HasPositiveArea(layout.editor_surface);
+  bool skip_sidebar = DirtyHintSkips(dirty_rect_hint, layout.sidebar) ||
+                      !HasPositiveArea(layout.sidebar);
+  bool skip_right_pane = DirtyHintSkips(dirty_rect_hint, layout.right_pane) ||
+                         !HasPositiveArea(layout.right_pane);
+  bool skip_bottom_panel = DirtyHintSkips(dirty_rect_hint, layout.bottom_panel) ||
+                           !HasPositiveArea(layout.bottom_panel);
   // Window chrome spans menu bar, project/editor tab strips, and the
   // breadcrumb row. Skip the whole chrome pass when none intersect — popup
   // hover dirty rects sit below the chrome strip and don't touch it.
