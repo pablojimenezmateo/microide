@@ -505,7 +505,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           panel_focused && workflow.focus_field == CommitWorkflowFocusField::Subject;
       const bool body_focused =
           panel_focused && workflow.focus_field == CommitWorkflowFocusField::Body;
-      const bool caret_on = CaretVisibleNow();
+      const bool caret_on = prepared_frame_caret_visible_;
       workflow.caret_rect = SDL_FRect{};
       const int body_rows = kCommitWorkflowBodyRows;
       // Single source of truth for the panel geometry; GitSidebarCommitWorkflowHeight reserves

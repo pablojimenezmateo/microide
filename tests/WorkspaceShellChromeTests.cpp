@@ -1668,11 +1668,72 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
              std::to_string(differences) + " pixels differ");
 }
 
+// The caret blink is decided once per prepared frame. Paint sites used to read the
+// clock themselves (the single-line input, the terminal, the commit fields, the
+// compare and merge carets), so two renders of ONE prepared frame could disagree
+// about the caret -- which is what the QA redraw verifier does on every partial
+// frame (a partial render and a full reference render of the same frame), and a
+// blink edge between them was a false QA-STALE.
+void TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1024;
+  static constexpr int kHeight = 640;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the caret fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  // A shell's very first frame sets up its text measurement; the frames under
+  // test are ordinary ones after it.
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+
+  // An epoch that puts the blink in its hidden phase right now. The epoch is a
+  // past tick, so the process must have been up for a blink interval or two.
+  while (SDL_GetTicks() < 2000) {
+    SDL_Delay(50);
+  }
+  Uint64 hidden_epoch = 0;
+  for (Uint64 back = 50; back < 2000 && hidden_epoch == 0; back += 50) {
+    WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - back);
+    if (!WorkspaceShellTestAccess::CaretVisibleNow(shell)) {
+      hidden_epoch = SDL_GetTicks() - back;
+    }
+  }
+  Expect(hidden_epoch != 0, "the quick-open caret should blink");
+
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "a fresh epoch shows the caret");
+  const WorkspaceShell::FrameToken token = shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* first = SDL_DuplicateSurface(canvas.surface());
+
+  // The clock moves into the hidden phase between the two renders of the frame.
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden_epoch);
+  shell.RenderClip(token, canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differences = CountPixelDifferences(first, canvas.surface());
+  SDL_DestroySurface(first);
+  Expect(differences == 0, "two renders of one prepared frame should paint the same caret; " +
+                               std::to_string(differences) + " pixels differ");
+}
+
 // The first frame after focus moves to a text input paints that input's caret.
 // Frame prep built the text-input view model and only THEN synced the active
 // surface, so the frame that opened the command palette still described the
 // editor: no caret in the palette until the next blink repaint, half a second
-// later. Found by the QA redraw work (a blink test was vacuous for it).
+// later. Found by the QA redraw work (the blink test below was vacuous for it).
 void TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4225,6 +4286,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/OpenedPaletteShowsItsCaretOnTheFirstFrame",
           TestWorkspaceShellOpenedPaletteShowsItsCaretOnTheFirstFrame);
+  AddTest(tests, "WorkspaceShell/CaretBlinkIsDecidedOncePerFrame",
+          TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/OpeningAMenuByClickKeepsTheSidebar",

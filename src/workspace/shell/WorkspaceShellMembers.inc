@@ -2184,6 +2184,10 @@
   mutable EditorGroupRectsLayout editor_group_rects_memo_{};
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
+  // The caret blink phase, decided once in PrepareFrame. Paint sites read this,
+  // never the clock: two renders of one prepared frame (a partial frame and the
+  // QA redraw verifier's full reference) must paint the same caret.
+  bool prepared_frame_caret_visible_ = false;
   std::uint64_t prepared_frame_id_ = 0;
   // Frame-scoped memo for the menu's LSP-readiness probe. Menu layout, each row's
   // label and each row's enablement all asked for readiness independently, and every

@@ -577,8 +577,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   if (sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Git) {
     PrepareCommitBodyViewportForFrame(layout.sidebar);
   }
+  prepared_frame_caret_visible_ = CaretVisibleNow();
   prepared_frame_draw_editor_caret_ =
-      CaretVisibleNow() &&
+      prepared_frame_caret_visible_ &&
       !(context_.text_input.active_surface == TextInputSurface::Editor &&
         !context_.text_input.composition.text.empty());
   FrameToken::VisibleLineRange visible_line_range{};
@@ -746,7 +747,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
         project_state.surface.focus == FocusTarget::Editor && active_compare_tab->right_view_active &&
-        CaretVisibleNow() &&
+        prepared_frame_caret_visible_ &&
         !(overlay_vm.current_surface == TextInputSurface::Editor &&
           !context_.text_input.composition.text.empty());
     // Plugin decorations for the EDITABLE right pane only, and resolved here
@@ -772,7 +773,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                          });
   } else if (active_merge_tab != nullptr) {
     const bool draw_merge_caret =
-        project_state.surface.focus == FocusTarget::Editor && CaretVisibleNow();
+        project_state.surface.focus == FocusTarget::Editor && prepared_frame_caret_visible_;
     RenderMergeSurface(renderer, layout.editor_surface, project_state.root, draw_merge_caret,
                        project_state.diagnostics_store);
   } else {

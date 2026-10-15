@@ -614,7 +614,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           // An unfocused pane shows where its cursor is without claiming the keyboard:
           // a steady outline, the way every terminal multiplexer draws it.
           DrawRect(renderer, *caret_rect, theme_.cursor);
-        } else if (panel_vm.focus != FocusTarget::Panel || CaretVisibleNow()) {
+        } else if (panel_vm.focus != FocusTarget::Panel || prepared_frame_caret_visible_) {
           DrawFilledRect(renderer, *caret_rect, theme_.cursor);
           if (cursor.row >= first_row && cursor.row - first_row < terminal_lines.size()) {
             const auto& line = terminal_lines[cursor.row - first_row];
