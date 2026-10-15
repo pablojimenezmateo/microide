@@ -2722,6 +2722,51 @@ void TestWorkspaceShellEditorSplitDividerDragPaintsCleanly() {
   step("moving away", {MouseMotionEvent(x - 300.0f, y)});
 }
 
+// A split divider starts at the editor area's top, two pixels above the panes'
+// editor surfaces' chrome ends -- so a repaint of just a pane's tab strip (hovering
+// its first tab) reaches the divider's top rows, and it used to paint the frame
+// base there and skip the editor pass that draws the divider (QA monkey seeds 4
+// and 12: a 6x2 notch at the divider's top).
+void TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the split fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the fixture should split the editor");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect tab = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 1, 0);
+  Expect(tab.w > 0.0f, "the right pane should show its tab");
+  const auto step = [&](std::string_view what, std::initializer_list<SDL_Event> events) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, events), pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  step("hovering the right pane's first tab",
+       {MouseMotionEvent(tab.x + 4.0f, tab.y + tab.h / 2.0f)});
+  step("leaving it", {MouseMotionEvent(tab.x + 4.0f, tab.y + tab.h + 200.0f)});
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5507,6 +5552,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarDividerDragPaintsCleanly);
   AddTest(tests, "WorkspaceShell/EditorSplitDividerDragPaintsCleanly",
           TestWorkspaceShellEditorSplitDividerDragPaintsCleanly);
+  AddTest(tests, "WorkspaceShell/PaneTabStripRepaintKeepsTheSplitDivider",
+          TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",

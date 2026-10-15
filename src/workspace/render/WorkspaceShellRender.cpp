@@ -97,12 +97,27 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   // touching a lower pane's strip (a caret blink in that pane, grown by the clip
   // padding) painted the frame base over the strip and skipped the chrome that
   // draws it (found by the QA redraw verifier: a 1-px row at the lower pane's top).
-  if (skip_window_chrome && dirty_rect_hint.has_value()) {
-    for (const EditorGroupRects& group : ComputeEditorGroupRectsForState(layout).groups) {
+  //
+  // The split dividers are the editor pass's, and they run the editor AREA's full
+  // height -- from above the breadcrumb row, where the surfaces' rects do not
+  // reach -- so a clip that touches only a divider's top (a pane's tab strip,
+  // grown by the padding) painted the frame base over it and skipped the pass
+  // that draws it (QA monkey: a 6x2 notch at the divider's top).
+  if (dirty_rect_hint.has_value() && (skip_window_chrome || skip_editor_surface)) {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    for (const EditorGroupRects& group : group_rects.groups) {
       if (!DirtyHintSkips(dirty_rect_hint, group.tab_strip) ||
           !DirtyHintSkips(dirty_rect_hint, group.breadcrumb)) {
         skip_window_chrome = false;
         break;
+      }
+    }
+    if (HasPositiveArea(layout.editor_surface)) {
+      for (const EditorSplitDividerRect& divider : group_rects.dividers) {
+        if (!DirtyHintSkips(dirty_rect_hint, divider.rect)) {
+          skip_editor_surface = false;
+          break;
+        }
       }
     }
   }
