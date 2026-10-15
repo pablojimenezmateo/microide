@@ -292,6 +292,21 @@ new terminal behaviour lands there.
 
 ### 7. Remote-projects groundwork
 
+> **Verified on a real host (2026-10-16).** `tools/qa/remote.py` drives the shipped
+> binary headlessly against `worky` through the control channel -- open and first
+> sync, save, host edits under clean and dirty tabs, offline save and replay, a
+> killed ssh master, a host terminal, clangd on the host, a branch switch, eight
+> agents churning while saving, a relaunch on the mirror -- and every scenario
+> passes. Fixed on the way: a kept language server leaked on the host per client
+> session (keep grace, `--keep-grace-ms`), the changed-on-disk banner was
+> mouse-only (`banner-action`), `plugins-reload` reported the previous reload, no
+> way to remove a mirror (`remote-remove-mirror`), no remote state on the control
+> channel (`status.remote`), and the host entry points were palette-only (File
+> and Terminal menus, the welcome page). The contract is now a spec:
+> `openspec/changes/remote-project-mirror` (its remaining task is 1.1, mapping
+> each requirement to the test that pins it). Left: TD-2026-10-16-344 (the cpp-lsp
+> plugin's compile-database check reads the mirror, not the host).
+>
 > **Phase 3 done (2026-10-15).** Tuned on a real host (worky) under simulated
 > agents: a git status loop on idle hosts, branch switches held as mass deletes
 > (and a held-delete prompt with no Apply button), a 50 ms exit poll on every host

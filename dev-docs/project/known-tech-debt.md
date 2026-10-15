@@ -1,5 +1,12 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-16 (§ TD-2026-10-16-344 for the remote-editing verification on a
+real host: every scenario of `tools/qa/remote.py` passes; what it found is fixed
+on `main` -- a kept language server leaked on the host per client session, the
+changed-on-disk banner was mouse-only, `plugins-reload` reported the previous
+reload, no Remove Mirror, no remote state on the control channel -- and the one
+limitation it left is below).
+
 Reviewed 2026-10-15 (§ TD-2026-10-15-343 for the GUI QA proposal verification:
 a blank sidebar under an open menu that showed four times on a fresh fixture and
 never again, kept here with its sequence because nothing recorded its frames).
@@ -430,6 +437,33 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-16-344 — a remote project's clangd is only as good as the host's compile database, and the plugin's warning looks at the wrong machine. [OPEN]
+
+Found by `tools/qa/remote.py` H on 2026-10-16. Go to definition through clangd on
+the host works (0.5 s on `worky`) for a self-contained file; in this repository's
+own TUs it resolves nothing, because clangd on the host had no
+`compile_commands.json` to read: the host checkout was never built. That is
+clangd's contract, not a bug -- but two things around it are wrong for a remote
+project:
+
+- `plugins/cpp-lsp/init.lua` looks for the compile database under the PROJECT
+  ROOT, which for a remote project is the mirror, and warns "no
+  compile_commands.json found under <mirror path> -- clangd cross-file features
+  will be limited until one is generated". The build directory of a remote
+  project lives on the host (and is ignored, so never mirrored): the check reads
+  the wrong machine and the warning names a path the user should never act on.
+  The check belongs behind the project's launcher (a host `test -f`), or should
+  be dropped for a non-local project and left to clangd's own
+  `compile_commands.json` discovery on the host.
+- Nothing tells the user that cross-file navigation on a remote project needs the
+  host's build to have produced a compile database (or a `compile_flags.txt`),
+  and `cpp_lsp.binary` is resolved on the host's `PATH` with no way to say so in
+  the Settings overlay's description.
+
+Not fixed in the pass because it is plugin-side product text plus a launcher-aware
+file probe the plugin API does not offer today (`ctx.fs` is project-scoped and
+local). Related: TD-2026-10-06-318 (plugin tools follow the project's launcher).
 
 ### TD-2026-10-15-343 — the File menu opened over a blank sidebar, four times, then never again. [OPEN]
 
