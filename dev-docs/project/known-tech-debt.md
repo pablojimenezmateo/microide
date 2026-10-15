@@ -427,7 +427,41 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-15-341 — a project-change batch repaints the whole window. [OPEN]
+### TD-2026-10-15-341 — a project-change batch repaints the whole window. [RESOLVED 2026-10-15]
+
+Resolved: the apply requests the surfaces it changed and the two wake paths
+(`WorkspaceEventDispatcher`'s project-file event, `HandleScheduledWakeSources`)
+no longer answer an applied batch with `full = true`. `RefreshProjectFileViews`
+is the one "the file set changed" step -- tree, finder, search, then the sidebar
+and overlay rects, each only when shown -- replacing four copies (the batch, the
+index-metadata branch, replace-all, the forced rescan); a hidden project search
+is no longer re-run per batch, only marked so showing it re-runs. An open file's
+reload, a merge tab going stale and a rescan's buffer reconcile request the
+editor column; a HEAD move requests the sidebar and the status bar. Two more
+full frames hid behind it. `RequestSidebarRedraw` fell back to the WINDOW with the
+sidebar hidden, so the automatic git refresh each batch triggers was a full frame
+anyway; hidden, it now asks for the status-bar strip (frame prep re-derives the
+branch) and the overlay if one is shown. And the replace-all completion's
+reloaded tabs had no redraw of their own -- they rode on the full frame.
+
+Measured on worky (8 simulated agents, 60 s, the Phase 3 driver), full-window
+frames during the churn: 182 → 5 with the sidebar shown (2.0 s → 0.06 s of
+full-frame time), 191 → 5 with it hidden; the mirror byte-exact in all four runs.
+The five left are rare events (a notification expiring, a tree-shape change).
+
+The narrowing is gated by `ProjectChangeRedraw/*`: each test paints only the
+requested rects over the previous frame, as the app loop does, and requires the
+result to be pixel-identical to a full repaint (plus a check that the change was
+visible at all). The first run of it found a real stale-pixel bug, not in the
+narrowing but under it: `ScopedRenderClip` and the plugin display-list replay
+REPLACED the renderer's clip instead of narrowing it, so a surface drew outside
+the rect being repainted, and anti-aliased text blended over itself came out
+bolder. Both now intersect (`render::NarrowToCurrentClip`;
+`ScopedRenderClip/NarrowsToTheOuterClip`). The reference frame has to be drawn
+on the same canvas -- glyph textures belong to the renderer that made them, so a
+fresh canvas differs wherever there is text.
+
+Original entry:
 
 Measured under simulated agents on a real host (2026-10-15,
 `dev-docs/design/remote-projects.md` § "Phase 3 against a multi-agent workload"):

@@ -537,6 +537,11 @@
   static bool ConsumePendingRedraw(WorkspaceShell& shell) {
     return shell.ConsumePendingRenderInvalidation().HasAnyRedraw();
   }
+  // The damage queued so far, taken -- what the app loop paints next (frame
+  // prep queues the status bar this way, after the frame that changed it).
+  static WorkspaceShell::RenderInvalidation TakePendingRenderInvalidation(WorkspaceShell& shell) {
+    return shell.ConsumePendingRenderInvalidation();
+  }
   // Queues damage that no handler asked for, the way a background tick or a
   // focus change does before an event is dispatched.
   static void QueueUnrelatedDamage(WorkspaceShell& shell, const SDL_FRect& rect) {

@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 
 #include "editor/DiagnosticsRender.h"
@@ -289,35 +290,6 @@ PixelBounds NonBackgroundBounds(SDL_Surface* surface, SDL_Color background) {
     }
   }
   return bounds;
-}
-
-std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
-  Expect(lhs != nullptr && rhs != nullptr,
-         "pixel comparisons should receive readable surfaces");
-  Expect(lhs->w == rhs->w && lhs->h == rhs->h,
-         "pixel comparisons should use canvases with matching dimensions");
-
-  std::size_t differences = 0;
-  for (int y = 0; y < lhs->h; ++y) {
-    for (int x = 0; x < lhs->w; ++x) {
-      Uint8 lhs_r = 0;
-      Uint8 lhs_g = 0;
-      Uint8 lhs_b = 0;
-      Uint8 lhs_a = 0;
-      Uint8 rhs_r = 0;
-      Uint8 rhs_g = 0;
-      Uint8 rhs_b = 0;
-      Uint8 rhs_a = 0;
-      Expect(SDL_ReadSurfacePixel(lhs, x, y, &lhs_r, &lhs_g, &lhs_b, &lhs_a),
-             "pixel comparisons should read actual pixels");
-      Expect(SDL_ReadSurfacePixel(rhs, x, y, &rhs_r, &rhs_g, &rhs_b, &rhs_a),
-             "pixel comparisons should read reference pixels");
-      if (lhs_r != rhs_r || lhs_g != rhs_g || lhs_b != rhs_b || lhs_a != rhs_a) {
-        ++differences;
-      }
-    }
-  }
-  return differences;
 }
 
 struct PixelFootprintComparison {

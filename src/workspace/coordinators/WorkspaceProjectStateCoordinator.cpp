@@ -256,19 +256,7 @@ void WorkspaceShell::ApplyForcedFileIndexRefresh(const std::filesystem::path& ro
     return;
   }
   context_.current_project_state.file_index.ReplaceScannedFiles(std::move(files), status);
-  context_.current_project_state.file_finder.InvalidateIndexCache();
-  // A changed file set makes cached project-search results stale; drop the cache
-  // marker so re-opening Search re-runs, and refresh live if Search/Finder is open.
-  context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
-  if (ActiveSidebarMode() == SidebarMode::Search &&
-      !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
-    RefreshProjectSearch();
-  }
-  if (context_.current_project_state.overlay.visible &&
-      context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
-    context_.current_project_state.file_finder.Refresh();
-  }
-  RequestWindowRedraw();
+  RefreshProjectFileViews();
 }
 
 void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {

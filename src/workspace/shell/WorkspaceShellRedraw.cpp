@@ -248,11 +248,26 @@ void WorkspaceShell::RequestChromeRedraw() {
 }
 
 void WorkspaceShell::RequestSidebarRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && context_.current_project_state.sidebar.visible) {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    RequestWindowRedraw();
+    return;
+  }
+  if (context_.current_project_state.sidebar.visible) {
     RequestRedrawRect(layout->sidebar);
     return;
   }
-  RequestWindowRedraw();
+  // Hidden, none of the sidebar is on screen. This used to fall back to the WHOLE
+  // WINDOW, so every automatic git refresh with the sidebar closed -- one per
+  // project-change batch while agents write the tree -- was a full frame
+  // (TD-2026-10-15-341). Two things did ride on that fallback, and keep a rect
+  // each: project search shown in the overlay instead of the sidebar, and the
+  // status bar, whose branch and counts are re-derived at frame prep and so need
+  // a frame to run in (the strip is the smallest one that gets it).
+  if (context_.current_project_state.overlay.visible) {
+    RequestOverlayRedraw();
+  }
+  RequestRedrawRect(layout->status_bar);
 }
 
 void WorkspaceShell::RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
@@ -1106,20 +1121,7 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     if (!index_metadata_pending) {
       return false;
     }
-    context_.current_project_state.directory_tree.Refresh();
-    context_.current_project_state.file_finder.InvalidateIndexCache();
-    // A changed file set makes cached project-search results stale (e.g. a match
-    // in a since-deleted file). Drop the cache marker so re-opening Search
-    // re-runs against the new file set, and refresh live if Search is active.
-    context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
-    if (ActiveSidebarMode() == SidebarMode::Search &&
-        !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
-      RefreshProjectSearch();
-    }
-    if (context_.current_project_state.overlay.visible &&
-        context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
-      context_.current_project_state.file_finder.Refresh();
-    }
+    RefreshProjectFileViews();
     return true;
   }
 
@@ -1208,14 +1210,11 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
         },
     };
   }
+  // The apply requests exactly the surfaces it changed; HandleScheduledWake merges
+  // them. A blanket full frame here repainted the window on every agent write
+  // (TD-2026-10-15-341).
   if (ReloadProjectIfFilesChanged(false)) {
-    return EventResult{
-        .handled = true,
-        .redraw = RenderInvalidation{
-            .full = true,
-            .rects = {},
-        },
-    };
+    return EventResult{.handled = true, .redraw = {}};
   }
   // Step the Chrome-like tab-slide animation. Capture the dirty strip before
   // advancing so the settle-end frame (which clears the state) still repaints

@@ -33,6 +33,7 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     ++context_.current_project_state.sidebar.git.repository_marker_generation;
     // Mark merge tabs stale in EVERY editor group, not just the focused split: a
     // merge tab in the other split must not keep rendering a pre-change index.
+    bool marked_merge_tab = false;
     for (EditorGroup& group : context_.current_project_state.editor_groups) {
       for (TabEntry& tab : group.open_tabs) {
         if (!tab.merge.has_value()) {
@@ -40,20 +41,24 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         }
         tab.merge->index_stale = true;
         tab.merge->marked_resolved = false;
+        marked_merge_tab = true;
       }
+    }
+    if (marked_merge_tab) {
+      RequestActiveTabRedraw();
+    }
+    // The git view reads the now-stale snapshot, and the status bar's branch is
+    // read from HEAD at frame prep -- which needs a frame to run in.
+    if (context_.current_project_state.sidebar.visible) {
+      RequestSidebarRedraw();
+    }
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      RequestRedrawRect(layout->status_bar);
     }
   }
 
   if (batch.tree_rescan_requested || !batch.file_changes.empty()) {
-    context_.current_project_state.directory_tree.Refresh();
-    context_.current_project_state.file_finder.InvalidateIndexCache();
-    if (context_.current_project_state.overlay.visible &&
-        context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
-      context_.current_project_state.file_finder.Refresh();
-    }
-    if (!context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
-      RefreshProjectSearch();
-    }
+    RefreshProjectFileViews();
   }
 
   std::set<std::filesystem::path> dirty_external_paths;
@@ -107,6 +112,8 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     // line ending, and save normalization, none of which affect the language
     // contract, so the O(tabs) filetype-detect + contract rebuild is skipped.
     ApplyEditorPreferencesToAllTabs(/*refresh_language_contracts=*/false);
+    // Indent width moves every visible guide and tab stop in every pane.
+    RequestActiveTabRedraw();
   }
 
   for (const std::filesystem::path& path : refresh_compare_paths) {
@@ -122,6 +129,9 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 
   if (batch.tree_rescan_requested) {
     if (batch.file_changes.empty()) {
+      // Any open buffer may reload and any compare/merge restage: that is the
+      // editor column, not the window (the sidebar is RefreshProjectFileViews').
+      RequestActiveTabRedraw();
       ReloadCleanOpenBuffersFromDisk();
       // Reconcile compare/merge tabs across EVERY editor group, not just the focused
       // one: a compare/merge tab open only in a background split must not keep a stale
@@ -166,6 +176,39 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   }
 }
 
+void WorkspaceShell::RefreshProjectFileViews() {
+  ProjectWorkspaceState& project = context_.current_project_state;
+  project.directory_tree.Refresh();
+  project.file_finder.InvalidateIndexCache();
+  const bool finder_open = project.overlay.visible && project.overlay.mode == OverlayMode::FileFinder;
+  if (finder_open) {
+    project.file_finder.Refresh();
+  }
+  // Cached project-search results are stale against a changed file set (a match
+  // in a since-deleted file). Dropping the marker makes the next showing of Search
+  // re-run it; it re-runs NOW only where it is on screen. A hidden search re-run
+  // per batch was a tree walk per agent write that nobody looked at.
+  ProjectSearchState& search = project.overlay.workflow.project_search;
+  search.searched_query.clear();
+  const bool search_shown =
+      (project.sidebar.visible && ActiveSidebarMode() == SidebarMode::Search) ||
+      (project.overlay.visible && project.overlay.mode == OverlayMode::ProjectSearch);
+  if (search_shown && !search.query.text().empty()) {
+    RefreshProjectSearch();
+  }
+  // What lists files is the sidebar (tree, search, Changed on Host) and the
+  // overlay (finder, search). Not the window: under agents writing the tree this
+  // was two full frames a second (TD-2026-10-15-341). A hidden surface needs no
+  // pixels -- RequestSidebarRedraw falls back to the WINDOW when the sidebar is
+  // hidden, which is the full frame again, so it is gated here.
+  if (project.sidebar.visible) {
+    RequestSidebarRedraw();
+  }
+  if (project.overlay.visible) {
+    RequestOverlayRedraw();
+  }
+}
+
 void WorkspaceShell::MarkCompareTabsStaleForPath(const std::filesystem::path& path) {
   const std::filesystem::path normalized_path = path.lexically_normal();
   // Scan every editor group: a compare tab in the non-focused split must also be
@@ -204,6 +247,9 @@ void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& pat
     if (MergeResultChangedOnDisk(*tab.merge)) {
       tab.merge->external_result_stale = true;
       tab.merge->marked_resolved = false;
+      // The stale-result banner and the resolved mark are on screen; the batch
+      // that got here no longer repaints the window for them (TD-2026-10-15-341).
+      RequestActiveTabRedraw();
     }
    }
   }

@@ -232,6 +232,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - Decoding semantic tokens is ~37 % faster than the previous build and ~20 % faster
   than 2.12.0: the integer read is inline on every JSON consumer's hot path again.
 
+- **Files changing on disk no longer repaint the whole window.** Each batch of
+  changes (an agent writing the tree, a build, a `git pull`) answered with a
+  full-window frame. It now repaints what lists files (the sidebar, an open finder)
+  and the pane of a file that reloaded; a change to a file nobody has open leaves
+  the editor alone. With the sidebar closed, the git refresh each batch triggers
+  no longer repaints the window either.
+
 ### Changed
 
 - The bottom panel's terminal tab, pane and panel logic moved from `WorkspaceShell`

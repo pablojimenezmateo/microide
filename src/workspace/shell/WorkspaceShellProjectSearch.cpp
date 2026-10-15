@@ -576,6 +576,7 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
       break;
   }
 
+  bool reloaded_open_view = false;
   for (const auto& change : outcome.written) {
     // Refresh every clean open view of the rewritten file across ALL editor groups.
     // A tab that became dirty AFTER the pre-dispatch snapshot is left alone (its
@@ -623,10 +624,12 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
           // The compare's editable side is a view of the same file; it takes the
           // one reopened document too (see RepointCompareRightSideToReloadedBuffer).
           RepointCompareRightSideToReloadedBuffer(*tab.compare, *reopened_view);
+          reloaded_open_view = true;
           continue;
         }
         auto& editor_state = *tab.editor_state;
         editor_state.viewport = *reopened_view;
+        reloaded_open_view = true;
         editor_state.restore.path = change.absolute_path;
         editor_state.restore.cursor_line = reopened_view->cursor_line();
         editor_state.restore.cursor_column = reopened_view->cursor_column();
@@ -659,18 +662,17 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
         },
     });
   }
-  if (!metadata_updates.changes.empty() &&
-      context_.current_project_state.file_index.ApplyBatch(metadata_updates)) {
-    file_index_has_pending_changes_.store(true, std::memory_order_release);
+  if (!metadata_updates.changes.empty()) {
+    (void)context_.current_project_state.file_index.ApplyBatch(metadata_updates);
   }
-  context_.current_project_state.directory_tree.Refresh();
-  context_.current_project_state.file_finder.InvalidateIndexCache();
-  if (context_.current_project_state.overlay.visible &&
-      context_.current_project_state.overlay.mode == OverlayMode::FileFinder) {
-    context_.current_project_state.file_finder.Refresh();
+  // Every pane that showed a rewritten file now shows the new text. Nothing else
+  // asked for those pixels: this used to ride on the full frame the file-event
+  // wake answered every reload with (TD-2026-10-15-341).
+  if (reloaded_open_view) {
+    RequestActiveTabRedraw();
   }
+  RefreshProjectFileViews();
   RequestAutomaticGitSidebarRefresh();
-  RefreshProjectSearch();
   if (outcome.failed_write_count > 0) {
     const std::size_t attempted = outcome.written.size() + outcome.failed_write_count;
     ps.error = "Replace-all wrote " + std::to_string(outcome.written.size()) + " of " +

@@ -77,18 +77,12 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     // the wakes-vs-file_index_apply_batch_calls ratio makes an over-eager watcher
     // visible without a debugger.
     util::AddPerformanceCounter(util::PerfCounterId::FileWatcherWakes);
-    const bool reloaded = operations_.reload_project_if_files_changed(false);
-    if (reloaded) {
-      return EventResult{
-          .handled = true,
-          .redraw = RenderInvalidation{
-              .full = true,
-              .rects = {},
-          },
-      };
-    }
-    // The event type matched, so it is ours and is consumed either way — a wake
-    // whose batch turned out to change nothing is still handled, not unhandled.
+    // The apply requests the surfaces it changed (the sidebar, an open file's
+    // pane), and `finish` collects them; it used to answer every applied batch
+    // with a full frame (TD-2026-10-15-341). The event type matched, so it is ours
+    // and is consumed either way — a wake whose batch turned out to change nothing
+    // is still handled, not unhandled.
+    (void)operations_.reload_project_if_files_changed(false);
     return finish(true);
   }
   if (operations_.project_search_handles_event(event.type)) {

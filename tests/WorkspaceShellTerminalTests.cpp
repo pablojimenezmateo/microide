@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 
 #include "TerminalSessionTestAccess.h"
@@ -51,55 +52,6 @@ int CountNonBackgroundPixels(SDL_Surface* surface,
     }
   }
   return count;
-}
-
-SDL_Rect InflateClipRect(const SDL_FRect& rect,
-                         microide::render::TextClipPadding padding,
-                         int width,
-                         int height) {
-  const int x0 =
-      std::max(0, static_cast<int>(std::floor(rect.x - padding.left)));
-  const int y0 =
-      std::max(0, static_cast<int>(std::floor(rect.y - padding.top)));
-  const int x1 = std::min(
-      width, static_cast<int>(std::ceil(rect.x + rect.w + padding.right)));
-  const int y1 = std::min(
-      height, static_cast<int>(std::ceil(rect.y + rect.h + padding.bottom)));
-  return SDL_Rect{
-      .x = x0,
-      .y = y0,
-      .w = std::max(0, x1 - x0),
-      .h = std::max(0, y1 - y0),
-  };
-}
-
-std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
-  Expect(lhs != nullptr && rhs != nullptr,
-         "surface comparisons should receive readable surfaces");
-  Expect(lhs->w == rhs->w && lhs->h == rhs->h,
-         "surface comparisons should use canvases with matching dimensions");
-
-  std::size_t differences = 0;
-  for (int y = 0; y < lhs->h; ++y) {
-    for (int x = 0; x < lhs->w; ++x) {
-      Uint8 lhs_r = 0;
-      Uint8 lhs_g = 0;
-      Uint8 lhs_b = 0;
-      Uint8 lhs_a = 0;
-      Uint8 rhs_r = 0;
-      Uint8 rhs_g = 0;
-      Uint8 rhs_b = 0;
-      Uint8 rhs_a = 0;
-      Expect(SDL_ReadSurfacePixel(lhs, x, y, &lhs_r, &lhs_g, &lhs_b, &lhs_a),
-             "surface comparisons should read actual pixels");
-      Expect(SDL_ReadSurfacePixel(rhs, x, y, &rhs_r, &rhs_g, &rhs_b, &rhs_a),
-             "surface comparisons should read reference pixels");
-      if (lhs_r != rhs_r || lhs_g != rhs_g || lhs_b != rhs_b || lhs_a != rhs_a) {
-        ++differences;
-      }
-    }
-  }
-  return differences;
 }
 
 SDL_Color ReadSurfacePixelOrThrow(SDL_Surface* surface, int x, int y) {

@@ -698,6 +698,9 @@
   bool ReloadPluginsIfPluginAssetsChanged(bool force_check);
   bool ReloadProjectIfFilesChanged(bool force_check);
   void ApplyProjectChangeBatch(const project::ProjectChangeBatch& batch);
+  // The file set under the root changed: the tree, the finder and project search
+  // re-read it, and only the surfaces that list files repaint (TD-2026-10-15-341).
+  void RefreshProjectFileViews();
   // The per-path half of an external change, shared by the immediate verdict and
   // the deferred one.
   void ApplyExternalFileChange(const std::filesystem::path& normalized_path,

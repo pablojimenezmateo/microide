@@ -200,8 +200,10 @@ What the workload found, each fixed with a regression test:
 - **Every host process paid a 50 ms poll**: the process table found exits by
   polling; a pidfd now wakes it (request to exit flushed in ~5 ms on the host).
 - **A full-window repaint per sync tick**: the remote service's blanket redraw is
-  gone (full frames under churn 306 → 199 a minute). The rest are the generic
-  project-change apply, which a local project written by agents pays the same.
+  gone (full frames under churn 306 → 199 a minute). The rest were the generic
+  project-change apply, which a local project written by agents paid the same;
+  it now repaints the sidebar and the panes of files that reloaded: 182 → 5
+  full frames a minute under the same 8 agents (TD-2026-10-15-341).
 
 Tuning constants (§ 13): the 250 ms coalesce window held; `remote.resync_threshold`
 was never built and is not needed -- a 4,708-file switch through watch deltas is
