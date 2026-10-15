@@ -578,6 +578,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     PrepareCommitBodyViewportForFrame(layout.sidebar);
   }
   prepared_frame_caret_visible_ = CaretVisibleNow();
+  prepared_frame_pointer_occluder_.reset();
+  if (last_mouse_position_valid_) {
+    // Later pieces paint over earlier ones (a submenu over its popup), so the last
+    // one under the pointer is the one it is over.
+    for (const SDL_FRect& piece : CurrentChromeRects()) {
+      if (Contains(piece, last_mouse_x_, last_mouse_y_)) {
+        prepared_frame_pointer_occluder_ = piece;
+      }
+    }
+    if (!prepared_frame_pointer_occluder_.has_value() && project_state.overlay.visible) {
+      const SDL_FRect card = ComputeOverlayRect(layout.overlay_anchor);
+      if (Contains(card, last_mouse_x_, last_mouse_y_)) {
+        prepared_frame_pointer_occluder_ = card;
+      }
+    }
+  }
   // The editor (and the compare/merge editable panes) paint the caret only while
   // the editor OWNS the blinking caret -- the condition under which the blink
   // repaint names the editor (CurrentCaretDirtyRect). Drawing it in another
@@ -1123,8 +1139,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       DrawButtonCentered(text_renderer_, renderer, theme_, rect, label, tone,
                          ButtonVisualState{
                              .enabled = true,
-                             .hovered = last_mouse_position_valid_ &&
-                                        Contains(rect, last_mouse_x_, last_mouse_y_),
+                             .hovered = PointerOver(rect),
                              .active = false,
                          });
     };

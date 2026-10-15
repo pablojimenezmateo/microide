@@ -1029,8 +1029,21 @@ void WorkspaceShell::ClearMouseHoverState() {
   cursor_kind_ = CursorKind::Default;
 }
 
+// Paint-time hover. A rect lights up when the pointer is over it AND it is not
+// covered there by a floating surface: with the pointer over an open menu, a
+// sidebar row beneath the menu used to paint its hover background through every
+// part of it the menu did not cover (found by the QA redraw verifier: the row's
+// left edge showed hover beside the popup on full frames only).
 bool WorkspaceShell::PointerOver(const SDL_FRect& rect) const {
-  return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
+  if (!last_mouse_position_valid_ || !Contains(rect, last_mouse_x_, last_mouse_y_)) {
+    return false;
+  }
+  if (!prepared_frame_pointer_occluder_.has_value()) {
+    return true;
+  }
+  const SDL_FRect& occluder = *prepared_frame_pointer_occluder_;
+  return rect.x >= occluder.x && rect.y >= occluder.y &&
+         rect.x + rect.w <= occluder.x + occluder.w && rect.y + rect.h <= occluder.y + occluder.h;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceLayout& layout,

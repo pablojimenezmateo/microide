@@ -20,8 +20,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                          SDL_Color hover_color) {
     DrawHoverableCloseGlyph(renderer, rect,
                             !context_.interaction_state.tab_drag.dragging &&
-                                last_mouse_position_valid_ &&
-                                Contains(rect, last_mouse_x_, last_mouse_y_),
+                                PointerOver(rect),
                             color, hover_color);
   };
   const StripTabPalette chrome_tab_palette{
@@ -38,8 +37,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // hover from that stale point — an auto-scrolled strip would otherwise light up
   // whichever tab drifted under it. VS Code drops tab hover during a drag too.
   const auto tab_hovered = [&](const SDL_FRect& rect) {
-    return !context_.interaction_state.tab_drag.dragging && last_mouse_position_valid_ &&
-           Contains(rect, last_mouse_x_, last_mouse_y_);
+    return !context_.interaction_state.tab_drag.dragging && PointerOver(rect);
   };
   // Chrome-like reorder: neighbor tabs render offset by the live slide animation,
   // and the dragged tab is lifted out of the flow (drawn as the floating ghost by
@@ -72,8 +70,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     if (menu == nullptr) {
       continue;
     }
-    const bool hovered = !item.active && last_mouse_position_valid_ &&
-                         Contains(item.rect, last_mouse_x_, last_mouse_y_);
+    const bool hovered = !item.active && PointerOver(item.rect);
     const SDL_Color background = item.active ? theme_.chrome_active
                                 : hovered    ? theme_.row_highlight
                                              : theme_.chrome_background;
@@ -89,8 +86,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value()) {
-    const bool hovered = last_mouse_position_valid_ &&
-                         Contains(*chevron, last_mouse_x_, last_mouse_y_);
+    const bool hovered = PointerOver(*chevron);
     const SDL_Color background = hovered ? theme_.row_highlight : theme_.chrome_background;
     const SDL_Color glyph = hovered ? theme_.text_primary : theme_.chrome_text_secondary;
     DrawFilledRect(renderer, *chevron, background);
@@ -170,14 +166,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
           tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible_project_tabs);
       DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.left_button,
                                  /*point_right=*/false, project_overflow.hidden_left,
-                                 last_mouse_position_valid_ &&
-                                     Contains(project_overflow.left_button, last_mouse_x_,
-                                              last_mouse_y_));
+                                 PointerOver(project_overflow.left_button));
       DrawTabStripOverflowButton(text_renderer_, renderer, theme_, project_overflow.right_button,
                                  /*point_right=*/true, project_overflow.hidden_right,
-                                 last_mouse_position_valid_ &&
-                                     Contains(project_overflow.right_button, last_mouse_x_,
-                                              last_mouse_y_));
+                                 PointerOver(project_overflow.right_button));
     }
     if (const TabDragState& drag = context_.interaction_state.tab_drag;
         drag.dragging && drag.kind == TabDragKind::Project) {
@@ -290,14 +282,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
           tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, visible_tabs);
       DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.left_button,
                                  /*point_right=*/false, tab_overflow.hidden_left,
-                                 last_mouse_position_valid_ &&
-                                     Contains(tab_overflow.left_button, last_mouse_x_,
-                                              last_mouse_y_));
+                                 PointerOver(tab_overflow.left_button));
       DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.right_button,
                                  /*point_right=*/true, tab_overflow.hidden_right,
-                                 last_mouse_position_valid_ &&
-                                     Contains(tab_overflow.right_button, last_mouse_x_,
-                                              last_mouse_y_));
+                                 PointerOver(tab_overflow.right_button));
       if (const TabDragState& drag = context_.interaction_state.tab_drag;
           drag.dragging && drag.kind == TabDragKind::Editor && gi == drag.target_group_index) {
         // The ghost tracks the pointer, so it paints over the strip the pointer is

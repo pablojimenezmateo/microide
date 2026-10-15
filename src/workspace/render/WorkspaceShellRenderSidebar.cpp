@@ -163,8 +163,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         text_renderer_, renderer, theme_, button_rect, label, tone,
         ButtonVisualState{
             .enabled = enabled,
-            .hovered = enabled && last_mouse_position_valid_ &&
-                       Contains(button_rect, last_mouse_x_, last_mouse_y_),
+            .hovered = enabled && PointerOver(button_rect),
             .active = false,
         });
   };
@@ -209,7 +208,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     const std::string_view tab_label =
         mode_row.icon_only || spec == nullptr ? std::string_view{} : spec->label;
     DrawModeTab(text_renderer_, renderer, theme_, tab.rect,
-                last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_),
+                PointerOver(tab.rect),
                 tab.id == active_view_id, tab_label,
                 [&](const SDL_FRect& icon_rect, SDL_Color color) {
                   draw_mode_glyph(tab.mode, icon_rect, color);
@@ -217,7 +216,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   }
   if (mode_row.has_overflow) {
     const bool hovered =
-        last_mouse_position_valid_ && Contains(mode_row.overflow_rect, last_mouse_x_, last_mouse_y_);
+        PointerOver(mode_row.overflow_rect);
     // Lit whenever the current view lives behind the overflow rather than in a tab
     // (Problems / Tests / Outline / any plugin view), so the rail always shows where
     // you are. Testing "is it a builtin view" instead of "is it one of the drawn
@@ -282,7 +281,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           text_renderer_, renderer, theme_, rect, label, ButtonTone::Neutral,
           ButtonVisualState{
               .enabled = true,
-              .hovered = last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+              .hovered = PointerOver(rect),
               .active = active,
           });
     };
@@ -405,9 +404,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
         ButtonTone::Neutral,
         ButtonVisualState{
             .enabled = true,
-            .hovered = last_mouse_position_valid_ &&
-                       Contains(git_sidebar_header::RefreshButtonRect(layout.sidebar), last_mouse_x_,
-                                last_mouse_y_),
+            .hovered = PointerOver(git_sidebar_header::RefreshButtonRect(layout.sidebar)),
             .active = false,
         });
 
@@ -424,8 +421,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           ButtonTone::Neutral,
           ButtonVisualState{
               .enabled = true,
-              .hovered = last_mouse_position_valid_ &&
-                         Contains(branch_rect, last_mouse_x_, last_mouse_y_),
+              .hovered = PointerOver(branch_rect),
               .active = false,
           });
       DrawButtonCentered(
@@ -436,7 +432,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           ButtonVisualState{
               .enabled = true,
               .hovered =
-                  last_mouse_position_valid_ && Contains(sync_rect, last_mouse_x_, last_mouse_y_),
+                  PointerOver(sync_rect),
               .active = false,
           });
     }
@@ -639,7 +635,7 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
           if (const auto button_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
               button_rect.has_value()) {
             const bool hovered =
-                last_mouse_position_valid_ && Contains(*button_rect, last_mouse_x_, last_mouse_y_);
+                PointerOver(*button_rect);
             DrawFilledRect(renderer, *button_rect,
                            outgoing_base_menu_open || hovered ? theme_.row_highlight
                                                               : theme_.surface_background);

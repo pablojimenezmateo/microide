@@ -63,8 +63,7 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
   // Clickable segments get a hover background so the pointer cursor (already returned by
   // CursorKindForPosition for these segments) is matched by a visible affordance.
   const auto draw_segment = [&](const StatusBarSegmentViewModel& seg, const SDL_FRect& row) {
-    const bool hovered = seg.clickable && last_mouse_position_valid_ &&
-                         Contains(row, last_mouse_x_, last_mouse_y_);
+    const bool hovered = seg.clickable && PointerOver(row);
     SDL_Color text_bg = theme_.chrome_background;
     if (hovered) {
       const SDL_FRect hover_rect = MakeRect(row.x - 4.0f, row.y, row.w + 8.0f, row.h);

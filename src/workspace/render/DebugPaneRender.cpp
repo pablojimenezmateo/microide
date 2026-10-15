@@ -77,7 +77,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
   for (int i = 0; i < mode_row.tab_count; ++i) {
     const DebugPaneModeTab& tab = mode_row.tabs[static_cast<std::size_t>(i)];
     DrawModeTab(text_renderer_, renderer, theme_, tab.rect,
-                last_mouse_position_valid_ && Contains(tab.rect, last_mouse_x_, last_mouse_y_),
+                PointerOver(tab.rect),
                 tab.mode == pane_vm.mode,
                 mode_row.icon_only ? std::string_view{} : tab.label,
                 [&](const SDL_FRect& icon_rect, SDL_Color color) {

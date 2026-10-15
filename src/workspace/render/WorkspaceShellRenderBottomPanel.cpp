@@ -79,7 +79,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
                                          SDL_Color color,
                                          SDL_Color hover_color) {
     DrawHoverableCloseGlyph(renderer, rect,
-                            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+                            PointerOver(rect),
                             color, hover_color);
   };
   const StripTabPalette panel_tab_palette{
@@ -367,24 +367,22 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
         text_renderer_, renderer, theme_, new_tab_rect, "", ButtonTone::Neutral,
         ButtonVisualState{
             .enabled = true,
-            .hovered = last_mouse_position_valid_ && Contains(new_tab_rect, last_mouse_x_, last_mouse_y_),
+            .hovered = PointerOver(new_tab_rect),
             .active = false,
         });
     DrawPlusGlyph(renderer, new_tab_rect,
-                  last_mouse_position_valid_ && Contains(new_tab_rect, last_mouse_x_, last_mouse_y_)
+                  PointerOver(new_tab_rect)
                       ? theme_.text_primary
                       : theme_.text_secondary);
     const TabStripOverflowControls& panel_overflow = panel_vm.tab_overflow;
     DrawTabStripOverflowButton(
         text_renderer_, renderer, theme_, panel_overflow.left_button, /*point_right=*/false,
         panel_overflow.hidden_left,
-        last_mouse_position_valid_ &&
-            Contains(panel_overflow.left_button, last_mouse_x_, last_mouse_y_));
+        PointerOver(panel_overflow.left_button));
     DrawTabStripOverflowButton(
         text_renderer_, renderer, theme_, panel_overflow.right_button, /*point_right=*/true,
         panel_overflow.hidden_right,
-        last_mouse_position_valid_ &&
-            Contains(panel_overflow.right_button, last_mouse_x_, last_mouse_y_));
+        PointerOver(panel_overflow.right_button));
     if (panel_vm.tab_drag.active) {
       DrawTabDragFeedback(text_renderer_, renderer, theme_, panel_header, visible_panel_tabs,
                           panel_vm.tab_drag.source_index,
@@ -422,7 +420,7 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     const SDL_FRect maximize_rect = tab_strip_service_.BottomPanelMaximizeButtonRect(
         layout_mode_service_.CurrentMode(), panel_header);
     const bool hovered =
-        last_mouse_position_valid_ && Contains(maximize_rect, last_mouse_x_, last_mouse_y_);
+        PointerOver(maximize_rect);
     DrawButtonCentered(text_renderer_, renderer, theme_, maximize_rect, "", ButtonTone::Neutral,
                        ButtonVisualState{.enabled = true, .hovered = hovered, .active = false});
     const SDL_Color glyph = hovered ? theme_.text_primary : theme_.text_secondary;

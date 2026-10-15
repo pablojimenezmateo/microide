@@ -1755,6 +1755,66 @@ void TestWorkspaceShellEscapeFromFindInFilesRepaintsTheField() {
                                  DescribePixelDiff(escape));
 }
 
+// A row under an open menu does not hover through it. The Edit menu drops over
+// the tree; with the pointer on one of its rows, the tree row beneath the pointer
+// painted its hover background wherever the menu did not cover it -- on full
+// frames only, since a hover move under a menu repaints just the popup rows. Found
+// by the QA redraw verifier (QA-STALE at the tree row's left edge, beside the menu).
+void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (const char* name : {"alpha.cpp", "beta.cpp", "gamma.cpp", "delta.cpp", "epsilon.cpp",
+                           "zeta.cpp", "eta.cpp", "theta.cpp"}) {
+    WriteFile(root / name, "int value = 1;\n");
+  }
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the menu hover fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const std::optional<SDL_FRect> edit = WorkspaceShellTestAccess::MenuBarItemRect(shell, WorkspaceShell::MenuId::Edit);
+  Expect(edit.has_value(), "the Edit menu should be on the menu bar");
+  const float bar_x = edit->x + edit->w / 2.0f;
+  const float bar_y = edit->y + edit->h / 2.0f;
+  const auto open = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(bar_x, bar_y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, bar_x, bar_y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, bar_x, bar_y)}),
+      pin_caret);
+  Expect(open.identical(), "opening the Edit menu should paint what a full repaint paints; " +
+                               DescribePixelDiff(open));
+
+  const std::optional<SDL_FRect> row =
+      WorkspaceShellTestAccess::PopupMenuItemRect(shell, WorkspaceShell::MenuId::Edit, "Paste");
+  Expect(row.has_value(), "the Edit menu should list Paste");
+  const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
+  // On the menu row, over the tree.
+  const float x = std::min(row->x + 40.0f, sidebar.x + sidebar.w - 10.0f);
+  const float y = row->y + row->h / 2.0f;
+  Expect(x > row->x && x < sidebar.x + sidebar.w, "the probe point should be over the menu and the tree");
+  const auto hover = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(x, y)}), pin_caret);
+  Expect(hover.identical(), "hovering a menu row over the tree should paint what a full repaint paints; " +
+                                DescribePixelDiff(hover));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4434,6 +4494,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/RowUnderAnOpenMenuDoesNotHoverThroughIt",
+          TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt);
   AddTest(tests, "WorkspaceShell/EscapeFromFindInFilesRepaintsTheField",
           TestWorkspaceShellEscapeFromFindInFilesRepaintsTheField);
   AddTest(tests, "WorkspaceShell/HoveringIntoAClickedMenuRepaintsItsFirstRow",

@@ -2187,6 +2187,10 @@
   // never the clock: two renders of one prepared frame (a partial frame and the
   // QA redraw verifier's full reference) must paint the same caret.
   bool prepared_frame_caret_visible_ = false;
+  // The floating surface (menu bar, open popup, submenu, context menu, quick-open
+  // card) the pointer is over this frame, if any: PointerOver lights up only what
+  // lies inside it, so a row under an open menu does not hover through it.
+  std::optional<SDL_FRect> prepared_frame_pointer_occluder_;
   std::uint64_t prepared_frame_id_ = 0;
   // Frame-scoped memo for the menu's LSP-readiness probe. Menu layout, each row's
   // label and each row's enablement all asked for readiness independently, and every
