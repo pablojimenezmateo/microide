@@ -800,6 +800,27 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     scene_texture_ready = scene_texture_.Ensure(renderer_, width, height);
   }
 
+  workspace::WorkspaceShell::FrameToken frame_token;
+  {
+    util::PerformanceTrace::Scope prepare_scope("Application::WorkspacePrepareFrame");
+    frame_token = workspace_shell_.PrepareFrameOnce(renderer_, width, height);
+  }
+  // Damage requested while PREPARING this frame belongs to this frame: preparing
+  // drains completions and settles state (a status-bar value that moved with the
+  // caret, a file read that landed), and painting that state without its rect
+  // left the old pixels up for a frame -- the status bar's Ln/Col trailed every
+  // caret move by one frame (found by the QA redraw verifier). A full frame covers
+  // it already.
+  if (const workspace::RenderInvalidation prepared =
+          workspace_shell_.ConsumePendingRenderInvalidation();
+      !dirty_rects.empty()) {
+    if (prepared.full) {
+      dirty_rects.clear();
+    } else {
+      dirty_rects.insert(dirty_rects.end(), prepared.rects.begin(), prepared.rects.end());
+    }
+  }
+
   const std::size_t dirty_rect_count = dirty_rects.size();
   const render::TextClipPadding clip_padding = workspace_shell_.PartialRedrawClipPadding();
   const DirtyRegionAnalysis dirty_region_analysis =
@@ -810,11 +831,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       scene_texture_.valid() && ShouldPromotePartialFrameToFull(dirty_region_analysis);
   const bool full_redraw = dirty_rects.empty() || !scene_texture_.valid() || promote_partial_to_full;
   std::size_t rendered_clip_count = 0;
-  workspace::WorkspaceShell::FrameToken frame_token;
-  {
-    util::PerformanceTrace::Scope prepare_scope("Application::WorkspacePrepareFrame");
-    frame_token = workspace_shell_.PrepareFrameOnce(renderer_, width, height);
-  }
 #if defined(__SANITIZE_ADDRESS__)
   SDL_assert(frame_token.valid() &&
              "Application::WorkspaceRenderClip requires PrepareFrameOnce() in current frame");

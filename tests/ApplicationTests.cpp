@@ -16,6 +16,7 @@
 #include "app/RedrawTraceAccumulator.h"
 #include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
 
@@ -51,6 +52,9 @@ struct ApplicationTestAccess {
                                std::vector<SDL_FRect> dirty_rects,
                                const char* reason) {
     application.Render(std::move(dirty_rects), reason);
+  }
+  static workspace::WorkspaceShell& Shell(app::Application& application) {
+    return application.workspace_shell_;
   }
   static app::RedrawVerifier& Verifier(app::Application& application) {
     return application.redraw_verifier_;
@@ -462,6 +466,48 @@ void TestRedrawVerifierReportsOnlyStaleFrames() {
   ApplicationTestAccess::Shutdown(application);
 }
 
+// Damage requested while preparing a frame is painted in that frame. Preparing
+// settles state the frame then paints -- the status bar's Ln/Col among it -- and
+// the status-bar rect it asked for used to land in the NEXT frame, so every caret
+// move showed the old position for a frame. Found by the QA redraw verifier
+// (QA-STALE over the Ln/Col segment after a click in the editor).
+void TestPrepareTimeDamageIsPaintedInItsFrame() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  HeadlessHomeGuard homes(temp_dir.path());
+
+  const std::filesystem::path project = temp_dir.path() / "project";
+  WriteFile(project / "alpha.cpp", "int value = 1;\nint other = 2;\n");
+  app::AppStartupOptions options = HeadlessStartupOptions();
+  options.project_path = project;
+
+  app::Application application(options);
+  Expect(ApplicationTestAccess::Initialize(application), "headless Initialize() should succeed");
+  workspace::WorkspaceShell& shell = ApplicationTestAccess::Shell(application);
+  workspace::WorkspaceShell::TestAccess::OpenSingleEditorTab(shell, project / "alpha.cpp");
+  app::RedrawVerifier& verifier = ApplicationTestAccess::Verifier(application);
+  verifier.Configure(true);
+  ApplicationTestAccess::Render(application);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  for (const SDL_Keycode key : {SDLK_DOWN, SDLK_RIGHT, SDLK_END}) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_KEY_DOWN;
+    event.key.key = key;
+    const auto result = ApplicationTestAccess::HandleEvent(application, event);
+    Expect(result.redraw.HasDamage() && !result.redraw.full,
+           "a caret move should ask for a partial repaint");
+    ApplicationTestAccess::RenderWithReason(
+        application, std::vector<SDL_FRect>(result.redraw.rects.begin(), result.redraw.rects.end()),
+        "caret-move");
+  }
+  Expect(verifier.verified_frame_count() == 3, "every caret move should be a verified partial frame");
+  Expect(verifier.stale_frame_count() == 0,
+         "a caret move should repaint the status bar in its own frame: " + verifier.last_report());
+
+  ApplicationTestAccess::Shutdown(application);
+}
+
 void TestStaleFrameReportFormat() {
   render::PixelDiffResult diff;
   diff.count = 7;
@@ -523,6 +569,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Application/RedrawVerifierReportsOnlyStaleFrames",
           TestRedrawVerifierReportsOnlyStaleFrames);
   AddTest(tests, "Application/StaleFrameReportFormat", TestStaleFrameReportFormat);
+  AddTest(tests, "Application/PrepareTimeDamageIsPaintedInItsFrame",
+          TestPrepareTimeDamageIsPaintedInItsFrame);
   AddTest(tests, "Application/PresentationCacheReusedWhenUiScaleMatches",
           TestPresentationCacheReusedWhenUiScaleMatches);
   AddTest(tests, "Application/PresentationCacheInvalidatedWhenUiScaleChanges",

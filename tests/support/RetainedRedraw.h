@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 #include <initializer_list>
 
 #include "TestSupport.h"
@@ -83,8 +84,9 @@ inline std::size_t CountPixelDifferences(const SoftwareCanvas& lhs, const Softwa
 // (Application::RenderFrame): a full frame for `full`, otherwise one pass per
 // rect under its clip WITH that clip as the dirty hint -- the hint is what lets
 // RenderClip skip whole surfaces, and skipping the wrong one is a class of stale
-// pixel only a hinted pass can show -- and NOTHING when it asks for nothing: an
-// empty invalidation is a frame the app does not draw.
+// pixel only a hinted pass can show -- plus whatever preparing the frame asked
+// for, and NOTHING when it asks for nothing: an empty invalidation is a frame the
+// app does not draw.
 inline void PaintInvalidation(workspace::WorkspaceShell& shell,
                               SoftwareCanvas& canvas,
                               int width,
@@ -99,7 +101,16 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
   }
   const workspace::WorkspaceShell::FrameToken token =
       shell.PrepareFrameOnce(canvas.renderer(), width, height);
-  for (const SDL_FRect& rect : redraw.rects) {
+  // Damage requested while preparing the frame is painted in it, as
+  // Application::Render does.
+  const workspace::RenderInvalidation prepared = shell.ConsumePendingRenderInvalidation();
+  if (prepared.full) {
+    shell.RenderClip(token, canvas.renderer(), width, height);
+    return;
+  }
+  std::vector<SDL_FRect> rects(redraw.rects.begin(), redraw.rects.end());
+  rects.insert(rects.end(), prepared.rects.begin(), prepared.rects.end());
+  for (const SDL_FRect& rect : rects) {
     const SDL_Rect clip = InflateClipRect(rect, shell.PartialRedrawClipPadding(), width, height);
     if (clip.w <= 0 || clip.h <= 0) {
       continue;
