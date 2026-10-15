@@ -162,23 +162,31 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
   return operations_.execute_action(item.action, args, ActionSource::Menu);
 }
 
+// Left/Right walk the menu BAR, as in VS Code. It used to walk every menu spec,
+// so Right from Help opened a context menu at the bar, and Right in the sidebar's
+// views menu (anchored on its button) switched to the git base menu with the
+// button still painted pressed (found by the QA monkey). A menu that opened
+// anchored on a button or a click has no neighbours: the arrows do nothing there.
 bool MenuCoordinator::SwitchMenuBarMenu(int delta) {
-  const auto menus = WorkspaceMenuSpecs();
-  if (menus.empty() || menu_state_.active_menu_id == MenuId::None || delta == 0) {
+  if (menu_state_.active_menu_id == MenuId::None || delta == 0 ||
+      menu_state_.active_menu_anchor_rect.has_value() ||
+      !IsMenuBarTopLevelMenu(menu_state_.active_menu_id)) {
     return false;
   }
-
-  auto current_it = std::find_if(
-      menus.begin(), menus.end(),
-      [this](const MenuSpec& spec) { return spec.id == menu_state_.active_menu_id; });
-  if (current_it == menus.end()) {
+  util::InlineVector<MenuId, kMaxMenuBarItems> bar;
+  for (const MenuSpec& spec : WorkspaceMenuSpecs()) {
+    if (IsMenuBarTopLevelMenu(spec.id)) {
+      bar.push_back(spec.id);
+    }
+  }
+  const auto current = std::find(bar.begin(), bar.end(), menu_state_.active_menu_id);
+  if (current == bar.end()) {
     return false;
   }
-
-  const int current_index = static_cast<int>(std::distance(menus.begin(), current_it));
+  const int count = static_cast<int>(bar.size());
   const int next_index =
-      (current_index + delta + static_cast<int>(menus.size())) % static_cast<int>(menus.size());
-  OpenMenuBarMenu(menus[static_cast<std::size_t>(next_index)].id);
+      (static_cast<int>(std::distance(bar.begin(), current)) + delta % count + count) % count;
+  OpenMenuBarMenu(bar[static_cast<std::size_t>(next_index)]);
   return true;
 }
 

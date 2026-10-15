@@ -15,13 +15,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuIte
 
 namespace {
 
-bool IsMenuBarTopLevelMenu(MenuId id) {
-  return id != MenuId::SidebarMode && id != MenuId::GitOutgoingBase &&
-         id != MenuId::EditorContext && id != MenuId::EditorTabContext &&
-         id != MenuId::TerminalContext && id != MenuId::TerminalTabContext &&
-         id != MenuId::ProjectTabContext;
-}
-
 }  // namespace
 
 bool WorkspaceShell::IsMenuBarMenuVisible(MenuId id) const {

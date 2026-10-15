@@ -95,6 +95,15 @@ inline constexpr std::size_t kMaxMenuBarItems = 24;
 // ComputeVisibleWindowControlButtons.
 inline constexpr std::size_t kWindowControlButtonCount = 3;
 
+// Whether a menu lives on the menu bar, as opposed to opening anchored on a button
+// or a click (the sidebar's views menu, the git base menu, the context menus).
+constexpr bool IsMenuBarTopLevelMenu(MenuId id) {
+  return id != MenuId::SidebarMode && id != MenuId::GitOutgoingBase &&
+         id != MenuId::EditorContext && id != MenuId::EditorTabContext &&
+         id != MenuId::TerminalContext && id != MenuId::TerminalTabContext &&
+         id != MenuId::ProjectTabContext && id != MenuId::None;
+}
+
 // One laid-out menu-bar entry. Menu vocabulary rather than shell state: the
 // registry owns MenuId and the cap the container below is sized from, and the
 // shell aliases both.

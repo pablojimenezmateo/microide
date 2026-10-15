@@ -2218,6 +2218,49 @@ void TestWorkspaceShellAModalReleasesAHoveredWindowControl() {
                                 DescribePixelDiff(modal));
 }
 
+// Left/Right walk the menu BAR. They walked every menu spec, so Right from Help
+// opened a context menu at the bar, and Right in the sidebar's views menu (anchored
+// on its button) switched to the git base menu with the button still painted
+// pressed. An anchored menu has no neighbours. Found by the QA monkey (seed 2).
+void TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the menu fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+
+  const std::optional<SDL_FRect> help = WorkspaceShellTestAccess::MenuBarItemRect(shell, WorkspaceShell::MenuId::Help);
+  Expect(help.has_value(), "Help should be on the menu bar");
+  (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, help->x + 4.0f, help->y + 4.0f),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, help->x + 4.0f, help->y + 4.0f)});
+  Expect(WorkspaceShellTestAccess::ActiveMenuId(shell) == WorkspaceShell::MenuId::Help, "Help should open");
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_RIGHT)});
+  Expect(WorkspaceShellTestAccess::ActiveMenuId(shell) == WorkspaceShell::MenuId::File,
+         "Right from the last bar menu should wrap to File");
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_LEFT)});
+  Expect(WorkspaceShellTestAccess::ActiveMenuId(shell) == WorkspaceShell::MenuId::Help,
+         "Left from File should wrap to the last bar menu");
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_ESCAPE)});
+
+  const SDL_FRect more = WorkspaceShellTestAccess::SidebarModeOverflowRect(shell);
+  Expect(more.w > 0.0f, "the sidebar should show its more-views button");
+  (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, more.x + 4.0f, more.y + 4.0f),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, more.x + 4.0f, more.y + 4.0f)});
+  Expect(WorkspaceShellTestAccess::ActiveMenuId(shell) == WorkspaceShell::MenuId::SidebarMode,
+         "the more-views button should open the views menu");
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_RIGHT)});
+  Expect(WorkspaceShellTestAccess::ActiveMenuId(shell) == WorkspaceShell::MenuId::SidebarMode,
+         "Right in an anchored menu should stay in it");
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4939,6 +4982,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/MenuArrowsWalkOnlyTheMenuBar",
+          TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar);
   AddTest(tests, "WorkspaceShell/AModalReleasesAHoveredWindowControl",
           TestWorkspaceShellAModalReleasesAHoveredWindowControl);
   AddTest(tests, "WorkspaceShell/ClosingAnAnchoredMenuReleasesItsButton",
