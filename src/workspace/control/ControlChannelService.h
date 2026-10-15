@@ -9,6 +9,7 @@
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
 #include "workspace/control/ControlUiQuery.h"
+#include "workspace/registries/WorkspaceKeybindingRegistry.h"
 #include "workspace/services/NotificationService.h"
 
 namespace microide::workspace {
@@ -98,6 +99,9 @@ class ControlChannelService {
     // nullopt for a local root. Null in tests that do not exercise it.
     std::function<std::optional<ControlRemoteProjectInfo>(const std::filesystem::path& root)>
         remote_project;
+    // The resolved keybindings, for the `keybindings` query. Null in tests that do
+    // not exercise it (the query then answers an empty list).
+    std::function<const std::vector<ResolvedKeybinding>&()> keybindings;
     // The on-screen element geometry for the `ui` query. Unset sources report
     // nothing (tests that do not exercise it).
     ControlUiQuery::Operations ui;
@@ -171,6 +175,7 @@ class ControlChannelService {
   util::JsonValue BuildExceptionFilters() const;
   util::JsonValue BuildTabs() const;
   util::JsonValue BuildNotifications() const;
+  util::JsonValue BuildKeybindings() const;
   // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
   // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;

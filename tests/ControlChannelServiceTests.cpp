@@ -877,6 +877,11 @@ void TestNotificationsQueryListsActions() {
 
   microide::workspace::WorkspaceContext context;
   context.current_project_state.root = "/tmp/proj";
+  std::vector<microide::workspace::ResolvedKeybinding> bindings(1);
+  bindings[0].id = "project-search";
+  bindings[0].key = SDLK_F;
+  bindings[0].modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+  bindings[0].skips_terminal = true;
   microide::workspace::ControlChannelService service;
   service.Configure(context,
                     microide::workspace::ControlChannelService::Operations{
@@ -886,6 +891,9 @@ void TestNotificationsQueryListsActions() {
                                   .ok = true};
                             },
                         .notifications = &notifications,
+                        .keybindings = [&]() -> const std::vector<microide::workspace::ResolvedKeybinding>& {
+                          return bindings;
+                        },
                     });
   service.SetWakeChannel(0);
   Expect(service.Start("/tmp/proj"), "control service should start");
@@ -915,6 +923,18 @@ void TestNotificationsQueryListsActions() {
              actions.AsArray()[0]["command"].AsString() == "goto" &&
              actions.AsArray()[0]["args"].AsArray().at(0).AsString() == "3",
          "each button is reported with its label, command and arguments");
+
+  // `--query keybindings` is what a QA driver presses: the chord as the menus
+  // spell it and where the registration says it is active.
+  const auto keys = util::ParseJson(ExchangeLine(service, fd, R"({"id":2,"query":"keybindings"})"));
+  Expect(keys.has_value() && (*keys)["ok"].AsBool(), "the keybindings query succeeds");
+  const util::JsonValue& key_rows = (*keys)["result"];
+  Expect(key_rows.IsArray() && key_rows.AsArray().size() == 1 &&
+             key_rows.AsArray()[0]["id"].AsString() == "project-search" &&
+             key_rows.AsArray()[0]["chord"].AsString() == "Ctrl+Shift+F" &&
+             key_rows.AsArray()[0]["context"].AsString() == "global" &&
+             key_rows.AsArray()[0]["skipsTerminal"].AsBool(),
+         "each binding is reported with its id, chord, context and terminal skip");
 
   ::close(fd);
   service.Stop();

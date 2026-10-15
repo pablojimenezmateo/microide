@@ -462,6 +462,9 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "notifications") {
     return BuildNotifications();
   }
+  if (verb == "keybindings") {
+    return BuildKeybindings();
+  }
   if (verb == "ui") {
     return context_ == nullptr ? util::JsonValue(util::JsonObject{})
                                : ControlUiQuery::Build(*context_, operations_.ui);
@@ -749,6 +752,38 @@ util::JsonValue ControlChannelService::BuildCommands() const {
     commands.push_back(util::JsonValue(std::move(object)));
   }
   return util::JsonValue(std::move(commands));
+}
+
+// Every resolved keybinding, in dispatch order: what a driver presses, and where
+// the registration says it is active (KeybindingContext; a Global binding is
+// active everywhere but a focused terminal unless it skips the shell).
+util::JsonValue ControlChannelService::BuildKeybindings() const {
+  util::JsonArray rows;
+  if (!operations_.keybindings) {
+    return util::JsonValue(std::move(rows));
+  }
+  const auto context_name = [](KeybindingContext context) {
+    switch (context) {
+      case KeybindingContext::Editor: return "editor";
+      case KeybindingContext::Sidebar: return "sidebar";
+      case KeybindingContext::Terminal: return "terminal";
+      case KeybindingContext::Global: break;
+    }
+    return "global";
+  };
+  for (const ResolvedKeybinding& binding : operations_.keybindings()) {
+    if (rows.size() >= kMaxControlQueryEntries) {
+      break;
+    }
+    util::JsonObject object;
+    object["id"] = util::JsonValue(binding.id);
+    object["chord"] = util::JsonValue(FormatKeyChord(binding.key, binding.modifiers));
+    object["context"] = util::JsonValue(context_name(binding.context));
+    object["skipsTerminal"] = util::JsonValue(binding.skips_terminal);
+    object["plugin"] = util::JsonValue(binding.from_plugin);
+    rows.push_back(util::JsonValue(std::move(object)));
+  }
+  return util::JsonValue(std::move(rows));
 }
 
 util::JsonValue ControlChannelService::BuildNotifications() const {

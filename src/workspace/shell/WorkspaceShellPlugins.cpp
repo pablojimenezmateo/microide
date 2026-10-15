@@ -399,6 +399,9 @@ WorkspaceShell::WorkspaceShell() {
                     .held_deletes = count(sync.held_deletes),
                 };
               },
+          .keybindings = [this]() -> const std::vector<ResolvedKeybinding>& {
+            return ResolvedKeybindings();
+          },
           .ui = MakeControlUiOperations(),
       });
   assist_service_.Configure(

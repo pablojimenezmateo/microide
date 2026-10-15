@@ -161,7 +161,14 @@ Newline-delimited JSON, one object per line.
 
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
-`editor`, `commands`, `terminals`, `terminal-output`, `notifications`, `ui`.
+`editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
+`keybindings`, `ui`.
+
+**Keybindings.** `keybindings` lists the resolved bindings in dispatch order:
+`{id, chord, context, skipsTerminal, plugin}`, `chord` spelled as the menus show it
+(`Ctrl+Shift+F`), `context` one of `global`, `editor`, `sidebar`, `terminal`. A
+`global` binding is active everywhere but a focused terminal, and there too when
+`skipsTerminal`.
 
 **What is on screen (`ui`).** The locator surface for automation (`tools/qa`):
 `{window:{width,height}, focus, sidebar:{visible,view,temporary},
