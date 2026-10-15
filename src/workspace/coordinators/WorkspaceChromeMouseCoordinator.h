@@ -91,8 +91,19 @@ class ChromeMouseCoordinator {
                    int horizontal_ticks);
 
  private:
+  // A popup's highlighted rows: under the pointer, and the active (keyboard) item.
+  struct PopupRowPair {
+    int hovered = -1;
+    int active = -1;
+  };
+
   bool HandleMenuButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleMenuMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  void RedrawChangedPopupRows(MenuId menu_id,
+                              const SDL_FRect& popup_rect,
+                              PopupRowPair previous,
+                              PopupRowPair current,
+                              const SDL_FRect& hovered_rect);
   // Tracks the hovered overflow row into `overflow_popup_active_index` so the
   // render path highlights from state rather than from the live pointer, and
   // the keyboard and the mouse cannot select two different rows.

@@ -302,6 +302,31 @@ bool ChromeMouseCoordinator::HandleMenuOverflowPopupMotion(const SDL_Event& even
   return row.has_value();
 }
 
+// A popup row is painted highlighted when it is the ACTIVE item (the keyboard's,
+// which a menu opened from the bar starts on) and tracked for hover separately, so
+// a hover change repaints every row that was or is either one. Repainting only the
+// previously HOVERED row left the first row highlighted beside the hovered one when
+// the pointer entered a freshly opened menu (found by the QA redraw verifier).
+void ChromeMouseCoordinator::RedrawChangedPopupRows(MenuId menu_id,
+                                                    const SDL_FRect& popup_rect,
+                                                    PopupRowPair previous,
+                                                    PopupRowPair current,
+                                                    const SDL_FRect& hovered_rect) {
+  if (previous.hovered == current.hovered && previous.active == current.active) {
+    return;
+  }
+  for (const int index : {previous.hovered, previous.active}) {
+    if (index >= 0 && index != current.hovered) {
+      RequestMenuHoverRowRedraw(
+          operations_.request_redraw_rect,
+          operations_.popup_row_rect_by_index(menu_id, popup_rect, static_cast<std::size_t>(index)));
+    }
+  }
+  if (current.hovered >= 0) {
+    RequestMenuHoverRowRedraw(operations_.request_redraw_rect, hovered_rect);
+  }
+}
+
 bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
                                               const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("ChromeMouseCoordinator::HandleMenuMotion");
@@ -326,6 +351,7 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
   if (const auto submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
       submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
     const int previous_hovered_index = menu_state_.hovered_submenu_row_index;
+    const int previous_active_index = menu_state_.active_submenu_item_index;
     const auto hit = operations_.hit_test_popup_row(menu_state_.active_submenu_id, *submenu_rect,
                                                      event.motion.x, event.motion.y);
     int hovered_index = -1;
@@ -341,17 +367,9 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     }
     menu_state_.active_submenu_item_index = hovered_enabled ? hovered_index : -1;
     menu_state_.hovered_submenu_row_index = hovered_index;
-    if (hovered_index != previous_hovered_index) {
-      if (previous_hovered_index >= 0) {
-        RequestMenuHoverRowRedraw(
-            operations_.request_redraw_rect,
-            operations_.popup_row_rect_by_index(menu_state_.active_submenu_id, *submenu_rect,
-                                                static_cast<std::size_t>(previous_hovered_index)));
-      }
-      if (hovered_index >= 0) {
-        RequestMenuHoverRowRedraw(operations_.request_redraw_rect, hovered_rect);
-      }
-    }
+    RedrawChangedPopupRows(menu_state_.active_submenu_id, *submenu_rect,
+                           {previous_hovered_index, previous_active_index},
+                           {hovered_index, menu_state_.active_submenu_item_index}, hovered_rect);
     return true;
   }
 
@@ -359,6 +377,7 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
           operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
     const int previous_hovered_index = menu_state_.hovered_popup_row_index;
+    const int previous_active_index = menu_state_.active_menu_item_index;
     const MenuId previous_submenu_id = menu_state_.active_submenu_id;
     const auto previous_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
     const auto hit = operations_.hit_test_popup_row(menu_state_.active_menu_id, *popup_rect,
@@ -397,17 +416,9 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     }
     menu_state_.active_menu_item_index = hovered_enabled ? hovered_index : -1;
     menu_state_.hovered_popup_row_index = hovered_index;
-    if (hovered_index != previous_hovered_index) {
-      if (previous_hovered_index >= 0) {
-        RequestMenuHoverRowRedraw(
-            operations_.request_redraw_rect,
-            operations_.popup_row_rect_by_index(menu_state_.active_menu_id, *popup_rect,
-                                                static_cast<std::size_t>(previous_hovered_index)));
-      }
-      if (hovered_index >= 0) {
-        RequestMenuHoverRowRedraw(operations_.request_redraw_rect, hovered_rect);
-      }
-    }
+    RedrawChangedPopupRows(menu_state_.active_menu_id, *popup_rect,
+                           {previous_hovered_index, previous_active_index},
+                           {hovered_index, menu_state_.active_menu_item_index}, hovered_rect);
     const auto current_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
     if (previous_submenu_id != menu_state_.active_submenu_id ||
         !OptionalRectsEqual(previous_submenu_rect, current_submenu_rect)) {

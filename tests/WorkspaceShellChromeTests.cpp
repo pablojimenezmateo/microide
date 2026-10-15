@@ -1668,6 +1668,70 @@ void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
              std::to_string(differences) + " pixels differ");
 }
 
+// A menu opened from the bar starts with its first enabled row as the ACTIVE
+// (keyboard) item, painted highlighted. The pointer entering another row repainted
+// the previously HOVERED row (none) and the new one, so the first row stayed
+// highlighted beside the hovered one. Found by the QA redraw verifier.
+void TestWorkspaceShellHoveringIntoAClickedMenuRepaintsItsFirstRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the menu hover fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+
+  const std::optional<SDL_FRect> file_item =
+      WorkspaceShellTestAccess::MenuBarItemRect(shell, WorkspaceShell::MenuId::File);
+  Expect(file_item.has_value(), "the File menu should be on the menu bar");
+  const float bar_x = file_item->x + file_item->w / 2.0f;
+  const float bar_y = file_item->y + file_item->h / 2.0f;
+  microide::workspace::RenderInvalidation invalidation;
+  for (const SDL_Event& event :
+       {MouseMotionEvent(bar_x, bar_y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, bar_x, bar_y),
+        MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, bar_x, bar_y)}) {
+    invalidation.Merge(shell.HandleEvent(event).redraw);
+  }
+  invalidation.Merge(WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
+  pin_caret();
+  PaintInvalidation(shell, canvas, kWidth, kHeight, invalidation);
+
+  const std::optional<SDL_FRect> second_row = WorkspaceShellTestAccess::PopupMenuItemRect(
+      shell, WorkspaceShell::MenuId::File, "Open File\u2026");
+  Expect(second_row.has_value(), "the File menu should list Open File");
+  invalidation = {};
+  invalidation.Merge(
+      shell.HandleEvent(MouseMotionEvent(second_row->x + 20.0f, second_row->y + second_row->h / 2.0f))
+          .redraw);
+  invalidation.Merge(WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
+  pin_caret();
+  PaintInvalidation(shell, canvas, kWidth, kHeight, invalidation);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differences = CountPixelDifferences(retained, canvas.surface());
+  SDL_DestroySurface(retained);
+  Expect(differences == 0, "hovering into a clicked menu should paint what a full repaint paints; " +
+                               std::to_string(differences) + " pixels differ");
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4347,6 +4411,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/HoveringIntoAClickedMenuRepaintsItsFirstRow",
+          TestWorkspaceShellHoveringIntoAClickedMenuRepaintsItsFirstRow);
   AddTest(tests, "WorkspaceShell/OpeningAMenuByClickKeepsTheSidebar",
           TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar);
   AddTest(tests, "WorkspaceShell/SecondarySidebarsDoNotPaintTheFileTree",
