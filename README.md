@@ -683,6 +683,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `command-palette`
 - `focus-notifications`
 - `notification-action <row-key|row-index> <action-label|action-index>`
+- `banner-action <Compare|Reload|Overwrite|Keep|Retry>`
 - `show-output <channel-id>`
 - `remote-open [[user@]host[:port]:/path]`
 - `remote-resolve <path> <mine|host|compare|merge>`
