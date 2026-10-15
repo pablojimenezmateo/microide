@@ -27,6 +27,7 @@ KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state, PromptSta
 
 bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   key_damage_mark_ = operations_.damage_generation();
+  dispatch_probe_.last = nullptr;
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
 
@@ -204,102 +205,6 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     EnsureRedraw([this]() { operations_.request_focused_editor_redraw(); });
   }
   return handled;
-}
-
-bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
-                                              SDL_Keymod modifiers,
-                                              bool active_compare_tab,
-                                              bool active_merge_tab) {
-  if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
-    const bool surface_accepts_paste =
-        (state_.overlay.visible &&
-         (state_.overlay.mode == OverlayMode::FileFinder ||
-          state_.overlay.mode == OverlayMode::CommitPicker ||
-          state_.overlay.mode == OverlayMode::LaunchConfigPicker ||
-          state_.overlay.mode == OverlayMode::CommandPalette ||
-          state_.overlay.mode == OverlayMode::BufferSearch ||
-          state_.overlay.mode == OverlayMode::BufferReplace ||
-          state_.overlay.mode == OverlayMode::ProjectSearch)) ||
-        (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
-         operations_.active_sidebar_mode() == SidebarMode::Search &&
-         state_.overlay.workflow.project_search.editing) ||
-        (state_.surface.focus == FocusTarget::Sidebar && state_.sidebar.visible &&
-         operations_.active_sidebar_mode() == SidebarMode::Git &&
-         state_.sidebar.git.commit_workflow.open &&
-         state_.sidebar.git.commit_workflow.focus_field == CommitWorkflowFocusField::Subject);
-    if (surface_accepts_paste) {
-      return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
-    }
-  }
-
-  const TextInputSurface text_input_surface = operations_.current_text_input_surface();
-  const bool single_line_text_surface = IsSingleLineTextInputSurface(text_input_surface);
-  if (single_line_text_surface && (modifiers & SDL_KMOD_CTRL) != 0) {
-    switch (event.key) {
-      case SDLK_A:
-        return operations_.execute_action(ActionId::SelectAll, {}, ActionSource::Shortcut);
-      case SDLK_C:
-        return operations_.execute_action(ActionId::CopySelection, {}, ActionSource::Shortcut);
-      case SDLK_X:
-        return operations_.execute_action(ActionId::CutSelection, {}, ActionSource::Shortcut);
-      default:
-        break;
-    }
-  }
-
-  const auto& bindings = operations_.resolved_keybindings();
-  const KeybindingContext key_ctx = ActiveKeybindingContext();
-  if (const std::optional<bool> chord = HandleCtrlKChord(event, modifiers, key_ctx);
-      chord.has_value()) {
-    return *chord;
-  }
-
-  const ResolvedKeybinding* binding = FindKeybinding(bindings, event.key, modifiers, key_ctx);
-  if (binding == nullptr) {
-    return false;
-  }
-
-  // Text shortcuts that act on the focused editor's buffer, whatever context a
-  // user's keybindings file gives them. Workbench commands (close tab, find in
-  // files) are not here: listing them made a Global rebinding of Ctrl+W or
-  // Ctrl+Shift+F still dead outside the editor.
-  const bool editor_shortcut =
-      binding->action == ActionId::SelectAll || binding->action == ActionId::Undo ||
-      binding->action == ActionId::Redo || binding->action == ActionId::CopySelection ||
-      binding->action == ActionId::CutSelection || binding->action == ActionId::PasteClipboard ||
-      binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer;
-
-  if (binding->action == ActionId::Tab && binding->args.empty() &&
-      binding->command_name.empty() && state_.overlay.visible) {
-    return false;
-  }
-
-  // The find/replace widget is non-modal: while it floats and the editor holds
-  // focus, editor shortcuts (Ctrl+F to re-focus the widget, Undo, Copy, …) must
-  // still fire. Only a genuinely modal overlay blocks them.
-  const bool modal_overlay_visible = state_.overlay.visible &&
-                                     state_.overlay.mode != OverlayMode::BufferSearch &&
-                                     state_.overlay.mode != OverlayMode::BufferReplace;
-  if (editor_shortcut &&
-      (modal_overlay_visible || state_.surface.focus != FocusTarget::Editor)) {
-    return false;
-  }
-  if ((binding->action == ActionId::Search || binding->action == ActionId::ReplaceInBuffer) &&
-      active_merge_tab) {
-    return false;
-  }
-  if (binding->action == ActionId::SelectAll &&
-      operations_.active_navigable_viewport() == nullptr) {
-    return false;
-  }
-  if (binding->action == ActionId::Save && active_compare_tab) {
-    return false;
-  }
-  if (!binding->command_name.empty() && state_.overlay.visible) {
-    return false;
-  }
-
-  return DispatchResolvedKeybinding(*binding, ActionSource::Shortcut);
 }
 
 bool KeyInputCoordinator::HandleDebugVariablesKeyDown(const SDL_KeyboardEvent& event,
@@ -520,31 +425,6 @@ bool KeyInputCoordinator::HandleDebugWatchKeyDown(const SDL_KeyboardEvent& event
     default:
       return false;
   }
-}
-
-KeybindingContext KeyInputCoordinator::ActiveKeybindingContext() const {
-  switch (state_.surface.focus) {
-    case FocusTarget::Editor:
-      return KeybindingContext::Editor;
-    case FocusTarget::Sidebar:
-      return KeybindingContext::Sidebar;
-    case FocusTarget::Panel:
-      return state_.panel.content == PanelContentKind::Terminal &&
-                     operations_.active_terminal_pane() != nullptr
-                 ? KeybindingContext::Terminal
-                 : KeybindingContext::Global;
-    case FocusTarget::Overlay:
-    default:
-      return KeybindingContext::Global;
-  }
-}
-
-bool KeyInputCoordinator::DispatchResolvedKeybinding(const ResolvedKeybinding& binding,
-                                                     ActionSource source) {
-  if (!binding.command_name.empty()) {
-    return operations_.execute_command_name(binding.command_name, binding.args, source);
-  }
-  return operations_.execute_action(binding.action, binding.args, source);
 }
 
 bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event,

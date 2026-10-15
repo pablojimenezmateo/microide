@@ -1090,6 +1090,9 @@
   static void SetFocusEditor(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Editor;
   }
+  static void SetPanelContentTerminal(WorkspaceShell& shell) {
+    shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::Terminal;
+  }
   static void SetFocusPanel(WorkspaceShell& shell) {
     shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Panel;
   }
@@ -1211,6 +1214,13 @@
   // The control channel's `ui` query, answered exactly as the channel answers it.
   static util::JsonValue ControlUi(WorkspaceShell& shell) {
     return ControlUiQuery::Build(shell.context_, shell.MakeControlUiOperations());
+  }
+  // The keybinding reachability matrix (tests/KeybindingReachabilityTests.cpp).
+  static KeyInputCoordinator::DispatchProbe& KeyDispatchProbe(WorkspaceShell& shell) {
+    return shell.MakeKeyInputCoordinator().dispatch_probe();
+  }
+  static const std::vector<ResolvedKeybinding>& ResolvedKeybindingsForTest(WorkspaceShell& shell) {
+    return shell.ResolvedKeybindings();
   }
   static WorkspaceShell::MenuId ActiveMenuId(const WorkspaceShell& shell) {
     return shell.context_.menu_state.active_menu_id;

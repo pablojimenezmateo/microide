@@ -39,6 +39,7 @@ void RegisterBreakpointStoreTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
 void RegisterPixelDiffTests(std::vector<TestCase>& tests);
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests);
+void RegisterKeybindingReachabilityTests(std::vector<TestCase>& tests);
 void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests);
 void RegisterTerminalPaneLayoutTests(std::vector<TestCase>& tests);
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
@@ -201,6 +202,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterDirtyRegionPolicyTests(tests);
   RegisterPixelDiffTests(tests);
   RegisterControlUiQueryTests(tests);
+  RegisterKeybindingReachabilityTests(tests);
   RegisterEditorSplitTreeTests(tests);
   RegisterTerminalPaneLayoutTests(tests);
   RegisterRecentsServiceTests(tests);

@@ -16,9 +16,9 @@
 
 ## 3. Keybinding reachability matrix
 
-- [ ] 3.1 Record the last dispatched binding in `KeyInputCoordinator` (no allocation) and expose it through TestAccess
-- [ ] 3.2 Test: for every built-in keybinding x focus target (editor, tree, search view, git view, output panel, terminal, debug pane, quick-open overlay), dispatch happens exactly where the registration says; one named table of the `HandleGlobalKeyDown` gates
-- [ ] 3.3 Fix or file every mismatch the matrix finds
+- [x] 3.1 Record the last dispatched binding in `KeyInputCoordinator` (no allocation) and expose it through TestAccess
+- [x] 3.2 Test: for every built-in keybinding x focus target (editor, tree, search view, git view, output panel, terminal, debug pane, quick-open overlay), dispatch happens exactly where the registration says; one named table of the `HandleGlobalKeyDown` gates
+- [x] 3.3 Fix or file every mismatch the matrix finds (none: 358 expected dispatches over 8 focus targets all match, nothing dispatches outside its registration)
 
 ## 4. QA driver
 

@@ -228,6 +228,16 @@ class KeyInputCoordinator {
 
   bool HandleKeyDown(const SDL_KeyboardEvent& event);
 
+  // Test seam for the keybinding reachability matrix: the binding the last key
+  // dispatched (null when it dispatched none; points into the resolved list, valid
+  // until bindings are re-resolved), and a record-only mode in which dispatch is
+  // recorded but nothing runs, so one shell can be pressed with every chord.
+  struct DispatchProbe {
+    const ResolvedKeybinding* last = nullptr;
+    bool record_only = false;
+  };
+  DispatchProbe& dispatch_probe() { return dispatch_probe_; }
+
  private:
   bool HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool HandleTreeContextMenuKeyDown(const SDL_KeyboardEvent& event);
@@ -284,6 +294,7 @@ class KeyInputCoordinator {
   MenuSurfaceState& menu_state_;
   NotificationService& notifications_;
   Operations operations_;
+  DispatchProbe dispatch_probe_;
   DamageMark key_damage_mark_ = 0;
 };
 

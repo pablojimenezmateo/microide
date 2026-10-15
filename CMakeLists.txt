@@ -601,7 +601,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/actions/WorkspaceGlobalActionExecutor.cpp
   src/workspace/WorkspaceIndentDetectApply.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinator.cpp
-  src/workspace/coordinators/WorkspaceKeyInputCoordinatorChords.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorBindings.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorModal.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorSurfaces.cpp
   src/workspace/coordinators/WorkspaceKeyInputCoordinatorSettings.cpp
@@ -1256,6 +1256,7 @@ add_executable(microide_tests
   tests/DirtyRegionPolicyTests.cpp
   tests/PixelDiffTests.cpp
   tests/ControlUiQueryTests.cpp
+  tests/KeybindingReachabilityTests.cpp
   tests/EditorSplitTreeTests.cpp
   tests/TerminalPaneLayoutTests.cpp
   tests/RecentsServiceTests.cpp
