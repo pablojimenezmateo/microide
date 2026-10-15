@@ -381,6 +381,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return Execute(action->id, action->args, source) ? DispatchResult::Handled
                                                        : DispatchResult::Rejected;
     }
+    case ActionId::BannerAction: {
+      if (args.size() != 1) {
+        return reject("usage: banner-action <Compare|Reload|Overwrite|Keep|Retry>");
+      }
+      std::string error;
+      return context_.ActivateEditorBanner(args[0], &error) ? DispatchResult::Handled
+                                                            : reject(error);
+    }
     case ActionId::OpenSettings:
       context_.OpenSettingsOverlay();
       return DispatchResult::Handled;

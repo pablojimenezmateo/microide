@@ -172,6 +172,15 @@ action executor, dismisses a transient row afterwards unless the action keeps it
 open, and leaves a sticky row to its owner. `focus-notifications` is the keyboard
 route (arrows, Enter, Delete, Escape) a person uses for the same buttons.
 
+**Editor banner buttons.** A `save` refused because the file changed on disk
+answers with the banner's choices; `banner-action <Compare|Reload|Overwrite|Keep>`
+presses one on the active tab's banner exactly as a click does (label
+case-insensitive; `Retry` on a failed open). It rejects when the active tab shows
+no banner or the banner has no such button. In a remote project this is the
+conflict flow of `dev-docs/design/remote-projects.md` § 7.7: the host's version is
+what the mirror pulled, Compare shows it beside the unsaved buffer, Overwrite
+pushes the buffer to the host, Reload takes the host's.
+
 The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
 `feat/editor-groups` control work, and made pane-aware):
 

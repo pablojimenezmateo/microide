@@ -21,6 +21,10 @@ enum class ActionId {
   // `notification-action <row-key|row-index> <action-label|action-index>`.
   // The control channel's way to press Reconnect / Show Output.
   NotificationAction,
+  // Press one button of the banner on the active editor tab, as a click would:
+  // `banner-action <Compare|Reload|Overwrite|Keep|Retry>`. The headless route to
+  // the changed-on-disk choice a refused `save` points at.
+  BannerAction,
   // Open an Output channel's tab in the bottom panel and select it, following the
   // tail (VS Code's "Output: Show Output Channel"): `show-output <channel-id>`.
   // The "Show Output" button on a formatter failure is this.

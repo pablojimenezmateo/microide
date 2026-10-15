@@ -1404,6 +1404,14 @@ std::optional<NotificationAction> WorkspaceActionContext::TakeNotificationAction
   return operations_.take_notification_action(row, action, error);
 }
 
+bool WorkspaceActionContext::ActivateEditorBanner(std::string_view label, std::string* error) {
+  if (!operations_.activate_editor_banner) {
+    *error = "editor banners are not available";
+    return false;
+  }
+  return operations_.activate_editor_banner(label, error);
+}
+
 void WorkspaceActionContext::ToggleWindowFullscreen() {
   if (operations_.request_toggle_fullscreen) {
     operations_.request_toggle_fullscreen();

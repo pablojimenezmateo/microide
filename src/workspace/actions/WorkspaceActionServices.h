@@ -248,6 +248,9 @@ class WorkspaceActionContext {
     std::function<std::optional<NotificationAction>(std::string_view, std::string_view,
                                                     std::string*)>
         take_notification_action;
+    // Press the button labelled so on the active editor tab's banner; false with
+    // *error when the tab shows no banner or the banner has no such button.
+    std::function<bool(std::string_view, std::string*)> activate_editor_banner;
     // Show an Output channel by id; false when no such channel exists.
     std::function<bool(std::string_view)> show_output_channel;
     // The remote-host service (created on first use).
@@ -668,6 +671,8 @@ class WorkspaceActionContext {
   std::optional<NotificationAction> TakeNotificationAction(std::string_view row,
                                                            std::string_view action,
                                                            std::string* error);
+  // Press the active tab's banner button labelled `label` (case-insensitive).
+  bool ActivateEditorBanner(std::string_view label, std::string* error);
   // Queue the host full-screen toggle (see Operations::request_toggle_fullscreen).
   // The shell only records it; Application owns the SDL window and applies the
   // request on its next ConsumeWindowAction poll.

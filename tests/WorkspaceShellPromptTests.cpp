@@ -118,6 +118,65 @@ void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
          "the buffer keeps its unsaved edit so the user can still choose what to do");
 }
 
+// `banner-action` is the headless route to the changed-on-disk banner: a refused
+// `save` names the banner, and an agent driving the control channel has no pointer
+// to click its buttons with. It presses the active tab's banner exactly as a click
+// does, by label, case-insensitively, and rejects when there is nothing to press.
+void TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "base text\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+
+  auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "banner-action Reload");
+  Expect(!outcome.ok && outcome.error.find("no banner") != std::string::npos,
+         "with no banner on the tab the command rejects saying so: " + outcome.error);
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  const std::string external = "written by something else entirely\n";
+  WriteFile(source, external);
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save");
+  Expect(!outcome.ok, "the save is refused by the external change");
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "the refused save raises the banner");
+
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "banner-action Merge");
+  Expect(!outcome.ok && outcome.error.find("Merge") != std::string::npos,
+         "a label the banner does not offer is rejected by name: " + outcome.error);
+  Expect(WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "a rejected press leaves the banner up");
+
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "banner-action reload");
+  Expect(outcome.ok, "Reload is pressed case-insensitively: " + outcome.error);
+  Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "Reload takes the banner down");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "Reload replaces the buffer with the file on disk");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).SerializeDocumentText() == external,
+         "the buffer holds the external content after Reload");
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("mine ");
+  WriteFile(source, "changed again, longer than before\n");
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save");
+  Expect(!outcome.ok && WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "a second external change refuses the save again");
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "banner-action Overwrite");
+  Expect(outcome.ok, "Overwrite is pressed: " + outcome.error + " banners=" +
+                         WorkspaceShellTestAccess::DescribeEditorBanners(shell));
+  Expect(ReadFile(source).find("mine ") != std::string::npos &&
+             ReadFile(source).find("changed again") == std::string::npos,
+         "Overwrite writes the buffer over the external content: " + ReadFile(source));
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the buffer is clean after Overwrite");
+  Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "Overwrite takes the banner down");
+}
+
 void TestWorkspaceShellGoToLinePromptNavigatesActiveEditor() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1394,6 +1453,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/DiscardAllGitPromptReconcilesOpenTabs",
           TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs);
   AddTest(tests, "WorkspaceShell/LaunchConfigPicker", TestWorkspaceShellLaunchConfigPicker);
+  AddTest(tests, "WorkspaceShell/BannerActionCommandPressesTheActiveTabsBanner",
+          TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner);
 #endif
 }
 

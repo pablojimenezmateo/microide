@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/StringUtil.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/WorkspaceCommandParsing.h"
@@ -916,6 +917,26 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 RequestWindowRedraw();
                 return notification_service_.TakeAction(*row_index, *action_index);
+              },
+          .activate_editor_banner =
+              [this](std::string_view label, std::string* error) {
+                const EditorBannerState* banner =
+                    ActiveEditorBannerForTab(context_.current_project_state);
+                if (banner == nullptr) {
+                  *error = "the active tab shows no banner";
+                  return false;
+                }
+                const std::string wanted = util::ToLowerAscii(label);
+                for (const EditorBannerButton& button : EditorBannerButtonsFor(banner->kind)) {
+                  if (util::EqualsAsciiCaseInsensitive(button.label, wanted)) {
+                    // The path is copied: the action may erase the banner it came from.
+                    ActivateEditorBannerAction(button.action, std::filesystem::path(banner->path));
+                    RequestWindowRedraw();
+                    return true;
+                  }
+                }
+                *error = "the banner has no \"" + std::string(label) + "\" button";
+                return false;
               },
           .show_output_channel =
               [this](std::string_view channel_id) {

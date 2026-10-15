@@ -117,6 +117,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::OpenCommandPalette:
     case ActionId::FocusNotifications:  // rejects with a message when there are none
     case ActionId::NotificationAction:  // rejects naming the row/action it cannot find
+    case ActionId::BannerAction:        // rejects when the active tab shows no such button
     case ActionId::ShowOutput:          // rejects naming a channel that does not exist
     case ActionId::RemoteOpenTerminal:  // no project needed: a host terminal has none
     case ActionId::RemoteOpenFolder:
