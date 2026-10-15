@@ -558,6 +558,7 @@ set(MICROIDE_CORE_SOURCES
   src/render/TextRendererBackend.cpp
   src/render/Theme.cpp
   src/render/ColorMath.cpp
+  src/render/PixelDiff.cpp
   src/render/ThemeFile.cpp
   src/render/PluginDisplayList.cpp
   src/render/PluginDisplayListRenderer.cpp
@@ -981,6 +982,7 @@ add_executable(microide
   src/app/Application.cpp
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp
+  src/app/RedrawVerifier.cpp
   src/app/SceneTexturePresenter.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   $<TARGET_OBJECTS:microide_kernel>
@@ -1222,6 +1224,7 @@ add_executable(microide_tests
   src/app/SceneTexturePresenter.cpp
   src/app/DirtyRegionPolicy.cpp
   src/app/RedrawTraceAccumulator.cpp
+  src/app/RedrawVerifier.cpp
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   $<TARGET_OBJECTS:microide_kernel>
   $<TARGET_OBJECTS:microide_core>
@@ -1250,6 +1253,7 @@ add_executable(microide_tests
   tests/EolDecorationLayoutTests.cpp
   tests/InlayHintColumnsTests.cpp
   tests/DirtyRegionPolicyTests.cpp
+  tests/PixelDiffTests.cpp
   tests/EditorSplitTreeTests.cpp
   tests/TerminalPaneLayoutTests.cpp
   tests/RecentsServiceTests.cpp

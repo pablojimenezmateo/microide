@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstddef>
+#include <cstdint>
 
 namespace microide::app {
 
@@ -13,6 +14,7 @@ struct RedrawFrameStats {
   bool promoted_partial_to_full = false;
   std::size_t dirty_rect_count = 0;
   std::size_t rendered_clip_count = 0;
+  std::uint64_t frame_index = 0;
   const char* reason = nullptr;
   Uint64 elapsed_ns = 0;
 };

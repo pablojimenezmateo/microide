@@ -1,8 +1,8 @@
 ## 1. Redraw verifier
 
-- [ ] 1.1 Add `src/render/PixelDiff.{h,cpp}`: a pure diff of two equally sized RGBA buffers returning count, bounding box and first differing pixel; unit tests in `microide_tests` (identical, one pixel, size mismatch); `tests/support/RetainedRedraw.h` consumes it in place of its own loop
-- [ ] 1.2 Add `src/app/RedrawVerifier.{h,cpp}` (second target texture, the two readbacks, the `QA-STALE` line) and call it from `Application::Render` after a partial frame when `MICROIDE_QA_VERIFY_REDRAW` was `1` at startup; the line carries count, bbox, the merged clips and the redraw reason
-- [ ] 1.3 Prove it fires in-process: an `ApplicationTests` test with the verifier on expects no report for a correct partial frame and exactly one for a frame with a forced wrong skip (test seam on `RenderClip`'s chrome containment); the forced-skip half is the vacuity probe
+- [x] 1.1 Add `src/render/PixelDiff.{h,cpp}`: a pure diff of two equally sized RGBA buffers returning count, bounding box and first differing pixel; unit tests in `microide_tests` (identical, one pixel, size mismatch); `tests/support/RetainedRedraw.h` consumes it in place of its own loop
+- [x] 1.2 Add `src/app/RedrawVerifier.{h,cpp}` (second target texture, the two readbacks, the `QA-STALE` line) and call it from `Application::Render` after a partial frame when `MICROIDE_QA_VERIFY_REDRAW` was `1` at startup; the line carries count, bbox, the merged clips and the redraw reason
+- [x] 1.3 Prove it fires in-process: an `ApplicationTests` test with the verifier on expects no report for a correct partial frame and exactly one for a partial frame over a retained scene painted behind the shell's back (the residue of a missed rect or a wrong skip, with no production test seam); that half is the vacuity probe
 - [ ] 1.4 Decide caret blink once per prepared frame and make the five `CaretVisibleNow()` paint sites (bottom panel, sidebar, text input, three in `WorkspaceShellRenderFrame.cpp`) read it; run the app with the verifier through the media capture scenes and fix (or document as an exclusion) anything else it reports
 - [ ] 1.5 Confirm the off path adds no work: perf-tests and perf-canary lanes unchanged
 

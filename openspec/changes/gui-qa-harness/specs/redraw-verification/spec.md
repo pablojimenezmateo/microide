@@ -34,12 +34,12 @@ The verifier SHALL NOT repair a stale frame: the retained scene and the presente
 
 ### Requirement: The verifier is proven able to fire
 
-The change SHALL include an in-process test that runs the application's render path with the verifier on, paints a partial frame whose damage is correct and asserts no report, then paints a partial frame with a deliberately wrong surface skip and asserts exactly one `QA-STALE` report. A verifier whose failing half is not exercised SHALL NOT count as shipped.
+The change SHALL include an in-process test that runs the application's render path with the verifier on, paints a partial frame over a correct retained scene and asserts no report, then paints the same partial frame over a retained scene holding pixels no state explains (the residue a missed damage rect or a wrong surface skip leaves) and asserts exactly one `QA-STALE` report naming that region. A verifier whose failing half is not exercised SHALL NOT count as shipped.
 
-#### Scenario: A forced wrong skip is reported
-- **WHEN** the test makes the render path skip a surface that the frame base painted over
-- **THEN** one `QA-STALE` line is reported for that frame
+#### Scenario: A stale retained region is reported
+- **WHEN** the test paints over the retained scene behind the shell's back and then renders a partial frame elsewhere
+- **THEN** one `QA-STALE` line is reported for that frame, and its bounding box is the painted region
 
 #### Scenario: A correct frame under the same test is quiet
-- **WHEN** the same test paints a partial frame with correct damage
+- **WHEN** the same test paints a partial frame with correct damage, or one that repaints the stale region
 - **THEN** no `QA-STALE` line is reported

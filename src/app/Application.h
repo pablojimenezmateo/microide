@@ -2,11 +2,13 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
 #include "app/AppStartupOptions.h"
 #include "app/RedrawTraceAccumulator.h"
+#include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -68,6 +70,10 @@ class Application {
   SceneTexturePresenter scene_texture_;
   // Owns the MICROIDE_TRACE_REDRAW timing/coverage bookkeeping.
   RedrawTraceAccumulator redraw_trace_;
+  // MICROIDE_QA_VERIFY_REDRAW: compares each partial frame with a full render.
+  RedrawVerifier redraw_verifier_;
+  // Counts Render() calls; names frames in the redraw trace and QA-STALE lines.
+  std::uint64_t frame_index_ = 0;
 
   AppStartupOptions startup_options_;
   workspace::WorkspaceShell workspace_shell_;

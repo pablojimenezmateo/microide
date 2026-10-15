@@ -587,6 +587,7 @@ bool Application::Initialize() {
   first_render_complete_ = false;
   redraw_trace_.Configure(util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW"),
                           util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_REDRAW_VERBOSE"));
+  redraw_verifier_.Configure(RedrawVerifier::EnabledFromEnvironment());
   return true;
 }
 
@@ -594,6 +595,7 @@ void Application::DestroySdlResources() {
   if (window_ != nullptr) {
     SDL_StopTextInput(window_);
   }
+  redraw_verifier_.Destroy();
   scene_texture_.Destroy();
   if (renderer_ != nullptr) {
     SDL_DestroyRenderer(renderer_);
@@ -765,6 +767,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   if (renderer_ == nullptr) {
     return;
   }
+  ++frame_index_;
 
   const bool full_redraw_requested = dirty_rects.empty() || !scene_texture_.valid();
   util::PerformanceTrace::Scope trace_scope(
@@ -831,6 +834,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                             .promoted_partial_to_full = false,
                                             .dirty_rect_count = 0,
                                             .rendered_clip_count = 0,
+                                            .frame_index = frame_index_,
                                             .reason = "fallback-full",
                                             .elapsed_ns = SDL_GetTicksNS() - render_start});
       first_render_complete_ = true;
@@ -886,6 +890,14 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     }
 
     SDL_SetRenderClipRect(renderer_, nullptr);
+    if (redraw_verifier_.enabled() && !full_redraw && !dirty_rects.empty()) {
+      redraw_verifier_.Verify(
+          renderer_, scene_texture_.texture(), width, height,
+          VerifiedFrameInfo{.clips = dirty_region_analysis.merged_clip_rects,
+                            .reason = reason,
+                            .frame_index = frame_index_},
+          [&] { workspace_shell_.RenderClip(frame_token, renderer_, width, height); });
+    }
     SDL_SetRenderTarget(renderer_, nullptr);
     {
       util::PerformanceTrace::Scope present_scope("Application::PresentRetainedScene");
@@ -904,6 +916,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                           .promoted_partial_to_full = promote_partial_to_full,
                                           .dirty_rect_count = dirty_rect_count,
                                           .rendered_clip_count = rendered_clip_count,
+                                          .frame_index = frame_index_,
                                           .reason = reason,
                                           .elapsed_ns = SDL_GetTicksNS() - render_start});
   } else {
@@ -916,6 +929,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                           .promoted_partial_to_full = false,
                                           .dirty_rect_count = 0,
                                           .rendered_clip_count = 0,
+                                          .frame_index = frame_index_,
                                           .reason = "fallback-full",
                                           .elapsed_ns = SDL_GetTicksNS() - render_start});
   }

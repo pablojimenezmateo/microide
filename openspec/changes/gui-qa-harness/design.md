@@ -82,10 +82,14 @@ and promotion.
 
 **1a. The verifier is proven able to fire, in-process.** A `microide_tests` test
 drives `Application` through `ApplicationTestAccess` with the verifier on, paints
-a partial frame whose damage is correct and expects no report, then forces a
-wrong skip (a test seam that makes `RenderClip` treat the hint as contained in
-chrome, the exact shape of 2383101b) and expects one `QA-STALE` line. A verifier
-that cannot fail is the perf-gate vacuity trap again
+a partial frame whose damage is correct and expects no report, then paints over
+the retained scene texture behind the shell's back (pixels no state explains --
+the residue a missed damage rect or a wrong `RenderClip` skip such as 2383101b
+leaves) and expects one `QA-STALE` line whose bounding box is that region; a
+partial frame that repaints the region is quiet again. The verifier compares
+images and does not care which bug made them differ, so corrupting the scene
+proves the failing half without a production test seam in `RenderClip`. A
+verifier that cannot fail is the perf-gate vacuity trap again
 (`dev-docs/project/validation-traps.md`); the probe is part of the change, not a
 follow-up.
 

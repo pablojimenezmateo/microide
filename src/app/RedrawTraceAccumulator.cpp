@@ -13,8 +13,8 @@ void RedrawTraceAccumulator::Record(const RedrawFrameStats& stats) {
   const char* reason = stats.reason != nullptr ? stats.reason : "unknown";
   if (verbose_) {
     SDL_Log(
-        "microide redraw frame: reason=%s requested=%s rendered=%s promoted=%s dirty=%zu clips=%zu elapsed=%.2f ms",
-        reason, stats.full_redraw_requested ? "full" : "partial",
+        "microide redraw frame: frame=%llu reason=%s requested=%s rendered=%s promoted=%s dirty=%zu clips=%zu elapsed=%.2f ms",
+        static_cast<unsigned long long>(stats.frame_index), reason, stats.full_redraw_requested ? "full" : "partial",
         stats.full_redraw ? "full" : "partial", stats.promoted_partial_to_full ? "yes" : "no",
         stats.dirty_rect_count, stats.rendered_clip_count,
         static_cast<double>(stats.elapsed_ns) / 1'000'000.0);

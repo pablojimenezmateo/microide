@@ -7,15 +7,18 @@
 // forgets a rect therefore leaves stale pixels on screen, and nothing fails --
 // unless a test paints the same way and compares the result with a full repaint
 // of the same state. That is what this is for. Its pieces (the clip inflation,
-// the pixel diff) lived as private copies in three test files.
+// the pixel diff) lived as private copies in three test files; the diff is now
+// the app's own (render/PixelDiff), shared with the QA redraw verifier.
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 #include "TestSupport.h"
+#include "render/PixelDiff.h"
 #include "render/TextRendererBackend.h"
 #include "support/SoftwareCanvas.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -40,25 +43,25 @@ inline SDL_Rect InflateClipRect(const SDL_FRect& rect,
   };
 }
 
-inline std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
+// The same comparison the app's QA redraw verifier runs (render/PixelDiff), over
+// two surfaces of one 4-byte format -- every canvas here is RGBA8888.
+inline render::PixelDiffResult DiffSurfaces(SDL_Surface* lhs, SDL_Surface* rhs) {
   Expect(lhs != nullptr && rhs != nullptr, "pixel comparisons should receive readable surfaces");
-  Expect(lhs->w == rhs->w && lhs->h == rhs->h,
-         "pixel comparisons should use canvases with matching dimensions");
-  std::size_t differences = 0;
-  for (int y = 0; y < lhs->h; ++y) {
-    for (int x = 0; x < lhs->w; ++x) {
-      Uint8 lr = 0, lg = 0, lb = 0, la = 0;
-      Uint8 rr = 0, rg = 0, rb = 0, ra = 0;
-      Expect(SDL_ReadSurfacePixel(lhs, x, y, &lr, &lg, &lb, &la),
-             "pixel comparisons should read actual pixels");
-      Expect(SDL_ReadSurfacePixel(rhs, x, y, &rr, &rg, &rb, &ra),
-             "pixel comparisons should read reference pixels");
-      if (lr != rr || lg != rg || lb != rb || la != ra) {
-        ++differences;
-      }
-    }
-  }
-  return differences;
+  Expect(lhs->format == rhs->format && SDL_BYTESPERPIXEL(lhs->format) == 4,
+         "pixel comparisons should use canvases of one 4-byte pixel format");
+  Expect(!SDL_MUSTLOCK(lhs) && !SDL_MUSTLOCK(rhs),
+         "pixel comparisons should read surfaces that need no lock");
+  const render::PixelDiffResult diff = render::DiffPixels(
+      render::PixelImageView{static_cast<const std::uint8_t*>(lhs->pixels), lhs->w, lhs->h,
+                             lhs->pitch},
+      render::PixelImageView{static_cast<const std::uint8_t*>(rhs->pixels), rhs->w, rhs->h,
+                             rhs->pitch});
+  Expect(!diff.size_mismatch, "pixel comparisons should use canvases with matching dimensions");
+  return diff;
+}
+
+inline std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
+  return DiffSurfaces(lhs, rhs).count;
 }
 
 inline std::size_t CountPixelDifferences(const SoftwareCanvas& lhs, const SoftwareCanvas& rhs) {

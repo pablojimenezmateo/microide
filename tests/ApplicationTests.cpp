@@ -2,6 +2,7 @@
 #include "TestSupportSdl.h"
 
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
 #include "app/RedrawTraceAccumulator.h"
+#include "app/RedrawVerifier.h"
 #include "app/SceneTexturePresenter.h"
 
 namespace microide::tests {
@@ -44,6 +46,25 @@ struct ApplicationTestAccess {
   }
   static void InvalidateScene(app::Application& application) {
     application.scene_texture_.Invalidate();
+  }
+  static void RenderWithReason(app::Application& application,
+                               std::vector<SDL_FRect> dirty_rects,
+                               const char* reason) {
+    application.Render(std::move(dirty_rects), reason);
+  }
+  static app::RedrawVerifier& Verifier(app::Application& application) {
+    return application.redraw_verifier_;
+  }
+  // Paint over the retained scene behind the shell's back: pixels no state
+  // explains, which is what a missed damage rect or a wrong surface skip leaves.
+  static void CorruptScene(app::Application& application, const SDL_FRect& rect) {
+    SDL_Renderer* renderer = application.renderer_;
+    Expect(SDL_SetRenderTarget(renderer, application.scene_texture_.texture()),
+           "binding the scene texture to corrupt it");
+    SDL_SetRenderClipRect(renderer, nullptr);
+    SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
+    SDL_RenderFillRect(renderer, &rect);
+    Expect(SDL_SetRenderTarget(renderer, nullptr), "unbinding the corrupted scene texture");
   }
 };
 
@@ -387,6 +408,80 @@ void TestExposeRePresentsRetainedSceneInsteadOfRerendering() {
   ApplicationTestAccess::Shutdown(application);
 }
 
+// The QA redraw verifier must be able to fail, or every quiet QA run proves
+// nothing (the perf-gate vacuity trap, dev-docs/project/validation-traps.md).
+// A partial frame over a correct retained scene is quiet; the same partial frame
+// over a scene holding pixels no state explains -- what a missed damage rect or a
+// wrong RenderClip skip leaves behind -- is exactly one QA-STALE report, which
+// names the stale region. A repaint that covers the region makes it quiet again.
+void TestRedrawVerifierReportsOnlyStaleFrames() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  HeadlessHomeGuard homes(temp_dir.path());
+
+  const std::filesystem::path project = temp_dir.path() / "project";
+  std::filesystem::create_directories(project);
+  app::AppStartupOptions options = HeadlessStartupOptions();
+  options.project_path = project;
+
+  app::Application application(options);
+  Expect(ApplicationTestAccess::Initialize(application), "headless Initialize() should succeed");
+  app::RedrawVerifier& verifier = ApplicationTestAccess::Verifier(application);
+  Expect(!verifier.enabled(), "the verifier should be off without MICROIDE_QA_VERIFY_REDRAW");
+  verifier.Configure(true);
+
+  ApplicationTestAccess::Render(application);
+  Expect(verifier.verified_frame_count() == 0, "a full frame should not be compared");
+
+  ApplicationTestAccess::RenderWithReason(application, {SDL_FRect{0.0f, 0.0f, 64.0f, 64.0f}},
+                                          "test-correct");
+  Expect(verifier.verified_frame_count() == 1, "a partial frame should be compared");
+  Expect(verifier.stale_frame_count() == 0,
+         "a partial frame over a correct retained scene should not be reported");
+
+  const SDL_FRect stale{200.0f, 120.0f, 10.0f, 6.0f};
+  ApplicationTestAccess::CorruptScene(application, stale);
+  ApplicationTestAccess::RenderWithReason(application, {SDL_FRect{0.0f, 0.0f, 64.0f, 64.0f}},
+                                          "test-stale");
+  Expect(verifier.verified_frame_count() == 2, "the second partial frame should be compared");
+  Expect(verifier.stale_frame_count() == 1,
+         "a partial frame that leaves stale pixels should be reported exactly once");
+  const std::string& report = verifier.last_report();
+  Expect(report.starts_with("QA-STALE "), "the report should carry the QA-STALE prefix");
+  Expect(report.find("reason=test-stale") != std::string::npos,
+         "the report should name the frame's redraw reason");
+  Expect(report.find("pixels=60 bbox=200,120,10,6") != std::string::npos,
+         "the report should name the stale region");
+  Expect(report.find("clips=") != std::string::npos, "the report should name the frame's clips");
+
+  ApplicationTestAccess::RenderWithReason(application, {SDL_FRect{190.0f, 110.0f, 40.0f, 30.0f}},
+                                          "test-repair");
+  Expect(verifier.verified_frame_count() == 3 && verifier.stale_frame_count() == 1,
+         "a partial frame that repaints the stale region should be quiet");
+
+  ApplicationTestAccess::Shutdown(application);
+}
+
+void TestStaleFrameReportFormat() {
+  render::PixelDiffResult diff;
+  diff.count = 7;
+  diff.min_x = 3;
+  diff.min_y = 4;
+  diff.box_width = 5;
+  diff.box_height = 2;
+  diff.first_x = 6;
+  diff.first_y = 4;
+  const SDL_Rect clips[] = {SDL_Rect{0, 0, 10, 10}, SDL_Rect{20, 30, 4, 5}};
+  Expect(app::FormatStaleFrameReport(diff, app::VerifiedFrameInfo{.clips = clips,
+                                                                  .reason = "caret",
+                                                                  .frame_index = 42}) ==
+             "QA-STALE frame=42 reason=caret pixels=7 bbox=3,4,5,2 first=6,4 "
+             "clips=0,0,10,10;20,30,4,5",
+         "the QA-STALE line is a parsed format; its fields must not drift");
+  Expect(app::FormatStaleFrameReport(diff, app::VerifiedFrameInfo{}).ends_with("clips=none"),
+         "a report with no clips should say so");
+}
+
 void TestHeadlessReinitializeAfterShutdown() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -425,6 +520,9 @@ void TestHeadlessDestructorShutsDownInitializedApp() {
 }  // namespace
 
 void RegisterApplicationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Application/RedrawVerifierReportsOnlyStaleFrames",
+          TestRedrawVerifierReportsOnlyStaleFrames);
+  AddTest(tests, "Application/StaleFrameReportFormat", TestStaleFrameReportFormat);
   AddTest(tests, "Application/PresentationCacheReusedWhenUiScaleMatches",
           TestPresentationCacheReusedWhenUiScaleMatches);
   AddTest(tests, "Application/PresentationCacheInvalidatedWhenUiScaleChanges",

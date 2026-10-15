@@ -37,6 +37,7 @@ void RegisterEolDecorationLayoutTests(std::vector<TestCase>& tests);
 void RegisterInlayHintColumnsTests(std::vector<TestCase>& tests);
 void RegisterBreakpointStoreTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
+void RegisterPixelDiffTests(std::vector<TestCase>& tests);
 void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests);
 void RegisterTerminalPaneLayoutTests(std::vector<TestCase>& tests);
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
@@ -197,6 +198,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterInlayHintColumnsTests(tests);
   RegisterBreakpointStoreTests(tests);
   RegisterDirtyRegionPolicyTests(tests);
+  RegisterPixelDiffTests(tests);
   RegisterEditorSplitTreeTests(tests);
   RegisterTerminalPaneLayoutTests(tests);
   RegisterRecentsServiceTests(tests);
