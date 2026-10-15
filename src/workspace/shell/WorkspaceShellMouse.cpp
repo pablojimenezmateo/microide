@@ -372,7 +372,15 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  if (MakePanelMouseCoordinator().HandleResizeButtonDown(event, layout)) {
+  if (const float height_before = context_.current_project_state.panel.height;
+      MakePanelMouseCoordinator().HandleResizeButtonDown(event, layout)) {
+    // A double-click resets the height: the editor column grows or shrinks with
+    // it, so it is a layout change, not a panel repaint -- the region between the
+    // old and the new panel top kept the old panel header (QA monkey, seed 5).
+    if (context_.current_project_state.panel.height != height_before) {
+      RequestBottomPanelLayoutChangeRedraw(layout);
+      return true;
+    }
     EnsureRedraw(mark, [this]() { RequestBottomPanelRedraw(); });
     return true;
   }

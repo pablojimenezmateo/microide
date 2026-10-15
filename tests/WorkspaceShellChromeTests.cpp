@@ -2457,6 +2457,49 @@ void TestWorkspaceShellSidebarDividerDragPaintsCleanly() {
   step("moving away", {MouseMotionEvent(x + 300.0f, y)});
 }
 
+// Double-clicking the panel divider resets the panel height, which moves the
+// editor's bottom edge: the frame repaints both. It repainted only the new panel,
+// and the band between the old and new panel top kept the old header. Found by
+// the QA monkey (seed 5).
+void TestWorkspaceShellPanelDividerResetRepaintsTheLayout() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the panel fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 8, 80);
+  WorkspaceShellTestAccess::SetBottomPanelHeight(shell, 300.0f);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect handle = microide::workspace::BottomPanelResizeHitRect(WorkspaceShellTestAccess::CurrentLayout(shell));
+  const float x = handle.x + handle.w / 2.0f;
+  const float y = handle.y + handle.h / 2.0f;
+  SDL_Event press = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+  press.button.clicks = 2;
+  SDL_Event release = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+  release.button.clicks = 2;
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                DispatchEvents(shell, {press, release}), pin_caret);
+  Expect(diff.identical(), "resetting the panel height should paint what a full repaint paints; " +
+                               DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5178,6 +5221,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/PanelDividerResetRepaintsTheLayout",
+          TestWorkspaceShellPanelDividerResetRepaintsTheLayout);
   AddTest(tests, "WorkspaceShell/SidebarDividerDragPaintsCleanly",
           TestWorkspaceShellSidebarDividerDragPaintsCleanly);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
