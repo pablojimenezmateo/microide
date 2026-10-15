@@ -46,6 +46,9 @@ class RemoteServer {
     // no workspace remains for `idle_timeout`. A hand-started server never idles out.
     bool on_demand = false;
     std::chrono::milliseconds idle_timeout{10 * 60 * 1000};
+    // How long a kept process (a language server, a debug adapter) outlives the
+    // client that lost it before the server terminates it (ProcessTable::Limits).
+    std::chrono::milliseconds keep_grace{30 * 60 * 1000};
     project::remote::SessionSurvival session_survival;
   };
 

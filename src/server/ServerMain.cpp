@@ -1,7 +1,7 @@
 // microide-server: the host half of a remote project (dev-docs/design/remote-projects.md
 // § 6.6). One daemon per user; subcommands:
 //
-//   start   [--on-demand] [--socket-dir D] [--idle-timeout-ms N]   daemonize and serve
+//   start   [--on-demand] [--socket-dir D] [--idle-timeout-ms N] [--keep-grace-ms N]   daemonize and serve
 //   stop    [--socket-dir D]                                       ask it to exit
 //   status  [--socket-dir D]                                       print what it serves
 //   attach  [--socket-dir D] [--idle-timeout-ms N]                 relay stdio to it,
@@ -59,11 +59,12 @@ struct Options {
   std::filesystem::path socket_dir;
   bool on_demand = false;
   std::chrono::milliseconds idle_timeout{10 * 60 * 1000};
+  std::chrono::milliseconds keep_grace{30 * 60 * 1000};
 };
 
 int Usage() {
   std::cerr << "usage: microide-server <start|stop|status|attach|serve-stdio> "
-               "[--socket-dir DIR] [--on-demand] [--idle-timeout-ms N]\n";
+               "[--socket-dir DIR] [--on-demand] [--idle-timeout-ms N] [--keep-grace-ms N]\n";
   return 2;
 }
 
@@ -101,6 +102,12 @@ std::optional<Options> ParseOptions(int argc, char** argv) {
         return std::nullopt;
       }
       options.idle_timeout = std::chrono::milliseconds(*ms);
+    } else if (arg == "--keep-grace-ms" && i + 1 < argc) {
+      const auto ms = microide::util::ParseInt64(argv[++i]);
+      if (!ms.has_value() || *ms < 0) {
+        return std::nullopt;
+      }
+      options.keep_grace = std::chrono::milliseconds(*ms);
     } else {
       return std::nullopt;
     }
@@ -204,6 +211,7 @@ int Start(const Options& options) {
           .release = MICROIDE_VERSION,
           .on_demand = options.on_demand,
           .idle_timeout = options.idle_timeout,
+          .keep_grace = options.keep_grace,
           .session_survival = remote::ReadSessionSurvival("/", UserName()),
       });
       code = server.RunListener(listen_fd);
@@ -344,9 +352,10 @@ int Attach(const Options& options, const char* self) {
         ::close(null_fd);
       }
       const std::string idle = std::to_string(options.idle_timeout.count());
+      const std::string keep = std::to_string(options.keep_grace.count());
       const std::string dir = options.socket_dir.string();
       ::execl(self, self, "start", "--on-demand", "--socket-dir", dir.c_str(), "--idle-timeout-ms",
-              idle.c_str(), static_cast<char*>(nullptr));
+              idle.c_str(), "--keep-grace-ms", keep.c_str(), static_cast<char*>(nullptr));
       ::_exit(127);
     }
     int status = 0;

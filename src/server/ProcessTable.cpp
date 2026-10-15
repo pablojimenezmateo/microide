@@ -423,6 +423,7 @@ bool ProcessTable::Attach(std::uint64_t connection, std::uint64_t handle,
       stream->sent = offset;
     }
     process.connection = connection;
+    process.detached_at.reset();
     process.exit_sent = false;
   }
   wake_.Wake();
@@ -457,6 +458,7 @@ void ProcessTable::Detach(std::uint64_t connection) {
         continue;
       }
       process->connection = 0;
+      process->detached_at = std::chrono::steady_clock::now();
       // Unacknowledged output is resent from the reattaching client's offset.
       process->out.sent = process->out.base;
       process->err.sent = process->err.base;
@@ -607,6 +609,20 @@ void ProcessTable::Run() {
       const auto now = std::chrono::steady_clock::now();
       for (auto it = processes_.begin(); it != processes_.end();) {
         Process& process = *it->second;
+        // A kept process nobody came back for: from here on it is an unkept one.
+        if (process.keep_on_detach && process.connection == 0 && process.detached_at.has_value()) {
+          const auto expires = *process.detached_at + limits_.keep_grace;
+          if (now >= expires) {
+            process.keep_on_detach = false;
+            process.detached_at.reset();
+            if (!process.exited) {
+              ::kill(-process.pid, SIGTERM);
+              process.kill_at = now + kKillGrace;
+            }
+          } else if (!next_kill.has_value() || expires < *next_kill) {
+            next_kill = expires;
+          }
+        }
         if (!process.exited && process.kill_at.has_value() && now >= *process.kill_at) {
           ::kill(-process.pid, SIGKILL);
           process.kill_at.reset();

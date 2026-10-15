@@ -50,6 +50,11 @@ reports no remote state, so a driver infers readiness from a notification row.
   are in the File and Terminal menus and on the welcome page.
 - `external-repo-change-handling`: adds the requirement that the changed-on-disk
   banner's actions are reachable from the control channel.
+- `remote-process-spawn`: a kept process (language server, debug adapter) nobody
+  reattaches to within the server's keep grace is terminated and forgotten. The
+  verification found four clangd processes with a background index on the host
+  after four short client sessions, one per session, each kept for the server's
+  lifetime.
 
 ## Impact
 
@@ -63,4 +68,4 @@ reports no remote state, so a driver infers readiness from a notification row.
 - Docs: `dev-docs/control/control-channel.md` (query fields), README command list,
   `docs/microide.1` (regenerated), `dev-docs/design/remote-projects.md` § 7.1 and
   § 6.8 pointing at the spec.
-- No wire-protocol change; no server change.
+- Server: `ProcessTable` keep grace and the `--keep-grace-ms` option (no wire change).

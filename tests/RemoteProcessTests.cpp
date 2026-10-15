@@ -221,6 +221,35 @@ void TestUnkeptProcessIsTerminatedOnDetach() {
          "the language-server case: it does not outlive its client");
 }
 
+// A kept process is for the client that lost its link and comes back; one nobody
+// comes back for is terminated once the keep grace runs out, and forgotten. Before
+// this, every language server a client's crash or SIGTERM left behind stayed on the
+// host for the server's lifetime.
+void TestKeptProcessIsReleasedAfterTheKeepGrace() {
+  ShortDir dir;
+  StartServer(dir, {"--keep-grace-ms", "500"});
+  int pid = -1;
+  std::uint64_t handle = 0;
+  {
+    ProcClient client(dir.path());
+    handle = client.Spawn({"sleep", "60"}, /*keep=*/true, &pid);
+    Expect(pid > 0 && ::kill(pid, 0) == 0, "it runs");
+    client.Drop();
+  }
+  Expect(WaitUntil([&]() { return ::kill(pid, 0) != 0; }, std::chrono::seconds(15)),
+         "a kept process nobody reattaches to is terminated after the grace");
+  ProcClient later(dir.path());
+  std::string error;
+  util::JsonObject params;
+  params["handle"] = util::JsonValue(static_cast<std::int64_t>(handle));
+  params["stdout"] = util::JsonValue(std::int64_t{0});
+  params["stderr"] = util::JsonValue(std::int64_t{0});
+  Expect(WaitUntil([&]() {
+           return !later.Call("proc/attach", util::JsonValue(params), &error).has_value();
+         }),
+         "and its handle is forgotten, like an unkept process's");
+}
+
 // A kept process that exits while nobody is attached delivers its output and exit
 // on the next attach.
 void TestExitWhileDetachedIsDeliveredOnAttach() {
@@ -274,6 +303,8 @@ void RegisterRemoteProcessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteProcess/ArgvArrivesIntact", TestArgvArrivesIntact);
   AddTest(tests, "RemoteProcess/ExitCodesStderrAndSignals", TestExitCodesStderrAndSignals);
   AddTest(tests, "RemoteProcess/KeptProcessResumesFromItsOffset", TestKeptProcessResumesFromItsOffset);
+  AddTest(tests, "RemoteProcess/KeptProcessIsReleasedAfterTheKeepGrace",
+          TestKeptProcessIsReleasedAfterTheKeepGrace);
   AddTest(tests, "RemoteProcess/UnkeptProcessIsTerminatedOnDetach",
           TestUnkeptProcessIsTerminatedOnDetach);
   AddTest(tests, "RemoteProcess/ExitWhileDetachedIsDeliveredOnAttach",

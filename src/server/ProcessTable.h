@@ -30,8 +30,13 @@ namespace microide::server {
 // handle by a credit window; beyond the window — or beyond the retention cap while
 // no client is attached — the server stops reading the pipe and the process feels
 // ordinary backpressure. A process not kept on detach is terminated when the client
-// that spawned it goes; a kept one keeps running, and its exit is delivered on the
-// next attach and reaped only once a client has released it.
+// that spawned it goes; a kept one keeps running for `Limits::keep_grace` so the
+// client that lost its link can take it back with its state, and its exit is
+// delivered on the next attach and reaped once a client has released it. A kept
+// process nobody reattaches to within the grace is terminated and forgotten like
+// an unkept one: every language server a client's crash or SIGTERM left behind
+// stayed on the host for the server's lifetime (four clangds with a background
+// index after four short sessions on worky, 2026-10-16).
 class ProcessTable {
  public:
   // Send a frame or notification to connection `connection` (0 = nobody). The
@@ -54,6 +59,8 @@ class ProcessTable {
     std::size_t credit_bytes = 256 * 1024;        // per stream, sent but unacknowledged
     std::size_t retention_bytes = 16u * 1024 * 1024;  // per stream, unacknowledged at all
     std::size_t max_processes = 256;
+    // How long a kept process waits for a client to reattach after its client went.
+    std::chrono::milliseconds keep_grace{30 * 60 * 1000};
   };
 
   struct SpawnRequest {
@@ -125,6 +132,8 @@ class ProcessTable {
     bool exit_sent = false;
     // Set when a detach terminated it: SIGKILL its group if it is still alive then.
     std::optional<std::chrono::steady_clock::time_point> kill_at;
+    // A kept process whose client went: when, so the keep grace can run out.
+    std::optional<std::chrono::steady_clock::time_point> detached_at;
   };
   struct Outgoing {
     std::uint64_t connection = 0;

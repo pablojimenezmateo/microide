@@ -126,10 +126,12 @@ class ShortServerDir {
   std::filesystem::path path_;
 };
 
-inline void StartServer(const ShortServerDir& dir) {
-  const auto started = platform::RunSubprocess(
-      {MICROIDE_SERVER_BINARY, "start", "--socket-dir", dir.path().string()},
-      platform::SubprocessOptions{.timeout_ms = 20000});
+inline void StartServer(const ShortServerDir& dir, std::vector<std::string> extra_args = {}) {
+  std::vector<std::string> argv = {MICROIDE_SERVER_BINARY, "start", "--socket-dir",
+                                   dir.path().string()};
+  argv.insert(argv.end(), extra_args.begin(), extra_args.end());
+  const auto started =
+      platform::RunSubprocess(argv, platform::SubprocessOptions{.timeout_ms = 20000});
   Expect(started.success(), "the server starts: " + started.stderr_text);
 }
 

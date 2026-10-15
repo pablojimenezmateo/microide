@@ -61,7 +61,7 @@ RemoteServer::RemoteServer(Config config)
             }
             return generation;
           },
-  });
+  }, ProcessTable::Limits{.keep_grace = config_.keep_grace});
   terminals_ = std::make_unique<TerminalTable>(TerminalTable::Sink{
       .frame =
           [this](std::uint64_t connection, std::uint64_t handle, std::string_view frame) {
