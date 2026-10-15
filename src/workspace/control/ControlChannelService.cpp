@@ -462,6 +462,10 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "notifications") {
     return BuildNotifications();
   }
+  if (verb == "ui") {
+    return context_ == nullptr ? util::JsonValue(util::JsonObject{})
+                               : ControlUiQuery::Build(*context_, operations_.ui);
+  }
   *ok = false;
   *error = "unknown query \"" + verb + "\"";
   return util::JsonValue(nullptr);

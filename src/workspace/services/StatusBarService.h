@@ -22,6 +22,25 @@ enum class StatusBarSegmentId : std::uint8_t {
   Count,
 };
 
+// The segment's stable name, as automation (the control channel's `ui` query)
+// spells it.
+constexpr std::string_view StatusBarSegmentName(StatusBarSegmentId id) {
+  switch (id) {
+    case StatusBarSegmentId::Project: return "project";
+    case StatusBarSegmentId::Branch: return "branch";
+    case StatusBarSegmentId::Language: return "language";
+    case StatusBarSegmentId::Indent: return "indent";
+    case StatusBarSegmentId::Encoding: return "encoding";
+    case StatusBarSegmentId::LineColumn: return "line-column";
+    case StatusBarSegmentId::Problems: return "problems";
+    case StatusBarSegmentId::Lsp: return "lsp";
+    case StatusBarSegmentId::LayoutMode: return "layout-mode";
+    case StatusBarSegmentId::Remote: return "remote";
+    case StatusBarSegmentId::Count: break;
+  }
+  return "unknown";
+}
+
 // Semantic severity/state of a segment, derived where the value is known
 // (StatusBarModelService) so the render path never re-parses display text to
 // pick a color.

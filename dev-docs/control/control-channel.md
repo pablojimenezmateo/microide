@@ -161,7 +161,33 @@ Newline-delimited JSON, one object per line.
 
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
-`editor`, `commands`, `terminals`, `terminal-output`, `notifications`.
+`editor`, `commands`, `terminals`, `terminal-output`, `notifications`, `ui`.
+
+**What is on screen (`ui`).** The locator surface for automation (`tools/qa`):
+`{window:{width,height}, focus, sidebar:{visible,view,temporary},
+overlay:{visible,mode}, menu:{open,menu,activeItem,submenu,contextMenu,overflow},
+panel:{visible,content,maximized}, surfaces:{menuBar,projectTabStrip,tabStrip,
+breadcrumb,editorSurface,sidebar,rightPane,bottomPanel,statusBar}, elements:[...]}`.
+Each element is `{name, kind, rect:[x,y,w,h], label?, enabled?, active?,
+selected?}` in window coordinates (what mouse events use). Names, by kind:
+
+| name | element |
+|------|---------|
+| `menu:<label>` | a menu-bar item (`menu:Edit`) |
+| `menu-item:<menu>/<label>` | a row of the open menu, submenu (`menu-item:Edit/Undo`), tree context menu (`menu-item:context/...`) or overflow popup (`menu-item:more/...`); separators are not elements |
+| `project-tab:<title>` | a project tab |
+| `tab:<group>/<title>` | an editor tab of split group `<group>` (0-based) |
+| `sidebar-view:<view id>` | a sidebar view button (`tree`, `search`, `git`) |
+| `row:<view id>/<label>` | a visible sidebar row (`row:tree/src`; `#<index>` when a row has no label) |
+| `panel-tab:<title>` | a bottom-panel tab |
+| `status:<segment>` | a status-bar segment (`project`, `branch`, `language`, `indent`, `encoding`, `line-column`, `problems`, `lsp`, `layout-mode`, `remote`) |
+| `button:<surface>/<label>` | `window/{minimize,maximize,close}`, `close-tab/<group>/<title>`, `sidebar/{more,Collapse,Refresh}`, `panel/{new-terminal,maximize}`, `banner/<label>`, `banner/dismiss`, `notification/<label>` |
+| `divider:<which>` | `sidebar`, `panel`, `right-pane` resize handles; `editor/<n>` split dividers |
+
+A name shared by two elements gets `#2`, `#3`, ... on the later ones in visual
+order, so a name resolves to one element. Every rect comes from the geometry the
+matching mouse path hit-tests, so clicking an element's center lands on it.
+Answering reads state only: it requests no redraw and needs no painted frame.
 
 **Notification buttons.** `notifications` lists every toast oldest first:
 `{index, key, tone, message, sticky, progress?, actions}`, each action

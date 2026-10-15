@@ -586,6 +586,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceCommandParsing.cpp
   src/workspace/WorkspaceFileDrop.cpp
   src/workspace/control/ControlChannelService.cpp
+  src/workspace/control/ControlUiQuery.cpp
   src/workspace/control/ControlClient.cpp
   src/workspace/control/ControlProtocol.cpp
   src/workspace/control/ControlSpec.cpp
@@ -1254,6 +1255,7 @@ add_executable(microide_tests
   tests/InlayHintColumnsTests.cpp
   tests/DirtyRegionPolicyTests.cpp
   tests/PixelDiffTests.cpp
+  tests/ControlUiQueryTests.cpp
   tests/EditorSplitTreeTests.cpp
   tests/TerminalPaneLayoutTests.cpp
   tests/RecentsServiceTests.cpp

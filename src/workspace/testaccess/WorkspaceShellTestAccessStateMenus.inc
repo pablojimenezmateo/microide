@@ -1208,6 +1208,16 @@
     return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Overlay;
   }
   static bool MenuBarOpen(const WorkspaceShell& shell) { return shell.context_.menu_state.menu_bar_open; }
+  // The control channel's `ui` query, answered exactly as the channel answers it.
+  static util::JsonValue ControlUi(WorkspaceShell& shell) {
+    return ControlUiQuery::Build(shell.context_, shell.MakeControlUiOperations());
+  }
+  static WorkspaceShell::MenuId ActiveMenuId(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.active_menu_id;
+  }
+  static std::size_t TreeSelectedIndex(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.directory_tree.selected_index();
+  }
   static bool EditMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.menu_bar_open &&
            shell.context_.menu_state.active_menu_id == WorkspaceShell::MenuId::Edit;

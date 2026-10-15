@@ -8,11 +8,11 @@
 
 ## 2. `ui` control query
 
-- [ ] 2.1 Add `src/workspace/control/ControlUiQuery.{h,cpp}` with an `Operations` struct and the JSON builder for window size, focus, sidebar, overlay, menu, panel and layout surface rects
-- [ ] 2.2 Elements: menu bar items (`menu:`), open popup rows (`menu-item:`), editor tabs per group (`tab:`), sidebar view buttons (`sidebar-view:`) and visible rows (`row:`), panel tabs (`panel-tab:`), status segments (`status:`), banner/notification/sidebar-header buttons (`button:`), with unique-name suffixes
-- [ ] 2.3 Wire the operations from the shell using the same calls the mouse paths make; register `ui` in `ControlProtocol`'s query verbs
-- [ ] 2.4 Tests: each element's center hit-tests to that element (menu item opens its menu, tab click activates it, row click selects it); repeated queries are identical and the damage generation does not move
-- [ ] 2.5 Document the query in `dev-docs/control/control-channel.md`
+- [x] 2.1 Add `src/workspace/control/ControlUiQuery.{h,cpp}` with an `Operations` struct and the JSON builder for window size, focus, sidebar, overlay, menu, panel and layout surface rects
+- [x] 2.2 Elements: menu bar items (`menu:`), open popup rows (`menu-item:`), editor tabs per group (`tab:`), sidebar view buttons (`sidebar-view:`) and visible rows (`row:`), panel tabs (`panel-tab:`), status segments (`status:`), banner/notification/sidebar-header buttons (`button:`), with unique-name suffixes
+- [x] 2.3 Wire the operations from the shell using the same calls the mouse paths make; register `ui` in `ControlProtocol`'s query verbs
+- [x] 2.4 Tests: each element's center hit-tests to that element (menu item opens its menu, tab click activates it, row click selects it); repeated queries are identical and the damage generation does not move
+- [x] 2.5 Document the query in `dev-docs/control/control-channel.md`
 
 ## 3. Keybinding reachability matrix
 

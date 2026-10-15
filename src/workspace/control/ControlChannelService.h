@@ -8,6 +8,7 @@
 
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
+#include "workspace/control/ControlUiQuery.h"
 #include "workspace/services/NotificationService.h"
 
 namespace microide::workspace {
@@ -97,6 +98,9 @@ class ControlChannelService {
     // nullopt for a local root. Null in tests that do not exercise it.
     std::function<std::optional<ControlRemoteProjectInfo>(const std::filesystem::path& root)>
         remote_project;
+    // The on-screen element geometry for the `ui` query. Unset sources report
+    // nothing (tests that do not exercise it).
+    ControlUiQuery::Operations ui;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,

@@ -399,6 +399,7 @@ WorkspaceShell::WorkspaceShell() {
                     .held_deletes = count(sync.held_deletes),
                 };
               },
+          .ui = MakeControlUiOperations(),
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
