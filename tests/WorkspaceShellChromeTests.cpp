@@ -2261,6 +2261,48 @@ void TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar() {
          "Right in an anchored menu should stay in it");
 }
 
+// The bottom panel's header buttons repaint their hover. The maximize button lit
+// up from the pointer on full frames but nothing repainted it when the pointer
+// arrived: the hover tracking did not know the header buttons. Found by the QA
+// monkey (seed 2).
+void TestWorkspaceShellPanelHeaderButtonRepaintsItsHover() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the panel fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 8, 80);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect maximize = WorkspaceShellTestAccess::BottomPanelMaximizeButtonRect(shell);
+  Expect(maximize.w > 0.0f, "the panel should show its maximize button");
+  for (const SDL_FRect& target : {maximize, SDL_FRect{maximize.x - 200.0f, maximize.y, 1.0f, 1.0f}}) {
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight,
+        DispatchEvents(shell, {MouseMotionEvent(target.x + target.w / 2.0f, target.y + target.h / 2.0f)}),
+        pin_caret);
+    Expect(diff.identical(), "moving onto and off the maximize button should paint what a full "
+                             "repaint paints; " + DescribePixelDiff(diff));
+  }
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4982,6 +5024,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/PanelHeaderButtonRepaintsItsHover",
+          TestWorkspaceShellPanelHeaderButtonRepaintsItsHover);
   AddTest(tests, "WorkspaceShell/MenuArrowsWalkOnlyTheMenuBar",
           TestWorkspaceShellMenuArrowsWalkOnlyTheMenuBar);
   AddTest(tests, "WorkspaceShell/AModalReleasesAHoveredWindowControl",

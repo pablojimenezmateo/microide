@@ -1162,6 +1162,15 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
           return tab.rect;
         }
       }
+      // The header's buttons (new terminal, maximize/restore) light up too.
+      const LayoutMode mode = layout_mode_service_.CurrentMode();
+      for (const SDL_FRect& button :
+           {tab_strip_service_.BottomPanelTerminalNewTabRect(mode, panel_header),
+            tab_strip_service_.BottomPanelMaximizeButtonRect(mode, panel_header)}) {
+        if (Contains(button, x, y)) {
+          return button;
+        }
+      }
     }
     return std::nullopt;
   }
