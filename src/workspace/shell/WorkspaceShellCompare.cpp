@@ -398,29 +398,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
   return DirtyRectWithHalo(MakeRect(surface_layout.left_x, y, width, h));
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowToBottomRect(std::size_t start_row) const {
-  const auto row_rect =
-      CurrentCompareRowRangeRect(start_row, std::numeric_limits<std::size_t>::max());
-  if (!row_rect.has_value()) {
-    return std::nullopt;
-  }
-
-  const auto layout = CurrentWorkspaceLayout();
-  const CompareTabState* compare_tab = ActiveCompareTab();
-  if (!layout.has_value() || compare_tab == nullptr) {
-    return row_rect;
-  }
-
-  const CompareSurfaceLayout surface_layout =
-      ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
-  const SDL_FRect content_rect = MakeRect(surface_layout.left_x, surface_layout.rows_y,
-                                          row_rect->w,
-                                          static_cast<float>(surface_layout.visible_rows) *
-                                              surface_layout.line_height);
-  return MakeRect(content_rect.x, row_rect->y, content_rect.w,
-                  std::max(0.0f, content_rect.y + content_rect.h - row_rect->y));
-}
-
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
   return std::max(0, static_cast<int>(CompareTabVisualRowCount(compare_tab)) -
                             std::max(1, visible_rows));

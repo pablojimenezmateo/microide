@@ -506,14 +506,6 @@ void WorkspaceShell::RequestCompareRowRangeRedraw(std::size_t start_row, std::si
   RequestEditorSurfaceRedraw();
 }
 
-void WorkspaceShell::RequestCompareRowToBottomRedraw(std::size_t start_row) {
-  if (const auto rect = CurrentCompareRowToBottomRect(start_row); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestEditorSurfaceRedraw();
-}
-
 void WorkspaceShell::RequestCompareRightLineRangeRedraw(std::size_t start_line,
                                                         std::size_t end_line) {
   CompareTabState* compare_tab = ActiveCompareTab();
@@ -748,16 +740,6 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
       metrics.first_line_y +
           static_cast<float>(clipped_start - visible_start_row) * metrics.line_height,
       pane_rect.w, static_cast<float>(clipped_end - clipped_start) * metrics.line_height));
-}
-
-std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineToBottomRect(std::size_t start_line) const {
-  const auto line_rect = CurrentEditorLineRangeRect(start_line, std::numeric_limits<std::size_t>::max());
-  if (!line_rect.has_value()) {
-    return std::nullopt;
-  }
-  const SDL_FRect pane_rect = CurrentFocusedEditorRedrawRect().value_or(*line_rect);
-  return MakeRect(pane_rect.x, line_rect->y, pane_rect.w,
-                  std::max(0.0f, pane_rect.y + pane_rect.h - line_rect->y));
 }
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() const {

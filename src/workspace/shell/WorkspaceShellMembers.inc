@@ -1944,7 +1944,6 @@
   void RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
                                                     std::size_t after_line);
   void RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row);
-  void RequestCompareRowToBottomRedraw(std::size_t start_row);
   void RequestCompareRightLineRangeRedraw(std::size_t start_line, std::size_t end_line);
   void RequestMergeResultLineRangeRedraw(std::size_t start_line, std::size_t end_line);
   void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
@@ -1977,10 +1976,8 @@
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
   std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,
                                                       std::size_t end_line) const;
-  std::optional<SDL_FRect> CurrentEditorLineToBottomRect(std::size_t start_line) const;
   std::optional<SDL_FRect> CurrentCompareRowRangeRect(std::size_t start_row,
                                                       std::size_t end_row) const;
-  std::optional<SDL_FRect> CurrentCompareRowToBottomRect(std::size_t start_row) const;
   std::optional<SDL_FRect> CurrentMergeResultLineRangeRect(std::size_t start_line,
                                                            std::size_t end_line) const;
   std::optional<SDL_FRect> CurrentMergeResultLineToBottomRect(std::size_t start_line) const;
