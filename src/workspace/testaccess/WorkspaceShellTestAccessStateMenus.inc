@@ -699,6 +699,9 @@
   static std::size_t ProjectSearchSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.selected_index;
   }
+  static void SetProjectSearchSelectedIndex(WorkspaceShell& shell, std::size_t index) {
+    shell.context_.current_project_state.overlay.workflow.project_search.selected_index = index;
+  }
   // The find/replace widget is NON-MODAL: opening it leaves focus on the editor
   // so typing keeps going to the buffer. A test that wants the query field to
   // own a keystroke has to move focus the way clicking into it would.

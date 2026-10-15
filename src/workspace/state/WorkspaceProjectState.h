@@ -226,6 +226,12 @@ struct BufferSearchState {
   IncrementalSearchCache incremental;
 };
 
+// How RefreshProjectSearch treats the results already shown. `Fresh` is a new
+// query: they are cleared and the list starts at the top. `InPlace` re-runs the
+// SAME query because the files changed under it: they stay up until the run
+// finishes and are then replaced in one step, selection kept on the same match.
+enum class ProjectSearchRerun { Fresh, InPlace };
+
 struct ProjectSearchState {
   editor::SingleLineEditor query;
   project::ProjectSearchOptions options;
@@ -280,6 +286,13 @@ struct ProjectSearchState {
   // it may be behind the host, and the status says so (remote-projects.md § 6.11).
   bool searched_local_copy = false;
   std::string error;
+  // An InPlace re-run in flight: its matches collect in `staged_results` and
+  // replace `results` when it finishes. Clearing the shown list up front made it
+  // blink empty and jump to the top on every project-change batch, which under
+  // agents writing the tree is twice a second.
+  bool rerun_in_place = false;
+  std::vector<project::ProjectSearchResult> staged_results;
+  bool staged_truncated = false;
 };
 
 // The committed editor behind one search-panel field. Single source of truth for

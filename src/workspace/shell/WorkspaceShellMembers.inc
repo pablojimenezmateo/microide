@@ -1379,7 +1379,7 @@
   // the tests, so the three cannot disagree about what a toggle does.
   void ToggleBufferSearchOption(BufferFindToggle toggle);
   void OpenBufferSearchFromProjectSearchResult();
-  void RefreshProjectSearch();
+  void RefreshProjectSearch(ProjectSearchRerun rerun = ProjectSearchRerun::Fresh);
   void StopProjectSearch();
   void ConsumeProjectSearchUpdates();
   void ResetOverlayScroll();

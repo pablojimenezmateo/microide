@@ -196,7 +196,7 @@ void WorkspaceShell::RefreshProjectFileViews() {
       (project.sidebar.visible && ActiveSidebarMode() == SidebarMode::Search) ||
       (project.overlay.visible && project.overlay.mode == OverlayMode::ProjectSearch);
   if (search_shown && !search.query.text().empty()) {
-    RefreshProjectSearch();
+    RefreshProjectSearch(ProjectSearchRerun::InPlace);
   }
   // What lists files is the sidebar (tree, search, Changed on Host) and the
   // overlay (finder, search). Not the window: under agents writing the tree this

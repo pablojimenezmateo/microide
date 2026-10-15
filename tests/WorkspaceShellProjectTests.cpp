@@ -7991,6 +7991,65 @@ void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheSca
          "and it still sees the injected file, which is on disk");
 }
 
+// A project search on screen re-runs when files change under it, so its results
+// stay true. It used to clear the list first: under agents writing the tree that
+// is twice a second, and each time the list went empty, the selection reset to the
+// first match and the scroll to the top. The re-run now replaces the results when
+// it finishes, in one step, with the selection on the same match.
+void TestWorkspaceShellSearchRerunOnAFileChangeKeepsTheListAndSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (const char* name : {"a.cpp", "b.cpp", "c.cpp", "d.cpp", "e.cpp"}) {
+    WriteFile(root / name, std::string("// needle in ") + name + "\n");
+  }
+  WriteFile(root / "other.txt", "nothing here\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "search re-run fixture should open the project");
+  Expect(WaitForFileIndexSize(shell, 6, std::chrono::milliseconds(5000)),
+         "search re-run fixture should finish its initial scan");
+  Expect(WorkspaceShellTestAccess::QuiesceFileIndexWatcherForTesting(shell),
+         "search re-run fixture should quiesce its watcher");
+  while (WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+  }
+
+  const std::uint64_t first_revision = WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
+  Expect(WaitForProjectSearchResults(shell, first_revision, std::chrono::milliseconds(5000)),
+         "the first search should complete");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 5,
+         "the fixture has five matches");
+  WorkspaceShellTestAccess::SetProjectSearchSelectedIndex(shell, 3);
+  WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 2);
+  const std::filesystem::path selected_path =
+      WorkspaceShellTestAccess::ProjectSearchResults(shell)[3].relative_path;
+
+  // An agent adds a match ahead of the selected one in display order.
+  WriteFile(root / "aa.cpp", "// needle, new\n");
+  platform::IndexUpdateBatch batch = BuildInjectedCreateBatch(root, "aa.cpp");
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell, std::move(batch)),
+         "the change should be delivered");
+  const std::uint64_t before_rerun = WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell);
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
+         "the change should be applied");
+
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 5 &&
+             WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == 3 &&
+             WorkspaceShellTestAccess::SidebarScrollRow(shell) == 2,
+         "while the re-run is in flight the list on screen stays as it was");
+
+  Expect(WaitForProjectSearchResults(shell, before_rerun, std::chrono::milliseconds(5000)),
+         "the re-run should complete");
+  const auto& results = WorkspaceShellTestAccess::ProjectSearchResults(shell);
+  Expect(results.size() == 6, "the re-run picks up the new match");
+  const std::size_t selected = WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell);
+  Expect(selected < results.size() && results[selected].relative_path == selected_path,
+         "the selection follows the same match, not the same row number");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 2,
+         "a re-run caused by a file change does not scroll the list to the top");
+}
+
 void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -8612,6 +8671,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan);
   AddTest(tests, "WorkspaceShell/ForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheScan",
           TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheScan);
+  AddTest(tests, "WorkspaceShell/SearchRerunOnAFileChangeKeepsTheListAndSelection",
+          TestWorkspaceShellSearchRerunOnAFileChangeKeepsTheListAndSelection);
   AddTest(tests, "WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch",
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",

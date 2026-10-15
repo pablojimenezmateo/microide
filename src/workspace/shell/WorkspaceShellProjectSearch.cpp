@@ -123,28 +123,134 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   return outcome;
 }
 
+// Deterministic, file-grouped display order (the engine streams matches in
+// whatever order its parallel workers find them).
+void SortProjectSearchResults(std::vector<project::ProjectSearchResult>& results) {
+  std::sort(results.begin(), results.end(),
+            [](const project::ProjectSearchResult& lhs, const project::ProjectSearchResult& rhs) {
+              if (lhs.file_index != rhs.file_index) {
+                return lhs.file_index < rhs.file_index;
+              }
+              if (lhs.line != rhs.line) {
+                return lhs.line < rhs.line;
+              }
+              return lhs.column < rhs.column;
+            });
+}
+
+// Appends one streamed update to the shown results (a fresh run).
+void AppendProjectSearchUpdate(ProjectSearchState& search, project::ProjectSearchUpdate& update) {
+  auto& shell_results = search.results;
+  // Workers publish out of order, so remember which result is selected (by its
+  // stable position identity) and restore it after the re-sort below, keeping the
+  // highlighted row from jumping as later batches stream in.
+  const bool had_selection = search.selected_index < shell_results.size();
+  const std::size_t selected_file_index =
+      had_selection ? shell_results[search.selected_index].file_index : 0;
+  const std::size_t selected_line = had_selection ? shell_results[search.selected_index].line : 0;
+  const std::size_t selected_column =
+      had_selection ? shell_results[search.selected_index].column : 0;
+
+  for (auto& result : update.results) {
+    if (shell_results.size() >= kMaxProjectSearchResults) {
+      // Dropping a published match here IS truncation, whoever noticed first. The
+      // worker caps its own stores at the same number so this should not normally
+      // fire, but a silent `break` would leave the sidebar claiming a complete
+      // result set while discarding matches — the one failure mode the flag exists
+      // to prevent. Flag it at the point of loss rather than trusting the producer.
+      search.truncated = true;
+      break;
+    }
+    shell_results.push_back(std::move(result));
+  }
+  SortProjectSearchResults(shell_results);
+  // Results just changed (appended + re-sorted); invalidate the cached line map.
+  ++search.results_revision;
+
+  if (had_selection) {
+    for (std::size_t i = 0; i < shell_results.size(); ++i) {
+      if (shell_results[i].file_index == selected_file_index &&
+          shell_results[i].line == selected_line && shell_results[i].column == selected_column) {
+        search.selected_index = i;
+        break;
+      }
+    }
+  }
+  search.truncated = search.truncated || update.truncated;
+}
+
+// Collects an in-place re-run's update off screen, and on the last one replaces
+// the shown results in one step. The selection follows the same match by PATH
+// and position: `file_index` is a position in the run's candidate list, which the
+// very change that triggered the re-run may have shifted.
+void StageInPlaceRerunUpdate(ProjectSearchState& search, project::ProjectSearchUpdate& update) {
+  for (auto& result : update.results) {
+    if (search.staged_results.size() >= kMaxProjectSearchResults) {
+      search.staged_truncated = true;
+      break;
+    }
+    search.staged_results.push_back(std::move(result));
+  }
+  search.staged_truncated = search.staged_truncated || update.truncated;
+  if (!update.finished) {
+    return;
+  }
+  SortProjectSearchResults(search.staged_results);
+  const project::ProjectSearchResult* selected =
+      search.selected_index < search.results.size() ? &search.results[search.selected_index]
+                                                    : nullptr;
+  std::size_t next_selected = std::min(search.selected_index,
+                                       search.staged_results.empty()
+                                           ? std::size_t{0}
+                                           : search.staged_results.size() - 1);
+  if (selected != nullptr) {
+    for (std::size_t i = 0; i < search.staged_results.size(); ++i) {
+      const project::ProjectSearchResult& candidate = search.staged_results[i];
+      if (candidate.line == selected->line && candidate.column == selected->column &&
+          candidate.relative_path == selected->relative_path) {
+        next_selected = i;
+        break;
+      }
+    }
+  }
+  search.results = std::move(search.staged_results);
+  search.staged_results.clear();
+  search.selected_index = next_selected;
+  search.truncated = search.staged_truncated;
+  search.staged_truncated = false;
+  search.rerun_in_place = false;
+  ++search.results_revision;
+}
+
 }  // namespace
 
-void WorkspaceShell::RefreshProjectSearch() {
+void WorkspaceShell::RefreshProjectSearch(ProjectSearchRerun rerun) {
   StopProjectSearch();
+  ProjectSearchState& search = context_.current_project_state.overlay.workflow.project_search;
+  // In place only when there is something on screen to keep; an empty list has
+  // nothing to blink, and a fresh run streams into it as before.
+  const bool in_place = rerun == ProjectSearchRerun::InPlace && !search.results.empty();
   // Starting (or clearing) a search invalidates the cached-results marker; it is
   // re-armed in ConsumeProjectSearchUpdates once this run reports `finished`.
-  context_.current_project_state.overlay.workflow.project_search.searched_query.clear();
-  context_.current_project_state.overlay.workflow.project_search.results.clear();
-  ++context_.current_project_state.overlay.workflow.project_search.results_revision;
-  context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
-  context_.current_project_state.overlay.workflow.project_search.truncated = false;
-  context_.current_project_state.overlay.workflow.project_search.index_incomplete = false;
-  context_.current_project_state.overlay.workflow.project_search.error.clear();
-  context_.current_project_state.overlay.workflow.project_search.searched_files = 0;
-  context_.current_project_state.overlay.workflow.project_search.total_files = 0;
-  context_.current_project_state.overlay.workflow.project_search.total_matches = 0;
-  context_.current_project_state.overlay.workflow.project_search.searched_local_copy = false;
-  // A fresh search resets the selection to the top of the list.
-  context_.current_project_state.sidebar.scroll_row = 0;
+  search.searched_query.clear();
+  if (!in_place) {
+    search.results.clear();
+    ++search.results_revision;
+    search.selected_index = 0;
+    search.truncated = false;
+    // A fresh search resets the selection to the top of the list.
+    context_.current_project_state.sidebar.scroll_row = 0;
+  }
+  search.rerun_in_place = in_place;
+  search.index_incomplete = false;
+  search.error.clear();
+  search.searched_files = 0;
+  search.total_files = 0;
+  search.total_matches = 0;
+  search.searched_local_copy = false;
 
-  if (context_.current_project_state.root.empty() ||
-      context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {
+  if (context_.current_project_state.root.empty() || search.query.text().empty()) {
+    search.rerun_in_place = false;
     ResetOverlayScroll();
     RequestSidebarRedraw();
     return;
@@ -177,13 +283,21 @@ void WorkspaceShell::RefreshProjectSearch() {
                                 context_.current_project_state.overlay.workflow.project_search.query.text(),
                                 std::move(options), file_snapshot.files,
                                 project::ProjectSearchHostFor(context_.current_project_state.launcher()));
-  ResetOverlayScroll();
+  if (!in_place) {
+    ResetOverlayScroll();
+  }
   RequestSidebarRedraw();
 }
 
 void WorkspaceShell::StopProjectSearch() {
   project_search_runtime_.Stop();
-  context_.current_project_state.overlay.workflow.project_search.running = false;
+  ProjectSearchState& search = context_.current_project_state.overlay.workflow.project_search;
+  search.running = false;
+  // A stopped in-place re-run leaves the shown results as they were; its partial
+  // set must not be swapped in by a later run.
+  search.rerun_in_place = false;
+  search.staged_results.clear();
+  search.staged_truncated = false;
 }
 
 void WorkspaceShell::ConsumeProjectSearchUpdates() {
@@ -195,60 +309,11 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
   auto update = *maybe_update;
 
   auto& search = context_.current_project_state.overlay.workflow.project_search;
-  auto& shell_results = search.results;
-
-  // Workers publish out of order, so remember which result is selected (by its
-  // stable position identity) and restore it after the re-sort below, keeping the
-  // highlighted row from jumping as later batches stream in.
-  const bool had_selection = search.selected_index < shell_results.size();
-  const std::size_t selected_file_index =
-      had_selection ? shell_results[search.selected_index].file_index : 0;
-  const std::size_t selected_line =
-      had_selection ? shell_results[search.selected_index].line : 0;
-  const std::size_t selected_column =
-      had_selection ? shell_results[search.selected_index].column : 0;
-
-  for (auto& result : update.results) {
-    if (shell_results.size() >= kMaxProjectSearchResults) {
-      // Dropping a published match here IS truncation, whoever noticed first. The
-      // worker caps its own stores at the same number so this should not normally
-      // fire, but a silent `break` would leave the sidebar claiming a complete
-      // result set while discarding matches — the one failure mode the flag exists
-      // to prevent. Flag it at the point of loss rather than trusting the producer.
-      search.truncated = true;
-      break;
-    }
-    shell_results.push_back(std::move(result));
+  if (search.rerun_in_place) {
+    StageInPlaceRerunUpdate(search, update);
+  } else {
+    AppendProjectSearchUpdate(search, update);
   }
-
-  // Restore deterministic, file-grouped display order (the engine streams matches
-  // in whatever order parallel workers find them).
-  std::sort(shell_results.begin(), shell_results.end(),
-            [](const project::ProjectSearchResult& lhs, const project::ProjectSearchResult& rhs) {
-              if (lhs.file_index != rhs.file_index) {
-                return lhs.file_index < rhs.file_index;
-              }
-              if (lhs.line != rhs.line) {
-                return lhs.line < rhs.line;
-              }
-              return lhs.column < rhs.column;
-            });
-  // Results just changed (appended + re-sorted); invalidate the cached line map.
-  ++search.results_revision;
-
-  if (had_selection) {
-    for (std::size_t i = 0; i < shell_results.size(); ++i) {
-      if (shell_results[i].file_index == selected_file_index &&
-          shell_results[i].line == selected_line &&
-          shell_results[i].column == selected_column) {
-        search.selected_index = i;
-        break;
-      }
-    }
-  }
-
-  context_.current_project_state.overlay.workflow.project_search.truncated =
-      context_.current_project_state.overlay.workflow.project_search.truncated || update.truncated;
   if (update.total_files > 0) {
     // The service always publishes the latest counters on each update; reflect
     // them as-is so "Searching X matches (Y of Z files)" stays current.

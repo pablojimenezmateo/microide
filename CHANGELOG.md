@@ -153,6 +153,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Search results no longer blink and jump while files change.** A project search
+  on screen re-runs when files change under it; it cleared its list first, so with
+  agents writing the tree it emptied twice a second and the selection and scroll
+  went back to the top. The re-run now replaces the list when it finishes, keeping
+  the selection on the same match. A search that is not on screen is no longer
+  re-run at all until it is shown.
+
 - **An open file changed by a large checkout now reloads.** Past 1,024 changes in
   one burst (a branch switch, a generator) only the first 1,024 were handled per
   file, and the open-buffer re-check that was meant to cover the rest only ran for
