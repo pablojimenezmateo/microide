@@ -2115,6 +2115,109 @@ void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
                             "repaint paints; " + DescribePixelDiff(typed));
 }
 
+// A menu anchored on a button (the sidebar's "..." views menu) paints the button
+// pressed while it is open; closing the menu repaints the button. Closing
+// repainted the menu's own rect and the menu bar, and the button stayed pressed.
+// Found by the QA monkey (seed 2).
+void TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the sidebar fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect more = WorkspaceShellTestAccess::SidebarModeOverflowRect(shell);
+  Expect(more.w > 0.0f, "the sidebar should show its more-views button");
+  const float x = more.x + more.w / 2.0f;
+  const float y = more.y + more.h / 2.0f;
+  const auto open = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+      pin_caret);
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "the click should open the views menu");
+  Expect(open.identical(), "opening the views menu should paint what a full repaint paints; " +
+                               DescribePixelDiff(open));
+  // Away from the button, so its own hover does not mask the pressed state.
+  const auto away = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(700.0f, 400.0f)}),
+      pin_caret);
+  Expect(away.identical(), "moving off the menu should paint what a full repaint paints; " +
+                               DescribePixelDiff(away));
+  // Closed by a click outside it, as a person closes a menu.
+  const auto closed = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, 700.0f, 400.0f),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, 700.0f, 400.0f)}),
+      pin_caret);
+  Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell), "a click outside should close the views menu");
+  Expect(closed.identical(), "closing the views menu should release its button; " +
+                                 DescribePixelDiff(closed));
+}
+
+// A modal opening under a hovered window-control button takes the hover off it.
+// The buttons lit up from the raw pointer, under modals too, and nothing repainted
+// them when the modal opened. Found by the QA monkey (seed 1, run-checks qa).
+void TestWorkspaceShellAModalReleasesAHoveredWindowControl() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the window-control fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const std::optional<SDL_FRect> maximize =
+      WorkspaceShellTestAccess::WindowControlButtonRect(shell, WorkspaceShell::WindowControlButtonId::Maximize);
+  Expect(maximize.has_value(), "the window should show its maximize button");
+  const auto hover = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(maximize->x + maximize->w / 2.0f,
+                                              maximize->y + maximize->h / 2.0f)}),
+      pin_caret);
+  Expect(hover.identical(), "hovering the maximize button should paint what a full repaint "
+                            "paints; " + DescribePixelDiff(hover));
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  const auto modal = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                 shell.ConsumePendingRenderInvalidation(), pin_caret);
+  Expect(modal.identical(), "a modal opening should take the hover off the window control; " +
+                                DescribePixelDiff(modal));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -4836,6 +4939,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/AModalReleasesAHoveredWindowControl",
+          TestWorkspaceShellAModalReleasesAHoveredWindowControl);
+  AddTest(tests, "WorkspaceShell/ClosingAnAnchoredMenuReleasesItsButton",
+          TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton);
   AddTest(tests, "WorkspaceShell/SettingsOverAFocusedTerminalHidesItsCaret",
           TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret);
   AddTest(tests, "WorkspaceShell/MaximizedPanelPaintsNoHiddenSurface",

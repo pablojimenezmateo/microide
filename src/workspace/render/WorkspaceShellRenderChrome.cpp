@@ -119,9 +119,12 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   for (const VisibleWindowControlButton& button : window_buttons) {
-    SDL_Color background = button.hovered ? theme_.row_highlight : theme_.chrome_background;
-    SDL_Color glyph = button.hovered ? theme_.text_primary : theme_.chrome_text_secondary;
-    if (button.id == WindowControlButtonId::Close && button.hovered) {
+    // PointerOver, not the layout's raw-pointer `hovered`: under a modal the window
+    // controls do not light up (QA monkey: a maximize button hovered under a prompt).
+    const bool hovered = PointerOver(button.rect);
+    SDL_Color background = hovered ? theme_.row_highlight : theme_.chrome_background;
+    SDL_Color glyph = hovered ? theme_.text_primary : theme_.chrome_text_secondary;
+    if (button.id == WindowControlButtonId::Close && hovered) {
       background = theme_.diff_deleted;
       glyph = theme_.text_primary;
     }

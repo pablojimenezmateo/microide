@@ -1056,6 +1056,12 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
         return item.rect;
       }
     }
+    // The window controls light up on hover too.
+    for (const VisibleWindowControlButton& button : ComputeVisibleWindowControlButtons(layout.menu_bar)) {
+      if (Contains(button.rect, x, y)) {
+        return button.rect;
+      }
+    }
     return std::nullopt;
   }
 
