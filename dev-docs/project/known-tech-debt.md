@@ -1,5 +1,9 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-15 (§ TD-2026-10-15-343 for the GUI QA proposal verification:
+a blank sidebar under an open menu that showed four times on a fresh fixture and
+never again, kept here with its sequence because nothing recorded its frames).
+
 Reviewed 2026-10-13 (§ TD-2026-10-13-337 for the stale-tree / terminal-keyboard
 pass: the fallback-redraw guard that a cursor present could satisfy, and the
 terminal's fixed skip-shell set).
@@ -426,6 +430,33 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-15-343 — the File menu opened over a blank sidebar, four times, then never again. [OPEN]
+
+Seen while verifying the `gui-qa-harness` proposal with the draft driver
+(`tools/qa/microide_qa.py`, Xvfb 1440x900, `make-fixture.sh` fixture, build
+73e47e99's parent): on each of the first four launches on a freshly generated
+fixture, clicking `File` on the menu bar (xdotool, pointer at 60,8) left the whole
+sidebar column painted window background from the menu bar down to the panel --
+the mode row and tree rows inside the repaint's clip as well as the rows below it
+-- with the editor, the panel and the status bar intact, from a fresh instance and
+also with the search view open and a query typed. Escape restored the sidebar in
+full. The `MICROIDE_TRACE_MENU_HOVER` trace of a blank run showed two partial
+frames after the click: `hint=(0,0 1440x256) ... skip[sidebar=0]` and
+`hint=(289,85 1151x638) ... skip[sidebar=1]` -- the second cannot touch the
+sidebar, and the first repaints only the top 256 px, so the rows below were blank
+BEFORE the click's frames and the on-screen window had been showing something the
+retained scene did not hold. Twenty later launches (settle 0 to 2 s before the
+click, a screen grab before the click, the software renderer, full CPU load,
+freshly regenerated fixtures, an on-disk change under the open menu) all painted
+correctly, and `WorkspaceShell/OpeningAMenuByClickKeepsTheSidebar` shows the
+shell's click-path damage and skips are right. Candidates left: a frame presented
+through the direct-to-window fallback (`SceneTexturePresenter::Ensure` returning
+false during the resize settle) while the texture kept stale content, or a sidebar
+repaint dropped between an async tree/git completion and the menu open. What
+would have settled it is the frame trace of the blank runs, which was not on; the
+harness turns that on for every run (design decision 8) and task 6.2 re-finds
+this first.
 
 ### TD-2026-10-15-342 — typing in the tree runs commands instead of navigating. [OPEN]
 

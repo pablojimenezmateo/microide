@@ -11,3 +11,11 @@
 #### Scenario: A missing tool is not a pass
 - **WHEN** the lane runs on a machine without Xvfb
 - **THEN** it exits non-zero naming Xvfb
+
+### Requirement: One headless driver
+
+Headless drivers of the shipped binary (random control commands, pointer and keyboard input, repro scenarios) SHALL live in `tools/qa` on one launcher, one isolation recipe and one oracle set. The former `tools/fuzz-control-commands.py` and `tools/repro/overlay-backdrop-repro.sh` SHALL be removed once their function is reachable from `tools/qa/run.py`, and documents that named them SHALL name their replacement.
+
+#### Scenario: The command fuzzer keeps its seeds
+- **WHEN** `tools/qa/run.py monkey --profile commands --seed N` runs against the ASAN binary
+- **THEN** it drives the same command generators with on-disk churn as the former script did for seed N, and a sanitizer report fails the run

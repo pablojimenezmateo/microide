@@ -12,6 +12,10 @@
 - **WHEN** a scenario clicks `menu:Edit`
 - **THEN** the driver resolves the name through the `ui` query and clicks inside that element's rect
 
+#### Scenario: Two drivers share a machine
+- **WHEN** two QA runs start at the same moment on one machine
+- **THEN** each gets its own display, runtime directory and instance, and neither sees the other's window or control socket
+
 ### Requirement: Oracles need no expected screenshots
 
 Every QA action SHALL be followed by a check of the always-on oracles: `QA-STALE` lines from the redraw verifier, sanitizer reports (ASan, LSan, UBSan, TSan), assertion failures, and the process having exited. Scenario-specific expectations SHALL be stated against the `ui` query or control queries, not against reference images.
@@ -23,6 +27,18 @@ Every QA action SHALL be followed by a check of the always-on oracles: `QA-STALE
 #### Scenario: A crash fails the run
 - **WHEN** the application exits during a run
 - **THEN** the run records a crash finding naming the last action
+
+### Requirement: A finding carries the frames that led to it
+
+The driver SHALL run the application with its per-frame redraw trace on, keep a screenshot of the window after every action (at least the last three), and on a finding SHALL write a directory holding the action list up to the finding, the frame-trace lines since the previous action, the retained screenshots, the finding's own screenshot and the replay file.
+
+#### Scenario: A stale frame is explained
+- **WHEN** a `QA-STALE` report is recorded after an action
+- **THEN** the finding directory names the clips and redraw reason of that frame and shows the window before and after the action
+
+#### Scenario: A finding that does not reproduce still has evidence
+- **WHEN** a replay of a finding's action list does not reproduce it
+- **THEN** the original frame-trace lines and screenshots remain available for triage
 
 ### Requirement: The scenario suite covers every reachable control
 
@@ -46,7 +62,7 @@ A check SHALL press every built-in keybinding from every focus target -- editor,
 
 ### Requirement: The monkey is seeded and replayable
 
-The driver SHALL offer a monkey mode that performs weighted random actions over the named elements and free pointer positions from a given seed, with every oracle armed, and on a finding SHALL save the exact action list so that replaying it on the same build reproduces the finding.
+The driver SHALL offer a monkey mode that performs weighted random actions over the named elements, built-in key chords, control commands (the generators, profiles and on-disk churn of the former `tools/fuzz-control-commands.py`), typed text, drags, wheel and free pointer positions from a given seed, with every oracle armed, and on a finding SHALL save the exact action list so that replaying it on the same build reproduces the finding. Each run SHALL start from a fresh copy of its fixture so a seed means the same actions on the same state.
 
 #### Scenario: A finding is replayed
 - **WHEN** the monkey with seed S records a finding after N actions
