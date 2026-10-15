@@ -77,6 +77,17 @@ inline SDL_Event MouseMotionEvent(float x, float y) {
   return event;
 }
 
+// One wheel notch per unit of `dy` (positive scrolls up), at the pointer (x, y).
+inline SDL_Event MouseWheelEvent(float x, float y, float dy) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_WHEEL;
+  event.wheel.mouse_x = x;
+  event.wheel.mouse_y = y;
+  event.wheel.y = dy;
+  event.wheel.integer_y = static_cast<Sint32>(dy);
+  return event;
+}
+
 inline SDL_Event MouseButtonEvent(Uint32 type, float x, float y) {
   SDL_Event event{};
   event.type = type;

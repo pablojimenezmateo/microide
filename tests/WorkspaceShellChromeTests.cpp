@@ -2809,6 +2809,69 @@ void TestWorkspaceShellSaveAsRepaintsTheTabTitle() {
          "and leaves the buffer untitled, not named after a file that does not exist");
 }
 
+// A prompt opened over Settings (Ctrl+G) is the topmost modal and owns the
+// pointer: the Settings rows around it must not light up under it. The pointer
+// owner was picked Settings-first, so full frames hovered a Settings row the
+// partial ones never repainted (QA monkey seeds 14 and 15).
+void TestWorkspaceShellAPromptOverSettingsOwnsThePointer() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // Row 1: the selected row (0) never paints hover, so it could not show this.
+  const SDL_FRect row = WorkspaceShellTestAccess::SettingsOverlayVisibleRowRect(shell, 1);
+  Expect(row.w > 0.0f, "Settings should show a second row");
+  const auto step = [&](std::string_view what, std::initializer_list<SDL_Event> events) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, events), pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  // From the Go menu, as the monkey did it (the keystroke goes to Settings).
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::Goto, {}),
+         "Go to Line should run from the menu");
+  {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  shell.ConsumePendingRenderInvalidation(), pin_caret);
+    Expect(diff.identical(), "opening Go to Line over Settings should paint what a full repaint "
+                             "paints; " + DescribePixelDiff(diff));
+  }
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
+             WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+         "Go to Line should open over Settings");
+  const float x = row.x + 20.0f;
+  const float y = row.y + row.h / 2.0f;
+  SDL_Surface* before = SDL_DuplicateSurface(canvas.surface());
+  step("moving onto a Settings row outside the prompt", {MouseMotionEvent(x, y)});
+  step("wheeling there", {MouseWheelEvent(x, y, -2.0f)});
+  // The canvas now holds a full repaint: under the prompt nothing may have lit up
+  // or moved.
+  Expect(CountPixelDifferences(before, canvas.surface()) == 0,
+         "a Settings row under a prompt must not hover or scroll");
+  SDL_DestroySurface(before);
+  step("clicking there", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                          MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5598,6 +5661,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider);
   AddTest(tests, "WorkspaceShell/SaveAsRepaintsTheTabTitle",
           TestWorkspaceShellSaveAsRepaintsTheTabTitle);
+  AddTest(tests, "WorkspaceShell/APromptOverSettingsOwnsThePointer",
+          TestWorkspaceShellAPromptOverSettingsOwnsThePointer);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",

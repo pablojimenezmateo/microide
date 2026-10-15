@@ -694,14 +694,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   frame_state_.pointer_occluder.reset();
   // A modal owns the pointer: inside it, only its own rects hover; outside it,
-  // nothing does (an empty occluder contains no rect).
+  // nothing does (an empty occluder contains no rect). The TOPMOST one, in paint
+  // order: a prompt opened over Settings (Go to Line from the menu) owns it, and
+  // picking Settings first lit its rows up around the prompt (QA monkey).
   std::optional<SDL_FRect> modal;
-  if (settings_overlay_service_.Visible()) {
-    modal = layout.editor_area;
-  } else if (context_.prompts.dirty_visible) {
+  if (context_.prompts.dirty_visible) {
     modal = ComputeDirtyPromptRect(layout.full);
   } else if (context_.prompts.surface_visible) {
     modal = ComputePromptSurfaceRect(layout.full);
+  } else if (settings_overlay_service_.Visible()) {
+    modal = layout.editor_area;
   }
   if (modal.has_value()) {
     frame_state_.pointer_occluder =
