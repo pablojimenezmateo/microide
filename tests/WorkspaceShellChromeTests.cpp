@@ -1585,6 +1585,89 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   SDL_DestroySurface(pixels);
 }
 
+namespace {
+SDL_Event MouseMotionEvent(float x, float y) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_MOTION;
+  event.motion.x = x;
+  event.motion.y = y;
+  return event;
+}
+SDL_Event MouseButtonEvent(Uint32 type, float x, float y) {
+  SDL_Event event{};
+  event.type = type;
+  event.button.button = SDL_BUTTON_LEFT;
+  event.button.x = x;
+  event.button.y = y;
+  event.button.clicks = 1;
+  return event;
+}
+}  // namespace
+
+// Opening a menu with a CLICK must leave the sidebar painted. The GUI QA driver's
+// first runs (tools/qa, 2026-10-15) showed the File menu open over a BLANK sidebar
+// column -- tree or search view, from a fresh instance -- with the content back
+// only once the menu closed; see TD-2026-10-15-343. The keyboard open path was
+// already pinned (the test above); this is the pointer path: the motion, press
+// and release each return their own redraw, folded as the app loop folds them,
+// painted clip by clip with the clip as the dirty hint, and compared with a full
+// repaint of the same state.
+void TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (const char* name : {"alpha.cpp", "beta.cpp", "gamma.cpp", "README.md"}) {
+    WriteFile(root / name, "int value = 1;\n");
+  }
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the menu click fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+
+  const std::optional<SDL_FRect> file_item =
+      WorkspaceShellTestAccess::MenuBarItemRect(shell, WorkspaceShell::MenuId::File);
+  Expect(file_item.has_value(), "the File menu should be on the menu bar");
+  const float x = file_item->x + file_item->w / 2.0f;
+  const float y = file_item->y + file_item->h / 2.0f;
+  // The app loop folds each event's own redraw with whatever the shell queued.
+  microide::workspace::RenderInvalidation invalidation;
+  for (const SDL_Event& event : {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                 MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}) {
+    invalidation.Merge(shell.HandleEvent(event).redraw);
+  }
+  invalidation.Merge(WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "the click should open the File menu");
+  Expect(invalidation.HasDamage(), "opening a menu must repaint something");
+
+  pin_caret();
+  PaintInvalidation(shell, canvas, kWidth, kHeight, invalidation);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differences = CountPixelDifferences(retained, canvas.surface());
+  SDL_DestroySurface(retained);
+  Expect(differences == 0,
+         "opening a menu by click should paint what a full repaint paints; " +
+             std::to_string(differences) + " pixels differ");
+}
+
 // A repaint of the editor under an open menu must repaint the editor. RenderClip
 // skips the editor, sidebar and panels when a dirty rect lies inside the open
 // chrome ("only a popup row changed"), and tested that against the BOUNDING BOX
@@ -4103,6 +4186,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/OpeningAMenuByClickKeepsTheSidebar",
+          TestWorkspaceShellOpeningAMenuByClickKeepsTheSidebar);
   AddTest(tests, "WorkspaceShell/SecondarySidebarsDoNotPaintTheFileTree",
           TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree);
   AddTest(tests, "WorkspaceShell/CallHierarchyIsGatedLikeItsSiblings",

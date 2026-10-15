@@ -291,6 +291,17 @@
            shell.ComputeVisibleWindowControlButtons(menu_bar).size();
   }
   static SDL_FRect MenuBarRect(WorkspaceShell& shell) { return CurrentLayout(shell).menu_bar; }
+  // The on-bar rect of one menu's title, or nullopt when it is in the overflow.
+  static std::optional<SDL_FRect> MenuBarItemRect(WorkspaceShell& shell,
+                                                  WorkspaceShell::MenuId id) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    for (const auto& item : shell.ComputeVisibleMenuBarItems(layout.menu_bar)) {
+      if (item.id == id) {
+        return item.rect;
+      }
+    }
+    return std::nullopt;
+  }
   static std::optional<SDL_FRect> MenuOverflowChevronRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);
