@@ -1925,6 +1925,46 @@ Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
   return 0;
 }
 
+// A caret blink in the lower pane of a split repaints that pane and leaves the
+// divider above it intact. Found by the QA redraw verifier (tools/qa suite
+// split-and-close: a 1-px row at the lower pane's top edge after split-down).
+void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\nint other = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the split fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, microide::workspace::EditorSplitOrientation::Horizontal),
+         "the editor should split down");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const Uint64 hidden = HiddenCaretBlinkEpoch(shell);
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::optional<SDL_FRect> blink = shell.CurrentCaretDirtyRect();
+  Expect(blink.has_value(), "the focused lower pane should name its caret region");
+  WorkspaceShell::RenderInvalidation invalidation;
+  invalidation.rects.push_back(*blink);
+  const auto diff = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, invalidation,
+      [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); });
+  Expect(diff.identical(), "a blink in the lower pane should paint what a full repaint paints; " +
+                               DescribePixelDiff(diff));
+}
+
 // The caret blink is decided once per prepared frame. Paint sites used to read the
 // clock themselves (the single-line input, the terminal, the commit fields, the
 // compare and merge carets), so two renders of ONE prepared frame could disagree
@@ -4588,6 +4628,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/BlinkInALowerPaneKeepsTheDivider",
+          TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider);
   AddTest(tests, "WorkspaceShell/EditRepaintsEveryPaneOfTheDocument",
           TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument);
   AddTest(tests, "WorkspaceShell/OpeningAMenuTakesTheCaretOffScreen",

@@ -82,6 +82,20 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
       DirtyHintSkips(dirty_rect_hint, layout.project_tab_strip) &&
       DirtyHintSkips(dirty_rect_hint, layout.tab_strip) &&
       DirtyHintSkips(dirty_rect_hint, layout.breadcrumb);
+  // With the editor split, every pane carries its own tab strip and breadcrumb,
+  // drawn by the chrome pass too; `layout.tab_strip` is only the top row's. A clip
+  // touching a lower pane's strip (a caret blink in that pane, grown by the clip
+  // padding) painted the frame base over the strip and skipped the chrome that
+  // draws it (found by the QA redraw verifier: a 1-px row at the lower pane's top).
+  if (skip_window_chrome && dirty_rect_hint.has_value()) {
+    for (const EditorGroupRects& group : ComputeEditorGroupRectsForState(layout).groups) {
+      if (!DirtyHintSkips(dirty_rect_hint, group.tab_strip) ||
+          !DirtyHintSkips(dirty_rect_hint, group.breadcrumb)) {
+        skip_window_chrome = false;
+        break;
+      }
+    }
+  }
   // Popups float over the editor area (they drop down from the menu bar),
   // so an intersection check against editor_surface alone would still drag
   // in the editor render every time a popup row dirty rect lands below the
