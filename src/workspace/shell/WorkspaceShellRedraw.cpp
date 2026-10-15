@@ -616,33 +616,52 @@ void WorkspaceShell::QueueEditorHoverRefresh() {
   editor_hover_refresh_pending_ = last_mouse_position_valid_;
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
+// Each piece of chrome that floats over the workspace while it is open: the menu
+// bar, an open menu and its submenu, the overflow popup, the tree context menu.
+// Kept as separate shapes because their BOUNDING BOX is not chrome: the menu bar
+// spans the window, so with a tall menu open (Edit reaches below the editor) the
+// box covers the whole editor and sidebar. RenderClip used to test a dirty rect
+// against that box to decide "only a popup changed, skip the editor" -- so a
+// caret blink or a file reload under an open Edit menu painted the window
+// background over the editor until the menu closed.
+util::InlineVector<SDL_FRect, 5> WorkspaceShell::CurrentChromeRects() const {
+  util::InlineVector<SDL_FRect, 5> rects;
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value()) {
-    return std::nullopt;
+    return rects;
   }
-
-  std::optional<SDL_FRect> rect = layout->menu_bar;
+  rects.push_back(layout->menu_bar);
   if (context_.menu_state.menu_bar_open) {
     if (const auto popup_rect = ComputePopupMenuRect(layout->menu_bar, context_.menu_state.active_menu_id);
         popup_rect.has_value()) {
-      rect = UnionOptionalRects(rect, *popup_rect);
+      rects.push_back(*popup_rect);
     }
     if (const auto submenu_rect = ActiveSubmenuRect(layout->menu_bar);
         submenu_rect.has_value()) {
-      rect = UnionOptionalRects(rect, *submenu_rect);
+      rects.push_back(*submenu_rect);
     }
   }
   if (context_.menu_state.overflow_popup_open &&
       context_.menu_state.overflow_popup_anchor_rect.has_value()) {
     const auto overflow = ComputeOverflowMenuBarItems(layout->menu_bar);
-    rect = UnionOptionalRects(rect, ComputeMenuOverflowPopupRect(
-                                *context_.menu_state.overflow_popup_anchor_rect, overflow.size()));
+    rects.push_back(ComputeMenuOverflowPopupRect(*context_.menu_state.overflow_popup_anchor_rect,
+                                                 overflow.size()));
   }
   if (context_.menu_state.tree_context_menu.open) {
     if (const auto tree_menu_rect = ComputeTreeContextMenuRect(); tree_menu_rect.has_value()) {
-      rect = UnionOptionalRects(rect, *tree_menu_rect);
+      rects.push_back(*tree_menu_rect);
     }
+  }
+  return rects;
+}
+
+// One rect covering all of it, for REQUESTING a chrome repaint (a superset is
+// only extra pixels). Never for deciding what a dirty rect may skip; that is
+// CurrentChromeRects, shape by shape.
+std::optional<SDL_FRect> WorkspaceShell::CurrentChromeRedrawRect() const {
+  std::optional<SDL_FRect> rect;
+  for (const SDL_FRect& piece : CurrentChromeRects()) {
+    rect = UnionOptionalRects(rect, piece);
   }
   return rect;
 }

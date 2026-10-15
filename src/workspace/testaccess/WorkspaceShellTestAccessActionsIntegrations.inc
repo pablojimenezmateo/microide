@@ -185,6 +185,11 @@
   static void OpenMenuBarMenuForTest(WorkspaceShell& shell, WorkspaceShell::MenuId id) {
     shell.MakeMenuCoordinator().OpenMenuBarMenu(id);
   }
+  static std::optional<SDL_FRect> PopupMenuRectForTest(WorkspaceShell& shell,
+                                                       WorkspaceShell::MenuId id) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    return layout.has_value() ? shell.ComputePopupMenuRect(layout->menu_bar, id) : std::nullopt;
+  }
   static void OpenSubmenuForTest(WorkspaceShell& shell, WorkspaceShell::MenuId id,
                                  const SDL_FRect& anchor_rect) {
     shell.MakeMenuCoordinator().OpenSubmenu(id, anchor_rect);

@@ -85,24 +85,28 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   // Popups float over the editor area (they drop down from the menu bar),
   // so an intersection check against editor_surface alone would still drag
   // in the editor render every time a popup row dirty rect lands below the
-  // chrome strip. When the dirty rect sits fully inside the open menu/chrome
-  // union, only the menu popup needs repainting — the editor/sidebar/panel
-  // contents underneath are already retained in the scene texture.
+  // chrome strip. When the dirty rect sits fully inside ONE piece of open chrome
+  // (the bar, a popup, a submenu), only that piece needs repainting — the
+  // editor/sidebar/panel contents underneath are already retained in the scene
+  // texture, and the piece is opaque over them. One piece, not their bounding
+  // box: the bar spans the window, so the box of bar + a tall menu covers the
+  // whole editor, and a caret blink under an open Edit menu painted the window
+  // background over it (see CurrentChromeRects).
   // (Window chrome stays gated by its own intersection check above so
   // menu-bar item highlight changes still trigger a chrome repaint.)
   bool contained_in_chrome_union = false;
   std::optional<SDL_FRect> traced_chrome_union;
   if (dirty_rect_hint.has_value()) {
-    if (const auto chrome_union = CurrentChromeRedrawRect();
-        chrome_union.has_value() && RectContains(*chrome_union, *dirty_rect_hint)) {
-      skip_editor_surface = true;
-      skip_sidebar = true;
-      skip_right_pane = true;
-      skip_bottom_panel = true;
-      contained_in_chrome_union = true;
-      traced_chrome_union = chrome_union;
-    } else if (chrome_union.has_value()) {
-      traced_chrome_union = chrome_union;
+    for (const SDL_FRect& piece : CurrentChromeRects()) {
+      if (RectContains(piece, *dirty_rect_hint)) {
+        skip_editor_surface = true;
+        skip_sidebar = true;
+        skip_right_pane = true;
+        skip_bottom_panel = true;
+        contained_in_chrome_union = true;
+        traced_chrome_union = piece;
+        break;
+      }
     }
   }
 

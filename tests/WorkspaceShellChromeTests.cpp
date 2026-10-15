@@ -1585,6 +1585,75 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   SDL_DestroySurface(pixels);
 }
 
+// A repaint of the editor under an open menu must repaint the editor. RenderClip
+// skips the editor, sidebar and panels when a dirty rect lies inside the open
+// chrome ("only a popup row changed"), and tested that against the BOUNDING BOX
+// of the menu bar and the popup. The bar spans the window, so with the Edit menu
+// open -- tall enough to reach the bottom of the editor -- the box covered the
+// whole editor: a caret blink or a file reload there skipped the editor and left
+// the window background painted over it until the menu closed. Reported as "the
+// editor goes black while the Edit menu is open".
+void TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "wide.cpp";
+  std::string body;
+  for (int line = 0; line < 30; ++line) {
+    body += "int value_" + std::to_string(line) +
+            " = compute_something_rather_long(alpha, beta, gamma, delta, epsilon, zeta);\n";
+  }
+  WriteFile(source, body);
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the menu repaint fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenMenuBarMenuForTest(shell, WorkspaceShell::MenuId::Edit);
+  (void)WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const std::optional<SDL_FRect> popup =
+      WorkspaceShellTestAccess::PopupMenuRectForTest(shell, WorkspaceShell::MenuId::Edit);
+  Expect(popup.has_value(), "the Edit menu should be open");
+  // A band of the first text row to the right of the popup: not under any chrome,
+  // but inside the bar+popup bounding box -- the case the box got wrong.
+  const float left = popup->x + popup->w + 24.0f;
+  const SDL_FRect damage{left, layout.editor_surface.y + 6.0f,
+                         layout.editor_surface.x + layout.editor_surface.w - left - 24.0f, 14.0f};
+  Expect(damage.w > 100.0f && damage.y + damage.h <= popup->y + popup->h,
+         "the fixture's damage must sit inside the old bounding box, or it proves nothing");
+
+  WorkspaceShellTestAccess::QueueUnrelatedDamage(shell, damage);
+  pin_caret();
+  PaintInvalidation(shell, canvas, kWidth, kHeight,
+                    WorkspaceShellTestAccess::TakePendingRenderInvalidation(shell));
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  SDL_FlushRenderer(canvas.renderer());
+  const std::size_t differences = CountPixelDifferences(retained, canvas.surface());
+  SDL_DestroySurface(retained);
+  Expect(differences == 0,
+         "an editor repaint under an open menu should match a full repaint; " +
+             std::to_string(differences) + " pixels differ");
+}
+
 void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -4032,6 +4101,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard);
   AddTest(tests, "WorkspaceShell/ProjectTabTooltipDismissRetainedRedrawMatchesFullRender",
           TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender);
+  AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
+          TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/SecondarySidebarsDoNotPaintTheFileTree",
           TestWorkspaceShellSecondarySidebarsDoNotPaintTheFileTree);
   AddTest(tests, "WorkspaceShell/CallHierarchyIsGatedLikeItsSiblings",

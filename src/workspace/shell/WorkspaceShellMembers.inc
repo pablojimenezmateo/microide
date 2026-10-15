@@ -1971,6 +1971,7 @@
   }
   void QueueEditorHoverRefresh();
   std::optional<SDL_FRect> CurrentChromeRedrawRect() const;
+  util::InlineVector<SDL_FRect, 5> CurrentChromeRects() const;
   std::optional<SDL_FRect> CurrentFocusedEditorRedrawRect() const;
   std::optional<SDL_FRect> CurrentEditorLineRangeRect(std::size_t start_line,
                                                       std::size_t end_line) const;

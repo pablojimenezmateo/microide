@@ -67,9 +67,12 @@ inline std::size_t CountPixelDifferences(const SoftwareCanvas& lhs, const Softwa
   return CountPixelDifferences(lhs.surface(), rhs.surface());
 }
 
-// Paint exactly what `redraw` asks for onto `canvas`, as the app loop does: a
-// full frame for `full`, one clipped pass per rect otherwise, and NOTHING when it
-// asks for nothing -- an empty invalidation is a frame the app does not draw.
+// Paint exactly what `redraw` asks for onto `canvas`, as the app loop does
+// (Application::RenderFrame): a full frame for `full`, otherwise one pass per
+// rect under its clip WITH that clip as the dirty hint -- the hint is what lets
+// RenderClip skip whole surfaces, and skipping the wrong one is a class of stale
+// pixel only a hinted pass can show -- and NOTHING when it asks for nothing: an
+// empty invalidation is a frame the app does not draw.
 inline void PaintInvalidation(workspace::WorkspaceShell& shell,
                               SoftwareCanvas& canvas,
                               int width,
@@ -82,7 +85,8 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
   if (redraw.rects.empty()) {
     return;
   }
-  shell.PrepareRenderFrame(canvas.renderer(), width, height);
+  const workspace::WorkspaceShell::FrameToken token =
+      shell.PrepareFrameOnce(canvas.renderer(), width, height);
   for (const SDL_FRect& rect : redraw.rects) {
     const SDL_Rect clip = InflateClipRect(rect, shell.PartialRedrawClipPadding(), width, height);
     if (clip.w <= 0 || clip.h <= 0) {
@@ -90,7 +94,9 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
     }
     Expect(SDL_SetRenderClipRect(canvas.renderer(), &clip),
            "a retained redraw should set its clip rect");
-    shell.RenderPrepared(canvas.renderer(), width, height);
+    const SDL_FRect hint{static_cast<float>(clip.x), static_cast<float>(clip.y),
+                         static_cast<float>(clip.w), static_cast<float>(clip.h)};
+    shell.RenderClip(token, canvas.renderer(), width, height, hint);
   }
   Expect(SDL_SetRenderClipRect(canvas.renderer(), nullptr),
          "a retained redraw should clear its clip rect");

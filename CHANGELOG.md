@@ -153,6 +153,12 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **The editor no longer goes dark while the Edit menu is open.** A repaint under
+  an open menu skipped the editor whenever it fell inside the box spanning the menu
+  bar and the menu, and the menu bar is as wide as the window: with the Edit menu
+  (tall enough to reach the bottom of the editor) open, a caret blink or a file
+  reload painted the window background over the editor until the menu closed.
+
 - **Search results no longer blink and jump while files change.** A project search
   on screen re-runs when files change under it; it cleared its list first, so with
   agents writing the tree it emptied twice a second and the selection and scroll
