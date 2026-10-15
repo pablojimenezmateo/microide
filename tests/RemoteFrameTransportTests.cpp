@@ -256,7 +256,10 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   if (!IsSanitizerBuild() && base < 2 * std::chrono::duration<double>(kRtt).count()) {
     Expect(throughput > kBytesPerSecond * 0.8,
            "the link stays full: " + std::to_string(throughput / 1e6) + " MB/s");
-    Expect(window >= product && window <= product + kBytesPerSecond * 0.015,
+    // Below by a measurement's worth (2%): the window comes from the MEASURED
+    // bandwidth, which a busy box reads a fraction low -- 499392 against 500000
+    // failed a full parallel ctest run once while the rule above held exactly.
+    Expect(window >= product * 0.98 && window <= product + kBytesPerSecond * 0.015,
            "the window is the bandwidth-delay product plus a few ms of queue: window " +
                std::to_string(window) + ", product " + std::to_string(product));
   }
