@@ -512,10 +512,11 @@ void TextViewport::SetPath(const std::filesystem::path& path) {
   SetDocumentPath(path);
 }
 
-void TextViewport::RebindToPath(const std::filesystem::path& path) {
+void TextViewport::RebindToPath(const std::filesystem::path& path,
+                                const util::FileSignature& signature) {
   EnsureDocument();
   SetDocumentPath(path);
-  document_->disk_signature = util::FileSignature{};
+  document_->disk_signature = signature;
 }
 
 void TextViewport::SetDirty(bool dirty) {

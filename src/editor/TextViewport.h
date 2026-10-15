@@ -224,7 +224,10 @@ class TextViewport {
   // Save As: the buffer now belongs to `path`, which it has never been loaded
   // from or saved to, so the on-disk identity is forgotten (a conflict check
   // against the old file's signature would read the new path as vanished).
-  void RebindToPath(const std::filesystem::path& path);
+  // `signature` restores a binding instead: a Save As whose write failed goes
+  // back to the path and on-disk identity it had.
+  void RebindToPath(const std::filesystem::path& path,
+                    const util::FileSignature& signature = {});
   void SetDirty(bool dirty);
   void SetPlaceholderText(std::string text);
   void SetUntitledBuffer();

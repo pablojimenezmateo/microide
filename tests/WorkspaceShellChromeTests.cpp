@@ -2767,6 +2767,48 @@ void TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider() {
   step("leaving it", {MouseMotionEvent(tab.x + 4.0f, tab.y + tab.h + 200.0f)});
 }
 
+// `save <path>` names an untitled buffer, and its tab's title changes with it --
+// but only the dirty marker's tab was repainted, so the strip kept "*Untitled"
+// (QA monkey seed 11). A Save As whose write fails names nothing.
+void TestWorkspaceShellSaveAsRepaintsTheTabTitle() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "blocker.txt", "a file, so nothing can be created under it\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the save-as fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "an untitled tab opens");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("hello");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save notes/named.txt"),
+         "save <path> names the buffer");
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                shell.ConsumePendingRenderInvalidation(), pin_caret);
+  Expect(diff.identical(),
+         "the renamed tab should paint what a full repaint paints; " + DescribePixelDiff(diff));
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "a second untitled tab");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("again");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save blocker.txt/inner.txt"),
+         "a Save As that cannot write fails");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().empty(),
+         "and leaves the buffer untitled, not named after a file that does not exist");
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5554,6 +5596,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorSplitDividerDragPaintsCleanly);
   AddTest(tests, "WorkspaceShell/PaneTabStripRepaintKeepsTheSplitDivider",
           TestWorkspaceShellPaneTabStripRepaintKeepsTheSplitDivider);
+  AddTest(tests, "WorkspaceShell/SaveAsRepaintsTheTabTitle",
+          TestWorkspaceShellSaveAsRepaintsTheTabTitle);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",

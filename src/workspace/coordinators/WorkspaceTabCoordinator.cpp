@@ -257,23 +257,38 @@ bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
   }
   editor::TextViewport& viewport = tab.editor_state->viewport;
   const std::filesystem::path normalized = path.lexically_normal();
-  if (normalized != viewport.path().lexically_normal()) {
-    std::error_code exists_error;
-    if (std::filesystem::exists(normalized, exists_error)) {
-      return fail(normalized.string() + " already exists");
-    }
-    const std::filesystem::path previous = viewport.path();
-    viewport.RebindToPath(normalized);
-    tab.path = normalized;
-    tab.title = normalized.filename().string();
-    if (!previous.empty()) {
-      operations_.invalidate_editor_blame_path(previous.lexically_normal());
-    }
-    operations_.notify_plugin_buffer_open(normalized);
+  if (normalized == viewport.path().lexically_normal()) {
+    return SaveGroupTab(group_index, index, SaveMode::Blocking) || fail("Save failed");
   }
+  std::error_code exists_error;
+  if (std::filesystem::exists(normalized, exists_error)) {
+    return fail(normalized.string() + " already exists");
+  }
+  // The write goes to the buffer's path, so bind first -- and undo the binding if
+  // the write fails (a directory that cannot be created, no permission): as in VS
+  // Code, a failed Save As leaves the buffer what it was, not named after a file
+  // that does not exist.
+  const std::filesystem::path previous = viewport.path();
+  const util::FileSignature previous_signature = viewport.disk_signature();
+  const std::filesystem::path previous_tab_path = tab.path;
+  std::string previous_title = tab.title;
+  viewport.RebindToPath(normalized);
+  tab.path = normalized;
+  tab.title = normalized.filename().string();
   if (!SaveGroupTab(group_index, index, SaveMode::Blocking)) {
+    viewport.RebindToPath(previous, previous_signature);
+    tab.path = previous_tab_path;
+    tab.title = std::move(previous_title);
     return fail("Save failed");
   }
+  if (!previous.empty()) {
+    operations_.invalidate_editor_blame_path(previous.lexically_normal());
+  }
+  operations_.notify_plugin_buffer_open(normalized);
+  // The buffer has a new name: its tab title, its breadcrumb, and -- through the
+  // extension -- possibly its language, so its highlighting. A plain save repaints
+  // only the dirty marker.
+  operations_.request_active_tab_redraw(/*include_tree_sidebar=*/true);
   return true;
 }
 
