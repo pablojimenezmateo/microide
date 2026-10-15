@@ -317,7 +317,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
   return ControlUiQuery::Operations{
       .layout = [this]() { return CurrentWorkspaceLayout(); },
       .menu_label =
-          [this](MenuId id) {
+          [](MenuId id) {
             const MenuSpec* spec = FindMenuSpec(id);
             return spec == nullptr ? std::string{} : std::string(spec->label);
           },
@@ -338,7 +338,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
       .menus =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
             const MenuSurfaceState& menus = context_.menu_state;
-            const auto menu_name = [this](MenuId id) {
+            const auto menu_name = [](MenuId id) {
               const MenuSpec* spec = FindMenuSpec(id);
               return spec == nullptr || spec->label.empty() ? std::string("menu")
                                                             : std::string(spec->label);
