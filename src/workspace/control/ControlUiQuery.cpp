@@ -115,6 +115,10 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   sidebar["temporary"] = util::JsonValue(state.sidebar.temporary);
   object["sidebar"] = util::JsonValue(std::move(sidebar));
 
+  {
+    const std::string modal = operations.modal ? operations.modal() : std::string{};
+    object["modal"] = OptionalStringJson(modal);
+  }
   util::JsonObject overlay;
   overlay["visible"] = util::JsonValue(state.overlay.visible);
   overlay["mode"] = state.overlay.visible

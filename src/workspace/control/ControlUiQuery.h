@@ -83,6 +83,9 @@ class ControlUiQuery {
     std::function<std::optional<WorkspaceLayout>()> layout;
     // The display label of a menu (`Edit`), for the menu state block.
     std::function<std::string(MenuId)> menu_label;
+    // The modal that owns the keyboard and pointer, if any: `settings`, `help`,
+    // `prompt` (a confirm/input prompt) or `unsaved-prompt`; empty for none.
+    std::function<std::string()> modal;
     ElementSource menus;       // menu bar items, then the open popup's (and submenu's) rows
     ElementSource tabs;        // project tabs, each editor group's tabs, split dividers
     ElementSource sidebar;     // view buttons, header buttons, visible rows

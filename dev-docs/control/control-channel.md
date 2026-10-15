@@ -171,11 +171,12 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `skipsTerminal`.
 
 **What is on screen (`ui`).** The locator surface for automation (`tools/qa`):
-`{window:{width,height}, focus, sidebar:{visible,view,temporary},
+`{window:{width,height}, focus, modal, sidebar:{visible,view,temporary},
 overlay:{visible,mode}, menu:{open,menu,activeItem,submenu,contextMenu,overflow},
 panel:{visible,content,maximized}, surfaces:{menuBar,projectTabStrip,tabStrip,
 breadcrumb,editorSurface,sidebar,rightPane,bottomPanel,statusBar}, elements:[...]}`.
-Each element is `{name, kind, rect:[x,y,w,h], label?, enabled?, active?,
+`modal` names the surface that owns the keyboard and pointer (`settings`, `help`,
+`prompt`, `unsaved-prompt`) or is null. Each element is `{name, kind, rect:[x,y,w,h], label?, enabled?, active?,
 selected?}` in window coordinates (what mouse events use). Names, by kind:
 
 | name | element |

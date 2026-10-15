@@ -321,6 +321,20 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const MenuSpec* spec = FindMenuSpec(id);
             return spec == nullptr ? std::string{} : std::string(spec->label);
           },
+      .modal =
+          [this]() -> std::string {
+            if (context_.prompts.dirty_visible) {
+              return "unsaved-prompt";
+            }
+            if (context_.prompts.surface_visible) {
+              return "prompt";
+            }
+            if (settings_overlay_service_.Visible()) {
+              return settings_overlay_service_.Mode() == SettingsOverlayMode::HelpAbout ? "help"
+                                                                                        : "settings";
+            }
+            return {};
+          },
       .menus =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
             const MenuSurfaceState& menus = context_.menu_state;

@@ -116,6 +116,7 @@ void TestUiQueryNamesTheWorkspaceChrome() {
   Expect(ui["sidebar"]["visible"].AsBool() && ui["sidebar"]["view"].AsString() == "tree",
          "the ui query should report the sidebar view");
   Expect(!ui["menu"]["open"].AsBool(), "no menu should be open");
+  Expect(ui["modal"].IsNull(), "no modal should be up");
   Expect(ui["surfaces"]["editorSurface"].IsArray(), "the ui query should report surface rects");
   for (const std::string_view name :
        {"menu:File", "menu:Edit", "menu:Help", "tab:0/alpha.cpp", "tab:0/beta.cpp",
@@ -157,6 +158,19 @@ void TestUiQueryHitsWhatItNames() {
          "a click at the center of a tree row should select that row");
 }
 
+// A modal owns the keyboard and the pointer, so a driver must see it to dismiss it:
+// the indent status segment opens Settings, which a QA run otherwise mistakes for
+// nothing having happened.
+void TestUiQueryReportsTheModal() {
+  UiFixture fixture;
+  TestAccess::OpenSettingsOverlay(fixture.shell);
+  Expect(TestAccess::ControlUi(fixture.shell)["modal"].AsString() == "settings",
+         "the ui query should report the Settings overlay as the modal");
+  TestAccess::OpenHelpAboutOverlay(fixture.shell);
+  Expect(TestAccess::ControlUi(fixture.shell)["modal"].AsString() == "help",
+         "the ui query should report Help/About as the modal");
+}
+
 void TestUiQueryIsReadOnly() {
   UiFixture fixture;
   const std::string first = util::SerializeJson(TestAccess::ControlUi(fixture.shell));
@@ -185,6 +199,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesTheWorkspaceChrome", TestUiQueryNamesTheWorkspaceChrome);
   AddTest(tests, "ControlUiQuery/HitsWhatItNames", TestUiQueryHitsWhatItNames);
   AddTest(tests, "ControlUiQuery/IsReadOnly", TestUiQueryIsReadOnly);
+  AddTest(tests, "ControlUiQuery/ReportsTheModal", TestUiQueryReportsTheModal);
   AddTest(tests, "ControlUiQuery/NamesAreMadeUnique", TestUiNamesAreMadeUnique);
 }
 
