@@ -229,7 +229,10 @@ bool IsValidUtf8(std::string_view content);
 std::string NormalizeLineEndings(std::string_view text);
 void TrimTrailingLineEndings(std::string* text);
 // Trim leading and trailing ASCII whitespace (`std::isspace` semantics on the
-// unsigned char value: space, tab, CR, LF, VT, FF).
+// unsigned char value: space, tab, CR, LF, VT, FF). The view form is the one to
+// reach for on a line already split out of a buffer; three TUs had grown their own
+// copy of it before it existed here.
+std::string_view TrimAsciiWhitespaceView(std::string_view text);
 std::string TrimAsciiWhitespace(std::string_view text);
 // Lowercase the ASCII A-Z range, leaving every other byte untouched. Safe for
 // UTF-8 input because the multi-byte sequences never include 'A'..'Z'.

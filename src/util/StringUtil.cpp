@@ -797,7 +797,7 @@ std::string CollapseAsciiWhitespaceTrackingMatch(std::string_view text,
   return collapsed;
 }
 
-std::string TrimAsciiWhitespace(std::string_view text) {
+std::string_view TrimAsciiWhitespaceView(std::string_view text) {
   std::size_t start = 0;
   while (start < text.size() && IsAsciiSpace(static_cast<unsigned char>(text[start]))) {
     ++start;
@@ -806,7 +806,11 @@ std::string TrimAsciiWhitespace(std::string_view text) {
   while (end > start && IsAsciiSpace(static_cast<unsigned char>(text[end - 1]))) {
     --end;
   }
-  return std::string(text.substr(start, end - start));
+  return text.substr(start, end - start);
+}
+
+std::string TrimAsciiWhitespace(std::string_view text) {
+  return std::string(TrimAsciiWhitespaceView(text));
 }
 
 namespace {

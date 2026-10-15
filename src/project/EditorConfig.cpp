@@ -7,20 +7,11 @@
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
 namespace microide::project {
 namespace {
-
-std::string_view TrimAscii(std::string_view text) {
-  while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\r')) {
-    text.remove_prefix(1);
-  }
-  while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
-    text.remove_suffix(1);
-  }
-  return text;
-}
 
 // EditorConfig keys and the boolean/enum values are case-insensitive; section
 // globs are not.
@@ -55,7 +46,7 @@ std::optional<bool> ParseBool(std::string_view value) {
 // There is deliberately no "bare name also means its subtree" expansion: that is a
 // search-box affordance and would make "[build]" silently capture build/**.
 void AppendSectionPatterns(std::string_view header, std::vector<std::string>& out) {
-  std::string_view pattern = TrimAscii(header);
+  std::string_view pattern = util::TrimAsciiWhitespaceView(header);
   if (pattern.empty()) {
     return;
   }
@@ -73,7 +64,7 @@ void AppendSectionPatterns(std::string_view header, std::vector<std::string>& ou
 
 void ApplyProperty(std::string_view key, std::string_view raw_value,
                    EditorConfigProperties& properties) {
-  const std::string value = LowerAscii(TrimAscii(raw_value));
+  const std::string value = LowerAscii(util::TrimAsciiWhitespaceView(raw_value));
   // "unset" restores the default by removing any inherited value; modelling that
   // as "no opinion" is right for us because our fallback is the user's setting.
   if (value == "unset") {
@@ -187,7 +178,7 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
                                           : text.substr(position, newline - position);
     position = newline == std::string_view::npos ? text.size() + 1 : newline + 1;
 
-    const std::string_view line = TrimAscii(raw_line);
+    const std::string_view line = util::TrimAsciiWhitespaceView(raw_line);
     if (line.empty() || line.front() == '#' || line.front() == ';') {
       continue;
     }
@@ -218,7 +209,7 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
     if (equals == std::string_view::npos) {
       continue;
     }
-    const std::string key = LowerAscii(TrimAscii(line.substr(0, equals)));
+    const std::string key = LowerAscii(util::TrimAsciiWhitespaceView(line.substr(0, equals)));
     const std::string_view value = line.substr(equals + 1);
     if (key.empty()) {
       continue;
@@ -226,7 +217,7 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
 
     if (in_preamble) {
       if (key == "root") {
-        file.root = ParseBool(LowerAscii(TrimAscii(value))).value_or(false);
+        file.root = ParseBool(LowerAscii(util::TrimAsciiWhitespaceView(value))).value_or(false);
       }
       continue;
     }

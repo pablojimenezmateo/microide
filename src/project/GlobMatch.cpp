@@ -1,5 +1,7 @@
 #include "project/GlobMatch.h"
 
+#include "util/StringUtil.h"
+
 #include <cstddef>
 #include <utility>
 
@@ -228,16 +230,6 @@ namespace {
 // is paste noise that would only slow the per-file match loop.
 constexpr std::size_t kMaxPatternBytes = 1024;
 
-std::string_view TrimAscii(std::string_view text) {
-  while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
-    text.remove_prefix(1);
-  }
-  while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
-    text.remove_suffix(1);
-  }
-  return text;
-}
-
 bool HasWildcard(std::string_view text) {
   for (std::size_t index = 0; index < text.size(); ++index) {
     const char c = text[index];
@@ -325,7 +317,7 @@ namespace {
 // Turn one user-typed entry into the zero, one, or two patterns it means. A
 // wildcard-free entry names a file OR a subtree, so it yields both "p" and "p/**".
 void AppendNormalized(std::string_view entry, std::vector<std::string>& out) {
-  entry = TrimAscii(entry);
+  entry = util::TrimAsciiWhitespaceView(entry);
   while (entry.starts_with("./")) {
     entry.remove_prefix(2);
   }

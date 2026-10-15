@@ -25,16 +25,6 @@
 namespace microide::project::remote {
 namespace {
 
-std::string_view TrimView(std::string_view text) {
-  while (!text.empty() && (text.front() == ' ' || text.front() == '\t' || text.front() == '\r')) {
-    text.remove_prefix(1);
-  }
-  while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
-    text.remove_suffix(1);
-  }
-  return text;
-}
-
 std::string OctalMode(unsigned mode) {
   char buffer[8];
   std::snprintf(buffer, sizeof(buffer), "%04o", mode & 07777u);
@@ -204,7 +194,7 @@ SessionSurvival ReadSessionSurvival(const std::filesystem::path& root, std::stri
     }
     bool in_login = false;
     for (std::string_view line : util::SplitLineViews(*text)) {
-      line = TrimView(line);
+      line = util::TrimAsciiWhitespaceView(line);
       if (line.empty() || line.front() == '#' || line.front() == ';') {
         continue;
       }
@@ -217,10 +207,10 @@ SessionSurvival ReadSessionSurvival(const std::filesystem::path& root, std::stri
       }
       const std::size_t eq = line.find('=');
       if (eq == std::string_view::npos ||
-          TrimView(line.substr(0, eq)) != "KillUserProcesses") {
+          util::TrimAsciiWhitespaceView(line.substr(0, eq)) != "KillUserProcesses") {
         continue;
       }
-      const std::string_view value = TrimView(line.substr(eq + 1));
+      const std::string_view value = util::TrimAsciiWhitespaceView(line.substr(eq + 1));
       survival.kill_user_processes = value == "yes" || value == "true" || value == "1" ||
                                      value == "on";
     }
