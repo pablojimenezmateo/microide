@@ -68,6 +68,7 @@ void RegisterPluginPureHelperTests(std::vector<TestCase>& tests);
 void RegisterPluginSurfaceCoverageTests(std::vector<TestCase>& tests);
 void RegisterSurfaceTextureCacheTests(std::vector<TestCase>& tests);
 void RegisterExternalRepoChangeTests(std::vector<TestCase>& tests);
+void RegisterScopedRenderClipTests(std::vector<TestCase>& tests);
 void RegisterMainThreadMailboxTests(std::vector<TestCase>& tests);
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests);
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests);
@@ -308,6 +309,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterSaveFormatterPipelineTests(tests);
   RegisterProcessLauncherTests(tests);
   RegisterExternalRepoChangeTests(tests);
+  RegisterScopedRenderClipTests(tests);
   RegisterWorkspaceToolDownloaderTests(tests);
   RegisterEditorEssentialsTests(tests);
   RegisterEditorWordMotionTests(tests);

@@ -1273,6 +1273,7 @@ add_executable(microide_tests
   tests/ReviewTabPlanTests.cpp
   tests/ReviewSessionTests.cpp
   tests/ExternalRepoChangeTests.cpp
+  tests/ScopedRenderClipTests.cpp
   tests/MainThreadMailboxTests.cpp
   tests/RenderViewModelBuilderTests.cpp
   tests/TerminalWordSelectionTests.cpp

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "render/PluginDisplayList.h"
+#include "render/ScopedRenderClip.h"
 #include "render/SurfacePrimitives.h"
 #include "render/SurfaceTextureCache.h"
 #include "render/TextRenderer.h"
@@ -63,7 +64,9 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
   if (had_clip) {
     SDL_GetRenderClipRect(renderer, &previous_clip);
   }
-  const SDL_Rect base_clip = ToIntRect(params.clip);
+  // Bounded by the caller's clip too: on a partial repaint that is the dirty
+  // rect, and a surface replayed under it must not paint outside it.
+  const SDL_Rect base_clip = NarrowToCurrentClip(renderer, ToIntRect(params.clip));
   thread_local std::vector<SDL_Rect> clip_stack;
   clip_stack.clear();
   clip_stack.push_back(base_clip);

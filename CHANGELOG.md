@@ -153,6 +153,12 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Text drawn over itself on partial repaints.** A surface that set its own clip
+  (the editor's "reloaded from disk" banner, the status bar, the bottom panel's
+  strip, plugin surfaces) replaced the repaint's clip instead of narrowing it, so
+  it drew outside the region being repainted; anti-aliased text blended over
+  itself there and came out bolder.
+
 - **Remote: switching branches on the host no longer leaves deleted files in the
   mirror.** A checkout that deleted more than a quarter of the files was held as a
   possible unmounted disk. The host now says when its HEAD moved, and the mirror

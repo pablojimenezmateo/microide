@@ -4,9 +4,9 @@
 
 namespace microide::render {
 
-// Applies `clip` to the renderer for the lifetime of the scope, then restores the
-// renderer's PREVIOUS clip state exactly — the enabled rect if one was set, or the
-// disabled state if none was.
+// Applies `clip`, narrowed to any outer clip, to the renderer for the lifetime of
+// the scope, then restores the renderer's PREVIOUS clip state exactly — the
+// enabled rect if one was set, or the disabled state if none was.
 //
 // This exists because the naive "save, set, restore-to-nullptr" pattern silently
 // breaks two ways:
@@ -18,6 +18,27 @@ namespace microide::render {
 //     everything drawn afterward, and restoring to nullptr drops an outer clip
 //     (e.g. the dirty-region rect a partial repaint relies on) instead of keeping
 //     it — letting later draws escape the dirty region.
+// `clip` narrowed to the renderer's current clip, if one is set. A nested clip
+// must never WIDEN the outer one: a partial repaint runs the whole scene under
+// the dirty rect's clip, and a surface that simply set its own clip drew outside
+// that rect -- over pixels that were already right. Opaque fills come out the
+// same; anti-aliased text blended over itself does not, so a banner message got
+// bolder on every partial frame that ran its paint code without covering it
+// (TD-2026-10-15-341 found it). An empty intersection is a zero-area clip, which
+// SDL enables and which draws nothing -- what the caller should get.
+inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& clip) {
+  if (!SDL_RenderClipEnabled(renderer)) {
+    return clip;
+  }
+  SDL_Rect outer{};
+  SDL_GetRenderClipRect(renderer, &outer);
+  SDL_Rect narrowed{};
+  if (!SDL_GetRectIntersection(&outer, &clip, &narrowed)) {
+    return SDL_Rect{outer.x, outer.y, 0, 0};
+  }
+  return narrowed;
+}
+
 class ScopedRenderClip {
  public:
   ScopedRenderClip(SDL_Renderer* renderer, const SDL_Rect& clip) : renderer_(renderer) {
@@ -25,7 +46,8 @@ class ScopedRenderClip {
     if (had_clip_) {
       SDL_GetRenderClipRect(renderer_, &previous_clip_);
     }
-    SDL_SetRenderClipRect(renderer_, &clip);
+    const SDL_Rect narrowed = NarrowToCurrentClip(renderer_, clip);
+    SDL_SetRenderClipRect(renderer_, &narrowed);
   }
 
   ~ScopedRenderClip() {
