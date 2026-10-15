@@ -34,8 +34,11 @@ Files live in `tools/capture-media/`:
   with **xdotool**, and grabs frames through `cm_capture`. Because it runs
   entirely on Xvfb it never steals the real desktop and works headless / in CI.
   The grabber is ImageMagick `import` when present and otherwise `xwd` piped
-  through `xwd2png.py` (x11-apps + Pillow), so stills and the repro scripts run
-  on a box with no ImageMagick — only the hero *video* still needs ffmpeg.
+  through `xwd2png.py` (x11-apps + Pillow), so stills and the GUI QA driver run
+  on a box with no ImageMagick — only the hero *video* still needs ffmpeg. The
+  one-off repro scripts that used to live in `tools/repro/` are scenarios of
+  `tools/qa` now (the modal-backdrop repro is `tools/qa/run.py suite
+  overlay-backdrop`, with the redraw verifier as its oracle).
 - **`make-fixture.sh`** — builds the deterministic demo project (`taskflow`): a
   small C++ git repo with pinned author/dates, a compiled `-g` binary for the
   debugger, and a divergent branch engineered to conflict for the merge scene.
@@ -94,12 +97,12 @@ checked into the real project tree.
 (`xwd`) plus Pillow — **`xdotool`** (live keystroke/typing injection — required for
 the hero video and the welcome-tab close), and — for the debugger scene — `gdb`
 plus the bundled `gdb-dap` plugin. The hero *video* additionally needs `ffmpeg`
-(with libx264 + libvpx-vp9); `--shots-only` and the `tools/repro/` scripts do not.
+(with libx264 + libvpx-vp9); `--shots-only` and `tools/qa` do not.
 On Debian/Ubuntu:
 
 ```bash
 sudo apt install xvfb ffmpeg imagemagick xdotool gdb
-# or, without ImageMagick (stills + repro scripts only):
+# or, without ImageMagick (stills + tools/qa only):
 sudo apt install xvfb x11-apps python3-pil xdotool gdb
 ```
 

@@ -1355,7 +1355,9 @@ libstdc++, it takes two minutes and the answer is unambiguous. See
 `platform::EntryPathType`.
 
 **Randomized command sequences through the shipped binary**
-(`tools/fuzz-control-commands.py`, against the ASAN build). The unit suites drive
+(`tools/qa/run.py monkey --profile commands`, against the ASAN build; it was
+`tools/fuzz-control-commands.py` until the GUI QA harness absorbed it, seeds,
+generators and churn unchanged). The unit suites drive
 coordinators and viewports directly, so a defect that needs the *whole shell* --
 a real render loop, real background threads, a viewport that gets COPIED because a
 pane was split -- is invisible to them. A few hundred random control-channel

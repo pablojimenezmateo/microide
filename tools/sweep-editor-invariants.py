@@ -36,7 +36,7 @@ Exit code is the number of failing cases; each failure prints the case, the
 command, and a unified diff of what changed.
 
 Environment: needs `xvfb` and a SHORT `XDG_RUNTIME_DIR` (AF_UNIX caps the socket
-path at 108 bytes) -- same requirements as tools/fuzz-control-commands.py.
+path at 108 bytes) -- same requirements as the tools/qa driver.
 """
 
 from __future__ import annotations

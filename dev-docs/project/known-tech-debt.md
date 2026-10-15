@@ -3167,7 +3167,8 @@ Worth recording is what it took to find, because none of it was reading code:
   close / draw is five commands in order; independent uniform draws essentially
   never land them.
 
-The sweep is committed as `tools/fuzz-control-commands.py` with those three
+The sweep was committed as `tools/fuzz-control-commands.py` (now
+`tools/qa/run.py monkey --profile commands`, seed-for-seed the same) with those three
 requirements in its docstrings, and vacuity-checked both ways (fix reverted: 2 of
 2 seeds reproduce; fix in place: 4 of 4 survive). A shell-level test of the same
 user sequence was written and then DELETED: it passed with the fix reverted, so it
