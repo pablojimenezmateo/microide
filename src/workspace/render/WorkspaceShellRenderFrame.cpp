@@ -583,6 +583,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   frame_state_.caret_visible = CaretVisibleNow();
   frame_state_.terminal_owns_caret = project_state.surface.focus == FocusTarget::Panel &&
                                      context_.text_input.active_surface == TextInputSurface::Terminal;
+  // Ownership changes the terminal caret's style (steady outline vs blinking block)
+  // at the same place, which the caret-region comparison below cannot see.
+  if (frame_state_.terminal_owns_caret != frame_state_.painted_terminal_owns_caret) {
+    if (const auto caret = ActiveTerminalCaretRect(layout); caret.has_value()) {
+      RequestRedrawRect(*caret);
+    }
+    frame_state_.painted_terminal_owns_caret = frame_state_.terminal_owns_caret;
+  }
   // Whatever moves the caret away -- focus to another surface, a menu or prompt
   // that suspends the blink, the blink's own phase -- this frame repaints both the
   // caret region the last frame painted and the one it paints now. Each such
@@ -636,6 +644,33 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       RequestWindowRedraw();
       frame_state_.painted_backdrops = backdrops;
     }
+  }
+  // The sidebar's selected row: activating a tab selects its file in the tree (as
+  // VS Code's explorer follows the active editor) without repainting the tree
+  // (QA monkey, seed 5). Any selection that moved with no repaint of its own
+  // repaints the sidebar here.
+  if (sidebar_vm.visible) {
+    const SidebarState& sidebar = project_state.sidebar;
+    std::size_t selected = project_state.directory_tree.selected_index();
+    switch (ActiveSidebarMode()) {
+      case SidebarMode::Git: selected = sidebar.git.selected_index; break;
+      case SidebarMode::Problems: selected = sidebar.problems.selected_index; break;
+      case SidebarMode::Tests: selected = sidebar.tests.selected_index; break;
+      case SidebarMode::Search: selected = project_state.overlay.workflow.project_search.selected_index; break;
+      default:
+        if (UsesPluginItemSurface(ActiveSidebarMode())) {
+          selected = sidebar.plugin.selected_index;
+        }
+        break;
+    }
+    const std::uint64_t key = (std::hash<std::string>{}(sidebar.view_id) * 0x9E3779B97F4A7C15ull) ^
+                              (static_cast<std::uint64_t>(selected) + 1);
+    if (key != frame_state_.painted_sidebar_selection && frame_state_.painted_sidebar_selection != 0) {
+      RequestRedrawRect(layout.sidebar);
+    }
+    frame_state_.painted_sidebar_selection = key;
+  } else {
+    frame_state_.painted_sidebar_selection = 0;
   }
   // A tab strip painted mid-slide that is no longer animating repaints at rest.
   {

@@ -2631,6 +2631,44 @@ void TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside() {
   Expect(diff.identical(), "a narrow git view should paint inside itself; " + DescribePixelDiff(diff));
 }
 
+// A tree selection that moves with no repaint of its own -- activating a tab in the
+// other split pane selects its file in the tree, as VS Code's explorer follows the
+// active editor, and that path damaged only the panes -- is repainted by the next
+// frame, whatever it repaints. Found by the QA monkey (seed 5; replay-verified).
+void TestWorkspaceShellTreeFollowingTheActiveTabRepaints() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  WriteFile(root / "beta.cpp", "int beta = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the tree fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::size_t before = WorkspaceShellTestAccess::TreeSelectedIndex(shell);
+  WorkspaceShellTestAccess::SetTreeSelectedIndexSilently(shell, before == 0 ? 1 : 0);
+  microide::workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).status_bar);
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, elsewhere, pin_caret);
+  Expect(diff.identical(), "a tree selection moved with no damage should repaint on the next frame; " +
+                               DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5400,6 +5438,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/TreeFollowingTheActiveTabRepaints",
+          TestWorkspaceShellTreeFollowingTheActiveTabRepaints);
   AddTest(tests, "WorkspaceShell/TerminalFindBarOwnsTheBlink",
           TestWorkspaceShellTerminalFindBarOwnsTheBlink);
   AddTest(tests, "WorkspaceShell/NarrowGitViewKeepsItsLabelsInside",

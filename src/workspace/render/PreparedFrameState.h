@@ -29,6 +29,7 @@ struct PreparedFrameState {
   // Whether the focused terminal owns the blinking caret (not its find bar, not a
   // modal): only then does its caret blink; otherwise it shows a steady outline.
   bool terminal_owns_caret = false;
+  bool painted_terminal_owns_caret = false;  // outline vs blinking block, as painted
   // The floating or modal surface the pointer is over, if any: PointerOver lights
   // up only rects inside it (an empty rect: the pointer is outside a modal, and
   // nothing hovers).
@@ -56,6 +57,9 @@ struct PreparedFrameState {
   // everything under it, so a modal opening over another changes the whole
   // window, not just the new dialog.
   std::uint8_t painted_backdrops = 0;
+  // The sidebar list selection painted (view and row): the tree follows the
+  // active editor's file, and that selection change damaged nothing.
+  std::uint64_t painted_sidebar_selection = 0;
 };
 
 }  // namespace microide::workspace

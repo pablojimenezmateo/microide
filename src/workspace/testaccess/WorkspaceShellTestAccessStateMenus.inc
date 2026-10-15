@@ -1228,6 +1228,10 @@
   static WorkspaceShell::MenuId ActiveMenuId(const WorkspaceShell& shell) {
     return shell.context_.menu_state.active_menu_id;
   }
+  // Moves the tree selection the way a background sync does: no damage of its own.
+  static void SetTreeSelectedIndexSilently(WorkspaceShell& shell, std::size_t index) {
+    shell.context_.current_project_state.directory_tree.SetSelectedIndex(index);
+  }
   static std::size_t TreeSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.directory_tree.selected_index();
   }
