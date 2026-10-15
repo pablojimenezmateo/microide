@@ -2687,6 +2687,54 @@ void TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider() {
                                DescribePixelDiff(diff));
 }
 
+// With the terminal's find bar focused, only the find field's caret blinks; the
+// terminal shows a steady outline cursor. It blinked along with the field while
+// the blink repainted only the field's caret. Found by the QA monkey (seed 4).
+void TestWorkspaceShellTerminalFindBarOwnsTheBlink() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the terminal fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 8, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const Uint64 hidden = HiddenCaretBlinkEpoch(shell);
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)});
+  Expect(WorkspaceShellTestAccess::CurrentTextInputSurface(shell) ==
+             microide::workspace::TextInputSurface::TerminalFind,
+         "Ctrl+F in the terminal should focus its find bar");
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, hidden);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  // The blink turns visible and repaints the rect it names, as the blink wake does.
+  WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  const std::optional<SDL_FRect> blink = shell.CurrentCaretDirtyRect();
+  Expect(blink.has_value(), "the find field should name its caret rect");
+  WorkspaceShell::RenderInvalidation invalidation;
+  invalidation.rects.push_back(*blink);
+  const auto diff = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, invalidation,
+      [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); });
+  Expect(diff.identical(), "a find-bar blink should paint what a full repaint paints; " +
+                               DescribePixelDiff(diff));
+}
+
 // The caret blink is decided once per prepared frame. Paint sites used to read the
 // clock themselves (the single-line input, the terminal, the commit fields, the
 // compare and merge carets), so two renders of ONE prepared frame could disagree
@@ -5352,6 +5400,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/TerminalFindBarOwnsTheBlink",
+          TestWorkspaceShellTerminalFindBarOwnsTheBlink);
   AddTest(tests, "WorkspaceShell/NarrowGitViewKeepsItsLabelsInside",
           TestWorkspaceShellNarrowGitViewKeepsItsLabelsInside);
   AddTest(tests, "WorkspaceShell/TabTooltipFollowsATabMovedUnderThePointer",

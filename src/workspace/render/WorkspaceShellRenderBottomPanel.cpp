@@ -585,11 +585,14 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
       // dirty region and the painted caret cannot disagree.
       const std::optional<SDL_FRect> caret_rect = TerminalCaretRectIn(pane_layout, cursor);
       if (caret_rect.has_value()) {
-        if (!is_active) {
-          // An unfocused pane shows where its cursor is without claiming the keyboard:
-          // a steady outline, the way every terminal multiplexer draws it.
+        if (!is_active || !frame_state_.terminal_owns_caret) {
+          // A pane that does not own the keyboard -- an inactive pane, or the active
+          // one while focus is elsewhere or on its find bar -- shows where its cursor
+          // is with a steady outline, as VS Code's unfocused terminal does. The
+          // active pane blinked along with the find bar's caret while only the find
+          // bar's caret was repainted (QA monkey, seed 4).
           DrawRect(renderer, *caret_rect, theme_.cursor);
-        } else if (panel_vm.focus != FocusTarget::Panel || frame_state_.caret_visible) {
+        } else if (frame_state_.caret_visible) {
           DrawFilledRect(renderer, *caret_rect, theme_.cursor);
           if (cursor.row >= first_row && cursor.row - first_row < terminal_lines.size()) {
             const auto& line = terminal_lines[cursor.row - first_row];

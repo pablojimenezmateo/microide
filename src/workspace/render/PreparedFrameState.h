@@ -26,6 +26,9 @@ struct PreparedFrameState {
   // ---- decided once per prepared frame ---------------------------------
   // The caret blink phase. Paint sites read this, never the clock.
   bool caret_visible = false;
+  // Whether the focused terminal owns the blinking caret (not its find bar, not a
+  // modal): only then does its caret blink; otherwise it shows a steady outline.
+  bool terminal_owns_caret = false;
   // The floating or modal surface the pointer is over, if any: PointerOver lights
   // up only rects inside it (an empty rect: the pointer is outside a modal, and
   // nothing hovers).

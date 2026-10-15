@@ -581,6 +581,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     PrepareCommitBodyViewportForFrame(layout.sidebar);
   }
   frame_state_.caret_visible = CaretVisibleNow();
+  frame_state_.terminal_owns_caret = project_state.surface.focus == FocusTarget::Panel &&
+                                     context_.text_input.active_surface == TextInputSurface::Terminal;
   // Whatever moves the caret away -- focus to another surface, a menu or prompt
   // that suspends the blink, the blink's own phase -- this frame repaints both the
   // caret region the last frame painted and the one it paints now. Each such
