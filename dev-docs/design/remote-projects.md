@@ -2772,6 +2772,21 @@ for remote must not pay for it locally:
 - The perf scenarios in § 9, each in its own child process like every other
   scenario, with a stalled-server case for the frame-time gate.
 
+### 10.0 The host suite: the same scenarios against a real machine
+
+`tools/qa/remote.py` (2026-10-16) drives the shipped binary headlessly against an
+ssh host (`MQA_REMOTE_HOST`, `MQA_REMOTE_ROOT`, a git repository the run resets to
+`MQA_REMOTE_BASE` before and after) through the control channel, as a person
+would: open and first sync (tree equality by one SHA-256 per file), save, a host
+edit under a clean and a dirty tab (the banner, through `banner-action`), an
+offline save and its replay, a killed ssh master, a host terminal, clangd on the
+host, a branch switch, eight simulated agents (`tools/qa/agents.py`, copied to the
+host per run) rewriting the tree while the user saves, and a relaunch on the
+mirror. Readiness is read from `status.remote.state`. It is on-demand (it needs a
+host), exits 1 on any failed expectation or oracle finding, and prints each
+scenario with its measured latency. The 2026-10-16 run on `worky` is recorded in
+the `remote-project-mirror` change's proposal.
+
 ### 10.1 Local/remote parity: the end-to-end QA gate
 
 The tests above each pin a remote mechanism. None of them would notice a remote

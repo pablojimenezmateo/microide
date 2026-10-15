@@ -18,6 +18,6 @@
 
 ## 4. The host scenario suite
 
-- [ ] 4.1 `tools/qa/remote.py` on the existing driver: open+sync equality, save, clean-tab reload, dirty-tab banner (Compare/Overwrite/Reload via `banner-action`), offline save + reconnect, killed ssh master, host terminal, go-to-definition, agent churn with saves, relaunch; `MQA_REMOTE_HOST`/`MQA_REMOTE_ROOT`, host reset to a pinned commit, latencies in the summary
-- [ ] 4.2 Once 3.x lands, wait on `status.remote.state` instead of the notification row
+- [x] 4.1 `tools/qa/remote.py` on the existing driver: open+sync equality, save, clean-tab reload, dirty-tab banner (Compare/Overwrite/Reload via `banner-action`), offline save + reconnect, killed ssh master, host terminal, go-to-definition, agent churn with saves, relaunch; `MQA_REMOTE_HOST`/`MQA_REMOTE_ROOT`, host reset to a pinned commit, latencies in the summary
+- [x] 4.2 Once 3.x lands, wait on `status.remote.state` instead of the notification row
 - [ ] 4.3 README of `tools/qa` names the remote suite and how to run it against a host

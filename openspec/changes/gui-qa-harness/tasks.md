@@ -31,8 +31,8 @@
 
 ## 5. Remote scenarios
 
-- [ ] 5.1 `tools/qa/agents.py` (simulated agents: bursts, churn with commits, reset) copied to the host per run
-- [ ] 5.2 `tools/qa/remote.py`: open host folder and wait for the mirror; host edits under open/unopened tabs; save conflict and resolve; drop and restore the link; host terminal typing; agent churn with the Edit menu, search view and a split open; mirror byte-identical at the end
+- [x] 5.1 `tools/qa/agents.py` (simulated agents: bursts, churn with commits, reset) copied to the host per run
+- [x] 5.2 `tools/qa/remote.py`: open host folder and wait for the mirror; host edits under open/unopened tabs; save conflict and resolve; drop and restore the link; host terminal typing; agent churn with the Edit menu, search view and a split open; mirror byte-identical at the end
 - [ ] 5.3 Run the remote suite against worky and fix or file every finding
 
 ## 6. Lane and wrap-up
