@@ -541,7 +541,17 @@ void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
   Expect(std::filesystem::exists(mirror / "main.c"), "and nothing was deleted");
 
   // A save the host never receives: disconnected, then edited and saved.
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnected");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnect");
+  // The link goes down asynchronously: a save made before it has would still be
+  // pushed, leaving nothing unsent (a parallel ctest run hit exactly that).
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::Remote)
+                          .find("disconnected") != std::string::npos;
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "disconnected");
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// offline\n");
