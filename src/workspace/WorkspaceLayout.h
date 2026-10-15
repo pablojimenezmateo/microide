@@ -441,6 +441,10 @@ SDL_FRect SidebarResizeCursorRect(const WorkspaceLayout& layout);
 SDL_FRect BottomPanelResizeCursorRect(const WorkspaceLayout& layout);
 SDL_FRect RightPaneResizeCursorRect(const WorkspaceLayout& layout);
 SDL_FRect SidebarResizeHitRect(const WorkspaceLayout& layout);
+// The region a drag target paints highlighted while it is dragged (a divider's
+// line, a scrollbar's surface), or nullopt for one that paints nothing.
+enum class DragTarget;
+std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, DragTarget target);
 SDL_FRect BottomPanelResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect RightPaneResizeHitRect(const WorkspaceLayout& layout);
 SDL_FRect VerticalScrollbarHitRect(const ScrollbarGeometry& geometry);

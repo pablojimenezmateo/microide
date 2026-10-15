@@ -2409,6 +2409,54 @@ void TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea() {
   step("closing Settings", DispatchEvents(shell, {KeyDownEvent(SDLK_ESCAPE)}));
 }
 
+// Dragging the sidebar divider and releasing it paints, at every step, what a full
+// repaint paints -- including the divider's own drag highlight, which must go when
+// the drag ends. Found by the QA monkey (seed 4: a 1-px column at the divider).
+void TestWorkspaceShellSidebarDividerDragPaintsCleanly() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the divider fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const SDL_FRect handle = microide::workspace::SidebarResizeHitRect(WorkspaceShellTestAccess::CurrentLayout(shell));
+  const float x = handle.x + handle.w / 2.0f;
+  const float y = handle.y + handle.h / 2.0f;
+  const auto step = [&](std::string_view what, std::initializer_list<SDL_Event> events) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, events), pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  step("hovering the divider", {MouseMotionEvent(x, y)});
+  step("pressing the divider", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y)});
+  for (float dx : {-20.0f, -60.0f, -98.0f}) {
+    SDL_Event held = MouseMotionEvent(x + dx, y + 30.0f);
+    held.motion.state = SDL_BUTTON_LMASK;
+    step("dragging the divider", {held});
+  }
+  step("releasing the divider", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x - 98.0f, y + 30.0f)});
+  step("moving away", {MouseMotionEvent(x + 300.0f, y)});
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5130,6 +5178,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/SidebarDividerDragPaintsCleanly",
+          TestWorkspaceShellSidebarDividerDragPaintsCleanly);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",

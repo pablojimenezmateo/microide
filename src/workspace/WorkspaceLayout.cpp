@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "util/PerformanceCounters.h"
+#include "workspace/state/WorkspaceInteractionState.h"
 
 namespace microide::workspace {
 
@@ -410,6 +411,45 @@ SDL_FRect RightPaneResizeHandleRect(const WorkspaceLayout& layout) {
   }
   return MakeRect(layout.right_pane.x - kResizeHandleThickness * 0.5f - kDivider,
                   layout.right_pane.y, kResizeHandleThickness + kDivider, layout.right_pane.h);
+}
+
+std::optional<SDL_FRect> DragTargetHighlightRect(const WorkspaceLayout& layout, DragTarget target) {
+  const auto surface = [](const SDL_FRect& rect) -> std::optional<SDL_FRect> {
+    return rect.w > 0.0f && rect.h > 0.0f ? std::optional<SDL_FRect>(rect) : std::nullopt;
+  };
+  switch (target) {
+    case DragTarget::None:
+    case DragTarget::SingleLineSelection:
+      return std::nullopt;
+    case DragTarget::SidebarDivider:
+      return surface(SidebarResizeCursorRect(layout));
+    case DragTarget::RightPaneDivider:
+      return surface(RightPaneResizeCursorRect(layout));
+    case DragTarget::BottomPanelDivider:
+      return surface(BottomPanelResizeCursorRect(layout));
+    case DragTarget::SidebarScrollbar:
+      return surface(layout.sidebar);
+    case DragTarget::BottomPanelScrollbar:
+    case DragTarget::TerminalPaneDivider:
+      return surface(layout.bottom_panel);
+    case DragTarget::DebugPaneScrollbar:
+      return surface(layout.right_pane);
+    case DragTarget::CompareDivider:
+    case DragTarget::MergeLeftDivider:
+    case DragTarget::MergeRightDivider:
+    case DragTarget::EditorVerticalScrollbar:
+    case DragTarget::EditorHorizontalScrollbar:
+    case DragTarget::EditorSplitDivider:
+    case DragTarget::CompareVerticalScrollbar:
+    case DragTarget::CompareHorizontalScrollbar:
+      return surface(layout.editor_surface);
+    case DragTarget::OverlayScrollbar:
+    case DragTarget::SettingsScrollbar:
+    case DragTarget::SettingsCategoryScrollbar:
+    case DragTarget::SettingsPickerScrollbar:
+      return surface(layout.editor_area);
+  }
+  return std::nullopt;
 }
 
 SDL_FRect SidebarResizeCursorRect(const WorkspaceLayout& layout) {

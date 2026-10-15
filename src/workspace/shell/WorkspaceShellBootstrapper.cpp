@@ -20,6 +20,7 @@ namespace microide::workspace {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
   const FocusTarget focus_before = context_.current_project_state.surface.focus;
+  const DragTarget drag_before = context_.interaction_state.drag_target;
   // A keystroke a read-only view refused is said out loud (VS Code's "Cannot edit
   // in read-only editor"), not swallowed.
   const bool typing = event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_TEXT_INPUT;
@@ -46,6 +47,20 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       };
       add_focus_surface_redraw(focus_before);
       add_focus_surface_redraw(focus_after);
+    }
+  }
+  // Dividers and scrollbar thumbs paint highlighted while dragged, so a press or
+  // release that changes the drag target repaints both regions, whichever
+  // handler changed it: pressing the sidebar divider damaged nothing, and its
+  // highlight showed only once the first drag motion repainted (QA monkey).
+  if (const DragTarget drag_after = context_.interaction_state.drag_target;
+      drag_after != drag_before && !result.redraw.full) {
+    if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+      for (const DragTarget target : {drag_before, drag_after}) {
+        if (const auto rect = DragTargetHighlightRect(*layout, target); rect.has_value()) {
+          result.redraw.rects.push_back(*rect);
+        }
+      }
     }
   }
   // Clear any live ghost text the moment the caret/content/focus no longer matches
