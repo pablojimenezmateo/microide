@@ -34,6 +34,8 @@ class RecentsService {
   void Configure(const PersistenceService& persistence);
 
   void RecordProjectOpen(const std::filesystem::path& root);
+  // Drop `root` and its files from the lists (a removed mirror must not be offered).
+  void ForgetProject(const std::filesystem::path& root);
   void RecordFileOpen(const std::filesystem::path& file,
                       const std::filesystem::path& project_root);
 

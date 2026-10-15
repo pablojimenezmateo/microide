@@ -71,6 +71,10 @@ class MirrorStore {
   // human, a hash of the whole host path so two roots with one basename differ.
   static std::filesystem::path DefaultDirectory(std::string_view host, std::string_view host_root);
 
+  // Delete a mirror whole — tree, objects, journal, state — given its directory
+  // (the tree's parent). Refuses, with *error, a directory that carries no
+  // `meta/remote` record: this must never remove a folder that is not a mirror.
+  static bool Remove(const std::filesystem::path& directory, std::string* error);
   const std::filesystem::path& directory() const { return directory_; }
   const std::filesystem::path& tree() const { return tree_; }
   const std::filesystem::path& meta() const { return meta_; }

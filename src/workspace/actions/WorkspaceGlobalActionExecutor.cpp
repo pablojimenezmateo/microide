@@ -206,6 +206,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::RemoteStopServer:
     case ActionId::RemoteDisconnect:
     case ActionId::RemoteReconnect:
+    case ActionId::RemoteRemoveMirror:
     case ActionId::RemoteCopyCommand:
     case ActionId::RemoteShowHostChanges:
     case ActionId::RemoteClearHostChanges:
@@ -320,6 +321,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
             return reject(host.empty() ? "Name the host: remote-" + std::string(forward ? "" : "un") +
                                              "forward-port <port> <host>"
                                        : "No remote host \"" + host + "\"");
+          }
+          return DispatchResult::Handled;
+        }
+        case ActionId::RemoteRemoveMirror: {
+          // Bare: the active project's mirror, which is open -- the service says so,
+          // and the user closes it first. A root argument names a closed one.
+          const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
+                                                          : std::filesystem::path(args[0]);
+          const bool discard = args.size() > 1 && args[1] == "discard";
+          std::string error;
+          if (!hosts->RemoveMirror(root, discard, &error)) {
+            return reject(error);
           }
           return DispatchResult::Handled;
         }

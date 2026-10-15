@@ -68,6 +68,21 @@ void RecentsService::RecordProjectOpen(const std::filesystem::path& root) {
   Save();
 }
 
+void RecentsService::ForgetProject(const std::filesystem::path& root) {
+  auto& roots = state_.recent_project_roots;
+  auto& files = state_.recent_files;
+  const auto before = roots.size() + files.size();
+  roots.erase(std::remove(roots.begin(), roots.end(), root), roots.end());
+  files.erase(std::remove_if(files.begin(), files.end(),
+                             [&](const auto& entry) { return entry.project_root == root; }),
+              files.end());
+  if (roots.size() + files.size() == before) {
+    return;
+  }
+  ++revision_;
+  Save();
+}
+
 void RecentsService::RecordFileOpen(const std::filesystem::path& file,
                                     const std::filesystem::path& project_root) {
   if (file.empty()) {

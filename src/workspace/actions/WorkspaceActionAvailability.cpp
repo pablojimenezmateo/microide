@@ -124,6 +124,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::RemoteResolveConflict:
     case ActionId::RemoteShowLog:
     case ActionId::RemoteShowStatus:
+    case ActionId::RemoteRemoveMirror:  // rejects naming what stops it (open, unsent, not a mirror)
     case ActionId::RemoteStopServer:    // these reject naming the host they cannot find
     case ActionId::RemoteDisconnect:
     case ActionId::RemoteReconnect:

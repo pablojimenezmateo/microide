@@ -42,6 +42,10 @@ enum class ActionId {
   RemoteShowLog,
   RemoteShowStatus,
   RemoteStopServer,   // `remote-stop-server [host]`; the sole host when omitted
+  // `remote-remove-mirror [root] [discard]`: delete a closed remote project's mirror
+  // (tree, objects, journal, state) and forget it in the recents; `discard` lets
+  // saves the host never received go with it.
+  RemoteRemoveMirror,
   RemoteDisconnect,   // `remote-disconnect [host]`; every host when omitted
   RemoteReconnect,    // `remote-reconnect <host>`: the Reconnect button
   // `remote-copy-command <host> <ssh|install|linger>`: the Copy buttons on a failure row.

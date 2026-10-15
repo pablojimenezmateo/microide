@@ -70,6 +70,9 @@
       WorkspaceShell& shell, const std::string& command_line) {
     return shell.ExecuteControlCommand(command_line);
   }
+  static const std::vector<std::filesystem::path>& RecentProjects(const WorkspaceShell& shell) {
+    return shell.recents_service_.RecentProjects();
+  }
   // One query verb through the control channel, as its socket client gets it; a
   // null value (with *error) when the verb is refused.
   static util::JsonValue ExecuteControlQuery(const WorkspaceShell& shell, const std::string& verb,

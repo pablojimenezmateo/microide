@@ -5,10 +5,10 @@
 
 ## 2. Remove Mirror
 
-- [ ] 2.1 `MirrorStore::Remove(tree)` deletes tree, objects, journal and state; unit test in `microide_kernel_tests`
-- [ ] 2.2 `RemoteHostService::RemoveMirror(root)`: dirty prompt, unsent-push confirmation naming the count, close the project tab, disconnect, delete, drop the recents entry
-- [ ] 2.3 `ActionId::RemoteRemoveMirror` / `remote-remove-mirror [root]`, available for the active remote project or a named closed one; palette label `Remote: Remove Mirror`
-- [ ] 2.4 Tests: active project with a dirty tab; closed mirror by root; unsent journal asks; README, man page, control-channel doc
+- [x] 2.1 `MirrorStore::Remove(tree)` deletes tree, objects, journal and state; unit test in `microide_kernel_tests`
+- [x] 2.2 `RemoteHostService::RemoveMirror(root)`: dirty prompt, unsent-push confirmation naming the count, close the project tab, disconnect, delete, drop the recents entry
+- [x] 2.3 `ActionId::RemoteRemoveMirror` / `remote-remove-mirror [root]`, available for the active remote project or a named closed one; palette label `Remote: Remove Mirror`
+- [x] 2.4 Tests: active project with a dirty tab; closed mirror by root; unsent journal asks; README, man page, control-channel doc
 
 ## 3. Remote state on the control channel
 

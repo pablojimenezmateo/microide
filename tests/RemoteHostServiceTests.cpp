@@ -514,6 +514,66 @@ void TestProjectHomeStatusBlockFollowsTheConnection() {
 // from the host, and an edit saved in the editor lands in the HOST's file. Then
 // the mirror reopened as a plain path (what the recents list and a restored session
 // do) is recognized and given its remote locality again.
+// Remote: Remove Mirror. A mirror leaves the disk only through this (a copy of
+// the host's tree plus its metadata is a real cost: 47 MB + up to 170 MB for this
+// repository after churn), and only when nothing in it is still owed to the host.
+void TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves() {
+  FakeSshHost host;
+  const std::filesystem::path host_root = host.home / "src" / "app";
+  WriteFile(host_root / "main.c", "int main(void) { return 0; }\n");
+  const std::string target = "dev@fake-remove-" + std::to_string(::getpid());
+  WorkspaceShell shell;
+  PointAtFakeHost(shell, host);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
+                                                      "remote-open " + target + ":" + host_root.string()),
+         "the remote project opens");
+  const std::filesystem::path mirror = WorkspaceShellTestAccess::ProjectRoot(shell);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return std::filesystem::exists(mirror / "main.c");
+             },
+             std::chrono::seconds(30), std::chrono::milliseconds(10)),
+         "the mirror fills from the host");
+  auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror");
+  Expect(!outcome.ok && outcome.error.find("close the project first") != std::string::npos,
+         "an open project's mirror is not removed under it: " + outcome.error);
+  Expect(std::filesystem::exists(mirror / "main.c"), "and nothing was deleted");
+
+  // A save the host never receives: disconnected, then edited and saved.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "remote-disconnect"), "disconnected");
+  WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// offline\n");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "the offline save succeeds locally");
+  WorkspaceShellTestAccess::CloseProject(shell, 0);
+  Expect(WaitUntil(
+             [&] {
+               Pump(shell);
+               return !WorkspaceShellTestAccess::StatusBarSegmentVisible(shell, StatusBarSegmentId::Remote);
+             },
+             std::chrono::seconds(10), std::chrono::milliseconds(10)),
+         "the project is closed");
+
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror " + mirror.string());
+  Expect(!outcome.ok && outcome.error.find("1 save") != std::string::npos &&
+             outcome.error.find("discard") != std::string::npos,
+         "a mirror with an unsent save is kept, and the refusal names the count: " + outcome.error);
+  Expect(std::filesystem::exists(mirror / "main.c"), "the mirror is still there");
+
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(
+      shell, "remote-remove-mirror " + mirror.string() + " discard");
+  Expect(outcome.ok, "with discard the mirror is removed: " + outcome.error);
+  Expect(!std::filesystem::exists(mirror.parent_path()),
+         "the tree and its metadata are gone: " + mirror.parent_path().string());
+  const auto& recents = WorkspaceShellTestAccess::RecentProjects(shell);
+  Expect(std::find(recents.begin(), recents.end(), mirror) == recents.end(),
+         "and the recents list no longer offers it");
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "remote-remove-mirror " + mirror.string());
+  Expect(!outcome.ok && outcome.error.find("not the mirror") != std::string::npos,
+         "a path that is not a mirror is refused by name: " + outcome.error);
+}
+
 void TestOpenFolderOnHostEditsTheHostTree() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "app";
@@ -1025,6 +1085,8 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/APortThatStartsListeningIsForwarded", TestAPortThatStartsListeningIsForwarded);
   AddTest(tests, "RemoteHostService/ProjectHomeStatusBlockFollowsTheConnection",
           TestProjectHomeStatusBlockFollowsTheConnection);
+  AddTest(tests, "RemoteHostService/RemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves",
+          TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
 #endif

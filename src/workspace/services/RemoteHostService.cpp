@@ -413,6 +413,63 @@ bool RemoteHostService::IsRemoteProject(const std::filesystem::path& root) const
   return it != projects_.end() && !it->second.closed;
 }
 
+bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool discard_unsent,
+                                     std::string* error) {
+  const std::optional<remote::RemoteProjectRecord> record = remote::RemoteProject::ReadRecord(root);
+  if (!record.has_value()) {
+    *error = root.string() + " is not the mirror of a remote project";
+    return false;
+  }
+  const auto it = projects_.find(root);
+  if (it != projects_.end() && !it->second.closed) {
+    *error = "close the project first; its mirror is removed once it is closed";
+    return false;
+  }
+  std::size_t unsent = 0;
+  if (it != projects_.end()) {
+    const remote::MirrorSyncEngine::Status sync = it->second.project->engine().status();
+    unsent = sync.dirty + sync.conflicts;
+  } else {
+    // Never opened this run: the journal on disk says what the host has not got.
+    remote::MirrorStore store(root.parent_path(), root.filename().string());
+    std::string ignored;
+    if (store.Open(&ignored)) {
+      for (const auto& [path, entry] : store.entries()) {
+        (void)path;
+        unsent += (entry.push_pending || entry.conflict) ? 1 : 0;
+      }
+      unsent += store.pending_tree_ops().size();
+    }
+  }
+  if (unsent > 0 && !discard_unsent) {
+    *error = std::to_string(unsent) + (unsent == 1 ? " save" : " saves") + " in " + root.string() +
+             " never reached " + record->host +
+             "; reopen the project to push them, or add `discard` to remove them with the mirror";
+    return false;
+  }
+  if (it != projects_.end()) {
+    // Its session and engine stop here, before the directory they write goes.
+    if (operations_.dismiss_notification) {
+      operations_.dismiss_notification("remote.project." + root.string());
+    }
+    projects_.erase(it);
+  }
+  if (!remote::MirrorStore::Remove(root.parent_path(), error)) {
+    return false;
+  }
+  if (operations_.forget_recent_project) {
+    operations_.forget_recent_project(root);
+  }
+  if (operations_.notify) {
+    operations_.notify(NotificationService::Request{
+        .tone = NotificationService::Tone::Info,
+        .message = "Removed the mirror of " + record->host + ":" + record->host_root,
+    });
+  }
+  PublishStatusSegment();
+  return true;
+}
+
 std::optional<RemoteHostService::ProjectSnapshot> RemoteHostService::SnapshotOf(
     const std::filesystem::path& root) const {
   const auto it = projects_.find(root);

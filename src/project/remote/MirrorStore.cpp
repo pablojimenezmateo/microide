@@ -130,6 +130,20 @@ MirrorStore::MirrorStore(std::filesystem::path directory, std::string_view tree_
       tree_(directory_ / Component(tree_name == "meta" ? "meta_" : tree_name)),
       meta_(directory_ / "meta") {}
 
+bool MirrorStore::Remove(const std::filesystem::path& directory, std::string* error) {
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(directory / "meta" / "remote", ec)) {
+    *error = directory.string() + " is not a mirror (no meta/remote record)";
+    return false;
+  }
+  std::filesystem::remove_all(directory, ec);
+  if (ec) {
+    *error = "cannot remove " + directory.string() + ": " + ec.message();
+    return false;
+  }
+  return true;
+}
+
 std::filesystem::path MirrorStore::DefaultDirectory(std::string_view host,
                                                     std::string_view host_root) {
   const std::filesystem::path root_path{std::string(host_root)};

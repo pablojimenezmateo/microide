@@ -55,6 +55,8 @@ class RemoteHostService {
   struct Operations {
     std::function<void(NotificationService::Request)> notify;
     std::function<void(std::string_view key)> dismiss_notification;
+    // A removed mirror leaves the recents list (Remote: Remove Mirror).
+    std::function<void(const std::filesystem::path& root)> forget_recent_project;
     // Open a terminal tab whose shell runs through `launcher`, titled with
     // `label_prefix`; `command` empty = an interactive shell. False on failure.
     std::function<bool(std::shared_ptr<const platform::ProcessLauncher> launcher,
@@ -157,6 +159,12 @@ class RemoteHostService {
   project::SharedPendingPaths PendingPathsOf(const std::filesystem::path& root) const;
   // What project_status_changed last reported for `root` (empty for any other).
   editor::WelcomeRemoteStatus ProjectStatusOf(const std::filesystem::path& root) const;
+  // Remote: Remove Mirror. Delete the mirror whose tree is `root` -- its tree,
+  // objects, journal and state -- and forget it in the recents list. Refuses, with
+  // *error, a root that is not a mirror, a project that is still open (close it
+  // first: the dirty prompt is the close's), and, unless `discard_unsent`, a mirror
+  // holding saves the host never received (the count is in *error).
+  bool RemoveMirror(const std::filesystem::path& root, bool discard_unsent, std::string* error);
   // The remote project at `root` as a driver reads it (the control channel's
   // `status.remote`): its host, the session's state and the engine's counts.
   // nullopt for a root that is not a remote project.
