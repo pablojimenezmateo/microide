@@ -1,6 +1,7 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
+#include <functional>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -618,6 +619,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_pane_content[gi] = content;
     }
   }
+  // The modal backdrop stack: a prompt opening over the command palette (or the
+  // unsaved-changes prompt over a prompt) dims the whole window once more, and the
+  // dialog's own repaint covered only the dialog (QA monkey, seeds 7 and 9).
+  {
+    const OverlayState& overlay = project_state.overlay;
+    const bool overlay_backdrop = overlay.visible && overlay.mode != OverlayMode::BufferSearch &&
+                                  overlay.mode != OverlayMode::BufferReplace &&
+                                  overlay.mode != OverlayMode::Completion;
+    const std::uint8_t backdrops = static_cast<std::uint8_t>(
+        (overlay_backdrop ? 1u : 0u) | (settings_overlay_service_.Visible() ? 2u : 0u) |
+        (context_.prompts.surface_visible ? 4u : 0u) | (context_.prompts.dirty_visible ? 8u : 0u));
+    if (backdrops != frame_state_.painted_backdrops) {
+      RequestWindowRedraw();
+      frame_state_.painted_backdrops = backdrops;
+    }
+  }
   // A tab strip painted mid-slide that is no longer animating repaints at rest.
   {
     const TabSlideState& slide = context_.interaction_state.tab_slide;
@@ -695,10 +712,18 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
     std::optional<SDL_FRect> tooltip_rect;
+    std::size_t tooltip_text_hash = 0;
     if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
       tooltip_rect = MakeRect(tooltip->rect.x - 1.0f, tooltip->rect.y - 1.0f, tooltip->rect.w + 2.0f,
                               tooltip->rect.h + 2.0f);
+      tooltip_text_hash = std::hash<std::string_view>{}(tooltip->text);
     }
+    // A card at the same place can say something else (a click reordered the tab
+    // under a still pointer): QA monkey, seed 5.
+    if (tooltip_text_hash != frame_state_.painted_tooltip_text_hash && tooltip_rect.has_value()) {
+      RequestRedrawRect(*tooltip_rect);
+    }
+    frame_state_.painted_tooltip_text_hash = tooltip_text_hash;
     const auto repaint_if_moved = [this](std::optional<SDL_FRect>& painted,
                                          const std::optional<SDL_FRect>& now) {
       if (painted.has_value() == now.has_value() &&

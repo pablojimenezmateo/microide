@@ -36,6 +36,7 @@ struct PreparedFrameState {
   // The element painted hovered and the tooltip card painted, under the pointer.
   std::optional<SDL_FRect> painted_hover_rect;
   std::optional<SDL_FRect> painted_tooltip_rect;
+  std::size_t painted_tooltip_text_hash = 0;  // the same card can name another tab
   // The editor hover card painted (hover docs, diagnostics, the blame card).
   std::optional<SDL_FRect> painted_hover_popup_rect;
   // Per editor pane, the (viewport, content revision) painted.
@@ -48,6 +49,10 @@ struct PreparedFrameState {
     std::size_t group_index = 0;
   };
   std::array<SlideStrip, kMaxAnimatingTabStrips> painted_slide_strips{};
+  // Which translucent modal backdrops were painted (a bit per surface). Each dims
+  // everything under it, so a modal opening over another changes the whole
+  // window, not just the new dialog.
+  std::uint8_t painted_backdrops = 0;
 };
 
 }  // namespace microide::workspace

@@ -2500,6 +2500,94 @@ void TestWorkspaceShellPanelDividerResetRepaintsTheLayout() {
                                DescribePixelDiff(diff));
 }
 
+// A prompt opening over the command palette dims the whole window once more, so
+// the frame repaints the window, not just the dialog. Found by the QA monkey
+// (seeds 7 and 9: a Go to Line prompt over the palette, the unsaved-changes prompt
+// over a prompt).
+void TestWorkspaceShellAStackedModalRedimsTheWindow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the modal fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // The palette's own command line opens Go to Line over it, as the monkey did.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto"), "goto should run");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "goto should open its prompt");
+  // Only the dialog's own damage, as a prompt opening asks for.
+  microide::workspace::RenderInvalidation dialog_only;
+  const SDL_FRect dialog = microide::workspace::ComputePromptSurfaceRect(
+      WorkspaceShellTestAccess::CurrentLayout(shell).full);
+  dialog_only.rects.push_back(dialog);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, dialog_only, pin_caret);
+  Expect(diff.identical(), "a prompt over the palette should re-dim the whole window; " +
+                               DescribePixelDiff(diff));
+}
+
+// A tab tooltip whose tab changed under a still pointer (a tab moved into the
+// slot) repaints with the new name. Found by the QA monkey (seed 5: the card still
+// named README.md over the taskflow tab).
+void TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  WriteFile(root / "beta.cpp", "int beta = 2;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the tab fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "beta.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect first = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  const auto hover = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(first.x + first.w / 2.0f, first.y + first.h / 2.0f)}),
+      pin_caret);
+  Expect(hover.identical(), "hovering a tab should paint what a full repaint paints; " +
+                                DescribePixelDiff(hover));
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tabmove -1"), "tabmove should run");
+  const auto moved = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                 shell.ConsumePendingRenderInvalidation(), pin_caret);
+  Expect(moved.identical(), "a tab moved under the pointer should repaint its tooltip; " +
+                                DescribePixelDiff(moved));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5221,6 +5309,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
   AddTest(tests, "WorkspaceShell/AStatusSegmentModalOwnsThePointer",
           TestWorkspaceShellAStatusSegmentModalOwnsThePointer);
+  AddTest(tests, "WorkspaceShell/TabTooltipFollowsATabMovedUnderThePointer",
+          TestWorkspaceShellTabTooltipFollowsATabMovedUnderThePointer);
+  AddTest(tests, "WorkspaceShell/AStackedModalRedimsTheWindow",
+          TestWorkspaceShellAStackedModalRedimsTheWindow);
   AddTest(tests, "WorkspaceShell/PanelDividerResetRepaintsTheLayout",
           TestWorkspaceShellPanelDividerResetRepaintsTheLayout);
   AddTest(tests, "WorkspaceShell/SidebarDividerDragPaintsCleanly",
