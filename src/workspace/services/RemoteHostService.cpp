@@ -413,6 +413,21 @@ bool RemoteHostService::IsRemoteProject(const std::filesystem::path& root) const
   return it != projects_.end() && !it->second.closed;
 }
 
+std::optional<RemoteHostService::ProjectSnapshot> RemoteHostService::SnapshotOf(
+    const std::filesystem::path& root) const {
+  const auto it = projects_.find(root);
+  if (it == projects_.end() || it->second.closed) {
+    return std::nullopt;
+  }
+  const remote::RemoteProjectRecord record = it->second.project->record();
+  return ProjectSnapshot{
+      .host = record.host,
+      .host_root = record.host_root,
+      .state = it->second.status.state,
+      .sync = it->second.project->engine().status(),
+  };
+}
+
 editor::WelcomeRemoteStatus RemoteHostService::ProjectStatusOf(const std::filesystem::path& root) const {
   const auto it = projects_.find(root);
   return it != projects_.end() ? it->second.status_block : editor::WelcomeRemoteStatus{};

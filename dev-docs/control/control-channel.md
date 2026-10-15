@@ -172,6 +172,14 @@ action executor, dismisses a transient row afterwards unless the action keeps it
 open, and leaves a sticky row to its owner. `focus-notifications` is the keyboard
 route (arrows, Enter, Delete, Escape) a person uses for the same buttons.
 
+**Remote projects.** For a remote active project `status` carries
+`remote: {host, hostRoot, state, files, filesPending, unsentPushes, conflicts,
+heldDeletes}`; `state` is the connection's (`disconnected`, `connecting`,
+`needs-auth`, `starting`, `installing`, `reconnecting`, `offline`) or, on a live
+link, `syncing` until the first sync lands and `ready` after. `projects` marks a
+remote entry with `host` and `hostRoot`. A driver waits on `state == "ready"`
+instead of reading the sync row's text.
+
 **Editor banner buttons.** A `save` refused because the file changed on disk
 answers with the banner's choices; `banner-action <Compare|Reload|Overwrite|Keep>`
 presses one on the active tab's banner exactly as a click does (label

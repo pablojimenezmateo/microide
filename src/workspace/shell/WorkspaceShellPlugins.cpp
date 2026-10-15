@@ -366,6 +366,39 @@ WorkspaceShell::WorkspaceShell() {
               },
           .ensure_debugger_enabled = [this]() { EnsureDebuggerEnabledTransiently(); },
           .notifications = &notification_service_,
+          .remote_project =
+              [this](const std::filesystem::path& root) -> std::optional<ControlRemoteProjectInfo> {
+                const auto snapshot = MakeRemoteHostService().SnapshotOf(root);
+                if (!snapshot.has_value()) {
+                  return std::nullopt;
+                }
+                using State = project::remote::RemoteHostSession::State;
+                const auto& sync = snapshot->sync;
+                std::string state;
+                switch (snapshot->state) {
+                  case State::Disconnected: state = "disconnected"; break;
+                  case State::Connecting: state = "connecting"; break;
+                  case State::NeedsAuth: state = "needs-auth"; break;
+                  case State::StartingServer: state = "starting"; break;
+                  case State::Installing: state = "installing"; break;
+                  case State::Reconnecting: state = "reconnecting"; break;
+                  case State::Offline: state = "offline"; break;
+                  case State::Ready:
+                    state = (sync.syncing || !sync.synced_once) ? "syncing" : "ready";
+                    break;
+                }
+                const auto count = [](std::size_t n) { return static_cast<std::int64_t>(n); };
+                return ControlRemoteProjectInfo{
+                    .host = snapshot->host,
+                    .host_root = snapshot->host_root,
+                    .state = std::move(state),
+                    .files = count(sync.files),
+                    .files_pending = count(std::min(sync.absent + sync.stale, sync.files)),
+                    .unsent_pushes = count(sync.dirty),
+                    .conflicts = count(sync.conflicts),
+                    .held_deletes = count(sync.held_deletes),
+                };
+              },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

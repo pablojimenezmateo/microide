@@ -22,6 +22,22 @@ struct ControlAdapterInfo {
   std::vector<std::string> command;
 };
 
+// A remote project as the `status` query reports it (`remote`) and the `projects`
+// query marks it: what a driver waits on instead of reading a notification's text.
+struct ControlRemoteProjectInfo {
+  std::string host;       // `[user@]host[:port]`
+  std::string host_root;  // absolute, on the host
+  // The connection's state, lower-case: disconnected, connecting, needs-auth,
+  // starting, installing, reconnecting, offline; and a Ready link split into
+  // `syncing` (the first sync or a resync is running) and `ready`.
+  std::string state;
+  std::int64_t files = 0;          // in the host's content set
+  std::int64_t files_pending = 0;  // listed but not yet pulled
+  std::int64_t unsent_pushes = 0;  // saved here, not yet on the host
+  std::int64_t conflicts = 0;      // parked, waiting for the user
+  std::int64_t held_deletes = 0;   // a mass delete waiting for Apply
+};
+
 // A live control-channel instance discovered from its descriptor file.
 struct ControlInstanceDescriptor {
   int pid = 0;
@@ -77,6 +93,10 @@ class ControlChannelService {
     // The toast stack, for the `notifications` query. Null in tests that do not
     // exercise it (the query then answers an empty list).
     const NotificationService* notifications = nullptr;
+    // The remote project whose mirror is `root`, for `status` and `projects`;
+    // nullopt for a local root. Null in tests that do not exercise it.
+    std::function<std::optional<ControlRemoteProjectInfo>(const std::filesystem::path& root)>
+        remote_project;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,
@@ -132,6 +152,11 @@ class ControlChannelService {
   void OnDebugOutput(const std::string& category, const std::string& text);
 
   std::size_t ConnectionCount() const;
+
+  // Answer one query verb as a socket client would get it, without a socket (tests).
+  util::JsonValue AnswerQuery(const std::string& verb, bool* ok, std::string* error) const {
+    return HandleQuery(verb, util::JsonValue(util::JsonObject{}), ok, error);
+  }
 
  private:
   util::JsonValue HandleQuery(const std::string& verb, const util::JsonValue& args, bool* ok,

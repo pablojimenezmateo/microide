@@ -12,9 +12,9 @@
 
 ## 3. Remote state on the control channel
 
-- [ ] 3.1 `status` query: `remote` object for a remote active project (host, hostRoot, state, filesPending, bytesPending, unsentPushes, conflicts)
-- [ ] 3.2 `projects` query: `host` and `hostRoot` on remote entries
-- [ ] 3.3 Tests through `ExecuteControlQuery` with the fake ssh fixture: the state sequence on open, unsent rises on an offline save; document the fields
+- [x] 3.1 `status` query: `remote` object for a remote active project (host, hostRoot, state, filesPending, bytesPending, unsentPushes, conflicts)
+- [x] 3.2 `projects` query: `host` and `hostRoot` on remote entries
+- [x] 3.3 Tests through `ExecuteControlQuery` with the fake ssh fixture: the state sequence on open, unsent rises on an offline save; document the fields
 
 ## 4. The host scenario suite
 

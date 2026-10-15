@@ -157,6 +157,16 @@ class RemoteHostService {
   project::SharedPendingPaths PendingPathsOf(const std::filesystem::path& root) const;
   // What project_status_changed last reported for `root` (empty for any other).
   editor::WelcomeRemoteStatus ProjectStatusOf(const std::filesystem::path& root) const;
+  // The remote project at `root` as a driver reads it (the control channel's
+  // `status.remote`): its host, the session's state and the engine's counts.
+  // nullopt for a root that is not a remote project.
+  struct ProjectSnapshot {
+    std::string host;
+    std::string host_root;
+    project::remote::RemoteHostSession::State state{};
+    project::remote::MirrorSyncEngine::Status sync;
+  };
+  std::optional<ProjectSnapshot> SnapshotOf(const std::filesystem::path& root) const;
   // The home's status block for a project in `state` with `sync` (§ 7.3): the
   // link, the server and the sync, each as far as it got, and what to do about a
   // failure. `command` reproduces the connection in a terminal; `server_release`

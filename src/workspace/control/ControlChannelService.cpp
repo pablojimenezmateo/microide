@@ -910,6 +910,12 @@ util::JsonValue ControlChannelService::BuildProjects() const {
     project_object["root"] =
         util::JsonValue(entry != nullptr ? entry->root.generic_string() : std::string());
     project_object["active"] = util::JsonValue(i == catalog.active_index);
+    if (entry != nullptr && operations_.remote_project) {
+      if (const auto remote = operations_.remote_project(entry->root)) {
+        project_object["host"] = util::JsonValue(remote->host);
+        project_object["hostRoot"] = util::JsonValue(remote->host_root);
+      }
+    }
     projects.push_back(util::JsonValue(std::move(project_object)));
   }
   return util::JsonValue(std::move(projects));
@@ -972,6 +978,20 @@ util::JsonValue ControlChannelService::BuildStatus() const {
   object["connections"] = util::JsonValue(static_cast<std::int64_t>(server_.ConnectionCount()));
   object["renderer"] = util::JsonValue(context_->render_driver_name);
   object["rendererIsGpu"] = util::JsonValue(context_->render_is_gpu);
+  if (operations_.remote_project) {
+    if (const auto remote = operations_.remote_project(state.root)) {
+      util::JsonObject remote_object;
+      remote_object["host"] = util::JsonValue(remote->host);
+      remote_object["hostRoot"] = util::JsonValue(remote->host_root);
+      remote_object["state"] = util::JsonValue(remote->state);
+      remote_object["files"] = util::JsonValue(remote->files);
+      remote_object["filesPending"] = util::JsonValue(remote->files_pending);
+      remote_object["unsentPushes"] = util::JsonValue(remote->unsent_pushes);
+      remote_object["conflicts"] = util::JsonValue(remote->conflicts);
+      remote_object["heldDeletes"] = util::JsonValue(remote->held_deletes);
+      object["remote"] = util::JsonValue(std::move(remote_object));
+    }
+  }
 
   // Whether the per-plugin kernel confinement layers are actually live on this host. The confinement
   // is fail-open, so this lets an operator confirm it was installed rather than silently skipped.

@@ -70,6 +70,18 @@
       WorkspaceShell& shell, const std::string& command_line) {
     return shell.ExecuteControlCommand(command_line);
   }
+  // One query verb through the control channel, as its socket client gets it; a
+  // null value (with *error) when the verb is refused.
+  static util::JsonValue ExecuteControlQuery(const WorkspaceShell& shell, const std::string& verb,
+                                             std::string* error = nullptr) {
+    bool ok = false;
+    std::string refusal;
+    util::JsonValue result = shell.control_channel_service_.AnswerQuery(verb, &ok, &refusal);
+    if (error != nullptr) {
+      *error = refusal;
+    }
+    return ok ? result : util::JsonValue();
+  }
   // Launch-config picker (Phase 9): seed configs, drive the picker, and read back
   // its filtered matches / the persisted selection on confirm.
   static void SeedLaunchConfigs(WorkspaceShell& shell,

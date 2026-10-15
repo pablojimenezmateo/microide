@@ -558,6 +558,25 @@ void TestOpenFolderOnHostEditsTheHostTree() {
              },
              std::chrono::seconds(30), std::chrono::milliseconds(10)),
          "the project home shows the connection and the sync");
+  // The control channel reports the same, as a driver reads it: no notification
+  // text to parse for readiness.
+  {
+    const util::JsonValue status = WorkspaceShellTestAccess::ExecuteControlQuery(shell, "status");
+    Expect(status.HasKey("remote"), "status carries the remote project");
+    const util::JsonValue& remote = status["remote"];
+    Expect(remote["host"].AsString() == target && remote["hostRoot"].AsString() == host_root.string(),
+           "status.remote names the host and its root");
+    Expect(remote["state"].AsString() == "ready" && remote["files"].AsInt() == 1 &&
+               remote["filesPending"].AsInt() == 0 && remote["unsentPushes"].AsInt() == 0,
+           "status.remote is ready with everything pulled: " + remote["state"].AsString());
+    const util::JsonValue projects = WorkspaceShellTestAccess::ExecuteControlQuery(shell, "projects");
+    bool marked = false;
+    for (const util::JsonValue& project : projects.AsArray()) {
+      marked = marked || (project["root"].AsString() == mirror.string() &&
+                          project["host"].AsString() == target);
+    }
+    Expect(marked, "the projects query marks the mirror with its host");
+  }
   WorkspaceShellTestAccess::OpenFile(shell, mirror / "main.c");
   WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
   WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// edited\n");
