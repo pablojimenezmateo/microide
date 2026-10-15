@@ -644,6 +644,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       RequestWindowRedraw();
       frame_state_.painted_backdrops = backdrops;
     }
+    // The editor paints find matches on the overlay's MODE (see the pane loop in
+    // RenderActiveWorkspaceSurface), so this follows exactly that.
+    const bool find_matches = overlay.mode == OverlayMode::BufferSearch ||
+                              overlay.mode == OverlayMode::BufferReplace;
+    if (find_matches != frame_state_.painted_find_matches) {
+      RequestFocusedEditorRedraw();
+      frame_state_.painted_find_matches = find_matches;
+    }
   }
   // The sidebar's selected row: activating a tab selects its file in the tree (as
   // VS Code's explorer follows the active editor) without repainting the tree

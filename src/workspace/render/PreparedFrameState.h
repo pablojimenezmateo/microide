@@ -57,6 +57,10 @@ struct PreparedFrameState {
   // everything under it, so a modal opening over another changes the whole
   // window, not just the new dialog.
   std::uint8_t painted_backdrops = 0;
+  // Whether the focused pane painted the find widget's matches: they show only
+  // while the widget is the overlay, and another overlay replacing it (a
+  // completion request) took them off the editor without repainting it.
+  bool painted_find_matches = false;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

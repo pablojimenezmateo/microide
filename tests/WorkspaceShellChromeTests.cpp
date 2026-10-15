@@ -2900,6 +2900,42 @@ void TestWorkspaceShellSettingsFilterTextStaysInItsBar() {
          "the shown query must fit inside the bar's insets, not run past it");
 }
 
+// The find widget's matches are painted in the editor only while the widget is
+// the overlay. Another overlay replacing it (a completion request from the
+// command line) took them off the editor without repainting it, so the match
+// boxes stayed on screen (QA monkey seed 11).
+void TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "notes.md", "}b\nalpha alpha\n");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "notes.md");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto step = [&](std::string_view what, const microide::workspace::RenderInvalidation& redraw) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  step("opening find", DispatchEvents(shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)}));
+  step("searching alpha", DispatchEvents(shell, {TextInputEvent("alpha")}));
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
+         "a completion request opens its overlay");
+  step("the completion list replacing find", shell.ConsumePendingRenderInvalidation());
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5693,6 +5729,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAPromptOverSettingsOwnsThePointer);
   AddTest(tests, "WorkspaceShell/SettingsFilterTextStaysInItsBar",
           TestWorkspaceShellSettingsFilterTextStaysInItsBar);
+  AddTest(tests, "WorkspaceShell/ReplacingTheFindWidgetRepaintsItsMatches",
+          TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",
