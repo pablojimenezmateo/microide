@@ -51,14 +51,38 @@ inline float MaxRectHeight(std::span<const SDL_FRect> rects) {
   return max_height;
 }
 
-inline workspace::WorkspaceShell::EventResult SendKeyDownResult(workspace::WorkspaceShell& shell,
-                                                                SDL_Keycode key,
-                                                                SDL_Keymod modifiers) {
+// Event constructors for tests that dispatch a run of events and fold their
+// redraws (support/RetainedRedraw.h DispatchEvents).
+inline SDL_Event KeyDownEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = key;
   event.key.mod = modifiers;
-  return shell.HandleEvent(event);
+  return event;
+}
+
+inline SDL_Event MouseMotionEvent(float x, float y) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_MOTION;
+  event.motion.x = x;
+  event.motion.y = y;
+  return event;
+}
+
+inline SDL_Event MouseButtonEvent(Uint32 type, float x, float y) {
+  SDL_Event event{};
+  event.type = type;
+  event.button.button = SDL_BUTTON_LEFT;
+  event.button.x = x;
+  event.button.y = y;
+  event.button.clicks = 1;
+  return event;
+}
+
+inline workspace::WorkspaceShell::EventResult SendKeyDownResult(workspace::WorkspaceShell& shell,
+                                                                SDL_Keycode key,
+                                                                SDL_Keymod modifiers) {
+  return shell.HandleEvent(KeyDownEvent(key, modifiers));
 }
 
 inline bool SendKeyDown(workspace::WorkspaceShell& shell, SDL_Keycode key, SDL_Keymod modifiers) {

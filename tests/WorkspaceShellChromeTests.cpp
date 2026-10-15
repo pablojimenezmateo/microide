@@ -1585,25 +1585,6 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   SDL_DestroySurface(pixels);
 }
 
-namespace {
-SDL_Event MouseMotionEvent(float x, float y) {
-  SDL_Event event{};
-  event.type = SDL_EVENT_MOUSE_MOTION;
-  event.motion.x = x;
-  event.motion.y = y;
-  return event;
-}
-SDL_Event MouseButtonEvent(Uint32 type, float x, float y) {
-  SDL_Event event{};
-  event.type = type;
-  event.button.button = SDL_BUTTON_LEFT;
-  event.button.x = x;
-  event.button.y = y;
-  event.button.clicks = 1;
-  return event;
-}
-}  // namespace
-
 // Opening a menu with a CLICK must leave the sidebar painted. The GUI QA driver's
 // first runs (tools/qa, 2026-10-15) showed the File menu open over a BLANK sidebar
 // column -- tree or search view, from a fresh instance -- with the content back
@@ -1730,6 +1711,48 @@ void TestWorkspaceShellHoveringIntoAClickedMenuRepaintsItsFirstRow() {
   SDL_DestroySurface(retained);
   Expect(differences == 0, "hovering into a clicked menu should paint what a full repaint paints; " +
                                std::to_string(differences) + " pixels differ");
+}
+
+// Find-in-files into the query field and back out, each frame equal to a full
+// repaint. The QA redraw verifier reported the query field stale after
+// ctrl+shift+f, Escape; the cause was frame prep syncing the active text-input
+// surface after building the view models (5f80d5ec): the frame that focused the
+// field drew it unfocused, and nothing repainted it until the next blink.
+void TestWorkspaceShellEscapeFromFindInFilesRepaintsTheField() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the find-in-files fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto open = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {KeyDownEvent(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))}),
+      pin_caret);
+  Expect(open.identical(), "Ctrl+Shift+F should paint what a full repaint paints; " +
+                               DescribePixelDiff(open));
+  const auto escape = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {KeyDownEvent(SDLK_ESCAPE)}), pin_caret);
+  Expect(escape.identical(), "Escape from find-in-files should paint what a full repaint paints; " +
+                                 DescribePixelDiff(escape));
 }
 
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
@@ -4411,6 +4434,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCaretBlinkIsDecidedOncePerFrame);
   AddTest(tests, "WorkspaceShell/EditorRepaintUnderAnOpenMenuKeepsTheEditor",
           TestWorkspaceShellEditorRepaintUnderAnOpenMenuKeepsTheEditor);
+  AddTest(tests, "WorkspaceShell/EscapeFromFindInFilesRepaintsTheField",
+          TestWorkspaceShellEscapeFromFindInFilesRepaintsTheField);
   AddTest(tests, "WorkspaceShell/HoveringIntoAClickedMenuRepaintsItsFirstRow",
           TestWorkspaceShellHoveringIntoAClickedMenuRepaintsItsFirstRow);
   AddTest(tests, "WorkspaceShell/OpeningAMenuByClickKeepsTheSidebar",

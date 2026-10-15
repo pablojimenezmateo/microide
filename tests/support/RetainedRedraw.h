@@ -16,6 +16,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <string>
+#include <initializer_list>
 
 #include "TestSupport.h"
 #include "render/PixelDiff.h"
@@ -109,6 +112,55 @@ inline void PaintInvalidation(workspace::WorkspaceShell& shell,
   }
   Expect(SDL_SetRenderClipRect(canvas.renderer(), nullptr),
          "a retained redraw should clear its clip rect");
+}
+
+// The app loop's handling of a run of events: each event's own redraw folded with
+// whatever the shell queued while handling it. A test that keeps only `handled`
+// paints nothing, which is how a click-path test once passed vacuously.
+inline workspace::RenderInvalidation DispatchEvents(workspace::WorkspaceShell& shell,
+                                                   std::initializer_list<SDL_Event> events) {
+  workspace::RenderInvalidation redraw;
+  for (const SDL_Event& event : events) {
+    redraw.Merge(shell.HandleEvent(event).redraw);
+    redraw.Merge(shell.ConsumePendingRenderInvalidation());
+  }
+  return redraw;
+}
+
+// Paint `redraw` over the retained canvas as the app would, then repaint the same
+// state in full ON THE SAME CANVAS (glyph textures are per renderer, so a fresh
+// canvas differs wherever there is text) and diff the two. The canvas is left
+// holding the full repaint, so steps chain. `before_paint` runs before each paint
+// -- tests pin the caret blink there so both paints agree on it.
+inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
+    workspace::WorkspaceShell& shell,
+    SoftwareCanvas& canvas,
+    int width,
+    int height,
+    const workspace::RenderInvalidation& redraw,
+    const std::function<void()>& before_paint = {}) {
+  if (before_paint) {
+    before_paint();
+  }
+  PaintInvalidation(shell, canvas, width, height, redraw);
+  SDL_FlushRenderer(canvas.renderer());
+  SDL_Surface* retained = SDL_DuplicateSurface(canvas.surface());
+  Expect(retained != nullptr, "a retained-redraw comparison should copy the canvas");
+  if (before_paint) {
+    before_paint();
+  }
+  shell.Render(canvas.renderer(), width, height);
+  (void)shell.ConsumePendingRenderInvalidation();
+  SDL_FlushRenderer(canvas.renderer());
+  const render::PixelDiffResult diff = DiffSurfaces(retained, canvas.surface());
+  SDL_DestroySurface(retained);
+  return diff;
+}
+
+inline std::string DescribePixelDiff(const render::PixelDiffResult& diff) {
+  return std::to_string(diff.count) + " pixels differ in " + std::to_string(diff.min_x) + "," +
+         std::to_string(diff.min_y) + " " + std::to_string(diff.box_width) + "x" +
+         std::to_string(diff.box_height);
 }
 
 }  // namespace microide::tests

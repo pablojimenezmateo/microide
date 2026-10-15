@@ -9,6 +9,7 @@
 // text it no longer belongs to.
 
 #include "TestSupport.h"
+#include "WorkspaceShellEventHelpers.h"
 
 #include <SDL3/SDL.h>
 
@@ -133,14 +134,6 @@ void TestCommitReachesEveryCaret() {
   Expect(TestAccess::TextComposition(shell).text.empty(), "and the preview is cleared");
 }
 
-
-SDL_Event KeyDownEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
-  SDL_Event event{};
-  event.type = SDL_EVENT_KEY_DOWN;
-  event.key.key = key;
-  event.key.mod = modifiers;
-  return event;
-}
 
 // While an input method is composing, the keys it uses to drive the conversion
 // belong to IT, not to the editor. Arrows pick a candidate, Enter accepts,
