@@ -143,6 +143,7 @@ tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation co
 tools/run-checks.sh perf-canary # -> /tmp/microide-perf-canary.log (proves the perf gate can fail)
 tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler, warnings-as-errors)
 tools/run-checks.sh hardened    # -> /tmp/microide-hardened.log (_GLIBCXX_ASSERTIONS; catches library-precondition UB the sanitizers cannot)
+tools/run-checks.sh qa          # -> /tmp/microide-qa.log (GUI QA on Xvfb: scenario suite + 300-step monkey, redraw verifier on; see tools/qa/README.md)
 tools/run-checks.sh all     # all four in sequence
 ```
 
@@ -257,6 +258,7 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 - Extend and execute relevant fuzz targets when touching persistence and parser pipelines.
 - Keep redraw comparison tests serial under SDL dummy video when they share global SDL state.
 - Use focused fixtures for git, search, compare, merge, terminal, and plugin-adjacent workflows.
+- Run `tools/run-checks.sh qa` after touching damage, redraw, hover, focus or paint code: the redraw verifier (`MICROIDE_QA_VERIFY_REDRAW=1`) compares every partial frame with a full render, so stale paint fails the lane without a reference image. A QA finding lands as a failing-first unit test (`tests/support/RetainedRedraw.h`: `DispatchEvents`, `PaintAndDiffWithFullRepaint`) plus its fix.
 - Update docs when a durable architecture decision, workflow, or shipped capability changes.
 
 ## Related Docs

@@ -1492,6 +1492,62 @@ Found a test claiming to verify `ComputeIdleHint(...)` — a function that exist
 nowhere — while actually asserting only that a counter increments. Fake coverage
 reads as real coverage in a test list.
 
+## Stale Paint: A Green Pixel Test Is Not A Correct Frame
+
+The app paints a retained scene: a frame repaints only its dirty clips over the
+previous frame's pixels. A frame is correct only if every damage site named the
+right rects, every `RenderClip` skip was right, AND every render of the frame
+read the same state. Pixel tests check the cases their author thought of, by
+painting the way their author thought the app paints.
+
+**The oracle is the app itself.** `MICROIDE_QA_VERIFY_REDRAW=1` makes the app
+render every partial frame a second time, in full, into another target and diff
+the two (`src/app/RedrawVerifier`): any difference is a `QA-STALE` line naming the
+region, the clips and the redraw reason, with no reference image. Its failing
+half is pinned by `Application/RedrawVerifierReportsOnlyStaleFrames` (paint over
+the retained scene behind the shell's back, expect exactly one report). Its first
+day under `tools/qa` found fifteen distinct bugs in a codebase whose pixel tests
+were green; the shapes, so the next one is recognized:
+
+- **Paint read live state.** The caret blink read the clock at each paint site;
+  inline blame read a cache a worker thread fills; the terminal read its session
+  (written by the PTY reader) under three separate locks. Two renders of one frame
+  painted differently -- and so did two clips of ONE partial frame: a torn frame.
+  Paint reads what frame prep sampled (`render/PreparedFrameState.h`,
+  `EditorOverlayForFrame`, `PrepareTerminalPanesForFrame`).
+- **A transition with no damage of its own.** A menu opening over a terminal caret,
+  Settings opening over a hovered status segment, focus leaving a field. Each
+  transition used to carry its own damage request and several had none. Frame
+  prep now compares what it paints (caret, hovered element, tooltip, each pane's
+  document) with what the last frame painted and repaints both regions -- one
+  rule instead of one request per transition.
+- **Damage tracked a different thing than paint drew.** The menu painted the
+  ACTIVE row and damaged the HOVERED one; the blink damaged the Settings field
+  while the terminal caret was the one blinking; edits damaged the focused pane
+  while another pane showed the same document.
+- **A skip test that knew one instance of a repeated surface.** `RenderClip`
+  skipped the chrome unless the clip touched the TOP split pane's tab strip.
+- **Translucency re-blended.** An overlay background at alpha 0xf6 repainted over
+  its own retained pixels on every hover; opaque surfaces are what makes a
+  surface-local repaint exact.
+- **A hidden surface still painted.** A zero-area editor under a maximized panel
+  was skipped by hinted clips and painted by unhinted ones.
+
+**A finding without its frames is a finding you cannot fix.** TD-2026-10-15-343
+(a blank sidebar under the File menu, seen four times, never again) is filed with
+one screenshot and no cause. `tools/qa` keeps the frame trace
+(`MICROIDE_TRACE_REDRAW_VERBOSE`) since the previous action, the last three
+screenshots, the verifier's retained and reference images of the stale frame
+(`MICROIDE_QA_STALE_DUMP_DIR`) and the replay file with every finding. The
+terminal-caret finding above was diagnosed from the two images in one look after
+its bounding box had been stared at for half an hour.
+
+**Reproduce in-process before fixing.** Several live findings passed their first
+in-process test because the test painted a moment the live run never reached (a
+blink phase pinned visible, a caret inside the menu's own repaint box, a first
+frame that skipped the caret for unrelated reasons). Check that the test fails
+without the fix -- every QA fix commit above did -- or it is not the test.
+
 ## Reachability Sweeps
 
 Two mirror questions, both invisible to compilers, tests, and coverage — because

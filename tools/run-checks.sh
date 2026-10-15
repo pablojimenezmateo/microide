@@ -555,8 +555,40 @@ check_perf_gate() {
   return $rc
 }
 
+# GUI QA lane (tools/qa): build the app, run the local scenario suite and a
+# 300-step monkey (seed 1) on private Xvfb displays with the redraw verifier and
+# the frame trace on. Any finding fails the lane; its directory (frames, trace,
+# screenshots, replay.json) is named in the log. A missing Xvfb/xdotool/xwd fails
+# it too -- not running is not a pass. The remote suite needs a host and runs on
+# demand only (tools/qa/run.py remote).
+check_qa() {
+  local log="${LOG_DIR}/microide-qa.log"
+  local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-out}"
+  local steps="${MICROIDE_QA_MONKEY_STEPS:-300}"
+  run_logged "$log" bash -c '
+    set -e
+    for tool in Xvfb xdotool xwd xdpyinfo; do
+      if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "run-checks: qa needs $tool (apt install xvfb xdotool x11-apps x11-utils)" >&2
+        exit 1
+      fi
+    done
+    rm -rf '"$out"'
+    cmake -S . -B build >/dev/null
+    cmake --build build --target microide -j'"$JOBS"'
+    status=0
+    python3 tools/qa/run.py --out '"$out"'/suite suite || status=1
+    python3 tools/qa/run.py --out '"$out"'/monkey monkey --seed 1 --steps '"$steps"' || status=1
+    exit $status
+  '
+  local rc=$?
+  echo "run-checks: qa finished (exit $rc); log at $log, findings under $out"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|all}" >&2
+  echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh hardened      # whole suite with _GLIBCXX_ASSERTIONS armed" >&2
   echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
   echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
@@ -584,6 +616,7 @@ main() {
     clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
     hardened) check_hardened ;;
+    qa) check_qa ;;
     all)
       local overall=0
       check_tests            || overall=1

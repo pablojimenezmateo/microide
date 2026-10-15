@@ -3,7 +3,7 @@
 - [x] 1.1 Add `src/render/PixelDiff.{h,cpp}`: a pure diff of two equally sized RGBA buffers returning count, bounding box and first differing pixel; unit tests in `microide_tests` (identical, one pixel, size mismatch); `tests/support/RetainedRedraw.h` consumes it in place of its own loop
 - [x] 1.2 Add `src/app/RedrawVerifier.{h,cpp}` (second target texture, the two readbacks, the `QA-STALE` line) and call it from `Application::Render` after a partial frame when `MICROIDE_QA_VERIFY_REDRAW` was `1` at startup; the line carries count, bbox, the merged clips and the redraw reason
 - [x] 1.3 Prove it fires in-process: an `ApplicationTests` test with the verifier on expects no report for a correct partial frame and exactly one for a partial frame over a retained scene painted behind the shell's back (the residue of a missed rect or a wrong skip, with no production test seam); that half is the vacuity probe
-- [ ] 1.4 Decide caret blink once per prepared frame and make the five `CaretVisibleNow()` paint sites (bottom panel, sidebar, text input, three in `WorkspaceShellRenderFrame.cpp`) read it; run the app with the verifier through the media capture scenes and fix (or document as an exclusion) anything else it reports
+- [x] 1.4 Decide caret blink once per prepared frame and make the five `CaretVisibleNow()` paint sites (bottom panel, sidebar, text input, three in `WorkspaceShellRenderFrame.cpp`) read it; run the app with the verifier through the media capture scenes and fix (or document as an exclusion) anything else it reports
 - [ ] 1.5 Confirm the off path adds no work: perf-tests and perf-canary lanes unchanged
 
 ## 2. `ui` control query
@@ -22,12 +22,12 @@
 
 ## 4. QA driver
 
-- [ ] 4.1 Finish `tools/qa/microide_qa.py` against the real `ui` query: App lifecycle (Xvfb `-displayfd`, fresh fixture copy per run), input, control, `ui` locators, oracles, per-action screenshot ring and frame-trace tail, finding directories, action record/replay
-- [ ] 4.2 `tools/qa/monkey.py`: the weighted action sources per design, including the command generators, profiles and churn from `tools/fuzz-control-commands.py`; delete that script and repoint its references (`validation-traps.md`, the TD ledger)
-- [ ] 4.3 `tools/qa/scenarios.py`: menus and rows, overlays, sidebar views, tabs/panel tabs/status segments, divider drags, split/close, terminal panel, scrolling -- each under editor, tree and terminal focus; the overlay-backdrop repro as a scenario (delete `tools/repro/overlay-backdrop-repro.sh`, update `media-generation.md`)
-- [ ] 4.4 `tools/qa/run.py` CLI: `suite`, `monkey --seed --steps [--profile]`, `replay <file>`, `remote`; non-zero exit on any finding; findings summary naming each finding directory
-- [ ] 4.5 Verify a saved monkey action list replays its finding; verify two drivers can run at once on one machine
-- [ ] 4.6 `tools/qa/README.md`: setup, running, reading a finding directory, adding a scenario
+- [x] 4.1 Finish `tools/qa/microide_qa.py` against the real `ui` query: App lifecycle (Xvfb `-displayfd`, fresh fixture copy per run), input, control, `ui` locators, oracles, per-action screenshot ring and frame-trace tail, finding directories, action record/replay
+- [x] 4.2 `tools/qa/monkey.py`: the weighted action sources per design, including the command generators, profiles and churn from `tools/fuzz-control-commands.py`; delete that script and repoint its references (`validation-traps.md`, the TD ledger)
+- [x] 4.3 `tools/qa/scenarios.py`: menus and rows, overlays, sidebar views, tabs/panel tabs/status segments, divider drags, split/close, terminal panel, scrolling -- each under editor, tree and terminal focus; the overlay-backdrop repro as a scenario (delete `tools/repro/overlay-backdrop-repro.sh`, update `media-generation.md`)
+- [x] 4.4 `tools/qa/run.py` CLI: `suite`, `monkey --seed --steps [--profile]`, `replay <file>`, `remote`; non-zero exit on any finding; findings summary naming each finding directory
+- [x] 4.5 Verify a saved monkey action list replays its finding; verify two drivers can run at once on one machine
+- [x] 4.6 `tools/qa/README.md`: setup, running, reading a finding directory, adding a scenario
 
 ## 5. Remote scenarios
 
@@ -37,7 +37,7 @@
 
 ## 6. Lane and wrap-up
 
-- [ ] 6.1 `tools/run-checks.sh qa`: build `microide`, suite, 300-action monkey (seed 1), `/tmp/microide-qa.log`, fail on finding or missing Xvfb/xdotool/xwd
+- [x] 6.1 `tools/run-checks.sh qa`: build `microide`, suite, 300-action monkey (seed 1), `/tmp/microide-qa.log`, fail on finding or missing Xvfb/xdotool/xwd
 - [ ] 6.2 Run the full suite, the monkey with several seeds, and the remote suite; re-find TD-2026-10-15-343 (the blank sidebar under an open menu) with its frame trace, or record what the traced runs rule out; every fixed finding lands with a failing-before unit test and its own commit; unfixed ones filed as TD
-- [ ] 6.3 Update `dev-docs/project/validation-traps.md` (the verifier as the stale-paint oracle; a finding without its frames) and CLAUDE.md's validation list with the `qa` lane
+- [x] 6.3 Update `dev-docs/project/validation-traps.md` (the verifier as the stale-paint oracle; a finding without its frames) and CLAUDE.md's validation list with the `qa` lane
 - [ ] 6.4 Run the check lanes (tests, perf-tests, clang-build, asan, ubsan, tsan) green
