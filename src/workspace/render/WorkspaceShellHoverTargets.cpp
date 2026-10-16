@@ -237,7 +237,9 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     if (Contains(hit_rect, x, y)) {
       return EditorHoverTarget{
           .kind = EditorHoverTarget::Kind::Diagnostic,
-          .anchor_rect = *rect,
+          // The hovered word's row, not its 2-px underline: the card is placed
+          // against this, and above an underline it would cover the row's text.
+          .anchor_rect = hit_rect,
           .blame_line_index = 0,
           .diagnostic = diagnostic,
           .plugin_hover = std::nullopt,
@@ -330,11 +332,12 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
                 line_text, editor::TextLayout::NextTextColumn(line_text, text_column), tab_size)
           : start_visual + 1;
   const float line_y = TextGridLineY(interaction, grid_row);
+  // The hovered character's whole row: the card opens above it (or below).
   const SDL_FRect anchor_rect =
-      MakeRect(TextGridCursorX(interaction, start_visual), line_y + interaction.line_height - 2.0f,
+      MakeRect(TextGridCursorX(interaction, start_visual), line_y,
                std::max(1.0f, static_cast<float>(std::max<std::size_t>(1, end_visual - start_visual)) *
                                    interaction.char_width),
-               2.0f);
+               interaction.line_height);
   return EditorHoverTarget{
       .kind = EditorHoverTarget::Kind::Plugin,
       .anchor_rect = anchor_rect,
@@ -435,7 +438,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
       if (Contains(hit_rect, x, y)) {
         return EditorHoverTarget{
             .kind = EditorHoverTarget::Kind::Diagnostic,
-            .anchor_rect = *rect,
+            .anchor_rect = hit_rect,
             .blame_line_index = 0,
             .diagnostic = diagnostic,
             .plugin_hover = std::nullopt,
@@ -685,10 +688,10 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
       editor::TextLayout::VisualColumnForTextColumn(line_text, range.end, viewport.tab_size());
   const float line_y = TextGridLineY(interaction, *hovered_line);
   const SDL_FRect anchor_rect = MakeRect(
-      TextGridCursorX(interaction, start_visual), line_y + interaction.line_height - 2.0f,
+      TextGridCursorX(interaction, start_visual), line_y,
       std::max(1.0f, static_cast<float>(std::max<std::size_t>(1, end_visual - start_visual)) *
                          interaction.char_width),
-      2.0f);
+      interaction.line_height);
   return EditorHoverTarget{
       .kind = EditorHoverTarget::Kind::DebugValue,
       .anchor_rect = anchor_rect,

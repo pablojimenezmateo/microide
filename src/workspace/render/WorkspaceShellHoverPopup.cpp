@@ -79,12 +79,20 @@ SDL_FRect PositionHoverPopup(const SDL_FRect& anchor_rect,
                              float card_height,
                              const SDL_FRect& editor_surface) {
   float x = anchor_rect.x;
-  float y = anchor_rect.y + anchor_rect.h + kEditorHoverPopupGap;
   if (x + card_width > editor_surface.x + editor_surface.w - 8.0f) {
     x = editor_surface.x + editor_surface.w - card_width - 8.0f;
   }
-  if (y + card_height > editor_surface.y + editor_surface.h - 8.0f) {
-    y = anchor_rect.y - card_height - kEditorHoverPopupGap;
+  // Above the hovered text when it fits (VS Code's editor.hover.above), below it
+  // otherwise. Opening below covered the lines under the pointer -- the ones a
+  // person clicks next -- and a press on the card is the card's, so the click
+  // that should have placed the caret two lines down did nothing (QA flow
+  // lsp-navigation).
+  float y = anchor_rect.y - card_height - kEditorHoverPopupGap;
+  if (y < editor_surface.y + 8.0f) {
+    y = anchor_rect.y + anchor_rect.h + kEditorHoverPopupGap;
+    if (y + card_height > editor_surface.y + editor_surface.h - 8.0f) {
+      y = editor_surface.y + editor_surface.h - 8.0f - card_height;
+    }
   }
   x = std::max(editor_surface.x + 8.0f, x);
   y = std::max(editor_surface.y + 8.0f, y);

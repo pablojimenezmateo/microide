@@ -4108,6 +4108,57 @@ void TestWorkspaceShellSplitGroupHoverResolvesPaneViewport() {
          "hovering the unfocused group's diagnostic should surface its message");
 }
 
+// A hover card opens ABOVE the hovered line when there is room (VS Code's
+// editor.hover.above) and below it otherwise. Below, it covered the lines under
+// the pointer, and a press on the card is the card's: the next click two lines
+// down placed no caret (QA flow lsp-navigation).
+void TestWorkspaceShellHoverCardOpensAboveTheLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  std::string text;
+  for (int i = 0; i < 30; ++i) {
+    text += i == 12 ? "alpha beta\n" : "line\n";
+  }
+  WriteFile(source, text);
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, project_root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto diagnostic_on = [&](std::size_t line) {
+    return microide::editor::Diagnostic{
+        .range = microide::editor::SelectionRange{
+            .start = microide::editor::TextPosition{.line = line, .column = 1},
+            .end = microide::editor::TextPosition{.line = line, .column = 4},
+        },
+        .severity = microide::editor::DiagnosticSeverity::Warning,
+        .message = "Unexpected token near alpha",
+    };
+  };
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(shell, "diagnostics", source,
+                                                      {diagnostic_on(12), diagnostic_on(0)}),
+         "the fixture should publish its diagnostics");
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float x = metrics.text_x + WorkspaceShellTestAccess::TextCharWidth(shell) * 2.0f;
+  for (const std::size_t line : {std::size_t{12}, std::size_t{0}}) {
+    const float row_top = metrics.first_line_y + static_cast<float>(line) * metrics.line_height;
+    Expect(SendMouseMotion(shell, x, row_top + metrics.line_height - 1.5f, 0),
+           "hovering the diagnostic should be handled");
+    const auto popup = WorkspaceShellTestAccess::ActiveEditorHoverPopupRect(shell);
+    Expect(popup.has_value(), "the hover should open a card");
+    if (!popup) {
+      continue;
+    }
+    if (line == 12) {
+      Expect(popup->y + popup->h <= row_top,
+             "with room above, the card should sit above the hovered line");
+    } else {
+      Expect(popup->y >= row_top + metrics.line_height,
+             "on the first line, with no room above, the card should sit below it");
+    }
+  }
+}
+
 void TestWorkspaceShellDiagnosticHoverPopupShowsMessages() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -6616,6 +6667,7 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow);
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
+  AddTest(tests, "WorkspaceShell/HoverCardOpensAboveTheLine", TestWorkspaceShellHoverCardOpensAboveTheLine);
   AddTest(tests, "WorkspaceShell/FindReferencesShowsTheResults",
           TestWorkspaceShellFindReferencesShowsTheResults);
   AddTest(tests, "WorkspaceShell/CompletionDownEnterAcceptsTheSecondRow",
