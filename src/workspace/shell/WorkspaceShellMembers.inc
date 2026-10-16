@@ -1231,7 +1231,7 @@
   bool DispatchGitSidebarAction(GitSidebarActionId action, std::size_t entry_index);
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
   void SetGitOutgoingBaseChoice(OutgoingBaseChoice choice);
-  void ReloadCleanEditorTabsForPath(
+  bool ReloadCleanEditorTabsForPath(
       const std::filesystem::path& path,
       EditorReloadEchoGuard echo_guard = EditorReloadEchoGuard::Check);
   std::optional<EditorHoverTarget> EditorHoverTargetAtPosition(float x, float y) const;

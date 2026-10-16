@@ -428,6 +428,15 @@ class TextViewport {
   bool CouldConfirmDiskContent(const util::FileSignature& current) const;
   bool ConfirmDiskContentUnchanged(const util::FileSignature& current,
                                    std::uint64_t disk_content_hash) const;
+  // Whether this buffer would save exactly the bytes `other` was loaded from: the
+  // same lines, line ending, mixed-ending flag and BOM (ASCII and UTF-8 are one
+  // encoding on disk). A reload from disk that would install identical content
+  // keeps this buffer -- its undo/redo history, caches and folds -- and only
+  // takes `other`'s on-disk identity through AdoptDiskBaselineOf.
+  bool HoldsSameFileContentAs(const TextViewport& other) const;
+  // Take `other`'s disk signature as this buffer's baseline, and mark it clean:
+  // it now holds what the file holds.
+  void AdoptDiskBaselineOf(const TextViewport& other);
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;

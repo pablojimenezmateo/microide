@@ -393,6 +393,41 @@ bool TextViewport::ConfirmDiskContentUnchanged(const util::FileSignature& curren
   return true;
 }
 
+bool TextViewport::HoldsSameFileContentAs(const TextViewport& other) const {
+  if (document_ == nullptr || other.document_ == nullptr) {
+    return false;
+  }
+  if (document_ == other.document_) {
+    return true;
+  }
+  const DocumentState& mine = *document_;
+  const DocumentState& theirs = *other.document_;
+  const auto utf8_family = [](TextEncoding encoding) {
+    return encoding == TextEncoding::ASCII || encoding == TextEncoding::UTF8;
+  };
+  if (mine.line_ending != theirs.line_ending ||
+      mine.mixed_line_endings != theirs.mixed_line_endings || mine.utf8_bom != theirs.utf8_bom ||
+      !(mine.encoding == theirs.encoding ||
+        (utf8_family(mine.encoding) && utf8_family(theirs.encoding))) ||
+      mine.lines.size() != theirs.lines.size()) {
+    return false;
+  }
+  for (std::size_t line = 0; line < mine.lines.size(); ++line) {
+    if (mine.lines.LineView(line) != theirs.lines.LineView(line)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void TextViewport::AdoptDiskBaselineOf(const TextViewport& other) {
+  EnsureDocument();
+  if (other.document_ != nullptr) {
+    document_->disk_signature = other.document_->disk_signature;
+  }
+  document_->dirty = false;
+}
+
 void TextViewport::LoadContent(std::string_view content,
                                const std::filesystem::path& path,
                                std::optional<LineEnding> line_ending) {

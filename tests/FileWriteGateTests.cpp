@@ -269,6 +269,43 @@ void TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload() {
          "and the save after the reload still went through the project's gate");
 }
 
+// A reload of a clean buffer whose file holds exactly what the buffer holds -- the
+// echo of the editor's own save, reported late (a watcher verdict computed before
+// the save, a rescan sweep while a deferred save's signature is still landing) --
+// keeps the buffer, undo AND redo history included, as VS Code does. It swapped in
+// a freshly read document, so an undo followed by a save could lose the redo: the
+// editor-invariants sweep (`tools/qa/run.py invariants`) caught it in the first
+// seconds after launch.
+void TestReloadingIdenticalContentKeepsTheEditHistory() {
+  using microide::workspace::WorkspaceShell;
+  using TA = WorkspaceShell::TestAccess;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "note.txt";
+  WriteFile(file, "one\n");
+
+  WorkspaceShell shell;
+  TA::SetProjectRoot(shell, root);
+  Expect(TA::OpenFileInNewTab(shell, file), "open the file");
+  Expect(TA::HandleTextInput(shell, "x"), "edit it");
+  Expect(TA::SaveTab(shell, TA::GroupActiveTabIndex(shell, 0)), "save the edit");
+  Expect(TA::ExecuteAction(shell, WorkspaceShell::ActionId::Undo, {}), "undo it");
+  Expect(TA::SaveTab(shell, TA::GroupActiveTabIndex(shell, 0)), "save the undo");
+  Expect(ReadFile(file) == "one\n", "the file holds the undone text");
+
+  TA::ReloadCleanEditorTabsForPath(shell, file);
+  Expect(TA::ExecuteAction(shell, WorkspaceShell::ActionId::Redo, {}), "redo");
+  Expect(TA::ActiveEditor(shell).lines().LineView(0) == "xone",
+         "a reload of identical bytes must keep the redo history");
+
+  // A real change still reloads.
+  Expect(TA::SaveTab(shell, TA::GroupActiveTabIndex(shell, 0)), "save the redo");
+  WriteFile(file, "changed on disk\n");
+  TA::ReloadCleanEditorTabsForPath(shell, file);
+  Expect(TA::ActiveEditor(shell).lines().LineView(0) == "changed on disk",
+         "a file that really changed is reloaded");
+}
+
 }  // namespace
 
 void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
@@ -288,6 +325,8 @@ void RegisterFileWriteGateTests(std::vector<TestCase>& tests) {
           TestSaveRecordsContentSoTheNextCheckIsClean);
   AddTest(tests, "FileWriteGate/IdenticalRewriteIsNotAConflictForADirtyBuffer",
           TestIdenticalRewriteIsNotAConflictForADirtyBuffer);
+  AddTest(tests, "FileWriteGate/ReloadingIdenticalContentKeepsTheEditHistory",
+          TestReloadingIdenticalContentKeepsTheEditHistory);
   AddTest(tests, "FileWriteGate/AnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload",
           TestAnEditorSaveGoesThroughTheProjectsGateEvenAfterAReload);
   AddTest(tests, "FileWriteGate/GateSkipsTheSignatureStatByDefault",

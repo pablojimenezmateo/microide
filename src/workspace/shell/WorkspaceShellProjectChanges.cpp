@@ -295,14 +295,13 @@ void WorkspaceShell::ApplyExternalFileChange(const std::filesystem::path& normal
     return;
   }
   // Reload silently and, only when an open clean buffer was actually refreshed,
-  // surface a passive "reloaded from disk" notice.
-  const bool had_open_buffer = CountOpenBufferViews(normalized_path) > 0;
+  // surface a passive "reloaded from disk" notice -- not for a buffer that already
+  // held what the file holds (the late echo of its own save), which is kept.
   // AlreadyResolved: the verdict above IS the echo check, and it has already read
   // the file (off-thread) if a read was needed. Letting the reload re-ask would
   // read the same file a second time, on the shell thread, to learn what the
   // caller just established.
-  ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved);
-  if (had_open_buffer) {
+  if (ReloadCleanEditorTabsForPath(normalized_path, EditorReloadEchoGuard::AlreadyResolved)) {
     SetEditorBanner(context_.current_project_state, EditorBannerState::Kind::ReloadedNotice,
                     normalized_path);
     RequestEditorSurfaceRedraw();

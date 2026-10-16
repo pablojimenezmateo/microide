@@ -726,6 +726,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspaceTabCoordinator.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorDirty.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorGroups.cpp
+  src/workspace/coordinators/WorkspaceTabCoordinatorReload.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorSplits.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorShellBridge.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp

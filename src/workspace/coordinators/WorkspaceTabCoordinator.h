@@ -164,14 +164,16 @@ class TabCoordinator {
   // a file that is already open, which is what Ctrl+P to an open tab does, where
   // the guard is what avoids a full re-read plus a width rebuild.
   using EchoGuard = EditorReloadEchoGuard;
-  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+  // Returns whether any view's content was replaced; a view that already held
+  // what the file holds is kept, history and all, and does not count.
+  bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
                                     EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   // Shared reload core for both of the above. Reloads every editor view on `path`
   // across ALL editor groups (not just the focused one) so a split view of the same
   // file in the non-focused group is refreshed too. `clean_only` skips dirty views
   // (the clean-reload path); false reloads unconditionally (the from-disk overwrite).
-  void ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
+  bool ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
                                EchoGuard echo_guard = EchoGuard::Check);
   // Force-saves every dirty editor view on `path`, bypassing the save-time
   // disk-conflict guard (the user explicitly chose to overwrite). Returns true

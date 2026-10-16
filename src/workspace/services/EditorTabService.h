@@ -41,7 +41,7 @@ class EditorTabService {
   bool ActivateCurrentTabAfterStateLoad();
   void SyncActiveEditorTabMetadata();
   using EchoGuard = TabCoordinator::EchoGuard;
-  void ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
+  bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
                                     EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
