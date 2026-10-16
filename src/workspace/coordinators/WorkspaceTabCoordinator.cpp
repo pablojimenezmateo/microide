@@ -230,6 +230,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
     return false;
   }
+  // The tab's dirty marker is gone. The deferred completion repaints the strip;
+  // a save that wrote at once must too, or a save no keystroke made (the command
+  // line, a menu path that damages nothing else) leaves "*name" on screen.
+  operations_.request_tab_strip_redraw();
   operations_.invalidate_editor_blame_path(normalized_path);
   operations_.notify_plugin_buffer_save(normalized_path);
   refresh_directory_tree();
