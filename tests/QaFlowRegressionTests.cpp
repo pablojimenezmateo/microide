@@ -501,6 +501,34 @@ void TestPaletteRowWhoseLabelStartsWithACommandRunsTheRow() {
              actions["last"].AsString() + " from " + actions["source"].AsString());
 }
 
+// settings-scopes: a tab size made the user default (the Settings row's scope
+// chip) did not reach a project opened for the first time -- its Settings row
+// read 5 while its buffers indented by 4. A project with no saved config skipped
+// the materializing of the editor preferences, so it kept the built-in defaults
+// instead of project override -> user default -> built-in default.
+void TestUserDefaultReachesAProjectOpenedForTheFirstTime() {
+  TemporaryDirectory temp_dir;
+  ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
+  const std::filesystem::path first = temp_dir.path() / "first";
+  const std::filesystem::path second = temp_dir.path() / "second";
+  WriteFile(first / "a.txt", "a\n");
+  WriteFile(second / "b.txt", "b\n");
+
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, first, true, false), "the first project should open");
+  const std::size_t base = TestAccess::EditorTabSize(shell);
+  Expect(TestAccess::SetSettingValue(shell, "editor.tab_size", std::to_string(base + 1)),
+         "the tab size should take a project override");
+  TestAccess::ToggleSettingScope(shell, "editor.tab_size");
+  Expect(TestAccess::EditorTabSize(shell) == base + 1, "the first project keeps the value");
+
+  Expect(TestAccess::OpenProjectTab(shell, second, true, false), "the second project should open");
+  Expect(TestAccess::GetSettingValue(shell, "editor.tab_size") == std::to_string(base + 1),
+         "the second project's setting resolves to the user default");
+  Expect(TestAccess::EditorTabSize(shell) == base + 1,
+         "and its editor should use it, got " + std::to_string(TestAccess::EditorTabSize(shell)));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -512,6 +540,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/UserDefaultReachesAProjectOpenedForTheFirstTime",
+          TestUserDefaultReachesAProjectOpenedForTheFirstTime);
   AddTest(tests, "QaFlowRegression/PaletteRowWhoseLabelStartsWithACommandRunsTheRow",
           TestPaletteRowWhoseLabelStartsWithACommandRunsTheRow);
   AddTest(tests, "QaFlowRegression/PaletteAsksForTheArgumentsACommandNeeds",

@@ -846,6 +846,10 @@
   static bool SetSettingValue(WorkspaceShell& shell, std::string_view id, std::string value) {
     return shell.SetSettingValue(id, std::move(value));
   }
+  // The Settings row's scope chip: a project override becomes the user default.
+  static void ToggleSettingScope(WorkspaceShell& shell, std::string_view id) {
+    shell.ToggleSettingScope(id);
+  }
   static bool SetSettingValueTransient(WorkspaceShell& shell, std::string_view id,
                                        std::string value) {
     return shell.SetSettingValue(id, std::move(value), /*persist=*/false);

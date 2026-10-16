@@ -245,6 +245,13 @@ bool PersistenceCoordinator::RestoreConfigState() {
       .branch_review = {},
   };
   if (!operations_.persistence_service->LoadProjectConfig(config_path, &persisted_state)) {
+    // No saved config (a project opened for the first time) is no overrides, not
+    // no settings: the user's defaults still apply. Returning before this left a
+    // new project on the built-in defaults -- its store unindexed and its editor
+    // preferences never materialized -- whatever the user had made their default.
+    settings_store_.Reindex();
+    MaterializeCanonicalPreferences();
+    operations_.apply_editor_preferences_to_all_tabs();
     return false;
   }
 
