@@ -268,11 +268,12 @@ class App:
         result = self._control(["control-send", *words])
         return _last_json(result.stdout) or {"ok": False, "raw": result.stdout + result.stderr}
 
-    def send_line(self, line: str, timeout: float = 15.0) -> dict[str, Any]:
+    def send_line(self, line: str, timeout: float = 15.0, record: bool = True) -> dict[str, Any]:
         """Sends one command line VERBATIM over the control socket (no argv
         re-quoting, so a hostile argument reaches the parser as written) and
-        waits for its reply. Records it for replay."""
-        self._record({"line": line})
+        waits for its reply. Records it for replay unless `record` is False."""
+        if record:
+            self._record({"line": line})
         if self._socket is None:
             listing = _last_json(self._control(["control-list"]).stdout) or {}
             path = listing.get("socket")

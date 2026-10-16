@@ -24,6 +24,9 @@ tools/qa/run.py monkey --seed 1 --steps 300 # the seeded monkey
 tools/qa/run.py monkey --profile commands --seeds 1-8 --binary build/microide-asan/microide/microide
                                             # the control-command fuzzer (formerly tools/fuzz-control-commands.py)
 tools/qa/run.py replay /tmp/mqa-out-.../seed-1/finding-01-.../replay.json
+tools/qa/run.py invariants [--only VERB] [--soft-wrap]
+                                            # algebraic invariants of every editing command
+                                            # (undo/redo/inverse/idempotent/read-only), on disk
 MQA_REMOTE_HOST=worky MQA_REMOTE_ROOT=/home/me/repo tools/qa/run.py remote
 tools/run-checks.sh qa                      # the lane: build, suite, 300-step monkey (seed 1)
 ```
@@ -98,5 +101,6 @@ after each action, and state expectations with `app.expect(...)` or
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
 | `scenarios.py` | the local scenario suite |
 | `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |
+| `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |
 | `run.py` | the CLI |
 | `remote.py`, `agents.py` | the remote-project scenarios against a real ssh host (on demand) |

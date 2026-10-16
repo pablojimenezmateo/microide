@@ -6,6 +6,8 @@
     tools/qa/run.py monkey --profile commands --seeds 1-8 [--rounds 400] [--project PATH]
                                                      the former control-command fuzzer
     tools/qa/run.py replay FINDING/replay.json       re-run a saved action list
+    tools/qa/run.py invariants [--only VERB] [--soft-wrap]
+                                                     algebraic invariants of every editing command
     tools/qa/run.py remote [SCENARIO ...]            the remote suite (MQA_REMOTE_HOST)
 
 Common options: --binary PATH (default build/microide/microide, or $MICROIDE_BIN),
@@ -31,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import microide_qa as q  # noqa: E402
 import monkey as m  # noqa: E402
 import scenarios as s  # noqa: E402
+import invariants as inv  # noqa: E402
 
 REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo")
 
@@ -137,6 +140,12 @@ def cmd_remote(args: argparse.Namespace) -> int:
     return remote.main()
 
 
+def cmd_invariants(args: argparse.Namespace) -> int:
+    failing = inv.run(args.binary, only=args.only, soft_wrap=args.soft_wrap,
+                      verbose=args.verbose, keep=args.keep)
+    return 1 if failing else 0
+
+
 def main() -> int:
     # --binary and --out are accepted before or after the mode: the subparsers
     # take them with SUPPRESS defaults, so a value given after the mode wins and
@@ -172,6 +181,13 @@ def main() -> int:
                         help="commands/editor profiles: do not rewrite files under the editor")
     replay = sub.add_parser("replay", parents=[common(False)])
     replay.add_argument("file")
+    invariants = sub.add_parser("invariants", parents=[common(False)])
+    invariants.add_argument("--only", help="restrict to commands containing this substring")
+    invariants.add_argument("--soft-wrap", action="store_true",
+                            help="run the whole matrix with word wrap ON")
+    invariants.add_argument("--verbose", action="store_true",
+                            help="list every probe in which the command changed nothing")
+    invariants.add_argument("--keep", action="store_true", help="keep the scratch project")
     remote = sub.add_parser("remote", parents=[common(False)])
     remote.add_argument("names", nargs="*")
     args = parser.parse_args()
@@ -182,7 +198,7 @@ def main() -> int:
             raise SystemExit(f"no microide binary at {args.binary} (build it or set MICROIDE_BIN)")
         args.out.mkdir(parents=True, exist_ok=True)
     handler = {"suite": cmd_suite, "monkey": cmd_monkey, "replay": cmd_replay,
-               "remote": cmd_remote}[args.mode]
+               "invariants": cmd_invariants, "remote": cmd_remote}[args.mode]
     code = handler(args)
     if args.mode != "remote":
         shutil.rmtree(args.out / "fixtures", ignore_errors=True)

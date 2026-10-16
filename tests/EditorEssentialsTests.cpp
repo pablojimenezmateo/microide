@@ -332,7 +332,7 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
 // RangeForCaret reads as "the selection stops one line short", so the next line
 // op moved one line less than the last one did. Select all in a file ending with a
 // newline, then Alt+Down / Alt+Up, and the buffer came back with a stray blank line
-// and its last line stranded. Found by tools/sweep-editor-invariants.py.
+// and its last line stranded. Found by the editor-invariants sweep (`tools/qa/run.py invariants`).
 void TestShapingMoveLineDownThenUpRestoresABufferEndingInANewline() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\n", "/tmp/moveline-roundtrip.txt");
@@ -357,7 +357,7 @@ void TestShapingMoveLineDownThenUpRestoresABufferEndingInANewline() {
 // already reads a selection (through ResolveLineRanges). DeleteLine was the one
 // verb that still deleted `cursor_line_` alone, so Ctrl+A then Delete Line removed
 // the single phantom line after the final newline and left the whole buffer
-// standing. Found by tools/sweep-editor-invariants.py against the shipped binary.
+// standing. Found by the editor-invariants sweep (`tools/qa/run.py invariants`) against the shipped binary.
 void TestShapingDeleteLineRemovesEverySelectedLine() {
   TextViewport viewport;
   viewport.LoadContent("delta\nalpha\ncharlie\n", "/tmp/deleteline-selectall.txt");

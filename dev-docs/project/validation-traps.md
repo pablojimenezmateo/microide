@@ -8,7 +8,7 @@ Most entries below are ways that stopped being true without anyone noticing.
 
 ## One caret is not the shape the bugs are in
 
-`tools/sweep-editor-invariants.py` checks algebraic properties (undo restores it,
+`tools/qa/run.py invariants` (formerly `tools/sweep-editor-invariants.py`) checks algebraic properties (undo restores it,
 the inverse restores it, sorting twice changes nothing) for every editing command
 at every probed caret -- and until 2026-09-14 every probe reset to a SINGLE
 caret. A command could be correct for one cursor and lose data for three, and the
@@ -1221,7 +1221,7 @@ closing marker landed at the start of the next line and joined it to the comment
 Count both sides of the boundary; a verb reaching past its range is as much a
 defect as one not reaching the end of it.
 
-And the fix's own trap, caught by `tools/sweep-editor-invariants.py` rather than
+And the fix's own trap, caught by `tools/qa/run.py invariants` rather than
 by any unit test: the multi-caret path must leave each region's inner text
 SELECTED, because that is what the second press acts on. Restoring the carets as
 bare positions made the toggle act on whole lines the second time and nest a
@@ -1385,7 +1385,7 @@ reproduces in 2 of 2 seeds, and with it in place 4 of 4 seeds survive. Keep it
 that way -- a sweep nobody has watched fail is a sweep that proves nothing.
 
 **Algebraic invariants of the editing commands, against the shipped binary**
-(`tools/sweep-editor-invariants.py`). The unit suites assert what one command does
+(`tools/qa/run.py invariants`). The unit suites assert what one command does
 to one fixture, so they only cover what someone thought to write down. This asserts
 properties that hold for EVERY command at EVERY caret position and need no model of
 the expected output at all: a command followed by `undo` restores the file byte for
