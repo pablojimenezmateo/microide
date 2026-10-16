@@ -4,7 +4,7 @@
 - [x] 1.2 Add `src/app/RedrawVerifier.{h,cpp}` (second target texture, the two readbacks, the `QA-STALE` line) and call it from `Application::Render` after a partial frame when `MICROIDE_QA_VERIFY_REDRAW` was `1` at startup; the line carries count, bbox, the merged clips and the redraw reason
 - [x] 1.3 Prove it fires in-process: an `ApplicationTests` test with the verifier on expects no report for a correct partial frame and exactly one for a partial frame over a retained scene painted behind the shell's back (the residue of a missed rect or a wrong skip, with no production test seam); that half is the vacuity probe
 - [x] 1.4 Decide caret blink once per prepared frame and make the five `CaretVisibleNow()` paint sites (bottom panel, sidebar, text input, three in `WorkspaceShellRenderFrame.cpp`) read it; run the app with the verifier through the media capture scenes and fix (or document as an exclusion) anything else it reports
-- [ ] 1.5 Confirm the off path adds no work: perf-tests and perf-canary lanes unchanged
+- [x] 1.5 Confirm the off path adds no work: perf-tests and perf-canary lanes unchanged
 
 ## 2. `ui` control query
 
@@ -33,11 +33,11 @@
 
 - [x] 5.1 `tools/qa/agents.py` (simulated agents: bursts, churn with commits, reset) copied to the host per run
 - [x] 5.2 `tools/qa/remote.py`: open host folder and wait for the mirror; host edits under open/unopened tabs; save conflict and resolve; drop and restore the link; host terminal typing; agent churn with the Edit menu, search view and a split open; mirror byte-identical at the end
-- [ ] 5.3 Run the remote suite against worky and fix or file every finding
+- [x] 5.3 Run the remote suite against worky and fix or file every finding
 
 ## 6. Lane and wrap-up
 
 - [x] 6.1 `tools/run-checks.sh qa`: build `microide`, suite, 300-action monkey (seed 1), `/tmp/microide-qa.log`, fail on finding or missing Xvfb/xdotool/xwd
-- [ ] 6.2 Run the full suite, the monkey with several seeds, and the remote suite; re-find TD-2026-10-15-343 (the blank sidebar under an open menu) with its frame trace, or record what the traced runs rule out; every fixed finding lands with a failing-before unit test and its own commit; unfixed ones filed as TD
+- [x] 6.2 Run the full suite, the monkey with several seeds, and the remote suite; re-find TD-2026-10-15-343 (the blank sidebar under an open menu) with its frame trace, or record what the traced runs rule out; every fixed finding lands with a failing-before unit test and its own commit; unfixed ones filed as TD
 - [x] 6.3 Update `dev-docs/project/validation-traps.md` (the verifier as the stale-paint oracle; a finding without its frames) and CLAUDE.md's validation list with the `qa` lane
-- [ ] 6.4 Run the check lanes (tests, perf-tests, clang-build, asan, ubsan, tsan) green
+- [x] 6.4 Run the check lanes (tests, perf-tests, clang-build, asan, ubsan, tsan) green
