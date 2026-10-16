@@ -786,6 +786,18 @@ util::JsonValue ControlChannelService::BuildKeybindings() const {
     object["context"] = util::JsonValue(context_name(binding.context));
     object["skipsTerminal"] = util::JsonValue(binding.skips_terminal);
     object["plugin"] = util::JsonValue(binding.from_plugin);
+    // The command the binding runs, as the `ui` action receipt names it: a
+    // driver presses the chord and checks this ran.
+    std::string command = binding.command_name;
+    if (command.empty()) {
+      for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+        if (spec.id == binding.action) {
+          command = std::string(spec.command_name.empty() ? spec.label : spec.command_name);
+          break;
+        }
+      }
+    }
+    object["command"] = util::JsonValue(std::move(command));
     rows.push_back(util::JsonValue(std::move(object)));
   }
   return util::JsonValue(std::move(rows));

@@ -18,6 +18,8 @@
 #include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/control/ControlUiQuery.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "editor/EditorViewRenderer.h"
@@ -580,6 +582,35 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                     ? util::JsonValue(active_signature_help_->signature)
                     : util::JsonValue(nullptr);
             root["popups"] = util::JsonValue(std::move(popups));
+
+            // The last action a key, menu row, palette entry or command ran
+            // (ActionCoordinator's receipt), by command name.
+            {
+              const WorkspaceActionContext::ActionReceipt& receipt =
+                  MakeActionContext().LastActionReceipt();
+              util::JsonObject actions;
+              actions["dispatched"] = util::JsonValue(static_cast<std::int64_t>(receipt.dispatched));
+              actions["last"] = util::JsonValue(nullptr);
+              if (receipt.last.has_value()) {
+                for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+                  if (spec.id == *receipt.last) {
+                    actions["last"] = util::JsonValue(std::string(
+                        spec.command_name.empty() ? spec.label : spec.command_name));
+                    break;
+                  }
+                }
+              }
+              const char* source = "command";
+              switch (receipt.source) {
+                case ActionSource::Command: source = "command"; break;
+                case ActionSource::Shortcut: source = "shortcut"; break;
+                case ActionSource::Menu: source = "menu"; break;
+                case ActionSource::ContextMenu: source = "context-menu"; break;
+              }
+              actions["source"] = util::JsonValue(std::string(source));
+              actions["rejected"] = util::JsonValue(receipt.rejected);
+              root["actions"] = util::JsonValue(std::move(actions));
+            }
 
             // Per editor pane: the text geometry a click is resolved against
             // (EditorMouseCoordinator's fast pointer metrics), and which buffer

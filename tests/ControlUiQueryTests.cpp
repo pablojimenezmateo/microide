@@ -299,6 +299,20 @@ void TestUiQueryNamesSettingsRows() {
   Expect(before != after, "clicking " + checkbox->name + " should toggle " + id);
 }
 
+// The ui query's action receipt names what a key ran, by command name, so a
+// driver can tell a dead shortcut (nothing ran) from one taken by another
+// binding (something else ran).
+void TestUiQueryReportsTheLastAction() {
+  UiFixture fixture;
+  const std::int64_t before = TestAccess::ControlUi(fixture.shell)["actions"]["dispatched"].AsInt();
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_B, SDL_KMOD_CTRL)});
+  const util::JsonValue actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(actions["dispatched"].AsInt() == before + 1, "Ctrl+B should dispatch one action");
+  Expect(actions["last"].AsString() == "sidebar-toggle" && actions["source"].AsString() == "shortcut",
+         "the receipt should name sidebar-toggle from a shortcut, got " + actions["last"].AsString() +
+             " from " + actions["source"].AsString());
+}
+
 }  // namespace
 
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
@@ -314,6 +328,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesOverlayRows", TestUiQueryNamesOverlayRows);
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
+  AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
 }
 
 }  // namespace microide::tests

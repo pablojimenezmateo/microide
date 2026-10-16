@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -349,6 +350,25 @@ class WorkspaceActionContext {
 
   void PrepareForAction(ActionSource source);
   bool RejectAction(ActionSource source, std::string feedback);
+
+  // The receipt for the last action dispatched through ActionCoordinator: what a
+  // key, menu row, palette entry or command actually ran. The `ui` control query
+  // reports it, so a driver that pressed Ctrl+B can check sidebar-toggle ran --
+  // and not a binding from another context, or nothing.
+  struct ActionReceipt {
+    std::uint64_t dispatched = 0;
+    std::optional<ActionId> last;
+    ActionSource source = ActionSource::Command;
+    bool rejected = false;
+  };
+  void NoteActionDispatched(ActionId id, ActionSource source) {
+    ++receipt_.dispatched;
+    receipt_.last = id;
+    receipt_.source = source;
+    receipt_.rejected = false;
+  }
+  void NoteActionRejected() { receipt_.rejected = true; }
+  const ActionReceipt& LastActionReceipt() const { return receipt_; }
 
   SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args) const;
 
@@ -708,6 +728,7 @@ class WorkspaceActionContext {
   ProjectWorkspaceState& state_;
   float& ui_scale_;
   Operations operations_;
+  ActionReceipt receipt_;
 };
 
 }  // namespace microide::workspace
