@@ -13617,7 +13617,9 @@ static_asserted the two constant pairs that must stay equal
   profiling is available. Do NOT rebaseline the scenario to hide it.
 
 - **TD-2026-07-25-002 — the macOS / Windows / generic poll-fallback backends carry the
-  reviewed poll rewrite unverified. OPEN (platform, same category as 004/005/010/035).**
+  reviewed poll rewrite unverified. [WON'T DO 2026-10-16 — under the maintainer's
+  2026-07-24 platform decision (no Windows/macOS host planned; see the standing
+  backlog). Revisit with a real port.] (platform, same category as 004/005/010/035).**
   `FileIndexWatcher.cpp` holds four per-platform `Impl` structs that each carried a
   byte-identical copy of the poll worker. The review collapsed them into one shared
   `RunPollFallbackWorker` + `BuildPollSnapshot` + `PollStopSignal` (which is where the
@@ -13677,7 +13679,7 @@ both build `-Werror`-clean. What is left open:
   before changing, and measure `search_*` scenarios if it is taken.
 
 - **TD-2026-07-25-102 — `platform/ControlSocketServer.cpp` still cannot compile on macOS.
-  OPEN (platform, same category as 002).**
+  [WON'T DO 2026-10-16 — the same platform decision as 002.] (platform, same category as 002).**
   The pipe-creation sites across `platform`/`util` now share `util::MakeCloexecPipe`,
   which picks `pipe2` on Linux and `pipe()+fcntl` elsewhere — that closed the `pipe2`
   half of the problem for `TerminalBackend` and `ControlSocketServer`. But
@@ -13686,7 +13688,9 @@ both build `-Werror`-clean. What is left open:
   shim treatment applies (accept + `F_SETFD` fallback) but it is unverifiable here.
 
 - **TD-2026-07-25-103 — the four per-platform `FileIndexWatcher::Impl` structs still
-  duplicate their poll-fallback field block. OPEN (deliberately deferred).**
+  duplicate their poll-fallback field block. [WON'T DO 2026-10-16 — blind edits to
+  three blocks no host here compiles; folds in with a real port, per 002.]
+  (deliberately deferred).**
   TD-2026-07-25-002 collapsed the poll *worker*; each `Impl` still repeats the same seven
   members (`poll_mode`, `force_poll`, `poll_interval`, `poll_worker`, `stop_poll`,
   `initial_scan_worker`, `stop_initial_scan`) plus an identical `StopInitialScan()`.
