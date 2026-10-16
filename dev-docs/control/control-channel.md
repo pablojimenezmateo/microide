@@ -165,7 +165,8 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `keybindings`, `ui`, `buffer`.
 
 **Keybindings.** `keybindings` lists the resolved bindings in dispatch order:
-`{id, chord, context, skipsTerminal, plugin}`, `chord` spelled as the menus show it
+`{id, chord, context, skipsTerminal, plugin, command}` (`command`: the command the
+binding runs, as the `ui` action receipt names it), `chord` spelled as the menus show it
 (`Ctrl+Shift+F`), `context` one of `global`, `editor`, `sidebar`, `terminal`. A
 `global` binding is active everywhere but a focused terminal, and there too when
 `skipsTerminal`.
@@ -230,6 +231,14 @@ columns). `folded` lists the collapsed folds and `foldable` the fold ranges reso
 in the current window, each `[openerLine, closerLine]`. With no buffer it answers
 `{available:false}`. `tools/qa` checks every edit against this rather than against
 the saved file.
+
+**What ran (`ui.actions`).** `{dispatched, last, source, rejected}`: the count of
+actions dispatched through the action coordinator since startup, the last one's
+command name, its source (`shortcut`, `menu`, `context-menu`, `command`) and
+whether it was rejected. A `menu-item:` row also carries the `command` it runs.
+With `MICROIDE_QA_ACTION_DRY_RUN=1` at startup every key-, menu- and
+pointer-driven action records its receipt and runs nothing (control commands still
+run), which is how `tools/qa`'s `keys` and `context-menus` sweeps press everything.
 
 A name shared by two elements gets `#2`, `#3`, ... on the later ones in visual
 order, so a name resolves to one element. Every rect comes from the geometry the
