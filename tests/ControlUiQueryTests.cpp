@@ -313,10 +313,52 @@ void TestUiQueryReportsTheLastAction() {
              " from " + actions["source"].AsString());
 }
 
+// The debug pane's mode tabs and rows are named with the rects its mouse path
+// hit-tests: a click on `debug-tab:watch` switches the mode, and a click on a
+// breakpoint row goes to the breakpoint (QA flows drive the pane this way).
+void TestUiQueryNamesTheDebugPane() {
+  UiFixture fixture;
+  TestAccess::SetSettingValue(fixture.shell, "debug.enabled", "true");
+  TestAccess::ToggleBreakpointForTest(fixture.shell, fixture.root / "alpha.cpp", 0);
+  TestAccess::FocusDebugPaneBreakpoints(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto breakpoints_tab = Find(ui, "debug-tab:breakpoints");
+  Expect(breakpoints_tab.has_value() && breakpoints_tab->active == true,
+         "the ui query should name the active debug-tab:breakpoints");
+  std::optional<UiElement> row;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString().starts_with("debug-row:breakpoints/") &&
+        entry["label"].AsString().find("alpha.cpp") != std::string::npos) {
+      row = Find(ui, entry["name"].AsString());
+    }
+  }
+  Expect(row.has_value(), "the ui query should name the alpha.cpp breakpoint row");
+
+  if (row) {
+    fixture.ClickCenter(*row);
+    const auto tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
+    Expect(tab.has_value() && tab->active == true,
+           "a click on the named breakpoint row should go to alpha.cpp");
+  }
+  const auto watch_tab = Find(TestAccess::ControlUi(fixture.shell), "debug-tab:watch");
+  Expect(watch_tab.has_value(), "the ui query should name debug-tab:watch");
+  if (watch_tab) {
+    fixture.ClickCenter(*watch_tab);
+    const auto after = Find(TestAccess::ControlUi(fixture.shell), "debug-tab:watch");
+    Expect(after.has_value() && after->active == true,
+           "a click on debug-tab:watch should switch the pane to Watch");
+  }
+}
+
 }  // namespace
 
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/IsRegistered", TestUiQueryIsRegistered);
+  AddTest(tests, "ControlUiQuery/NamesTheDebugPane", TestUiQueryNamesTheDebugPane);
   AddTest(tests, "ControlUiQuery/NamesTheWorkspaceChrome", TestUiQueryNamesTheWorkspaceChrome);
   AddTest(tests, "ControlUiQuery/HitsWhatItNames", TestUiQueryHitsWhatItNames);
   AddTest(tests, "ControlUiQuery/IsReadOnly", TestUiQueryIsReadOnly);

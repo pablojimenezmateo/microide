@@ -15,6 +15,7 @@
 
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
+#include "workspace/debug/DebugPaneRegistry.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/control/ControlUiQuery.h"
@@ -47,6 +48,36 @@ const editor::SingleLineEditor* OverlayQueryEditor(const ProjectWorkspaceState& 
     case OverlayMode::CodeActions: break;
   }
   return nullptr;
+}
+
+// The debug toolbar button's locator (`button:debug-toolbar/<id>`).
+std::string_view DebugToolbarButtonId(DebugToolbarButton button) {
+  switch (button) {
+    case DebugToolbarButton::ContinuePause: return "continue";
+    case DebugToolbarButton::StepOver: return "step-over";
+    case DebugToolbarButton::StepInto: return "step-into";
+    case DebugToolbarButton::StepOut: return "step-out";
+    case DebugToolbarButton::ReverseContinue: return "reverse-continue";
+    case DebugToolbarButton::StepBack: return "step-back";
+    case DebugToolbarButton::Restart: return "restart";
+    case DebugToolbarButton::Stop: return "stop";
+    case DebugToolbarButton::Count: break;
+  }
+  return "unknown";
+}
+
+// A value-tree row as the pane draws it: name, then value, then type.
+std::string DebugValueRowLabel(const DebugVariableRowView& row) {
+  std::string label = row.display_name;
+  if (!row.display_value.empty()) {
+    label += " = ";
+    label += row.display_value;
+  }
+  if (!row.display_type.empty()) {
+    label += " : ";
+    label += row.display_type;
+  }
+  return label;
 }
 
 }  // namespace
@@ -523,6 +554,104 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             AddControlUiElement(out, kField, "git/body", workflow.body_field_rect, workflow.BodyText());
             out.back().active = workflow.focus_field == CommitWorkflowFocusField::Body;
             AddControlUiElement(out, kButton, "git/confirm-commit", workflow.commit_button_rect);
+          },
+      .debug =
+          [this](const WorkspaceLayout& layout, ControlUiElements& out) {
+            const ProjectWorkspaceState& ps = context_.current_project_state;
+            // The floating toolbar: the layout and enablement its click handler
+            // (HandleDebugToolbarButtonDown) uses.
+            if (DebugToolbarVisible()) {
+              const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
+                  layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+              const bool stopped = IsDebugSessionStopped();
+              for (std::size_t i = 0; i < tb.button_count; ++i) {
+                const DebugToolbarButton button = tb.kinds[i];
+                AddControlUiElement(out, kButton,
+                                    "debug-toolbar/" + std::string(DebugToolbarButtonId(button)),
+                                    tb.buttons[i],
+                                    std::string(DebugToolbarButtonTooltip(button, stopped)));
+                const bool step = button != DebugToolbarButton::ContinuePause &&
+                                  button != DebugToolbarButton::Restart &&
+                                  button != DebugToolbarButton::Stop;
+                out.back().enabled = !step || stopped;
+              }
+            }
+            if (!ps.debug_pane.visible || !UiRectHasArea(layout.right_pane)) {
+              return;
+            }
+            const DebugPaneModeRowLayout modes = DebugPaneModeRow(layout.right_pane);
+            for (int i = 0; i < modes.tab_count; ++i) {
+              const DebugPaneModeTab& tab = modes.tabs[static_cast<std::size_t>(i)];
+              AddControlUiElement(out, kDebugTab, tab.id, tab.rect, std::string(tab.label));
+              out.back().active = tab.mode == ps.debug_pane.mode;
+            }
+            // The visible rows, each with the band DebugPaneRowAtPoint maps a click
+            // in to that row (`debug-row:<mode>/<index>`, index into the mode's rows).
+            const DebugPaneSurfaceSpec* spec = FindDebugPaneSurface(ps.debug_pane.mode);
+            const std::string mode_id = spec != nullptr ? std::string(spec->id) : "debug";
+            const std::size_t count = DebugPaneActiveRowCount();
+            const LogSurfaceLayout list = ComputeDebugPaneListLayout(layout, count);
+            for (int r = 0; r < list.scroll.visible_rows; ++r) {
+              const std::size_t index =
+                  static_cast<std::size_t>(list.scroll.vertical_scroll + r);
+              if (index >= count) {
+                break;
+              }
+              std::string label;
+              bool selected = false;
+              switch (ps.debug_pane.mode) {
+                case DebugPaneMode::CallStack: {
+                  const DebugExecutionView& exec = ps.debug_execution;
+                  const auto ref = exec.PanelRowAt(index);
+                  using Kind = DebugExecutionView::PanelRowRef::Kind;
+                  if (ref.kind == Kind::Session && ref.index < exec.sessions.size()) {
+                    label = exec.sessions[ref.index].display;
+                    selected = exec.sessions[ref.index].id == exec.focused_session_id;
+                  } else if (ref.kind == Kind::Thread && ref.index < exec.threads.size()) {
+                    label = exec.threads[ref.index].display;
+                    selected = exec.threads[ref.index].id == exec.focused_thread_id;
+                  } else if (ref.kind == Kind::Frame && ref.index < exec.frames.size()) {
+                    const DebugStackFrameView& frame = exec.frames[ref.index];
+                    label = frame.display_primary;
+                    if (!frame.display_secondary.empty()) {
+                      label += "  ";
+                      label += frame.display_secondary;
+                    }
+                    selected = ref.index == exec.focused_frame_index;
+                  }
+                  break;
+                }
+                case DebugPaneMode::Variables:
+                  if (index < ps.debug_variables.Rows().size()) {
+                    label = DebugValueRowLabel(ps.debug_variables.Rows()[index]);
+                    selected = ps.debug_variables.SelectedRow() == index;
+                  }
+                  break;
+                case DebugPaneMode::Watch:
+                  if (index < ps.debug_watch.Rows().size()) {
+                    label = DebugValueRowLabel(ps.debug_watch.Rows()[index]);
+                    selected = ps.debug_watch.SelectedRow() == index;
+                  }
+                  break;
+                case DebugPaneMode::Breakpoints:
+                  if (index < ps.debug_breakpoints_panel.Rows().size()) {
+                    const DebugBreakpointRowView& row = ps.debug_breakpoints_panel.Rows()[index];
+                    label = row.display;
+                    if (!row.secondary.empty()) {
+                      label += "  ";
+                      label += row.secondary;
+                    }
+                    selected = ps.debug_pane.breakpoints_selected_row == static_cast<int>(index);
+                  }
+                  break;
+              }
+              const float y = list.text_y + static_cast<float>(r) * list.line_height;
+              AddControlUiElement(out, kDebugRow, mode_id + "/" + std::to_string(index),
+                                  MakeRect(list.content_rect.x, y, list.content_rect.w,
+                                           list.line_height),
+                                  std::move(label));
+              out.back().selected = selected;
+            }
           },
       .details =
           [this](const WorkspaceLayout& layout, util::JsonObject& root) {

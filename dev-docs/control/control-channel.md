@@ -199,6 +199,9 @@ selected?}` in window coordinates (what mouse events use). Names, by kind:
 | `button:search/...`, `button:git/...` | the search view's `mode`, `case`, `hidden`, `scope` toggles; the git view's `stage-all`, `discard-all`, `refresh`, `branch`, `sync`, `commit`, `confirm-commit` |
 | `setting:<id>` | a Settings row (value as `label`, `on`/`off` for a checkbox), with `button:setting/<id>/{checkbox,decrement,increment,value,reset,scope}` for its controls |
 | `settings-category:<label>` | a Settings category in the left rail |
+| `button:debug-toolbar/<id>` | the floating debug toolbar's `continue`, `step-over`, `step-into`, `step-out`, `reverse-continue`, `step-back`, `restart`, `stop` (tooltip as `label`; `enabled` false for a step while the program runs) |
+| `debug-tab:<mode>` | the debug pane's mode tabs: `variables`, `breakpoints`, `watch`, `callstack` (`active` = shown) |
+| `debug-row:<mode>/<index>` | a visible debug pane row, `<index>` into that mode's rows, with its painted text as `label` (`name = value : type` for variables and watches, `function  file:line` for frames); `selected` marks the focused frame or selected row |
 
 `menu.lastRun` is the receipt for a menu row: the `<menu>/<label>` locator (the
 `menu-item:` element's name without its kind) of the row a click or Enter last

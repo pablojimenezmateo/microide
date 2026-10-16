@@ -66,6 +66,8 @@ inline constexpr std::string_view kOverlayRow = "overlay-row";
 inline constexpr std::string_view kField = "field";
 inline constexpr std::string_view kSetting = "setting";
 inline constexpr std::string_view kSettingsCategory = "settings-category";
+inline constexpr std::string_view kDebugTab = "debug-tab";
+inline constexpr std::string_view kDebugRow = "debug-row";
 }  // namespace control_ui_kind
 
 // Appends an element named `<kind>:<locator>`.
@@ -105,6 +107,9 @@ class ControlUiQuery {
     ElementSource dialogs;     // prompt and unsaved-prompt buttons/field, Settings rows
     ElementSource fields;      // sidebar text fields (search view, commit message) and
                                // the git view's header buttons
+    ElementSource debug;       // the debug toolbar's buttons, the debug pane's mode tabs
+                               // and its visible rows (call stack, variables, watch,
+                               // breakpoints)
     // State no element carries: the overlay's query, match count and selection,
     // the open prompt's text, and the editor popups (hover, signature help).
     // Merged into the answer's `overlay`, and added as `prompt` and `popups`.

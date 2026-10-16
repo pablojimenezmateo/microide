@@ -169,7 +169,8 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   for (const ElementSource* source : {&operations.menus, &operations.tabs, &operations.sidebar,
                                       &operations.fields, &operations.panel,
                                       &operations.status_bar, &operations.buttons,
-                                      &operations.overlay, &operations.dialogs}) {
+                                      &operations.debug, &operations.overlay,
+                                      &operations.dialogs}) {
     if (*source) {
       (*source)(*layout, elements);
     }
