@@ -10,16 +10,24 @@ and checks it with oracles that need no expected screenshot.
 
 ```bash
 sudo apt install xvfb xdotool x11-apps x11-utils python3-pil   # Xvfb, xdotool, xwd, xdpyinfo, Pillow
+sudo apt install clangd gdb                                     # the lsp-* and dbg-* flows
 cmake --build build --target microide -j8
 ```
+
+The `lsp-*` / `outline` flows drive the real clangd through `plugins/cpp-lsp` and
+`dbg-session` drives gdb through `plugins/gdb-dap` (seeded into the instance's
+config, `SCENARIO_PLUGINS`). A missing tool is a finding, not a skip, unless
+`MQA_ALLOW_MISSING_TOOLS=1`.
 
 Any build works, including the sanitizer builds (`--binary build/microide-asan/microide/microide`).
 
 ## Running
 
 ```bash
-tools/qa/run.py suite                       # every local scenario
+tools/qa/run.py suite -j 8                  # every local scenario, 8 at a time (~5 min)
 tools/qa/run.py suite menus chrome          # some of them
+tools/qa/run.py suite 'edit-*' 'lsp-*'      # by glob
+tools/qa/run.py suite --list                # the catalog, one line each
 tools/qa/run.py suite menu-clicks           # click every menu row in each layout (dry run)
 tools/qa/run.py monkey --seed 1 --steps 300 # the seeded monkey
 tools/qa/run.py monkey --profile commands --seeds 1-8 --binary build/microide-asan/microide/microide
@@ -39,6 +47,61 @@ Every run gets its own Xvfb (`-displayfd`, so two drivers can run at once), its 
 XDG config/state/data/runtime directories, and a fresh copy of the fixture
 (`tools/capture-media/make-fixture.sh`'s `taskflow`), so a seed means the same
 actions on the same state and nothing touches your real configuration.
+
+## The scenarios
+
+| group | scenarios | what they check |
+|-------|-----------|-----------------|
+| chrome | `menus`, `menu-clicks`, `overlays`, `overlay-backdrop`, `sidebar-views`, `chrome`, `dividers`, `split-and-close`, `terminal`, `scrolling` | every chrome surface opened, hovered, clicked from every focus; no stale paint |
+| editing | `edit-type-save`, `edit-selection-clipboard`, `edit-multi-cursor`, `edit-line-ops`, `edit-auto-close`, `edit-folding`, `edit-find-replace`, `edit-goto-line`, `edit-unsaved-prompt`, `edit-external-change`, `edit-wrap-scroll` | each edit's text, carets, selections and folds (`buffer`), the file on disk, undo/redo |
+| workbench | `wb-quick-open`, `wb-command-palette`, `wb-tree`, `wb-tabs`, `wb-editor-groups`, `wb-project-search`, `wb-git`, `wb-settings`, `wb-status-bar`, `wb-terminal`, `wb-layouts`, `wb-zoom-chrome`, `wb-help` | whole tasks, checked against `ui`/`editor`/`terminals`, the disk and the git repository |
+| tools | `lsp-hover`, `lsp-navigation`, `lsp-completion`, `lsp-diagnostics`, `lsp-rename`, `lsp-format`, `outline`, `dbg-session` | clangd and gdb end to end |
+| sweeps | `keys`, `context-menus` | every keybinding through the real keyboard in every context; every row of every right-click menu -- each checked by the action receipt |
+| session | `session-restore`, `untitled-save-as`, `unicode-editing`, `drag-drop-text`, `terminal-find`, `projects`, `compare-merge` | quit and relaunch, first save, non-ASCII text, several projects, a real conflicting merge |
+
+The flows live in `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`,
+`flows_keys.py`, `flows_context_menus.py` and `flows_more.py`; `scenarios.py`
+holds the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`,
+`SCENARIO_PLUGINS`).
+
+## What a flow reads
+
+- **`buffer`** -- the active buffer's text, every caret with its anchor (primary
+  first, 1-based), the selected text, collapsed and foldable ranges, its flags.
+- **`ui`** -- named elements with rects (menus and their rows, tabs, tree / search /
+  git rows, overlay rows, text fields with their text, prompt and Settings
+  controls, the find widget's buttons), plus `overlay` (query, count, selection),
+  `prompt`, `popups` (hover text and kind, signature help), `editors` (per pane:
+  which buffer line each visible row shows, text x, char width, line height, the
+  gutter and fold-marker x -- so `App.click_text(line, column)` lands exactly) and
+  the action receipt `actions`.
+- **`editor`, `terminals`, `terminal-output`, `keybindings`, `debug-state`,
+  `breakpoints`, `notifications`** -- see `dev-docs/control/control-channel.md`.
+
+## Receipts and dry runs
+
+A press can be taken by the wrong surface with every frame still correct, so the
+sweeps check what RAN: `menu.lastRun`/`rowsRun` for menu-bar rows, and
+`actions: {dispatched, last, source, rejected}` for any action a key, menu row,
+context-menu row or command dispatched (`last` is the command name; menu rows and
+keybindings carry theirs as `command`). `MICROIDE_QA_MENU_DRY_RUN=1` makes menu-bar
+rows record and not run; `MICROIDE_QA_ACTION_DRY_RUN=1` makes every key-, menu-
+and pointer-driven action record and not run (control commands still run, so a
+sweep drives with them). `keys` and `context-menus` run with the latter.
+
+## Driver notes (things the window taught the harness)
+
+- Two presses within SDL's double-click time and radius are one double click;
+  `click`/`drag` wait the window out before an unrelated press.
+- A few pixels at the window's edges are the borderless window's resize grips,
+  which SDL takes before the app: click "outside" a modal well inside the window.
+- xdotool types '\n' as the Linefeed keysym, which SDL drops: `type` presses
+  Return and Tab for '\n' and '\t'. Latin-1 goes as its own keysym press; past it
+  Xvfb has no input method, so `type` inserts it through the control channel.
+- A hover card is a surface: a press on it is the card's. Move off a hover
+  before clicking text it may cover.
+- `App.restart()` quits the way a person does and starts again on the same
+  display, XDG tree and project (`session-restore`).
 
 ## The oracles
 
@@ -109,18 +172,26 @@ scenario name.
 
 ## Adding a scenario
 
-A scenario is a function `scenario_x(app)` in `scenarios.py`, registered in
-`SCENARIOS`. Drive by name (`app.click_named("menu:Edit")`, `app.hover_named(...)`,
-`app.key("ctrl+shift+f")`, `app.send("open", "src/main.cpp")`), call `app.check(label)`
-after each action, and state expectations with `app.expect(...)` or
-`app.wait_until(...)` against `app.ui()` — never `sleep` for a state the app reports.
+A scenario is a function `f(app)` registered in a `FLOWS`/`SCENARIOS` dict that
+`scenarios.py` merges. Drive by name (`app.click_named("menu:Edit")`,
+`app.hover_named(...)`, `app.click_text(line, col)`, `app.key("ctrl+shift+f")`,
+`app.send("open", "src/main.cpp")`; `flows_common.open_file` opens and waits),
+run the oracles after each action (`flows_common.step` or `app.check(label)`), and
+state expectations with `app.expect(...)`, `app.wait_until(...)` and
+`flows_common.expect_text(...)` against what the app reports -- never `sleep` for a
+state the app reports, and say in the expectation what VS Code does when the two
+could differ. Before writing a fix for a finding, check the expectation: about a
+third of first-run findings in the 2026-10-16 pass were the flow's own
+assumptions (a column off by one, a key a focused terminal owns).
 
 ## Files
 
 | file | what |
 |------|------|
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
-| `scenarios.py` | the local scenario suite |
+| `scenarios.py` | the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
+| `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit` |
+| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py` | the flows, by group |
 | `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |
 | `run.py` | the CLI |
