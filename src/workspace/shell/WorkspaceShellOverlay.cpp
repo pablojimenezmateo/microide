@@ -446,6 +446,9 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
   // `colorscheme dark`), is a command line whatever rows the words happen to
   // match: since the palette matches query words in any order, `goto 2` also
   // lights up "Go to Line…", and running that row would swallow the argument.
+  // ...unless the query is how the highlighted row's label starts: "compare with
+  // clipboard" picks Compare with Clipboard, not `compare` given two arguments
+  // (which failed on a path named "with"), and "open file" picks Open File….
   bool verb_with_arguments = false;
   {
     const ParsedCommandLine parsed = ParseCommandLine(palette.query.text());
@@ -457,6 +460,11 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
           break;
         }
       }
+    }
+    if (verb_with_arguments && palette.selected_index < palette.matches.size()) {
+      const std::string& label = palette.items[palette.matches[palette.selected_index]].primary_label;
+      const std::string query = util::ToLowerAscii(palette.query.text());
+      verb_with_arguments = util::ToLowerAscii(label).rfind(query, 0) != 0;
     }
   }
   if (!verb_with_arguments && !palette.matches.empty() &&

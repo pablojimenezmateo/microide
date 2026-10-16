@@ -485,6 +485,22 @@ void TestPaletteAsksForTheArgumentsACommandNeeds() {
          "Ctrl+G should still open Go to Line");
 }
 
+// compare-clipboard: the palette row "Compare with Clipboard", picked by Enter or
+// a click, ran the command line `compare with clipboard` instead -- `compare` is a
+// command, so its first word made the query "a verb with arguments" -- and failed
+// with "Compare path does not exist: .../with". A query that starts a row's label
+// is a search for that row ("open file" -> Open File…).
+void TestPaletteRowWhoseLabelStartsWithACommandRunsTheRow() {
+  FlowFixture fixture("rows.txt", "plain\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+                                       TextInputEvent("compare with clipboard"),
+                                       KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  const util::JsonValue actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(actions["last"].AsString() == "compare-clipboard",
+         "Enter on Compare with Clipboard should run compare-clipboard, ran " +
+             actions["last"].AsString() + " from " + actions["source"].AsString());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -496,6 +512,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/PaletteRowWhoseLabelStartsWithACommandRunsTheRow",
+          TestPaletteRowWhoseLabelStartsWithACommandRunsTheRow);
   AddTest(tests, "QaFlowRegression/PaletteAsksForTheArgumentsACommandNeeds",
           TestPaletteAsksForTheArgumentsACommandNeeds);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
