@@ -5,6 +5,7 @@
 #include "editor/FoldingModel.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
+#include "util/JsonValue.h"
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
 #include "workspace/PluginEditorEventTracker.h"
@@ -2415,6 +2416,78 @@ bool CompletionListUp(const WorkspaceShell& shell) {
   return WorkspaceShellTestAccess::OverlayVisible(shell) &&
          WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
              WorkspaceShell::OverlayMode::Completion;
+}
+
+// QA flow lsp-completion: a click on a row of a NARROWED completion list must
+// accept the row clicked. It accepted the selected one instead -- the first.
+void TestWorkspaceShellCompletionClickAcceptsTheClickedRow() {
+  WithMarkdownCompletionServer(
+      "x = \n", 0, 4,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback cb) {
+        std::vector<workspace::LspClient::CompletionItem> items;
+        for (const char* label : {"beta", "alpha_one", "gamma", "alpha_two"}) {
+          items.push_back(PlainCompletionItem(label));
+        }
+        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        constexpr int kWidth = 1280;
+        constexpr int kHeight = 720;
+        EnsureDummySdlVideoInitialized();
+        WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        SoftwareCanvas canvas(kWidth, kHeight);
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "completion should run");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        (void)DispatchEvents(shell, {TextInputEvent("a"), TextInputEvent("l")});
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        std::optional<SDL_FRect> row;
+        const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+        for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+          if (entry["name"].AsString().starts_with("overlay-row:") &&
+              entry["label"].AsString().find("alpha_two") != std::string::npos) {
+            const auto& r = entry["rect"].AsArray();
+            row = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                            static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+          }
+        }
+        Expect(row.has_value(), "the narrowed list should show alpha_two");
+        if (!row) {
+          return;
+        }
+        const float x = row->x + row->w / 2.0f;
+        const float y = row->y + row->h / 2.0f;
+        (void)DispatchEvents(shell, {MouseMotionEvent(x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+        Expect(std::string(editor.lines()[0]) == "x = alpha_two",
+               "clicking alpha_two should accept alpha_two, got [" + std::string(editor.lines()[0]) + "]");
+      });
+}
+
+// Down then Enter in a narrowed completion list accepts the row Down moved to
+// (accepting re-filtered and reset the selection to the top).
+void TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow() {
+  WithMarkdownCompletionServer(
+      "x = \n", 0, 4,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback cb) {
+        std::vector<workspace::LspClient::CompletionItem> items;
+        for (const char* label : {"beta", "alpha_one", "alpha_two"}) {
+          items.push_back(PlainCompletionItem(label));
+        }
+        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "completion should run");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        (void)DispatchEvents(shell, {TextInputEvent("a"), TextInputEvent("l"), KeyDownEvent(SDLK_DOWN),
+                                     KeyDownEvent(SDLK_RETURN)});
+        Expect(std::string(editor.lines()[0]) == "x = alpha_two",
+               "Down, Enter should accept the second row, got [" + std::string(editor.lines()[0]) + "]");
+      });
 }
 
 // QA flow lsp-completion: typing into an open completion list narrows it, and
@@ -6502,6 +6575,10 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow);
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
+  AddTest(tests, "WorkspaceShell/CompletionDownEnterAcceptsTheSecondRow",
+          TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow);
+  AddTest(tests, "WorkspaceShell/CompletionClickAcceptsTheClickedRow",
+          TestWorkspaceShellCompletionClickAcceptsTheClickedRow);
   AddTest(tests, "WorkspaceShell/CompletionPopupShrinkRepaintsWhatItLeft",
           TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft);
   AddTest(tests, "WorkspaceShell/CompletionReRequestsOnlyWhileIncomplete",

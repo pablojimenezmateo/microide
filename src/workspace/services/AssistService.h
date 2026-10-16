@@ -278,7 +278,11 @@ class AssistService {
   void StartAutomaticCompletion(editor::TextViewport& viewport, char trigger_character);
   // Narrow `session.items` into `session.visible` by the word between the anchor
   // and the caret. Returns false when the caret is no longer in that word.
-  bool RefilterCompletion(CompletionSessionState& session, const editor::TextViewport& viewport);
+  // `keep_selection`: the selected ITEM stays selected if it is still visible
+  // (accepting re-filters first, and must accept what is highlighted); otherwise
+  // the selection goes to the best match, as typing does.
+  bool RefilterCompletion(CompletionSessionState& session, const editor::TextViewport& viewport,
+                          bool keep_selection = false);
   std::vector<CodeActionSessionItem> TransformPluginCodeActions(
       const std::vector<plugin::PluginHost::CodeActionCandidate>& items) const;
 

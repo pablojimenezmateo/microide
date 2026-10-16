@@ -319,7 +319,7 @@ void AssistService::RequestCompletions(editor::TextViewport& viewport, bool refr
 }
 
 bool AssistService::RefilterCompletion(CompletionSessionState& session,
-                                       const editor::TextViewport& viewport) {
+                                       const editor::TextViewport& viewport, bool keep_selection) {
   const editor::TextPosition anchor = session.replacement_range.start;
   if (viewport.has_multiple_carets() || viewport.has_selection() ||
       viewport.cursor_line() != anchor.line) {
@@ -336,12 +336,22 @@ bool AssistService::RefilterCompletion(CompletionSessionState& session,
     return false;
   }
   session.replacement_range.end = editor::TextPosition{anchor.line, caret};
+  const std::optional<std::uint32_t> selected_item =
+      keep_selection && session.selected_index < session.visible.size()
+          ? std::optional<std::uint32_t>(session.visible[session.selected_index])
+          : std::nullopt;
   const std::string_view word = line.substr(anchor.column, caret - anchor.column);
   editor::RankCompletionCandidates(
       session.items.size(), word,
       [&](std::size_t i) { return session.items[i].FilterText(); }, completion_rank_scratch_,
       session.visible);
   session.selected_index = 0;
+  if (selected_item.has_value()) {
+    const auto it = std::find(session.visible.begin(), session.visible.end(), *selected_item);
+    if (it != session.visible.end()) {
+      session.selected_index = static_cast<std::size_t>(it - session.visible.begin());
+    }
+  }
   return true;
 }
 
@@ -533,7 +543,11 @@ bool AssistService::ApplySelectedCompletion() {
     return false;
   }
 
-  if (!RefilterCompletion(session, *viewport) || session.visible.empty()) {
+  // Re-filter by the word as it is now, keeping the highlighted row: a click or
+  // Enter accepts what the user picked. The re-filter used to reset the
+  // selection to the top, so every accept took the first row (QA flow
+  // lsp-completion: clicking `empty()` inserted `emplace(...)`).
+  if (!RefilterCompletion(session, *viewport, /*keep_selection=*/true) || session.visible.empty()) {
     return false;
   }
   const CompletionSessionItem& item =
