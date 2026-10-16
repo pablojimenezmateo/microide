@@ -161,6 +161,7 @@ enum class ActionId {
   Quit,
   RenamePath,
   Reopen,
+  ReopenClosedEditor,
   ShowInFileExplorer,
   RevealInFileTree,
   Save,

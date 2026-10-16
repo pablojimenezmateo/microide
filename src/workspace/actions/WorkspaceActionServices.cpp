@@ -885,6 +885,19 @@ void WorkspaceActionContext::MoveActiveTabTo(std::size_t index) {
   operations_.move_active_tab_to(index);
 }
 
+std::optional<ProjectWorkspaceState::ClosedEditor> WorkspaceActionContext::TakeRecentlyClosedEditor() {
+  auto& closed = state_.recently_closed_editors;
+  while (!closed.empty()) {
+    ProjectWorkspaceState::ClosedEditor entry = std::move(closed.back());
+    closed.pop_back();
+    std::error_code error;
+    if (std::filesystem::is_regular_file(entry.path, error) && !error) {
+      return entry;
+    }
+  }
+  return std::nullopt;
+}
+
 void WorkspaceActionContext::ReopenActiveTab() {
   operations_.reopen_active_tab();
 }

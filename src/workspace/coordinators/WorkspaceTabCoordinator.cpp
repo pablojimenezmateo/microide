@@ -885,6 +885,25 @@ TabCoordinator::SaveForCloseResult TabCoordinator::SaveForClose(std::size_t inde
   return {.saved = true};
 }
 
+void TabCoordinator::RememberClosedEditor(const TabEntry& tab) {
+  if (tab.kind != TabEntry::Kind::Editor || tab.path.empty() || !tab.path.is_absolute()) {
+    return;  // an untitled buffer has nothing to reopen
+  }
+  ProjectWorkspaceState::ClosedEditor entry{.path = tab.path.lexically_normal()};
+  if (tab.editor_state.has_value()) {
+    const EditorTabState& editor = *tab.editor_state;
+    entry.line = editor.content_pending() ? editor.restore.cursor_line : editor.viewport.cursor_line();
+    entry.column =
+        editor.content_pending() ? editor.restore.cursor_column : editor.viewport.cursor_column();
+  }
+  auto& closed = state_.recently_closed_editors;
+  std::erase_if(closed, [&](const auto& old) { return old.path == entry.path; });
+  if (closed.size() >= ProjectWorkspaceState::kMaxRecentlyClosedEditors) {
+    closed.erase(closed.begin());
+  }
+  closed.push_back(std::move(entry));
+}
+
 void TabCoordinator::Close(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;
@@ -899,6 +918,7 @@ void TabCoordinator::Close(std::size_t index) {
   // traversals in SyncActiveEditorTabMetadata.
   MaybeNotifyLspClose(closing_tab);
   CancelPendingAsyncRead(closing_tab);
+  RememberClosedEditor(closing_tab);
 
   state_.focused_group().open_tabs.erase(state_.focused_group().open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
 

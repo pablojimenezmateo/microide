@@ -363,6 +363,8 @@ class TabCoordinator {
   // its buffer. Uses a live count (correct for sequential closes, where an earlier
   // close in the same batch drops a shared buffer to its last remaining view).
   void MaybeNotifyLspClose(const TabEntry& tab);
+  // Records a closing editor tab for Reopen Closed Editor.
+  void RememberClosedEditor(const TabEntry& tab);
   // Stop an off-thread read whose tab is being erased. Its completion still
   // arrives and finds no tab holding its id, so this is about not reading a
   // half-gigabyte file nobody is waiting for any more.

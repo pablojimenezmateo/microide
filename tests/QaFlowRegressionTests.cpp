@@ -598,6 +598,43 @@ void TestHoverCardDoesNotSwallowClicksOnThePalette() {
   }
 }
 
+// The coverage audit: no Reopen Closed Editor (VS Code's Ctrl+Shift+T). Closing a
+// tab now remembers its file and caret; Ctrl+Shift+T reopens the newest closed
+// editor where its caret was, then the one before it.
+void TestCtrlShiftTReopensClosedEditorsNewestFirst() {
+  FlowFixture fixture("first.txt", "one\ntwo\nthree\n");
+  const std::filesystem::path second = fixture.root / "second.txt";
+  WriteFile(second, "alpha\nbeta\ngamma\n");
+  Expect(TestAccess::OpenFileInNewTab(fixture.shell, second), "second.txt should open");
+  TestAccess::ActiveEditor(fixture.shell).JumpCursorTo(1, 2);
+  // The active tab's file, or empty with none open.
+  const auto active_path = [&]() -> std::filesystem::path {
+    const auto paths = TestAccess::GroupTabPaths(fixture.shell, 0);
+    const std::size_t active = TestAccess::ActiveTabIndex(fixture.shell);
+    return active < paths.size() ? paths[active] : std::filesystem::path{};
+  };
+  const SDL_Keymod ctrl_shift = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});  // second.txt
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});  // first.txt
+  Expect(active_path().empty(), "both tabs should be closed");
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_T, ctrl_shift)});
+  Expect(active_path() == fixture.file,
+         "Ctrl+Shift+T should reopen the last closed editor (first.txt)");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_T, ctrl_shift)});
+  Expect(active_path() == second,
+         "a second Ctrl+Shift+T should reopen second.txt");
+  const editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
+         "the caret should be where it was when second.txt closed, got " +
+             std::to_string(viewport.cursor_line()) + ":" + std::to_string(viewport.cursor_column()));
+  const std::int64_t rejected_before = TestAccess::ControlUi(fixture.shell)["actions"]["dispatched"].AsInt();
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_T, ctrl_shift)});
+  const util::JsonValue actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(actions["dispatched"].AsInt() > rejected_before && actions["rejected"].AsBool(),
+         "with nothing left to reopen, Ctrl+Shift+T should say so");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -609,6 +646,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
+          TestCtrlShiftTReopensClosedEditorsNewestFirst);
   AddTest(tests, "QaFlowRegression/HoverCardDoesNotSwallowClicksOnThePalette",
           TestHoverCardDoesNotSwallowClicksOnThePalette);
   AddTest(tests, "QaFlowRegression/UserDefaultReachesAnOpenProjectOnSwitch",

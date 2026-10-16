@@ -208,6 +208,24 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         context_.MoveActiveTabTo(static_cast<std::size_t>(clamped_slot - 1));
         return DispatchResult::Handled;
       }
+    case ActionId::ReopenClosedEditor: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const std::optional<ProjectWorkspaceState::ClosedEditor> closed =
+          context_.TakeRecentlyClosedEditor();
+      if (!closed.has_value()) {
+        return reject("No recently closed editor");
+      }
+      // `reveal` opens or activates the file and places the caret, also when the
+      // read lands later (a large file loads off the shell thread).
+      return Execute(ActionId::Reveal,
+                     {closed->path.string(),
+                      std::to_string(closed->line + 1) + ":" + std::to_string(closed->column + 1)},
+                     source)
+                 ? DispatchResult::Handled
+                 : DispatchResult::Rejected;
+    }
     case ActionId::Reopen:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

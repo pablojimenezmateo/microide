@@ -878,6 +878,16 @@ struct ProjectWorkspaceState {
   // half owns both).
   std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
   std::size_t focused_group_index = 0;
+  // Editors closed in this project, newest last, for Reopen Closed Editor (VS
+  // Code's Ctrl+Shift+T): the file and where its caret was. Bounded; a path
+  // closed again replaces its older entry.
+  struct ClosedEditor {
+    std::filesystem::path path;
+    std::size_t line = 0;    // 0-based
+    std::size_t column = 0;  // 0-based byte column
+  };
+  static constexpr std::size_t kMaxRecentlyClosedEditors = 32;
+  std::vector<ClosedEditor> recently_closed_editors;
   EditorSplitTree editor_split;
 
   // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the

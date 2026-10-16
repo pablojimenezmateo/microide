@@ -193,6 +193,17 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .skips_terminal = true,
       },
       KeybindingSpec{
+          .id = "reopen-closed-editor",
+          .action = ActionId::ReopenClosedEditor,
+          .key = SDLK_T,
+          .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+      },
+      KeybindingSpec{
           .id = "command-palette",
           .action = ActionId::OpenCommandPalette,
           .key = SDLK_P,
