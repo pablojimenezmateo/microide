@@ -223,8 +223,14 @@ void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewpor
   EnsureLspDocumentOpen(viewport, *client, language_id);
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   BeginTrackedLspRequest();
+  // The URI first, in its own statement: as a sibling argument of the lambda
+  // that MOVES request_path into its capture, the two evaluate in unspecified
+  // order -- GCC built the lambda first, so the request went out for "file://"
+  // (an empty path), clangd answered "unresolvable URI", and the outline never
+  // listed a symbol for any language server.
+  std::string uri = FileUriForPath(request_path);
   client->RequestDocumentSymbolAsync(
-      FileUriForPath(request_path),
+      std::move(uri),
       [this, request_path = std::move(request_path), plugin_error = std::move(plugin_error),
        encoding, apply](LspResult<std::vector<LspClient::DocumentSymbol>> symbols) {
         FinishTrackedLspRequest();

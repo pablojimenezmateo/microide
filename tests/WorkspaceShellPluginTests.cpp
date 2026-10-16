@@ -2418,6 +2418,42 @@ bool CompletionListUp(const WorkspaceShell& shell) {
              WorkspaceShell::OverlayMode::Completion;
 }
 
+// QA flow outline: the outline's documentSymbol request was built for "file://"
+// -- the URI argument and the callback that MOVES the path into its capture were
+// sibling arguments, and GCC evaluated the move first -- so clangd answered
+// "unresolvable URI" and the outline never showed a symbol.
+void TestWorkspaceShellOutlineAsksForTheFilesSymbols() {
+  WithMarkdownCompletionServer(
+      "# Title\n\n## Section\n", 0, 0,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        auto* client = WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("markdown");
+        Expect(client != nullptr, "the stub client should be installed");
+        if (client == nullptr) {
+          return;
+        }
+        std::string asked_uri;
+        client->SetTestDocumentSymbolHandler(
+            [&asked_uri](std::string uri, workspace::LspClient::DocumentSymbolCallback cb) {
+              asked_uri = uri;
+              workspace::LspClient::DocumentSymbol symbol;
+              symbol.name = "Section";
+              symbol.range.start.line = 2;
+              symbol.selection_range = symbol.range;
+              cb(std::vector<workspace::LspClient::DocumentSymbol>{symbol});
+            });
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show outline"),
+               "the outline should open");
+        WaitUntil([&]() { return !asked_uri.empty(); }, std::chrono::seconds(3),
+                  std::chrono::milliseconds(5), [&]() {
+                    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+                    (void)shell.HandleScheduledWake();
+                  });
+        Expect(asked_uri == workspace::FileUriForPath(editor.path()),
+               "the outline should ask for the open file's symbols, asked for [" + asked_uri + "]");
+      });
+}
+
 // QA flow lsp-navigation: Ctrl+click places the caret and asks the language
 // server for the definition, which answers asynchronously. It returned before
 // requesting the editor's repaint, so the caret and its line highlight stayed
@@ -6713,6 +6749,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
   AddTest(tests, "WorkspaceShell/HoverCardOpensAboveTheLine", TestWorkspaceShellHoverCardOpensAboveTheLine);
+  AddTest(tests, "WorkspaceShell/OutlineAsksForTheFilesSymbols",
+          TestWorkspaceShellOutlineAsksForTheFilesSymbols);
   AddTest(tests, "WorkspaceShell/CtrlClickRepaintsTheCaretBeforeTheDefinition",
           TestWorkspaceShellCtrlClickRepaintsTheCaretBeforeTheDefinition);
   AddTest(tests, "WorkspaceShell/FindReferencesShowsTheResults",
