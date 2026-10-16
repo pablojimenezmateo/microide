@@ -1,5 +1,11 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-16 (§ TD-2026-10-16-348 through 354 for the QA-coverage pass:
+`tools/qa` grew from ten chrome scenarios to ~60 flows -- editing, workbench, LSP
+against clangd, gdb debugging, every keybinding through the real keyboard, every
+context menu, session restore -- and the 19 bugs they found are fixed on `main`;
+what they found and did not fix, and what they still cannot reach, is below).
+
 Reviewed 2026-10-16 (§ TD-2026-10-16-344 for the remote-editing verification on a
 real host: every scenario of `tools/qa/remote.py` passes; what it found is fixed
 on `main` -- a kept language server leaked on the host per client session, the
@@ -437,6 +443,81 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-16-354 — two defaults diverge from VS Code: hard tabs and trim-on-save. [OPEN — product decision]
+
+Found by the QA editing flows (`edit-line-ops`, `edit-auto-close`,
+`edit-external-change`). `editor.soft_tabs` defaults to false, so a new or
+unindented file indents with a tab (VS Code's `editor.insertSpaces` defaults to
+true), and `editor.save.trim_trailing_whitespace` defaults to true, so saving
+removes a typed trailing space (VS Code's `files.trimTrailingWhitespace` defaults
+to false). The flows read the buffer's own `softTabs` and avoid trailing spaces,
+so they pass either way; flipping the defaults changes what every existing user's
+new files look like, which is why it is not done here.
+
+### TD-2026-10-16-353 — VS Code shortcuts with no binding here. [OPEN]
+
+Found by the QA `keys` sweep reading the resolved table: Ctrl+Tab / Ctrl+Shift+Tab
+(cycle editors in MRU order), Ctrl+Shift+T (reopen the closed editor; a `reopen`
+command exists, unbound), Ctrl+L (expand the selection to the line;
+`TextViewport::ExpandSelectionToWholeLines` exists, no action reaches it from a
+key), F1 (command palette), Ctrl+1/2/3 (focus editor group N), Alt+Left/Right in
+the editor (navigate back/forward; there is no navigation history at all). Each
+is small; together they are most of what a VS Code hand reaches for first.
+
+### TD-2026-10-16-352 — the Ctrl+K chords are invisible to the keybindings query, so the keys sweep cannot press them. [OPEN]
+
+`WorkspaceKeyInputCoordinatorBindings.cpp` handles Ctrl+K Ctrl+O / Ctrl+<arrow> /
+Ctrl+Shift+<arrow> / Ctrl+0 / Ctrl+J as a leader sequence outside
+`WorkspaceKeybindingRegistry`, so `keybindings` does not list them and the
+`keys` scenario cannot check they reach their actions (the menus do advertise
+them). Model the chords as registry entries with a two-step chord (`Ctrl+K
+Ctrl+O`), list them in the query, and teach the sweep to press both steps.
+
+### TD-2026-10-16-351 — no lane runs clang-tidy's use-after-move check, which would have caught the outline's empty URI. [OPEN]
+
+The outline bug (227a2ddf) was `F(FileUriForPath(path), [path = std::move(path)]
+{...})`: sibling arguments with unspecified evaluation order, GCC moving first.
+`bugprone-use-after-move` flags exactly this; no lane runs clang-tidy. A
+heuristic scan of `src/` for the shape found no other instance, which is not a
+guarantee. Add a `tidy` lane (or a focused check in `clang-build`) for
+`bugprone-use-after-move` and `bugprone-unchecked-optional-access`.
+
+### TD-2026-10-16-350 — the search results list still runs bare-letter commands. [OPEN]
+
+The tree became type-to-navigate (TD-2026-10-15-342); the search view's results
+list still maps bare letters to commands (`r` rerun, `R` replace all -- now behind
+a confirm, 7aef6576 -- `c` count all, `i`/`x` scope fields, `=`/`/` fields,
+`j`/`k`), and the git list does the same (`s` stage, `x` discard with a confirm,
+`d`, `u`, `m`, `c`, `o`). VS Code's lists type-to-filter. Same decision as 342:
+move the commands to chords, the context menu (which has them) and the buttons,
+and make typing navigate.
+
+### TD-2026-10-16-349 — what the QA harness still cannot reach. [OPEN]
+
+- Text past Latin-1 cannot be TYPED: Xvfb has no input method, and without one X
+  delivers no text for such a keysym. `App.type` inserts it through the control
+  channel's `type` (the paste path), so composition/IME (`SDL_TEXTEDITING`) and
+  CJK keyboard input are untested in the real window.
+- The merge editor's hunk buttons (accept current / incoming / both) have no `ui`
+  locators; `compare-merge` resolves through `git-accept-current`. Add
+  `button:merge/...` elements from the merge mouse coordinator's geometry and
+  click them.
+- The debugger flow launches with `debug-run --type gdb <program>`; F5 starting
+  from a launch configuration (`.vscode/launch.json` or the picker) is not driven,
+  nor are the watch, call-stack and breakpoint-condition surfaces.
+- The redraw verifier cannot see a cursor-shape change (memory: Xvfb misses
+  cursor-dependent redraw bugs) and the sweeps run with no window manager, so
+  maximize/minimize/resize-by-drag are untested.
+
+### TD-2026-10-16-348 — the app starts with the keyboard in the terminal. [OPEN — verify intent]
+
+On a fresh project the `ui` query reports `focus: panel` after startup (the
+default terminal opens and takes the keyboard), so the first Ctrl+N, Ctrl+W or
+typed character goes to the shell rather than the editor -- the QA flows that
+press editor keys first all `focus editor`. VS Code starts with the editor (or
+the welcome page) focused and the terminal closed. Decide which surface owns the
+keyboard at launch; if the editor, focus it after the default terminal opens.
 
 ### TD-2026-10-16-347 — the tree's git letters appeared two frames before the tree was repainted (remote QA, scenario H). [OPEN — not reproduced in-process]
 
