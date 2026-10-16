@@ -438,6 +438,22 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-16-347 — the tree's git letters appeared two frames before the tree was repainted (remote QA, scenario H). [OPEN — not reproduced in-process]
+
+`tools/qa/remote.py` against `worky` (2026-10-16, all 50 checks passing): in
+scenario H a host-created `qa/qa_gd.c` reached the mirror, and two partial frames
+(`QA-STALE frame=350/351 ... bbox=263,316,6,29`) painted the tree without the
+untracked `U` letters a full render of the same frame shows on `qa/` and
+`qa_gd.c`; the next frames were clean. The likely seam is
+`SidebarCoordinator::RefreshGit`: the async branch applies the tree's statuses
+(`ApplyGitStatuses`) and, when the Git list keeps its selection, repaints only a
+SHOWING Git view -- nothing in that branch repaints a showing tree. An in-process
+test (tree view, settled Git selection on a modified file, a new untracked file,
+a second synchronous refresh) did not fail: something else repaints the tree in
+that sequence, so the remote frames are a timing case of the same seam (statuses
+applied between a frame's prep and its paint). Repaint a visible tree whenever
+`ApplyGitStatuses` changes what it holds, with a test that fails first.
+
 ### TD-2026-10-16-346 — a terminal tab's close button lit up after a press that closed a menu, with no repaint. [OPEN — not reproduced in-process]
 
 Found by the QA monkey (`tools/qa/run.py monkey --seed 12 --steps 300`, finding 1 at
