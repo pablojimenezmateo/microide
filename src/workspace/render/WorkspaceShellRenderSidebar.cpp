@@ -295,6 +295,14 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     draw_search_button(project_search_panel::HiddenButtonRect(layout.sidebar),
                        ProjectSearchHiddenButtonLabel(),
                        project_state.overlay.workflow.project_search.options.show_hidden);
+    DrawButtonCentered(text_renderer_, renderer, theme_,
+                       project_search_panel::ReplaceAllButtonRect(layout.sidebar), "All",
+                       ButtonTone::Neutral,
+                       ButtonVisualState{
+                           .enabled = !ps.query.text().empty(),
+                           .hovered = PointerOver(project_search_panel::ReplaceAllButtonRect(layout.sidebar)),
+                           .active = false,
+                       });
     draw_search_button(project_search_panel::ScopeButtonRect(layout.sidebar),
                        // "..." mirrors VS Code's show/hide-scope affordance; a
                        // constant label needs no shell accessor.

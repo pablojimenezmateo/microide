@@ -571,6 +571,7 @@
   static void ToggleProjectSearchHiddenFiles(WorkspaceShell& shell) {
     shell.ToggleProjectSearchHiddenFiles();
   }
+  static void RequestProjectSearchReplaceAll(WorkspaceShell& shell) { shell.RequestProjectSearchReplaceAll(); }
   static void ReplaceAllProjectSearchMatches(WorkspaceShell& shell) {
     shell.ReplaceAllProjectSearchMatches();
     // Replace-all now runs the read/replace/atomic-write off the shell thread

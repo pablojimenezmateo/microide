@@ -27,6 +27,7 @@ class SidebarMouseCoordinator {
     std::function<void()> cycle_project_search_case_mode;
     std::function<void()> toggle_project_search_hidden_files;
     std::function<void()> toggle_project_search_scope_expanded;
+    std::function<void()> request_project_search_replace_all;
     std::function<std::vector<int>()> build_project_search_line_map;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)>
         compute_project_search_sidebar_list_layout;

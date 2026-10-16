@@ -481,6 +481,8 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                   project_search_panel::HiddenButtonRect(layout.sidebar));
               AddControlUiElement(out, kButton, "search/scope",
                                   project_search_panel::ScopeButtonRect(layout.sidebar));
+              AddControlUiElement(out, kButton, "search/replace-all",
+                                  project_search_panel::ReplaceAllButtonRect(layout.sidebar));
               return;
             }
             if (mode != SidebarMode::Git) {

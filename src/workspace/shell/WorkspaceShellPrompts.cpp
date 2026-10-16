@@ -247,6 +247,8 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
       return "Rename Symbol";
     case PromptSurfaceState::Action::ConfirmRenameSave:
       return "Rename Across Files";
+    case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
+      return "Replace All";
   }
   return "Prompt";
 }
@@ -315,6 +317,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::RenameSymbol:
       return "Enter a new name for the symbol under the cursor.";
     case PromptSurfaceState::Action::ConfirmRenameSave:
+    case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
       return context_.prompts.surface.detail;
   }
   return {};
@@ -378,6 +381,8 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Rename", "Cancel"};
     case PromptSurfaceState::Action::ConfirmRenameSave:
       return {"Rename & Save", "Cancel"};
+    case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
+      return {"Replace All", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -440,6 +445,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       case Action::GoToLine:
       case Action::RenameSymbol:
       case Action::SaveAs:
+      case Action::ConfirmProjectReplaceAll:
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmRenameSave:
@@ -467,6 +473,14 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     // success branch previously passed `!opened` (== false), stranding keyboard
     // focus on the dismissed prompt and leaving input dead until the next click.
     MakePromptSurfaceService().DismissPromptSurface(true);
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::ConfirmProjectReplaceAll) {
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    if (resolution != DirtyPathResolution::Discard) {
+      ReplaceAllProjectSearchMatches();
+    }
     return;
   }
   if (context_.prompts.surface_visible &&

@@ -199,6 +199,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         if (Contains(scope_rect, x, y)) {
           return scope_rect;
         }
+        const SDL_FRect replace_all_rect = project_search_panel::ReplaceAllButtonRect(layout.sidebar);
+        if (Contains(replace_all_rect, x, y)) {
+          return replace_all_rect;
+        }
         return std::nullopt;
       }
       case SidebarMode::Git: {

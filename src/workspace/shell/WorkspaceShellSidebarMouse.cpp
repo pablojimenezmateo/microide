@@ -28,6 +28,7 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
           .toggle_project_search_hidden_files = [this]() { ToggleProjectSearchHiddenFiles(); },
           .toggle_project_search_scope_expanded =
               [this]() { ToggleProjectSearchScopeExpanded(); },
+          .request_project_search_replace_all = [this]() { RequestProjectSearchReplaceAll(); },
           .build_project_search_line_map = [this]() { return BuildProjectSearchLineMap(); },
           .compute_project_search_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {

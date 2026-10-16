@@ -93,6 +93,10 @@ struct PromptSurfaceState {
     // Remote: Open Terminal on Host…: type `[user@]host[:port]`.
     RemoteHost,
     RemoteFolder,
+    // Replace every project-search match: confirm with the counts first (VS
+    // Code's "Replace N occurrences across M files"), since it rewrites files the
+    // user has not opened and an empty replacement deletes every match.
+    ConfirmProjectReplaceAll,
   };
 
   Kind kind = Kind::None;

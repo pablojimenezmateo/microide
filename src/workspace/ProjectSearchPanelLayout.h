@@ -41,6 +41,11 @@ SDL_FRect ReplaceRect(const SDL_FRect& sidebar_rect);
 SDL_FRect IncludeRect(const SDL_FRect& sidebar_rect, bool scope_expanded);
 SDL_FRect ExcludeRect(const SDL_FRect& sidebar_rect, bool scope_expanded);
 
+// Replace All, at the right end of the replace field's row (VS Code's
+// replace-all button sits beside its replace input). ReplaceRect leaves room.
+inline constexpr float kReplaceAllButtonWidth = 34.0f;
+SDL_FRect ReplaceAllButtonRect(const SDL_FRect& sidebar_rect);
+
 SDL_FRect ModeButtonRect(const SDL_FRect& sidebar_rect);
 SDL_FRect CaseButtonRect(const SDL_FRect& sidebar_rect);
 SDL_FRect HiddenButtonRect(const SDL_FRect& sidebar_rect);

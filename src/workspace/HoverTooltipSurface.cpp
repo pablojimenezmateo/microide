@@ -203,6 +203,9 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
         found = hit(ProjectSearchScopeExpanded() ? "Hide files to include/exclude"
                                                  : "Show files to include/exclude",
                     scope);
+      } else if (const SDL_FRect all = project_search_panel::ReplaceAllButtonRect(layout.sidebar);
+                 Contains(all, x, y)) {
+        found = hit("Replace All (Ctrl+Alt+Enter in the replace field)", all);
       }
     }
   }

@@ -137,6 +137,7 @@ class KeyInputCoordinator {
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
     std::function<void()> commit_project_search_edit;
     std::function<void()> cancel_project_search_edit;
+    // Asks to replace every project-search match (a confirm prompt runs it).
     std::function<void()> replace_all_project_search_matches;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;

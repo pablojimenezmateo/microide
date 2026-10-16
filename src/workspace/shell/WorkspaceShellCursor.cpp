@@ -500,6 +500,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         }
       }
       if (Contains(project_search_panel::ModeButtonRect(layout.sidebar), x, y) ||
+          Contains(project_search_panel::ReplaceAllButtonRect(layout.sidebar), x, y) ||
           Contains(project_search_panel::CaseButtonRect(layout.sidebar), x, y) ||
           Contains(project_search_panel::HiddenButtonRect(layout.sidebar), x, y) ||
           Contains(project_search_panel::ScopeButtonRect(layout.sidebar), x, y)) {

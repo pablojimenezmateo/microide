@@ -712,7 +712,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
           .commit_project_search_edit = [this]() { CommitProjectSearchEdit(); },
           .cancel_project_search_edit = [this]() { CancelProjectSearchEdit(); },
-          .replace_all_project_search_matches = [this]() { ReplaceAllProjectSearchMatches(); },
+          .replace_all_project_search_matches = [this]() { RequestProjectSearchReplaceAll(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },

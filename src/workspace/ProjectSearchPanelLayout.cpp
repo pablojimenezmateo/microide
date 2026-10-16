@@ -30,7 +30,14 @@ float ButtonRowWidth(const SDL_FRect& sidebar_rect) {
 SDL_FRect QueryRect(const SDL_FRect& sidebar_rect) { return FieldRect(sidebar_rect, kQueryTop); }
 
 SDL_FRect ReplaceRect(const SDL_FRect& sidebar_rect) {
-  return FieldRect(sidebar_rect, kReplaceTop);
+  SDL_FRect field = FieldRect(sidebar_rect, kReplaceTop);
+  field.w = std::max(0.0f, field.w - kReplaceAllButtonWidth - kButtonGap);
+  return field;
+}
+
+SDL_FRect ReplaceAllButtonRect(const SDL_FRect& sidebar_rect) {
+  const SDL_FRect field = ReplaceRect(sidebar_rect);
+  return MakeRect(field.x + field.w + kButtonGap, field.y, kReplaceAllButtonWidth, kFieldHeight);
 }
 
 SDL_FRect IncludeRect(const SDL_FRect& sidebar_rect, bool scope_expanded) {

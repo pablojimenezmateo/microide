@@ -1410,6 +1410,8 @@
   void ToggleProjectSearchPatternMode();
   void CycleProjectSearchCaseMode();
   void ToggleProjectSearchHiddenFiles();
+  // Asks first (ConfirmProjectReplaceAll); ReplaceAllProjectSearchMatches runs it.
+  void RequestProjectSearchReplaceAll();
   void ReplaceAllProjectSearchMatches();
   // Main-thread reconciliation of a completed off-thread replace-all (reload clean
   // tabs, refresh index/tree/finder, report status). Generation/root-guarded.

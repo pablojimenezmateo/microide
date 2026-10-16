@@ -73,6 +73,12 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           return true;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
+          // Ctrl+Alt+Enter in the replace field replaces all (VS Code's chord).
+          if (search_state.edit_field == ProjectSearchEditField::Replace &&
+              (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & SDL_KMOD_ALT) != 0) {
+            operations_.replace_all_project_search_matches();
+            return true;
+          }
           operations_.commit_project_search_edit();
           return true;
         case SDLK_TAB: {

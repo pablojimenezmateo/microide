@@ -94,6 +94,8 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
        operations_.toggle_project_search_hidden_files},
       {project_search_panel::ScopeButtonRect(layout.sidebar),
        operations_.toggle_project_search_scope_expanded},
+      {project_search_panel::ReplaceAllButtonRect(layout.sidebar),
+       operations_.request_project_search_replace_all},
   };
   for (const auto& button : buttons) {
     if (Contains(button.rect, point.x, point.y)) {

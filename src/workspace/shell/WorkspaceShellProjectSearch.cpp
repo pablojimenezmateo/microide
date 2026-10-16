@@ -491,6 +491,43 @@ void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
   RequestSidebarRedraw();
 }
 
+void WorkspaceShell::RequestProjectSearchReplaceAll() {
+  ProjectSearchState& ps = context_.current_project_state.overlay.workflow.project_search;
+  if (ps.editing) {
+    CommitProjectSearchEdit();
+  }
+  if (ps.query.text().empty() || !ProjectSearchCanReplaceAll() ||
+      context_.current_project_state.root.empty()) {
+    return;
+  }
+  const std::string& replacement = ps.replace_text.text();
+  const std::string with =
+      replacement.empty() ? std::string(" with nothing (deleting them)")
+                          : " with \"" + replacement + "\"";
+  std::string detail;
+  const bool complete = !ps.running && !ps.truncated && ps.searched_query == ps.query.text() &&
+                        ps.results.size() < kMaxProjectSearchResults;
+  if (complete) {
+    std::size_t files = 0;
+    for (std::size_t i = 0; i < ps.results.size(); ++i) {
+      if (i == 0 || ps.results[i].relative_path != ps.results[i - 1].relative_path) {
+        ++files;
+      }
+    }
+    if (ps.results.empty()) {
+      return;  // nothing matches: nothing to confirm
+    }
+    detail = "Replace " + std::to_string(ps.results.size()) +
+             (ps.results.size() == 1 ? " occurrence" : " occurrences") + " across " +
+             std::to_string(files) + (files == 1 ? " file" : " files") + with + "?";
+  } else {
+    detail = "Replace every match of \"" + ps.query.text() + "\" in the project" + with + "?";
+  }
+  OpenPromptSurface(PromptSurfaceState::Action::ConfirmProjectReplaceAll,
+                    PromptSurfaceState::Kind::Confirm, context_.current_project_state.root);
+  context_.prompts.surface.detail = std::move(detail);
+}
+
 void WorkspaceShell::ReplaceAllProjectSearchMatches() {
   ProjectSearchState& ps = context_.current_project_state.overlay.workflow.project_search;
   if (ps.query.text().empty() || !ProjectSearchCanReplaceAll()) {

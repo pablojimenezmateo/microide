@@ -1079,6 +1079,48 @@ void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
          "replace-all must not rewrite a file the scope excluded");
 }
 
+// Replace All rewrites files the user has not opened, and an empty replacement
+// deletes every match, so it confirms first with the counts (VS Code's "Replace
+// N occurrences across M files"). Shift+R in the results list used to run it on
+// the spot. The button beside the replace field and Ctrl+Alt+Enter in it ask too.
+void TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha alpha\n");
+  WriteFile(root / "b.txt", "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "");
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_R, SDL_KMOD_SHIFT));
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "Shift+R should ask before replacing every match");
+  const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+  Expect(ui["prompt"]["message"].AsString() ==
+             "Replace 3 occurrences across 2 files with nothing (deleting them)?",
+         "the confirm should give the counts and the replacement: " + ui["prompt"]["message"].AsString());
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_ESCAPE));
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "Escape should cancel the confirm");
+  Expect(ReadFile(root / "a.txt") == "alpha alpha\n" && ReadFile(root / "b.txt") == "alpha\n",
+         "cancelling must leave every file alone");
+
+  WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "beta");
+  WorkspaceShellTestAccess::RequestProjectSearchReplaceAll(shell);
+  Expect(WorkspaceShellTestAccess::ControlUi(shell)["prompt"]["message"].AsString() ==
+             "Replace 3 occurrences across 2 files with \"beta\"?",
+         "the confirm should name the replacement");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+  const bool replaced = WaitUntil(
+      [&root]() { return ReadFile(root / "a.txt") == "beta beta\n" && ReadFile(root / "b.txt") == "beta\n"; },
+      std::chrono::seconds(2), std::chrono::milliseconds(5));
+  Expect(replaced, "confirming should replace every match");
+}
+
 // TD-2026-07-30-001: the search panel's three option toggles were reachable only
 // from the mouse. Alt+R / Alt+C / Alt+H are VSCode's search-box chords; they must
 // work from the results list AND from inside the query field, and a toggle
@@ -1525,6 +1567,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields);
   AddTest(tests, "WorkspaceShell/ProjectSearchScopeGlobsRerunAndRestrictResults",
           TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults);
+  AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllConfirmsFirst",
+          TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst);
   AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllHonorsScopeGlobs",
           TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs);
   AddTest(tests, "WorkspaceShell/BufferSearchIsNonModal", TestWorkspaceShellBufferSearchIsNonModal);
