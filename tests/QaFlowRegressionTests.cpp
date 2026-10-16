@@ -18,6 +18,7 @@
 #include "WorkspaceShellEventHelpers.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
+#include "editor/FoldingModel.h"
 #include "util/JsonValue.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -141,12 +142,41 @@ void TestBannerReloadRepaintsTheCleanTab() {
          "Reload should take the disk's text");
 }
 
+// edit-folding: typing at the end of a collapsed fold's opener line left that row
+// stale (the typed text and the inline blame the edit hides).
+void TestTypingOnAFoldedOpenerRepaintsItsRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("fold.cpp",
+                      "#include <x>\n\nint a = 1;\n\nnamespace n {\n\nvoid f() {\n  g();\n}\n\n}\n");
+  editor::FoldingModel* folds = TestAccess::EnsureActiveFoldingModelFresh(fixture.shell);
+  Expect(folds != nullptr && folds->FoldStartingAt(6).has_value(), "f's body should be foldable");
+  if (folds == nullptr) {
+    return;
+  }
+  (void)folds->Collapse(6);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "collapsing the fold");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(6, 10);
+  fixture.ExpectFresh(full, "placing the caret");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(" ")}),
+                      "typing at the end of the folded opener");
+  Expect(TestAccess::ControlQuery(fixture.shell, "buffer")["text"].AsString().find("void f() { \n") !=
+             std::string::npos,
+         "the space should land on the opener line");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
+  AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
+          TestTypingOnAFoldedOpenerRepaintsItsRow);
 }
 
 }  // namespace microide::tests

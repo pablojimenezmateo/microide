@@ -733,10 +733,17 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
   const std::size_t visible_start_row = viewport->scroll_line();
   const std::size_t visible_end_row = visible_start_row + metrics.visible_rows;
   const std::size_t start_row = viewport->VisualRowForLine(start_line);
+  // The exclusive end is the row after the range's last line. Reading it as
+  // VisualRowForLine(end_line) alone was wrong whenever `end_line` sits inside a
+  // collapsed fold: a hidden line maps to its opener's row, so an edit on a
+  // folded opener (range [opener, opener + 1)) became the empty range
+  // [opener row, opener row) and the edited row was never repainted.
   const std::size_t end_row =
       end_line == 0 ? start_row + 1
-                    : end_line >= viewport->line_count() ? viewport->visual_line_count()
-                                                         : viewport->VisualRowForLine(end_line);
+      : end_line >= viewport->line_count()
+          ? viewport->visual_line_count()
+          : std::max(viewport->VisualRowForLine(end_line),
+                     viewport->VisualRowForLine(end_line - 1) + 1);
   if (end_row <= visible_start_row || start_row >= visible_end_row) {
     return std::nullopt;
   }
