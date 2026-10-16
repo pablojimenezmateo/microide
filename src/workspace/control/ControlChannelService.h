@@ -15,6 +15,8 @@
 
 namespace microide::workspace {
 
+class WorkspaceOutputChannels;
+
 struct WorkspaceContext;
 
 // A registered debug adapter surfaced by the `adapters` query: its type id plus
@@ -109,6 +111,10 @@ class ControlChannelService {
     // The buffer the caret is in, for the `buffer` query. Null in tests that do
     // not exercise it (the query then answers `{available:false}`).
     std::function<ControlActiveBuffer()> active_buffer;
+    // The output channels (references, call hierarchy, workspace symbols, the
+    // debug console, logs), for the `output` query. Null in tests that do not
+    // exercise it (the query then answers no channels).
+    const WorkspaceOutputChannels* output_channels = nullptr;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,
@@ -179,6 +185,7 @@ class ControlChannelService {
   util::JsonValue BuildExceptionFilters() const;
   util::JsonValue BuildTabs() const;
   util::JsonValue BuildNotifications() const;
+  util::JsonValue BuildOutput(const util::JsonValue& args) const;
   util::JsonValue BuildKeybindings() const;
   // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
   // range of the focused active tab) and the split tree in its pre-order form.

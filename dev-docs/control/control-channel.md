@@ -100,8 +100,9 @@ Three gotchas, each of which cost real time:
   matches the invoking shell's own command line. Use
   `ps -eo pid,args | awk '$2 ~ /\/microide\/microide$/ {print $1}'`.
 
-The channel exposes no buffer-content query, so verify edits by driving `save` and
-reading the file from disk. Watch for cross-command state: `add-cursor-all-matches`
+Read an edit back with the `buffer` query (the text, carets, selection and folds of
+the buffer the caret is in) or by driving `save` and reading the file from disk.
+Watch for cross-command state: `add-cursor-all-matches`
 leaves multiple carets that pollute later single-caret edits, and a buffer right
 after `open` may not have settled — settle before asserting.
 
@@ -162,7 +163,7 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `ui`, `buffer`.
+`keybindings`, `ui`, `buffer`, `output`.
 
 **Keybindings.** `keybindings` lists the resolved bindings in dispatch order:
 `{id, chord, context, skipsTerminal, plugin, command}` (`command`: the command the
@@ -234,6 +235,13 @@ columns). `folded` lists the collapsed folds and `foldable` the fold ranges reso
 in the current window, each `[openerLine, closerLine]`. With no buffer it answers
 `{available:false}`. `tools/qa` checks every edit against this rather than against
 the saved file.
+
+**What an output channel holds (`output`).** `{channels, shown, channel, text}`:
+every output channel as `{id, label, lines}`, the one the panel's Output tab shows,
+and the lines (the newest 10000) of `channel` -- the args' `{"channel": id}`, else the
+shown one. References, call hierarchy (`lsp.callHierarchy`), workspace symbols
+(`lsp.workspaceSymbols`), the debug console and the logs all print here, so a
+driver reads their results from it.
 
 **What ran (`ui.actions`).** `{dispatched, last, source, rejected}`: the count of
 actions dispatched through the action coordinator since startup, the last one's

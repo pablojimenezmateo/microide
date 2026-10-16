@@ -1,5 +1,7 @@
 #include "workspace/control/ControlChannelService.h"
 
+#include "workspace/WorkspaceOutputChannels.h"
+
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -462,6 +464,9 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "notifications") {
     return BuildNotifications();
   }
+  if (verb == "output") {
+    return BuildOutput(args);
+  }
   if (verb == "keybindings") {
     return BuildKeybindings();
   }
@@ -477,6 +482,42 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   *ok = false;
   *error = "unknown query \"" + verb + "\"";
   return util::JsonValue(nullptr);
+}
+
+// `output [{"channel": id}]`: every output channel with its line count, and the
+// lines of `channel` -- by default the one the panel's Output tab shows.
+util::JsonValue ControlChannelService::BuildOutput(const util::JsonValue& args) const {
+  util::JsonObject object;
+  const WorkspaceOutputChannels* channels = operations_.output_channels;
+  const std::string shown =
+      context_ != nullptr ? context_->current_project_state.panel.output.channel_id : std::string{};
+  const std::string wanted =
+      args.IsObject() && args.HasKey("channel") ? args["channel"].AsString() : shown;
+  util::JsonArray list;
+  if (channels != nullptr) {
+    for (const WorkspaceOutputChannels::ChannelInfo& info : channels->Channels()) {
+      util::JsonObject entry;
+      entry["id"] = util::JsonValue(info.id);
+      entry["label"] = util::JsonValue(info.label);
+      const std::vector<std::string>* lines = channels->Entries(info.id);
+      entry["lines"] = util::JsonValue(static_cast<std::int64_t>(lines != nullptr ? lines->size() : 0));
+      list.push_back(util::JsonValue(std::move(entry)));
+    }
+  }
+  object["channels"] = util::JsonValue(std::move(list));
+  object["shown"] = util::JsonValue(shown);
+  object["channel"] = util::JsonValue(wanted);
+  util::JsonArray text;
+  if (const std::vector<std::string>* lines = channels != nullptr ? channels->Entries(wanted) : nullptr;
+      lines != nullptr) {
+    // The newest lines when a log is long; a QA flow reads what just arrived.
+    const std::size_t first = lines->size() > kMaxControlQueryEntries ? lines->size() - kMaxControlQueryEntries : 0;
+    for (std::size_t i = first; i < lines->size(); ++i) {
+      text.push_back(util::JsonValue((*lines)[i]));
+    }
+  }
+  object["text"] = util::JsonValue(std::move(text));
+  return util::JsonValue(std::move(object));
 }
 
 util::JsonValue ControlChannelService::BuildDebugState() const {

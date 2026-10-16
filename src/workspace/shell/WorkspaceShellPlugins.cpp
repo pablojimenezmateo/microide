@@ -378,6 +378,7 @@ WorkspaceShell::WorkspaceShell() {
                                                         : "editor",
             };
           },
+          .output_channels = &output_channels_,
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,
