@@ -312,9 +312,6 @@ void PatchApplyService::ReportResult(const project::PatchApplyResult& result) {
     case PatchApplyResultCategory::UnsupportedTarget:
       callbacks_.set_command_feedback(result.detail);
       break;
-    case PatchApplyResultCategory::Cancelled:
-      callbacks_.set_command_feedback("Patch operation cancelled");
-      break;
     case PatchApplyResultCategory::UnknownError:
       callbacks_.set_command_feedback(result.detail.empty() ? "Patch operation failed"
                                                             : result.detail);

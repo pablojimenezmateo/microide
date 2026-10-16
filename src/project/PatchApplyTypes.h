@@ -25,7 +25,9 @@ enum class PatchOperationKind {
 
 enum class PatchApplyResultCategory {
   Success,
-  Cancelled,
+  // No `Cancelled`: an apply runs to completion on the background executor and
+  // nothing can cancel it, so a "cancelled" outcome had no producer
+  // (TD-2026-07-26-004). Add it with the cancel affordance, not before.
   StaleDiff,
   StaleGeneration,
   PatchDidNotApply,

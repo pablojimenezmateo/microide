@@ -13358,7 +13358,7 @@ Other findings from the same sweep, closed in the commit log from `14da0f96`:
 Still open from this sweep:
 
 - **TD-2026-07-26-004 — five result/classification enum values are handled but
-  never produced. OPEN (detection gaps, deliberately NOT deleted).** Found by the
+  never produced. [RESOLVED 2026-10-16 — three detected, two deleted.]** Found by the
   same "appears only in `case` labels" sweep as -003. Unlike the retired chat
   cluster, these are *output taxonomies* with live display branches, so deleting
   them would silently downgrade what the user is told rather than remove waste:
@@ -13417,7 +13417,10 @@ Still open from this sweep:
   - `PatchApplyResultCategory::Cancelled` is still never produced. There is no
     cancellation path into a patch apply today (the operation runs to completion
     on the background executor), so this is the message waiting for a cancel
-    affordance rather than a missing classification.
+    affordance rather than a missing classification. **[RESOLVED 2026-10-16 —
+    deleted, with `Mode`.]** An outcome nothing can produce is vocabulary, not a
+    detection gap; the cancel affordance, if it ever lands, brings its outcome
+    with it. With this the whole entry is closed.
 
   Deleted in the same pass because they were genuinely unused vocabulary rather
   than undetected outcomes: `PatchOperationKind::StageFile` / `UnstageFile`
