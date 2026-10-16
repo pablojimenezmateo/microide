@@ -59,10 +59,11 @@ actions on the same state and nothing touches your real configuration.
 | sweeps | `keys`, `context-menus` | every keybinding through the real keyboard in every context; every row of every right-click menu -- each checked by the action receipt |
 | session | `session-restore`, `untitled-save-as`, `unicode-editing`, `drag-drop-text`, `terminal-find`, `projects`, `compare-merge` | quit and relaunch, first save, non-ASCII text, several projects, a real conflicting merge |
 | advanced | `lsp-signature-help`, `lsp-code-actions`, `snippets`, `sticky-scroll`, `themes`, `tab-overflow`, `dbg-conditions` | parameter hints, quick fixes, snippet placeholders, pinned scopes, every colour scheme, a crowded tab strip, conditional breakpoints |
+| coverage | `edit-transforms`, `save-transforms`, `settings-scopes`, `dbg-stepping`, `git-branches`, `lsp-more`, `compare-clipboard` | sort/join/block comment/bracket jump/JSON format/column select, trim and final newline on save, user vs project settings across projects and a restart, a debugger driven from its toolbar and pane (call stack, variables, watch, restart), branches and the stash, type definition/workspace symbols/next problem/call hierarchy, compare with clipboard |
 
 The flows live in `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`,
-`flows_keys.py`, `flows_context_menus.py`, `flows_more.py` and
-`flows_advanced.py`; `scenarios.py` holds the chrome scenarios and the registry
+`flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`
+and `flows_coverage.py`; `scenarios.py` holds the chrome scenarios and the registry
 (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`). A scenario's plugins are bundled
 ones (`plugins/<name>`) or QA-only ones under `plugins/` here, for test content no
 bundled plugin ships (`qa-snippets`).
@@ -77,9 +78,17 @@ bundled plugin ships (`qa-snippets`).
   `prompt`, `popups` (hover text and kind, signature help), `editors` (per pane:
   which buffer line each visible row shows, text x, char width, line height, the
   gutter and fold-marker x -- so `App.click_text(line, column)` lands exactly) and
-  the action receipt `actions`.
+  the action receipt `actions`. The debug toolbar's buttons
+  (`button:debug-toolbar/step-into`), the debug pane's mode tabs (`debug-tab:watch`)
+  and its visible rows (`debug-row:callstack/1`, labelled as painted) are named too.
+- **`output`** (`App.output(channel)`) -- an output channel's lines: references,
+  call hierarchy, workspace symbols, the debug console, the logs.
 - **`editor`, `terminals`, `terminal-output`, `keybindings`, `debug-state`,
   `breakpoints`, `notifications`** -- see `dev-docs/control/control-channel.md`.
+
+`App.expect(condition, message)` returns the condition, so a flow gates its next
+steps on it; a helper that returned `None` once made a whole flow return early
+and pass without checking anything.
 
 ## Receipts and dry runs
 
@@ -194,7 +203,7 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
 | `scenarios.py` | the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
 | `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit` |
-| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py` | the flows, by group |
+| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`, `flows_coverage.py` | the flows, by group |
 | `plugins/` | QA-only plugins a scenario seeds (`qa-snippets`) |
 | `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |

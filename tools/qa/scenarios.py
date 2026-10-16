@@ -355,6 +355,7 @@ import flows_keys  # noqa: E402
 import flows_context_menus  # noqa: E402
 import flows_more  # noqa: E402
 import flows_advanced  # noqa: E402
+import flows_coverage  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -374,12 +375,13 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     **flows_context_menus.SCENARIOS,
     **flows_more.FLOWS,
     **flows_advanced.FLOWS,
+    **flows_coverage.FLOWS,
 }
 
 # Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
 # (tools/qa/plugins/<name>).
 SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {**flows_lsp_debug.PLUGINS, **flows_more.PLUGINS,
-                                                **flows_advanced.PLUGINS}
+                                                **flows_advanced.PLUGINS, **flows_coverage.PLUGINS}
 
 # Environment a scenario's instance starts with, beyond App.launch's.
 SCENARIO_ENV: dict[str, dict[str, str]] = {

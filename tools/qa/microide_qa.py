@@ -357,12 +357,20 @@ class App:
         except (OSError, socket.timeout) as error:
             raise QaFailure(f"command {line!r} got no reply: {error}") from error
 
-    def query(self, verb: str) -> dict[str, Any]:
-        result = self._control(["control-send", "--query", verb])
+    def query(self, verb: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        command = ["control-send", "--query", verb]
+        if args is not None:
+            command += ["--args", json.dumps(args)]
+        result = self._control(command)
         reply = _last_json(result.stdout)
         if not reply or not reply.get("ok"):
             raise QaFailure(f"query {verb!r} failed: {result.stdout or result.stderr}")
         return reply.get("result", {})
+
+    def output(self, channel: str | None = None) -> list[str]:
+        """The lines of an output channel (references, call hierarchy, workspace
+        symbols, the debug console, logs) -- by default the one the Output tab shows."""
+        return self.query("output", {"channel": channel} if channel else None).get("text", [])
 
     def ui(self) -> dict[str, Any]:
         """Named on-screen elements and focus/overlay/menu state (the `ui` query)."""
@@ -720,10 +728,13 @@ class App:
         self.grab().save(path)
         return str(path)
 
-    def expect(self, condition: bool, message: str) -> None:
+    def expect(self, condition: bool, message: str) -> bool:
+        """Records a finding when `condition` is false; returns the condition, so a
+        flow can gate its next steps on it (`if not app.expect(...): return`)."""
         if not condition:
             shot = self.screenshot("expect-" + message[:40])
             self.findings.append(Finding("expect", message, shot))
+        return bool(condition)
 
     # ---- replay ----------------------------------------------------------
 
