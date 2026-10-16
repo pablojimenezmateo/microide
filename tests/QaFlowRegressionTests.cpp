@@ -281,6 +281,38 @@ void TestTallMenusStayInsideTheWindow() {
   }
 }
 
+// wb-help: a modal owns the pointer. A click outside Help/About (or Settings)
+// closes it, wherever it lands -- and a click on a status-bar segment under a
+// modal must not run that segment's command beneath it.
+void TestModalsOwnThePointer() {
+  FlowFixture fixture("modal.txt", "modal\n");
+  const auto modal = [&]() { return TestAccess::ControlUi(fixture.shell)["modal"]; };
+  // Help/About, then a click in the status bar's empty left corner.
+  TestAccess::OpenHelpAboutOverlay(fixture.shell);
+  Expect(modal().AsString() == "help", "Help/About should be the modal");
+  (void)fixture.Click(SDL_FRect{2.0f, static_cast<float>(FlowFixture::kHeight) - 10.0f, 4.0f, 4.0f});
+  Expect(modal().IsNull(), "a click outside Help/About should close it, got " + modal().AsString());
+  // Settings, then a click on the line/column segment: closes Settings, opens no
+  // Go to Line prompt behind it.
+  TestAccess::OpenSettingsOverlay(fixture.shell);
+  const auto segment = fixture.ElementRect("status:line-column");
+  Expect(segment.has_value(), "the status bar should show the caret position");
+  if (segment) {
+    (void)fixture.Click(*segment);
+    Expect(modal().IsNull(), "a click outside Settings should close it, got " + modal().AsString());
+  }
+  // The unsaved-changes prompt is modal too: a status segment click does nothing.
+  TestAccess::ActiveEditor(fixture.shell).InsertText("x");
+  TestAccess::RequestCloseTab(fixture.shell, 0);
+  Expect(modal().AsString() == "unsaved-prompt", "closing the dirty tab should ask");
+  if (segment) {
+    (void)fixture.Click(*segment);
+    Expect(modal().AsString() == "unsaved-prompt",
+           "a status-bar click under the unsaved prompt must not run its command, got " +
+               modal().AsString());
+  }
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -288,6 +320,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
