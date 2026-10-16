@@ -3015,6 +3015,41 @@ void TestWorkspaceShellASaveRepaintsTheDirtyMarker() {
   step("saving", shell.ConsumePendingRenderInvalidation());
 }
 
+// `sidebar-show` with no view brings a hidden sidebar back, which moves the whole
+// editor column. It set the visibility flag directly -- no layout change, no
+// repaint -- so only the focus ring's sidebar rect was painted and the editor kept
+// its old place under it (QA monkey seed 17).
+void TestWorkspaceShellSidebarShowRepaintsTheMovedEditor() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "notes.md", "# notes\nsome text\n");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "notes.md");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-hide"), "hide the sidebar");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-show"), "show it again");
+  Expect(WorkspaceShellTestAccess::CurrentLayout(shell).sidebar.w > 0.0f,
+         "the sidebar is laid out again");
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                shell.ConsumePendingRenderInvalidation(), pin_caret);
+  Expect(diff.identical(),
+         "showing the sidebar should paint what a full repaint paints; " + DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5810,6 +5845,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsFilterTextStaysInItsBar);
   AddTest(tests, "WorkspaceShell/ReplacingTheFindWidgetRepaintsItsMatches",
           TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches);
+  AddTest(tests, "WorkspaceShell/SidebarShowRepaintsTheMovedEditor",
+          TestWorkspaceShellSidebarShowRepaintsTheMovedEditor);
   AddTest(tests, "WorkspaceShell/ASaveRepaintsTheDirtyMarker",
           TestWorkspaceShellASaveRepaintsTheDirtyMarker);
   AddTest(tests, "WorkspaceShell/AnEditorRepaintKeepsTheDebugPaneDivider",

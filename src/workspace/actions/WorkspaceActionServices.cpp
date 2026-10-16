@@ -111,7 +111,13 @@ SidebarMode WorkspaceActionContext::ActiveSidebarMode() const {
 }
 
 void WorkspaceActionContext::ShowSidebarSurface() {
-  state_.sidebar.visible = true;
+  // Bringing the sidebar back moves the whole editor column: that is the
+  // coordinator's toggle (layout change, window repaint), not a flag flip, which
+  // left the editor painted where it used to be.
+  if (!state_.sidebar.visible) {
+    operations_.toggle_sidebar();
+    return;
+  }
   state_.surface.focus = FocusTarget::Sidebar;
 }
 
