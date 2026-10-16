@@ -264,6 +264,10 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   // The active project's settings vector may have just been moved-into; re-point
   // the store at the live vector and rebuild its resolved index.
   settings_store_.BindActiveProject(&context_.current_project_state.settings);
+  // ...and re-derive the editor preferences from it: the ones the project cached
+  // when it was last active miss any user default changed since (the activation
+  // that follows applies them to every tab).
+  MakePersistenceCoordinator().MaterializeCanonicalPreferences();
 }
 
 void WorkspaceShell::ClearDragState() {

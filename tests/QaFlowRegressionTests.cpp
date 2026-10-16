@@ -529,6 +529,33 @@ void TestUserDefaultReachesAProjectOpenedForTheFirstTime() {
          "and its editor should use it, got " + std::to_string(TestAccess::EditorTabSize(shell)));
 }
 
+// settings-scopes, the other half: with both projects open, a default promoted in
+// one did not reach the other on switching to it -- activation rebound the
+// settings store but kept the editor preferences it had cached when it was last
+// active, so a project's buffers indented by whatever was the default back then.
+void TestUserDefaultReachesAnOpenProjectOnSwitch() {
+  TemporaryDirectory temp_dir;
+  ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
+  const std::filesystem::path first = temp_dir.path() / "first";
+  const std::filesystem::path second = temp_dir.path() / "second";
+  WriteFile(first / "a.txt", "a\n");
+  WriteFile(second / "b.txt", "b\n");
+
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, first, true, false), "the first project should open");
+  Expect(TestAccess::OpenProjectTab(shell, second, true, false), "the second project should open");
+  const std::size_t base = TestAccess::EditorTabSize(shell);
+  Expect(TestAccess::SwitchProject(shell, 0), "switch back to the first project");
+  Expect(TestAccess::SetSettingValue(shell, "editor.tab_size", std::to_string(base + 1)),
+         "the tab size should take a project override");
+  TestAccess::ToggleSettingScope(shell, "editor.tab_size");
+
+  Expect(TestAccess::SwitchProject(shell, 1), "switch to the second project");
+  Expect(TestAccess::EditorTabSize(shell) == base + 1,
+         "the open project's editor should follow the new user default, got " +
+             std::to_string(TestAccess::EditorTabSize(shell)));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -540,6 +567,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/UserDefaultReachesAnOpenProjectOnSwitch",
+          TestUserDefaultReachesAnOpenProjectOnSwitch);
   AddTest(tests, "QaFlowRegression/UserDefaultReachesAProjectOpenedForTheFirstTime",
           TestUserDefaultReachesAProjectOpenedForTheFirstTime);
   AddTest(tests, "QaFlowRegression/PaletteRowWhoseLabelStartsWithACommandRunsTheRow",
