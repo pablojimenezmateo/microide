@@ -681,7 +681,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // The sidebar's selected row: activating a tab selects its file in the tree (as
   // VS Code's explorer follows the active editor) without repainting the tree
   // (QA monkey, seed 5). Any selection that moved with no repaint of its own
-  // repaints the sidebar here.
+  // repaints the sidebar here -- and so does a scroll or a rebuilt tree (a watcher
+  // batch, an expansion) that landed between frames: the command fuzzer caught a
+  // frame repainting only the menu bar over a tree that had moved under it.
   if (sidebar_vm.visible) {
     const SidebarState& sidebar = project_state.sidebar;
     std::size_t selected = project_state.directory_tree.selected_index();
@@ -696,8 +698,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         }
         break;
     }
-    const std::uint64_t key = (std::hash<std::string>{}(sidebar.view_id) * 0x9E3779B97F4A7C15ull) ^
-                              (static_cast<std::uint64_t>(selected) + 1);
+    std::uint64_t key = (std::hash<std::string>{}(sidebar.view_id) * 0x9E3779B97F4A7C15ull) ^
+                        (static_cast<std::uint64_t>(selected) + 1);
+    key = key * 0x100000001B3ull ^ static_cast<std::uint64_t>(static_cast<std::uint32_t>(sidebar.scroll_row));
+    if (ActiveSidebarMode() == SidebarMode::Tree) {
+      key = key * 0x100000001B3ull ^ project_state.directory_tree.entries_revision();
+    }
+    key |= 1u;  // never 0: 0 means "nothing painted yet"
     if (key != frame_state_.painted_sidebar_selection && frame_state_.painted_sidebar_selection != 0) {
       RequestRedrawRect(layout.sidebar);
     }

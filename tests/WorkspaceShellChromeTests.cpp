@@ -3089,6 +3089,47 @@ void TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker() {
   step("saving", shell.ConsumePendingRenderInvalidation());
 }
 
+// Whatever moves the tree's rows -- a scroll, a rebuild after a watcher batch, an
+// expansion -- repaints the sidebar, even when it happens between frames with no
+// damage of its own and the next frame repaints only something else. The command
+// fuzzer (seeds 1-3, file churn on) caught frames that repainted just the menu bar
+// while the tree had scrolled or rebuilt under them; frame prep now keys the
+// sidebar's painted state on its scroll row and the tree's entries revision too.
+void TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (int i = 0; i < 60; ++i) {
+    WriteFile(root / ("file_" + std::to_string(100 + i) + ".txt"), "x\n");
+  }
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // The tree scrolls with nothing asking for a repaint; the next frame's own
+  // damage is the menu bar only.
+  WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 20);
+  microide::workspace::RenderInvalidation menu_bar_only;
+  menu_bar_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).menu_bar);
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, menu_bar_only,
+                                                pin_caret);
+  Expect(diff.identical(), "a frame after the tree scrolled should paint what a full repaint "
+                           "paints; " + DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5888,6 +5929,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarShowRepaintsTheMovedEditor);
   AddTest(tests, "WorkspaceShell/ASaveRepaintsTheProjectTabsDirtyMarker",
           TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker);
+  AddTest(tests, "WorkspaceShell/ATreeThatMovedRepaintsOnAnUnrelatedFrame",
+          TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame);
   AddTest(tests, "WorkspaceShell/ASaveRepaintsTheDirtyMarker",
           TestWorkspaceShellASaveRepaintsTheDirtyMarker);
   AddTest(tests, "WorkspaceShell/AnEditorRepaintKeepsTheDebugPaneDivider",
