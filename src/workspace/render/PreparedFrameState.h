@@ -14,6 +14,7 @@
 #include <SDL3/SDL.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 
@@ -61,6 +62,16 @@ struct PreparedFrameState {
   // while the widget is the overlay, and another overlay replacing it (a
   // completion request) took them off the editor without repainting it.
   bool painted_find_matches = false;
+  // The active compare tab's scroll position as painted. Typing past a pane's
+  // edge scrolls BOTH panes sideways to keep the caret in view while the edit
+  // damages only its row, so a moved position repaints the surface.
+  struct CompareScroll {
+    const void* tab = nullptr;
+    int row = 0;
+    std::size_t column = 0;
+    bool operator==(const CompareScroll&) const = default;
+  };
+  CompareScroll painted_compare_scroll{};
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

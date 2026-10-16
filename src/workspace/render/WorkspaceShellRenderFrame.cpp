@@ -653,6 +653,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_find_matches = find_matches;
     }
   }
+  {
+    PreparedFrameState::CompareScroll compare_scroll;
+    if (EditorGroup& group = project_state.focused_group();
+        group.has_active_tab() && group.active_tab().compare.has_value()) {
+      const CompareTabState& compare = *group.active_tab().compare;
+      compare_scroll = {.tab = &compare, .row = compare.scroll_row,
+                        .column = compare.horizontal_scroll};
+    }
+    if (compare_scroll != frame_state_.painted_compare_scroll) {
+      if (compare_scroll.tab != nullptr) {
+        RequestEditorSurfaceRedraw();
+      }
+      frame_state_.painted_compare_scroll = compare_scroll;
+    }
+  }
   // The sidebar's selected row: activating a tab selects its file in the tree (as
   // VS Code's explorer follows the active editor) without repainting the tree
   // (QA monkey, seed 5). Any selection that moved with no repaint of its own

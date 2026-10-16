@@ -2,7 +2,9 @@
 
 #include "project/GitRepository.h"
 
+#include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
+#include "WorkspaceShellEventHelpers.h"
 
 #include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/git/CompareTabReview.h"
@@ -2322,6 +2324,51 @@ void TestWorkspaceShellCompareRecomputeGate() {
          "no-op refreshes after a right-pane edit must not rebuild the compare model");
 }
 
+// Typing past the right edge of a compare tab's editable side scrolls BOTH panes
+// sideways to keep the caret in view; the edit damaged only the edited row, so
+// every other row of both panes kept its old horizontal offset (QA monkey seed
+// 13). Frame prep repaints the surface when its scroll position moved.
+void TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "notes.md";
+  const std::string long_line(150, 'w');
+  WriteFile(source, long_line + "\nA tiny, dependency-free task scheduler\nsecond row of text\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare scroll fixture", "compare scroll fixture");
+  WriteFile(source, long_line + "\nA tiny, dependency-free task scheduler\nsecond row, edited\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable && compare.right_view_active, "the editable pane is active");
+  compare.right_viewport.MoveCursorTo(0, long_line.size());
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  microide::tests::SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::size_t scroll_before = compare.horizontal_scroll;
+  for (int i = 0; i < 4; ++i) {
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent("xxxxxxxx")}),
+        pin_caret);
+    Expect(diff.identical(), "typing at the line's end should paint what a full repaint "
+                             "paints; " + DescribePixelDiff(diff));
+  }
+  Expect(compare.horizontal_scroll != scroll_before,
+         "the fixture must actually scroll the panes sideways");
+}
+
 }  // namespace
 
 // H11/J41: an unreadable or binary working-tree file must NOT open as an editable
@@ -3314,6 +3361,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange);
   AddTest(tests, "WorkspaceShell/CompareHunkJumpMovesTheEditableCaret",
           TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret);
+  AddTest(tests, "WorkspaceShell/CompareHorizontalScrollRepaintsTheSurface",
+          TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface);
   AddTest(tests, "WorkspaceShell/StagesHunksInSequence",
           TestWorkspaceShellCompareStagesHunksInSequence);
 }
