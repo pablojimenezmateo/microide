@@ -714,6 +714,37 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_overlay_rect = overlay_rect;
     }
   }
+  // The output panel's lines (see PreparedFrameState::painted_output_revision).
+  {
+    const bool shows_output =
+        panel_vm.content == PanelContentKind::Output && layout.bottom_panel.h > 0.0f;
+    const std::uint64_t revision = shows_output ? output_channels_.ContentRevision() + 1 : 0;
+    if (revision != frame_state_.painted_output_revision) {
+      if (shows_output) {
+        RequestBottomPanelContentRedraw();
+      }
+      frame_state_.painted_output_revision = revision;
+    }
+  }
+  // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).
+  {
+    PreparedFrameState::DebugToolbar toolbar;
+    if (DebugToolbarVisible()) {
+      toolbar.visible = true;
+      toolbar.stopped = IsDebugSessionStopped();
+      toolbar.rect = ComputeDebugToolbarLayout(layout.editor_surface, DebugToolbarAvoidBelowY(layout),
+                                               DebugSupportsReverse())
+                         .widget;
+    }
+    if (!(toolbar == frame_state_.painted_debug_toolbar)) {
+      for (const auto* painted : {&frame_state_.painted_debug_toolbar, &toolbar}) {
+        if (painted->visible && painted->rect.w > 0.0f && painted->rect.h > 0.0f) {
+          RequestRedrawRect(painted->rect);
+        }
+      }
+      frame_state_.painted_debug_toolbar = toolbar;
+    }
+  }
   // The editor tabs' dirty markers: repaint the strips when the set of dirty tabs
   // moved, whatever path moved it (see PreparedFrameState).
   {

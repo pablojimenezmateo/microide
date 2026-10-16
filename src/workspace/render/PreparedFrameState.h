@@ -89,6 +89,23 @@ struct PreparedFrameState {
   // result count changed -- repainted only its new rect, leaving the strip it no
   // longer covers on screen. A moved rect repaints old and new.
   std::optional<SDL_FRect> painted_overlay_rect;
+  // The floating debug toolbar as painted: whether it shows, its rect, and the
+  // run state its Continue/Pause button and step buttons draw. A session that
+  // stopped or resumed repainted the debug pane and the menu bar but not the
+  // toolbar, so its first button kept reading Pause over a stopped program.
+  struct DebugToolbar {
+    bool visible = false;
+    bool stopped = false;
+    SDL_FRect rect{};
+    bool operator==(const DebugToolbar& o) const {
+      return visible == o.visible && stopped == o.stopped && rect.x == o.rect.x &&
+             rect.y == o.rect.y && rect.w == o.rect.w && rect.h == o.rect.h;
+    }
+  };
+  DebugToolbar painted_debug_toolbar{};
+  // The output channels' content revision the output panel was painted at
+  // (WorkspaceOutputChannels::ContentRevision); 0 while it shows something else.
+  std::uint64_t painted_output_revision = 0;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

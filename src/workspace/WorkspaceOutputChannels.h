@@ -60,6 +60,11 @@ class WorkspaceOutputChannels {
                                                            std::size_t index,
                                                            const std::filesystem::path& resolved_path) const;
   void Clear(std::string_view id);
+  // Bumps on every change to any channel's lines (append, clear, removal). The
+  // output panel draws a channel's tail; frame prep repaints the panel when this
+  // moved, since the producers -- a debug adapter's output, an LSP log, a plugin
+  // -- append from callbacks that know nothing about the panel.
+  std::uint64_t ContentRevision() const { return content_revision_; }
   // Drop a channel entirely (entries + parsed cache). No-op if the id is unknown.
   // Used when a debug session is pruned so its console does not linger (Phase 10).
   void RemoveChannel(std::string_view id);
@@ -93,6 +98,7 @@ class WorkspaceOutputChannels {
 
   std::map<std::string, Channel, std::less<>> channels_;
   std::uint64_t touch_counter_ = 0;
+  std::uint64_t content_revision_ = 0;
   std::size_t evicted_channel_count_ = 0;
   mutable bool channel_infos_dirty_ = true;
   mutable std::vector<ChannelInfo> channel_infos_;

@@ -181,6 +181,7 @@ void WorkspaceOutputChannels::AppendLine(std::string_view id, std::string_view l
   }
 
   EnsureChannel(id, label);
+  ++content_revision_;
   auto& channel = channels_.find(id)->second;
   TruncateOutputLine(line);
   ParsedEntry parsed = BuildParsedEntry(line, &channel.current_reference_path);
@@ -311,6 +312,7 @@ void WorkspaceOutputChannels::Clear(std::string_view id) {
   it->second.parsed_entries.clear();
   it->second.retained_bytes = 0;
   it->second.current_reference_path.reset();
+  ++content_revision_;
 }
 
 void WorkspaceOutputChannels::RemoveChannel(std::string_view id) {
@@ -319,6 +321,7 @@ void WorkspaceOutputChannels::RemoveChannel(std::string_view id) {
     return;
   }
   channels_.erase(it);
+  ++content_revision_;
   MarkDirty();
 }
 

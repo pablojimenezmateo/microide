@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <thread>
 #include <optional>
 #include <string>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "WorkspaceShellEventHelpers.h"
+#include "support/MockDapAdapter.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "editor/FoldingModel.h"
@@ -348,6 +350,52 @@ void TestHoverTextKeepsItsLines() {
   Expect(capped == std::vector<std::string>{"a", "b c d"}, "the last line should carry the rest");
 }
 
+// dbg-session: a stop or a resume repainted the debug pane and the menu bar, and
+// nothing else -- but the floating toolbar's first button is Continue while the
+// program is stopped and Pause while it runs, and the adapter's output lands in
+// the output panel below. Both kept their old pixels.
+void TestDebugSessionRepaintsToolbarAndOutput() {
+#if !MICROIDE_HAS_SDL3_TTF || !(defined(__unix__) || defined(__APPLE__))
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "stop"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  // The QA run: stopped at a breakpoint, F5, and the program stopped again on
+  // the same line -- so the editor had nothing to repaint and the stop's damage
+  // was the menu bar and the debug pane. The mock re-stops at the same frame on
+  // every resume, which is that case exactly.
+  const auto wait_for_stop = [&](workspace::RenderInvalidation* damage) {
+    return WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); },
+                     std::chrono::seconds(10), std::chrono::milliseconds(5), [&]() {
+                       TestAccess::ConsumeDapCallbacks(fixture.shell);
+                       if (damage != nullptr) {
+                         damage->Merge(fixture.shell.ConsumePendingRenderInvalidation());
+                       }
+                     });
+  };
+  Expect(wait_for_stop(nullptr), "the mock adapter should stop on configurationDone");
+  // The debug pane open beside the editor, as it is after the first stop in the
+  // app: a stop repaints the pane, not the window.
+  if (TestAccess::ControlUi(fixture.shell)["surfaces"]["rightPane"].IsNull()) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane should open");
+  }
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the first stop");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-continue"), "debug-continue should run");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
+                      "resuming (the toolbar's Continue becomes Pause)");
+  workspace::RenderInvalidation stop_damage;
+  Expect(wait_for_stop(&stop_damage), "the mock adapter should stop again");
+  fixture.ExpectFresh(stop_damage, "stopping again on the same line (Pause becomes Continue)");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -357,6 +405,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
+  AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);

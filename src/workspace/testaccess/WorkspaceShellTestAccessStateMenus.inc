@@ -1226,6 +1226,15 @@
   static util::JsonValue ControlUi(WorkspaceShell& shell) {
     return ControlUiQuery::Build(shell.context_, shell.MakeControlUiOperations());
   }
+  // A debug adapter on the shell's own DapManager (a scripted mock: see
+  // tests/support/MockDapAdapter.h), and the drain the SDL wake would run.
+  static void RegisterDebugAdapterForTest(WorkspaceShell& shell, const std::string& type,
+                                          const std::vector<std::string>& command) {
+    shell.CurrentDapManager().RegisterAdapter(type, platform::LocalProcessLauncher(), command);
+  }
+  static void ConsumeDapCallbacks(WorkspaceShell& shell) { shell.debug_service_.ConsumeDapCallbacks(); }
+  static bool DebugSessionStopped(const WorkspaceShell& shell) { return shell.IsDebugSessionStopped(); }
+  static bool DebugSessionActive(const WorkspaceShell& shell) { return shell.IsDebugSessionActive(); }
   static bool TabDragBodyDropActive(const WorkspaceShell& shell) {
     const auto& drag = shell.context_.interaction_state.tab_drag;
     return drag.dragging && drag.body_drop();
