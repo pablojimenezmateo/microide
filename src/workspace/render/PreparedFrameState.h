@@ -72,6 +72,10 @@ struct PreparedFrameState {
     bool operator==(const CompareScroll&) const = default;
   };
   CompareScroll painted_compare_scroll{};
+  // Where the editor split's dividers were painted (a hash of their rects). A
+  // divider that moved -- the split's shares changed -- moves every pane beside
+  // it; the change is repainted whatever damage the next frame carries.
+  std::uint64_t painted_split_dividers = 0;
   // The project strip's source version as painted (WorkspaceTabStripChrome).
   std::uint64_t painted_project_strip_version = 0;
   // The sidebar list selection painted (view and row): the tree follows the

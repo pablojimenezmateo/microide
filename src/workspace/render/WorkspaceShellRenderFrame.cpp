@@ -668,6 +668,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_compare_scroll = compare_scroll;
     }
   }
+  {
+    std::uint64_t dividers = 0;
+    for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
+      for (const float edge : {divider.rect.x, divider.rect.y, divider.rect.w, divider.rect.h}) {
+        dividers = dividers * 0x100000001B3ull ^ static_cast<std::uint64_t>(std::lround(edge * 4.0f));
+      }
+    }
+    if (dividers != frame_state_.painted_split_dividers) {
+      // The whole column: each pane's tab strip sits above `editor_area`.
+      const float top = layout.tab_strip.h > 0.0f ? layout.tab_strip.y : layout.editor_area.y;
+      RequestRedrawRect(MakeRect(layout.editor_area.x, top, layout.editor_area.w,
+                                 layout.editor_area.y + layout.editor_area.h - top));
+      frame_state_.painted_split_dividers = dividers;
+    }
+  }
   // A project tab's label follows state no input touches -- its dirty marker is
   // "any editor tab in that project is dirty" -- so typing into or saving a file
   // changed it with no damage on the strip (remote QA suite).

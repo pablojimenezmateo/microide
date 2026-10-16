@@ -3130,6 +3130,46 @@ void TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame() {
                            "paints; " + DescribePixelDiff(diff));
 }
 
+// A split divider that moved between frames -- the split's shares changed with
+// nothing repainting the divider's full height -- repaints the editor area on the
+// next frame, whatever that frame's own damage is (QA monkey seed 21: a 1-px notch
+// where the divider meets the breadcrumb row).
+void TestWorkspaceShellASplitDividerThatMovedRepaintsOnAnUnrelatedFrame() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "the fixture should split the editor");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  Expect(WorkspaceShellTestAccess::ResizeRootSplitDivider(shell, 0, 0.6f), "move the divider");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  (void)shell.ConsumePendingRenderInvalidation();
+  microide::workspace::RenderInvalidation menu_bar_only;
+  menu_bar_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).menu_bar);
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, menu_bar_only,
+                                                pin_caret);
+  Expect(diff.identical(), "a frame after the divider moved should paint what a full repaint "
+                           "paints; " + DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5929,6 +5969,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSidebarShowRepaintsTheMovedEditor);
   AddTest(tests, "WorkspaceShell/ASaveRepaintsTheProjectTabsDirtyMarker",
           TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker);
+  AddTest(tests, "WorkspaceShell/ASplitDividerThatMovedRepaintsOnAnUnrelatedFrame",
+          TestWorkspaceShellASplitDividerThatMovedRepaintsOnAnUnrelatedFrame);
   AddTest(tests, "WorkspaceShell/ATreeThatMovedRepaintsOnAnUnrelatedFrame",
           TestWorkspaceShellATreeThatMovedRepaintsOnAnUnrelatedFrame);
   AddTest(tests, "WorkspaceShell/ASaveRepaintsTheDirtyMarker",
