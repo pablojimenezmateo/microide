@@ -142,6 +142,8 @@ class App:
     _next_id: int = 1
     # (time, x, y) of the last press, for the double-click guard in click().
     _last_click: tuple[float, float, float] = (0.0, -1e9, -1e9)
+    _launches: int = 0
+    _extra_args: list[str] = field(default_factory=list)
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -209,7 +211,40 @@ class App:
         w, h = self.size
         self._start_xvfb(w, h)
         self.env["DISPLAY"] = self.display
-        self.log_path = self.work / "microide.log"
+        self._extra_args = list(extra_args)
+        self._spawn(project, extra_args)
+
+    def restart(self, project: Path | None = None, quit_timeout: float = 15.0) -> None:
+        """Quits the app the way a person does (the `quit` command, so session state
+        is written as on a real exit) and starts it again on the same display, XDG
+        tree and project -- the session-restore path. An unsaved buffer makes quit
+        ask first; a scenario that wants that prompt drives it before calling this."""
+        if self.alive():
+            self.send("quit")
+            deadline = time.monotonic() + quit_timeout
+            while self.alive() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if self.alive():
+                self.expect(False, "quit did not exit the app")
+                os.killpg(self.proc.pid, signal.SIGTERM)
+                self.proc.wait(timeout=5)
+        # The oracles over what the first run logged up to its exit; the exit
+        # itself is the point, not a crash (check() would report it as one).
+        for line in self.new_log_lines():
+            if any(marker in line for marker in FINDING_MARKERS):
+                self.findings.append(Finding("log", line.strip()))
+        if self.proc is not None and self.proc.returncode not in (0, None):
+            self.expect(False, f"quit exited with status {self.proc.returncode}")
+        if self._socket is not None:
+            with contextlib.suppress(OSError):
+                self._socket.close()
+            self._socket = None
+        self.log_offset = 0
+        self._spawn(project if project is not None else self.project, self._extra_args)
+
+    def _spawn(self, project: Path | None, extra_args: list[str]) -> None:
+        self.log_path = self.work / f"microide-{self._launches}.log" if self._launches else self.work / "microide.log"
+        self._launches += 1
         args = [str(self.binary)]
         if project is not None:
             args.append(str(project))
@@ -556,18 +591,36 @@ class App:
         args = ["type", "--clearmodifiers", "--delay", "25"]
         if self.window:
             args += ["--window", self.window]
+        # Beyond ASCII, xdotool remaps a scratch keycode per character and SDL races
+        # the keymap change, so a run of them drops characters; Latin-1 goes as its
+        # own keysym press instead. Past Latin-1 there is no way in: Xvfb has no
+        # input method, and without one X delivers no text for such a keysym (a real
+        # desktop's IME does) -- those characters are inserted through the control
+        # channel's `type` (the paste path), and the action log says so.
+        key_args = ["key", "--clearmodifiers"] + (["--window", self.window] if self.window else [])
         chunk = ""
+
+        def flush() -> None:
+            nonlocal chunk
+            if chunk:
+                self._xdotool(*args, "--", chunk)
+                chunk = ""
         for char in text:
             if char in "\n\t":
-                if chunk:
-                    self._xdotool(*args, "--", chunk)
-                    chunk = ""
-                key_args = ["key", "--clearmodifiers"] + (["--window", self.window] if self.window else [])
+                flush()
                 self._xdotool(*key_args, "Return" if char == "\n" else "Tab")
-            else:
+            elif ord(char) < 0x80:
                 chunk += char
-        if chunk:
-            self._xdotool(*args, "--", chunk)
+            elif ord(char) <= 0xFF:
+                flush()
+                time.sleep(0.08)  # let SDL see the ASCII run's keymap settle first
+                self._xdotool(*key_args, "U%04X" % ord(char))
+                time.sleep(0.08)
+            else:
+                flush()
+                self._record({"type-via-control": char})
+                self._control(["control-send", "type", char])
+        flush()
 
     def center(self, element: dict[str, Any]) -> tuple[float, float]:
         x, y, w, h = element["rect"]
