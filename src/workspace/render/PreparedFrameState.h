@@ -106,6 +106,10 @@ struct PreparedFrameState {
   // The output channels' content revision the output panel was painted at
   // (WorkspaceOutputChannels::ContentRevision); 0 while it shows something else.
   std::uint64_t painted_output_revision = 0;
+  // The active merge tab's status as painted (result state, conflicts left, the
+  // selected one): a git refresh or the file watcher marks a merge result stale
+  // or saved asynchronously, and the header kept reading the old state.
+  std::uint64_t painted_merge_status = 0;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

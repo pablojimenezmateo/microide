@@ -16,6 +16,7 @@
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/WorkspaceTextSearch.h"
+#include "workspace/git/MergeResultValidation.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/coordinators/WorkspaceDiffTabCoordinator.h"
@@ -712,6 +713,22 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         RequestRedrawRect(*overlay_rect);
       }
       frame_state_.painted_overlay_rect = overlay_rect;
+    }
+  }
+  // The merge header's status (see PreparedFrameState::painted_merge_status).
+  {
+    std::uint64_t status = 0;
+    if (const MergeTabState* merge = ActiveMergeTab(); merge != nullptr) {
+      status = (reinterpret_cast<std::uintptr_t>(merge) * 0x9E3779B97F4A7C15ull) ^
+               (static_cast<std::uint64_t>(ComputeMergeResultState(*merge, merge->file_conflict)) + 1);
+      status = status * 0x100000001B3ull ^ CountRemainingMergeConflicts(merge->conflicts);
+      status = status * 0x100000001B3ull ^ (merge->selected_hunk + 1);
+    }
+    if (status != frame_state_.painted_merge_status) {
+      if (status != 0) {
+        RequestEditorSurfaceRedraw();
+      }
+      frame_state_.painted_merge_status = status;
     }
   }
   // The output panel's lines (see PreparedFrameState::painted_output_revision).

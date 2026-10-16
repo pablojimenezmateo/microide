@@ -1,4 +1,7 @@
 #include "TestSupport.h"
+#include "TestSupportSdl.h"
+#include "support/RetainedRedraw.h"
+#include "support/SoftwareCanvas.h"
 
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -245,6 +248,50 @@ void TestReviewCommitCapsOpenedTabs() {
          "the review summary reports the un-opened remainder as truncated");
 }
 
+// QA flow compare-merge: a merge result goes stale (or saved) asynchronously --
+// a git refresh, the file watcher -- and the merge header's status read the old
+// state, because whatever damage brought the change never covered the header.
+void TestMergeHeaderRepaintsWhenTheResultGoesStale() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "conflict.txt", "base\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "base", "base commit");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-b", "theirs"}, "create theirs branch");
+  WriteFile(repo_path / "conflict.txt", "theirs change\n");
+  CommitAll(repo_path, "theirs", "theirs commit");
+  RequireGitCommandSuccess(repo_path, {"checkout", "main"}, "back to main");
+  WriteFile(repo_path / "conflict.txt", "ours change\n");
+  CommitAll(repo_path, "ours", "ours commit");
+  RunGitCommand(repo_path, {"merge", "theirs"});
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(TestAccess::OpenGitConflictMerge(shell, repo_path / "conflict.txt"), "the open is accepted");
+  TestAccess::FlushPendingFileReads(shell);
+  Expect(TestAccess::ActiveTabIsMerge(shell), "the merge tab opens");
+  TestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto pin = [&]() { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  pin();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // The change arrives with some unrelated damage (here: the menu bar strip).
+  TestAccess::ActiveMerge(shell).index_stale = true;
+  workspace::RenderInvalidation unrelated;
+  unrelated.rects.push_back(SDL_FRect{0.0f, 0.0f, static_cast<float>(kWidth), 20.0f});
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, unrelated, pin);
+  Expect(diff.identical(), "the merge header should repaint its new status; " + DescribePixelDiff(diff));
+}
+
 }  // namespace
 
 // Every review compare tab carries the file list the next/previous-review-file
@@ -309,6 +356,8 @@ void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
           TestReviewCommitOpensCompareTabsPerChangedFile);
   AddTest(tests, "ReviewSession/BranchOpensAndCleansCompareTabs",
           TestReviewBranchOpensAndCleansCompareTabs);
+  AddTest(tests, "ReviewSession/MergeHeaderRepaintsWhenTheResultGoesStale",
+          TestMergeHeaderRepaintsWhenTheResultGoesStale);
   AddTest(tests, "ReviewSession/ConflictsOpensMergeTabsPerConflict",
           TestReviewConflictsOpensMergeTabsPerConflict);
 }
