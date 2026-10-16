@@ -8,6 +8,7 @@
 
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
+#include "workspace/control/ControlBufferQuery.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"
 #include "workspace/services/NotificationService.h"
@@ -105,6 +106,9 @@ class ControlChannelService {
     // The on-screen element geometry for the `ui` query. Unset sources report
     // nothing (tests that do not exercise it).
     ControlUiQuery::Operations ui;
+    // The buffer the caret is in, for the `buffer` query. Null in tests that do
+    // not exercise it (the query then answers `{available:false}`).
+    std::function<ControlActiveBuffer()> active_buffer;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,

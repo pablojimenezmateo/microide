@@ -167,8 +167,9 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
 
   ControlUiElements elements;
   for (const ElementSource* source : {&operations.menus, &operations.tabs, &operations.sidebar,
-                                      &operations.panel, &operations.status_bar,
-                                      &operations.buttons}) {
+                                      &operations.fields, &operations.panel,
+                                      &operations.status_bar, &operations.buttons,
+                                      &operations.overlay, &operations.dialogs}) {
     if (*source) {
       (*source)(*layout, elements);
     }
@@ -211,6 +212,9 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
     array.push_back(util::JsonValue(std::move(entry)));
   }
   object["elements"] = util::JsonValue(std::move(array));
+  if (operations.details) {
+    operations.details(*layout, object);
+  }
   return util::JsonValue(std::move(object));
 }
 

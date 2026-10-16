@@ -94,6 +94,11 @@ SANITIZER_ENV = {
 }
 
 
+# SDL's defaults (SDL_HINT_MOUSE_DOUBLE_CLICK_TIME / _RADIUS), with margin.
+DOUBLE_CLICK_SECONDS = 0.55
+DOUBLE_CLICK_RADIUS = 40
+
+
 class QaFailure(AssertionError):
     pass
 
@@ -135,6 +140,8 @@ class App:
     _socket: socket.socket | None = None
     _socket_buffer: bytes = b""
     _next_id: int = 1
+    # (time, x, y) of the last press, for the double-click guard in click().
+    _last_click: tuple[float, float, float] = (0.0, -1e9, -1e9)
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -327,6 +334,96 @@ class App:
                 if (kind is None or element.get("kind") == kind)
                 and element.get("name", "").startswith(prefix)]
 
+    def buffer(self) -> dict[str, Any]:
+        """The buffer the caret is in (the `buffer` query): text, every caret with
+        its selection (primary first, 1-based), folds, flags."""
+        return self.query("buffer")
+
+    def text(self) -> str:
+        return self.buffer().get("text", "")
+
+    def editor_state(self) -> dict[str, Any]:
+        """Every editor group and tab (the `editor` query)."""
+        return self.query("editor")
+
+    def active_tab(self) -> dict[str, Any] | None:
+        state = self.editor_state()
+        for group in state.get("groups", []):
+            if group.get("focused"):
+                for tab in group.get("tabs", []):
+                    if tab.get("active"):
+                        return tab
+        return None
+
+    def field_text(self, name: str) -> str:
+        """A text field's contents (`field:` elements carry their text as label)."""
+        return self.element(name).get("label", "")
+
+    def pane(self, group: int | None = None, ui: dict[str, Any] | None = None) -> dict[str, Any]:
+        """One editor pane's text geometry from `ui.editors` (the focused one by
+        default)."""
+        editors = (ui or self.ui()).get("editors", [])
+        for pane in editors:
+            if (group is None and pane.get("focused")) or pane.get("group") == group:
+                return pane
+        if group is None and editors:
+            return editors[0]
+        raise QaFailure(f"no editor pane {group if group is not None else '(focused)'} on screen")
+
+    def text_point(self, line: int, column: int, group: int | None = None) -> tuple[float, float]:
+        """The window point a click at 1-based (line, column) resolves to: the
+        editor maps x to a column with lround(offset / charWidth), so aim a fifth
+        of a cell past the column's left edge."""
+        pane = self.pane(group)
+        for row in pane["rows"]:
+            if row["line"] == line:
+                x = pane["textX"] + (column - 1 - pane["scrollColumn"] + 0.2) * pane["charWidth"]
+                return x, row["y"] + pane["lineHeight"] / 2
+        raise QaFailure(f"line {line} is not on screen in pane {pane.get('group')}")
+
+    def click_text(self, line: int, column: int, clicks: int = 1,
+                   modifiers: tuple[str, ...] = (), group: int | None = None,
+                   button: int = 1) -> None:
+        self.click(*self.text_point(line, column, group), clicks=clicks, modifiers=modifiers,
+                   button=button)
+
+    def drag_text(self, start: tuple[int, int], end: tuple[int, int],
+                  modifiers: tuple[str, ...] = (), group: int | None = None) -> None:
+        x0, y0 = self.text_point(*start, group=group)
+        x1, y1 = self.text_point(*end, group=group)
+        self.drag(x0, y0, x1, y1, modifiers=modifiers)
+
+    def gutter_point(self, line: int, part: str = "fold", group: int | None = None) -> tuple[float, float]:
+        """The fold marker (`part="fold"`) or breakpoint zone (`"breakpoint"`) of a
+        visible line's gutter."""
+        pane = self.pane(group)
+        for row in pane["rows"]:
+            if row["line"] == line:
+                y = row["y"] + pane["lineHeight"] / 2
+                if part == "fold":
+                    return (pane["foldHitX"] + pane["gutterX"] + pane["gutterWidth"]) / 2, y
+                return pane["gutterX"] + 6, y
+        raise QaFailure(f"line {line} is not on screen in pane {pane.get('group')}")
+
+    def cursors(self) -> list[tuple[int, int]]:
+        """Every caret as (line, column), primary first."""
+        return [(c["line"], c["column"]) for c in self.buffer().get("cursors", [])]
+
+    def wait_for(self, name: str, timeout: float = 5.0) -> dict[str, Any] | None:
+        """Waits for the element called `name` to be on screen."""
+        found: dict[str, Any] = {}
+
+        def present() -> bool:
+            try:
+                found.update(self.element(name))
+                return True
+            except QaFailure:
+                return False
+        return found if self.wait_until(present, timeout, f"{name} on screen") else None
+
+    def wait_text(self, predicate, timeout: float = 5.0, message: str = "the buffer") -> bool:
+        return self.wait_until(lambda: predicate(self.text()), timeout, message)
+
     def keybindings(self) -> list[dict[str, Any]]:
         """The resolved keybindings (`keybindings` query), dispatch order."""
         result = self._control(["control-send", "--query", "keybindings"])
@@ -385,13 +482,33 @@ class App:
         self._record({"move": [round(x), round(y)]})
         self._xdotool("mousemove", *self._root(x, y))
 
-    def click(self, x: float, y: float, button: int = 1, clicks: int = 1) -> None:
-        self._record({"click": [round(x), round(y)], "button": button, "clicks": clicks})
+    def click(self, x: float, y: float, button: int = 1, clicks: int = 1,
+              modifiers: tuple[str, ...] = ()) -> None:
+        """A press at window (x, y); `modifiers` are xdotool key names held for it
+        ("alt", "shift", "ctrl")."""
+        # SDL folds two presses within its double-click time and radius into a
+        # double click (a word selection in the editor), so a separate click right
+        # after another near it waits that window out first.
+        last_time, last_x, last_y = self._last_click
+        if time.monotonic() - last_time < DOUBLE_CLICK_SECONDS and \
+                abs(x - last_x) < DOUBLE_CLICK_RADIUS and abs(y - last_y) < DOUBLE_CLICK_RADIUS:
+            time.sleep(DOUBLE_CLICK_SECONDS - (time.monotonic() - last_time))
+        self._record({"click": [round(x), round(y)], "button": button, "clicks": clicks,
+                      "modifiers": list(modifiers)})
+        for key in modifiers:
+            self._xdotool("keydown", key)
         self._xdotool("mousemove", *self._root(x, y), "click", "--repeat", str(clicks),
                       "--delay", "60", str(button))
+        for key in reversed(modifiers):
+            self._xdotool("keyup", key)
+        self._last_click = (time.monotonic(), x, y)
 
-    def drag(self, x0: float, y0: float, x1: float, y1: float, steps: int = 8) -> None:
-        self._record({"drag": [round(x0), round(y0), round(x1), round(y1)]})
+    def drag(self, x0: float, y0: float, x1: float, y1: float, steps: int = 8,
+             modifiers: tuple[str, ...] = ()) -> None:
+        self._record({"drag": [round(x0), round(y0), round(x1), round(y1)],
+                      "modifiers": list(modifiers)})
+        for key in modifiers:
+            self._xdotool("keydown", key)
         self._xdotool("mousemove", *self._root(x0, y0), "mousedown", "1")
         for i in range(1, steps + 1):
             x = x0 + (x1 - x0) * i / steps
@@ -399,6 +516,8 @@ class App:
             self._xdotool("mousemove", *self._root(x, y))
             time.sleep(0.02)
         self._xdotool("mouseup", "1")
+        for key in reversed(modifiers):
+            self._xdotool("keyup", key)
 
     def wheel(self, x: float, y: float, notches: int) -> None:
         self._record({"wheel": [round(x), round(y)], "notches": notches})
@@ -548,9 +667,10 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12) -> None
             app.move(*action["move"])
         elif "click" in action:
             app.click(*action["click"], button=action.get("button", 1),
-                      clicks=action.get("clicks", 1))
+                      clicks=action.get("clicks", 1),
+                      modifiers=tuple(action.get("modifiers", ())))
         elif "drag" in action:
-            app.drag(*action["drag"])
+            app.drag(*action["drag"], modifiers=tuple(action.get("modifiers", ())))
         elif "wheel" in action:
             app.wheel(*action["wheel"], action["notches"])
         elif "key" in action:

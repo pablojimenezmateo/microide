@@ -366,6 +366,18 @@ WorkspaceShell::WorkspaceShell() {
             return ResolvedKeybindings();
           },
           .ui = MakeControlUiOperations(),
+          .active_buffer = [this]() -> ControlActiveBuffer {
+            const editor::TextViewport* viewport = ActiveNavigableViewport();
+            if (viewport == nullptr || viewport->is_placeholder()) {
+              return {};
+            }
+            return ControlActiveBuffer{
+                .viewport = viewport,
+                .kind = ActiveMergeTab() != nullptr     ? "merge"
+                        : ActiveCompareTab() != nullptr ? "compare"
+                                                        : "editor",
+            };
+          },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

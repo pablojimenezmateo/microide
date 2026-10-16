@@ -465,6 +465,11 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "keybindings") {
     return BuildKeybindings();
   }
+  if (verb == "buffer") {
+    const ControlActiveBuffer active =
+        operations_.active_buffer ? operations_.active_buffer() : ControlActiveBuffer{};
+    return BuildControlBufferJson(active.viewport, active.kind);
+  }
   if (verb == "ui") {
     return context_ == nullptr ? util::JsonValue(util::JsonObject{})
                                : ControlUiQuery::Build(*context_, operations_.ui);

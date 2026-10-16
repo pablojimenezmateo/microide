@@ -589,6 +589,8 @@ class TextViewport {
   std::size_t folding_revision() const {
     return folding_model_ != nullptr ? folding_model_->revision() : 0;
   }
+  // The fold model this viewport lays out against (owned by its tab), or null.
+  const FoldingModel* folding_model() const { return folding_model_; }
   // Per-tab retained-memory breakdown. Walks container capacities; not called
   // on any production path (see TextViewportDerivedCacheBytes). The folding
   // model is deliberately NOT included: it is owned per tab but reachable
@@ -781,6 +783,9 @@ class TextViewport {
   std::size_t MaxVisualWidthInSpan(std::size_t lo, std::size_t hi) const;
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
+  // Where the primary selection started (the end that stays put while it is
+  // extended); nullopt with no selection anchor.
+  const std::optional<TextPosition>& selection_anchor() const { return selection_anchor_; }
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
   // Whole-line-trimmed span of the last applied edit (see AppliedEditLineSpan).
   // Set/cleared in lockstep with last_applied_edit(); empty for multi-region edits.

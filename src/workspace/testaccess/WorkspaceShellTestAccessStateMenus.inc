@@ -1226,6 +1226,12 @@
   static util::JsonValue ControlUi(WorkspaceShell& shell) {
     return ControlUiQuery::Build(shell.context_, shell.MakeControlUiOperations());
   }
+  // Any control query verb, answered by the live control channel service.
+  static util::JsonValue ControlQuery(WorkspaceShell& shell, const std::string& verb) {
+    bool ok = false;
+    std::string error;
+    return shell.control_channel_service_.AnswerQuery(verb, &ok, &error);
+  }
   // The keybinding reachability matrix (tests/KeybindingReachabilityTests.cpp).
   static KeyInputCoordinator::DispatchProbe& KeyDispatchProbe(WorkspaceShell& shell) {
     return shell.MakeKeyInputCoordinator().dispatch_probe();

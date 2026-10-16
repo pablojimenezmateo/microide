@@ -207,6 +207,93 @@ void TestUiNamesAreMadeUnique() {
          "later elements sharing a name should get #2, #3 suffixes in visual order");
 }
 
+// The `buffer` query reads the live viewport: its text, every caret with its
+// selection (primary first), and the collapsed folds. tools/qa's editing flows
+// assert against it instead of saving and reading the file back.
+void TestBufferQueryReportsTextCaretsAndFolds() {
+  UiFixture fixture;
+  WriteFile(fixture.root / "fold.cpp", "int f() {\n  return 1;\n}\nint g;\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "fold.cpp");
+  TestAccess::SetFocusEditor(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_SHIFT)});
+  util::JsonValue buffer = TestAccess::ControlQuery(fixture.shell, "buffer");
+  Expect(buffer["available"].AsBool() && buffer["kind"].AsString() == "editor",
+         "the buffer query should describe the active editor");
+  Expect(buffer["text"].AsString() == "int f() {\n  return 1;\n}\nint g;\n",
+         "the buffer query should report the text: " + buffer["text"].AsString());
+  Expect(buffer["selectedText"].AsString() == "int f() {",
+         "Shift+End should select the first line: " + buffer["selectedText"].AsString());
+  const util::JsonValue& primary = buffer["cursors"][std::size_t{0}];
+  Expect(primary["line"].AsInt() == 1 && primary["column"].AsInt() == 10 &&
+             primary["anchorColumn"].AsInt() == 1 && !primary["empty"].AsBool(),
+         "the primary caret should carry its anchor");
+  (void)DispatchEvents(fixture.shell,
+                       {KeyDownEvent(SDLK_DOWN, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT))});
+  buffer = TestAccess::ControlQuery(fixture.shell, "buffer");
+  Expect(buffer["cursors"].AsArray().size() == 2,
+         "Ctrl+Alt+Down should add a second caret the query reports");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "fold-all"), "fold-all should run");
+  buffer = TestAccess::ControlQuery(fixture.shell, "buffer");
+  Expect(!buffer["folded"].AsArray().empty() &&
+             buffer["folded"][std::size_t{0}][std::size_t{0}].AsInt() == 1,
+         "fold-all should leave the query reporting the fold at line 1");
+}
+
+// The list overlays name their rows.
+void TestUiQueryNamesOverlayRows() {
+  UiFixture fixture;
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "files"), "files should open the finder");
+  TestAccess::SetFileFinderQuery(fixture.shell, "gamma");
+  util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["overlay"]["query"].AsString() == "gamma", "the ui query should report the overlay query");
+  Expect(ui["overlay"]["count"].AsInt() == 1, "one file should match gamma");
+  const auto row = Find(ui, "overlay-row:src/gamma.cpp");
+  Expect(row.has_value() && row->selected == true, "the match should be a selected overlay row");
+}
+
+// The unsaved-changes prompt names its buttons; clicking Cancel keeps the tab.
+void TestUiQueryNamesPromptButtons() {
+  UiFixture fixture;
+  TestAccess::ActiveEditor(fixture.shell).InsertText("x");
+  TestAccess::RequestCloseTab(fixture.shell, 1);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["modal"].AsString() == "unsaved-prompt", "closing a dirty tab should raise the unsaved prompt");
+  Expect(ui["prompt"]["kind"].AsString() == "unsaved", "the prompt block should say which prompt");
+  bool found_cancel = false;
+  for (const UiElement& element : Elements(ui)) {
+    found_cancel = found_cancel || element.name == "button:prompt/Cancel";
+  }
+  Expect(found_cancel, "the unsaved prompt should name its Cancel button");
+  fixture.ClickCenter(*Find(ui, "button:prompt/Cancel"));
+  Expect(TestAccess::ControlUi(fixture.shell)["modal"].IsNull(), "Cancel should dismiss the prompt");
+}
+
+// Settings rows are named by setting id, with their controls; clicking a
+// checkbox toggles the setting.
+void TestUiQueryNamesSettingsRows() {
+  UiFixture fixture;
+  TestAccess::OpenSettingsOverlay(fixture.shell);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  ExpectElement(ui, "field:settings/filter");
+  std::optional<UiElement> checkbox;
+  std::string id;
+  for (const UiElement& element : Elements(ui)) {
+    if (!checkbox && element.name.starts_with("button:setting/") && element.name.ends_with("/checkbox")) {
+      checkbox = element;
+      id = element.name.substr(std::string_view("button:setting/").size());
+      id.resize(id.size() - std::string_view("/checkbox").size());
+    }
+  }
+  Expect(checkbox.has_value(), "the Settings overlay should name a checkbox control");
+  if (!checkbox) {
+    return;
+  }
+  const auto before = TestAccess::GetSettingValue(fixture.shell, id);
+  fixture.ClickCenter(*checkbox);
+  const auto after = TestAccess::GetSettingValue(fixture.shell, id);
+  Expect(before != after, "clicking " + checkbox->name + " should toggle " + id);
+}
+
 }  // namespace
 
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
@@ -217,6 +304,11 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/ReportsTheModal", TestUiQueryReportsTheModal);
   AddTest(tests, "ControlUiQuery/TypingInTheTreeNavigates", TestTypingInTheTreeNavigates);
   AddTest(tests, "ControlUiQuery/NamesAreMadeUnique", TestUiNamesAreMadeUnique);
+  AddTest(tests, "ControlUiQuery/BufferReportsTextCaretsAndFolds",
+          TestBufferQueryReportsTextCaretsAndFolds);
+  AddTest(tests, "ControlUiQuery/NamesOverlayRows", TestUiQueryNamesOverlayRows);
+  AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
+  AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
 }
 
 }  // namespace microide::tests

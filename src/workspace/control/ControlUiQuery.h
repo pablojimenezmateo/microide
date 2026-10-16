@@ -59,6 +59,10 @@ inline constexpr std::string_view kPanelTab = "panel-tab";
 inline constexpr std::string_view kStatus = "status";
 inline constexpr std::string_view kButton = "button";
 inline constexpr std::string_view kDivider = "divider";
+inline constexpr std::string_view kOverlayRow = "overlay-row";
+inline constexpr std::string_view kField = "field";
+inline constexpr std::string_view kSetting = "setting";
+inline constexpr std::string_view kSettingsCategory = "settings-category";
 }  // namespace control_ui_kind
 
 // Appends an element named `<kind>:<locator>`.
@@ -94,6 +98,14 @@ class ControlUiQuery {
     ElementSource panel;       // bottom-panel tabs and header buttons
     ElementSource status_bar;  // segments
     ElementSource buttons;     // editor banner, notification buttons
+    ElementSource overlay;     // the open overlay's rows, query field, find-widget controls
+    ElementSource dialogs;     // prompt and unsaved-prompt buttons/field, Settings rows
+    ElementSource fields;      // sidebar text fields (search view, commit message) and
+                               // the git view's header buttons
+    // State no element carries: the overlay's query, match count and selection,
+    // the open prompt's text, and the editor popups (hover, signature help).
+    // Merged into the answer's `overlay`, and added as `prompt` and `popups`.
+    std::function<void(const WorkspaceLayout&, util::JsonObject&)> details;
   };
 
   static util::JsonValue Build(const WorkspaceContext& context, const Operations& operations);

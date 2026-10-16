@@ -162,7 +162,7 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `ui`.
+`keybindings`, `ui`, `buffer`.
 
 **Keybindings.** `keybindings` lists the resolved bindings in dispatch order:
 `{id, chord, context, skipsTerminal, plugin}`, `chord` spelled as the menus show it
@@ -191,6 +191,13 @@ selected?}` in window coordinates (what mouse events use). Names, by kind:
 | `status:<segment>` | a status-bar segment (`project`, `branch`, `language`, `indent`, `encoding`, `line-column`, `problems`, `lsp`, `layout-mode`, `remote`) |
 | `button:<surface>/<label>` | `window/{minimize,maximize,close}`, `close-tab/<group>/<title>`, `sidebar/{more,Collapse,Refresh}`, `panel/{new-terminal,maximize}`, `banner/<label>`, `banner/dismiss`, `notification/<label>` |
 | `divider:<which>` | `sidebar`, `panel`, `right-pane` resize handles; `editor/<n>` split dividers |
+| `overlay-row:<label>` | a visible row of the open list overlay (file finder, command palette, project search, pickers, completion, code actions), by its painted primary text; `selected` marks the one Enter runs |
+| `field:<surface>/<name>` | a text field, its text as `label`: `find/search`, `find/replace` (the in-file find widget), `prompt` (a prompt's input), `settings/filter`, `search/{query,replace,include,exclude}` (the search view), `git/subject`, `git/body` (the commit panel); `active` marks the one being edited |
+| `button:find/...` | the find widget's `previous`, `next`, `close`, `replace`, `replace-all`, `match-case`, `whole-word`, `regex` (`active` = toggle on) |
+| `button:prompt/<label>` | a prompt's buttons (`Save`, `Don't Save`, `Cancel`; a confirm's two) |
+| `button:search/...`, `button:git/...` | the search view's `mode`, `case`, `hidden`, `scope` toggles; the git view's `stage-all`, `discard-all`, `refresh`, `branch`, `sync`, `commit`, `confirm-commit` |
+| `setting:<id>` | a Settings row (value as `label`, `on`/`off` for a checkbox), with `button:setting/<id>/{checkbox,decrement,increment,value,reset,scope}` for its controls |
+| `settings-category:<label>` | a Settings category in the left rail |
 
 `menu.lastRun` is the receipt for a menu row: the `<menu>/<label>` locator (the
 `menu-item:` element's name without its kind) of the row a click or Enter last
@@ -200,6 +207,29 @@ ran, and `menu.rowsRun` counts the rows run since startup. A driver that clicks
 another row's. With `MICROIDE_QA_MENU_DRY_RUN=1` at startup a row records its run
 and closes the menu without running its action, so a sweep can click every row
 (Quit and Close Project included); `tools/qa`'s `menu-clicks` scenario does.
+
+Beyond the elements, `ui` carries state no element does. With an overlay open,
+`overlay` adds `query` (its text field), `count` (rows in the list) and `selected`
+(the row Enter runs). With a prompt up, `prompt` is `{kind: unsaved|input|confirm,
+title, message, detail?, input?}`. `popups` is `{hover: {kind: blame|diagnostic|symbol|
+debug-value, text, rect} | null, signatureHelp: <label> | null}`. `editors` lists every
+editor pane's text geometry -- `{group, focused, rect, textX, firstLineY, lineHeight,
+charWidth, gutterX, gutterWidth, foldHitX, stickyRows, scrollColumn, rows:[{line, y}]}`,
+`rows` naming the buffer line each visible row shows (a collapsed fold skips lines) --
+so a driver clicks a line and column at `textX + (column - 1 - scrollColumn + 0.2) *
+charWidth` and a row's `y + lineHeight / 2`, and a fold marker between `foldHitX` and
+`gutterX + gutterWidth`, without knowing the font.
+
+**What the caret is in (`buffer`).** The focused group's active buffer (an editor, a
+compare tab's editable side, a merge result): `{available, kind, path, language,
+dirty, readOnly, softWrap, tabSize, softTabs, revision, lineCount, scrollLine,
+visibleCount, text, cursors, selectedText, folded, foldable}`. `text` joins the lines
+with `\n` (omitted with `textTruncated` past 1 MiB). `cursors` is every caret, the
+primary first, each `{line, column, anchorLine, anchorColumn, empty}` (1-based byte
+columns). `folded` lists the collapsed folds and `foldable` the fold ranges resolved
+in the current window, each `[openerLine, closerLine]`. With no buffer it answers
+`{available:false}`. `tools/qa` checks every edit against this rather than against
+the saved file.
 
 A name shared by two elements gets `#2`, `#3`, ... on the later ones in visual
 order, so a name resolves to one element. Every rect comes from the geometry the
