@@ -155,7 +155,8 @@ class App:
                extra_args: list[str] | None = None,
                extra_env: dict[str, str] | None = None,
                shots: Path | None = None,
-               keep_home: bool = False) -> Iterator["App"]:
+               keep_home: bool = False,
+               plugins: tuple[str, ...] = ()) -> Iterator["App"]:
         binary = Path(binary or os.environ.get("MICROIDE_BIN") or REPO / "build/microide/microide")
         if not binary.exists():
             raise FileNotFoundError(f"no microide binary at {binary} (set MICROIDE_BIN)")
@@ -189,6 +190,13 @@ class App:
         for sub in ("config", "state", "data", "run", "stale"):
             (work / sub).mkdir(parents=True, exist_ok=True)
         os.chmod(work / "run", 0o700)
+        # Bundled plugins a scenario needs (a language server, a debug adapter),
+        # seeded as tools/capture-media/lib.sh seeds them for the media scenes.
+        for plugin in plugins:
+            source = REPO / "plugins" / plugin
+            if not source.is_dir():
+                raise FileNotFoundError(f"no bundled plugin {plugin!r} under {REPO / 'plugins'}")
+            shutil.copytree(source, work / "config" / "microide" / "plugins" / plugin)
         app = cls(binary=binary, work=work, display=display or "", size=size, env=env, shots=shots,
                   project=project)
         try:

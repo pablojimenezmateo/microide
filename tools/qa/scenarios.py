@@ -350,6 +350,7 @@ def scenario_scrolling(app: q.App) -> None:
 
 import flows_editing  # noqa: E402
 import flows_workbench  # noqa: E402
+import flows_lsp_debug  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -364,7 +365,11 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "scrolling": scenario_scrolling,
     **flows_editing.FLOWS,
     **flows_workbench.FLOWS,
+    **flows_lsp_debug.FLOWS,
 }
+
+# Bundled plugins (plugins/<name>) a scenario's instance starts with.
+SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {**flows_lsp_debug.PLUGINS}
 
 # Environment a scenario's instance starts with, beyond App.launch's.
 SCENARIO_ENV: dict[str, dict[str, str]] = {

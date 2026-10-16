@@ -90,10 +90,12 @@ def run_scenario(name: str, args: argparse.Namespace) -> tuple[str, list[str], i
     lines and finding count (threads print nothing themselves)."""
     project = fixture("taskflow", args.out / "fixtures")
     env = s.SCENARIO_ENV.get(name, {})
+    plugins = s.SCENARIO_PLUGINS.get(name, ())
     started = time.monotonic()
     with q.App.launch(project=project, binary=args.binary, shots=args.out / name,
-                      extra_env=env) as app:
-        app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env}
+                      extra_env=env, plugins=plugins) as app:
+        app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env,
+                             "plugins": list(plugins)}
         app.check("start")
         try:
             s.SCENARIOS[name](app)
@@ -178,8 +180,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
     project = fixture(kind, args.out / "fixtures")
     size = tuple(record.get("size", (1440, 900))) if isinstance(record, dict) else (1440, 900)
     env = record.get("env", {}) if isinstance(record, dict) else {}
+    plugins = tuple(record.get("plugins", ())) if isinstance(record, dict) else ()
     with q.App.launch(project=project, binary=args.binary, shots=args.out / "replay",
-                      size=size, extra_env=env) as app:
+                      size=size, extra_env=env, plugins=plugins) as app:
         app.replay_header = {"fixture": kind, "replay_of": str(args.file)}
         app.check("start")
         q.replay(app, actions)
