@@ -689,6 +689,8 @@ class LspClient {
   // supported so the request is not short-circuited).
   void SetTestPrepareRenameHandler(
       std::function<void(std::string uri, Position pos, PrepareRenameCallback cb)> handler);
+  // Unit tests: feed a canned textDocument/references response.
+  void SetTestReferencesHandler(std::function<void(std::string uri, Position pos, LocationCallback cb)> handler);
   // Unit tests: feed a canned workspace/symbol response.
   void SetTestWorkspaceSymbolHandler(
       std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler);

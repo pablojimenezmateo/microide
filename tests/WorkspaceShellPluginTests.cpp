@@ -2418,6 +2418,47 @@ bool CompletionListUp(const WorkspaceShell& shell) {
              WorkspaceShell::OverlayMode::Completion;
 }
 
+// QA flow lsp-navigation: Find References (Shift+F12) wrote its results into
+// the lsp.references output channel and showed nothing, so the command looked
+// dead. It shows that channel in the bottom panel, as call hierarchy and
+// workspace symbols do.
+void TestWorkspaceShellFindReferencesShowsTheResults() {
+  WithMarkdownCompletionServer(
+      "alpha\nalpha\n", 0, 1,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        auto* client = WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("markdown");
+        Expect(client != nullptr, "the stub client should be installed");
+        if (client == nullptr) {
+          return;
+        }
+        const std::string uri = workspace::FileUriForPath(editor.path());
+        client->SetTestReferencesHandler(
+            [uri](std::string, workspace::LspClient::Position, workspace::LspClient::LocationCallback cb) {
+              std::vector<workspace::LspClient::Location> locations(2);
+              locations[0].uri = uri;
+              locations[1].uri = uri;
+              locations[1].range.start.line = 1;
+              cb(std::move(locations));
+            });
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "find-references"),
+               "find-references should run");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+        Expect(ui["panel"]["content"].AsString() == "output",
+               "Find References should show the output panel, got " + ui["panel"]["content"].AsString());
+        bool tab = false;
+        for (const util::JsonValue& element : ui["elements"].AsArray()) {
+          tab = tab || (element["kind"].AsString() == "panel-tab" &&
+                        element["label"].AsString().find("References") != std::string::npos &&
+                        element["active"].AsBool());
+        }
+        Expect(tab, "and its References tab should be the active one");
+      });
+}
+
 // QA flow lsp-completion: a click on a row of a NARROWED completion list must
 // accept the row clicked. It accepted the selected one instead -- the first.
 void TestWorkspaceShellCompletionClickAcceptsTheClickedRow() {
@@ -6575,6 +6616,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow);
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
+  AddTest(tests, "WorkspaceShell/FindReferencesShowsTheResults",
+          TestWorkspaceShellFindReferencesShowsTheResults);
   AddTest(tests, "WorkspaceShell/CompletionDownEnterAcceptsTheSecondRow",
           TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow);
   AddTest(tests, "WorkspaceShell/CompletionClickAcceptsTheClickedRow",

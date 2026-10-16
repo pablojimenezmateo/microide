@@ -315,6 +315,9 @@ void LspClient::RequestGoToDeclarationAsync(std::string uri, Position pos,
 void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
                                            bool include_declaration, LocationCallback callback) {
   using namespace util;
+  if (impl_->DispatchTestStub(impl_->test_handlers.references, callback, std::move(uri), pos)) {
+    return;
+  }
   JsonObject context_obj;
   context_obj["includeDeclaration"] = JsonValue(include_declaration);
   JsonObject params;

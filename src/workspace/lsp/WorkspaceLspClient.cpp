@@ -604,6 +604,12 @@ void LspClient::SetTestPrepareRenameHandler(
   impl_->supports_prepare_rename.store(true, std::memory_order_release);
 }
 
+void LspClient::SetTestReferencesHandler(
+    std::function<void(std::string uri, Position pos, LocationCallback cb)> handler) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->test_handlers.references = std::move(handler);
+}
+
 void LspClient::SetTestWorkspaceSymbolHandler(
     std::function<void(std::string query, WorkspaceSymbolCallback cb)> handler) {
   std::lock_guard lock(impl_->mutex);

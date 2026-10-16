@@ -367,6 +367,17 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
   if (glue_->action_context != nullptr) {
     return *glue_->action_context;
   }
+  // The LSP list results (references, call hierarchy, workspace symbols) fill an
+  // output channel asynchronously; the request shows that channel in the bottom
+  // panel so the answer lands where the user is looking. References forgot to,
+  // so Shift+F12 wrote its results into a channel nobody had open (QA flow
+  // lsp-navigation).
+  const auto show_results_channel = [this](const char* channel_id) {
+    EnsureOutputChannelTabOpen(channel_id);
+    context_.current_project_state.panel.content = PanelContentKind::Output;
+    context_.current_project_state.panel.output.channel_id = channel_id;
+    RequestBottomPanelRedraw();
+  };
   // Builds a fresh review coordinator per verb invocation; it owns no shell
   // access beyond these narrow callbacks (host-owned sidebar + tab lifecycle).
   const auto make_review = [this]() {
@@ -613,30 +624,26 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 return assist_service_.GoToLspDeclaration(error_message);
               },
           .find_lsp_references =
-              [this](std::string* error_message) {
-                return assist_service_.FindLspReferences(error_message);
+              [this, show_results_channel](std::string* error_message) {
+                const bool ok = assist_service_.FindLspReferences(error_message);
+                if (ok) {
+                  show_results_channel("lsp.references");
+                }
+                return ok;
               },
           .show_call_hierarchy =
-              [this](bool incoming, std::string* error_message) {
+              [this, show_results_channel](bool incoming, std::string* error_message) {
                 const bool ok = assist_service_.ShowCallHierarchy(incoming, error_message);
                 if (ok) {
-                  // Surface the results channel in the bottom panel (it fills async).
-                  EnsureOutputChannelTabOpen("lsp.callHierarchy");
-                  context_.current_project_state.panel.content = PanelContentKind::Output;
-                  context_.current_project_state.panel.output.channel_id = "lsp.callHierarchy";
-                  RequestBottomPanelRedraw();
+                  show_results_channel("lsp.callHierarchy");
                 }
                 return ok;
               },
           .show_workspace_symbols =
-              [this](const std::string& query, std::string* error_message) {
+              [this, show_results_channel](const std::string& query, std::string* error_message) {
                 const bool ok = assist_service_.ShowWorkspaceSymbols(query, error_message);
                 if (ok) {
-                  // Surface the results channel in the bottom panel (it fills async).
-                  EnsureOutputChannelTabOpen("lsp.workspaceSymbols");
-                  context_.current_project_state.panel.content = PanelContentKind::Output;
-                  context_.current_project_state.panel.output.channel_id = "lsp.workspaceSymbols";
-                  RequestBottomPanelRedraw();
+                  show_results_channel("lsp.workspaceSymbols");
                 }
                 return ok;
               },

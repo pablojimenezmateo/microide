@@ -117,6 +117,7 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     std::function<void(std::string, Position, SignatureHelpCallback)> signature_help;
     std::function<void(std::string, Position, PrepareRenameCallback)> prepare_rename;
     std::function<void(std::string, WorkspaceSymbolCallback)> workspace_symbol;
+    std::function<void(std::string, Position, LocationCallback)> references;
     std::function<void(std::string, Range, InlayHintCallback)> inlay_hint;
     std::function<void(std::string, Position, DocumentHighlightCallback)> document_highlight;
     std::function<void(std::string, CodeLensCallback)> code_lens;
