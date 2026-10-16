@@ -988,6 +988,16 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = editor_event_delay_ms;
     }
   }
+  // Search as you type: wake when the search view's debounce passes.
+  if (const std::uint64_t due =
+          context_.current_project_state.overlay.workflow.project_search.search_on_type_due_ms;
+      due != 0) {
+    const std::uint64_t now = SDL_GetTicks();
+    const Uint32 delay = due > now ? static_cast<Uint32>(due - now) : 0;
+    if (!next_delay.has_value() || delay < *next_delay) {
+      next_delay = delay;
+    }
+  }
   // "After delay" autosave wakes the loop near the debounce deadline so a settled
   // dirty buffer is written without any input to drive the save.
   if (const auto autosave_delay = NextAutosaveDelayMs(); autosave_delay.has_value()) {
@@ -1223,6 +1233,17 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       (SDL_GetTicks() - session_flush_edit_epoch_ms_) >= kSessionFlushDebounceMs) {
     session_flush_armed_ = false;
     FlushSessionStateForCrashSafety();
+  }
+  // Search as you type: run the search on the text in the field being edited once
+  // the typing pauses. The field stays open; Enter still commits it.
+  if (ProjectSearchState& search = context_.current_project_state.overlay.workflow.project_search;
+      search.search_on_type_due_ms != 0 && SDL_GetTicks() >= search.search_on_type_due_ms) {
+    search.search_on_type_due_ms = 0;
+    if (search.editing && search.edit_field != ProjectSearchEditField::Replace) {
+      ProjectSearchFieldEditor(search, search.edit_field).SetText(search.edit_buffer.text());
+      RefreshProjectSearch();
+      RequestSidebarRedraw();
+    }
   }
   // "After delay" autosave fires once the debounce elapses. Disarm before saving so a
   // clean/manually-saved buffer does not busy-loop the wake; the save clears the dirty

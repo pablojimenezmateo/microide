@@ -237,9 +237,17 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       operations_.request_overlay_redraw();
       break;
     case TextInputSurface::SidebarSearchQuery:
-    case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::SidebarSearchInclude:
     case TextInputSurface::SidebarSearchExclude:
+      // The search view searches as you type, after a pause (ProjectSearchState::
+      // search_on_type_due_ms); the replace field only feeds a later Replace All.
+      if (text_changed) {
+        state_.overlay.workflow.project_search.search_on_type_due_ms =
+            SDL_GetTicks() + ProjectSearchState::kSearchOnTypeDebounceMs;
+      }
+      operations_.request_sidebar_redraw();
+      break;
+    case TextInputSurface::SidebarSearchReplace:
     case TextInputSurface::CommitSubject:
     case TextInputSurface::CommitBody:
       // Typing in the commit subject/body only repaints the sidebar; the (heavier)

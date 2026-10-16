@@ -247,6 +247,12 @@ struct ProjectSearchState {
   // Whether the include/exclude fields are shown. Collapsed by default so the
   // result list keeps its vertical space until the user asks for scoping.
   bool scope_expanded = false;
+  // Search as you type (VS Code's search.searchOnType): an edit to the query or a
+  // scope glob arms this deadline (SDL ticks), and the shell's scheduled wake runs
+  // the search on the text being typed once it passes -- so a pause, not Enter,
+  // shows results. 0 = nothing pending.
+  static constexpr std::uint64_t kSearchOnTypeDebounceMs = 300;
+  std::uint64_t search_on_type_due_ms = 0;
   std::vector<project::ProjectSearchResult> results;
   // Monotonic revision of `results`, bumped by every mutation (clear on a new run /
   // overlay close, append+sort in ConsumeProjectSearchUpdates). The grouped sidebar

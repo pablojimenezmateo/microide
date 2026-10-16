@@ -1079,6 +1079,40 @@ void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
          "replace-all must not rewrite a file the scope excluded");
 }
 
+// The search view searches as you type, after a short pause (VS Code's
+// search.searchOnType): typing a query and waiting showed nothing until Enter.
+void TestWorkspaceShellProjectSearchSearchesOnType() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", false);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_SLASH));  // edit the query field
+  (void)shell.HandleEvent(TextInputEvent("beta"));
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).empty(),
+         "nothing should run while the typing has not paused");
+  const bool searched = WaitUntil(
+      [&]() {
+        (void)shell.HandleScheduledWake();
+        WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell);
+        return WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1;
+      },
+      std::chrono::seconds(3), std::chrono::milliseconds(20));
+  Expect(searched, "a pause after typing should run the search on the typed text");
+  bool still_editing = false;
+  const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+  for (const util::JsonValue& element : ui["elements"].AsArray()) {
+    if (element["name"].AsString() == "field:search/query") {
+      still_editing = element["active"].AsBool() && element["label"].AsString() == "beta";
+    }
+  }
+  Expect(still_editing, "and the query field stays open for more typing");
+}
+
 // Replace All rewrites files the user has not opened, and an empty replacement
 // deletes every match, so it confirms first with the counts (VS Code's "Replace
 // N occurrences across M files"). Shift+R in the results list used to run it on
@@ -1567,6 +1601,7 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields);
   AddTest(tests, "WorkspaceShell/ProjectSearchScopeGlobsRerunAndRestrictResults",
           TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults);
+  AddTest(tests, "WorkspaceShell/ProjectSearchSearchesOnType", TestWorkspaceShellProjectSearchSearchesOnType);
   AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllConfirmsFirst",
           TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst);
   AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllHonorsScopeGlobs",
