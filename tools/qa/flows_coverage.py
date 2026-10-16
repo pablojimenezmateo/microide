@@ -400,6 +400,39 @@ def flow_compare_clipboard(app: q.App) -> None:
         app.expect(isinstance(tabs, list) and len(tabs) == tabs_before + 1, "one compare tab was added")
 
 
+# ---- tabs ------------------------------------------------------------------
+
+
+def flow_reopen_closed_editor(app: q.App) -> None:
+    """Close two tabs (by Ctrl+W and by the tab's close button); Ctrl+Shift+T
+    reopens the newest first with its caret where it was, then the other; the File
+    menu offers it while there is something to reopen."""
+    open_file(app, "notes/one.txt", "one\ntwo\nthree\n")
+    open_file(app, "notes/two.txt", "alpha\nbeta\ngamma\n")
+    app.click_text(2, 3)
+    app.key("ctrl+w")
+    step(app, "ctrl+w two.txt", 0.3)
+    close = next((e for e in app.elements("button", prefix="button:close-tab/") if "one.txt" in e["name"]), None)
+    app.expect(close is not None, "one.txt has a close button")
+    if close:
+        app.click(*app.center(close))
+        step(app, "close one.txt by its button", 0.3)
+    app.key("ctrl+shift+t")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "one.txt", 3.0,
+                   "Ctrl+Shift+T to reopen one.txt, the last closed")
+    app.key("ctrl+shift+t")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "two.txt", 3.0,
+                   "a second Ctrl+Shift+T to reopen two.txt")
+    step(app, "reopened", 0.3)
+    app.expect(app.cursors() == [(2, 3)], f"two.txt reopens with its caret where it was ({app.cursors()})")
+    app.click_named("menu:File")
+    step(app, "File menu", 0.3)
+    row = next((e for e in app.elements("menu-item") if e["name"] == "menu-item:File/Reopen Closed Editor"), None)
+    app.expect(row is not None and row.get("enabled") is False,
+               f"with nothing left to reopen, File > Reopen Closed Editor is disabled ({row})")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "edit-transforms": flow_edit_transforms,
     "save-transforms": flow_save_transforms,
@@ -408,6 +441,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "git-branches": flow_git_branches,
     "lsp-more": flow_lsp_more,
     "compare-clipboard": flow_compare_clipboard,
+    "tab-reopen": flow_reopen_closed_editor,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
