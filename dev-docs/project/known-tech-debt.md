@@ -438,6 +438,33 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-16-346 — a terminal tab's close button lit up after a press that closed a menu, with no repaint. [OPEN — not reproduced in-process]
+
+Found by the QA monkey (`tools/qa/run.py monkey --seed 12 --steps 300`, finding 1 at
+step 11). With the Git menu open, a press on the third terminal tab (212,737) closed
+the menu, the held motion went to (135,737) -- over the second tab's close button --
+and the button released there. Every frame after that, including the caret-blink
+partials, kept the close glyph unlit while a full render lights it (`QA-STALE
+... bbox=153,734,7,7`): its hover changed and nothing repainted it.
+
+The whole seed is eleven actions:
+
+```
+click 144,248 · click 130,73 ×2 · double-click 1399,736 · `insert-snippet README.md`
+· click 102,12 (Edit) · click 254,466 · click 288,12 (Git) · key ctrl+Next
+· drag 212,737 -> 135,737
+```
+
+It did not reproduce when replayed step by step (`run.py replay` with pauses), nor
+in-process with a menu open, a press that closes it, held motion onto a terminal
+tab's close button and a release (the test written for it passed with and without
+a candidate fix, so it was not landed). The likely gap: frame prep's hover tracker
+(`HoveredInteractiveRect`) names a strip tab's WHOLE rect for both its body and its
+close button, so a hover that moves from one to the other with no repaint of its
+own -- here, motion the menu capture swallowed -- is invisible to it. Reporting the
+close button as its own element (and nothing on a strip while a tab drag is live,
+as paint does) would close that; land it with a test that fails first.
+
 ### TD-2026-10-16-345 — blame results become visible on the worker thread, not when their wake is handled. [RESOLVED 2026-10-16]
 
 Fixed as proposed. The worker no longer writes blame lines anywhere `Snapshot`
