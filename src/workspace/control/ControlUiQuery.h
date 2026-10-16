@@ -83,6 +83,8 @@ class ControlUiQuery {
     std::function<std::optional<WorkspaceLayout>()> layout;
     // The display label of a menu (`Edit`), for the menu state block.
     std::function<std::string(MenuId)> menu_label;
+    // `<menu>/<label>` of a menu's row, the locator its `menu-item:` element uses.
+    std::function<std::string(MenuId, std::size_t)> menu_row_locator;
     // The modal that owns the keyboard and pointer, if any: `settings`, `help`,
     // `prompt` (a confirm/input prompt) or `unsaved-prompt`; empty for none.
     std::function<std::string()> modal;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "util/PerformanceTrace.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/shell/WorkspaceShell.h"
@@ -141,6 +142,17 @@ bool MenuCoordinator::ExecuteMenuItem(MenuId menu_id, std::size_t item_index) {
       return true;
     }
     CloseSubmenu();
+    return true;
+  }
+
+  menu_state_.last_run_menu_id = menu_id;
+  menu_state_.last_run_item_index = item_index;
+  ++menu_state_.rows_run;
+  // tools/qa clicks every row of every menu to check each click reaches its row;
+  // running them would quit, close the project and open native pickers.
+  static const bool qa_dry_run = util::PerformanceTrace::FlagEnabled("MICROIDE_QA_MENU_DRY_RUN");
+  if (qa_dry_run) {
+    CloseMenuBar();
     return true;
   }
 

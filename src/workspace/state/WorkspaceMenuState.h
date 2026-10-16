@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 
@@ -44,6 +45,13 @@ struct MenuSurfaceState {
   // so the pointer and the keyboard can never highlight two different rows.
   int overflow_popup_active_index = -1;
   TreeContextMenuState tree_context_menu;
+  // The row a click or Enter last ran, and how many rows have run: the `ui`
+  // query's receipt. A press meant for a row can be taken by a surface beneath
+  // the menu (the sidebar's view buttons were), and then nothing on screen says
+  // which handler had it; a driver compares this with the row it aimed at.
+  MenuId last_run_menu_id = MenuId::None;
+  std::size_t last_run_item_index = 0;
+  std::uint64_t rows_run = 0;
 };
 
 // The overflow popup's three fields move together. Four call sites used to reset

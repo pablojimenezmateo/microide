@@ -321,6 +321,18 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const MenuSpec* spec = FindMenuSpec(id);
             return spec == nullptr ? std::string{} : std::string(spec->label);
           },
+      .menu_row_locator =
+          [this](MenuId id, std::size_t index) {
+            const MenuSpec* spec = FindMenuSpec(id);
+            std::string locator =
+                spec == nullptr || spec->label.empty() ? std::string("menu") : std::string(spec->label);
+            const auto items = MenuItems(id);
+            locator += '/';
+            if (index < items.size()) {
+              locator += MenuItemLabel(items[index]);
+            }
+            return locator;
+          },
       .modal =
           [this]() -> std::string {
             if (context_.prompts.dirty_visible) {

@@ -137,6 +137,11 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   menu["submenu"] = OptionalStringJson(menus.menu_bar_open ? menu_label(menus.active_submenu_id) : "");
   menu["contextMenu"] = util::JsonValue(menus.tree_context_menu.open);
   menu["overflow"] = util::JsonValue(menus.overflow_popup_open);
+  menu["rowsRun"] = util::JsonValue(static_cast<std::int64_t>(menus.rows_run));
+  menu["lastRun"] = OptionalStringJson(
+      menus.rows_run == 0 || !operations.menu_row_locator
+          ? std::string{}
+          : operations.menu_row_locator(menus.last_run_menu_id, menus.last_run_item_index));
   object["menu"] = util::JsonValue(std::move(menu));
 
   util::JsonObject panel;

@@ -172,7 +172,7 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 
 **What is on screen (`ui`).** The locator surface for automation (`tools/qa`):
 `{window:{width,height}, focus, modal, sidebar:{visible,view,temporary},
-overlay:{visible,mode}, menu:{open,menu,activeItem,submenu,contextMenu,overflow},
+overlay:{visible,mode}, menu:{open,menu,activeItem,submenu,contextMenu,overflow,rowsRun,lastRun},
 panel:{visible,content,maximized}, surfaces:{menuBar,projectTabStrip,tabStrip,
 breadcrumb,editorSurface,sidebar,rightPane,bottomPanel,statusBar}, elements:[...]}`.
 `modal` names the surface that owns the keyboard and pointer (`settings`, `help`,
@@ -191,6 +191,15 @@ selected?}` in window coordinates (what mouse events use). Names, by kind:
 | `status:<segment>` | a status-bar segment (`project`, `branch`, `language`, `indent`, `encoding`, `line-column`, `problems`, `lsp`, `layout-mode`, `remote`) |
 | `button:<surface>/<label>` | `window/{minimize,maximize,close}`, `close-tab/<group>/<title>`, `sidebar/{more,Collapse,Refresh}`, `panel/{new-terminal,maximize}`, `banner/<label>`, `banner/dismiss`, `notification/<label>` |
 | `divider:<which>` | `sidebar`, `panel`, `right-pane` resize handles; `editor/<n>` split dividers |
+
+`menu.lastRun` is the receipt for a menu row: the `<menu>/<label>` locator (the
+`menu-item:` element's name without its kind) of the row a click or Enter last
+ran, and `menu.rowsRun` counts the rows run since startup. A driver that clicks
+`menu-item:File/Save` checks that `rowsRun` went up by one and `lastRun` is
+`File/Save`: a press taken by a surface beneath the menu shows as no run, or as
+another row's. With `MICROIDE_QA_MENU_DRY_RUN=1` at startup a row records its run
+and closes the menu without running its action, so a sweep can click every row
+(Quit and Close Project included); `tools/qa`'s `menu-clicks` scenario does.
 
 A name shared by two elements gets `#2`, `#3`, ... on the later ones in visual
 order, so a name resolves to one element. Every rect comes from the geometry the
