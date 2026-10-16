@@ -52,11 +52,16 @@ void SidebarCoordinator::ShowMode(SidebarMode mode, bool temporary) {
     operations_.stop_project_search();
   }
 
-  if (temporary) {
-    if (!state_.sidebar.temporary && state_.sidebar.visible) {
-      state_.sidebar.prev_view_id = state_.sidebar.view_id;
-    }
-  } else {
+  // "Temporary" is a peek: a sidebar that was HIDDEN opens for one pick (a search
+  // hit, a problem) and goes away again after it, or on Escape. A sidebar the user
+  // already has open is a different case: Ctrl+Shift+F there switches it to the
+  // search view for good, as VS Code does. Treating that as a peek too restored
+  // the tree the moment a result opened, so the result list was gone after the
+  // first hit (QA flow wb-project-search).
+  if (temporary && state_.sidebar.visible && !state_.sidebar.temporary) {
+    temporary = false;
+  }
+  if (!temporary) {
     state_.sidebar.prev_view_id.clear();
   }
 

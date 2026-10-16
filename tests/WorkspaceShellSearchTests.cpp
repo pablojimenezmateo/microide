@@ -1079,6 +1079,28 @@ void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
          "replace-all must not rewrite a file the scope excluded");
 }
 
+// Ctrl+Shift+F on a visible sidebar switches it to the search view for good:
+// opening a result keeps the results on screen (VS Code). It used to be a
+// "temporary" peek that restored the tree on the first open, so the result list
+// was gone after one hit. Over a hidden sidebar it is still a peek (Escape closes).
+void TestWorkspaceShellSearchViewStaysAfterOpeningAResult() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\nalpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", /*temporary=*/true);
+  WaitForProjectSearch(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_RETURN));
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == microide::workspace::SidebarMode::Search,
+         "opening a result should keep the search view the user switched to");
+
+}
+
 // The search view searches as you type, after a short pause (VS Code's
 // search.searchOnType): typing a query and waiting showed nothing until Enter.
 void TestWorkspaceShellProjectSearchSearchesOnType() {
@@ -1235,6 +1257,9 @@ void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // A peek: the search panel opens over a HIDDEN sidebar (on a visible one,
+  // Ctrl+Shift+F switches the view for good, as VS Code does).
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "sidebar-hide"), "sidebar-hide should run");
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "", /*temporary=*/true);
   Expect(WorkspaceShellTestAccess::SidebarVisible(shell), "the search sidebar should be open");
   Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
@@ -1247,8 +1272,7 @@ void TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing() {
          "the first Escape should leave the panel open");
 
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "the second Escape should be handled");
-  Expect(WorkspaceShellTestAccess::SidebarMode(shell) !=
-             microide::workspace::SidebarMode::Search,
+  Expect(!WorkspaceShellTestAccess::SidebarVisible(shell),
          "the second Escape should dismiss the temporary search panel");
 }
 
@@ -1602,6 +1626,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ProjectSearchScopeGlobsRerunAndRestrictResults",
           TestWorkspaceShellProjectSearchScopeGlobsRerunAndRestrictResults);
   AddTest(tests, "WorkspaceShell/ProjectSearchSearchesOnType", TestWorkspaceShellProjectSearchSearchesOnType);
+  AddTest(tests, "WorkspaceShell/SearchViewStaysAfterOpeningAResult",
+          TestWorkspaceShellSearchViewStaysAfterOpeningAResult);
   AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllConfirmsFirst",
           TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst);
   AddTest(tests, "WorkspaceShell/ProjectSearchReplaceAllHonorsScopeGlobs",
