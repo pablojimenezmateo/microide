@@ -555,7 +555,8 @@ check_perf_gate() {
   return $rc
 }
 
-# GUI QA lane (tools/qa): build the app, run the local scenario suite and a
+# GUI QA lane (tools/qa): build the app, run the local scenario suite (in
+# parallel, MICROIDE_QA_JOBS at a time) and a
 # 300-step monkey (seed 1) on private Xvfb displays with the redraw verifier and
 # the frame trace on. Any finding fails the lane; its directory (frames, trace,
 # screenshots, replay.json) is named in the log. A missing Xvfb/xdotool/xwd fails
@@ -565,6 +566,9 @@ check_qa() {
   local log="${LOG_DIR}/microide-qa.log"
   local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-out}"
   local steps="${MICROIDE_QA_MONKEY_STEPS:-300}"
+  # Scenarios run in parallel, each on its own Xvfb, fixture and XDG tree; the
+  # LSP/debugger flows need clangd and gdb (MQA_ALLOW_MISSING_TOOLS=1 to skip them).
+  local qa_jobs="${MICROIDE_QA_JOBS:-$(( JOBS < 8 ? JOBS : 8 ))}"
   run_logged "$log" bash -c '
     set -e
     for tool in Xvfb xdotool xwd xdpyinfo; do
@@ -577,7 +581,7 @@ check_qa() {
     cmake -S . -B build >/dev/null
     cmake --build build --target microide -j'"$JOBS"'
     status=0
-    python3 tools/qa/run.py --out '"$out"'/suite suite || status=1
+    python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' || status=1
     python3 tools/qa/run.py --out '"$out"'/monkey monkey --seed 1 --steps '"$steps"' || status=1
     exit $status
   '
