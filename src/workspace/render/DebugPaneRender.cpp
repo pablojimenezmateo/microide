@@ -32,12 +32,10 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
 
   util::PerformanceTrace::Scope pane_scope("WorkspaceShell::RenderDebugPane");
 
-  // Pane background + a 1px divider on the left edge (where it meets the editor).
+  // Pane background. Its left divider is the frame base's, as the sidebar's and
+  // the panel's are: drawn here, outside `right_pane`, it was lost whenever a clip
+  // touched only that column (the editor's edge) and this pass was skipped.
   DrawFilledRect(renderer, layout.right_pane, theme_.surface_background);
-  DrawFilledRect(renderer,
-                 MakeRect(layout.right_pane.x - kWorkspaceDividerThickness, layout.right_pane.y,
-                          kWorkspaceDividerThickness, layout.right_pane.h),
-                 theme_.border);
 
   // Mode-row button switcher (Call Stack / Variables / Watch / Breakpoints).
   const auto draw_mode_glyph = [&](DebugPaneMode mode, const SDL_FRect& icon_rect,

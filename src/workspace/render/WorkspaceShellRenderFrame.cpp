@@ -920,6 +920,14 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
                    theme_.border);
   }
 
+  // The right (debug) pane's divider: the layout zeroes the pane when it is hidden.
+  if (layout.right_pane.w > 0.0f && layout.right_pane.h > 0.0f) {
+    DrawFilledRect(renderer,
+                   MakeRect(layout.right_pane.x - kWorkspaceDividerThickness, layout.right_pane.y,
+                            kWorkspaceDividerThickness, layout.right_pane.h),
+                   theme_.border);
+  }
+
   if (frame_vm.bottom_panel_visible) {
     DrawFilledRect(renderer, layout.bottom_panel, theme_.surface_background);
     DrawFilledRect(renderer,

@@ -2936,6 +2936,51 @@ void TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches() {
   step("the completion list replacing find", shell.ConsumePendingRenderInvalidation());
 }
 
+// The debug pane's divider belongs to the frame base, like the sidebar's and the
+// panel's. Drawn by the pane's own pass, it lay outside the pane's rect, so a
+// repaint that touched only the editor's last column (an editor row redraw)
+// skipped that pass and left the frame base's background in it (QA monkey seed
+// 13: a 1-px gap in the divider).
+void TestWorkspaceShellAnEditorRepaintKeepsTheDebugPaneDivider() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int alpha = 1;\n");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "debug.enabled", "true"),
+         "the debug pane needs the debugger on");
+  WorkspaceShellTestAccess::SetDebugPaneVisible(shell, true);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(layout.right_pane.w > 0.0f, "the debug pane should be laid out");
+  // A redraw whose clip -- grown by the partial-redraw padding -- ends exactly on
+  // the divider column, as the monkey's editor-row repaint did.
+  const float divider_x = layout.right_pane.x - 1.0f;
+  const float right_padding = shell.PartialRedrawClipPadding().right;
+  microide::workspace::RenderInvalidation redraw;
+  redraw.rects.push_back(microide::workspace::MakeRect(
+      layout.editor_area.x + 40.0f, layout.editor_area.y + 40.0f,
+      divider_x + 1.0f - right_padding - (layout.editor_area.x + 40.0f), 60.0f));
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin_caret);
+  Expect(diff.identical(),
+         "an editor-width repaint should paint what a full repaint paints; " + DescribePixelDiff(diff));
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5731,6 +5776,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsFilterTextStaysInItsBar);
   AddTest(tests, "WorkspaceShell/ReplacingTheFindWidgetRepaintsItsMatches",
           TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches);
+  AddTest(tests, "WorkspaceShell/AnEditorRepaintKeepsTheDebugPaneDivider",
+          TestWorkspaceShellAnEditorRepaintKeepsTheDebugPaneDivider);
   AddTest(tests, "WorkspaceShell/ClosingSettingsOverTheFindWidgetRepaintsItsArea",
           TestWorkspaceShellClosingSettingsOverTheFindWidgetRepaintsItsArea);
   AddTest(tests, "WorkspaceShell/DroppingAPanelTabClearsItsGhost",
