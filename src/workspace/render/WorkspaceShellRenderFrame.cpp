@@ -693,6 +693,27 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_project_strip_version = version;
     }
   }
+  // The overlay card's extent (see PreparedFrameState::painted_overlay_rect).
+  {
+    std::optional<SDL_FRect> overlay_rect;
+    if (project_state.overlay.visible) {
+      overlay_rect = ComputeOverlayRect(layout.overlay_anchor);
+    }
+    const auto& painted = frame_state_.painted_overlay_rect;
+    const auto same = [](const SDL_FRect& a, const SDL_FRect& b) {
+      return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+    };
+    if (painted.has_value() != overlay_rect.has_value() ||
+        (painted.has_value() && !same(*painted, *overlay_rect))) {
+      if (painted.has_value()) {
+        RequestRedrawRect(*painted);
+      }
+      if (overlay_rect.has_value()) {
+        RequestRedrawRect(*overlay_rect);
+      }
+      frame_state_.painted_overlay_rect = overlay_rect;
+    }
+  }
   // The editor tabs' dirty markers: repaint the strips when the set of dirty tabs
   // moved, whatever path moved it (see PreparedFrameState).
   {

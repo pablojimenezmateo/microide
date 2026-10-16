@@ -26,6 +26,8 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "support/RetainedRedraw.h"
+#include "support/SoftwareCanvas.h"
 
 namespace microide::tests {
 namespace {
@@ -2413,6 +2415,48 @@ bool CompletionListUp(const WorkspaceShell& shell) {
   return WorkspaceShellTestAccess::OverlayVisible(shell) &&
          WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
              WorkspaceShell::OverlayMode::Completion;
+}
+
+// QA flow lsp-completion: typing into an open completion list narrows it, and
+// the popup shrinks -- but only its new, smaller rect was repainted, so the rows
+// it no longer covered stayed on screen until something else repainted them.
+void TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  WithMarkdownCompletionServer(
+      "x = \n", 0, 4,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback cb) {
+        std::vector<workspace::LspClient::CompletionItem> items;
+        for (const char* label : {"alpha_one", "alpha_two", "beta_one", "beta_two", "gamma_one",
+                                  "gamma_two", "delta"}) {
+          items.push_back(PlainCompletionItem(label));
+        }
+        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport&) {
+        constexpr int kWidth = 1280;
+        constexpr int kHeight = 720;
+        EnsureDummySdlVideoInitialized();
+        WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        SoftwareCanvas canvas(kWidth, kHeight);
+        const auto pin = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "completion should run");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        Expect(CompletionListUp(shell), "the completion list should be up");
+        pin();
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+        for (const char* typed : {"a", "l"}) {
+          const auto diff = PaintAndDiffWithFullRepaint(
+              shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent(typed)}), pin);
+          Expect(diff.identical(), std::string("typing '") + typed +
+                                       "' into the completion list should paint what a full "
+                                       "repaint paints; " + DescribePixelDiff(diff));
+        }
+      });
 }
 
 // TD-2026-10-07-320. Typing into an open completion list goes to the editor and
@@ -6458,6 +6502,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow);
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
+  AddTest(tests, "WorkspaceShell/CompletionPopupShrinkRepaintsWhatItLeft",
+          TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft);
   AddTest(tests, "WorkspaceShell/CompletionReRequestsOnlyWhileIncomplete",
           TestWorkspaceShellCompletionReRequestsOnlyWhileIncomplete);
   AddTest(tests, "WorkspaceShell/CompletionAcceptAfterTypingReplacesTheTypedWord",

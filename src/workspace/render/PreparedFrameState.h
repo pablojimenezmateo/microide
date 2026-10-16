@@ -84,6 +84,11 @@ struct PreparedFrameState {
   // to have to remember to repaint the tab strip; the ones that forgot left the
   // tab's close button where its dirty dot belonged.
   std::uint64_t painted_editor_tab_dirty = 0;
+  // Where the overlay card was painted. An overlay that shrinks or moves while it
+  // is up -- the completion list narrowing as the user types, a picker whose
+  // result count changed -- repainted only its new rect, leaving the strip it no
+  // longer covers on screen. A moved rect repaints old and new.
+  std::optional<SDL_FRect> painted_overlay_rect;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;
