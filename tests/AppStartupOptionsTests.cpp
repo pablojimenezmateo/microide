@@ -205,6 +205,46 @@ void TestFilePathAtStartupOpensItsDirectoryAndTheFile() {
   Expect(editor.line_count() >= 1 && editor.lines()[0] == "hello", "with its content loaded");
 }
 
+// `microide <project>` opens that project instead of the saved workspace, but
+// with its OWN saved state -- its tabs and its project-scoped settings -- as
+// `code <folder>` reopens the folder's editors. The explicit path used to skip
+// the project's config and session along with the workspace session, so a
+// relaunch came back with only the default tab and none of the project's
+// settings (QA flow session-restore).
+void TestExplicitProjectRestoresItsOwnSession() {
+  TemporaryDirectory temp_dir;
+  ScopedAppHomes homes(temp_dir.path() / "state", temp_dir.path() / "config");
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  WriteFile(project / "a.txt", "alpha\n");
+  WriteFile(project / "b.txt", "beta\n");
+  {
+    WorkspaceShell shell;
+    microide::workspace::WorkspaceStartupOptions options;
+    options.project_path = project;
+    shell.SetStartupOptions(std::move(options));
+    Expect(shell.Initialize(project), "the first launch should open the project");
+    WorkspaceShellTestAccess::OpenFile(shell, project / "a.txt");
+    WorkspaceShellTestAccess::OpenFileInNewTab(shell, project / "b.txt");
+    Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
+           "a project-scoped setting should take");
+    shell.Shutdown();
+  }
+  WorkspaceShell shell;
+  microide::workspace::WorkspaceStartupOptions options;
+  options.project_path = project;
+  shell.SetStartupOptions(std::move(options));
+  Expect(shell.Initialize(project), "the relaunch should open the project");
+  bool has_a = false;
+  bool has_b = false;
+  for (const auto& tab : WorkspaceShellTestAccess::OpenTabs(shell)) {
+    has_a = has_a || tab.path.filename() == "a.txt";
+    has_b = has_b || tab.path.filename() == "b.txt";
+  }
+  Expect(has_a && has_b, "the project's tabs should come back on an explicit launch");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.wrap") == std::optional<std::string>("word"),
+         "and its project-scoped settings");
+}
+
 void TestSafeModeSurfacesStartupState() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -268,6 +308,8 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
           TestDisablePluginsSkipsUserPluginsAndSyntax);
   AddTest(tests, "AppStartupOptions/FilePathAtStartupOpensItsDirectoryAndTheFile",
           TestFilePathAtStartupOpensItsDirectoryAndTheFile);
+  AddTest(tests, "AppStartupOptions/ExplicitProjectRestoresItsOwnSession",
+          TestExplicitProjectRestoresItsOwnSession);
   AddTest(tests, "AppStartupOptions/SafeModeSurfacesStartupState",
           TestSafeModeSurfacesStartupState);
 }

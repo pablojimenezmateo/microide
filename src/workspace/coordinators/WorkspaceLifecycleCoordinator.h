@@ -18,6 +18,11 @@ class LifecycleCoordinator {
     std::function<void()> refresh_available_colorscheme_names;
     std::function<void(bool)> reset_project_scoped_state;
     std::function<bool()> skip_workspace_session_restore;
+    // Whether the project opened at launch restores its own saved state (its
+    // config and its session: tabs, splits, carets). Off in safe mode and with
+    // session.restore_on_launch off -- but NOT for a project named on the command
+    // line, which only replaces the multi-project workspace session.
+    std::function<bool()> restore_project_persistence;
     std::function<bool()> restore_workspace_session;
     std::function<void()> reload_plugins_for_current_project;
     std::function<bool(const std::filesystem::path&, bool, bool)> open_project_tab;

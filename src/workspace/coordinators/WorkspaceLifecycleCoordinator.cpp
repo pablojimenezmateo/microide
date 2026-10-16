@@ -91,7 +91,14 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   }
 
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
-  const bool restore_persistence = !operations_.skip_workspace_session_restore();
+  // `microide <project>` opens THAT project instead of the saved workspace, but
+  // with its own saved config and tabs, as `code <folder>` reopens the folder's
+  // editors. Skipping it here too dropped the project's settings (project-scoped
+  // Word Wrap, tab size, ...) along with its tabs on every explicit launch (QA
+  // flow session-restore).
+  const bool restore_persistence = operations_.restore_project_persistence
+                                       ? operations_.restore_project_persistence()
+                                       : !operations_.skip_workspace_session_restore();
   if (!operations_.open_project_tab(root, restore_persistence, true)) {
     return false;
   }
@@ -316,6 +323,11 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
                 // each suppress session restore on launch.
                 return startup_options_.skip_workspace_session_restore() ||
                        !SettingFlagEnabled(GetSettingValue("session.restore_on_launch"), true);
+              },
+          .restore_project_persistence =
+              [this]() {
+                return !startup_options_.safe_mode &&
+                       SettingFlagEnabled(GetSettingValue("session.restore_on_launch"), true);
               },
           .restore_workspace_session =
               [this]() { return MakePersistenceCoordinator().RestoreWorkspaceSession(); },
