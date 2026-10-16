@@ -540,12 +540,26 @@ class App:
         self._xdotool(*args, chord)
 
     def type(self, text: str) -> None:
+        """Types `text`. A newline is a Return press and a tab a Tab press: xdotool
+        types '\n' as the Linefeed keysym, which no keyboard sends and SDL drops,
+        so a typed command line never ran."""
         self._record({"type": text})
         self._focus()
         args = ["type", "--clearmodifiers", "--delay", "25"]
         if self.window:
             args += ["--window", self.window]
-        self._xdotool(*args, "--", text)
+        chunk = ""
+        for char in text:
+            if char in "\n\t":
+                if chunk:
+                    self._xdotool(*args, "--", chunk)
+                    chunk = ""
+                key_args = ["key", "--clearmodifiers"] + (["--window", self.window] if self.window else [])
+                self._xdotool(*key_args, "Return" if char == "\n" else "Tab")
+            else:
+                chunk += char
+        if chunk:
+            self._xdotool(*args, "--", chunk)
 
     def center(self, element: dict[str, Any]) -> tuple[float, float]:
         x, y, w, h = element["rect"]
