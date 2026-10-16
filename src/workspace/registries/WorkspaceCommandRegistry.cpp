@@ -381,6 +381,16 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Add Cursor Below", "Ctrl+Alt+Down"},
       ActionSpec{ActionId::AddCursorsToLineEnds, "add-cursors-to-line-ends",
                  "add-cursors-to-line-ends", "Add Cursors to Line Ends", "Shift+Alt+I"},
+      // Keyboard column (box) selection: bound to Ctrl+Shift+Alt+arrows, and runnable
+      // by name and from the palette like VS Code's Column Select commands.
+      ActionSpec{ActionId::ColumnSelectUp, "column-select-up", "column-select-up",
+                 "Column Select Up", "Ctrl+Shift+Alt+Up"},
+      ActionSpec{ActionId::ColumnSelectDown, "column-select-down", "column-select-down",
+                 "Column Select Down", "Ctrl+Shift+Alt+Down"},
+      ActionSpec{ActionId::ColumnSelectLeft, "column-select-left", "column-select-left",
+                 "Column Select Left", "Ctrl+Shift+Alt+Left"},
+      ActionSpec{ActionId::ColumnSelectRight, "column-select-right", "column-select-right",
+                 "Column Select Right", "Ctrl+Shift+Alt+Right"},
       ActionSpec{ActionId::Fold, "fold", "fold", "Fold", "Ctrl+Shift+["},
       ActionSpec{ActionId::Unfold, "unfold", "unfold", "Unfold", "Ctrl+Shift+]"},
       ActionSpec{ActionId::FoldAll, "fold-all", "fold-all", "Fold All", "Ctrl+K Ctrl+0"},

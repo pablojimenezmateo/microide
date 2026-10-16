@@ -876,6 +876,10 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `add-cursor-above`
 - `add-cursor-below`
 - `add-cursors-to-line-ends`
+- `column-select-up`
+- `column-select-down`
+- `column-select-left`
+- `column-select-right`
 - `fold`
 - `unfold`
 - `fold-all`
