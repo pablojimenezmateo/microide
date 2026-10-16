@@ -186,6 +186,10 @@ class SidebarCoordinator {
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
 
  private:
+  // Applies a refresh's tree badges and repaints a visible tree when any changed:
+  // the git view's own repaint decisions (an early return when its selection
+  // survives the refresh) say nothing about the tree's rows.
+  void ApplyTreeGitStatuses(project::SharedGitTreeStatusMap statuses);
   const GitSidebarEntry* GitEntry(std::size_t entry_index) const;
   void ReportDisabledGitAction(GitSidebarActionId action, std::size_t entry_index) const;
   void ReportGitOperationFailure(std::string_view verb, const GitSidebarEntry& entry) const;

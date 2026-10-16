@@ -374,13 +374,16 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
 
   // Exactly the key shape the porcelain parser writes: repository-relative,
   // '/'-separated, with the folder badge aggregated onto each ancestor.
-  tree.ApplyGitStatuses(std::make_shared<const microide::project::GitTreeStatusMap>(
+  const auto statuses = std::make_shared<const microide::project::GitTreeStatusMap>(
       microide::project::GitTreeStatusMap{
           {"top.txt", GitFileStatus::Untracked},
           {"src/deep/file.cpp", GitFileStatus::Modified},
           {"src/deep", GitFileStatus::Modified},
           {"src", GitFileStatus::Modified},
-      }));
+      });
+  Expect(tree.ApplyGitStatuses(statuses), "applying badges to clean rows should report a change");
+  // The same map again changes no row, and says so (its caller skips the repaint).
+  Expect(!tree.ApplyGitStatuses(statuses), "re-applying the same badges should report no change");
 
   const auto badge = [&](const std::filesystem::path& path) {
     const TreeEntry* entry = FindEntry(tree, path);
@@ -401,7 +404,7 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
   Expect(tree.has_dirty_files(), "a non-Clean status should mark the tree dirty");
 
   // Clearing the map must clear every badge, not leave the previous sweep's values.
-  tree.ApplyGitStatuses({});
+  Expect(tree.ApplyGitStatuses({}), "clearing the badges should report a change");
   Expect(badge(root / "src" / "deep" / "file.cpp") == GitFileStatus::Clean,
          "an emptied status map should clear existing badges");
 }

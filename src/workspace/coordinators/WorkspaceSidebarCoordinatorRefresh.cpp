@@ -119,6 +119,13 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
 
 }  // namespace
 
+void SidebarCoordinator::ApplyTreeGitStatuses(project::SharedGitTreeStatusMap statuses) {
+  if (state_.directory_tree.ApplyGitStatuses(std::move(statuses)) && state_.sidebar.visible &&
+      ActiveSidebarMode() == SidebarMode::Tree) {
+    operations_.request_sidebar_redraw();
+  }
+}
+
 void SidebarCoordinator::RefreshGit() {
   if (state_.sidebar.git.refreshing &&
       operations_.consume_git_refresh_snapshot != nullptr) {
@@ -130,7 +137,7 @@ void SidebarCoordinator::RefreshGit() {
       return;
     }
     if (pending_snapshot.includes_tree_git_statuses) {
-      state_.directory_tree.ApplyGitStatuses(std::move(pending_snapshot.tree_git_statuses));
+      ApplyTreeGitStatuses(std::move(pending_snapshot.tree_git_statuses));
     }
 
     const std::string previous_path =
@@ -195,7 +202,7 @@ void SidebarCoordinator::RefreshGit() {
     return;
   }
   if (snapshot.includes_tree_git_statuses) {
-    state_.directory_tree.ApplyGitStatuses(std::move(snapshot.tree_git_statuses));
+    ApplyTreeGitStatuses(std::move(snapshot.tree_git_statuses));
   }
 
   ApplyGitRefreshSnapshot(state_.sidebar.git, std::move(snapshot), project_root_);

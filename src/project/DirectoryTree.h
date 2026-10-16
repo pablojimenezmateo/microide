@@ -76,7 +76,10 @@ class DirectoryTree {
   // the built-in defaults; consulted on the next rebuild. Matched entries render
   // grayed (ignored), not hidden.
   void SetExcludeGlobs(std::vector<std::string> globs) { exclude_globs_ = std::move(globs); }
-  void ApplyGitStatuses(SharedGitTreeStatusMap statuses);
+  // Installs the badge map and re-badges every row. Returns whether any row's
+  // badge changed -- a caller that skips the repaint on false must still repaint
+  // on true, whatever else its refresh decided (the rows draw the badges).
+  [[nodiscard]] bool ApplyGitStatuses(SharedGitTreeStatusMap statuses);
   // Files the project lists that are not on disk yet (a remote mirror's first
   // sync): each directory lists its pending children beside its real ones. Rebuilds
   // the rows when the set changed; null or empty clears it.

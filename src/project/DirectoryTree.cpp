@@ -116,14 +116,18 @@ void DirectoryTree::Refresh() {
 }
 
 
-void DirectoryTree::ApplyGitStatuses(SharedGitTreeStatusMap statuses) {
+bool DirectoryTree::ApplyGitStatuses(SharedGitTreeStatusMap statuses) {
   git_statuses_ = std::move(statuses);
   // One scratch buffer for the whole sweep — after the first few entries it is
   // already large enough, so the sweep stops allocating entirely.
   std::string scratch;
+  bool changed = false;
   for (auto& entry : entries_) {
-    entry.git_status = EntryGitStatus(entry.path, scratch);
+    const GitFileStatus status = EntryGitStatus(entry.path, scratch);
+    changed = changed || status != entry.git_status;
+    entry.git_status = status;
   }
+  return changed;
 }
 
 void DirectoryTree::MoveSelection(int delta) {

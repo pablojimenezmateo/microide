@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "WorkspaceShellEventHelpers.h"
+#include "support/GitSidebarWait.h"
 #include "support/MockDapAdapter.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
@@ -396,6 +397,65 @@ void TestDebugSessionRepaintsToolbarAndOutput() {
   fixture.ExpectFresh(stop_damage, "stopping again on the same line (Pause becomes Continue)");
 }
 
+// edit-transforms: saving a new file in a repository repainted the tree's rows but
+// not the git badges the following async status refresh gave them. The refresh
+// returned early whenever the git view's selected entry survived it, and that
+// return repainted the sidebar only when it showed the git view -- so with the
+// file tree up, a badge appeared only when something else repainted its row.
+void TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(root / "b.txt", "b\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the badge fixture", "tree badge repaint fixture");
+  WriteFile(root / "a.txt", "a changed\n");  // the git view's selected entry
+
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{kWidth, kHeight};
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the badge fixture should open");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::OnFramePresented(shell);
+  // A visit to the git view fills its list (a.txt, selected); back on the tree,
+  // later refreshes are status-only and keep that selection.
+  TestAccess::ShowGitSidebar(shell);
+  (void)WaitForGitSidebarEntryCount(shell, 1);
+  TestAccess::ShowTreeSidebar(shell);
+  TestAccess::NoteLayoutInputsChanged(shell);
+  (void)SettleGitSidebarRefresh(shell);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto b_status = [&]() {
+    for (const project::TreeEntry& entry : TestAccess::TreeEntries(shell)) {
+      if (entry.path == (root / "b.txt").lexically_normal()) {
+        return entry.git_status;
+      }
+    }
+    return project::GitFileStatus::Clean;
+  };
+  Expect(b_status() == project::GitFileStatus::Clean, "b.txt should start clean");
+
+  WriteFile(root / "b.txt", "b changed\n");
+  TestAccess::RequestAutomaticGitSidebarRefresh(shell);
+  workspace::RenderInvalidation redraw;
+  (void)WaitUntil([&]() { return b_status() == project::GitFileStatus::Modified; },
+                  kGitSidebarWaitTimeout, std::chrono::milliseconds(10), [&]() {
+                    TestAccess::ConsumeGitSidebarRefresh(shell);
+                    redraw.Merge(shell.ConsumePendingRenderInvalidation());
+                  });
+  Expect(b_status() == project::GitFileStatus::Modified, "the refresh should mark b.txt modified");
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw);
+  Expect(diff.identical(), "the tree should repaint the badge the refresh gave b.txt; " +
+                               DescribePixelDiff(diff));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -407,6 +467,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
+          TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
 }
