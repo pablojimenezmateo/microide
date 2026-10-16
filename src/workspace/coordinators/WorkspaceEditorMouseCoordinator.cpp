@@ -571,6 +571,11 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   operations_.reset_caret_blink();
   state_.surface.focus = FocusTarget::Editor;
   if (ctrl_left_click && operations_.go_to_definition) {
+    // The click moved the caret before asking for the definition, which answers
+    // asynchronously (and may stay in this file): repaint now, or the caret and
+    // its highlights stay where they were until the answer -- or for good when
+    // there is none (QA flow lsp-navigation).
+    operations_.request_focused_editor_redraw();
     operations_.go_to_definition();
     return true;
   }

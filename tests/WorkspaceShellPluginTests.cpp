@@ -2418,6 +2418,51 @@ bool CompletionListUp(const WorkspaceShell& shell) {
              WorkspaceShell::OverlayMode::Completion;
 }
 
+// QA flow lsp-navigation: Ctrl+click places the caret and asks the language
+// server for the definition, which answers asynchronously. It returned before
+// requesting the editor's repaint, so the caret and its line highlight stayed
+// on the old line until the answer came -- or for good when it did not.
+void TestWorkspaceShellCtrlClickRepaintsTheCaretBeforeTheDefinition() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  WithMarkdownCompletionServer(
+      "one\ntwo\nthree\nfour\nfive\n", 0, 0,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        constexpr int kWidth = 1280;
+        constexpr int kHeight = 720;
+        EnsureDummySdlVideoInitialized();
+        WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        SoftwareCanvas canvas(kWidth, kHeight);
+        const auto pin = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+        pin();
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+        const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+        const util::JsonValue& pane = ui["editors"][std::size_t{0}];
+        const float x = static_cast<float>(pane["textX"].AsDouble(0.0)) + 4.0f;
+        float y = 0.0f;
+        for (const util::JsonValue& row : pane["rows"].AsArray()) {
+          if (row["line"].AsInt() == 4) {
+            y = static_cast<float>(row["y"].AsDouble(0.0) + pane["lineHeight"].AsDouble(0.0) / 2.0);
+          }
+        }
+        Expect(y > 0.0f, "line 4 should be on screen");
+        SDL_SetModState(SDL_KMOD_CTRL);
+        const auto redraw = DispatchEvents(shell, {MouseMotionEvent(x, y),
+                                                   MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                                   MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+        SDL_SetModState(SDL_KMOD_NONE);
+        Expect(editor.cursor_line() == 3, "Ctrl+click should place the caret on line 4");
+        const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin);
+        Expect(diff.identical(), "Ctrl+click should repaint the caret before the definition answers; " +
+                                     DescribePixelDiff(diff));
+      });
+}
+
 // QA flow lsp-navigation: Find References (Shift+F12) wrote its results into
 // the lsp.references output channel and showed nothing, so the command looked
 // dead. It shows that channel in the bottom panel, as call hierarchy and
@@ -6668,6 +6713,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompletionNarrowsLocallyWithOneRequestPerWord",
           TestWorkspaceShellCompletionNarrowsLocallyWithOneRequestPerWord);
   AddTest(tests, "WorkspaceShell/HoverCardOpensAboveTheLine", TestWorkspaceShellHoverCardOpensAboveTheLine);
+  AddTest(tests, "WorkspaceShell/CtrlClickRepaintsTheCaretBeforeTheDefinition",
+          TestWorkspaceShellCtrlClickRepaintsTheCaretBeforeTheDefinition);
   AddTest(tests, "WorkspaceShell/FindReferencesShowsTheResults",
           TestWorkspaceShellFindReferencesShowsTheResults);
   AddTest(tests, "WorkspaceShell/CompletionDownEnterAcceptsTheSecondRow",
