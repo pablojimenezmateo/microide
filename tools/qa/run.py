@@ -21,12 +21,16 @@ replay.json) and makes the exit status non-zero. See tools/qa/README.md.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import fnmatch
 import json
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -67,26 +71,71 @@ def report(name: str, app: q.App) -> int:
     return 1
 
 
+def select_scenarios(patterns: list[str]) -> list[str]:
+    """Scenario names matching `patterns` (exact names or fnmatch globs like
+    `edit-*`), in registry order; every scenario when none are given."""
+    if not patterns:
+        return list(s.SCENARIOS)
+    chosen: list[str] = []
+    for pattern in patterns:
+        matches = [name for name in s.SCENARIOS if fnmatch.fnmatchcase(name, pattern)]
+        if not matches:
+            raise SystemExit(f"unknown scenario {pattern!r}; known: {', '.join(s.SCENARIOS)}")
+        chosen += [name for name in matches if name not in chosen]
+    return chosen
+
+
+def run_scenario(name: str, args: argparse.Namespace) -> tuple[str, list[str], int]:
+    """One scenario on its own Xvfb, fixture and XDG tree. Returns its report
+    lines and finding count (threads print nothing themselves)."""
+    project = fixture("taskflow", args.out / "fixtures")
+    env = s.SCENARIO_ENV.get(name, {})
+    started = time.monotonic()
+    with q.App.launch(project=project, binary=args.binary, shots=args.out / name,
+                      extra_env=env) as app:
+        app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env}
+        app.check("start")
+        try:
+            s.SCENARIOS[name](app)
+        except q.QaFailure as failure:
+            app.expect(False, f"{name}: {failure}")
+        except Exception as error:  # a scenario bug is still a finding, not a dead suite
+            app.expect(False, f"{name}: the scenario raised {type(error).__name__}: "
+                              f"{traceback.format_exc(limit=4)}")
+        app.check(f"end of {name}")
+        lines = report_lines(f"{name} ({time.monotonic() - started:.0f}s)", app)
+        return name, lines, len(app.findings)
+
+
+def report_lines(name: str, app: q.App) -> list[str]:
+    if not app.findings:
+        return [f"  ok    {name}"]
+    lines = [f"  FAIL  {name}: {len(app.findings)} finding(s)"]
+    for finding in app.findings[:8]:
+        lines.append(f"        {finding.kind}: {finding.detail[:300]}")
+        if finding.screenshot:
+            lines.append(f"        evidence: {Path(finding.screenshot).parent}")
+    return lines
+
+
 def cmd_suite(args: argparse.Namespace) -> int:
-    names = args.names or list(s.SCENARIOS)
-    unknown = [name for name in names if name not in s.SCENARIOS]
-    if unknown:
-        raise SystemExit(f"unknown scenario(s): {', '.join(unknown)}; known: {', '.join(s.SCENARIOS)}")
+    names = select_scenarios(args.names)
+    if args.list:
+        for name in names:
+            doc = (s.SCENARIOS[name].__doc__ or "").strip().splitlines()
+            print(f"{name:28} {doc[0] if doc else ''}")
+        return 0
+    jobs = max(1, min(args.jobs, len(names)))
+    print(f"suite: {len(names)} scenario(s), {jobs} at a time -> {args.out}", flush=True)
     failures = 0
-    print(f"suite: {len(names)} scenario(s) -> {args.out}")
-    for name in names:
-        project = fixture("taskflow", args.out / "fixtures")
-        env = s.SCENARIO_ENV.get(name, {})
-        with q.App.launch(project=project, binary=args.binary, shots=args.out / name,
-                          extra_env=env) as app:
-            app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env}
-            app.check("start")
-            try:
-                s.SCENARIOS[name](app)
-            except q.QaFailure as failure:
-                app.expect(False, f"{name}: {failure}")
-            app.check(f"end of {name}")
-            failures += report(name, app)
+    lock = threading.Lock()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(run_scenario, name, args) for name in names]
+        for future in concurrent.futures.as_completed(futures):
+            name, lines, found = future.result()
+            with lock:
+                print("\n".join(lines), flush=True)
+            failures += 1 if found else 0
     print(f"suite: {len(names) - failures}/{len(names)} clean")
     return 1 if failures else 0
 
@@ -167,7 +216,10 @@ def main() -> int:
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="mode", required=True)
     suite = sub.add_parser("suite", parents=[common(False)])
-    suite.add_argument("names", nargs="*")
+    suite.add_argument("names", nargs="*", help="scenario names or globs (edit-*)")
+    suite.add_argument("--jobs", "-j", type=int, default=int(os.environ.get("MQA_JOBS", "1")),
+                       help="scenarios run at once, each on its own display (default 1, $MQA_JOBS)")
+    suite.add_argument("--list", action="store_true", help="list the scenarios and exit")
     monkey = sub.add_parser("monkey", parents=[common(False)])
     monkey.add_argument("--seed", type=int, default=1)
     monkey.add_argument("--seeds", help="a range like 1-8 (overrides --seed)")

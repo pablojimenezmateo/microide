@@ -348,6 +348,8 @@ def scenario_scrolling(app: q.App) -> None:
         app.check(f"editor {chord}")
 
 
+import flows_editing  # noqa: E402  (after the chrome scenarios it reuses nothing from)
+
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
     "menu-clicks": scenario_menu_clicks,
@@ -359,6 +361,7 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "split-and-close": scenario_split_and_close,
     "terminal": scenario_terminal,
     "scrolling": scenario_scrolling,
+    **flows_editing.FLOWS,
 }
 
 # Environment a scenario's instance starts with, beyond App.launch's.

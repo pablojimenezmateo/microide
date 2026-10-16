@@ -486,13 +486,7 @@ class App:
               modifiers: tuple[str, ...] = ()) -> None:
         """A press at window (x, y); `modifiers` are xdotool key names held for it
         ("alt", "shift", "ctrl")."""
-        # SDL folds two presses within its double-click time and radius into a
-        # double click (a word selection in the editor), so a separate click right
-        # after another near it waits that window out first.
-        last_time, last_x, last_y = self._last_click
-        if time.monotonic() - last_time < DOUBLE_CLICK_SECONDS and \
-                abs(x - last_x) < DOUBLE_CLICK_RADIUS and abs(y - last_y) < DOUBLE_CLICK_RADIUS:
-            time.sleep(DOUBLE_CLICK_SECONDS - (time.monotonic() - last_time))
+        self._await_click_gap(x, y)
         self._record({"click": [round(x), round(y)], "button": button, "clicks": clicks,
                       "modifiers": list(modifiers)})
         for key in modifiers:
@@ -503,8 +497,18 @@ class App:
             self._xdotool("keyup", key)
         self._last_click = (time.monotonic(), x, y)
 
+    def _await_click_gap(self, x: float, y: float) -> None:
+        """SDL folds two presses within its double-click time and radius into a
+        double click (a word selection in the editor), so a separate press right
+        after another near it waits that window out first."""
+        last_time, last_x, last_y = self._last_click
+        if time.monotonic() - last_time < DOUBLE_CLICK_SECONDS and \
+                abs(x - last_x) < DOUBLE_CLICK_RADIUS and abs(y - last_y) < DOUBLE_CLICK_RADIUS:
+            time.sleep(DOUBLE_CLICK_SECONDS - (time.monotonic() - last_time))
+
     def drag(self, x0: float, y0: float, x1: float, y1: float, steps: int = 8,
              modifiers: tuple[str, ...] = ()) -> None:
+        self._await_click_gap(x0, y0)
         self._record({"drag": [round(x0), round(y0), round(x1), round(y1)],
                       "modifiers": list(modifiers)})
         for key in modifiers:
@@ -518,6 +522,7 @@ class App:
         self._xdotool("mouseup", "1")
         for key in reversed(modifiers):
             self._xdotool("keyup", key)
+        self._last_click = (time.monotonic(), x1, y1)
 
     def wheel(self, x: float, y: float, notches: int) -> None:
         self._record({"wheel": [round(x), round(y)], "notches": notches})
