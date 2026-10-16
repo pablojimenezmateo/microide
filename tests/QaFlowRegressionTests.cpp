@@ -222,6 +222,65 @@ void TestTabDragDropPreviewPaints() {
       "dropping the tab");
 }
 
+// wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
+// menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
+// pointer could reach. A popup that fits neither below nor above its anchor now
+// caps its height at the window and breaks its rows into columns; every row is
+// on screen, and the pointer reaches the last one.
+void TestTallMenusStayInsideTheWindow() {
+  FlowFixture fixture("menu.txt", "menu\n");
+  for (const int height : {720, 480}) {
+    TestAccess::SetWindowSize(fixture.shell, FlowFixture::kWidth, height);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    for (const char* menu : {"menu:Edit", "menu:Debug", "menu:Go"}) {
+      const auto bar_item = fixture.ElementRect(menu);
+      Expect(bar_item.has_value(), std::string(menu) + " should be on the menu bar");
+      if (!bar_item) {
+        continue;
+      }
+      (void)fixture.Click(*bar_item);
+      const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+      std::string last;
+      SDL_FRect last_rect{};
+      std::size_t rows = 0;
+      for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+        if (entry["kind"].AsString() != "menu-item") {
+          continue;
+        }
+        ++rows;
+        const auto& r = entry["rect"].AsArray();
+        const SDL_FRect rect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                             static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+        Expect(rect.y >= 0.0f && rect.y + rect.h <= static_cast<float>(height) && rect.x >= 0.0f &&
+                   rect.x + rect.w <= static_cast<float>(FlowFixture::kWidth),
+               std::string(menu) + " at " + std::to_string(height) + " px: " + entry["name"].AsString() +
+                   " should be inside the window");
+        if (entry["enabled"].IsNull() || entry["enabled"].AsBool()) {
+          last = entry["name"].AsString();
+          last_rect = rect;
+        }
+      }
+      Expect(rows > 0, std::string(menu) + " should list its rows");
+      if (!last.empty()) {
+        // Hovering the last row highlights it: the hit test reaches it.
+        (void)DispatchEvents(fixture.shell, {MouseMotionEvent(last_rect.x + last_rect.w / 2.0f,
+                                                              last_rect.y + last_rect.h / 2.0f)});
+        bool active = false;
+        const util::JsonValue hovered = TestAccess::ControlUi(fixture.shell);
+        for (const util::JsonValue& entry : hovered["elements"].AsArray()) {
+          if (entry["name"].AsString() == last) {
+            active = entry["active"].AsBool();
+          }
+        }
+        Expect(active, std::string(menu) + " at " + std::to_string(height) + " px: hovering " + last +
+                           " should highlight it");
+      }
+      (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+      (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -229,6 +288,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
 }

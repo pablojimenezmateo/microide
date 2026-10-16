@@ -8,6 +8,77 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// Popup rows are laid out from the popup's rect alone, so render, hit-test,
+// keyboard reveal and the `ui` query agree by construction. A popup taller than
+// the window could otherwise give its rows (the Edit menu's 31 at 700 px, the
+// Debug menu's 21 at 480 px) rects below the window edge, where nothing can
+// reach them: ComputePopupMenuRect then caps the height at what fits, and the
+// rows break into further columns, as classic desktop menus do.
+constexpr float kPopupInset = 6.0f;
+constexpr float kPopupColumnGap = 8.0f;
+
+float PopupRowHeight(const MenuItemSpec& item) {
+  return item.separator ? kWorkspaceMenuPopupSeparatorHeight : kWorkspaceMenuPopupItemHeight;
+}
+
+// Calls fn(index, rect) for every row in order, flowing into a new column when a
+// row would pass the popup's bottom inset. The column count is found by the same
+// walk, so the columns split the width evenly.
+template <typename Fn>
+void ForEachPopupRow(std::span<const MenuItemSpec> items, const SDL_FRect& popup, Fn&& fn) {
+  const float top = popup.y + kPopupInset;
+  const float bottom = popup.y + popup.h - kPopupInset;
+  std::size_t columns = 1;
+  {
+    float y = top;
+    for (const MenuItemSpec& item : items) {
+      const float height = PopupRowHeight(item);
+      if (y + height > bottom + 0.5f && y > top) {
+        ++columns;
+        y = top;
+      }
+      y += height;
+    }
+  }
+  const float column_w = std::max(
+      0.0f, (popup.w - kPopupInset * 2.0f - kPopupColumnGap * static_cast<float>(columns - 1)) /
+                static_cast<float>(columns));
+  float x = popup.x + kPopupInset;
+  float y = top;
+  for (std::size_t i = 0; i < items.size(); ++i) {
+    const float height = PopupRowHeight(items[i]);
+    if (y + height > bottom + 0.5f && y > top) {
+      x += column_w + kPopupColumnGap;
+      y = top;
+    }
+    if (!fn(i, SDL_FRect{x, y, column_w, height})) {
+      return;
+    }
+    y += height;
+  }
+}
+
+// How many columns `items` need at a popup height of `height`.
+std::size_t PopupColumnsAtHeight(std::span<const MenuItemSpec> items, float height) {
+  std::size_t columns = 1;
+  float y = 0.0f;
+  const float bottom = height - kPopupInset * 2.0f;
+  for (const MenuItemSpec& item : items) {
+    const float row = PopupRowHeight(item);
+    if (y + row > bottom + 0.5f && y > 0.0f) {
+      ++columns;
+      y = 0.0f;
+    }
+    y += row;
+  }
+  return columns;
+}
+
+}  // namespace
+
+
 std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::TreeContextMenuItems(
     TreeContextTargetKind target) {
   return WorkspaceTreeContextMenuItems(target);
@@ -255,16 +326,25 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
     popup_width_cache_next = (popup_width_cache_next + 1) % popup_width_cache.size();
   }
 
-  float width = raw_width;
-  const float height = total_height;
+  float width = std::max(raw_width, 172.0f);
+  float height = total_height;
+  float y = anchor_rect.y + std::max(0.0f, anchor_rect.h) - 1.0f;
+  const float below = bounds.y + bounds.h - 4.0f - y;
+  const float above = anchor_rect.y + 1.0f - (bounds.y + 4.0f);
+  if (height > below && height <= above) {
+    y = anchor_rect.y - height + 1.0f;  // flip above the anchor
+  } else if (height > below) {
+    // Fits neither way: drop down into what is left and break into columns
+    // (see ForEachPopupRow), wider rather than off the bottom of the window.
+    height = std::max(kWorkspaceMenuPopupItemHeight + kPopupInset * 2.0f, below);
+    const std::size_t columns = PopupColumnsAtHeight(items, height);
+    width = (raw_width - kPopupInset * 2.0f) * static_cast<float>(columns) +
+            kPopupColumnGap * static_cast<float>(columns - 1) + kPopupInset * 2.0f;
+  }
   const float max_width = std::max(172.0f, bounds.w - 8.0f);
   width = std::clamp(width, 172.0f, max_width);
-  float x = std::clamp(anchor_rect.x, bounds.x + 4.0f,
-                       bounds.x + std::max(4.0f, bounds.w - width - 4.0f));
-  float y = anchor_rect.y + std::max(0.0f, anchor_rect.h) - 1.0f;
-  if (y + height > bounds.y + bounds.h - 4.0f) {
-    y = anchor_rect.y - height + 1.0f;
-  }
+  const float x = std::clamp(anchor_rect.x, bounds.x + 4.0f,
+                             bounds.x + std::max(4.0f, bounds.w - width - 4.0f));
   y = std::clamp(y, bounds.y + 4.0f, bounds.y + std::max(4.0f, bounds.h - height - 4.0f));
   return MakeRect(x, y, width, height);
 }
@@ -299,24 +379,15 @@ std::optional<WorkspaceShell::PopupRowGeometry> WorkspaceShell::HitTestPopupRow(
       y < popup_rect.y || y >= popup_rect.y + popup_rect.h) {
     return std::nullopt;
   }
-  const float row_x = popup_rect.x + 6.0f;
-  const float row_w = std::max(0.0f, popup_rect.w - 12.0f);
-  float row_y = popup_rect.y + 6.0f;
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    const float height = items[i].separator ? kWorkspaceMenuPopupSeparatorHeight
-                                             : kWorkspaceMenuPopupItemHeight;
-    if (y < row_y + height) {
-      if (y < row_y || x < row_x || x >= row_x + row_w) {
-        return std::nullopt;
-      }
-      return PopupRowGeometry{
-          .index = i, .rect = MakeRect(row_x, row_y, row_w, height),
-          .separator = items[i].separator,
-      };
+  std::optional<PopupRowGeometry> hit;
+  ForEachPopupRow(items, popup_rect, [&](std::size_t i, const SDL_FRect& rect) {
+    if (Contains(rect, x, y)) {
+      hit = PopupRowGeometry{.index = i, .rect = rect, .separator = items[i].separator};
+      return false;
     }
-    row_y += height;
-  }
-  return std::nullopt;
+    return true;
+  });
+  return hit;
 }
 
 std::optional<SDL_FRect> WorkspaceShell::PopupRowRectByIndex(
@@ -324,16 +395,15 @@ std::optional<SDL_FRect> WorkspaceShell::PopupRowRectByIndex(
   if (index >= items.size()) {
     return std::nullopt;
   }
-  const float row_x = popup_rect.x + 6.0f;
-  const float row_w = std::max(0.0f, popup_rect.w - 12.0f);
-  float row_y = popup_rect.y + 6.0f;
-  for (std::size_t i = 0; i < index; ++i) {
-    row_y += items[i].separator ? kWorkspaceMenuPopupSeparatorHeight
-                                : kWorkspaceMenuPopupItemHeight;
-  }
-  const float height = items[index].separator ? kWorkspaceMenuPopupSeparatorHeight
-                                              : kWorkspaceMenuPopupItemHeight;
-  return MakeRect(row_x, row_y, row_w, height);
+  std::optional<SDL_FRect> found;
+  ForEachPopupRow(items, popup_rect, [&](std::size_t i, const SDL_FRect& rect) {
+    if (i == index) {
+      found = rect;
+      return false;
+    }
+    return true;
+  });
+  return found;
 }
 
 void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(
@@ -346,13 +416,8 @@ void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(
   // One availability for the whole popup: it reads the same shell state for every
   // row, and constructing it per row was 26 std::functions per visible row per frame.
   const ActionAvailability& availability = MakeActionAvailability();
-  float y = popup_rect.y + 6.0f;
-  for (std::size_t i = 0; i < items.size(); ++i) {
+  ForEachPopupRow(items, popup_rect, [&](std::size_t i, const SDL_FRect& rect) {
     const MenuItemSpec& item = items[i];
-    const float height = item.separator ? kWorkspaceMenuPopupSeparatorHeight
-                                        : kWorkspaceMenuPopupItemHeight;
-    const SDL_FRect rect =
-        MakeRect(popup_rect.x + 6.0f, y, std::max(0.0f, popup_rect.w - 12.0f), height);
     out.push_back(VisiblePopupMenuItem{
         .index = i,
         .rect = rect,
@@ -361,8 +426,8 @@ void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(
         .hovered = static_cast<int>(i) == active_item_index,
         .separator = item.separator,
     });
-    y += height;
-  }
+    return true;
+  });
 }
 
 std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisiblePopupMenuItems(
