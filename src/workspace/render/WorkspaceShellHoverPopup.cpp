@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,6 +14,7 @@
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/lsp/LspProtocol.h"
 #include "workspace/lsp/LspViewportPositions.h"
+#include "workspace/HoverTextWrap.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -46,9 +46,11 @@ constexpr float kEditorHoverPopupHoverMargin = 4.0f;
 constexpr float kEditorHoverPopupLineGap = 2.0f;
 constexpr float kEditorHoverPopupSectionGap = 8.0f;
 constexpr std::size_t kEditorHoverPopupMaxSummaryLines = 4;
-constexpr std::size_t kEditorHoverPopupMaxDiagnosticLines = 6;
+// Line caps count the text's own lines now (HoverTextWrap keeps them), not one
+// run-on paragraph wrapped, so they leave room for a structured hover.
+constexpr std::size_t kEditorHoverPopupMaxDiagnosticLines = 10;
 constexpr std::size_t kEditorHoverPopupMaxPluginTitleLines = 2;
-constexpr std::size_t kEditorHoverPopupMaxPluginContentLines = 6;
+constexpr std::size_t kEditorHoverPopupMaxPluginContentLines = 12;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingX = 12.0f;
 constexpr float kEditorHoverPopupPrimaryActionHitPaddingY = 6.0f;
 // Shortcut shown next to the diagnostic "Quick Fix" button (matches ActionId::CodeActions).
@@ -64,28 +66,6 @@ SDL_FRect HoverPopupHoverZoneRect(const SDL_FRect& anchor_rect, const SDL_FRect&
       std::max(anchor_rect.y + anchor_rect.h, popup_rect.y + popup_rect.h) +
       kEditorHoverPopupHoverMargin;
   return MakeRect(left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top));
-}
-
-std::string NormalizeHoverPopupText(std::string_view text) {
-  std::string normalized;
-  normalized.reserve(text.size());
-  bool last_was_space = true;
-  for (char c : text) {
-    const bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    if (space) {
-      if (!last_was_space) {
-        normalized.push_back(' ');
-      }
-      last_was_space = true;
-      continue;
-    }
-    normalized.push_back(c);
-    last_was_space = false;
-  }
-  while (!normalized.empty() && normalized.back() == ' ') {
-    normalized.pop_back();
-  }
-  return normalized;
 }
 
 float ClampPopupWidth(float preferred_width, float minimum_width, float max_width) {
@@ -392,73 +372,17 @@ std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_vi
     text = text.substr(0, util::PreviousUtf8Boundary(text, kMaxHoverTextBytes));
   }
 
-  const std::string normalized = NormalizeHoverPopupText(text);
-  if (normalized.empty()) {
-    return remember(std::move(lines));
-  }
-  if (text_renderer_.MeasureWidth(normalized) <= max_width) {
-    lines.push_back(normalized);
-    return remember(std::move(lines));
-  }
-
-  std::istringstream stream(normalized);
-  std::vector<std::string> words;
-  for (std::string word; stream >> word;) {
-    words.push_back(std::move(word));
-  }
-  if (words.empty()) {
-    lines.push_back(
-        std::string(text_renderer_.TruncateToWidthEphemeralView(normalized, max_width)));
-    return remember(std::move(lines));
-  }
-
-  std::size_t index = 0;
-  // Reused across every candidate: the old `line + " " + words[index]` allocated a
-  // fresh string per word tried, and only the ones that fit were kept.
-  std::string line;
-  std::string candidate;
-  while (index < words.size() && lines.size() + 1 < max_lines) {
-    line.assign(words[index]);
-    ++index;
-    while (index < words.size()) {
-      candidate.assign(line);
-      candidate += ' ';
-      candidate += words[index];
-      if (text_renderer_.MeasureWidth(candidate) > max_width) {
-        break;
-      }
-      line.swap(candidate);
-      ++index;
-    }
-    // A single word wider than the wrap width (a long mangled/template type name, a
-    // URL) is taken unconditionally above; truncate it to the card width so it never
-    // paints past the card edge (hover cards draw with no clip). Truncation returns
-    // the input unchanged when the line already fits, so multi-word lines are
-    // unaffected. Mirrors the empty-words and trailing-`remaining` paths. These four
-    // are the only truncations in a render TU that legitimately own their result —
-    // they are memoized, not drawn — so the allocation is spelled out rather than
-    // hidden inside TruncateToWidth.
-    lines.push_back(
-        std::string(text_renderer_.TruncateToWidthEphemeralView(line, max_width)));
-  }
-
-  std::string remaining;
-  while (index < words.size()) {
-    if (!remaining.empty()) {
-      remaining += ' ';
-    }
-    remaining += words[index];
-    ++index;
-  }
-  if (!remaining.empty() && lines.size() < max_lines) {
-    lines.push_back(
-        std::string(text_renderer_.TruncateToWidthEphemeralView(remaining, max_width)));
-  }
-  if (lines.empty()) {
-    lines.push_back(
-        std::string(text_renderer_.TruncateToWidthEphemeralView(normalized, max_width)));
-  }
-  return remember(std::move(lines));
+  // The wrap itself (paragraphs kept, words wrapped, the last line carrying the
+  // rest) lives in HoverTextWrap; this keeps the memo and the byte clamp.
+  return remember(WrapHoverText(
+      text, max_width, max_lines,
+      HoverTextMeasure{
+          .width = [this](std::string_view t) { return text_renderer_.MeasureWidth(t); },
+          .truncate =
+              [this](std::string_view t, float width) {
+                return std::string(text_renderer_.TruncateToWidthEphemeralView(t, width));
+              },
+      }));
 }
 
 SDL_FRect WorkspaceShell::ComputeTwoBlockHoverCardRect(std::string_view title,

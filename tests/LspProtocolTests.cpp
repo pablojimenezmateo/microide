@@ -237,8 +237,11 @@ void TestLspProtocolParsesHoverContents() {
   // MarkupContent: {kind, value}.
   Expect(codec::ParseHoverContents(
              Json(R"({"contents":{"kind":"markdown","value":"### foo\ndocs"}})")) ==
-             "### foo\ndocs",
-         "MarkupContent value is extracted");
+             "foo\ndocs",
+         "MarkupContent markdown is extracted as text");
+  Expect(codec::ParseHoverContents(
+             Json(R"({"contents":{"kind":"plaintext","value":"### foo `x`"}})")) == "### foo `x`",
+         "plaintext MarkupContent is left alone");
   // MarkedString object: {language, value}.
   Expect(codec::ParseHoverContents(
              Json(R"({"contents":{"language":"cpp","value":"int foo"}})")) == "int foo",
@@ -271,6 +274,26 @@ void TestLspProtocolParsesHoverContents() {
   Expect(codec::ParseHoverContents(Json("{}")).empty(), "missing contents yields empty");
   Expect(codec::ParseHoverContents(Json(R"({"contents":[]})")).empty(),
          "empty contents array yields empty");
+}
+
+// The hover card draws plain text, so markdown hovers are converted: clangd's
+// "### field `queue_`  \nprovided by ...\n\n---\nType: ..." was drawn verbatim.
+void TestLspProtocolHoverMarkdownBecomesText() {
+  const std::string clangd =
+      "### field `queue_`  \nprovided by `\"scheduler.hpp\"`  \n\n---\nType: `std::vector<Task>`  "
+      "\n\n---\n```cpp\n// In Scheduler\nprivate: std::vector<Task> queue_\n```";
+  const std::string text = codec::HoverMarkdownToText(codec::StripMarkdownFences(clangd));
+  Expect(text ==
+             "field queue_\nprovided by \"scheduler.hpp\"\n\nType: std::vector<Task>\n\n"
+             "// In Scheduler\nprivate: std::vector<Task> queue_",
+         "clangd's hover should lose its markers and keep its lines: [" + text + "]");
+  Expect(codec::HoverMarkdownToText("**bold** and __strong__, a\\_b, `code`") ==
+             "bold and strong, a_b, code",
+         "emphasis, escapes and inline code should become text: [" +
+             codec::HoverMarkdownToText("**bold** and __strong__, a\\_b, `code`") + "]");
+  Expect(codec::HoverMarkdownToText("#hashtag stays\n####### seven") ==
+             "#hashtag stays\n####### seven",
+         "only a real heading (1-6 '#' and a space) loses its marker");
 }
 
 // J27: ParseHoverContents caps a hostile MarkedString[] by element count AND total
@@ -759,6 +782,7 @@ void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesPrepareRename", TestLspProtocolParsesPrepareRename);
   AddTest(tests, "LspProtocol/ParsesTextEdits", TestLspProtocolParsesTextEdits);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
+  AddTest(tests, "LspProtocol/HoverMarkdownBecomesText", TestLspProtocolHoverMarkdownBecomesText);
   AddTest(tests, "LspProtocol/HoverContentsAreBounded", TestLspProtocolHoverContentsAreBounded);
   AddTest(tests, "LspProtocol/ClampsOutOfRangePositions",
           TestLspProtocolClampsOutOfRangePositions);

@@ -16,12 +16,14 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "WorkspaceShellEventHelpers.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "editor/FoldingModel.h"
 #include "util/JsonValue.h"
+#include "workspace/HoverTextWrap.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -287,11 +289,23 @@ void TestTallMenusStayInsideTheWindow() {
 void TestModalsOwnThePointer() {
   FlowFixture fixture("modal.txt", "modal\n");
   const auto modal = [&]() { return TestAccess::ControlUi(fixture.shell)["modal"]; };
-  // Help/About, then a click in the status bar's empty left corner.
-  TestAccess::OpenHelpAboutOverlay(fixture.shell);
-  Expect(modal().AsString() == "help", "Help/About should be the modal");
-  (void)fixture.Click(SDL_FRect{2.0f, static_cast<float>(FlowFixture::kHeight) - 10.0f, 4.0f, 4.0f});
-  Expect(modal().IsNull(), "a click outside Help/About should close it, got " + modal().AsString());
+  // Help/About (from the menu and from the keyboard-shortcuts command), then a
+  // click in the status bar's empty left corner.
+  // With the terminal panel open, as in a default window.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-toggle"), "panel-toggle should run");
+  for (const bool from_command : {false, true}) {
+    if (from_command) {
+      Expect(TestAccess::ExecuteCommandLine(fixture.shell, "keyboard-shortcuts"),
+             "keyboard-shortcuts should run");
+    } else {
+      TestAccess::OpenHelpAboutOverlay(fixture.shell);
+    }
+    Expect(modal().AsString() == "help", "Help/About should be the modal");
+    (void)fixture.Click(SDL_FRect{2.0f, static_cast<float>(FlowFixture::kHeight) - 10.0f, 4.0f, 4.0f});
+    Expect(modal().IsNull(), std::string("a click outside Help/About") +
+                                 (from_command ? " (opened by keyboard-shortcuts)" : "") +
+                                 " should close it, got " + modal().AsString());
+  }
   // Settings, then a click on the line/column segment: closes Settings, opens no
   // Go to Line prompt behind it.
   TestAccess::OpenSettingsOverlay(fixture.shell);
@@ -313,6 +327,27 @@ void TestModalsOwnThePointer() {
   }
 }
 
+// lsp-hover: a hover card keeps its text's lines (each '\n' a line, a blank line
+// a paragraph break), wraps words within a line, and caps the line count with
+// the last line carrying the rest. It used to flatten every newline into one run.
+void TestHoverTextKeepsItsLines() {
+  const workspace::HoverTextMeasure measure{
+      .width = [](std::string_view text) { return static_cast<float>(text.size()); },
+      .truncate =
+          [](std::string_view text, float width) {
+            return std::string(text.substr(0, static_cast<std::size_t>(width)));
+          },
+  };
+  const auto lines = workspace::WrapHoverText("field queue_\nprovided by x\n\n\n\nType:   int", 40.0f,
+                                              10, measure);
+  Expect(lines == std::vector<std::string>{"field queue_", "provided by x", "", "Type: int"},
+         "lines should be kept, blank runs folded, spaces collapsed");
+  const auto wrapped = workspace::WrapHoverText("one two three four", 9.0f, 10, measure);
+  Expect(wrapped == std::vector<std::string>{"one two", "three", "four"}, "words should wrap within a line");
+  const auto capped = workspace::WrapHoverText("a\nb\nc\nd", 40.0f, 2, measure);
+  Expect(capped == std::vector<std::string>{"a", "b c d"}, "the last line should carry the rest");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -321,6 +356,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
+  AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);

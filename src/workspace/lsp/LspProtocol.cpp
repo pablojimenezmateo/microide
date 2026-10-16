@@ -464,6 +464,74 @@ std::string StripMarkdownFences(std::string text) {
   return out;
 }
 
+std::string HoverMarkdownToText(std::string_view markdown) {
+  std::string out;
+  out.reserve(markdown.size());
+  std::size_t start = 0;
+  while (start <= markdown.size()) {
+    const std::size_t end = markdown.find('\n', start);
+    const std::size_t stop = end == std::string_view::npos ? markdown.size() : end;
+    std::string_view line = markdown.substr(start, stop - start);
+    while (!line.empty() && (line.back() == ' ' || line.back() == '\r' || line.back() == '\t')) {
+      line.remove_suffix(1);  // a trailing "  " hard break is the newline itself
+    }
+    std::string_view body = line;
+    while (!body.empty() && body.front() == ' ') {
+      body.remove_prefix(1);
+    }
+    const bool rule = body.size() >= 3 &&
+                      body.find_first_not_of(body.front()) == std::string_view::npos &&
+                      (body.front() == '-' || body.front() == '*' || body.front() == '_');
+    if (rule) {
+      out += '\n';  // a paragraph break where the rule was
+    } else {
+      // ATX heading: up to six '#' then a space.
+      std::size_t hashes = 0;
+      while (hashes < body.size() && hashes < 6 && body[hashes] == '#') {
+        ++hashes;
+      }
+      if (hashes > 0 && hashes < body.size() && body[hashes] == ' ') {
+        line = body.substr(hashes + 1);
+      }
+      for (std::size_t i = 0; i < line.size(); ++i) {
+        const char c = line[i];
+        if (c == '\\' && i + 1 < line.size() &&
+            std::string_view("\\`*_{}[]()#+-.!|<>~\"'").find(line[i + 1]) != std::string_view::npos) {
+          out += line[++i];
+          continue;
+        }
+        if (c == '`') {
+          continue;  // inline code: keep the code, drop the ticks
+        }
+        if ((c == '*' || c == '_') && i + 1 < line.size() && line[i + 1] == c) {
+          ++i;  // strong emphasis markers
+          continue;
+        }
+        out += c;
+      }
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    out += '\n';
+    start = end + 1;
+  }
+  // One blank line between paragraphs however many the rules and breaks made.
+  std::string folded;
+  folded.reserve(out.size());
+  for (const char c : out) {
+    if (c == '\n' && folded.size() >= 2 && folded[folded.size() - 1] == '\n' &&
+        folded[folded.size() - 2] == '\n') {
+      continue;
+    }
+    folded += c;
+  }
+  while (!folded.empty() && folded.back() == '\n') {
+    folded.pop_back();
+  }
+  return folded;
+}
+
 std::string ParseHoverContents(const JsonValue& hover_result) {
   constexpr std::size_t kMaxHoverBytes = 32 * 1024;
   static constexpr char kTruncationMarker[] = "\n\n… (truncated)";
@@ -487,7 +555,10 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   // MarkupContent ({kind, value}) and the object form of MarkedString ({language,
   // value}) both carry a "value" — take it directly.
   if (contents.HasKey("value")) {
-    return cap_string(contents["value"].AsString());
+    // MarkupContent says which it is; a {language, value} MarkedString is code.
+    const bool markdown = contents["kind"].AsString() == "markdown";
+    std::string value = cap_string(contents["value"].AsString());
+    return markdown ? HoverMarkdownToText(value) : value;
   }
   // MarkedString[]: join each element's text with a blank line between blocks.
   // Bound both the element count and the accumulated byte size so a hostile server
@@ -505,7 +576,10 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
         truncated = true;
         break;
       }
-      const std::string piece = StripMarkdownFences(StringOrValueField(element));
+      // A string element is markdown; a {language, value} one is code.
+      const std::string piece = element.IsString()
+                                    ? HoverMarkdownToText(StripMarkdownFences(element.AsString()))
+                                    : StripMarkdownFences(StringOrValueField(element));
       if (piece.empty()) {
         continue;
       }
@@ -525,9 +599,9 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
     }
     return out;
   }
-  // Bare MarkedString.
+  // Bare MarkedString: markdown by definition.
   if (contents.IsString()) {
-    return cap_string(contents.AsString());
+    return HoverMarkdownToText(cap_string(contents.AsString()));
   }
   return {};
 }

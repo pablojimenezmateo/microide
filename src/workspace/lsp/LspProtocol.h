@@ -27,6 +27,13 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const util::JsonValue& array
 // markdown, and the popups have no renderer for it: every real server fences the
 // signature, and the fences used to be painted verbatim.
 std::string StripMarkdownFences(std::string text);
+// Markdown hover text as the plain text a hover card draws: heading markers,
+// inline-code backticks, emphasis markers and backslash escapes go, a thematic
+// break (---, ***, ___) becomes a paragraph break, a hard break ("  " at a line
+// end) is just the newline. Line structure is kept: the card wraps per line.
+// clangd sends "### field `queue_`  \nprovided by ...\n\n---\nType: ...", which
+// the card used to draw verbatim, markers and all, run into one paragraph.
+std::string HoverMarkdownToText(std::string_view markdown);
 
 std::vector<LspClient::TextEdit> ParseTextEdits(const util::JsonValue& result,
                                                 std::size_t max_edits = 200000);
