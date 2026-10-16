@@ -1109,6 +1109,8 @@ class TextViewport {
                            bool record_undo,
                            const std::vector<std::string>* per_caret_insert = nullptr);
   bool ApplyMultiCaretInsert(std::string_view text, bool record_undo);
+  static CoalesceHint MultiCaretCoalesceHint(MultiCaretEditKind kind, std::string_view text,
+                                             bool per_caret);
   // True when any two carets' affected ranges (selection, or empty point) overlap,
   // so no multi-caret apply path can run without double-editing shared content.
   // Both ApplyMultiCaretEdit and TryMultiCaretPairInsert bail when this is true.

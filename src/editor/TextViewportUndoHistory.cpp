@@ -279,9 +279,17 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   if (top.is_inline != next.is_inline) {
     return false;
   }
-  // A multi-range entry is never a typing-run continuation (TD-2026-08-06-157).
+  // A multi-range entry continues a run only as the same multi-caret edit again
+  // (TD-2026-08-06-157 kept every other multi-range pair apart).
   if (top.is_multi_range() || next.is_multi_range()) {
-    return false;
+    if (!CanMergeSameShapeMultiRange(top, next)) {
+      return false;
+    }
+    MergeSameShapeMultiRange(top, next);
+    top.byte_size = EntryContentBytes(top);
+    active_run_last_space_ = hint.changed_is_space;
+    EnforceHistoryBudget();
+    return true;
   }
   if (top.is_inline) {
     if (!CanMergeInlineEntry(top, next)) {
@@ -662,6 +670,35 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentCha
   entry.before_state = before_state;
   entry.after_state = after_state;
   return entry;
+}
+
+bool TextViewportUndoHistory::CanMergeSameShapeMultiRange(const Entry& top, const Entry& next) {
+  if (top.is_inline || next.is_inline || !top.is_multi_range() ||
+      top.extra_parts.size() != next.extra_parts.size() || top.start_line != next.start_line ||
+      top.after_lines.size() != next.before_lines.size() ||
+      !top.after_lines.range_equals(0, next.before_lines)) {
+    return false;
+  }
+  for (std::size_t i = 0; i < top.extra_parts.size(); ++i) {
+    const DisjointPart& installed = top.extra_parts[i];
+    const DisjointPart& replaced = next.extra_parts[i];
+    if (installed.after_start != replaced.before_start ||
+        installed.after_lines.size() != replaced.before_lines.size() ||
+        !installed.after_lines.range_equals(0, replaced.before_lines)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void TextViewportUndoHistory::MergeSameShapeMultiRange(Entry& top, const Entry& next) {
+  top.after_lines = next.after_lines;
+  for (std::size_t i = 0; i < top.extra_parts.size(); ++i) {
+    top.extra_parts[i].after_start = next.extra_parts[i].after_start;
+    top.extra_parts[i].after_lines = next.extra_parts[i].after_lines;
+  }
+  // The run keeps its original start state; only its end advances.
+  top.after_state = next.after_state;
 }
 
 bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const Entry& next) {

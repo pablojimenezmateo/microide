@@ -1473,9 +1473,37 @@ void TestExpandLineSelectionGrowsAndMerges() {
          "and it grows by one more line rather than standing still");
 }
 
+// QA flow edit-multi-cursor: typing a word at several carets is one typing run,
+// as at one caret -- a single undo took back only the last letter of "bar" typed
+// over three Ctrl+D selections (VS Code takes back the whole word).
+void TestMultiCaretTypingUndoesAsOneRun() {
+  for (const bool adjacent : {true, false}) {
+    TextViewport viewport;
+    const std::string text = adjacent ? "foo = 1\nfoo = 2\nfoo = 3" : "foo = 1\n\nfoo = 2\n\nfoo = 3";
+    viewport.LoadContent(text, "/tmp/mc-undo-run.txt");
+    viewport.MoveCursorTo(0, 0);
+    viewport.SetSecondaryCarets(adjacent ? std::vector<TextPosition>{{1, 0}, {2, 0}}
+                                         : std::vector<TextPosition>{{2, 0}, {4, 0}});
+    for (const char* ch : {"b", "a", "r"}) {
+      viewport.InsertText(ch);
+    }
+    const std::string label = adjacent ? "adjacent carets" : "carets apart";
+    Expect(viewport.lines()[0] == "barfoo = 1", label + ": every caret should type");
+    Expect(viewport.Undo(), label + ": undo should run");
+    std::string after;
+    viewport.lines().AppendWholeText(after);
+    Expect(viewport.lines()[0] == "foo = 1" && viewport.lines()[adjacent ? 2 : 4] == "foo = 3",
+           label + ": one undo should take the whole typed word back, got " + after);
+    Expect(viewport.Redo(), label + ": redo should run");
+    Expect(viewport.lines()[0] == "barfoo = 1" && viewport.lines()[adjacent ? 2 : 4] == "barfoo = 3",
+           label + ": one redo should put the whole word back");
+  }
+}
+
 }  // namespace
 
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/TypingUndoesAsOneRun", TestMultiCaretTypingUndoesAsOneRun);
   AddTest(tests, "EditorMultiCaret/ExpandLineSelectionCoversEveryCaret",
           TestExpandLineSelectionCoversEveryCaret);
   AddTest(tests, "EditorMultiCaret/ExpandLineSelectionGrowsAndMerges",

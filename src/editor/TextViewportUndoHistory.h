@@ -265,6 +265,13 @@ class TextViewportUndoHistory {
   //   * `next` lies wholly inside the aggregate's insertion (a re-edit of text
   //     the run itself typed).
   static bool CanMergeInlineEntry(const Entry& aggregate, const Entry& next);
+  // Two multi-range entries of the SAME shape -- the same ranges, the second
+  // replacing exactly what the first installed -- are one multi-caret typing run
+  // continuing: every caret typed again on its own line. Merging keeps the first
+  // entry's before-images and takes the second's after-images, so one undo takes
+  // the whole run back, as a single caret's run does (VS Code).
+  static bool CanMergeSameShapeMultiRange(const Entry& top, const Entry& next);
+  static void MergeSameShapeMultiRange(Entry& top, const Entry& next);
   static void MergeInlineEntryInto(Entry& aggregate, const Entry& next);
   // Fold a freshly recorded child edit into a frame's disjoint-range set: splice
   // into a containing/adjacent range or insert a new one, reindexing strictly-lower

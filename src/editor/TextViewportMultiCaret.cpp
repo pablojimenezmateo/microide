@@ -101,6 +101,34 @@ bool TextViewport::MultiCaretSelectionsOverlap() const {
   return false;
 }
 
+// A one-character insert or delete at every caret continues a typing run, as
+// the single-caret paths do: one undo takes back "bar" typed at three carets,
+// not just its last letter (VS Code). Anything else -- a paste, a newline, a tab,
+// a word delete, a per-caret distribute -- stands alone.
+CoalesceHint TextViewport::MultiCaretCoalesceHint(MultiCaretEditKind kind, std::string_view text,
+                                                  bool per_caret) {
+  switch (kind) {
+    case MultiCaretEditKind::Insert: {
+      const auto code_points = std::count_if(text.begin(), text.end(), [](char c) {
+        return (static_cast<unsigned char>(c) & 0xC0u) != 0x80u;  // UTF-8 lead bytes
+      });
+      if (per_caret || code_points != 1 || text == "\n" || text == "\t") {
+        return {};
+      }
+      return CoalesceHint{.kind = CoalesceKind::Insert, .changed_is_space = text == " "};
+    }
+    case MultiCaretEditKind::Backspace:
+      return CoalesceHint{.kind = CoalesceKind::DeleteBackward};
+    case MultiCaretEditKind::DeleteForward:
+      return CoalesceHint{.kind = CoalesceKind::DeleteForward};
+    case MultiCaretEditKind::SoftTab:
+    case MultiCaretEditKind::DeleteWordBackward:
+    case MultiCaretEditKind::DeleteWordForward:
+      break;
+  }
+  return {};
+}
+
 bool TextViewport::ApplyMultiCaretInsert(std::string_view text, bool record_undo) {
   return ApplyMultiCaretEdit(MultiCaretEditKind::Insert, text, record_undo);
 }
@@ -509,7 +537,8 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     ClearLastAppliedEdit();
   }
   if (record_undo) {
-    PushHistoryEntry(std::move(aggregate_entry));
+    PushHistoryEntry(std::move(aggregate_entry),
+                     MultiCaretCoalesceHint(kind, insert_text, per_caret_insert != nullptr));
   } else {
     document_->undo_history.ClearRedo();
   }

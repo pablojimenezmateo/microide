@@ -734,7 +734,10 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   // contiguous AppliedEdit would drag markers on preserved interior lines to the
   // span's end (see TextViewportMultiCaret). Leave last_applied_edit_ empty (it was
   // reset at entry) so single-range marker consumers take their resync fallback.
-  PushHistoryEntry(std::move(aggregate_entry));
+  // Typing at several carets is a typing run like typing at one.
+  PushHistoryEntry(std::move(aggregate_entry),
+                   MultiCaretCoalesceHint(MultiCaretEditKind::Insert, std::string_view(&ch, 1),
+                                          /*per_caret=*/false));
   return true;
 }
 
