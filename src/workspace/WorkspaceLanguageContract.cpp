@@ -206,9 +206,33 @@ WorkspaceLanguageContract::~WorkspaceLanguageContract() = default;
 
 namespace {
 
+// Map runtime-syntax filetype names to language-contract keys. The runtime
+// detector returns names like "c++"/"objective-c"/"csharp" (which match
+// language-id conventions in `RuntimeSyntaxRegistry`), while the language
+// contract defaults are keyed by short ids like "cpp". Without this alias
+// step, `.cpp` files would resolve to a null contract and auto-close /
+// surround / smart-indent would silently no-op.
+std::string_view CanonicalContractKey(std::string_view key) {
+  if (key == "c++") return "cpp";
+  if (key == "objective-c") return "c";
+  if (key == "csharp") return "cpp";
+  return key;
+}
+
+// The ONE key spelling, for writers and readers alike: a plugin contributing for
+// "c++" (the id a C++ buffer reports) once landed in a "c++" entry that Find,
+// which canonicalizes, never reached -- so its snippets/brackets were dropped.
+std::string ContractKey(std::string_view language_id) {
+  std::string key = util::ToLowerAscii(language_id);
+  if (const std::string_view canonical = CanonicalContractKey(key); canonical != key) {
+    key.assign(canonical);
+  }
+  return key;
+}
+
 LanguageContract& EnsureContract(std::unordered_map<std::string, LanguageContract>& table,
                                  std::string_view language_id) {
-  std::string key = util::ToLowerAscii(language_id);
+  std::string key = ContractKey(language_id);
   auto it = table.find(key);
   if (it == table.end()) {
     LanguageContract empty;
@@ -439,30 +463,9 @@ void WorkspaceLanguageContract::Refresh(const plugin::PluginHost& plugin_host,
   ++revision_;
 }
 
-namespace {
-
-// Map runtime-syntax filetype names to language-contract keys. The runtime
-// detector returns names like "c++"/"objective-c"/"csharp" (which match
-// language-id conventions in `RuntimeSyntaxRegistry`), while the language
-// contract defaults are keyed by short ids like "cpp". Without this alias
-// step, `.cpp` files would resolve to a null contract and auto-close /
-// surround / smart-indent would silently no-op.
-std::string_view CanonicalContractKey(std::string_view key) {
-  if (key == "c++") return "cpp";
-  if (key == "objective-c") return "c";
-  if (key == "csharp") return "cpp";
-  return key;
-}
-
-}  // namespace
-
 const LanguageContract* WorkspaceLanguageContract::Find(std::string_view language_id) const {
   if (language_id.empty()) return nullptr;
-  std::string key = util::ToLowerAscii(language_id);
-  if (const std::string_view canonical = CanonicalContractKey(key); canonical != key) {
-    key.assign(canonical);
-  }
-  const auto it = impl_->table.find(key);
+  const auto it = impl_->table.find(ContractKey(language_id));
   return it == impl_->table.end() ? nullptr : &it->second;
 }
 

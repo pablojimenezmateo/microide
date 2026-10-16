@@ -6215,6 +6215,52 @@ return ide.plugin({
   Expect(editor.lines()[0] == "forr", "one undo should restore the typed prefix");
 }
 
+// QA (snippets flow): a C++ buffer reports the runtime filetype "c++", which the
+// contract table stores as "cpp". A plugin contributing for "c++" -- the id the
+// editor itself reports, and the one cpp-lsp uses -- used to land in a "c++" entry
+// that no lookup ever reached, so Insert Snippet said "No snippets for this
+// language" (and brackets/comments/indents contributed under that id were dropped
+// the same way).
+void TestWorkspaceShellPluginSnippetForCxxLanguageIdReachesCppBuffers() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.cpp";
+  WriteFile(source, "\n");
+  WritePluginInit(
+      plugins_root, "cxxsnip",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "cxxsnip",
+  setup = function(ctx)
+    ctx.snippets.add({
+      id = "fori", language_id = "c++", prefix = "fori", label = "for loop",
+      body = "for (;;) {}",
+    })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "c++ snippet fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.language_id() == "c++", "a .cpp buffer reports the runtime filetype c++");
+  editor.InsertText("fori");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be handled when a c++ snippet prefix matches");
+  Expect(editor.lines()[0] == "for (;;) {}",
+         "a snippet contributed for language_id c++ should expand in a .cpp buffer");
+}
+
 }  // namespace
 
 // Data-integrity (A5/C6): a multi-file LSP WorkspaceEdit applies to each OPEN buffer as
@@ -6633,6 +6679,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkspaceEditRejectsOverlappingEdits);
   AddTest(tests, "WorkspaceShell/PluginSnippetTabTriggerExpands",
           TestWorkspaceShellPluginSnippetTabTriggerExpands);
+  AddTest(tests, "WorkspaceShell/PluginSnippetForCxxLanguageIdReachesCppBuffers",
+          TestWorkspaceShellPluginSnippetForCxxLanguageIdReachesCppBuffers);
   AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerCoalescesChanges",
           TestPluginEditorEventTrackerCoalescesChanges);
   AddTest(tests, "WorkspaceShell/PluginEditorEventTrackerZeroCostWhenUnsubscribed",
