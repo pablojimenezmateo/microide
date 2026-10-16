@@ -58,11 +58,14 @@ actions on the same state and nothing touches your real configuration.
 | tools | `lsp-hover`, `lsp-navigation`, `lsp-completion`, `lsp-diagnostics`, `lsp-rename`, `lsp-format`, `outline`, `dbg-session` | clangd and gdb end to end |
 | sweeps | `keys`, `context-menus` | every keybinding through the real keyboard in every context; every row of every right-click menu -- each checked by the action receipt |
 | session | `session-restore`, `untitled-save-as`, `unicode-editing`, `drag-drop-text`, `terminal-find`, `projects`, `compare-merge` | quit and relaunch, first save, non-ASCII text, several projects, a real conflicting merge |
+| advanced | `lsp-signature-help`, `lsp-code-actions`, `snippets`, `sticky-scroll`, `themes`, `tab-overflow`, `dbg-conditions` | parameter hints, quick fixes, snippet placeholders, pinned scopes, every colour scheme, a crowded tab strip, conditional breakpoints |
 
 The flows live in `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`,
-`flows_keys.py`, `flows_context_menus.py` and `flows_more.py`; `scenarios.py`
-holds the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`,
-`SCENARIO_PLUGINS`).
+`flows_keys.py`, `flows_context_menus.py`, `flows_more.py` and
+`flows_advanced.py`; `scenarios.py` holds the chrome scenarios and the registry
+(`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`). A scenario's plugins are bundled
+ones (`plugins/<name>`) or QA-only ones under `plugins/` here, for test content no
+bundled plugin ships (`qa-snippets`).
 
 ## What a flow reads
 
@@ -191,7 +194,8 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
 | `scenarios.py` | the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
 | `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit` |
-| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py` | the flows, by group |
+| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py` | the flows, by group |
+| `plugins/` | QA-only plugins a scenario seeds (`qa-snippets`) |
 | `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |
 | `run.py` | the CLI |

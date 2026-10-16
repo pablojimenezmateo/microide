@@ -195,9 +195,13 @@ class App:
         # Bundled plugins a scenario needs (a language server, a debug adapter),
         # seeded as tools/capture-media/lib.sh seeds them for the media scenes.
         for plugin in plugins:
+            # A bundled plugin, or a QA-only one (tools/qa/plugins: test content no
+            # bundled plugin ships, such as snippets).
             source = REPO / "plugins" / plugin
             if not source.is_dir():
-                raise FileNotFoundError(f"no bundled plugin {plugin!r} under {REPO / 'plugins'}")
+                source = REPO / "tools" / "qa" / "plugins" / plugin
+            if not source.is_dir():
+                raise FileNotFoundError(f"no plugin {plugin!r} under plugins/ or tools/qa/plugins/")
             shutil.copytree(source, work / "config" / "microide" / "plugins" / plugin)
         app = cls(binary=binary, work=work, display=display or "", size=size, env=env, shots=shots,
                   project=project)
