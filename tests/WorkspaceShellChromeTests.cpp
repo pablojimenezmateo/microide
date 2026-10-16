@@ -3050,6 +3050,45 @@ void TestWorkspaceShellSidebarShowRepaintsTheMovedEditor() {
          "showing the sidebar should paint what a full repaint paints; " + DescribePixelDiff(diff));
 }
 
+// The project tab's dirty marker follows its project's editor tabs: saving the
+// last dirty one clears it, and nothing repainted the project strip, so "*repo"
+// stayed on screen (remote QA suite, scenario B onward).
+void TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path other = temp_dir.path() / "other";
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(other / "a.txt", "a\n");
+  WriteFile(root / "notes.md", "# notes\n");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, other, false, false) &&
+             WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "two projects, so the project strip shows");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "notes.md");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  Expect(WorkspaceShellTestAccess::CurrentLayout(shell).project_tab_strip.h > 0.0f,
+         "the project strip is laid out");
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto step = [&](std::string_view what, const microide::workspace::RenderInvalidation& redraw) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin_caret);
+    Expect(diff.identical(), std::string(what) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  step("typing", DispatchEvents(shell, {TextInputEvent("x")}));
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "save"), "save from the command line");
+  step("saving", shell.ConsumePendingRenderInvalidation());
+}
+
 // A caret-blink epoch that puts the blink in its hidden phase right now. The epoch
 // is a past tick, so the process must have been up for a blink interval or two.
 Uint64 HiddenCaretBlinkEpoch(WorkspaceShell& shell) {
@@ -5847,6 +5886,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellReplacingTheFindWidgetRepaintsItsMatches);
   AddTest(tests, "WorkspaceShell/SidebarShowRepaintsTheMovedEditor",
           TestWorkspaceShellSidebarShowRepaintsTheMovedEditor);
+  AddTest(tests, "WorkspaceShell/ASaveRepaintsTheProjectTabsDirtyMarker",
+          TestWorkspaceShellASaveRepaintsTheProjectTabsDirtyMarker);
   AddTest(tests, "WorkspaceShell/ASaveRepaintsTheDirtyMarker",
           TestWorkspaceShellASaveRepaintsTheDirtyMarker);
   AddTest(tests, "WorkspaceShell/AnEditorRepaintKeepsTheDebugPaneDivider",

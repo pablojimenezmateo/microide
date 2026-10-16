@@ -668,6 +668,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_compare_scroll = compare_scroll;
     }
   }
+  // A project tab's label follows state no input touches -- its dirty marker is
+  // "any editor tab in that project is dirty" -- so typing into or saving a file
+  // changed it with no damage on the strip (remote QA suite).
+  if (layout.project_tab_strip.h > 0.0f) {
+    const std::uint64_t version = tab_strip_chrome_.ProjectStripSourceVersion();
+    if (version != frame_state_.painted_project_strip_version) {
+      RequestRedrawRect(layout.project_tab_strip);
+      frame_state_.painted_project_strip_version = version;
+    }
+  }
   // The sidebar's selected row: activating a tab selects its file in the tree (as
   // VS Code's explorer follows the active editor) without repainting the tree
   // (QA monkey, seed 5). Any selection that moved with no repaint of its own

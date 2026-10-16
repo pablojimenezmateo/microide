@@ -72,6 +72,8 @@ struct PreparedFrameState {
     bool operator==(const CompareScroll&) const = default;
   };
   CompareScroll painted_compare_scroll{};
+  // The project strip's source version as painted (WorkspaceTabStripChrome).
+  std::uint64_t painted_project_strip_version = 0;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

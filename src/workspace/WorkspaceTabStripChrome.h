@@ -65,6 +65,10 @@ class WorkspaceTabStripChrome {
   // coordinator each ask for this list per frame or per motion event.
   const std::vector<VisibleStripTab>& ComputeVisibleProjectTabs(
       const SDL_FRect& project_tab_strip) const;
+  // Bumps whenever anything a project tab shows changed (title, dirty marker,
+  // badge): frame prep repaints the strip on a new value, since most of those
+  // changes -- a tab in the project going dirty or clean -- damage nothing there.
+  std::uint64_t ProjectStripSourceVersion() const { return RefreshProjectStripSources().version; }
 
   // Editor-tab chrome is per-group. The no-index overloads operate on the
   // currently focused group; the *ForGroup variants target an explicit group so
