@@ -68,10 +68,90 @@ def scenario_menus(app: q.App) -> None:
                 app.hover_named(row["name"])
                 app.settle(0.06)
                 app.check(f"{focus}: hover {row['name']}")
+                # The row under the pointer is the one the menu highlights: a hit
+                # test that disagreed with the painted rows would show here.
+                app.expect(app.element(row["name"]).get("active") is True,
+                           f"{focus}: hovering {row['name']} highlights it")
             app.key("Escape")
             app.settle(0.15)
             app.check(f"{focus}: close {menu}")
         _escape_everything(app)
+
+
+# Layouts the click sweep repeats in: each moves the sidebar's controls under
+# different menu rows (with the project strip shown, File's fourth row lies over
+# the Search button).
+MENU_CLICK_LAYOUTS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("default", ()),
+    ("project strip", (("chrome.project_tabs.hide_when_single", "false"),)),
+)
+
+
+def _click_rows(app: q.App, where: str, reopen: Callable[[], None], owner_prefix: str) -> None:
+    """Reopen the menu, click one row, and check the receipt names that row, for
+    every enabled row the menu shows."""
+    reopen()
+    rows = [(row["name"], row["label"]) for row in app.elements("menu-item", prefix=owner_prefix)
+            if row.get("enabled") is not False]
+    app.key("Escape")
+    app.settle(0.1)
+    for name, label in rows:
+        reopen()
+        try:
+            row = app.element(name)
+        except q.QaFailure:
+            app.expect(False, f"{where}: {name} is not on screen when its menu reopens")
+            _escape_everything(app)
+            continue
+        before = app.ui()["menu"]["rowsRun"]
+        app.click(*app.center(row))
+        app.settle(0.12)
+        app.check(f"{where}: click {name}")
+        menu = app.ui()["menu"]
+        if menu["open"] and menu.get("submenu"):
+            # A submenu row opens its submenu; its own rows get the same sweep.
+            submenu = menu["submenu"]
+            app.key("Escape")
+            app.settle(0.1)
+            _click_rows(app, f"{where} > {label}",
+                        lambda: (reopen(), app.hover_named(name), app.settle(0.15)),
+                        f"menu-item:{submenu}/")
+            continue
+        locator = name.split(":", 1)[1]
+        app.expect(menu["rowsRun"] == before + 1 and menu["lastRun"] == locator,
+                   f"{where}: clicking {name} runs it (ran {menu['lastRun']!r}, "
+                   f"{menu['rowsRun'] - before} row(s))")
+        app.expect(not menu["open"], f"{where}: running {name} closes its menu")
+        _escape_everything(app)
+
+
+def scenario_menu_clicks(app: q.App) -> None:
+    """Click every row of every menu with the pointer, in each layout, and check
+    the click ran that row (the `ui` receipt) and not a surface beneath the menu.
+    The app runs with MICROIDE_QA_MENU_DRY_RUN=1 (SCENARIO_ENV), so a row records
+    its run and closes the menu without quitting, closing the project or opening a
+    native picker."""
+    _open_source(app)
+    for layout, settings in MENU_CLICK_LAYOUTS:
+        for key, value in settings:
+            app.send("set-setting", key, value)
+        app.settle(0.3)
+        app.check(f"layout {layout}")
+        for view in ("tree", "search", "git"):
+            app.click_named(f"sidebar-view:{view}")
+            app.settle(0.2)
+            for menu in [e["name"] for e in app.elements("menu")]:
+                label = menu.split(":", 1)[1]
+                _click_rows(app, f"{layout}, {view} view, {label}",
+                            lambda: (app.click_named(menu), app.settle(0.15)),
+                            f"menu-item:{label}/")
+            # The sidebar's views menu, anchored on its button over the tree.
+            if any(e["name"] == "button:sidebar/more" for e in app.elements("button")):
+                _click_rows(app, f"{layout}, {view} view, sidebar views menu",
+                            lambda: (app.click_named("button:sidebar/more"), app.settle(0.15)),
+                            "menu-item:")
+        app.click_named("sidebar-view:tree")
+        app.settle(0.2)
 
 
 def scenario_overlays(app: q.App) -> None:
@@ -270,6 +350,7 @@ def scenario_scrolling(app: q.App) -> None:
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
+    "menu-clicks": scenario_menu_clicks,
     "overlays": scenario_overlays,
     "overlay-backdrop": scenario_overlay_backdrop,
     "sidebar-views": scenario_sidebar_views,
@@ -278,4 +359,9 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "split-and-close": scenario_split_and_close,
     "terminal": scenario_terminal,
     "scrolling": scenario_scrolling,
+}
+
+# Environment a scenario's instance starts with, beyond App.launch's.
+SCENARIO_ENV: dict[str, dict[str, str]] = {
+    "menu-clicks": {"MICROIDE_QA_MENU_DRY_RUN": "1"},
 }

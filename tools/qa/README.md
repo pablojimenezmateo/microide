@@ -20,6 +20,7 @@ Any build works, including the sanitizer builds (`--binary build/microide-asan/m
 ```bash
 tools/qa/run.py suite                       # every local scenario
 tools/qa/run.py suite menus chrome          # some of them
+tools/qa/run.py suite menu-clicks           # click every menu row in each layout (dry run)
 tools/qa/run.py monkey --seed 1 --steps 300 # the seeded monkey
 tools/qa/run.py monkey --profile commands --seeds 1-8 --binary build/microide-asan/microide/microide
                                             # the control-command fuzzer (formerly tools/fuzz-control-commands.py)
@@ -55,6 +56,26 @@ Checked after every action:
 - **Scenario expectations**, stated against the `ui` query (`--query ui`: every
   on-screen element by name with its rect, plus focus, modal, sidebar, overlay, menu
   and panel state; see `dev-docs/control/control-channel.md`) — never against pixels.
+
+### Clicks reach what they aim at
+
+The redraw verifier checks what is painted; it cannot see a press that went to the
+wrong surface. A menu row drawn over the sidebar's view buttons used to switch the
+sidebar view instead of running (the view buttons were hit-tested before the open
+menu), and every frame stayed correct. Two checks cover that class:
+
+- `menus` asserts that hovering a row highlights that row (`active` on its element):
+  the hit test and the painted rows agree.
+- `menu-clicks` clicks every enabled row of every menu, and the sidebar's views
+  menu, in each sidebar view and in two layouts (default, and the project strip
+  shown, which moves the sidebar's controls under different rows), and asserts the
+  `ui` receipt (`menu.lastRun`, `menu.rowsRun`) names the row clicked and the menu
+  closed. It runs the app with `MICROIDE_QA_MENU_DRY_RUN=1` (`SCENARIO_ENV` in
+  `scenarios.py`), so rows record their run without quitting or opening pickers.
+
+A new popup surface (a context menu, a picker) gets the same treatment: a receipt
+in `ui` for what a click ran, and a scenario that clicks every row in more than one
+layout. Hovering alone does not find a press routed elsewhere.
 
 ## Reading a finding directory
 

@@ -76,8 +76,10 @@ def cmd_suite(args: argparse.Namespace) -> int:
     print(f"suite: {len(names)} scenario(s) -> {args.out}")
     for name in names:
         project = fixture("taskflow", args.out / "fixtures")
-        with q.App.launch(project=project, binary=args.binary, shots=args.out / name) as app:
-            app.replay_header = {"fixture": "taskflow", "scenario": name}
+        env = s.SCENARIO_ENV.get(name, {})
+        with q.App.launch(project=project, binary=args.binary, shots=args.out / name,
+                          extra_env=env) as app:
+            app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env}
             app.check("start")
             try:
                 s.SCENARIOS[name](app)
@@ -126,8 +128,9 @@ def cmd_replay(args: argparse.Namespace) -> int:
     kind = record.get("fixture", "taskflow") if isinstance(record, dict) else "taskflow"
     project = fixture(kind, args.out / "fixtures")
     size = tuple(record.get("size", (1440, 900))) if isinstance(record, dict) else (1440, 900)
+    env = record.get("env", {}) if isinstance(record, dict) else {}
     with q.App.launch(project=project, binary=args.binary, shots=args.out / "replay",
-                      size=size) as app:
+                      size=size, extra_env=env) as app:
         app.replay_header = {"fixture": kind, "replay_of": str(args.file)}
         app.check("start")
         q.replay(app, actions)
