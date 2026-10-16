@@ -766,6 +766,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `debug-start`
 - `debug-stop`
 - `debug-continue`
+- `debug-start-or-continue`
 - `debug-step-over`
 - `debug-step-in`
 - `debug-step-out`

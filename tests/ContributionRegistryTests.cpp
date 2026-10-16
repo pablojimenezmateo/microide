@@ -304,7 +304,7 @@ void TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped() {
          "Ctrl+S belongs to the terminal");
   Expect(id_at(SDLK_P, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "file-finder",
          "Ctrl+P skips the shell");
-  Expect(id_at(SDLK_F5, SDL_KMOD_NONE, KeybindingContext::Terminal) == "debug-continue",
+  Expect(id_at(SDLK_F5, SDL_KMOD_NONE, KeybindingContext::Terminal) == "debug-start-or-continue",
          "F5 skips the shell");
   Expect(id_at(SDLK_GRAVE, SDL_KMOD_CTRL, KeybindingContext::Terminal) == "terminal-toggle",
          "Ctrl+` skips the shell");
@@ -349,7 +349,7 @@ void TestResolveKeybindingsSkipShellOverrides() {
          "'-file-finder' gives Ctrl+P back to the shell");
   Expect(id_at(edited, SDLK_O, SDL_KMOD_CTRL) == "open-file",
          "'open-file' makes Ctrl+O skip the shell");
-  Expect(id_at(edited, SDLK_F5, SDL_KMOD_NONE) == "debug-continue",
+  Expect(id_at(edited, SDLK_F5, SDL_KMOD_NONE) == "debug-start-or-continue",
          "unlisted defaults keep skipping the shell");
   const auto last_wins = ResolveKeybindings(std::vector<PluginHost::ContributedKeybinding>{}, {},
                                             {"-file-finder", "file-finder"});

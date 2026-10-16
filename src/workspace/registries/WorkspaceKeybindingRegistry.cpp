@@ -231,11 +231,24 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
+      // F5 starts a session when none is running and continues a stopped one;
+      // Shift+F5 stops it (VS Code's pair).
       KeybindingSpec{
-          .id = "debug-continue",
-          .action = ActionId::DebugContinue,
+          .id = "debug-start-or-continue",
+          .action = ActionId::DebugStartOrContinue,
           .key = SDLK_F5,
           .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+      },
+      KeybindingSpec{
+          .id = "debug-stop",
+          .action = ActionId::StopDebugging,
+          .key = SDLK_F5,
+          .modifiers = SDL_KMOD_SHIFT,
           .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,

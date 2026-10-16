@@ -157,6 +157,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Gated on the master debugger toggle; the executor reports adapter/
       // session preconditions as command feedback.
       return SettingEnabled(operations_, "debug.enabled", false);
+    case ActionId::DebugStartOrContinue:
+      // Starts when idle, continues when stopped; nothing to do while running.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             !(operations_.debug_session_active && operations_.debug_session_active() &&
+               !(operations_.debug_session_stopped && operations_.debug_session_stopped()));
     case ActionId::DebugContinue:
     case ActionId::DebugStepOver:
     case ActionId::DebugStepIn:

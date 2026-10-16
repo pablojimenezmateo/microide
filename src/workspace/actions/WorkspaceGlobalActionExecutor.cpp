@@ -444,6 +444,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       context_.DebugContinue();
       return DispatchResult::Handled;
+    case ActionId::DebugStartOrContinue:
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      if (context_.DebugSessionActive()) {
+        context_.DebugContinue();
+      } else {
+        context_.StartDebuggingWithFeedback();
+      }
+      return DispatchResult::Handled;
     case ActionId::DebugStepOver:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");

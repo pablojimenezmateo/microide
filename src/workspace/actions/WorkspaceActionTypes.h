@@ -314,6 +314,10 @@ enum class ActionId {
   // Execution control (Phase 3). Gated on `debug.enabled` + an active session;
   // continue/step additionally require the session to be Stopped, pause Running.
   DebugContinue,
+  // F5, as in VS Code: start a session when none is running, continue a stopped
+  // one. Continue alone is inert with no session, and F8 (Start) is not where a
+  // VS Code hand goes.
+  DebugStartOrContinue,
   DebugStepOver,
   DebugStepIn,
   DebugStepOut,

@@ -239,7 +239,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::DebugStopAllSessions, "Stop All Sessions"),
       MenuSeparator(),
       MenuItem(ActionId::BreakpointToggle),
-      MenuItem(ActionId::DebugContinue, {}, "F5"),
+      MenuItem(ActionId::DebugStartOrContinue, "Start or Continue", "F5"),
       MenuItem(ActionId::DebugStepOver, {}, "F10"),
       MenuItem(ActionId::DebugStepIn, {}, "F11"),
       MenuItem(ActionId::DebugStepOut, {}, "Shift+F11"),
