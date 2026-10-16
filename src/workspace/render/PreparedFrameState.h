@@ -78,6 +78,12 @@ struct PreparedFrameState {
   std::uint64_t painted_split_dividers = 0;
   // The project strip's source version as painted (WorkspaceTabStripChrome).
   std::uint64_t painted_project_strip_version = 0;
+  // Which editor tabs painted a dirty marker (a hash of (group, tab) per dirty
+  // tab). Many paths change a buffer's dirty state -- typing, but also Replace
+  // All, a banner Reload, an undo back to the saved text, a save -- and each used
+  // to have to remember to repaint the tab strip; the ones that forgot left the
+  // tab's close button where its dirty dot belonged.
+  std::uint64_t painted_editor_tab_dirty = 0;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

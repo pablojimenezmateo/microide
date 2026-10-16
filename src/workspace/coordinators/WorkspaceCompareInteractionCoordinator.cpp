@@ -641,7 +641,6 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   if (merge_tab->result_viewport.dirty() != was_dirty) {
     operations_.request_active_editable_blame_neighborhood_redraw(
         cursor_before_line, merge_tab->result_viewport.cursor_line());
-    operations_.request_tab_strip_redraw();
   }
 }
 

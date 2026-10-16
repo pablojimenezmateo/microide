@@ -48,7 +48,6 @@ class TextInputCoordinator {
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void()> request_tab_strip_redraw;
     std::function<TerminalPaneState*()> active_terminal_pane;
     std::function<void()> clear_terminal_selection;
     std::function<void(std::string_view)> append_terminal_pending_input;

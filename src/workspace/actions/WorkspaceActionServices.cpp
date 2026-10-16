@@ -1147,7 +1147,6 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
     util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::DirtyStateSideEffects");
     operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                   viewport->cursor_line());
-    operations_.request_tab_strip_redraw();
   }
 }
 
@@ -1284,7 +1283,6 @@ void WorkspaceActionContext::CutSelection() {
       if (viewport->dirty() != was_dirty) {
         operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
       }
     }
   }
@@ -1367,7 +1365,6 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     if (viewport->dirty() != was_dirty) {
       operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                     viewport->cursor_line());
-      operations_.request_tab_strip_redraw();
     }
   }
 }

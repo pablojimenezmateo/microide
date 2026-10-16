@@ -194,7 +194,6 @@ bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
         "KeyInputCoordinator::HandleDefaultEditorKeyDown::DirtyStateSideEffects");
     operations.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                  viewport.cursor_line());
-    operations.request_tab_strip_redraw();
   }
   return true;
 }
@@ -220,7 +219,6 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       if (viewport.dirty() != was_dirty) {
         operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport.cursor_line());
-        operations_.request_tab_strip_redraw();
       }
       return true;
     };
@@ -388,7 +386,6 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     if (viewport.dirty() != was_dirty) {
       operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                     viewport.cursor_line());
-      operations_.request_tab_strip_redraw();
     }
     return true;
   };

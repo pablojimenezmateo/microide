@@ -839,7 +839,6 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
               },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .terminal_has_selection = [this]() { return TerminalHasSelection(); },
           .selected_terminal_text = [this]() { return SelectedTerminalText(); },
           .last_terminal_command_text = [this]() { return LastTerminalCommandText(); },

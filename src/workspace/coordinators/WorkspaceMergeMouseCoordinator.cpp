@@ -261,7 +261,6 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         if (merge_tab->result_viewport.dirty() != was_dirty) {
           operations_.request_active_editable_blame_neighborhood_redraw(
               cursor_before_line, merge_tab->result_viewport.cursor_line());
-          operations_.request_tab_strip_redraw();
         }
       }
       return true;
@@ -606,7 +605,6 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
               },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_merge_conflict_redraw =
               [this](std::size_t conflict_index) { RequestMergeConflictRedraw(conflict_index); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },

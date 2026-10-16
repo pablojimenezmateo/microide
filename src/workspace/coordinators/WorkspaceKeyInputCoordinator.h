@@ -181,7 +181,6 @@ class KeyInputCoordinator {
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
         request_active_editable_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void()> request_tab_strip_redraw;
     std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
     std::function<void()> request_close_active_tab;
     std::function<void()> reveal_active_compare_selection;

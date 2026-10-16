@@ -520,7 +520,6 @@ void AssistService::ApplyEditSideEffects(editor::TextViewport& viewport,
   if (viewport.dirty() != snapshot.was_dirty) {
     operations_.request_active_editable_blame_neighborhood_redraw(snapshot.cursor_before_line,
                                                                   viewport.cursor_line());
-    operations_.request_tab_strip_redraw();
   }
 }
 

@@ -193,7 +193,6 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         if (compare_tab->right_viewport.dirty() != was_dirty) {
           operations_.request_active_editable_blame_neighborhood_redraw(
               cursor_before_line, compare_tab->right_viewport.cursor_line());
-          operations_.request_tab_strip_redraw();
         }
       }
       state_.surface.focus = FocusTarget::Editor;
@@ -477,7 +476,6 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
               },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_compare_row_range_redraw =
               [this](std::size_t start_row, std::size_t end_row) {
                 RequestCompareRowRangeRedraw(start_row, end_row);

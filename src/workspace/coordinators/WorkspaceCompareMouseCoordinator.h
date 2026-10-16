@@ -27,7 +27,6 @@ class CompareMouseCoordinator {
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void()> request_active_editable_last_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void()> request_tab_strip_redraw;
     std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
     std::function<void()> request_focused_editor_redraw;
     std::function<CollapsedContextActionRects(const SDL_FRect&, const compare::ComparePresentationRow&)>

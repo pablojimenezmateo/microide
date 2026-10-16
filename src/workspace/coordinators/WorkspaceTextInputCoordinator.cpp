@@ -406,7 +406,6 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         if (viewport->dirty() != was_dirty) {
           operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                         viewport->cursor_line());
-          operations_.request_tab_strip_redraw();
         }
         follow_completion();
         return true;

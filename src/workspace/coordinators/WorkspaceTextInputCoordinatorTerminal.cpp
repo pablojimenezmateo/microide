@@ -379,7 +379,6 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
               [this](std::size_t first_line, std::size_t last_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(first_line, last_line);
               },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .active_terminal_pane = [this]() { return ActiveTerminalPane(); },
           .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
           .append_terminal_pending_input =

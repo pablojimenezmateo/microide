@@ -1259,6 +1259,7 @@ add_executable(microide_tests
   tests/DirtyRegionPolicyTests.cpp
   tests/PixelDiffTests.cpp
   tests/ControlUiQueryTests.cpp
+  tests/QaFlowRegressionTests.cpp
   tests/KeybindingReachabilityTests.cpp
   tests/TypeNavigationTests.cpp
   tests/EditorSplitTreeTests.cpp

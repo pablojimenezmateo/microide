@@ -38,7 +38,6 @@ class MergeMouseCoordinator {
     std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void()> request_active_editable_last_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
-    std::function<void()> request_tab_strip_redraw;
     std::function<void(std::size_t)> request_merge_conflict_redraw;
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> clear_drag_state;

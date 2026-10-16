@@ -794,7 +794,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               [this](std::size_t first_line, std::size_t last_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(first_line, last_line);
               },
-          .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_compare_row_range_redraw =
               [this](std::size_t first_row, std::size_t last_row) {
                 RequestCompareRowRangeRedraw(first_row, last_row);

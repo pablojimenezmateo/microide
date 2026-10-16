@@ -585,7 +585,6 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       if (viewport->dirty() != was_dirty) {
         operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                       viewport->cursor_line());
-        operations_.request_tab_strip_redraw();
       }
     }
     return true;
@@ -828,7 +827,6 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   if (viewport->dirty() != was_dirty) {
     operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
                                                                   viewport->cursor_line());
-    operations_.request_tab_strip_redraw();
   }
   operations_.request_focused_editor_redraw();
   return true;

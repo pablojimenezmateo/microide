@@ -463,7 +463,6 @@ WorkspaceShell::WorkspaceShell() {
               [this](std::size_t before_line, std::size_t after_line) {
                 RequestActiveEditableBlameNeighborhoodRedraw(before_line, after_line);
               },
-          .request_tab_strip_redraw = [this]() { RequestChromeRedraw(); },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& tab) { RefreshCompareTabDerivedState(tab); },
           .sync_compare_selection_from_viewport =
