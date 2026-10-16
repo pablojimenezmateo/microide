@@ -1684,9 +1684,34 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
   };
 }
 
-HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_target) const {
+HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_target,
+                                                           bool modal_open) const {
+  // A card left open over the editor stayed live under the command palette --
+  // painted over but hit-tested first, so a click on a palette row inside its rect
+  // was swallowed. The centred list overlays, the prompts and the modals cover it.
+  // (The caret-anchored lists and the find widget sit beside it and do not.)
+  const OverlayState& overlay = context_.current_project_state.overlay;
+  bool list_overlay = false;
+  if (overlay.visible) {
+    switch (overlay.mode) {
+      case OverlayMode::FileFinder:
+      case OverlayMode::ProjectSearch:
+      case OverlayMode::CommitPicker:
+      case OverlayMode::LaunchConfigPicker:
+      case OverlayMode::CommandPalette:
+        list_overlay = true;
+        break;
+      case OverlayMode::BufferSearch:
+      case OverlayMode::BufferReplace:
+      case OverlayMode::Completion:
+      case OverlayMode::CodeActions:
+        break;
+    }
+  }
+  const bool covered = modal_open || list_overlay || context_.prompts.surface_visible ||
+                       context_.prompts.dirty_visible;
   return HoverPopupViewModel{
-      .visible = has_active_target,
+      .visible = has_active_target && !covered,
       .has_active_target = has_active_target,
   };
 }

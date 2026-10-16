@@ -606,7 +606,9 @@ class RenderViewModelBuilder {
                                                int sticky_max_depth = 3,
                                                bool render_whitespace_enabled = false) const;
   BottomPanelSurfaceViewModel BuildBottomPanelSurface() const;
-  HoverPopupViewModel BuildHoverPopup(bool has_active_target) const;
+  // `modal_open`: a modal the builder cannot see (Settings / Help) is up. A list
+  // overlay, a prompt or a modal covers the card: it is then neither drawn nor hit.
+  HoverPopupViewModel BuildHoverPopup(bool has_active_target, bool modal_open = false) const;
   // `debug_hover_enabled` is the shell-computed gate (debug.enabled + session
   // Stopped + supportsEvaluateForHovers); when set, the returned view model carries
   // the focused-frame execution view + the hover-eval cache for the resolver.

@@ -127,7 +127,8 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
     return std::nullopt;
   }
   const HoverPopupViewModel hover_popup_vm =
-      RenderViewModelBuilder(context_).BuildHoverPopup(active_editor_hover_target_.has_value());
+      RenderViewModelBuilder(context_).BuildHoverPopup(active_editor_hover_target_.has_value(),
+                                                       settings_overlay_service_.Visible());
   if (!hover_popup_vm.visible || !hover_popup_vm.has_active_target ||
       !active_editor_hover_target_.has_value()) {
     return std::nullopt;

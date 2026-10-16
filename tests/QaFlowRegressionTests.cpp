@@ -556,6 +556,48 @@ void TestUserDefaultReachesAnOpenProjectOnSwitch() {
              std::to_string(TestAccess::EditorTabSize(shell)));
 }
 
+// lsp-more: a hover card left open over the editor stayed live under the command
+// palette -- painted over, but still hit-tested first -- so a click on a palette
+// row inside the card's rect was swallowed and ran nothing. A list overlay or a
+// modal covers the hover: it is neither drawn nor hit while one is open.
+void TestHoverCardDoesNotSwallowClicksOnThePalette() {
+  FlowFixture fixture("hover.txt", "alpha beta\n");
+  Expect(TestAccess::PublishDiagnostics(
+             fixture.shell, "diagnostics", fixture.file,
+             {editor::Diagnostic{
+                 .range = editor::SelectionRange{.start = editor::TextPosition{.line = 0, .column = 1},
+                                                 .end = editor::TextPosition{.line = 0, .column = 5}},
+                 .severity = editor::DiagnosticSeverity::Warning,
+                 .message = "Unexpected token near alpha",
+             }}),
+         "the fixture should publish a diagnostic");
+  const auto metrics = TestAccess::ActiveEditorMetrics(fixture.shell);
+  const float x = metrics.text_x + TestAccess::TextCharWidth(fixture.shell) * 2.0f;
+  const float y = metrics.first_line_y + metrics.line_height - 1.5f;
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)});
+  Expect(TestAccess::ActiveEditorHoverPopupRect(fixture.shell).has_value(),
+         "hovering the diagnostic should open its card");
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+                                       TextInputEvent("toggle status bar")});
+  Expect(!TestAccess::ActiveEditorHoverPopupRect(fixture.shell).has_value(),
+         "the palette should cover the hover card");
+  std::optional<SDL_FRect> row;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);  // own it: the loop borrows
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString().starts_with("overlay-row:Toggle Status Bar")) {
+      row = fixture.ElementRect(entry["name"].AsString());
+    }
+  }
+  Expect(row.has_value(), "the palette should list Toggle Status Bar");
+  if (row) {
+    (void)fixture.Click(*row);
+    Expect(TestAccess::ControlUi(fixture.shell)["actions"]["last"].AsString() == "status-bar-toggle",
+           "a click on the row should run it, ran " +
+               TestAccess::ControlUi(fixture.shell)["actions"]["last"].AsString());
+  }
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -567,6 +609,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/HoverCardDoesNotSwallowClicksOnThePalette",
+          TestHoverCardDoesNotSwallowClicksOnThePalette);
   AddTest(tests, "QaFlowRegression/UserDefaultReachesAnOpenProjectOnSwitch",
           TestUserDefaultReachesAnOpenProjectOnSwitch);
   AddTest(tests, "QaFlowRegression/UserDefaultReachesAProjectOpenedForTheFirstTime",
