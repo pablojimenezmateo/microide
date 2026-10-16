@@ -56,6 +56,15 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     operations_.close_menu_bar();
   }
 
+  // An open menu takes the press first, wherever it lands: its rows are drawn over
+  // the sidebar, and the view buttons used to be tested first, so a row over them
+  // switched the sidebar view instead of running (File > Remote: Open Folder on
+  // Host… over the Search button, with the project strip shown). A press outside
+  // the menu closes it and stops there, as everywhere else.
+  if (HandleMenuButtonDown(event, layout)) {
+    return true;
+  }
+
   if (event.button.button == SDL_BUTTON_LEFT && state_.sidebar.visible) {
     const SidebarModeRowLayout mode_row = operations_.sidebar_mode_row(layout.sidebar);
     for (int i = 0; i < mode_row.tab_count; ++i) {
@@ -67,21 +76,14 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         return true;
       }
     }
+    // A second press on the button while its menu is open is a press outside that
+    // menu, which closed it above.
     if (mode_row.has_overflow && Contains(mode_row.overflow_rect, event.button.x, event.button.y)) {
-      if (menu_state_.menu_bar_open && menu_state_.active_menu_id == MenuId::SidebarMode &&
-          menu_state_.active_menu_anchor_rect.has_value()) {
-        operations_.close_menu_bar();
-      } else {
-        operations_.open_anchored_menu(MenuId::SidebarMode, mode_row.overflow_rect);
-      }
+      operations_.open_anchored_menu(MenuId::SidebarMode, mode_row.overflow_rect);
       state_.surface.focus = FocusTarget::Sidebar;
       operations_.request_chrome_redraw();
       return true;
     }
-  }
-
-  if (HandleMenuButtonDown(event, layout)) {
-    return true;
   }
 
   if (HandleOverlayButtonDown(event, layout)) {
@@ -193,8 +195,13 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       }
       return true;
     }
+    // A press outside the popup closes it and stops there, like a menu's; one on
+    // the menu bar goes on to open what it landed on.
     CloseMenuOverflowPopup(menu_state_);
     operations_.request_chrome_redraw();
+    if (!Contains(layout.menu_bar, event.button.x, event.button.y)) {
+      return true;
+    }
   }
 
   if (menu_state_.menu_bar_open) {

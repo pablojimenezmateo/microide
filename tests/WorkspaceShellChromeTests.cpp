@@ -1815,6 +1815,75 @@ void TestWorkspaceShellRowUnderAnOpenMenuDoesNotHoverThroughIt() {
                                 DescribePixelDiff(hover));
 }
 
+// A menu row drawn over the sidebar's view buttons runs when clicked. The chrome
+// press handler tested the view buttons before the open menu, so the press went to
+// the button beneath: with the project strip shown, File > Remote: Open Folder on
+// Host… sits over the Search button, and clicking it switched the sidebar to Search
+// and left the menu open (reported from use as "nothing happens, and the mouse
+// interacts with the items below the menu"). The `ui` query's receipt names the row
+// the click ran, which is how tools/qa now checks every row of every menu.
+void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the menu click fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "chrome.project_tabs.hide_when_single", "false"),
+         "the fixture should show the project strip");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const std::optional<SDL_FRect> file = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
+  Expect(file.has_value(), "the File menu should be on the menu bar");
+  (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, file->x + 4.0f, file->y + 4.0f),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, file->x + 4.0f, file->y + 4.0f)});
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "clicking File should open it");
+
+  const std::optional<SDL_FRect> row = WorkspaceShellTestAccess::PopupMenuItemRect(
+      shell, WorkspaceShell::MenuId::File, "Remote: Open Folder on Host…");
+  Expect(row.has_value(), "the File menu should list Remote: Open Folder on Host…");
+  // Over another view's button where there is one, so a stolen press shows as a
+  // view switch as well as a menu left open.
+  const std::string view_before = WorkspaceShellTestAccess::SidebarViewId(shell);
+  std::vector<std::string> views{"tree", "search", "git"};
+  std::stable_partition(views.begin(), views.end(), [&](const std::string& v) { return v != view_before; });
+  std::optional<SDL_FPoint> probe;
+  for (const std::string& view : views) {
+    SDL_FRect overlap{};
+    const SDL_FRect button = WorkspaceShellTestAccess::SidebarModeTabRect(shell, view);
+    if (SDL_GetRectIntersectionFloat(&*row, &button, &overlap) && overlap.w > 2.0f && overlap.h > 2.0f) {
+      probe = SDL_FPoint{overlap.x + overlap.w / 2.0f, overlap.y + overlap.h / 2.0f};
+      break;
+    }
+  }
+  Expect(probe.has_value(), "the fixture should put the remote row over a sidebar view button");
+
+  (void)DispatchEvents(shell, {MouseMotionEvent(probe->x, probe->y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, probe->x, probe->y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, probe->x, probe->y)});
+  Expect(WorkspaceShellTestAccess::SidebarViewId(shell) == view_before,
+         "a click on a menu row must not switch the sidebar view beneath it");
+  Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell), "running a row should close the menu");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "the remote row should open the Open Folder on Host prompt");
+  const util::JsonValue ui = WorkspaceShellTestAccess::ExecuteControlQuery(shell, "ui");
+  Expect(ui["menu"]["lastRun"].AsString() == "File/Remote: Open Folder on Host…",
+         "the ui receipt should name the row the click ran, not " + ui["menu"]["lastRun"].AsString());
+  Expect(ui["menu"]["rowsRun"].AsInt() == 1, "one click should run one row");
+}
+
 // Opening a menu suspends the caret, and the frame that opens it takes the caret
 // off the screen. Each transition that moves the caret (focus elsewhere, a menu or
 // prompt suspending the blink) used to need its own damage request, and a menu
@@ -5999,6 +6068,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBlinkInALowerPaneKeepsTheDivider);
   AddTest(tests, "WorkspaceShell/EditRepaintsEveryPaneOfTheDocument",
           TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument);
+  AddTest(tests, "WorkspaceShell/MenuRowOverTheSidebarViewButtonsRunsTheRow",
+          TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow);
   AddTest(tests, "WorkspaceShell/OpeningAMenuTakesTheCaretOffScreen",
           TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen);
   AddTest(tests, "WorkspaceShell/RowUnderAnOpenMenuDoesNotHoverThroughIt",
