@@ -98,7 +98,7 @@ class TextInputCoordinator {
   bool CutSelectionAtActiveSingleLineSurface();
 
  private:
-  void RequestCompositionRedraw(TextInputSurface surface);
+  void RequestSurfaceRedraw(TextInputSurface surface);
   editor::SingleLineEditor* ActiveSingleLineTextState();
   const editor::SingleLineEditor* ActiveSingleLineTextState() const;
   void RequestSingleLineTextRedraw(TextInputSurface surface, bool text_changed);

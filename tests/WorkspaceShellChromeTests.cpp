@@ -1884,6 +1884,61 @@ void TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow() {
   Expect(ui["menu"]["rowsRun"].AsInt() == 1, "one click should run one row");
 }
 
+// A field that loses the keyboard repaints its focus ring. Opening a menu takes the
+// keyboard from the Search view's query field: the frame took the caret off (it
+// tracks the caret region it painted) but left the field's focused border, since
+// nothing damaged the field. Menus that drop over the sidebar hid it by repainting
+// what they cover; Help's does not reach the sidebar. Found by `tools/qa/run.py
+// suite menu-clicks` (QA-STALE on the query field after every Help row).
+void TestWorkspaceShellMenuTakingTheKeyboardRepaintsTheFieldFocusRing() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.cpp", "int value = 1;\n");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the focus ring fixture should open its project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "alpha.cpp");
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  SoftwareCanvas canvas(kWidth, kHeight);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "");
+  Expect(WorkspaceShellTestAccess::CurrentTextInputSurface(shell) ==
+             microide::workspace::TextInputSurface::SidebarSearchQuery,
+         "the search view's query field should own the keyboard");
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const std::optional<SDL_FRect> help = WorkspaceShellTestAccess::MenuBarItemRect(shell, "Help");
+  Expect(help.has_value(), "the Help menu should be on the menu bar");
+  const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
+  Expect(help->x > sidebar.x + sidebar.w, "the Help menu should drop clear of the sidebar");
+  const float x = help->x + help->w / 2.0f;
+  const float y = help->y + help->h / 2.0f;
+  const auto open = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight,
+      DispatchEvents(shell, {MouseMotionEvent(x, y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+      pin_caret);
+  Expect(WorkspaceShellTestAccess::MenuBarOpen(shell), "the click should open the Help menu");
+  Expect(open.identical(), "opening a menu should repaint the field it took the keyboard from; " +
+                               DescribePixelDiff(open));
+  const auto close = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {KeyDownEvent(SDLK_ESCAPE)}), pin_caret);
+  Expect(!WorkspaceShellTestAccess::MenuBarOpen(shell), "Escape should close the Help menu");
+  Expect(close.identical(), "closing the menu should repaint the field it gives the keyboard back to; " +
+                                DescribePixelDiff(close));
+}
+
 // Opening a menu suspends the caret, and the frame that opens it takes the caret
 // off the screen. Each transition that moves the caret (focus elsewhere, a menu or
 // prompt suspending the blink) used to need its own damage request, and a menu
@@ -6070,6 +6125,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditRepaintsEveryPaneOfTheDocument);
   AddTest(tests, "WorkspaceShell/MenuRowOverTheSidebarViewButtonsRunsTheRow",
           TestWorkspaceShellMenuRowOverTheSidebarViewButtonsRunsTheRow);
+  AddTest(tests, "WorkspaceShell/MenuTakingTheKeyboardRepaintsTheFieldFocusRing",
+          TestWorkspaceShellMenuTakingTheKeyboardRepaintsTheFieldFocusRing);
   AddTest(tests, "WorkspaceShell/OpeningAMenuTakesTheCaretOffScreen",
           TestWorkspaceShellOpeningAMenuTakesTheCaretOffScreen);
   AddTest(tests, "WorkspaceShell/RowUnderAnOpenMenuDoesNotHoverThroughIt",

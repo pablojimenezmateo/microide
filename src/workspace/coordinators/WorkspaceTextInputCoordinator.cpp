@@ -31,6 +31,16 @@ void TextInputCoordinator::SyncTextInputSurface(SDL_Window* window) {
     return;
   }
 
+  // Fields draw their focus ring from the active surface, so the field losing the
+  // keyboard and the one gaining it both repaint: a menu opened by click took it
+  // from the Search view's query field and left the ring on screen. The editor and
+  // the terminal draw no ring; their caret is tracked by frame prep, and repainting
+  // a whole pane per focus change would undo their partial redraws.
+  for (const TextInputSurface surface : {text_input_state_.active_surface, current_surface}) {
+    if (surface != TextInputSurface::Editor && surface != TextInputSurface::Terminal) {
+      RequestSurfaceRedraw(surface);
+    }
+  }
   text_input_state_.active_surface = current_surface;
   text_input_state_.composition = TextCompositionState{};
   SDL_Window* target_window = window != nullptr ? window : SDL_GetKeyboardFocus();
@@ -67,7 +77,7 @@ bool TextInputCoordinator::CompositionConsumesKey(SDL_Keycode key, SDL_Keymod mo
   }
 }
 
-void TextInputCoordinator::RequestCompositionRedraw(TextInputSurface surface) {
+void TextInputCoordinator::RequestSurfaceRedraw(TextInputSurface surface) {
   switch (surface) {
     case TextInputSurface::PromptInput:
       operations_.request_prompt_redraw();
@@ -269,7 +279,7 @@ bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) 
 
   if (event.text == nullptr || event.text[0] == '\0') {
     if (!text_input_state_.composition.text.empty()) {
-      RequestCompositionRedraw(surface);
+      RequestSurfaceRedraw(surface);
     }
     text_input_state_.composition = TextCompositionState{};
     return true;
@@ -279,7 +289,7 @@ bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) 
   text_input_state_.composition.text = event.text;
   text_input_state_.composition.start = event.start;
   text_input_state_.composition.length = event.length;
-  RequestCompositionRedraw(surface);
+  RequestSurfaceRedraw(surface);
   return true;
 }
 
