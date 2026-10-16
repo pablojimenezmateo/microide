@@ -239,7 +239,7 @@ void TestBufferQueryReportsTextCaretsAndFolds() {
          "fold-all should leave the query reporting the fold at line 1");
 }
 
-// The list overlays name their rows.
+// The list overlays name their rows, and a click at a row's center runs it.
 void TestUiQueryNamesOverlayRows() {
   UiFixture fixture;
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "files"), "files should open the finder");
@@ -249,6 +249,11 @@ void TestUiQueryNamesOverlayRows() {
   Expect(ui["overlay"]["count"].AsInt() == 1, "one file should match gamma");
   const auto row = Find(ui, "overlay-row:src/gamma.cpp");
   Expect(row.has_value() && row->selected == true, "the match should be a selected overlay row");
+  fixture.ClickCenter(*row);
+  Expect(TestAccess::ControlUi(fixture.shell)["overlay"]["visible"].AsBool() == false,
+         "clicking the row should run it and close the finder");
+  Expect(Find(TestAccess::ControlUi(fixture.shell), "tab:0/gamma.cpp").has_value(),
+         "clicking the row should open gamma.cpp");
 }
 
 // The unsaved-changes prompt names its buttons; clicking Cancel keeps the tab.

@@ -543,11 +543,14 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
       *item_index < static_cast<int>(operations_.overlay_item_count())) {
     operations_.set_overlay_selected_index(static_cast<std::size_t>(*item_index));
     operations_.reveal_overlay_selection(overlay);
-    if (state_.overlay.mode == OverlayMode::CommitPicker ||
-        state_.overlay.mode == OverlayMode::LaunchConfigPicker ||
-        state_.overlay.mode == OverlayMode::CommandPalette ||
-        state_.overlay.mode == OverlayMode::CodeActions) {
+    // A click on a row runs it, in every list overlay (VS Code's quick open and
+    // suggest widget both do): the file finder, the project-search overlay and
+    // the completion list used to only SELECT the clicked row, so a person who
+    // clicked a Go to File result got nothing until they pressed Enter.
+    if (event.button.button == SDL_BUTTON_LEFT) {
       operations_.activate_overlay_selection();
+      operations_.request_overlay_redraw();
+      return true;
     }
   }
   state_.surface.focus = FocusTarget::Overlay;
