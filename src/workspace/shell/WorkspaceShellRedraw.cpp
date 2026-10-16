@@ -1,4 +1,5 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "util/InlineVector.h"
 #include "workspace/services/RemoteHostService.h"
 
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
@@ -317,8 +318,31 @@ void WorkspaceShell::RequestTabStripRedraw() {
     RequestRedrawRect(layout->tab_strip);
     return;
   }
+  // One rect per ROW of strips, spanning the gaps between them: the strips of
+  // side-by-side panes stop short of the divider between them, but what a strip
+  // paints does not -- a dragged tab's floating ghost crosses from one pane's
+  // strip into the next, and repainting only the strips left a sliver of it in
+  // the gap after the drop (QA flow wb-editor-groups).
+  util::InlineVector<SDL_FRect, kMaxEditorGroups> rows;
   for (const EditorGroupRects& group : ComputeEditorGroupRectsForState(*layout).groups) {
-    RequestRedrawRect(group.tab_strip);
+    const SDL_FRect& strip = group.tab_strip;
+    if (strip.w <= 0.0f || strip.h <= 0.0f) {
+      continue;
+    }
+    auto row = std::find_if(rows.begin(), rows.end(), [&](const SDL_FRect& r) {
+      return r.y == strip.y && r.h == strip.h;
+    });
+    if (row == rows.end()) {
+      rows.push_back(strip);
+      continue;
+    }
+    const float left = std::min(row->x, strip.x);
+    const float right = std::max(row->x + row->w, strip.x + strip.w);
+    row->x = left;
+    row->w = right - left;
+  }
+  for (const SDL_FRect& row : rows) {
+    RequestRedrawRect(row);
   }
 }
 

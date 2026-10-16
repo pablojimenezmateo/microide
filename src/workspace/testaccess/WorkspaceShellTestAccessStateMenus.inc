@@ -1226,6 +1226,10 @@
   static util::JsonValue ControlUi(WorkspaceShell& shell) {
     return ControlUiQuery::Build(shell.context_, shell.MakeControlUiOperations());
   }
+  static bool TabDragBodyDropActive(const WorkspaceShell& shell) {
+    const auto& drag = shell.context_.interaction_state.tab_drag;
+    return drag.dragging && drag.body_drop();
+  }
   // Any control query verb, answered by the live control channel service.
   static util::JsonValue ControlQuery(WorkspaceShell& shell, const std::string& verb) {
     bool ok = false;

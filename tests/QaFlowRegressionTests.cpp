@@ -9,6 +9,8 @@
 #include "TestSupportSdl.h"
 
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <thread>
 #include <optional>
@@ -73,6 +75,11 @@ struct FlowFixture {
 
   // Paints `redraw` as the app would and expects it to equal a full repaint.
   void ExpectFresh(const workspace::RenderInvalidation& redraw, const std::string& what) {
+    if (const char* dump = std::getenv("MQA_TEST_DUMP"); dump != nullptr) {
+      for (const auto& r : redraw.rects) {
+        std::fprintf(stderr, "%s: rect %.0f,%.0f %.0fx%.0f\n", what.c_str(), r.x, r.y, r.w, r.h);
+      }
+    }
     const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw,
                                                   [this]() { PinCaret(); });
     Expect(diff.identical(), what + " should paint what a full repaint paints; " +
@@ -169,12 +176,59 @@ void TestTypingOnAFoldedOpenerRepaintsItsRow() {
          "the space should land on the opener line");
 }
 
+// wb-editor-groups: dragging a tab over another pane paints VS Code's drop
+// preview (an accent-tinted half or whole pane). The chrome pass draws it, and a
+// partial frame whose damage missed every tab strip skipped that pass, so the
+// preview never appeared on screen -- and its last position stayed after it moved.
+void TestTabDragDropPreviewPaints() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("shared.txt", "shared\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "other.txt");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the split");
+  const auto tab = fixture.ElementRect("tab:0/other.txt");
+  Expect(tab.has_value(), "the left group should show other.txt's tab");
+  if (!tab) {
+    return;
+  }
+  const float x0 = tab->x + tab->w / 2.0f;
+  const float y0 = tab->y + tab->h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y0),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0)}),
+                      "pressing on a tab");
+  // Eight even steps from the tab to the middle of the right pane, as a person's
+  // drag (and the QA flow's) goes: across the left pane's body on the way.
+  const float x1 = static_cast<float>(FlowFixture::kWidth) * 0.8f;
+  const float body_y = static_cast<float>(FlowFixture::kHeight) * 0.45f;
+  bool previewed = false;
+  for (int step = 1; step <= 8; ++step) {
+    const float x = x0 + (x1 - x0) * static_cast<float>(step) / 8.0f;
+    const float y = y0 + (body_y - y0) * static_cast<float>(step) / 8.0f;
+    SDL_Event motion = MouseMotionEvent(x, y);
+    motion.motion.state = SDL_BUTTON_LMASK;  // the button is held: a drag
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging the tab, step " + std::to_string(step));
+    previewed = previewed || TestAccess::TabDragBodyDropActive(fixture.shell);
+  }
+  Expect(previewed, "dragging a tab over a pane body should show the drop preview");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP,
+                                                      x1, body_y)}),
+      "dropping the tab");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
+  AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
 }

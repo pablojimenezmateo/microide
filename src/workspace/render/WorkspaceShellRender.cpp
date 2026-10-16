@@ -121,6 +121,16 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
       }
     }
   }
+  // A tab dragged over a pane body paints VS Code's drop preview over that pane
+  // -- from the chrome pass, so the floating ghost and the strips stay above it.
+  // A clip that missed every strip skipped that pass and repainted the pane
+  // without the preview: on screen it never appeared (QA flow wb-editor-groups).
+  if (skip_window_chrome && dirty_rect_hint.has_value()) {
+    const TabDragState& drag = context_.interaction_state.tab_drag;
+    if (drag.dragging && drag.body_drop() && !DirtyHintSkips(dirty_rect_hint, drag.body_drop_rect)) {
+      skip_window_chrome = false;
+    }
+  }
   // Popups float over the editor area (they drop down from the menu bar),
   // so an intersection check against editor_surface alone would still drag
   // in the editor render every time a popup row dirty rect lands below the
