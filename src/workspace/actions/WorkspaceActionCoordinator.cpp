@@ -16,12 +16,13 @@ bool ActionCoordinator::Execute(ActionId id,
                                 ActionSource source) {
   context_.PrepareForAction(source);
   context_.NoteActionDispatched(id, source);
-  // QA dry run (tools/qa's `keys` sweep): a key records which action it reached
-  // and runs nothing, so every binding can be pressed in every context without
-  // closing tabs, starting debuggers or quitting. Commands from the control
-  // channel still run -- the sweep drives with them.
+  // QA dry run (tools/qa's `keys` and `context-menus` sweeps): a key, a menu row
+  // or a context-menu row records which action it reached and runs nothing, so
+  // every one can be used in every context without closing tabs, starting
+  // debuggers, deleting files or quitting. Commands from the control channel
+  // still run -- the sweeps drive with them.
   static const bool qa_dry_run = util::PerformanceTrace::FlagEnabled("MICROIDE_QA_ACTION_DRY_RUN");
-  if (qa_dry_run && source == ActionSource::Shortcut) {
+  if (qa_dry_run && source != ActionSource::Command) {
     return true;
   }
 

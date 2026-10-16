@@ -123,6 +123,15 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 AddControlUiElement(out, kMenuItem, owner + "/" + label, row.rect, label);
                 out.back().enabled = row.enabled;
                 out.back().active = row.hovered;
+                if (items[row.index].submenu == MenuId::None) {
+                  for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+                    if (spec.id == items[row.index].action) {
+                      out.back().command =
+                          std::string(spec.command_name.empty() ? spec.label : spec.command_name);
+                      break;
+                    }
+                  }
+                }
               }
             };
             if (menus.menu_bar_open) {

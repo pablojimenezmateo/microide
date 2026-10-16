@@ -43,6 +43,9 @@ struct ControlUiElement {
   std::optional<bool> enabled;
   std::optional<bool> active;
   std::optional<bool> selected;
+  // A menu row's command (the name the `ui` action receipt reports when it runs);
+  // empty for elements that run none, and for submenu rows.
+  std::string command;
 };
 
 using ControlUiElements = std::vector<ControlUiElement>;

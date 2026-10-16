@@ -209,6 +209,9 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
     if (element.selected.has_value()) {
       entry["selected"] = util::JsonValue(*element.selected);
     }
+    if (!element.command.empty()) {
+      entry["command"] = util::JsonValue(element.command);
+    }
     array.push_back(util::JsonValue(std::move(entry)));
   }
   object["elements"] = util::JsonValue(std::move(array));
