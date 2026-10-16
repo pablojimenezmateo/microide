@@ -1,6 +1,7 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 
 #include "util/PerformanceTrace.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 
 #include <optional>
 #include <string>
@@ -24,6 +25,19 @@ bool ActionCoordinator::Execute(ActionId id,
   static const bool qa_dry_run = util::PerformanceTrace::FlagEnabled("MICROIDE_QA_ACTION_DRY_RUN");
   if (qa_dry_run && source != ActionSource::Command) {
     return true;
+  }
+  // A menu row, palette row or shortcut that names a command it gives no
+  // arguments to, when the command cannot run without them: ask for them (VS
+  // Code's input box) instead of failing with its usage line. A context menu
+  // fills its arguments from the row it was opened on, and a command line typed
+  // them, so neither is asked.
+  if (args.empty() && (source == ActionSource::Menu || source == ActionSource::Shortcut)) {
+    if (const ActionSpec* spec = FindWorkspaceActionSpec(id);
+        spec != nullptr && !spec->command_name.empty() &&
+        CommandUsageRequiresArgument(spec->command_usage)) {
+      context_.OpenCommandArgumentsPrompt(spec->command_name);
+      return true;
+    }
   }
 
   std::string rejection_feedback;

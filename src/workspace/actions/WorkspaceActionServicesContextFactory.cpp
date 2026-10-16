@@ -237,6 +237,12 @@ void WorkspaceActionContext::OpenGoToLinePrompt() {
   }
 }
 
+void WorkspaceActionContext::OpenCommandArgumentsPrompt(std::string_view command_name) {
+  if (operations_.open_command_arguments_prompt) {
+    operations_.open_command_arguments_prompt(command_name);
+  }
+}
+
 void WorkspaceActionContext::OpenRemoteHostPrompt(bool folder) {
   if (operations_.open_prompt_surface) {
     operations_.open_prompt_surface(folder ? PromptSurfaceState::Action::RemoteFolder
@@ -522,6 +528,13 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](PromptSurfaceState::Action action, PromptSurfaceState::Kind kind,
                      const std::filesystem::path& path, std::string input) {
                 OpenPromptSurface(action, kind, path, std::move(input));
+              },
+          .open_command_arguments_prompt =
+              [this](std::string_view command_name) {
+                OpenPromptSurface(PromptSurfaceState::Action::CommandArguments,
+                                  PromptSurfaceState::Kind::TextInput, std::filesystem::path{},
+                                  std::string{});
+                context_.prompts.surface.command_name.assign(command_name);
               },
           .write_clipboard_text = [this](std::string_view text) { return WriteClipboardText(text); },
           .open_external_url = [this](std::string_view url) { return OpenExternalUrl(url); },

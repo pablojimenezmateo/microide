@@ -191,6 +191,27 @@ void TestEveryMenuItemResolvesToALabel() {
   Expect(blanks.empty(), std::string("every menu row must resolve to a label:") + blanks);
 }
 
+// What a menu, palette row or shortcut asks for before running a command: only a
+// `<...>` outside every `[...]` is required (debug-run's `[--type <adapter>]` is
+// not), and the commands with a bare form say their argument is optional.
+void TestUsageRequiresArgumentOnlyOutsideBrackets() {
+  using microide::workspace::CommandUsageRequiresArgument;
+  Expect(CommandUsageRequiresArgument("git-create-branch <name> [start-point]"),
+         "<name> is required");
+  Expect(!CommandUsageRequiresArgument("git-switch-branch [branch]"), "[branch] is optional");
+  Expect(!CommandUsageRequiresArgument("indent-width [n]"), "[n] is optional");
+  Expect(!CommandUsageRequiresArgument("tool [--type <adapter>]"),
+         "a <...> inside brackets is optional");
+  Expect(CommandUsageRequiresArgument("debug-run [--type <adapter>] <program> [args...]"),
+         "<program> after a bracket group is required");
+  Expect(!CommandUsageRequiresArgument("goto [line[:col]]"), "nested brackets stay optional");
+  for (const std::string_view bare : {"goto", "open", "find", "search"}) {
+    const auto* spec = microide::workspace::FindWorkspaceActionByCommand(bare);
+    Expect(spec != nullptr && !CommandUsageRequiresArgument(spec->command_usage),
+           std::string(bare) + " runs bare, so its usage should not require an argument");
+  }
+}
+
 }  // namespace
 
 void RegisterCommandLabelConsistencyTests(std::vector<TestCase>& tests) {
@@ -198,6 +219,8 @@ void RegisterCommandLabelConsistencyTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommandLabels/MenuAndPaletteAgreeOnEllipsis",
           TestMenuAndPaletteAgreeOnTheEllipsisPromise);
   AddTest(tests, "CommandLabels/CleanlySpaced", TestLabelsAreCleanlySpaced);
+  AddTest(tests, "CommandLabels/UsageRequiresArgumentOnlyOutsideBrackets",
+          TestUsageRequiresArgumentOnlyOutsideBrackets);
   AddTest(tests, "CommandLabels/EveryMenuItemResolvesToALabel",
           TestEveryMenuItemResolvesToALabel);
 }

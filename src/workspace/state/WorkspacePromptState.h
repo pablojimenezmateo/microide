@@ -97,6 +97,10 @@ struct PromptSurfaceState {
     // Code's "Replace N occurrences across M files"), since it rewrites files the
     // user has not opened and an empty replacement deletes every match.
     ConfirmProjectReplaceAll,
+    // A command run bare from a menu, the palette or a shortcut that cannot run
+    // without arguments (`git-create-branch <name>`): type them; the line runs as
+    // `<command_name> <input>`.
+    CommandArguments,
   };
 
   Kind kind = Kind::None;
@@ -106,6 +110,8 @@ struct PromptSurfaceState {
   std::size_t target_line = 0;
   editor::SingleLineEditor input;
   std::string detail;
+  // The command a CommandArguments prompt runs.
+  std::string command_name;
   std::string provider_id;
   std::string request_id;
   std::string tool_call_id;

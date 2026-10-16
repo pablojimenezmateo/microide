@@ -2,6 +2,8 @@
 
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 
 #include "editor/BreakpointStore.h"
 #include "util/Parse.h"
@@ -249,6 +251,16 @@ std::string_view WorkspaceShell::PromptSurfaceTitle() const {
       return "Rename Across Files";
     case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
       return "Replace All";
+    case PromptSurfaceState::Action::CommandArguments:
+      if (const ActionSpec* spec = FindWorkspaceActionByCommand(context_.prompts.surface.command_name);
+          spec != nullptr && !spec->label.empty()) {
+        std::string_view label = spec->label;
+        if (label.ends_with("…")) {
+          label.remove_suffix(std::string_view("…").size());
+        }
+        return label;
+      }
+      return "Run Command";
   }
   return "Prompt";
 }
@@ -319,6 +331,15 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
     case PromptSurfaceState::Action::ConfirmRenameSave:
     case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
       return context_.prompts.surface.detail;
+    case PromptSurfaceState::Action::CommandArguments: {
+      // The usage after the command's name: what to type.
+      const ActionSpec* spec = FindWorkspaceActionByCommand(context_.prompts.surface.command_name);
+      std::string_view usage = spec != nullptr ? spec->command_usage : std::string_view{};
+      if (const std::size_t space = usage.find(' '); space != std::string_view::npos) {
+        usage.remove_prefix(space + 1);
+      }
+      return "Enter " + std::string(usage);
+    }
   }
   return {};
 }
@@ -383,6 +404,8 @@ std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() cons
       return {"Rename & Save", "Cancel"};
     case PromptSurfaceState::Action::ConfirmProjectReplaceAll:
       return {"Replace All", "Cancel"};
+    case PromptSurfaceState::Action::CommandArguments:
+      return {"Run", "Cancel"};
   }
   return {"OK", "Cancel"};
 }
@@ -446,6 +469,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       case Action::RenameSymbol:
       case Action::SaveAs:
       case Action::ConfirmProjectReplaceAll:
+      case Action::CommandArguments:
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmRenameSave:
@@ -562,6 +586,21 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
     MakePromptSurfaceService().DismissPromptSurface(true);
     if (!input.empty()) {
       ActionCoordinator(MakeActionContext()).Execute(action, {input}, ActionSource::Shortcut);
+    }
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::CommandArguments) {
+    // The typed arguments after the command's name, parsed as the command line
+    // parses them (quotes group words), so the prompt and the palette's command
+    // line run and refuse alike.
+    const std::string command_line =
+        context_.prompts.surface.command_name + " " + context_.prompts.surface.input.text();
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    const bool ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
+    if (const std::string& feedback = context_.current_project_state.panel.feedback.text;
+        !feedback.empty()) {
+      Notify(ok ? NotificationService::Tone::Info : NotificationService::Tone::Error, feedback);
     }
     return;
   }

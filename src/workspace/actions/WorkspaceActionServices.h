@@ -95,6 +95,8 @@ class WorkspaceActionContext {
                        const std::filesystem::path&,
                        std::string)>
         open_prompt_surface;
+    // Ask for the arguments of `command_name` (a CommandArguments prompt).
+    std::function<void(std::string_view)> open_command_arguments_prompt;
     std::function<bool(std::string_view)> write_clipboard_text;
     // The desktop's opener for an http(s) URL (a forwarded port's Open in Browser).
     std::function<bool(std::string_view)> open_external_url;
@@ -616,6 +618,8 @@ class WorkspaceActionContext {
   void OpenCommandPalette(std::string seed = {});
   // Open the single-line "Go to Line" modal prompt (VSCode-style Ctrl+G).
   void OpenGoToLinePrompt();
+  // Ask for the arguments a command cannot run without (its usage's `<...>`).
+  void OpenCommandArgumentsPrompt(std::string_view command_name);
   void OpenRenameSymbolPrompt();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();

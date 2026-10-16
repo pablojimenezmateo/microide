@@ -456,6 +456,35 @@ void TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives() {
                                DescribePixelDiff(diff));
 }
 
+// git-branches: "Git: Create Branch…" from the palette (or the Git menu) failed
+// with "Usage: git-create-branch <name> [start-point]" -- every command whose
+// usage needs an argument did, run bare from a menu, the palette or a shortcut.
+// It now asks for the arguments; a command with a bare form keeps it.
+void TestPaletteAsksForTheArgumentsACommandNeeds() {
+  FlowFixture fixture("args.txt", "plain\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+                                       TextInputEvent("set-setting"), KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["modal"].IsString() && ui["modal"].AsString() == "prompt",
+         "running Set Setting bare should open a prompt");
+  if (ui["prompt"].IsObject()) {
+    Expect(ui["prompt"]["title"].AsString() == "Set Setting",
+           "the prompt should be titled by the command, got " + ui["prompt"]["title"].AsString());
+    Expect(ui["prompt"]["message"].AsString() == "Enter <id> <value>",
+           "the prompt should say what to type, got " + ui["prompt"]["message"].AsString());
+  }
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("editor.tab_size 7"), KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  const auto value = TestAccess::GetSettingValue(fixture.shell, "editor.tab_size");
+  Expect(value.has_value() && *value == "7", "the typed arguments should run the command");
+  Expect(TestAccess::ControlUi(fixture.shell)["modal"].IsNull(), "and the prompt should close");
+
+  // Go to Line has a bare form (its own prompt): it is not asked for arguments.
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_G, SDL_KMOD_CTRL)});
+  ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["prompt"].IsObject() && ui["prompt"]["title"].AsString() == "Go to Line",
+         "Ctrl+G should still open Go to Line");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -467,6 +496,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/PaletteAsksForTheArgumentsACommandNeeds",
+          TestPaletteAsksForTheArgumentsACommandNeeds);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",

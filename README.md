@@ -716,7 +716,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `review-commit [commit]`
 - `reveal-in-tree`
 - `files [root]`
-- `find <query>`
+- `find [query]`
 - `find-references`
 - `call-hierarchy [incoming|outgoing]`
 - `focus <editor|sidebar|panel>`
@@ -728,7 +728,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `goto-declaration`
 - `workspace-symbol <query>`
 - `signature-help`
-- `goto <line[:col]>`
+- `goto [line[:col]]`
 - `git-refresh`
 - `git-switch-branch [branch]`
 - `git-create-branch <name> [start-point]`
@@ -750,7 +750,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `branch-review-note <text>`
 - `indent-width [n]`
 - `jump <line[:col]>`
-- `open <path>`
+- `open [path]`
 - `reveal <path> <line[:col]>`
 - `tab-to-group <group> [slot]`
 - `about`
@@ -804,7 +804,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `quit`
 - `reopen`
 - `save [path]`
-- `search <query>`
+- `search [query]`
 - `find-next`
 - `find-previous`
 - `sidebar-close`

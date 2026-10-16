@@ -98,7 +98,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::CreateFile, "", "", "New File…", ""},
       ActionSpec{ActionId::DeletePath, "", "", "Delete…", ""},
       ActionSpec{ActionId::Files, "files", "files [root]", "Go to File…", "Ctrl+P"},
-      ActionSpec{ActionId::Find, "find", "find <query>", "Find File by Query", ""},
+      ActionSpec{ActionId::Find, "find", "find [query]", "Find File by Query", ""},
       ActionSpec{ActionId::FindReferences, "find-references", "find-references",
                  "Find References", "Shift+F12"},
       ActionSpec{ActionId::CallHierarchy, "call-hierarchy", "call-hierarchy [incoming|outgoing]",
@@ -120,7 +120,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Search Workspace Symbols…", ""},
       ActionSpec{ActionId::SignatureHelp, "signature-help", "signature-help",
                  "Signature Help", "Ctrl+Shift+Space"},
-      ActionSpec{ActionId::Goto, "goto", "goto <line[:col]>", "Go to Line…", "Ctrl+G"},
+      ActionSpec{ActionId::Goto, "goto", "goto [line[:col]]", "Go to Line…", "Ctrl+G"},
       ActionSpec{ActionId::GitRefresh, "git-refresh", "git-refresh", "Git: Refresh", ""},
       ActionSpec{ActionId::GitSwitchBranch, "git-switch-branch", "git-switch-branch [branch]",
                  "Git: Switch Branch…", ""},
@@ -154,7 +154,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "branch-review-note <text>", "Edit Branch Review Note", ""},
       ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width", ""},
       ActionSpec{ActionId::Jump, "jump", "jump <line[:col]>", "Jump Relative…", ""},
-      ActionSpec{ActionId::Open, "open", "open <path>", "Open File…", ""},
+      ActionSpec{ActionId::Open, "open", "open [path]", "Open File…", ""},
       ActionSpec{ActionId::Reveal, "reveal", "reveal <path> <line[:col]>", "Reveal Line", ""},
       ActionSpec{ActionId::TabToGroup, "tab-to-group", "tab-to-group <group> [slot]",
                  "Move Tab to Group", ""},
@@ -251,7 +251,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::RenamePath, "", "", "Rename…", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reopen", ""},
       ActionSpec{ActionId::Save, "save", "save [path]", "Save", "Ctrl+S"},
-      ActionSpec{ActionId::Search, "search", "search <query>", "Find in Buffer", "Ctrl+F"},
+      ActionSpec{ActionId::Search, "search", "search [query]", "Find in Buffer", "Ctrl+F"},
       ActionSpec{ActionId::FindNext, "find-next", "find-next", "Find Next", "F3"},
       ActionSpec{ActionId::FindPrevious, "find-previous", "find-previous", "Find Previous",
                  "Shift+F3"},
@@ -466,6 +466,20 @@ const std::vector<std::string>& WorkspaceCommandNames() {
     return names;
   }();
   return kNames;
+}
+
+bool CommandUsageRequiresArgument(std::string_view usage) {
+  int optional_depth = 0;
+  for (const char c : usage) {
+    if (c == '[') {
+      ++optional_depth;
+    } else if (c == ']' && optional_depth > 0) {
+      --optional_depth;
+    } else if (c == '<' && optional_depth == 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 std::vector<std::string> WorkspaceDocumentedCommandUsages() {
