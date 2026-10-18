@@ -50,6 +50,8 @@ struct PreparedFrameState {
   // (content, fold model revision) they were hashed at.
   std::array<std::uint64_t, kMaxEditorGroups> painted_fold_revision{};
   std::array<std::uint64_t, kMaxEditorGroups> painted_fold_markers{};
+  // The breakpoint stores' revisions as painted (gutter dots, Breakpoints pane).
+  std::uint64_t painted_breakpoints = 0;
   // The tab strips painted mid-slide (kind None: none). A new drag can take a
   // strip's animation slot while it still glides, and that strip's tabs then
   // snap back with no frame of their own.

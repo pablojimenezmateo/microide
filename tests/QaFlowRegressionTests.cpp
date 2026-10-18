@@ -992,6 +992,24 @@ void TestDeleteInTheBreakpointsPaneRemovesIt() {
   Expect(breakpoint_count() == 0, "Delete on the breakpoint row should remove it");
 }
 
+// debug-keys: `breakpoint-remove` (Delete in the Breakpoints pane) changed the
+// store and the pane's rows but repainted neither the gutter dot nor the pane --
+// nor did `breakpoint-set` or any other path that does not also move the caret.
+void TestBreakpointCommandsRepaintTheGutterAndThePane() {
+  FlowFixture fixture("bp.cpp", "int a;\nint b;\nint c;\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled on"), "debugger on");
+  TestAccess::FocusDebugPaneBreakpoints(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the debug pane open");
+  const std::string target = fixture.file.string() + " 2";
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "breakpoint-set " + target), "breakpoint-set should run");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "breakpoint-set");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "breakpoint-remove " + target), "breakpoint-remove should run");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "breakpoint-remove");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1115,6 +1133,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/CtrlKChordSurvivesReleasingCtrl", TestCtrlKChordSurvivesReleasingCtrl);
   AddTest(tests, "QaFlowRegression/ColumnSelectionNeverSplitsACharacter", TestColumnSelectionNeverSplitsACharacter);
   AddTest(tests, "QaFlowRegression/DeleteInTheBreakpointsPaneRemovesIt", TestDeleteInTheBreakpointsPaneRemovesIt);
+  AddTest(tests, "QaFlowRegression/BreakpointCommandsRepaintTheGutterAndThePane",
+          TestBreakpointCommandsRepaintTheGutterAndThePane);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

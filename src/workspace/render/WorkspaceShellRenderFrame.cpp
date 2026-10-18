@@ -667,6 +667,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
   }
+  // Breakpoints: the gutter dots in every pane and the Breakpoints pane's rows.
+  // They change through the gutter, F9, the pane's own keys and menus, the control
+  // channel's breakpoint-* commands and the adapter's verification -- and only the
+  // paths that also moved the caret repainted anything (QA debug-keys: Delete in
+  // the pane removed a breakpoint that stayed on screen).
+  {
+    const std::uint64_t breakpoints =
+        (project_state.breakpoint_store.revision() * 0x9E3779B97F4A7C15ull) ^
+        project_state.function_breakpoint_store.revision();
+    if (breakpoints != frame_state_.painted_breakpoints) {
+      frame_state_.painted_breakpoints = breakpoints;
+      RequestEditorSurfaceRedraw();
+      RequestDebugPaneRedraw();
+    }
+  }
   // The modal backdrop stack: a prompt opening over the command palette (or the
   // unsaved-changes prompt over a prompt) dims the whole window once more, and the
   // dialog's own repaint covered only the dialog (QA monkey, seeds 7 and 9).
