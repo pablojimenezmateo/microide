@@ -444,6 +444,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-361 — inert chrome VS Code makes interactive: breadcrumbs, the encoding/EOL segment. [OPEN]
+
+Found probing the chrome for the QA `mouse-and-wrap` pass:
+
+- The breadcrumb bar ignores clicks. In VS Code each segment opens a picker (the
+  folder's siblings for a path segment, the symbols for a symbol segment) and
+  Ctrl+Shift+. focuses it.
+- The status bar's "UTF-8 · LF" segment has no command. VS Code splits it into
+  an encoding segment (Reopen / Save with Encoding) and an EOL segment (Select
+  End of Line Sequence). Here there is no way at all to change one file's line
+  endings: only the global `editor.line_endings` on-save override
+  (TextViewport::SetSaveLineEnding). A per-document change has to be an edit --
+  dirty, undoable, and back to clean on undo -- so it belongs with the undo
+  history rather than as a flag flip on the document.
+- The indentation segment opens Settings rather than VS Code's Indent Using
+  Spaces / Tabs and tab-size picker (it works, it is just a longer way round).
+
 ### TD-2026-10-18-360 — no Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open). [OPEN]
 
 Found by the QA quick-open probe: VS Code's Ctrl+Shift+O and an `@` typed into
