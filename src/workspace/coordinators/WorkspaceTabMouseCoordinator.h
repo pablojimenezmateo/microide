@@ -95,6 +95,9 @@ class TabMouseCoordinator {
     // drag and every wheel tick over a strip.
     std::function<EditorGroupRectsLayout(const WorkspaceLayout&)> compute_editor_group_rects;
     std::function<void(std::size_t)> focus_editor_group;
+    // A double-click on a strip's empty space opens an untitled editor there
+    // (VS Code), as Ctrl+N does.
+    std::function<void()> open_untitled;
   };
 
   TabMouseCoordinator(ProjectCatalogState& project_catalog,

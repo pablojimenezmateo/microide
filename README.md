@@ -667,6 +667,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | Click a URL or a `path:line:col` in terminal output | Open the link, or the file at that line in the editor |
 | `Ctrl`+click in editor | Go to definition |
 | Middle-click tab | Close tab |
+| Double-click the tab strip's empty space | New untitled editor in that group |
 | Mouse wheel on tab strip | Scroll tab overflow |
 
 Mouse: click to focus/open, drag to reorder tabs within their strip, wheel to scroll editor/sidebar/terminal.

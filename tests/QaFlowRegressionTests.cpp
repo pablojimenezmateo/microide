@@ -866,6 +866,28 @@ void TestTypingAfterCtrlEndRepaintsTheLastLine() {
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("a")}), "typing again");
 }
 
+// A double-click on the tab strip's empty space opens an untitled editor, as in
+// VS Code (it did nothing).
+void TestDoubleClickOnEmptyTabStripOpensUntitled() {
+  FlowFixture fixture("tabs.txt", "x\n");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto& strip = ui["surfaces"]["tabStrip"].AsArray();
+  Expect(strip.size() == 4, "the ui query should give the tab strip");
+  if (strip.size() != 4) {
+    return;
+  }
+  const float x = static_cast<float>(strip[0].AsDouble() + strip[2].AsDouble() - 120.0);
+  const float y = static_cast<float>(strip[1].AsDouble() + strip[3].AsDouble() / 2.0);
+  const std::size_t before = TestAccess::GroupTabPaths(fixture.shell, 0).size();
+  SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y);
+  SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y);
+  down.button.clicks = 2;
+  up.button.clicks = 2;
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), down, up});
+  Expect(TestAccess::GroupTabPaths(fixture.shell, 0).size() == before + 1,
+         "a double-click on the strip's empty space should open an untitled tab");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -982,6 +1004,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TreeF2RenamesAndDeleteDeletes", TestTreeF2RenamesAndDeleteDeletes);
   AddTest(tests, "QaFlowRegression/QuickOpenPrefixesAndLineSuffix", TestQuickOpenPrefixesAndLineSuffix);
   AddTest(tests, "QaFlowRegression/TypingAfterCtrlEndRepaintsTheLastLine", TestTypingAfterCtrlEndRepaintsTheLastLine);
+  AddTest(tests, "QaFlowRegression/DoubleClickOnEmptyTabStripOpensUntitled",
+          TestDoubleClickOnEmptyTabStripOpensUntitled);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

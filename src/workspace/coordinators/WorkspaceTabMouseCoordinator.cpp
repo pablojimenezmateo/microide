@@ -145,7 +145,13 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (hit_group_index != state_.focused_group_index && operations_.focus_editor_group) {
       operations_.focus_editor_group(hit_group_index);
     }
+    const bool double_click_empty_space =
+        event.button.button == SDL_BUTTON_LEFT && event.button.clicks == 2 && operations_.open_untitled;
     if (state_.focused_group().open_tabs.empty()) {
+      if (double_click_empty_space) {
+        operations_.open_untitled();
+        return true;
+      }
       const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_strip);
       if (event.button.button == SDL_BUTTON_LEFT &&
           Contains(placeholder_tab, event.button.x, event.button.y)) {
@@ -210,6 +216,10 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                      1.0f));
       }
+      return true;
+    }
+    if (double_click_empty_space) {
+      operations_.open_untitled();
       return true;
     }
   }
@@ -553,6 +563,8 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
               },
           .focus_editor_group =
               [this](std::size_t group_index) { FocusEditorGroup(group_index); },
+          .open_untitled =
+              [this]() { (void)ExecuteCommandName("tab", {}, ActionSource::Shortcut, nullptr); },
       });
   return *glue_->tab_mouse_coordinator;
 }
