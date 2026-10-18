@@ -416,6 +416,56 @@ def flow_undo_semantics(app: q.App) -> None:
     app.expect(app.text() == text, "a new edit drops the redo history")
 
 
+# ---- mouse and wrapping -------------------------------------------------------
+
+
+def flow_mouse_and_wrap(app: q.App) -> None:
+    """Shift+wheel scrolls a long line sideways; Alt+Z wraps it, Down steps one
+    wrapped row, End stops at the row's end and a second End at the line's; a
+    double-click on the tab strip's empty space opens an untitled editor."""
+    long_line = " ".join(f"w{i:03d}" for i in range(120))
+    open_file(app, "notes/wide.txt", long_line + "\nshort\n")
+    pane = app.pane()
+    x, y = pane["textX"] + 200, pane["rows"][0]["y"] + pane["lineHeight"] / 2
+    app.wheel(x, y, 3, modifiers=("shift",))
+    step(app, "shift+wheel down", 0.3)
+    app.expect(app.pane()["scrollColumn"] > 0,
+               f"Shift+wheel scrolls the long line sideways (scrollColumn {app.pane()['scrollColumn']})")
+    app.wheel(x, y, -6, modifiers=("shift",))
+    step(app, "shift+wheel up", 0.3)
+    app.expect(app.pane()["scrollColumn"] == 0, "and back to column 0")
+
+    if not app.buffer().get("softWrap"):
+        app.key("alt+z")
+        step(app, "alt+z", 0.3)
+    app.expect(app.buffer().get("softWrap") is True, "Alt+Z turns soft wrap on")
+    app.click_text(1, 3)
+    app.key("Down")
+    step(app, "Down on a wrapped line")
+    app.expect(app.cursors()[0][0] == 1 and app.cursors()[0][1] > 3,
+               f"Down steps to the line's next wrapped row ({app.cursors()})")
+    app.click_text(1, 3)
+    app.key("End")
+    step(app, "End")
+    first_end = app.cursors()[0]
+    app.expect(first_end[0] == 1 and first_end[1] < len(long_line) + 1,
+               f"End stops at the end of the wrapped row ({first_end})")
+    app.key("End")
+    step(app, "End again")
+    expect_cursors(app, [(1, len(long_line) + 1)], "a second End goes to the end of the line")
+    app.key("alt+z")
+    step(app, "alt+z off", 0.3)
+    app.expect(app.buffer().get("softWrap") is False, "Alt+Z turns it off again")
+
+    strip = app.ui()["surfaces"]["tabStrip"]
+    tabs_before = len(app.elements("tab"))
+    app.click(strip[0] + strip[2] - 100, strip[1] + strip[3] / 2, clicks=2)
+    step(app, "double-click the tab strip", 0.4)
+    app.expect(len(app.elements("tab")) == tabs_before + 1 and
+               (app.active_tab() or {}).get("title", "").lower().startswith("untitled"),
+               f"a double-click on the strip opens an untitled editor ({app.active_tab()})")
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -722,6 +772,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "tree-keys": flow_tree_keys,
     "quick-open": flow_quick_open,
     "undo-semantics": flow_undo_semantics,
+    "mouse-and-wrap": flow_mouse_and_wrap,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}

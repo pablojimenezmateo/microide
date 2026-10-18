@@ -591,11 +591,16 @@ class App:
             self._xdotool("keyup", key)
         self._last_click = (time.monotonic(), x1, y1)
 
-    def wheel(self, x: float, y: float, notches: int) -> None:
-        self._record({"wheel": [round(x), round(y)], "notches": notches})
+    def wheel(self, x: float, y: float, notches: int, modifiers: tuple[str, ...] = ()) -> None:
+        """`notches` > 0 scrolls down; `modifiers` (xdotool key names) are held for it."""
+        self._record({"wheel": [round(x), round(y)], "notches": notches, "modifiers": list(modifiers)})
         button = "5" if notches > 0 else "4"
-        self._xdotool("mousemove", *self._root(x, y), "click", "--repeat",
-                      str(abs(notches)), "--delay", "20", button)
+        self._xdotool("mousemove", *self._root(x, y))
+        for key in modifiers:
+            self._xdotool("keydown", key)
+        self._xdotool("click", "--repeat", str(abs(notches)), "--delay", "20", button)
+        for key in reversed(modifiers):
+            self._xdotool("keyup", key)
 
     def key(self, chord: str) -> None:
         """An xdotool chord: "ctrl+shift+f", "Escape", "alt+Up"."""
@@ -779,7 +784,7 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12) -> None
         elif "drag" in action:
             app.drag(*action["drag"], modifiers=tuple(action.get("modifiers", ())))
         elif "wheel" in action:
-            app.wheel(*action["wheel"], action["notches"])
+            app.wheel(*action["wheel"], action["notches"], tuple(action.get("modifiers", ())))
         elif "key" in action:
             app.key(action["key"])
         elif "type" in action:
