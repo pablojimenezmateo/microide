@@ -887,6 +887,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .refresh_available_colorscheme_names =
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
+          .available_colorscheme_names = [this]() { return available_colorscheme_names_; },
           .apply_colorscheme =
               [this](std::string_view name) {
                 return MakePersistenceCoordinator().ApplyColorscheme(name, true, true);

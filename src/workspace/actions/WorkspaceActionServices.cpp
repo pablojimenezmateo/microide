@@ -1449,6 +1449,18 @@ void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
   operations_.refresh_available_colorscheme_names();
 }
 
+void WorkspaceActionContext::ReportColorschemeNames() {
+  std::string message = "Colour schemes:";
+  const std::vector<std::string> names =
+      operations_.available_colorscheme_names ? operations_.available_colorscheme_names()
+                                              : std::vector<std::string>{};
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    message += (i == 0 ? " " : ", ") + names[i];
+  }
+  state_.panel.feedback.text = message;
+  Notify(NotificationService::Tone::Info, std::move(message));
+}
+
 void WorkspaceActionContext::RequestLiveConfigRedraw() {
   if (operations_.note_layout_inputs_changed) {
     operations_.note_layout_inputs_changed();

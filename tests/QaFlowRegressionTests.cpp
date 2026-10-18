@@ -1113,6 +1113,15 @@ void TestDecorationsFollowTheBufferGoingDirtyAndClean() {
                       "undo back to the saved text");
 }
 
+// plugins-ui: `colorscheme list` refreshed the scheme names and reported nothing.
+void TestColorschemeListSaysWhichSchemesThereAre() {
+  FlowFixture fixture("theme.txt", "x\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "colorscheme list"), "colorscheme list should run");
+  const std::string feedback = TestAccess::CommandFeedbackText(fixture.shell);
+  Expect(feedback.find("dark") != std::string::npos && feedback.find("light") != std::string::npos,
+         "colorscheme list should name the schemes, said '" + feedback + "'");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1245,6 +1254,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/CtrlShiftSSavesANamedFileAs", TestCtrlShiftSSavesANamedFileAs);
   AddTest(tests, "QaFlowRegression/DecorationsFollowTheBufferGoingDirtyAndClean",
           TestDecorationsFollowTheBufferGoingDirtyAndClean);
+  AddTest(tests, "QaFlowRegression/ColorschemeListSaysWhichSchemesThereAre",
+          TestColorschemeListSaysWhichSchemesThereAre);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

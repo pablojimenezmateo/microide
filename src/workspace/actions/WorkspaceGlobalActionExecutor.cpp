@@ -64,7 +64,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return DispatchResult::Handled;
       }
       if (request->list) {
+        // `colorscheme list` refreshed the names and then said nothing.
         context_.RefreshAvailableColorschemeNames();
+        context_.ReportColorschemeNames();
         return DispatchResult::Handled;
       }
       context_.RefreshAvailableColorschemeNames();

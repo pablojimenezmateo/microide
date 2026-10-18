@@ -235,6 +235,7 @@ class WorkspaceActionContext {
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.
     std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
     std::function<void()> refresh_available_colorscheme_names;
+    std::function<std::vector<std::string>()> available_colorscheme_names;
     // False when no theme of that name exists (built-in, on disk, or plugin).
     std::function<bool(std::string_view)> apply_colorscheme;
     std::function<void()> apply_editor_preferences_to_all_tabs;
@@ -595,6 +596,8 @@ class WorkspaceActionContext {
   void PressKey(SDL_Keycode key, SDL_Keymod modifiers);
 
   void RefreshAvailableColorschemeNames();
+  // Says which colour schemes `colorscheme <name>` takes (feedback and a toast).
+  void ReportColorschemeNames();
   bool ApplyColorscheme(std::string_view name);
   std::string_view CurrentColorschemeName() const;
   void SetTabSize(std::size_t value);
