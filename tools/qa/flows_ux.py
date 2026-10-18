@@ -804,6 +804,87 @@ def flow_debug_keys(app: q.App) -> None:
                    "Shift+F5 to stop the session")
 
 
+# ---- terminal by keyboard ----------------------------------------------------------------
+
+
+def _terminal_tabs(app: q.App) -> list[dict]:
+    terminals = app.query("terminals")
+    return terminals if isinstance(terminals, list) else terminals.get("tabs", [])
+
+
+def _active_terminal(app: q.App) -> int:
+    return next((i for i, t in enumerate(_terminal_tabs(app)) if t.get("active")), -1)
+
+
+def flow_terminal_keys(app: q.App) -> None:
+    """The terminal by keyboard: Ctrl+Shift+` opens another, Ctrl+PageDown/PageUp
+    cycle them, Shift+PageUp pages back through the scrollback and a keystroke
+    snaps to the bottom, Ctrl+Shift+\\ splits and Alt+Left/Right move between the
+    panes, and a pane whose shell exited relaunches on Enter."""
+    if not app.ui()["panel"]["visible"]:
+        app.key("ctrl+grave")
+        app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
+    app.send("focus", "panel")
+    step(app, "focus the terminal", 0.3)
+    before = len(_terminal_tabs(app))
+    app.key("ctrl+shift+grave")
+    app.wait_until(lambda: len(_terminal_tabs(app)) == before + 1, 5.0, "Ctrl+Shift+` to open a terminal")
+    step(app, "second terminal", 0.4)
+    active = _active_terminal(app)
+    app.key("ctrl+Prior")
+    step(app, "ctrl+PageUp", 0.3)
+    app.expect(_active_terminal(app) != active, f"Ctrl+PageUp switches terminal ({active} -> {_active_terminal(app)})")
+    app.key("ctrl+Next")
+    step(app, "ctrl+PageDown", 0.3)
+    app.expect(_active_terminal(app) == active, "Ctrl+PageDown switches back")
+
+    app.type("seq 1 400\n")
+    app.wait_until(lambda: "400" in app.query("terminal-output").get("text", ""), 5.0, "the output")
+    step(app, "scrollback", 0.3)
+    geometry = app.ui().get("terminal") or {}
+    bottom = geometry.get("firstRow")
+    app.key("shift+Prior")
+    step(app, "shift+PageUp", 0.3)
+    paged = (app.ui().get("terminal") or {}).get("firstRow")
+    app.expect(paged is not None and bottom is not None and paged < bottom,
+               f"Shift+PageUp pages back through the scrollback ({bottom} -> {paged})")
+    app.type("x")
+    step(app, "type", 0.3)
+    app.expect((app.ui().get("terminal") or {}).get("firstRow") == bottom,
+               "a keystroke snaps the view back to the bottom")
+    app.key("BackSpace")
+
+    app.key("ctrl+shift+backslash")
+    step(app, "split", 0.5)
+    tabs = _terminal_tabs(app)
+    panes = next((t.get("panes", []) for t in tabs if t.get("active")), [])
+    app.expect(len(panes) == 2, f"Ctrl+Shift+\\ splits the terminal ({panes})")
+    right = next((i for i, p in enumerate(panes) if p.get("active")), -1)
+    app.key("alt+Left")
+    step(app, "alt+Left", 0.3)
+    panes = next((t.get("panes", []) for t in _terminal_tabs(app) if t.get("active")), [])
+    app.expect(next((i for i, p in enumerate(panes) if p.get("active")), -1) != right,
+               f"Alt+Left moves to the other pane ({panes})")
+    app.key("alt+Right")
+    step(app, "alt+Right", 0.3)
+
+    def active_pane() -> dict:
+        panes = next((t.get("panes", []) for t in _terminal_tabs(app) if t.get("active")), [])
+        return next((p for p in panes if p.get("active")), {})
+
+    # An exited shell stays on screen with its output (by design, TD-2026-07-17A-130)
+    # and Enter relaunches it in place.
+    app.type("exit\n")
+    app.wait_until(lambda: active_pane().get("running") is False, 5.0, "exit to end the pane's shell")
+    app.wait_until(lambda: "[process exited]" in app.query("terminal-output").get("text", ""), 3.0,
+                   "the pane to say the process exited")
+    app.key("Return")
+    app.wait_until(lambda: active_pane().get("running") is True, 5.0, "Enter to relaunch the shell")
+    app.type("echo relaunched-$((7*6))\n")
+    app.wait_until(lambda: "relaunched-42" in app.query("terminal-output").get("text", ""), 5.0,
+                   "the relaunched shell to answer")
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -1116,6 +1197,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "settings-keyboard": flow_settings_keyboard,
     "completion-keys": flow_completion_keys,
     "debug-keys": flow_debug_keys,
+    "terminal-keys": flow_terminal_keys,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
