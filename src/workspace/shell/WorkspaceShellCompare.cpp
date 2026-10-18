@@ -392,10 +392,9 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
   const float y = surface_layout.rows_y +
                   static_cast<float>(rect_start - scroll_row) * surface_layout.line_height;
   const float h = static_cast<float>(rect_end - rect_start) * surface_layout.line_height;
-  const float width = surface_layout.gutter_width + surface_layout.left_width +
-                      surface_layout.divider_width + surface_layout.gutter_width +
-                      surface_layout.right_width;
-  return DirtyRectWithHalo(MakeRect(surface_layout.left_x, y, width, h));
+  // The whole surface's width: the selected change's markers sit at its outer
+  // edges, outside the panes' text (QA compare-keys left them behind).
+  return DirtyRectWithHalo(MakeRect(layout->editor_surface.x, y, layout->editor_surface.w, h));
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {

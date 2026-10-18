@@ -1157,6 +1157,44 @@ void TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters() {
          "every typed letter should land in the working side, got '" + text + "'");
 }
 
+// compare-keys: stepping between a diff's changes left the previous change's
+// selection markers on screen -- they sit at the surface's outer edges, and the
+// rows' damage started at the left pane's text.
+void TestCompareHunkStepRepaintsTheSelectionMarkers() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "diff.txt";
+  std::string text;
+  for (int i = 1; i <= 60; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(file, text);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the diff fixture", "diff fixture");
+  std::string changed = text;
+  changed.replace(changed.find("line 5\n"), 7, "line five\n");
+  changed.replace(changed.find("line 40\n"), 8, "line forty\n");
+  WriteFile(file, changed);
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{FlowFixture::kWidth, FlowFixture::kHeight};
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the diff fixture should open");
+  TestAccess::SetWindowSize(shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  Expect(TestAccess::OpenWorkingTreeComparison(shell, file, "HEAD", "HEAD"), "the diff should open");
+  TestAccess::SetFocusEditor(shell);
+  shell.Render(canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  for (int step = 0; step < 3; ++step) {
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight,
+        DispatchEvents(shell, {KeyDownEvent(SDLK_RIGHTBRACKET, SDL_KMOD_ALT)}));
+    Expect(diff.identical(), "Alt+] should repaint the old and new change's markers; " + DescribePixelDiff(diff));
+  }
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1293,6 +1331,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestColorschemeListSaysWhichSchemesThereAre);
   AddTest(tests, "QaFlowRegression/TypingOnTheDiffsWorkingSideNeverRunsReviewLetters",
           TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters);
+  AddTest(tests, "QaFlowRegression/CompareHunkStepRepaintsTheSelectionMarkers",
+          TestCompareHunkStepRepaintsTheSelectionMarkers);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
