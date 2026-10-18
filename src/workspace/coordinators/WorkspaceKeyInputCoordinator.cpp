@@ -334,6 +334,20 @@ bool KeyInputCoordinator::HandleDebugBreakpointsKeyDown(const SDL_KeyboardEvent&
     operations_.reveal_debug_pane_selection();
     return true;
   }
+  // Delete removes the selected breakpoint, as in VS Code's Breakpoints view.
+  if (event.key == SDLK_DELETE || event.key == SDLK_BACKSPACE) {
+    const DebugBreakpointRowView& row =
+        state_.debug_breakpoints_panel.Rows()[static_cast<std::size_t>(selected)];
+    if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && !row.path.empty()) {
+      (void)operations_.execute_action(ActionId::BreakpointRemove,
+                                       {row.path.string(), std::to_string(row.line + 1)},
+                                       ActionSource::Shortcut);
+    } else if (row.kind == DebugBreakpointRowView::Kind::FunctionBreakpoint) {
+      (void)operations_.execute_action(ActionId::BreakpointFunctionRemove, {row.function_name},
+                                       ActionSource::Shortcut);
+    }
+    return true;
+  }
   // Enter is the single click (navigate to the source line), Space the double
   // click (toggle enabled) — the two gestures the mouse already distinguishes.
   const bool is_enter = event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER;

@@ -968,6 +968,30 @@ void TestColumnSelectionNeverSplitsACharacter() {
          "the find query should not start inside a character");
 }
 
+// debug-keys: Delete in the Breakpoints pane did nothing; VS Code removes the
+// selected breakpoint.
+void TestDeleteInTheBreakpointsPaneRemovesIt() {
+  FlowFixture fixture("bp.cpp", "int a;\nint b;\nint c;\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled on"), "debugger on");
+  TestAccess::ToggleBreakpointForTest(fixture.shell, fixture.file, 1);
+  TestAccess::FocusDebugPaneBreakpoints(fixture.shell);
+  const auto breakpoint_count = [&]() {
+    std::size_t count = 0;
+    const util::JsonValue files = TestAccess::ControlQuery(fixture.shell, "breakpoints");
+    for (const util::JsonValue& file : files.AsArray()) {
+      count += file["breakpoints"].AsArray().size();
+    }
+    return count;
+  };
+  Expect(breakpoint_count() == 1, "the fixture should have one breakpoint");
+  // The first row is the section header; Down onto the breakpoint, then Delete.
+  for (int i = 0; i < 3 && breakpoint_count() == 1; ++i) {
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DELETE, SDL_KMOD_NONE)});
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN, SDL_KMOD_NONE)});
+  }
+  Expect(breakpoint_count() == 0, "Delete on the breakpoint row should remove it");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1090,6 +1114,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/CtrlShiftFSeedsTheSelection", TestCtrlShiftFSeedsTheSelection);
   AddTest(tests, "QaFlowRegression/CtrlKChordSurvivesReleasingCtrl", TestCtrlKChordSurvivesReleasingCtrl);
   AddTest(tests, "QaFlowRegression/ColumnSelectionNeverSplitsACharacter", TestColumnSelectionNeverSplitsACharacter);
+  AddTest(tests, "QaFlowRegression/DeleteInTheBreakpointsPaneRemovesIt", TestDeleteInTheBreakpointsPaneRemovesIt);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
