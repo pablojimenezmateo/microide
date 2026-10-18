@@ -1067,6 +1067,15 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     return std::nullopt;
   }
 
+  // Plugin status items, in the breadcrumb row: they lift on hover.
+  if (layout.breadcrumb.w > 0.0f && Contains(layout.breadcrumb, x, y)) {
+    for (const VisibleStatusItem& item : ComputeVisibleStatusItems(layout.breadcrumb)) {
+      if (Contains(item.rect, x, y)) {
+        return item.rect;
+      }
+    }
+  }
+
   // Project tab strip.
   if (layout.project_tab_strip.w > 0.0f && Contains(layout.project_tab_strip, x, y)) {
     for (const VisibleStripTab& tab :

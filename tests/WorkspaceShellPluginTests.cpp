@@ -339,6 +339,11 @@ return ide.plugin({
         tooltip = "Counter is 1",
       })
     end)
+    ctx.commands.add("status.wide", function(ctx, args)
+      ctx.status.update("counter", {
+        text = "a much wider counter text",
+      })
+    end)
   end
 })
 )");
@@ -397,6 +402,36 @@ return ide.plugin({
   const auto redraw = shell.ConsumePendingRenderInvalidation();
   Expect(redraw.full || !redraw.rects.empty(),
          "status updates should request a visible redraw");
+  {
+    // An item that changes width while hovered, then loses the pointer, leaves no
+    // highlight behind (QA plugins-ui: "Indexing" became "Indexed" under the
+    // pointer, and the old, wider highlight stayed after it left).
+    EnsureDummySdlVideoInitialized();
+    SoftwareCanvas canvas{1280, 720};
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+    const auto before = WorkspaceShellTestAccess::VisibleStatusItems(shell);
+    const auto item = std::find_if(before.begin(), before.end(), [](const auto& candidate) {
+      return candidate.item.plugin_id == "status";
+    });
+    if (item != before.end()) {
+      const float x = item->rect.x + item->rect.w * 0.5f;
+      const float y = item->rect.y + item->rect.h * 0.5f;
+      auto diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720,
+                                              DispatchEvents(shell, {MouseMotionEvent(x, y)}));
+      Expect(diff.identical(), "the pointer onto the status item should light it; " + DescribePixelDiff(diff));
+      Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "status.wide"), "status.wide should run");
+      diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720, shell.ConsumePendingRenderInvalidation());
+      Expect(diff.identical(), "the item changing width under the pointer; " + DescribePixelDiff(diff));
+      Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "status.tick"), "status.tick should run");
+      diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720, shell.ConsumePendingRenderInvalidation());
+      Expect(diff.identical(), "the item narrowing again under the pointer; " + DescribePixelDiff(diff));
+      diff = PaintAndDiffWithFullRepaint(shell, canvas, 1280, 720,
+                                         DispatchEvents(shell, {MouseMotionEvent(640.0f, 400.0f)}));
+      Expect(diff.identical(), "the pointer leaving the status item; " + DescribePixelDiff(diff));
+    }
+    (void)shell.ConsumePendingRenderInvalidation();
+  }
   // ...of the item itself: it lives in the breadcrumb row, and the update repainted
   // the menu bar (QA plugins-ui: the item kept its old text and progress).
   if (updated_counter != updated_items.end() && !redraw.full) {
