@@ -653,6 +653,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+PageUp` / `Ctrl+PageDown` in terminal | Previous / next terminal tab |
 | `Enter` in an exited terminal | Relaunch it in place with the same cwd and command |
 | Typing in the file tree | Select the next entry whose name starts with what you typed (VS Code's type navigation; Compare and Refresh are on the tree's context menu) |
+| `F2` / `Delete` in the file tree | Rename / delete the selected entry (Delete asks first) |
 | `[` / `]` in compare/merge | Previous / next hunk |
 | `i` `b` `c` `m` in merge | Apply incoming / base / current / both (current first) for selected hunk |
 | `I` `B` `C` `M` in merge | Apply choice to every hunk |
