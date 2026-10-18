@@ -6,10 +6,11 @@ unstage, and notifications.
 
 from __future__ import annotations
 
+import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_cursors, expect_text, open_file, step
+from flows_common import dismiss, expect_cursors, expect_text, open_file, read, step, write
 
 
 def _numbered(count: int, prefix: str = "line") -> str:
@@ -286,11 +287,222 @@ def flow_find_options(app: q.App) -> None:
     dismiss(app)
 
 
+# ---- git ---------------------------------------------------------------------
+
+
+def _git(app: q.App, *args: str) -> str:
+    assert app.project is not None
+    return subprocess.run(["git", *args], cwd=app.project, capture_output=True, text=True,
+                          check=False).stdout.strip()
+
+
+def _git_row_menu(app: q.App, name: str, label_prefix: str) -> bool:
+    """Right-clicks the git view's row for `name` and clicks the context menu row
+    whose label starts with `label_prefix`."""
+    row = app.wait_for(f"row:git/{name}", 5.0)
+    app.expect(row is not None, f"the git view lists {name}")
+    if row is None:
+        return False
+    app.click(*app.center(row), button=3)
+    step(app, f"right-click {name}", 0.3)
+    item = next((e for e in app.elements("menu-item", prefix="menu-item:context/")
+                 if e.get("label", "").startswith(label_prefix)), None)
+    app.expect(item is not None, f"{name}'s context menu offers {label_prefix} "
+                                 f"({[e.get('label') for e in app.elements('menu-item')]})")
+    if item is None:
+        dismiss(app)
+        return False
+    app.click(*app.center(item))
+    step(app, f"{label_prefix} {name}", 0.4)
+    return True
+
+
+def flow_git_discard(app: q.App) -> None:
+    """An untracked file shows in the git view; Stage and Unstage follow the index
+    both ways; Discard asks first, Cancel keeps the change, Discard restores the
+    file on disk and in its open editor; Stage All takes everything."""
+    original = read(app, "src/main.cpp")
+    write(app, "src/main.cpp", original + "// discard me\n")
+    write(app, "src/scheduler.cpp", read(app, "src/scheduler.cpp") + "// stage me\n")
+    write(app, "notes/untracked.txt", "new\n")
+    open_file(app, "src/main.cpp")
+    app.key("ctrl+shift+g")
+    step(app, "git view", 0.5)
+    app.expect(app.wait_for("row:git/untracked.txt", 5.0) is not None,
+               "an untracked file shows in the git view")
+
+    if _git_row_menu(app, "scheduler.cpp", "Stage"):
+        app.wait_until(lambda: _git(app, "diff", "--cached", "--name-only") == "src/scheduler.cpp", 5.0,
+                       "Stage to put scheduler.cpp in the index")
+    if _git_row_menu(app, "scheduler.cpp", "Unstage"):
+        app.wait_until(lambda: _git(app, "diff", "--cached", "--name-only") == "", 5.0,
+                       "Unstage to take it out of the index again")
+
+    if _git_row_menu(app, "main.cpp", "Discard"):
+        app.expect(app.ui().get("modal") == "prompt", "Discard asks before throwing the change away")
+        cancel = next((e for e in app.elements("button", prefix="button:prompt/")
+                       if e.get("label") == "Cancel"), None)
+        if cancel:
+            app.click(*app.center(cancel))
+            step(app, "cancel the discard", 0.3)
+            app.expect(read(app, "src/main.cpp").endswith("// discard me\n"), "Cancel keeps the change")
+    if _git_row_menu(app, "main.cpp", "Discard"):
+        confirm = next((e for e in app.elements("button", prefix="button:prompt/")
+                        if e.get("label", "").startswith("Discard")), None)
+        app.expect(confirm is not None, f"the prompt has a Discard button "
+                                        f"({[e['name'] for e in app.elements('button', prefix='button:prompt/')]})")
+        if confirm:
+            app.click(*app.center(confirm))
+            step(app, "confirm the discard", 0.5)
+            app.wait_until(lambda: read(app, "src/main.cpp") == original, 5.0, "the file restored on disk")
+            app.wait_until(lambda: not any(e["name"] == "row:git/main.cpp" for e in app.elements("row")),
+                           5.0, "main.cpp to leave the git view")
+            app.send("open", "src/main.cpp")
+            app.wait_until(lambda: "// discard me" not in app.text(), 5.0,
+                           "the open editor to follow the discard")
+    app.key("ctrl+shift+g")
+    step(app, "git view again", 0.3)
+    stage_all = app.wait_for("button:git/stage-all", 3.0)
+    if stage_all:
+        app.click(*app.center(stage_all))
+        step(app, "Stage All", 0.6)
+        app.wait_until(lambda: set(_git(app, "diff", "--cached", "--name-only").splitlines())
+                       == {"src/scheduler.cpp", "notes/untracked.txt"}, 5.0,
+                       "Stage All to stage the change and the untracked file")
+
+
+# ---- terminal ----------------------------------------------------------------
+
+
+def flow_terminal_clipboard(app: q.App) -> None:
+    """Copy in the editor and paste into the shell with Ctrl+Shift+V; select the
+    shell's output with the mouse and Ctrl+Shift+C it into an editor; the same
+    through the terminal's context menu."""
+    open_file(app, "notes/clip.txt", "echo qa-paste-$((50+5))\n")
+    app.click_text(1, 1)
+    app.key("End")
+    app.key("shift+Home")
+    app.key("ctrl+c")
+    step(app, "copy the command")
+    if not app.ui()["panel"]["visible"]:
+        app.key("ctrl+grave")
+        app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
+    app.send("focus", "panel")
+    step(app, "focus the terminal", 0.3)
+
+    def output() -> str:
+        return app.query("terminal-output").get("text", "")
+
+    app.type("clear\n")
+    step(app, "clear", 0.4)
+    app.key("ctrl+shift+v")
+    app.key("Return")
+    app.wait_until(lambda: "qa-paste-55" in output(), 5.0, "Ctrl+Shift+V to paste the command into the shell")
+
+    surface = app.ui()["surfaces"]["bottomPanel"]
+    if not surface:
+        app.expect(False, "the bottom panel has a surface")
+        return
+    x, y, w, h = surface
+    # Drag over the output row, located by its transcript row.
+    lines = output().split("\n")
+    row = next((i for i, line in enumerate(lines) if line.strip() == "qa-paste-55"), None)
+    app.expect(row is not None, f"the output row is in the transcript ({lines[-6:]})")
+    if row is None:
+        return
+    app.drag(*app.terminal_point(row, 0), *app.terminal_point(row, len("qa-paste-55")))
+    step(app, "drag over the output", 0.3)
+    app.key("ctrl+shift+c")
+    step(app, "ctrl+shift+c", 0.2)
+    app.key("ctrl+n")
+    step(app, "untitled", 0.3)
+    app.send("focus", "editor")
+    app.key("ctrl+v")
+    step(app, "paste", 0.3)
+    # The shell's OUTPUT (55), not the command the clipboard held before.
+    app.expect("qa-paste-55" in app.text(),
+               f"the terminal selection pastes into the editor ({app.text()[:120]!r})")
+
+    # The context menu's Paste does what Ctrl+Shift+V does.
+    app.click_text(1, 1)
+    app.key("ctrl+a")
+    app.type("echo qa-menu-$((60+6))")
+    app.key("ctrl+a")
+    app.key("ctrl+c")
+    step(app, "copy the second command")
+    app.send("focus", "panel")
+    app.click(x + w / 2, y + h / 2, button=3)
+    step(app, "right-click the terminal", 0.3)
+    paste = next((e for e in app.elements("menu-item") if e.get("label", "").startswith("Paste")), None)
+    app.expect(paste is not None, f"the terminal's context menu offers Paste "
+                                  f"({[e['name'] for e in app.elements('menu-item')]})")
+    if paste:
+        app.click(*app.center(paste))
+        step(app, "Paste from the menu", 0.3)
+        app.key("Return")
+        app.wait_until(lambda: "qa-menu-66" in output(), 5.0, "the menu's Paste to reach the shell")
+    dismiss(app)
+    # Leave the untitled buffer clean so the run ends without a prompt.
+    app.send("focus", "editor")
+    app.key("ctrl+a")
+    app.key("Delete")
+
+
+# ---- notifications ---------------------------------------------------------------
+
+
+def flow_notifications(app: q.App) -> None:
+    """A message toasts and is named on screen; a click dismisses it; several
+    stack newest first; the keyboard route (Focus Notifications) reaches them and
+    Escape gives the editor back."""
+    open_file(app, "notes/toast.txt", "plain\n")
+    app.key("F8")  # no problems anywhere: a toast says so
+    app.wait_until(lambda: any(e["name"].startswith("notification:") for e in app.elements("notification")),
+                   3.0, "F8 with no problems to toast")
+    toast = next(iter(app.elements("notification")), None)
+    app.expect(toast is not None and "problem" in toast.get("label", "").lower(),
+               f"the toast says there are no problems ({toast})")
+    if toast:
+        app.click(*app.center(toast))
+        step(app, "click the toast", 0.3)
+        app.expect(not app.elements("notification"), "a click dismisses the toast")
+    app.key("F8")
+    step(app, "F8 again", 0.2)
+    app.key("ctrl+g")
+    step(app, "ctrl+g", 0.2)
+    app.type("x")
+    app.key("Return")
+    step(app, "go to line x", 0.3)
+    toasts = app.elements("notification")
+    app.expect(len(toasts) >= 1, f"the toasts stack ({[t.get('label') for t in toasts]})")
+    dismiss(app)
+    app.key("ctrl+shift+p")
+    step(app, "palette", 0.3)
+    app.type("focus notifications")
+    step(app, "query", 0.3)
+    palette_rows = app.elements("overlay-row")
+    app.expect(bool(palette_rows), "the palette lists Focus Notifications")
+    if palette_rows:
+        app.key("Return")
+        step(app, "Focus Notifications", 0.3)
+        focused = [t for t in app.elements("notification") if t.get("active")]
+        app.expect(len(focused) == 1, f"Focus Notifications puts the keyboard on a toast ({focused})")
+        app.key("Delete")
+        step(app, "Delete the focused toast", 0.3)
+        app.key("Escape")
+        step(app, "Escape the toasts", 0.3)
+        app.expect(app.ui()["focus"] == "editor", f"Escape gives the editor the keyboard back ({app.ui()['focus']})")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "nav-history": flow_nav_history,
     "caret-motion": flow_caret_motion,
     "indentation": flow_indentation,
     "find-options": flow_find_options,
+    "git-discard": flow_git_discard,
+    "terminal-clipboard": flow_terminal_clipboard,
+    "notifications": flow_notifications,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}
