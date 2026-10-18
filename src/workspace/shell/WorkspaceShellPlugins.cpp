@@ -660,9 +660,11 @@ WorkspaceShell::WorkspaceShell() {
           [this]() {
             return settings_store_.Revision();
           },
+      // Plugin status items are drawn in the breadcrumb row, not the menu bar the
+      // chrome redraw covers (QA plugins-ui: an updated item kept its old text).
       .request_status_redraw =
           [this]() {
-            RequestChromeRedraw();
+            RequestBreadcrumbRedraw();
           },
       .show_notification =
           [this](const std::string& level, const std::string& message) {

@@ -397,6 +397,17 @@ return ide.plugin({
   const auto redraw = shell.ConsumePendingRenderInvalidation();
   Expect(redraw.full || !redraw.rects.empty(),
          "status updates should request a visible redraw");
+  // ...of the item itself: it lives in the breadcrumb row, and the update repainted
+  // the menu bar (QA plugins-ui: the item kept its old text and progress).
+  if (updated_counter != updated_items.end() && !redraw.full) {
+    const SDL_FRect item = updated_counter->rect;
+    bool covered = false;
+    for (const SDL_FRect& rect : redraw.rects) {
+      covered = covered || (rect.x <= item.x && rect.y <= item.y && rect.x + rect.w >= item.x + item.w &&
+                            rect.y + rect.h >= item.y + item.h);
+    }
+    Expect(covered, "the status update's damage should cover the item it changed");
+  }
 }
 
 void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
