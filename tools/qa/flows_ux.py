@@ -466,6 +466,100 @@ def flow_mouse_and_wrap(app: q.App) -> None:
                f"a double-click on the strip opens an untitled editor ({app.active_tab()})")
 
 
+# ---- project search ----------------------------------------------------------------
+
+
+def _search_hits(app: q.App) -> list[str]:
+    """The search view's hit rows (`row:search/<path>:<line>`)."""
+    return [e["name"][len("row:search/"):] for e in app.elements("row", prefix="row:search/")
+            if e["name"].rsplit(":", 1)[-1].isdigit()]
+
+
+def flow_search_options(app: q.App) -> None:
+    """The search view's options: Ctrl+Shift+F seeds the selected word, the case
+    and regex toggles narrow the hits, include/exclude globs scope them, and the
+    keyboard opens a hit."""
+    write(app, "notes/q1.txt", "Quokka quokka\nQUOKKA\n")
+    write(app, "notes/q2.md", "quokka\n")
+    open_file(app, "notes/q2.md")
+    app.click_text(1, 2)
+    app.key("ctrl+d")
+    step(app, "select quokka")
+    app.key("ctrl+shift+f")
+    step(app, "ctrl+shift+f", 0.5)
+    app.expect(app.field_text("field:search/query") == "quokka",
+               f"Ctrl+Shift+F seeds the selected word ({app.field_text('field:search/query')!r})")
+    if app.field_text("field:search/query") != "quokka":
+        app.click_named("field:search/query")
+        app.key("ctrl+a")
+        app.type("quokka")
+    app.wait_until(lambda: len(_search_hits(app)) >= 3, 5.0, "case-insensitive hits in both files")
+    all_hits = _search_hits(app)
+    app.click_named("button:search/case")
+    step(app, "match case on", 0.6)
+    app.wait_until(lambda: 0 < len(_search_hits(app)) < len(all_hits), 5.0,
+                   f"match case to drop QUOKKA and Quokka ({all_hits})")
+    app.click_named("button:search/case")
+    step(app, "match case off", 0.6)
+
+    app.click_named("button:search/mode")
+    step(app, "regex mode", 0.4)
+    app.click_named("field:search/query")
+    app.key("ctrl+a")
+    app.type("^QUOK")
+    step(app, "regex ^QUOK", 0.8)
+    app.wait_until(lambda: len(_search_hits(app)) >= 1, 5.0, "the regex to match line starts")
+    hits = _search_hits(app)
+    app.expect(all(h.endswith(":1") or h.endswith(":2") for h in hits) and len(hits) <= 4,
+               f"^ anchors at line starts ({hits})")
+    app.click_named("button:search/mode")
+    step(app, "back to literal", 0.4)
+    app.click_named("field:search/query")
+    app.key("ctrl+a")
+    app.type("quokka")
+    step(app, "literal quokka", 0.8)
+
+    if not any(e["name"] == "field:search/include" for e in app.elements("field")):
+        app.click_named("button:search/scope")
+        step(app, "show include/exclude", 0.4)
+    include = app.wait_for("field:search/include", 2.0)
+    app.expect(include is not None, "the scope toggle shows the include field")
+    if include:
+        app.click(*app.center(include))
+        app.type("*.md")
+        app.key("Return")
+        step(app, "include *.md", 0.8)
+        app.wait_until(lambda: _search_hits(app) and all(".md:" in h for h in _search_hits(app)), 5.0,
+                       f"include *.md to keep only q2.md ({_search_hits(app)})")
+        app.click(*app.center(app.element("field:search/include")))
+        app.key("ctrl+a")
+        app.key("BackSpace")
+        app.key("Return")
+        step(app, "clear include", 0.6)
+        exclude = app.element("field:search/exclude")
+        app.click(*app.center(exclude))
+        app.type("notes/**")
+        app.key("Return")
+        step(app, "exclude notes/**", 0.8)
+        app.wait_until(lambda: not any(h.startswith("notes/") for h in _search_hits(app)), 5.0,
+                       f"exclude notes/** to drop the notes hits ({_search_hits(app)})")
+        app.click(*app.center(app.element("field:search/exclude")))
+        app.key("ctrl+a")
+        app.key("BackSpace")
+        app.key("Return")
+        step(app, "clear exclude", 0.6)
+    app.wait_until(lambda: len(_search_hits(app)) >= 3, 5.0, "all hits back")
+    app.send("focus", "sidebar")
+    step(app, "focus the results", 0.2)
+    app.key("Down")
+    app.key("Down")
+    app.key("Return")
+    step(app, "Enter on a hit", 0.5)
+    app.expect((app.active_tab() or {}).get("title") in ("q1.txt", "q2.md"),
+               f"Enter on a result opens its file ({(app.active_tab() or {}).get('title')})")
+    dismiss(app)
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -773,6 +867,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "quick-open": flow_quick_open,
     "undo-semantics": flow_undo_semantics,
     "mouse-and-wrap": flow_mouse_and_wrap,
+    "search-options": flow_search_options,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}
