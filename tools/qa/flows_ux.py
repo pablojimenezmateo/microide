@@ -287,6 +287,135 @@ def flow_find_options(app: q.App) -> None:
     dismiss(app)
 
 
+# ---- quick open and undo ------------------------------------------------------
+
+
+def flow_quick_open(app: q.App) -> None:
+    """Ctrl+P with `file:line` opens at the line; `>` switches to commands and `:`
+    to Go to Line, keeping what follows; a click on a row opens it; Escape returns
+    the editor untouched."""
+    write(app, "notes/target.txt", "".join(f"row {i}\n" for i in range(1, 41)))
+    open_file(app, "notes/start.txt", "start\n")
+    app.key("ctrl+p")
+    step(app, "ctrl+p", 0.3)
+    app.type("target.txt:25")
+    step(app, "type target.txt:25", 0.4)
+    rows = app.elements("overlay-row")
+    app.expect(any("target.txt" in r.get("label", "") for r in rows),
+               f"file:line still lists the file ({[r.get('label') for r in rows][:4]})")
+    app.key("Return")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "target.txt", 3.0, "target.txt to open")
+    app.wait_until(lambda: app.cursors()[:1] == [(25, 1)], 3.0, "the caret on line 25")
+
+    app.key("ctrl+p")
+    step(app, "ctrl+p", 0.3)
+    app.type(">sort lines")
+    step(app, "type >sort lines", 0.3)
+    overlay = app.ui()["overlay"]
+    app.expect(overlay.get("mode") == "command-palette" and overlay.get("query") == "sort lines",
+               f"> switches to commands, keeping the rest ({overlay})")
+    app.expect(overlay.get("count", 0) >= 2, f"the sort commands are listed ({overlay.get('count')})")
+    dismiss(app)
+
+    app.key("ctrl+p")
+    step(app, "ctrl+p", 0.3)
+    app.type(":7")
+    step(app, "type :7", 0.3)
+    prompt = app.ui().get("prompt") or {}
+    app.expect(prompt.get("input") == "7", f": switches to Go to Line with 7 ({prompt})")
+    app.key("Return")
+    step(app, "Enter", 0.3)
+    app.expect(app.cursors()[:1] == [(7, 1)], f"Go to Line lands on 7 ({app.cursors()})")
+
+    app.key("ctrl+p")
+    step(app, "ctrl+p", 0.3)
+    app.expect(app.ui()["overlay"].get("query") == "", "the next Ctrl+P opens empty")
+    app.type("start")
+    step(app, "type start", 0.3)
+    row = next((r for r in app.elements("overlay-row") if "start.txt" in r.get("label", "")), None)
+    app.expect(row is not None, "start.txt is listed")
+    if row:
+        app.click(*app.center(row))
+        app.wait_until(lambda: (app.active_tab() or {}).get("title") == "start.txt", 3.0,
+                       "a click on the row to open it")
+    before = app.text()
+    app.key("ctrl+p")
+    app.type("zzz")
+    app.key("Escape")
+    step(app, "escape the finder", 0.3)
+    app.expect(app.text() == before and not app.ui()["overlay"]["visible"],
+               "Escape leaves the editor as it was")
+
+
+def flow_undo_semantics(app: q.App) -> None:
+    """Undo restores the selection an edit replaced; a paste, a multi-caret edit
+    and a line move each undo in one step; a new edit after undo drops redo; undo
+    brings the caret back to the edit."""
+    open_file(app, "notes/undo.txt", "alpha beta gamma\n" + "".join(f"pad {i}\n" for i in range(80)))
+    app.click_text(1, 7)
+    app.key("ctrl+d")
+    step(app, "select beta")
+    app.type("BETA")
+    step(app, "type over the selection")
+    app.expect(app.text().startswith("alpha BETA gamma\n"), f"typing replaces the selection ({app.text()[:20]!r})")
+    app.key("ctrl+z")
+    step(app, "undo the replacement")
+    app.expect(app.text().startswith("alpha beta gamma\n"), f"undo restores the word ({app.text()[:20]!r})")
+    app.expect(app.buffer().get("selectedText") == "beta",
+               f"undo restores the selection the edit replaced ({app.buffer().get('selectedText')!r})")
+
+    app.key("Escape")
+    app.click_text(1, 1)
+    app.key("ctrl+alt+Down")
+    app.key("ctrl+alt+Down")
+    step(app, "three carets")
+    app.type("> ")
+    step(app, "type at three carets")
+    app.expect(app.text().startswith("> alpha beta gamma\n> pad 0\n> pad 1\n"),
+               f"each caret typed ({app.text()[:40]!r})")
+    app.key("ctrl+z")
+    step(app, "undo the multi-caret edit")
+    app.expect(app.text().startswith("alpha beta gamma\npad 0\npad 1\n"),
+               f"one undo takes back every caret's edit ({app.text()[:40]!r})")
+    app.key("Escape")
+
+    app.click_text(2, 1)
+    app.key("End")
+    app.key("shift+Home")
+    app.key("ctrl+c")
+    app.click_text(1, 1)
+    app.key("ctrl+v")
+    step(app, "paste")
+    pasted = app.text()
+    app.key("ctrl+z")
+    step(app, "undo the paste")
+    app.expect(app.text().startswith("alpha beta gamma\n") and app.text() != pasted,
+               f"one undo takes back the paste ({app.text()[:30]!r})")
+
+    app.click_text(1, 1)
+    app.key("alt+Down")
+    step(app, "move the line down")
+    app.key("ctrl+z")
+    step(app, "undo the move")
+    app.expect(app.text().startswith("alpha beta gamma\npad 0\n"), f"one undo takes back the move ({app.text()[:30]!r})")
+
+    app.key("ctrl+End")
+    app.type("tail")
+    step(app, "type at the end")
+    app.key("ctrl+Home")
+    step(app, "go to the top")
+    app.key("ctrl+z")
+    step(app, "undo far from the edit")
+    app.expect(app.cursors()[0][0] >= 80, f"undo brings the caret back to the edit ({app.cursors()})")
+    app.expect(app.buffer().get("scrollLine", 0) > 40, "and scrolls it into view")
+    app.type("x")
+    step(app, "a new edit after undo")
+    text = app.text()
+    app.key("ctrl+shift+z")
+    step(app, "redo after a new edit")
+    app.expect(app.text() == text, "a new edit drops the redo history")
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -591,6 +720,8 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "terminal-clipboard": flow_terminal_clipboard,
     "notifications": flow_notifications,
     "tree-keys": flow_tree_keys,
+    "quick-open": flow_quick_open,
+    "undo-semantics": flow_undo_semantics,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}
