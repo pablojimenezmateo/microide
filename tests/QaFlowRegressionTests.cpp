@@ -1143,6 +1143,10 @@ void TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters() {
   Expect(TestAccess::OpenWorkingTreeComparison(shell, file, "HEAD", "HEAD"), "the diff should open");
   auto& compare = TestAccess::ActiveCompare(shell);
   Expect(compare.right_editable, "the working side should be editable");
+  // A working-tree diff says so from the start (it read "Branch review" until the
+  // first edit re-derived it).
+  Expect(compare.review_header.summary_line.starts_with("Working tree review"),
+         "a working-tree diff should open as one, header '" + compare.review_header.summary_line + "'");
   compare.right_view_active = true;
   compare.right_viewport.MoveCursorTo(1, 12);
   TestAccess::SetFocusEditor(shell);
@@ -1201,6 +1205,45 @@ void TestCompareHunkStepRepaintsTheSelectionMarkers() {
         DispatchEvents(shell, {KeyDownEvent(SDLK_RIGHTBRACKET, SDL_KMOD_ALT)}));
     Expect(diff.identical(), "Alt+] should repaint the old and new change's markers; " + DescribePixelDiff(diff));
   }
+}
+
+// compare-keys: the diff's header counts its hunks, and an edit that adds one
+// changed the header without repainting it.
+void TestCompareHeaderRepaintsWhenAnEditChangesIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "diff.txt";
+  std::string text;
+  for (int i = 1; i <= 30; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(file, text);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the diff fixture", "diff fixture");
+  std::string changed = text;
+  changed.replace(changed.find("line 5\n"), 7, "line five\n");
+  WriteFile(file, changed);
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{FlowFixture::kWidth, FlowFixture::kHeight};
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the diff fixture should open");
+  TestAccess::SetWindowSize(shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  Expect(TestAccess::OpenWorkingTreeComparison(shell, file, "HEAD", "HEAD"), "the diff should open");
+  TestAccess::SetFocusEditor(shell);
+  auto& compare = TestAccess::ActiveCompare(shell);
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(19, 7);  // "line 20", far from the first hunk
+  shell.Render(canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const std::string before = compare.review_header.summary_line;
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight,
+                                                DispatchEvents(shell, {TextInputEvent("X")}));
+  Expect(TestAccess::ActiveCompare(shell).review_header.summary_line != before,
+         "the edit should add a hunk to the header");
+  Expect(diff.identical(), "the header should repaint with its new hunk count; " + DescribePixelDiff(diff));
 }
 
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
@@ -1341,6 +1384,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters);
   AddTest(tests, "QaFlowRegression/CompareHunkStepRepaintsTheSelectionMarkers",
           TestCompareHunkStepRepaintsTheSelectionMarkers);
+  AddTest(tests, "QaFlowRegression/CompareHeaderRepaintsWhenAnEditChangesIt",
+          TestCompareHeaderRepaintsWhenAnEditChangesIt);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

@@ -834,6 +834,20 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_merge_status = status;
     }
   }
+  // The compare header (see PreparedFrameState::painted_compare_header).
+  {
+    std::uint64_t header = 0;
+    if (const CompareTabState* compare = ActiveCompareTab(); compare != nullptr) {
+      header = (reinterpret_cast<std::uintptr_t>(compare) * 0x9E3779B97F4A7C15ull) ^
+               std::hash<std::string_view>{}(compare->review_header.summary_line);
+    }
+    if (header != frame_state_.painted_compare_header) {
+      if (header != 0) {
+        RequestEditorSurfaceRedraw();
+      }
+      frame_state_.painted_compare_header = header;
+    }
+  }
   // The output panel's lines (see PreparedFrameState::painted_output_revision).
   {
     const bool shows_output =

@@ -374,12 +374,16 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
     // buffer shadowing the file, and Ctrl+S would write it over the real one.
     compare_tab->compare->right_viewport.SetReadOnly(true);
     compare_tab->compare->load_pending = true;
-  } else if (AdoptLiveBufferForCompareRightSide(state_.editor_groups, *compare_tab->compare) &&
-             operations_.refresh_compare_tab_derived_state) {
+  } else {
     // The editable side is the file: if an editor tab already holds it (unsaved
     // edits included), this pane shows and edits that buffer, as VS Code's diff
     // editor does, rather than a copy read from disk that would then save over it.
-    operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
+    (void)AdoptLiveBufferForCompareRightSide(state_.editor_groups, *compare_tab->compare);
+    // Re-derived either way: the build derived the review header before the refs
+    // above existed, so it opened reading "Branch review" until the first edit.
+    if (operations_.refresh_compare_tab_derived_state) {
+      operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
+    }
   }
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
@@ -568,6 +572,10 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
       }();
   compare_tab->compare->review_file_index =
       IndexOfReviewFile(compare_tab->compare->review_files, normalized_path, state_.root);
+  // The header names the review and its file position, neither known at build time.
+  if (!load_off_thread && operations_.refresh_compare_tab_derived_state) {
+    operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
+  }
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
     return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
