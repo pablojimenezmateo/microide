@@ -238,6 +238,21 @@ std::span<const editor::SelectionRange> BufferSearchHighlightFragments(
   return cache.fragments;
 }
 
+// What the gutter's fold markers show: every resolved fold opener and every
+// collapsed one. Position-sensitive, so a fold that moved also differs.
+std::uint64_t FoldMarkerFingerprint(const editor::FoldingModel& folds) {
+  std::uint64_t hash = 0xcbf29ce484222325ull;
+  const auto mix = [&hash](std::uint64_t value) { hash = (hash ^ value) * 0x100000001b3ull; };
+  for (const editor::FoldRange& range : folds.resolved_ranges()) {
+    mix(range.opener_line);
+  }
+  mix(~0ull);
+  for (const editor::FoldRange& range : folds.collapsed_ranges()) {
+    mix(range.opener_line);
+  }
+  return hash;
+}
+
 }  // namespace
 
 void WorkspaceShell::ResizeTerminalToPanel(const WorkspaceLayout& layout) {
@@ -633,6 +648,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         RequestRedrawRect(pane_rects.groups[gi].editor_surface);
       }
       frame_state_.painted_pane_content[gi] = content;
+      // The gutter's fold markers: an edit can make or unmake a fold opener on a
+      // line it did not touch (lines indented under a closing brace make that
+      // brace's line an indentation fold), and its damage named only the edited
+      // lines. Hashed only when the model's revision moved, so a settled frame
+      // pays two compares.
+      const editor::FoldingModel* folds =
+          viewport == nullptr ? nullptr : GroupFoldingModelPtr(project_state.editor_groups[gi]);
+      const std::uint64_t fold_revision =
+          folds == nullptr ? 0 : (content * 31u) ^ static_cast<std::uint64_t>(folds->revision());
+      if (fold_revision != frame_state_.painted_fold_revision[gi]) {
+        frame_state_.painted_fold_revision[gi] = fold_revision;
+        const std::uint64_t markers = folds == nullptr ? 0 : FoldMarkerFingerprint(*folds);
+        if (markers != frame_state_.painted_fold_markers[gi] && gi < pane_rects.groups.size()) {
+          RequestRedrawRect(pane_rects.groups[gi].editor_surface);
+        }
+        frame_state_.painted_fold_markers[gi] = markers;
+      }
     }
   }
   // The modal backdrop stack: a prompt opening over the command palette (or the

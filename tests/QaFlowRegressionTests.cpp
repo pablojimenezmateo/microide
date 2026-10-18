@@ -181,6 +181,40 @@ void TestTypingOnAFoldedOpenerRepaintsItsRow() {
          "the space should land on the opener line");
 }
 
+// indentation: Tab over two lines indented them under a closing brace, which made
+// that brace's line the opener of an indentation fold. The edit repainted the two
+// lines it changed, not the gutter of the line above that gained a fold marker.
+void TestAnEditThatAddsAFoldMarkerRepaintsTheGutter() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("indent.cpp", "int f() {\nreturn 1;\n}\na\nb\n");
+  editor::FoldingModel* folds = TestAccess::EnsureActiveFoldingModelFresh(fixture.shell);
+  Expect(folds != nullptr && !folds->FoldStartingAt(2).has_value(), "the closing brace starts no fold yet");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the file as opened");
+  // As the flow did it: a click on line 4 (the pointer stays over the text).
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& pane = ui["editors"].AsArray()[0];
+  float line4_y = 0.0f;
+  for (const util::JsonValue& row : pane["rows"].AsArray()) {
+    if (row["line"].AsInt() == 4) {
+      line4_y = static_cast<float>(row["y"].AsDouble() + pane["lineHeight"].AsDouble() / 2.0);
+    }
+  }
+  const float text_x = static_cast<float>(pane["textX"].AsDouble()) + 2.0f;
+  fixture.ExpectFresh(fixture.Click(SDL_FRect{text_x - 1.0f, line4_y - 1.0f, 2.0f, 2.0f}), "the click on line 4");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN, SDL_KMOD_SHIFT),
+                                                     KeyDownEvent(SDLK_END, SDL_KMOD_SHIFT)}),
+                      "selecting the two lines under the brace");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_TAB, SDL_KMOD_NONE)}),
+                      "Tab over the two lines under the brace");
+  folds = TestAccess::EnsureActiveFoldingModelFresh(fixture.shell);
+  Expect(folds != nullptr && folds->FoldStartingAt(2).has_value(),
+         "the indented lines should make the brace's line a fold opener");
+}
+
 // wb-editor-groups: dragging a tab over another pane paints VS Code's drop
 // preview (an accent-tinted half or whole pane). The chrome pass draws it, and a
 // partial frame whose damage missed every tab strip skipped that pass, so the
@@ -812,6 +846,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);
+  AddTest(tests, "QaFlowRegression/AnEditThatAddsAFoldMarkerRepaintsTheGutter",
+          TestAnEditThatAddsAFoldMarkerRepaintsTheGutter);
   AddTest(tests, "QaFlowRegression/GitCommitButtonHoverRepaints", TestGitCommitButtonHoverRepaints);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);

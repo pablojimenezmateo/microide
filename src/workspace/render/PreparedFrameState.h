@@ -46,6 +46,10 @@ struct PreparedFrameState {
   std::optional<SDL_FRect> painted_hover_popup_rect;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
+  // Per editor pane, the fold markers painted (FoldMarkerFingerprint) and the
+  // (content, fold model revision) they were hashed at.
+  std::array<std::uint64_t, kMaxEditorGroups> painted_fold_revision{};
+  std::array<std::uint64_t, kMaxEditorGroups> painted_fold_markers{};
   // The tab strips painted mid-slide (kind None: none). A new drag can take a
   // strip's animation slot while it still glides, and that strip's tabs then
   // snap back with no frame of their own.
