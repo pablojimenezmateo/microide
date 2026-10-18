@@ -888,6 +888,25 @@ void TestDoubleClickOnEmptyTabStripOpensUntitled() {
          "a double-click on the strip's empty space should open an untitled tab");
 }
 
+// mouse-and-wrap: Shift+wheel over a long line scrolls it sideways (VS Code).
+void TestShiftWheelScrollsTheEditorSideways() {
+  std::string line;
+  for (int i = 0; i < 120; ++i) {
+    line += "w" + std::to_string(i) + " ";
+  }
+  FlowFixture fixture("wide.txt", line + "\nshort\n");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto& pane = ui["editors"].AsArray()[0];
+  const float x = static_cast<float>(pane["textX"].AsDouble() + 200.0);
+  const float y = static_cast<float>(pane["rows"].AsArray()[0]["y"].AsDouble() + 5.0);
+  SDL_SetModState(SDL_KMOD_LSHIFT);
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), MouseWheelEvent(x, y, -3.0f)});
+  SDL_SetModState(SDL_KMOD_NONE);
+  Expect(TestAccess::ActiveEditor(fixture.shell).horizontal_scroll() > 0,
+         "Shift+wheel down should scroll the line to the right, horizontal scroll is " +
+             std::to_string(TestAccess::ActiveEditor(fixture.shell).horizontal_scroll()));
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1006,6 +1025,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingAfterCtrlEndRepaintsTheLastLine", TestTypingAfterCtrlEndRepaintsTheLastLine);
   AddTest(tests, "QaFlowRegression/DoubleClickOnEmptyTabStripOpensUntitled",
           TestDoubleClickOnEmptyTabStripOpensUntitled);
+  AddTest(tests, "QaFlowRegression/ShiftWheelScrollsTheEditorSideways", TestShiftWheelScrollsTheEditorSideways);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

@@ -681,10 +681,15 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
       context_.interaction_state, event.wheel.y, event.wheel.x,
       event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED);
   const int vertical_ticks = ticks.vertical;
+  // Shift turns the vertical wheel sideways, wheel-down going right as in VS Code.
+  // Horizontal ticks here are negative to the right (every surface's handler, and
+  // their tests, read them so), and wheel-down is a negative vertical tick: the
+  // same sign. Negating it made Shift+wheel-down scroll left, so from column 0 it
+  // did nothing at all (QA mouse-and-wrap).
   const int horizontal_ticks =
       ticks.horizontal != 0
           ? ticks.horizontal
-          : ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0 ? -vertical_ticks : 0);
+          : ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0 ? vertical_ticks : 0);
   if (vertical_ticks == 0 && horizontal_ticks == 0) {
     return false;
   }
