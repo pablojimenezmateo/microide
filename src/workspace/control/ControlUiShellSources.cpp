@@ -374,6 +374,11 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const NotificationsViewModel toasts = RenderViewModelBuilder(context_).BuildNotifications(
                 notification_service_, layout.status_bar, text_renderer_);
             for (const NotificationEntryViewModel& entry : toasts.entries) {
+              // The card itself (a click dismisses it), by its index in the
+              // `notifications` query, with its message as the label.
+              AddControlUiElement(out, kNotification, std::to_string(entry.index), entry.layout.rect,
+                                  std::string(entry.message));
+              out.back().active = entry.focused;
               for (const NotificationButtonViewModel& button : entry.buttons) {
                 const std::string label(button.label);
                 AddControlUiElement(out, kButton, "notification/" + label, button.rect, label);

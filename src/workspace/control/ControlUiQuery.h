@@ -68,6 +68,7 @@ inline constexpr std::string_view kSetting = "setting";
 inline constexpr std::string_view kSettingsCategory = "settings-category";
 inline constexpr std::string_view kDebugTab = "debug-tab";
 inline constexpr std::string_view kDebugRow = "debug-row";
+inline constexpr std::string_view kNotification = "notification";
 }  // namespace control_ui_kind
 
 // Appends an element named `<kind>:<locator>`.

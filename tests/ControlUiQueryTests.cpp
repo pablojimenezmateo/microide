@@ -354,9 +354,26 @@ void TestUiQueryNamesTheDebugPane() {
   }
 }
 
+// A toast is an element (`notification:<index>`, the message as its label) whether
+// or not it has buttons, and a click on it dismisses it.
+void TestUiQueryNamesToasts() {
+  UiFixture fixture;
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F8, SDL_KMOD_NONE)});  // "No problems"
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto toast = Find(TestAccess::ControlUi(fixture.shell), "notification:0");
+  Expect(toast.has_value(), "the ui query should name the toast F8 raised");
+  if (toast) {
+    fixture.ClickCenter(*toast);
+    Expect(!Find(TestAccess::ControlUi(fixture.shell), "notification:0").has_value(),
+           "a click on the toast should dismiss it");
+  }
+}
+
 }  // namespace
 
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlUiQuery/NamesToasts", TestUiQueryNamesToasts);
   AddTest(tests, "ControlUiQuery/IsRegistered", TestUiQueryIsRegistered);
   AddTest(tests, "ControlUiQuery/NamesTheDebugPane", TestUiQueryNamesTheDebugPane);
   AddTest(tests, "ControlUiQuery/NamesTheWorkspaceChrome", TestUiQueryNamesTheWorkspaceChrome);

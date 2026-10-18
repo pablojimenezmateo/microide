@@ -201,6 +201,7 @@ selected?}` in window coordinates (what mouse events use). Names, by kind:
 | `setting:<id>` | a Settings row (value as `label`, `on`/`off` for a checkbox), with `button:setting/<id>/{checkbox,decrement,increment,value,reset,scope}` for its controls |
 | `settings-category:<label>` | a Settings category in the left rail |
 | `button:debug-toolbar/<id>` | the floating debug toolbar's `continue`, `step-over`, `step-into`, `step-out`, `reverse-continue`, `step-back`, `restart`, `stop` (tooltip as `label`; `enabled` false for a step while the program runs) |
+| `notification:<index>` | a toast, by its index in the `notifications` query, its message as `label` (`active` = the keyboard is on it); a click dismisses it |
 | `debug-tab:<mode>` | the debug pane's mode tabs: `variables`, `breakpoints`, `watch`, `callstack` (`active` = shown) |
 | `debug-row:<mode>/<index>` | a visible debug pane row, `<index>` into that mode's rows, with its painted text as `label` (`name = value : type` for variables and watches, `function  file:line` for frames); `selected` marks the focused frame or selected row |
 
