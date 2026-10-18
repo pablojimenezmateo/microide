@@ -501,6 +501,18 @@ bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_messag
   return true;
 }
 
+std::string WorkspaceActionContext::SingleLineSelectionText() {
+  const editor::TextViewport* viewport = operations_.active_navigable_viewport();
+  if (viewport == nullptr) {
+    return {};
+  }
+  const auto selection = viewport->selection_range();
+  if (!selection.has_value() || selection->start.line != selection->end.line) {
+    return {};
+  }
+  return viewport->SelectedText();
+}
+
 void WorkspaceActionContext::NotifyDiagnostic(const editor::PublishedDiagnostic& diagnostic) {
   const NotificationService::Tone tone =
       diagnostic.severity == editor::DiagnosticSeverity::Error     ? NotificationService::Tone::Error

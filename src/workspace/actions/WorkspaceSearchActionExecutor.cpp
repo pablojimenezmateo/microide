@@ -104,12 +104,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       context_.ShowFileFinder();
       return DispatchResult::Handled;
     }
-    case ActionId::ProjectSearch:
+    case ActionId::ProjectSearch: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.ShowProjectSearchSidebar(JoinCommandArguments(args, 0));
+      // VS Code seeds Find in Files with the editor's selection (one line of it).
+      std::string query = JoinCommandArguments(args, 0);
+      if (query.empty()) {
+        query = context_.SingleLineSelectionText();
+      }
+      context_.ShowProjectSearchSidebar(std::move(query));
       return DispatchResult::Handled;
+    }
     case ActionId::Search:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

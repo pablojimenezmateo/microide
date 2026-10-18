@@ -907,6 +907,24 @@ void TestShiftWheelScrollsTheEditorSideways() {
              std::to_string(TestAccess::ActiveEditor(fixture.shell).horizontal_scroll()));
 }
 
+// search-options: Ctrl+Shift+F with a word selected opened the search view on the
+// last query; VS Code seeds it with the selection.
+void TestCtrlShiftFSeedsTheSelection() {
+  FlowFixture fixture("seed.txt", "find quokka here\n");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 5);
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 11, true);
+  (void)DispatchEvents(fixture.shell,
+                       {KeyDownEvent(SDLK_F, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
+  std::string query;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString() == "field:search/query") {
+      query = entry["label"].AsString();
+    }
+  }
+  Expect(query == "quokka", "Ctrl+Shift+F should seed the search with the selection, got '" + query + "'");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1026,6 +1044,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DoubleClickOnEmptyTabStripOpensUntitled",
           TestDoubleClickOnEmptyTabStripOpensUntitled);
   AddTest(tests, "QaFlowRegression/ShiftWheelScrollsTheEditorSideways", TestShiftWheelScrollsTheEditorSideways);
+  AddTest(tests, "QaFlowRegression/CtrlShiftFSeedsTheSelection", TestCtrlShiftFSeedsTheSelection);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

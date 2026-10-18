@@ -484,6 +484,8 @@ class WorkspaceActionContext {
   // diagnostic of the active file, wrapping at either end, and toast its message.
   // Returns false (with `error_message`) when there is no file or no diagnostic.
   bool StepDiagnostic(int delta, std::string* error_message);
+  // The active editor's selection when it is non-empty and on one line, else "".
+  std::string SingleLineSelectionText();
   // F8 / Shift+F8 (VS Code's marker.nextInFiles): the problem after (delta > 0) or
   // before the caret in every file with problems, files in path order, wrapping
   // at the ends. nullopt when there are none; the caller reveals it.
