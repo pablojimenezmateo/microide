@@ -739,6 +739,22 @@ void TestGitCommitButtonHoverRepaints() {
                                DescribePixelDiff(diff));
 }
 
+// find-options: Ctrl+F with nothing selected opened on the last query, where VS
+// Code seeds the word under the caret; a caret in whitespace keeps the last one.
+void TestCtrlFSeedsTheWordUnderTheCaret() {
+  FlowFixture fixture("seed.txt", "cat catalog  cat\n");
+  const auto query = [&]() {
+    return TestAccess::ControlQuery(fixture.shell, "ui")["overlay"]["query"].AsString();
+  };
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 6);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)});
+  Expect(query() == "catalog", "Ctrl+F on catalog should seed it, got '" + query() + "'");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 12);  // between the two spaces
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)});
+  Expect(query() == "catalog", "a caret in whitespace should keep the last query, got '" + query() + "'");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -849,6 +865,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AnEditThatAddsAFoldMarkerRepaintsTheGutter",
           TestAnEditThatAddsAFoldMarkerRepaintsTheGutter);
   AddTest(tests, "QaFlowRegression/GitCommitButtonHoverRepaints", TestGitCommitButtonHoverRepaints);
+  AddTest(tests, "QaFlowRegression/CtrlFSeedsTheWordUnderTheCaret", TestCtrlFSeedsTheWordUnderTheCaret);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

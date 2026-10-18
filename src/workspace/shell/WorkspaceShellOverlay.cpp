@@ -114,6 +114,17 @@ void WorkspaceShell::OpenBufferSearchSurface(OverlayMode mode) {
   std::string seed = SingleLineEditorSelectionSeed();
   if (!already_open) {
     ResetBufferSearchFoldRevealState(false);
+    // VS Code's `seedSearchStringFromSelection: always`: with nothing selected the
+    // word under the caret seeds the query. Only on opening -- with the widget up,
+    // the caret sits on a match, and its word is not what the user typed.
+    if (const editor::TextViewport* viewport = ActiveEditorViewport();
+        seed.empty() && viewport != nullptr && !viewport->selection_range().has_value()) {
+      if (const auto word = viewport->WordRangeAt({viewport->cursor_line(), viewport->cursor_column()});
+          word.has_value() && word->start.line == word->end.line) {
+        seed = std::string(viewport->lines().LineView(word->start.line)
+                               .substr(word->start.column, word->end.column - word->start.column));
+      }
+    }
   }
 
   ShowOverlay(mode);
