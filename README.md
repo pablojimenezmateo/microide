@@ -623,7 +623,8 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+c` / `Ctrl+x` / `Ctrl+v` | Copy / Cut / Paste |
 | `Ctrl+z` / `Ctrl+y` | Undo / Redo |
 | `Ctrl+s` | Save |
-| `Ctrl+Shift+p` | Open command palette |
+| `Ctrl+Shift+p` / `F1` | Open command palette |
+| `Ctrl+1` … `Ctrl+8` | Focus editor group N (the next one is created by splitting right) |
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
 | `Home` / `End` | Start / end of the view line (the wrapped row under word wrap); `Home` toggles between the first non-whitespace character and column 0 |
 | `Ctrl+Shift+Alt+arrows` | Column (box) selection |
@@ -841,6 +842,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `split-right [path]`
 - `split-down [path]`
 - `focus-other-group`
+- `focus-group <n>`
 - `focus-group-left`
 - `focus-group-right`
 - `focus-group-up`

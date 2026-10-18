@@ -66,6 +66,7 @@ class EditorTabService {
   TabCoordinator::SaveForCloseResult SaveForClose(std::size_t index);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
+  bool FocusEditorGroupAt(std::size_t index);
   bool FocusEditorGroupInDirection(EditorGroupDirection direction);
   bool MoveEditorGroupInDirection(EditorGroupDirection direction);
   bool CloseEditorGroup();

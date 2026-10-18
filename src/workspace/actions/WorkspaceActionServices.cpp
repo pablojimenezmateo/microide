@@ -973,6 +973,10 @@ bool WorkspaceActionContext::FocusOtherGroup() {
   return operations_.focus_other_group();
 }
 
+bool WorkspaceActionContext::FocusEditorGroupAt(std::size_t index) {
+  return operations_.focus_editor_group_at && operations_.focus_editor_group_at(index);
+}
+
 bool WorkspaceActionContext::FocusEditorGroupInDirection(EditorGroupDirection direction) {
   return operations_.focus_editor_group_in_direction(direction);
 }

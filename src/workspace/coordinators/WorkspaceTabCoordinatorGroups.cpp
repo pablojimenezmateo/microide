@@ -261,6 +261,16 @@ bool TabCoordinator::FocusOtherGroup() {
   return true;
 }
 
+bool TabCoordinator::FocusEditorGroupAt(std::size_t index) {
+  if (index >= state_.editor_groups.size()) {
+    return false;
+  }
+  state_.focused_group_index = index;
+  state_.surface.focus = FocusTarget::Editor;
+  RefreshFocusedGroupActiveTab(true);
+  return true;
+}
+
 std::size_t TabCoordinator::AdjacentGroupInDirection(EditorGroupDirection direction) const {
   if (state_.editor_groups.size() < 2 || !operations_.editor_group_rects) {
     return kNoEditorGroup;

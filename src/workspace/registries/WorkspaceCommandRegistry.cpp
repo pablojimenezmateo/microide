@@ -310,6 +310,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       // existing keybindings and scripts still resolve.
       ActionSpec{ActionId::FocusOtherGroup, "focus-other-group", "focus-other-group",
                  "Focus Next Editor Group", ""},
+      ActionSpec{ActionId::FocusEditorGroup, "focus-group", "focus-group <n>",
+                 "Focus Editor Group", "Ctrl+1..8"},
       ActionSpec{ActionId::FocusEditorGroupLeft, "focus-group-left", "focus-group-left",
                  "Focus Left Editor Group", "Ctrl+K Ctrl+Left"},
       ActionSpec{ActionId::FocusEditorGroupRight, "focus-group-right", "focus-group-right",

@@ -786,6 +786,8 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](EditorGroupDirection direction) {
                 return MakeEditorTabService().FocusEditorGroupInDirection(direction);
               },
+          .focus_editor_group_at =
+              [this](std::size_t index) { return MakeEditorTabService().FocusEditorGroupAt(index); },
           .move_editor_group_in_direction =
               [this](EditorGroupDirection direction) {
                 return MakeEditorTabService().MoveEditorGroupInDirection(direction);

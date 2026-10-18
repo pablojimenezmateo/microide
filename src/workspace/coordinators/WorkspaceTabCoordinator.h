@@ -286,6 +286,8 @@ class TabCoordinator {
   // tab to clone, or the editor area is already full.
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
+  // Focus the group at `index` (layout order); false when there is none.
+  bool FocusEditorGroupAt(std::size_t index);
   // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroupLeft/...
   // Both resolve the neighbour with `AdjacentEditorGroup`; the move then relocates
   // the pane beside it (`EditorSplitTree::MoveLeaf`), keeping the group vector in

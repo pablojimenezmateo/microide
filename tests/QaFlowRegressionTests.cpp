@@ -635,6 +635,32 @@ void TestCtrlShiftTReopensClosedEditorsNewestFirst() {
          "with nothing left to reopen, Ctrl+Shift+T should say so");
 }
 
+// TD-2026-10-16-353 (VS Code shortcuts with no binding): F1 opens the command
+// palette; Ctrl+1..8 focus editor group N, and the group one past the last is
+// made by splitting right (Ctrl+2 from a single editor opens the side one).
+void TestF1AndCtrlNumberFocusGroups() {
+  FlowFixture fixture("groups.txt", "plain\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F1, SDL_KMOD_NONE)});
+  Expect(TestAccess::ControlUi(fixture.shell)["overlay"]["mode"].AsString() == "command-palette",
+         "F1 should open the command palette");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_2, SDL_KMOD_CTRL)});
+  Expect(TestAccess::EditorGroupCount(fixture.shell) == 2 &&
+             TestAccess::FocusedGroupIndex(fixture.shell) == 1,
+         "Ctrl+2 from one group should split right and focus the new group");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_1, SDL_KMOD_CTRL)});
+  Expect(TestAccess::FocusedGroupIndex(fixture.shell) == 0, "Ctrl+1 should focus the first group");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_2, SDL_KMOD_CTRL)});
+  Expect(TestAccess::EditorGroupCount(fixture.shell) == 2 &&
+             TestAccess::FocusedGroupIndex(fixture.shell) == 1,
+         "Ctrl+2 with two groups should focus the second, not split again");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_5, SDL_KMOD_CTRL)});
+  const util::JsonValue actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(TestAccess::EditorGroupCount(fixture.shell) == 2 && actions["rejected"].AsBool(),
+         "Ctrl+5 with two groups should be refused, not split");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -646,6 +672,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
+  AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
           TestCtrlShiftTReopensClosedEditorsNewestFirst);
   AddTest(tests, "QaFlowRegression/HoverCardDoesNotSwallowClicksOnThePalette",

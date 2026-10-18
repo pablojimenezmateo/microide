@@ -428,6 +428,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
               active_terminal_pane != nullptr);
     case ActionId::Goto:
+    case ActionId::FocusEditorGroup:
+      return operations_.active_tab_is_editor() || operations_.editor_group_count() > 1;
     case ActionId::ReopenClosedEditor:
       // Offered while this project has closed an editor (a file deleted since is
       // skipped when it runs).

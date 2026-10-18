@@ -321,6 +321,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::FocusOtherGroup:
       context_.FocusOtherGroup();
       return DispatchResult::Handled;
+    case ActionId::FocusEditorGroup: {
+      // VS Code's Ctrl+1..8: focus group N (1-based, layout order); the group one
+      // past the last is created by splitting right, so Ctrl+2 from a single
+      // editor opens the side-by-side one.
+      const std::optional<std::size_t> n = args.empty() ? std::nullopt : util::ParseSize(args[0]);
+      if (!n.has_value() || *n == 0) {
+        return reject("focus-group expects a group number from 1");
+      }
+      const std::size_t index = *n - 1;
+      if (index < context_.EditorGroupCount()) {
+        context_.FocusEditorGroupAt(index);
+        return DispatchResult::Handled;
+      }
+      if (index == context_.EditorGroupCount() && context_.HasProjectRoot()) {
+        return Execute(ActionId::SplitEditorRight, {}, source) ? DispatchResult::Handled
+                                                               : DispatchResult::Rejected;
+      }
+      return reject("No editor group " + std::to_string(*n));
+    }
     case ActionId::FocusEditorGroupLeft:
       context_.FocusEditorGroupInDirection(EditorGroupDirection::Left);
       return DispatchResult::Handled;

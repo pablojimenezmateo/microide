@@ -455,15 +455,22 @@ to false). The flows read the buffer's own `softTabs` and avoid trailing spaces,
 so they pass either way; flipping the defaults changes what every existing user's
 new files look like, which is why it is not done here.
 
-### TD-2026-10-16-353 — VS Code shortcuts with no binding here. [OPEN]
+### TD-2026-10-16-353 — VS Code shortcuts with no binding here. [OPEN — partly RESOLVED 2026-10-18]
 
 Found by the QA `keys` sweep reading the resolved table: Ctrl+Tab / Ctrl+Shift+Tab
-(cycle editors in MRU order), Ctrl+Shift+T (reopen the closed editor; a `reopen`
-command exists, unbound), Ctrl+L (expand the selection to the line;
-`TextViewport::ExpandSelectionToWholeLines` exists, no action reaches it from a
-key), F1 (command palette), Ctrl+1/2/3 (focus editor group N), Alt+Left/Right in
-the editor (navigate back/forward; there is no navigation history at all). Each
-is small; together they are most of what a VS Code hand reaches for first.
+(cycle editors in MRU order), Ctrl+Shift+T (reopen the closed editor), Ctrl+L
+(expand the selection to the line), F1 (command palette), Ctrl+1/2/3 (focus editor
+group N), Alt+Left/Right in the editor (navigate back/forward; there is no
+navigation history at all).
+
+RESOLVED 2026-10-18: Ctrl+Shift+T is Reopen Closed Editor (a new
+`reopen-closed-editor`; the `reopen` command this entry named re-reads the clean
+active file, and is now labelled "Reload from Disk"); F1 opens the palette;
+Ctrl+1..8 run the new `focus-group <n>`, splitting right for the group one past
+the last as VS Code does. Ctrl+L is handled by the editor key coordinator
+(README: select the current line) rather than the binding table, which is why the
+sweep did not see it. Still OPEN: MRU editor cycling on Ctrl+Tab (Ctrl+Tab cycles
+focus between surfaces here) and Alt+Left/Right navigation history.
 
 ### TD-2026-10-16-352 — the Ctrl+K chords are invisible to the keybindings query, so the keys sweep cannot press them. [OPEN]
 

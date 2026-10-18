@@ -154,6 +154,10 @@ bool EditorTabService::SplitEditorGroup(EditorSplitOrientation orientation) {
   return coordinator_.SplitEditorGroup(orientation);
 }
 
+bool EditorTabService::FocusEditorGroupAt(std::size_t index) {
+  return coordinator_.FocusEditorGroupAt(index);
+}
+
 bool EditorTabService::FocusOtherGroup() {
   return coordinator_.FocusOtherGroup();
 }
