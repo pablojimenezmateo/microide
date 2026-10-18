@@ -60,6 +60,16 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     operations_.move_buffer_search_selection(*delta);
     return true;
   }
+  // Ctrl+H from the find field shows the replace row and focuses it, keeping the
+  // query (VS Code's startFindReplaceAction); in the replace widget it is the
+  // jump to the replace field.
+  if (event.key == SDLK_H && NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL) {
+    if (state_.overlay.mode == OverlayMode::BufferSearch) {
+      operations_.execute_action(ActionId::ReplaceInBuffer, {}, ActionSource::Shortcut);
+    }
+    state_.overlay.buffer_search_field = BufferSearchField::Replace;
+    return true;
+  }
   // Alt+C / Alt+W / Alt+R toggle match case, whole word and regex — VSCode's
   // find-widget chords, one per button, in button order. A plain letter still
   // types into the focused field via the default text-input path.

@@ -755,6 +755,27 @@ void TestCtrlFSeedsTheWordUnderTheCaret() {
   Expect(query() == "catalog", "a caret in whitespace should keep the last query, got '" + query() + "'");
 }
 
+// find-options: Ctrl+H typed into the find widget did nothing (the field took it);
+// VS Code shows the replace row and focuses it, keeping the query.
+void TestCtrlHInTheFindWidgetOpensReplace() {
+  FlowFixture fixture("replace.txt", "id=12 id=345\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL), TextInputEvent("id")});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_H, SDL_KMOD_CTRL)});
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["overlay"]["mode"].AsString() == "buffer-replace",
+         "Ctrl+H in the find widget should show the replace row, mode is " + ui["overlay"]["mode"].AsString());
+  Expect(ui["overlay"]["query"].AsString() == "id", "the query should survive, got '" +
+                                                        ui["overlay"]["query"].AsString() + "'");
+  bool replace_active = false;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["name"].AsString() == "field:find/replace") {
+      replace_active = entry["active"].AsBool();
+    }
+  }
+  Expect(replace_active, "the replace field should take the keyboard");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -866,6 +887,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAnEditThatAddsAFoldMarkerRepaintsTheGutter);
   AddTest(tests, "QaFlowRegression/GitCommitButtonHoverRepaints", TestGitCommitButtonHoverRepaints);
   AddTest(tests, "QaFlowRegression/CtrlFSeedsTheWordUnderTheCaret", TestCtrlFSeedsTheWordUnderTheCaret);
+  AddTest(tests, "QaFlowRegression/CtrlHInTheFindWidgetOpensReplace", TestCtrlHInTheFindWidgetOpensReplace);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
