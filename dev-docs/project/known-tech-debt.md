@@ -444,6 +444,36 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-357 — commands that need arguments ask for a raw command line. [OPEN]
+
+Found by the QA `git-branches` flow. A labelled command whose usage needs an
+argument, run bare from a menu, the palette or a shortcut, now opens an input
+prompt instead of failing with its usage line (649783b6). The prompt takes the
+arguments as the command line does: `Set Breakpoint` asks for `<file> <line>
+[condition]`, `Move Tab to Group` for `<group> [slot]`, `Compare Files…` for two
+paths. VS Code either hides such commands from the palette or asks with context
+(the active file and caret line as defaults, a file picker, a group picker).
+Worth doing per command where it is a real UI entry point (Compare Files…, Add
+Function Breakpoint, Show Output Channel…); the breakpoint and remote plumbing
+commands may rather leave the palette.
+
+### TD-2026-10-18-356 — Search Workspace Symbols lists into an output channel, not a live picker. [OPEN]
+
+Found by the QA `lsp-more` flow. `workspace-symbol <query>` asks once for a query
+and prints the matches into the panel's Workspace Symbols output, where an entry
+can be clicked. VS Code's Ctrl+T is a quick pick that re-queries the server as
+you type and opens the selection on Enter. The overlay machinery (the file
+finder, the palette) and the request generation guard already exist; what is
+missing is an overlay mode fed by async `workspace/symbol` responses, and a
+binding (Ctrl+T).
+
+### TD-2026-10-18-355 — the recently closed editors do not survive a restart. [OPEN]
+
+Reopen Closed Editor (c559c40f) keeps its list on the project's in-memory state:
+quitting forgets it, and VS Code's Ctrl+Shift+T reopens editors closed in an
+earlier session. The list is small (32 entries of path + caret) and would ride
+in the session record through PersistenceService like the open tabs do.
+
 ### TD-2026-10-16-354 — two defaults diverge from VS Code: hard tabs and trim-on-save. [OPEN — product decision]
 
 Found by the QA editing flows (`edit-line-ops`, `edit-auto-close`,
