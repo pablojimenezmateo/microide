@@ -677,6 +677,61 @@ def flow_settings_keyboard(app: q.App) -> None:
     dismiss(app)
 
 
+# ---- completion by keyboard ------------------------------------------------------------
+
+
+def flow_completion_keys(app: q.App) -> None:
+    """Completion by keyboard: Down/Up move the selection, Tab accepts it as Enter
+    does, a second Ctrl+Space keeps one list up, and the list closes when the
+    caret leaves the word."""
+    from flows_lsp_debug import _lsp_ready, _require
+    if not _require(app, "clangd") or not _lsp_ready(app):
+        return
+    app.click_text(19, 9)
+    app.key("End")
+    app.key("Return")
+    app.type("queue_.")
+    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion"
+                   and app.ui()["overlay"].get("count", 0) > 5, 10.0, "member completion after '.'")
+    step(app, "completion up", 0.3)
+    first = app.ui()["overlay"].get("selected")
+    app.key("Down")
+    app.key("Down")
+    step(app, "Down Down")
+    app.expect(app.ui()["overlay"].get("selected") == (first or 0) + 2,
+               f"Down moves the selection ({first} -> {app.ui()['overlay'].get('selected')})")
+    app.key("Up")
+    step(app, "Up")
+    app.expect(app.ui()["overlay"].get("selected") == (first or 0) + 1, "Up moves it back")
+    chosen = next((e.get("label", "") for e in app.elements("overlay-row") if e.get("selected")), "")
+    app.key("Tab")
+    step(app, "Tab", 0.5)
+    line = app.text().split("\n")[19]
+    name = chosen.strip().split("(")[0].split(" ")[0]
+    app.expect(not app.ui()["overlay"]["visible"] and bool(name) and f"queue_.{name}" in line,
+               f"Tab accepts the selected item ({chosen!r} -> {line!r})")
+    app.key("ctrl+z")
+    step(app, "undo the accept")
+
+    app.key("ctrl+space")
+    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion", 10.0, "Ctrl+Space completions")
+    count = app.ui()["overlay"].get("count", 0)
+    app.key("ctrl+space")
+    step(app, "Ctrl+Space again", 0.8)
+    app.expect(app.ui()["overlay"].get("mode") == "completion" and app.ui()["overlay"].get("count", 0) > 0,
+               f"a second Ctrl+Space keeps the list ({count} -> {app.ui()['overlay'].get('count')})")
+    # Home/End drive the list here (it has no query field); a word motion is the
+    # caret leaving the word.
+    app.key("ctrl+Left")
+    app.key("ctrl+Left")
+    step(app, "ctrl+Left twice", 0.4)
+    app.expect(not app.ui()["overlay"]["visible"], "moving the caret out of the word closes the list")
+    app.key("End")
+    for _ in range(len("queue_.")):
+        app.key("BackSpace")
+    step(app, "clean up")
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -987,6 +1042,9 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "search-options": flow_search_options,
     "groups-keyboard": flow_groups_keyboard,
     "settings-keyboard": flow_settings_keyboard,
+    "completion-keys": flow_completion_keys,
 }
 
-PLUGINS: dict[str, tuple[str, ...]] = {}
+PLUGINS: dict[str, tuple[str, ...]] = {
+    "completion-keys": ("cpp-lsp",),
+}
