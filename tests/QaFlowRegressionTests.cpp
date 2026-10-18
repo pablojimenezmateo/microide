@@ -925,6 +925,22 @@ void TestCtrlShiftFSeedsTheSelection() {
   Expect(query == "quokka", "Ctrl+Shift+F should seed the search with the selection, got '" + query + "'");
 }
 
+// groups-keyboard: Ctrl+K, release Ctrl, Ctrl+Left -- the second Ctrl press
+// cancelled the chord, so every Ctrl+K chord worked only with Ctrl held through
+// both keys. A modifier key on its own must leave a pending chord armed.
+void TestCtrlKChordSurvivesReleasingCtrl() {
+  FlowFixture fixture("chord.txt", "x\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_BACKSLASH, SDL_KMOD_CTRL)});
+  Expect(TestAccess::EditorGroupCount(fixture.shell) == 2, "Ctrl+\\ should split");
+  const std::size_t before = TestAccess::FocusedGroupIndex(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_K, SDL_KMOD_CTRL),
+                                       KeyDownEvent(SDLK_LCTRL, SDL_KMOD_LCTRL),
+                                       KeyDownEvent(SDLK_LEFT, SDL_KMOD_CTRL)});
+  Expect(before == 1 && TestAccess::FocusedGroupIndex(fixture.shell) == 0,
+         "Ctrl+K, Ctrl (again), Ctrl+Left should focus the left group, focused " +
+             std::to_string(TestAccess::FocusedGroupIndex(fixture.shell)));
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1045,6 +1061,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestDoubleClickOnEmptyTabStripOpensUntitled);
   AddTest(tests, "QaFlowRegression/ShiftWheelScrollsTheEditorSideways", TestShiftWheelScrollsTheEditorSideways);
   AddTest(tests, "QaFlowRegression/CtrlShiftFSeedsTheSelection", TestCtrlShiftFSeedsTheSelection);
+  AddTest(tests, "QaFlowRegression/CtrlKChordSurvivesReleasingCtrl", TestCtrlKChordSurvivesReleasingCtrl);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

@@ -146,6 +146,16 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
       chord_allowed && state_.surface.focus == FocusTarget::Editor &&
       key_ctx == KeybindingContext::Editor;
 
+  // A modifier pressed on its own is not the chord's second key: Ctrl+K, let go of
+  // Ctrl, Ctrl+Left is how the chord is often typed, and the fresh Ctrl press used
+  // to cancel it (VS Code ignores modifier-only presses while a chord is pending).
+  const bool modifier_only = event.key == SDLK_LCTRL || event.key == SDLK_RCTRL ||
+                             event.key == SDLK_LSHIFT || event.key == SDLK_RSHIFT ||
+                             event.key == SDLK_LALT || event.key == SDLK_RALT ||
+                             event.key == SDLK_LGUI || event.key == SDLK_RGUI;
+  if (state_.surface.editor_ctrl_k_leader_armed && modifier_only) {
+    return true;
+  }
   if (state_.surface.editor_ctrl_k_leader_armed) {
     state_.surface.editor_ctrl_k_leader_armed = false;
     if (chord_allowed) {
