@@ -1,5 +1,10 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-10-18 (§ TD-2026-10-18-364: what the QA suite does not execute,
+measured with a coverage build -- 56% of the app's lines; remote, terminal
+emulation, partial staging, branch review, the merge editor by mouse, save
+participants and three untested dimensions: Wayland, configuration, speed).
+
 Reviewed 2026-10-16 (§ TD-2026-10-16-348 through 354 for the QA-coverage pass:
 `tools/qa` grew from ten chrome scenarios to ~60 flows -- editing, workbench, LSP
 against clangd, gdb debugging, every keybinding through the real keyboard, every
@@ -443,6 +448,55 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
+
+Measured 2026-10-18 by running the whole `tools/qa` suite (87 scenarios) against a
+clang source-coverage build of `microide` (`-fprofile-instr-generate
+-fcoverage-mapping -mllvm -runtime-counter-relocation`, `LLVM_PROFILE_FILE=...%c`
+so a process killed at teardown still leaves its counts; `llvm-cov-17 report`):
+**56% of lines, 63% of functions** of the app run. The unit suites cover more,
+but these are the paths no real-window flow reaches. By size of the gap:
+
+- **Remote projects: ~0%** (`RemoteHostService`, `MirrorSyncEngine`,
+  `RemoteHostSession`, `RemoteServerClient`, `RemoteWorkspace`, `TreeFiles`).
+  `tools/qa/remote.py` exists but needs a real host and is not in the lane; a local
+  `sshd` (none is installed on the dev box) would let it run there.
+- **Terminal emulation beyond a plain shell: 26%.** The host-process terminal
+  (`TerminalSessionHost`, `TerminalHostWire`, `TerminalHostFrameBuilder`, 0-4%),
+  prediction (`TerminalPredictionOverlay` 0%), OSC (`TerminalSessionOsc` 0%), modes
+  and mouse reporting (`TerminalSessionModes` 4%, `TerminalMouseEncoder` 0%), SGR
+  colours (11%). No flow runs a full-screen program (less, vim, htop) or a
+  coloured one.
+- **Hunk- and line-level staging and discard: 0-2%** (`PatchGenerator`,
+  `PatchApplyService`, `GitPatchApply`): the git flows stage and discard whole files.
+- **Branch review mode: 2%** (`BranchReviewStateService`, mark file/hunk reviewed).
+- **Merge editor by mouse: 0%** (`WorkspaceMergeMouseCoordinator`; TD-2026-10-16-349:
+  its hunk buttons have no `ui` locators).
+- **Unsaved-changes continuations: 2%** (`WorkspaceDirtyPromptCoordinatorContinuations`:
+  save/discard/cancel when closing a group, a project, quitting with several dirty
+  buffers).
+- **Save participants and format on save: 0-3%** (`SaveFormatterService`,
+  `PluginHostSaveParticipants`); the `prettier` and `eslint` plugins are never
+  loaded, nor `typescript-lsp` or `dotnet-lsp` (only `cpp-lsp`/`gdb-dap` are), so
+  plugin process, diagnostics and provider interop are 0-12%.
+- **Smaller whole features at 0-10%:** native Open File/Folder dialogs
+  (`WorkspaceProjectDialogCoordinator`), files dropped on the window
+  (`WorkspaceFileDrop`), LSP file watching (`LspFileWatchRegistry`), tool downloads
+  (`WorkspaceToolDownloader`), user syntax definitions (`SyntaxDefinitionLoader`),
+  `--control-spec` cold start (`ControlSpec`), function/exception breakpoints
+  (`DebugServiceBreakpoints` 12%), multi-caret editing paths (`TextViewportMultiCaret` 23%),
+  snippets beyond one placeholder (`SnippetEngine` 20%).
+
+Beyond code paths, three dimensions are not varied at all: **Wayland** (every run
+is Xvfb/X11, while the main user runs SDL3 on Wayland), **configuration** (80 of
+95 registered settings are never set by a flow; the menu click-through fixed in
+923aecee needed one non-default setting to show), and **speed** (on the slow
+instrumented build 10 scenarios failed, 9 of them harness timeouts sized for a
+fast build; the slowness also exposed the freed-path crash fixed in fae8834d,
+which the fast build hid, and an Alt+click that added no caret in
+`edit-multi-cursor`, not yet explained). Running the suite once per change on a
+slow build (coverage or ASan) is a cheap race detector worth keeping.
 
 ### TD-2026-10-18-363 — no colour-theme picker. [OPEN]
 
