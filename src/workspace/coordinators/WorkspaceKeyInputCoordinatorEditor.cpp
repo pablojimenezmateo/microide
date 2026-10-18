@@ -268,6 +268,15 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
     if (handled_by_shared_switch) {
       return result;
     }
+    // Typed into, the working side is an editor: a printable key is text (it
+    // arrives as a text-input event of its own), not one of the row-review
+    // letters below. Typing " edited" here inserted " e" and the `d` opened
+    // Discard Patch (QA compare-keys).
+    if (compare_tab->right_editable &&
+        (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+        operations_.keycode_to_ascii(event.key, modifiers) != '\0') {
+      return false;
+    }
   }
 
   switch (event.key) {

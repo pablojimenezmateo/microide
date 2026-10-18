@@ -359,11 +359,12 @@ void TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret() {
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
   Expect(compare.model.hunks.size() >= 3, "the fixture should produce several hunks");
 
-  // Forward to the third change, then type. The edit must land there.
-  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_NONE),
-         "] should navigate to the next hunk");
-  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_NONE),
-         "] should navigate to the next hunk");
+  // Forward to the third change, then type. The edit must land there. Alt+]: the
+  // working side is being edited, where a bare ] is a typed bracket.
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_ALT),
+         "Alt+] should navigate to the next hunk");
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_ALT),
+         "Alt+] should navigate to the next hunk");
   shell.Render(canvas.renderer(), 1280, 720);
 
   auto& jumped = WorkspaceShellTestAccess::ActiveCompare(shell);

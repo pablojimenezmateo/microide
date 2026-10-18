@@ -655,11 +655,11 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Enter` in an exited terminal | Relaunch it in place with the same cwd and command |
 | Typing in the file tree | Select the next entry whose name starts with what you typed (VS Code's type navigation; Compare and Refresh are on the tree's context menu) |
 | `F2` / `Delete` in the file tree | Rename / delete the selected entry (Delete asks first) |
-| `[` / `]` in compare/merge | Previous / next hunk |
-| `i` `b` `c` `m` in merge | Apply incoming / base / current / both (current first) for selected hunk |
-| `I` `B` `C` `M` in merge | Apply choice to every hunk |
-| `a` in merge | Restore auto choices for all hunks |
-| `o` in compare/merge | Open working-tree file at corresponding line |
+| `Alt+[` / `Alt+]` in compare/merge | Previous / next hunk (bare `[` / `]` too while reviewing compare rows; while typing in a diff's working side they are brackets) |
+| `Alt+I` `Alt+B` `Alt+C` `Alt+M` in merge | Apply incoming / base / current / both for the selected hunk |
+| `Alt+1` / `Alt+2` in merge | Apply both, current first / incoming first |
+| `Alt+O` in compare/merge | Open the working-tree file at the corresponding line (bare `o` while reviewing compare rows) |
+| `j` `k` / `a` `A` / `c` `C` / `d` `D` reviewing compare rows | Move / stage hunk or lines / unstage hunk or lines / discard hunk or lines (letters are text while typing in the working side) |
 | `s` in git sidebar | Stage selected file |
 | `x` in git sidebar | Discard selected file |
 | `r` in git sidebar | Refresh |

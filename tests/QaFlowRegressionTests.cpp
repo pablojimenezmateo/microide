@@ -1122,6 +1122,41 @@ void TestColorschemeListSaysWhichSchemesThereAre() {
          "colorscheme list should name the schemes, said '" + feedback + "'");
 }
 
+// compare-keys: typing " edited" on a diff's working side inserted " e" and then
+// the `d` opened "Discard Patch" -- the row-review letters (j/k/a/c/d/o) fired
+// while the editable side had the caret. Being typed into, they are text.
+void TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "diff.txt";
+  WriteFile(file, "alpha\nbeta\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the diff fixture", "diff fixture");
+  WriteFile(file, "alpha\nbeta changed\n");
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the diff fixture should open");
+  TestAccess::SetWindowSize(shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  Expect(TestAccess::OpenWorkingTreeComparison(shell, file, "HEAD", "HEAD"), "the diff should open");
+  auto& compare = TestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable, "the working side should be editable");
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(1, 12);
+  TestAccess::SetFocusEditor(shell);
+  for (const char letter : std::string("adjkoc")) {
+    const std::string typed(1, letter);
+    (void)DispatchEvents(shell, {KeyDownEvent(static_cast<SDL_Keycode>(letter), SDL_KMOD_NONE),
+                                 TextInputEvent(typed.c_str())});
+  }
+  Expect(TestAccess::ControlUi(shell)["prompt"].IsNull(), "typing must not open a review prompt");
+  const std::string text = TestAccess::ControlQuery(shell, "buffer")["text"].AsString();
+  Expect(text.find("beta changedadjkoc") != std::string::npos,
+         "every typed letter should land in the working side, got '" + text + "'");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1256,6 +1291,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestDecorationsFollowTheBufferGoingDirtyAndClean);
   AddTest(tests, "QaFlowRegression/ColorschemeListSaysWhichSchemesThereAre",
           TestColorschemeListSaysWhichSchemesThereAre);
+  AddTest(tests, "QaFlowRegression/TypingOnTheDiffsWorkingSideNeverRunsReviewLetters",
+          TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
