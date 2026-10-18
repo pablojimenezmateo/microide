@@ -851,6 +851,21 @@ void TestQuickOpenPrefixesAndLineSuffix() {
   Expect(ui()["overlay"]["query"].AsString().empty(), "the next Ctrl+P should open on an empty query");
 }
 
+// undo-semantics: Ctrl+End to the last line of a file longer than the pane, then
+// type -- the typed text was damaged three rows above where it is painted.
+// EnsureCursorVisible's left-edge branch returned before clamping the vertical
+// scroll, so the bottom margin left it past its maximum until the next paint.
+void TestTypingAfterCtrlEndRepaintsTheLastLine() {
+  std::string text = "alpha beta gamma\n";
+  for (int i = 0; i < 80; ++i) {
+    text += "pad " + std::to_string(i) + "\n";
+  }
+  FlowFixture fixture("tail.txt", text);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_CTRL)}), "Ctrl+End");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("t")}), "typing on the last line");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("a")}), "typing again");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -966,6 +981,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ShiftAltRightExpandsTheSelection", TestShiftAltRightExpandsTheSelection);
   AddTest(tests, "QaFlowRegression/TreeF2RenamesAndDeleteDeletes", TestTreeF2RenamesAndDeleteDeletes);
   AddTest(tests, "QaFlowRegression/QuickOpenPrefixesAndLineSuffix", TestQuickOpenPrefixesAndLineSuffix);
+  AddTest(tests, "QaFlowRegression/TypingAfterCtrlEndRepaintsTheLastLine", TestTypingAfterCtrlEndRepaintsTheLastLine);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

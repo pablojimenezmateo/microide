@@ -775,18 +775,21 @@ void TextViewport::EnsureCursorVisible() {
     horizontal_scroll_ = visual_cursor_column > kHorizontalScrollMargin
                              ? visual_cursor_column - kHorizontalScrollMargin
                              : 0;
-    return;
+  } else {
+    const std::size_t visible_width = visible_columns_ > 0 ? visible_columns_ : 1;
+    const std::size_t horizontal_span = visible_width > kHorizontalScrollMargin
+                                            ? visible_width - kHorizontalScrollMargin - 1
+                                            : 0;
+    if (visual_cursor_column > horizontal_scroll_ + horizontal_span) {
+      horizontal_scroll_ =
+          visual_cursor_column > horizontal_span ? visual_cursor_column - horizontal_span : 0;
+    }
   }
 
-  const std::size_t visible_width = visible_columns_ > 0 ? visible_columns_ : 1;
-  const std::size_t horizontal_span = visible_width > kHorizontalScrollMargin
-                                          ? visible_width - kHorizontalScrollMargin - 1
-                                          : 0;
-  if (visual_cursor_column > horizontal_scroll_ + horizontal_span) {
-    horizontal_scroll_ =
-        visual_cursor_column > horizontal_span ? visual_cursor_column - horizontal_span : 0;
-  }
-
+  // Both branches end here. The left-edge one used to return early, so a caret
+  // near column 0 on the last lines left the vertical scroll past its maximum (the
+  // bottom margin pushed it there); the next paint clamped it back, and every
+  // damage rect computed in between -- the edit's own -- was rows off.
   ClampScrollState();
 }
 
