@@ -500,7 +500,14 @@ Ctrl+1..8 run the new `focus-group <n>`, splitting right for the group one past
 the last as VS Code does. Ctrl+L is handled by the editor key coordinator
 (README: select the current line) rather than the binding table, which is why the
 sweep did not see it. Still OPEN: MRU editor cycling on Ctrl+Tab (Ctrl+Tab cycles
-focus between surfaces here) and Alt+Left/Right navigation history.
+focus between surfaces here).
+
+RESOLVED 2026-10-18: Alt+Left/Right are Go Back / Go Forward (`navigate-back`,
+`navigate-forward`, top of the Go menu) over a per-project
+`EditorNavigationHistory`. Frame prep feeds it the active file editor's caret, so
+every way of moving the caret is covered without a hook per jump; VS Code's rule
+decides what is a place (another file, or more than ten lines away). A focused
+terminal keeps Alt+Left/Right.
 
 ### TD-2026-10-16-352 — the Ctrl+K chords are invisible to the keybindings query, so the keys sweep cannot press them. [OPEN]
 

@@ -163,6 +163,8 @@ enum class ActionId {
   Reopen,
   ReopenClosedEditor,
   FocusEditorGroup,
+  NavigateBack,
+  NavigateForward,
   ShowInFileExplorer,
   RevealInFileTree,
   Save,

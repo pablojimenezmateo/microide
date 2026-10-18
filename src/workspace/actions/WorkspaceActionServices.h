@@ -191,6 +191,8 @@ class WorkspaceActionContext {
     // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroup*.
     std::function<bool(EditorGroupDirection)> focus_editor_group_in_direction;
     std::function<bool(std::size_t)> focus_editor_group_at;
+    // Go Back (-1) / Go Forward (+1): the place to reveal, if there is one.
+    std::function<std::optional<EditorNavigationHistory::Location>(int)> step_navigation;
     std::function<bool(EditorGroupDirection)> move_editor_group_in_direction;
     std::function<bool()> close_editor_group;
     std::function<void(std::size_t)> request_close_tab;
@@ -547,6 +549,7 @@ class WorkspaceActionContext {
   // Focus the 0-based group `index`; false when there is none.
   bool FocusEditorGroupAt(std::size_t index);
   std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
+  std::optional<EditorNavigationHistory::Location> StepNavigation(int direction);
   bool MoveEditorGroupInDirection(EditorGroupDirection direction);
   bool CloseEditorGroup();
   void RequestCloseTab(std::size_t index);

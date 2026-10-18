@@ -14,6 +14,7 @@
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/PluginSurfacePreview.h"
 #include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/services/EditorTabService.h"
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/WorkspaceTextSearch.h"
 #include "workspace/git/MergeResultValidation.h"
@@ -341,6 +342,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       file_read_service_.DrainCompletions();
     }
   }
+  // Every caret move, jump and tab switch ends in a frame, so this is where the
+  // Go Back / Go Forward history sees them -- one place instead of a hook in each
+  // of the dozens of ways the caret can move.
+  MakeEditorTabService().ObserveNavigationLocation();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   // The terminal renderer is only needed (and only pays for its glyph atlas) once a
   // terminal is actually shown; initialize + apply its font lazily at that point.

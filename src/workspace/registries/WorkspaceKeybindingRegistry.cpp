@@ -294,6 +294,30 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = false,
       },
+      // VS Code's Go Back / Go Forward. A focused terminal keeps Alt+Left/Right
+      // (pane focus, or the shell's word motion).
+      KeybindingSpec{
+          .id = "navigate-back",
+          .action = ActionId::NavigateBack,
+          .key = SDLK_LEFT,
+          .modifiers = SDL_KMOD_ALT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = false,
+      },
+      KeybindingSpec{
+          .id = "navigate-forward",
+          .action = ActionId::NavigateForward,
+          .key = SDLK_RIGHT,
+          .modifiers = SDL_KMOD_ALT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = false,
+      },
       KeybindingSpec{
           .id = "reopen-closed-editor",
           .action = ActionId::ReopenClosedEditor,

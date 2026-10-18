@@ -173,6 +173,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::ToggleFullscreen),
   });
   static const auto kGoItems = std::to_array<MenuItemSpec>({
+      MenuItem(ActionId::NavigateBack, {}, "Alt+Left"),
+      MenuItem(ActionId::NavigateForward, {}, "Alt+Right"),
+      MenuSeparator(),
       MenuItem(ActionId::OpenCommandPalette, {}, "Ctrl+Shift+P"),
       MenuSeparator(),
       MenuItem(ActionId::Search, {}, "Ctrl+F"),

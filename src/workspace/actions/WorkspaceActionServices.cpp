@@ -977,6 +977,11 @@ bool WorkspaceActionContext::FocusEditorGroupAt(std::size_t index) {
   return operations_.focus_editor_group_at && operations_.focus_editor_group_at(index);
 }
 
+std::optional<EditorNavigationHistory::Location> WorkspaceActionContext::StepNavigation(
+    int direction) {
+  return operations_.step_navigation ? operations_.step_navigation(direction) : std::nullopt;
+}
+
 bool WorkspaceActionContext::FocusEditorGroupInDirection(EditorGroupDirection direction) {
   return operations_.focus_editor_group_in_direction(direction);
 }

@@ -625,6 +625,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+s` | Save |
 | `Ctrl+Shift+p` / `F1` | Open command palette |
 | `Ctrl+1` … `Ctrl+8` | Focus editor group N (the next one is created by splitting right) |
+| `Alt+Left` / `Alt+Right` | Go back / forward through the places the caret jumped to (another file, or more than ten lines away) |
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
 | `Home` / `End` | Start / end of the view line (the wrapped row under word wrap); `Home` toggles between the first non-whitespace character and column 0 |
 | `Ctrl+Shift+Alt+arrows` | Column (box) selection |
@@ -806,6 +807,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `quit`
 - `reopen`
 - `reopen-closed-editor`
+- `navigate-back`
+- `navigate-forward`
 - `save [path]`
 - `search [query]`
 - `find-next`

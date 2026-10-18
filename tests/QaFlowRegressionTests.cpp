@@ -635,6 +635,74 @@ void TestCtrlShiftTReopensClosedEditorsNewestFirst() {
          "with nothing left to reopen, Ctrl+Shift+T should say so");
 }
 
+// TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
+// far jump in a file and a switch to another file are places; going back to a
+// file closed since reopens it with the caret where it was.
+void TestAltLeftRightNavigateBackAndForward() {
+  std::string many_lines;
+  for (int i = 0; i < 60; ++i) {
+    many_lines += "line " + std::to_string(i) + "\n";
+  }
+  FlowFixture fixture("long.txt", many_lines);
+  const std::filesystem::path other = fixture.root / "other.txt";
+  WriteFile(other, "alpha\nbeta\ngamma\ndelta\n");
+  const auto frame = [&] {
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  };
+  const auto key = [&](SDL_Keycode code) {
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(code, SDL_KMOD_ALT)});
+    frame();
+  };
+  const auto where = [&]() -> std::string {
+    const auto paths = TestAccess::GroupTabPaths(fixture.shell, 0);
+    const std::size_t active = TestAccess::ActiveTabIndex(fixture.shell);
+    if (active >= paths.size()) {
+      return "no tab";
+    }
+    return paths[active].filename().string() + ":" +
+           std::to_string(TestAccess::ActiveEditor(fixture.shell).cursor_line());
+  };
+  frame();
+  TestAccess::ActiveEditor(fixture.shell).JumpCursorTo(40, 0);
+  frame();
+  Expect(TestAccess::OpenFileInNewTab(fixture.shell, other), "other.txt should open");
+  TestAccess::ActiveEditor(fixture.shell).JumpCursorTo(2, 0);
+  frame();
+
+  key(SDLK_LEFT);
+  Expect(where() == "long.txt:40", "Alt+Left should go back to long.txt:40, got " + where());
+  key(SDLK_LEFT);
+  Expect(where() == "long.txt:0", "Alt+Left again should go back to long.txt:0, got " + where());
+  key(SDLK_LEFT);
+  Expect(where() == "long.txt:0", "with nothing behind, Alt+Left should stay put, got " + where());
+  key(SDLK_RIGHT);
+  Expect(where() == "long.txt:40", "Alt+Right should go forward to long.txt:40, got " + where());
+
+  // The file ahead was closed: going forward reopens it, caret where it was.
+  const auto paths = TestAccess::GroupTabPaths(fixture.shell, 0);
+  for (std::size_t i = 0; i < paths.size(); ++i) {
+    if (paths[i] == other) {
+      TestAccess::CloseTab(fixture.shell, i);
+      break;
+    }
+  }
+  frame();
+  key(SDLK_RIGHT);
+  Expect(where() == "other.txt:2", "Alt+Right should reopen other.txt at line 2, got " + where());
+
+  // A new place from the middle of the history drops what was ahead of it.
+  key(SDLK_LEFT);
+  Expect(where() == "long.txt:40", "back from other.txt should land on long.txt:40, got " + where());
+  TestAccess::ActiveEditor(fixture.shell).JumpCursorTo(10, 0);
+  frame();
+  key(SDLK_RIGHT);
+  Expect(where() == "long.txt:10",
+         "after a new jump there should be nothing to go forward to, got " + where());
+  key(SDLK_LEFT);
+  Expect(where() == "long.txt:40", "back from the new place should land on long.txt:40, got " + where());
+}
+
 // TD-2026-10-16-353 (VS Code shortcuts with no binding): F1 opens the command
 // palette; Ctrl+1..8 focus editor group N, and the group one past the last is
 // made by splitting right (Ctrl+2 from a single editor opens the side one).
@@ -673,6 +741,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
+  AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
+          TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
           TestCtrlShiftTReopensClosedEditorsNewestFirst);
   AddTest(tests, "QaFlowRegression/HoverCardDoesNotSwallowClicksOnThePalette",

@@ -22,6 +22,7 @@
 #include "editor/WelcomeView.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceLayout.h"
+#include "workspace/state/EditorNavigationHistory.h"
 #include "workspace/state/TerminalLayoutRecord.h"
 #include "workspace/registries/WorkspaceFileIconRegistry.h"
 #include "platform/ProcessLauncher.h"
@@ -888,6 +889,8 @@ struct ProjectWorkspaceState {
   };
   static constexpr std::size_t kMaxRecentlyClosedEditors = 32;
   std::vector<ClosedEditor> recently_closed_editors;
+  // Go Back / Go Forward across this project's editors (Alt+Left / Alt+Right).
+  EditorNavigationHistory navigation_history;
   EditorSplitTree editor_split;
 
   // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the

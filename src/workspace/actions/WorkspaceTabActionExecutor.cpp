@@ -226,6 +226,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
                  ? DispatchResult::Handled
                  : DispatchResult::Rejected;
     }
+    case ActionId::NavigateBack:
+    case ActionId::NavigateForward: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const bool back = id == ActionId::NavigateBack;
+      const std::optional<EditorNavigationHistory::Location> target =
+          context_.StepNavigation(back ? -1 : 1);
+      if (!target.has_value()) {
+        return reject(back ? "Nothing to go back to" : "Nothing to go forward to");
+      }
+      // `reveal` reopens a file closed since, and places the caret.
+      return Execute(ActionId::Reveal,
+                     {target->path.string(),
+                      std::to_string(target->line + 1) + ":" + std::to_string(target->column + 1)},
+                     source)
+                 ? DispatchResult::Handled
+                 : DispatchResult::Rejected;
+    }
     case ActionId::Reopen:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

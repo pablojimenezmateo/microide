@@ -630,6 +630,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/shell/WorkspaceShellEditor.cpp
   src/workspace/shell/WorkspaceShellEditorSplits.cpp
   src/workspace/WorkspaceTabExternalChangeOps.cpp
+  src/workspace/state/EditorNavigationHistory.cpp
   src/workspace/state/SaveContinuationState.cpp
   src/workspace/shell/WorkspaceShellInteraction.cpp
   src/workspace/shell/WorkspaceShellMenu.cpp
@@ -1263,6 +1264,7 @@ add_executable(microide_tests
   tests/QaFlowRegressionTests.cpp
   tests/KeybindingReachabilityTests.cpp
   tests/TypeNavigationTests.cpp
+  tests/EditorNavigationHistoryTests.cpp
   tests/EditorSplitTreeTests.cpp
   tests/TerminalPaneLayoutTests.cpp
   tests/RecentsServiceTests.cpp

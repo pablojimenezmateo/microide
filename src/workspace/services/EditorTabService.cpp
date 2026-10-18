@@ -158,6 +158,14 @@ bool EditorTabService::FocusEditorGroupAt(std::size_t index) {
   return coordinator_.FocusEditorGroupAt(index);
 }
 
+void EditorTabService::ObserveNavigationLocation() {
+  coordinator_.ObserveNavigationLocation();
+}
+
+std::optional<EditorNavigationHistory::Location> EditorTabService::StepNavigation(int direction) {
+  return coordinator_.StepNavigation(direction);
+}
+
 bool EditorTabService::FocusOtherGroup() {
   return coordinator_.FocusOtherGroup();
 }

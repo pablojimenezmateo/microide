@@ -288,6 +288,12 @@ class TabCoordinator {
   bool FocusOtherGroup();
   // Focus the group at `index` (layout order); false when there is none.
   bool FocusEditorGroupAt(std::size_t index);
+  // Feeds the active file editor's caret into the project's navigation history
+  // (Go Back / Go Forward). Called once per prepared frame and before each step.
+  void ObserveNavigationLocation();
+  // Steps the navigation history back (-1) or forward (+1), skipping files that no
+  // longer exist; the caller reveals the result.
+  std::optional<EditorNavigationHistory::Location> StepNavigation(int direction);
   // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroupLeft/...
   // Both resolve the neighbour with `AdjacentEditorGroup`; the move then relocates
   // the pane beside it (`EditorSplitTree::MoveLeaf`), keeping the group vector in

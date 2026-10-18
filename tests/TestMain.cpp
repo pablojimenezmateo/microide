@@ -43,6 +43,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests);
 void RegisterKeybindingReachabilityTests(std::vector<TestCase>& tests);
 void RegisterTypeNavigationTests(std::vector<TestCase>& tests);
 void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests);
+void RegisterEditorNavigationHistoryTests(std::vector<TestCase>& tests);
 void RegisterTerminalPaneLayoutTests(std::vector<TestCase>& tests);
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
@@ -208,6 +209,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterKeybindingReachabilityTests(tests);
   RegisterTypeNavigationTests(tests);
   RegisterEditorSplitTreeTests(tests);
+  RegisterEditorNavigationHistoryTests(tests);
   RegisterTerminalPaneLayoutTests(tests);
   RegisterRecentsServiceTests(tests);
   RegisterWorkspaceShellSharedCoreTests(tests);

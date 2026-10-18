@@ -430,6 +430,12 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Goto:
     case ActionId::FocusEditorGroup:
       return operations_.active_tab_is_editor() || operations_.editor_group_count() > 1;
+    case ActionId::NavigateBack:
+      return !context_.current_project_state.root.empty() &&
+             context_.current_project_state.navigation_history.CanGoBack();
+    case ActionId::NavigateForward:
+      return !context_.current_project_state.root.empty() &&
+             context_.current_project_state.navigation_history.CanGoForward();
     case ActionId::ReopenClosedEditor:
       // Offered while this project has closed an editor (a file deleted since is
       // skipped when it runs).

@@ -904,6 +904,32 @@ void TabCoordinator::RememberClosedEditor(const TabEntry& tab) {
   closed.push_back(std::move(entry));
 }
 
+void TabCoordinator::ObserveNavigationLocation() {
+  const EditorGroup& group = state_.focused_group();
+  if (group.active_tab_index >= group.open_tabs.size()) {
+    return;
+  }
+  const TabEntry& tab = group.open_tabs[group.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+      !tab.path.is_absolute()) {
+    return;  // compare/merge/virtual/untitled tabs are not places to go back to
+  }
+  const EditorTabState& editor = *tab.editor_state;
+  // A tab still loading shows where its caret will land, as Reopen Closed Editor does.
+  state_.navigation_history.Observe(
+      tab.path, editor.content_pending() ? editor.restore.cursor_line : editor.viewport.cursor_line(),
+      editor.content_pending() ? editor.restore.cursor_column : editor.viewport.cursor_column());
+}
+
+std::optional<EditorNavigationHistory::Location> TabCoordinator::StepNavigation(int direction) {
+  // The frame that would have observed the latest caret move may not have run yet.
+  ObserveNavigationLocation();
+  return state_.navigation_history.Step(direction, [](const std::filesystem::path& path) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error) && !error;
+  });
+}
+
 void TabCoordinator::Close(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;
