@@ -695,6 +695,19 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
           viewport == nullptr ? nullptr : GroupFoldingModelPtr(project_state.editor_groups[gi]);
       const std::uint64_t fold_revision =
           folds == nullptr ? 0 : (content * 31u) ^ static_cast<std::uint64_t>(folds->revision());
+      // Plugin decorations are drawn only while the buffer is clean (they were
+      // computed for the saved text): the keystroke that dirties it hides every
+      // annotation in the file, and an undo or a save back to clean shows them,
+      // while the edit's damage names only its own rows (QA plugins-ui).
+      const bool decorated_clean =
+          viewport != nullptr && !viewport->dirty() && !viewport->path().empty() &&
+          project_state.plugin_presentation_if_present() != nullptr &&
+          project_state.plugin_presentation_if_present()->decorations.FindByPathKey(
+              viewport->path_key()) != nullptr;
+      if (decorated_clean != frame_state_.painted_decorations[gi] && gi < pane_rects.groups.size()) {
+        RequestRedrawRect(pane_rects.groups[gi].editor_surface);
+      }
+      frame_state_.painted_decorations[gi] = decorated_clean;
       if (fold_revision != frame_state_.painted_fold_revision[gi]) {
         frame_state_.painted_fold_revision[gi] = fold_revision;
         const std::uint64_t markers = folds == nullptr ? 0 : FoldMarkerFingerprint(*folds);

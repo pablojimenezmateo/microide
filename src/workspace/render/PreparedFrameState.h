@@ -50,6 +50,9 @@ struct PreparedFrameState {
   // (content, fold model revision) they were hashed at.
   std::array<std::uint64_t, kMaxEditorGroups> painted_fold_revision{};
   std::array<std::uint64_t, kMaxEditorGroups> painted_fold_markers{};
+  // Per editor pane, whether it painted its file's plugin decorations (they show
+  // only while the buffer is clean).
+  std::array<bool, kMaxEditorGroups> painted_decorations{};
   // The breakpoint stores' revisions as painted (gutter dots, Breakpoints pane).
   std::uint64_t painted_breakpoints = 0;
   // The window's regions as painted (sidebar, bottom panel, editor surface, right

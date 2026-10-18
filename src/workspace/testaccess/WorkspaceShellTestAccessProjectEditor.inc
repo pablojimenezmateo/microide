@@ -137,6 +137,13 @@
   static bool HasPluginPresentation(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.plugin_presentation_if_present() != nullptr;
   }
+  // Publishes decorations as a plugin's ctx.decorations.set does (owner, file).
+  static void PublishPluginDecorationsForTest(WorkspaceShell& shell, std::string_view owner,
+                                              const std::filesystem::path& path,
+                                              editor::PluginDecorationData data) {
+    (void)shell.context_.current_project_state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
+        owner, path, std::move(data));
+  }
   static bool DispatchDuePluginEditorEvents(WorkspaceShell& shell) {
     return shell.DispatchDuePluginEditorEvents();
   }

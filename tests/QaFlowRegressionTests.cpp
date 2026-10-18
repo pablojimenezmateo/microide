@@ -25,6 +25,7 @@
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "editor/FoldingModel.h"
+#include "editor/PluginDecorationStore.h"
 #include "util/JsonValue.h"
 #include "workspace/HoverTextWrap.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -1090,6 +1091,28 @@ void TestCtrlShiftSSavesANamedFileAs() {
   Expect(active < paths.size() && paths[active].filename() == "copy.txt", "the tab should now be copy.txt");
 }
 
+// plugins-ui: plugin decorations are hidden while the buffer is dirty (they were
+// computed for the saved text). The keystroke that made a clean buffer dirty hid
+// every annotation in the file but repainted only its own row, so an end-of-line
+// note on another line stayed on screen -- and undo back to clean brought them
+// back nowhere.
+void TestDecorationsFollowTheBufferGoingDirtyAndClean() {
+  FlowFixture fixture("deco.txt", "first line\nsecond\nthird line\nfourth\n");
+  editor::PluginDecorationData data;
+  data.inline_texts.push_back(editor::InlineTextDecoration{
+      .line = 0, .text = "note on the first line", .color = SDL_Color{224, 169, 109, 255}});
+  TestAccess::PublishPluginDecorationsForTest(fixture.shell, "qa", fixture.file, std::move(data));
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the annotation shown");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(3, 0);
+  fixture.ExpectFresh(full, "the caret on line four");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("y")}),
+                      "typing on line four (the buffer goes dirty)");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}),
+                      "undo back to the saved text");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1220,6 +1243,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/AutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus",
           TestAutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus);
   AddTest(tests, "QaFlowRegression/CtrlShiftSSavesANamedFileAs", TestCtrlShiftSSavesANamedFileAs);
+  AddTest(tests, "QaFlowRegression/DecorationsFollowTheBufferGoingDirtyAndClean",
+          TestDecorationsFollowTheBufferGoingDirtyAndClean);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
