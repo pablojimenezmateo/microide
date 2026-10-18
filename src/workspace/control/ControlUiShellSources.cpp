@@ -17,6 +17,7 @@
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/debug/DebugPaneRegistry.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
+#include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
@@ -357,6 +358,19 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                       std::string(segment.text));
                   out.back().enabled = segment.clickable;
                 });
+            // Plugin status items (drawn in the breadcrumb row, right-aligned):
+            // `status:plugin/<plugin>/<item>`, the item's text as label, enabled when
+            // a click runs a command.
+            for (const VisibleStatusItem& item : ComputeVisibleStatusItems(layout.breadcrumb)) {
+              // Registry ids are qualified with the plugin id; the name carries it once.
+              std::string_view id = item.item.id;
+              if (const std::string prefix = item.item.plugin_id + "."; id.starts_with(prefix)) {
+                id.remove_prefix(prefix.size());
+              }
+              AddControlUiElement(out, kStatus, "plugin/" + item.item.plugin_id + "/" + std::string(id),
+                                  item.rect, item.item.text);
+              out.back().enabled = !item.item.command.empty();
+            }
           },
       .buttons =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
@@ -536,19 +550,31 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               return;
             }
             const SDL_FRect sidebar = layout.sidebar;
+            // The branch and Sync buttons' labels are the ones the render draws
+            // (the branch name; Sync with its behind/ahead counts), from the same
+            // revision-exact memo.
+            const GitSidebarViewModel& git_vm =
+                CachedGitSidebarPresentation(context_.current_project_state.sidebar.git,
+                                             context_.current_project_state.root,
+                                             context_.current_project_state.branch_review)
+                    .view_model;
             AddControlUiElement(out, kButton, "git/stage-all",
-                                git_sidebar_header::StageAllButtonRect(sidebar));
+                                git_sidebar_header::StageAllButtonRect(sidebar), "Stage All");
+            out.back().enabled = CanStageAllGitSidebarEntries();
             AddControlUiElement(out, kButton, "git/discard-all",
-                                git_sidebar_header::DiscardAllButtonRect(sidebar));
+                                git_sidebar_header::DiscardAllButtonRect(sidebar), "Discard All");
+            out.back().enabled = CanDiscardAllGitSidebarEntries();
             AddControlUiElement(out, kButton, "git/refresh",
-                                git_sidebar_header::RefreshButtonRect(sidebar));
+                                git_sidebar_header::RefreshButtonRect(sidebar), "Refresh");
             AddControlUiElement(out, kButton, "git/branch",
-                                git_sidebar_header::BranchButtonRect(sidebar));
-            AddControlUiElement(out, kButton, "git/sync", git_sidebar_header::SyncButtonRect(sidebar));
+                                git_sidebar_header::BranchButtonRect(sidebar), git_vm.branch_button_label);
+            AddControlUiElement(out, kButton, "git/sync", git_sidebar_header::SyncButtonRect(sidebar),
+                                git_vm.sync_button_label);
             const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
             if (!workflow.open) {
               AddControlUiElement(out, kButton, "git/commit",
-                                  git_sidebar_header::CommitButtonRect(sidebar));
+                                  git_sidebar_header::CommitButtonRect(sidebar), "Commit");
+              out.back().enabled = git_vm.commit_ready;
               return;
             }
             // The commit panel's rects are the ones its render cached (they sit

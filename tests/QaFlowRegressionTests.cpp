@@ -732,6 +732,18 @@ void TestGitCommitButtonHoverRepaints() {
   if (!commit.has_value()) {
     return;
   }
+  {
+    // The buttons carry the labels the render draws (Sync with its counts).
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    std::string commit_label;
+    std::string sync_label;
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["name"].AsString() == "button:git/commit") commit_label = entry["label"].AsString();
+      if (entry["name"].AsString() == "button:git/sync") sync_label = entry["label"].AsString();
+    }
+    Expect(commit_label == "Commit" && sync_label.starts_with("Sync"),
+           "the git buttons should carry their labels, got '" + commit_label + "' and '" + sync_label + "'");
+  }
   const auto redraw =
       DispatchEvents(shell, {MouseMotionEvent(commit->x + commit->w / 2.0f, commit->y + commit->h / 2.0f)});
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight, redraw);

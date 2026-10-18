@@ -190,14 +190,14 @@ selected?}` in window coordinates (what mouse events use). Names, by kind:
 | `sidebar-view:<view id>` | a sidebar view button (`tree`, `search`, `git`) |
 | `row:<view id>/<label>` | a visible sidebar row (`row:tree/src`; `#<index>` when a row has no label) |
 | `panel-tab:<title>` | a bottom-panel tab |
-| `status:<segment>` | a status-bar segment (`project`, `branch`, `language`, `indent`, `encoding`, `line-column`, `problems`, `lsp`, `layout-mode`, `remote`) |
+| `status:<segment>` | a status-bar segment (`project`, `branch`, `language`, `indent`, `encoding`, `line-column`, `problems`, `lsp`, `layout-mode`, `remote`); `status:plugin/<plugin>/<item>` is a plugin status item (drawn in the breadcrumb row), its text as `label`, `enabled` when a click runs a command |
 | `button:<surface>/<label>` | `window/{minimize,maximize,close}`, `close-tab/<group>/<title>`, `sidebar/{more,Collapse,Refresh}`, `panel/{new-terminal,maximize}`, `banner/<label>`, `banner/dismiss`, `notification/<label>` |
 | `divider:<which>` | `sidebar`, `panel`, `right-pane` resize handles; `editor/<n>` split dividers |
 | `overlay-row:<label>` | a visible row of the open list overlay (file finder, command palette, project search, pickers, completion, code actions), by its painted primary text; `selected` marks the one Enter runs |
 | `field:<surface>/<name>` | a text field, its text as `label`: `find/search`, `find/replace` (the in-file find widget), `prompt` (a prompt's input), `settings/filter`, `search/{query,replace,include,exclude}` (the search view), `git/subject`, `git/body` (the commit panel); `active` marks the one being edited |
 | `button:find/...` | the find widget's `previous`, `next`, `close`, `replace`, `replace-all`, `match-case`, `whole-word`, `regex` (`active` = toggle on) |
 | `button:prompt/<label>` | a prompt's buttons (`Save`, `Don't Save`, `Cancel`; a confirm's two) |
-| `button:search/...`, `button:git/...` | the search view's `mode`, `case`, `hidden`, `scope` toggles; the git view's `stage-all`, `discard-all`, `refresh`, `branch`, `sync`, `commit`, `confirm-commit` |
+| `button:search/...`, `button:git/...` | the search view's `mode`, `case`, `hidden`, `scope` toggles; the git view's `stage-all`, `discard-all`, `refresh`, `branch`, `sync`, `commit`, `confirm-commit` (labels as drawn: the branch name, Sync with its behind/ahead counts; `enabled` for Stage All, Discard All and Commit) |
 | `setting:<id>` | a Settings row (value as `label`, `on`/`off` for a checkbox), with `button:setting/<id>/{checkbox,decrement,increment,value,reset,scope}` for its controls |
 | `settings-category:<label>` | a Settings category in the left rail |
 | `button:debug-toolbar/<id>` | the floating debug toolbar's `continue`, `step-over`, `step-into`, `step-out`, `reverse-continue`, `step-back`, `restart`, `stop` (tooltip as `label`; `enabled` false for a step while the program runs) |
@@ -296,7 +296,7 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   a file still loading off-thread reports `loading: true` and the position it will
   open at. The focused group's active tab also reports `visibleTop`/`visibleCount`
   — what the user is looking at. `tabs` stays as the flat list the media scripts use.
-- `commands` lists the runnable command registry as `{command, usage, label}`.
+- `commands` lists the runnable command registry as `{command, usage, label}`, then the plugin-contributed commands (`plugin: true`).
 - `terminals` lists the terminal strip: per tab `{tab, active, unseenOutput,
   unseenBell, panes}`, per pane `{pane, active, label, running, lineCount}`.
   `unseenBell`: a program rang the bell (BEL) while the tab was not on screen.

@@ -115,6 +115,9 @@ class ControlChannelService {
     // debug console, logs), for the `output` query. Null in tests that do not
     // exercise it (the query then answers no channels).
     const WorkspaceOutputChannels* output_channels = nullptr;
+    // Plugin-contributed command names, listed by the `commands` query after the
+    // built-ins (the palette lists them too).
+    std::function<std::vector<std::string>()> plugin_command_names;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,

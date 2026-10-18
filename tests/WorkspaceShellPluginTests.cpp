@@ -365,6 +365,23 @@ return ide.plugin({
   }
   Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Counter is 0",
          "hovering a contributed status item should expose its tooltip");
+  {
+    // The ui query names it (and the commands query lists the plugin's command),
+    // so a driver can find and click it.
+    const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+    bool named = false;
+    for (const util::JsonValue& element : ui["elements"].AsArray()) {
+      named = named || (element["name"].AsString() == "status:plugin/status/counter" &&
+                        element["label"].AsString() == "0");
+    }
+    Expect(named, "the ui query should name the plugin status item status:plugin/status/counter");
+    const util::JsonValue commands = WorkspaceShellTestAccess::ControlQuery(shell, "commands");
+    bool listed = false;
+    for (const util::JsonValue& command : commands.AsArray()) {
+      listed = listed || command["command"].AsString() == "status.tick";
+    }
+    Expect(listed, "the commands query should list the plugin's status.tick");
+  }
 
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "status.tick"),

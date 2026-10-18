@@ -379,6 +379,7 @@ WorkspaceShell::WorkspaceShell() {
             };
           },
           .output_channels = &output_channels_,
+          .plugin_command_names = [this]() { return plugin_runtime_.Host().CommandNames(); },
       });
   assist_service_.Configure(
       context_, plugin_runtime_, output_channels_, language_contract_,

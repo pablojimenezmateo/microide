@@ -797,6 +797,16 @@ util::JsonValue ControlChannelService::BuildCommands() const {
     object["label"] = util::JsonValue(std::string(spec.label));
     commands.push_back(util::JsonValue(std::move(object)));
   }
+  if (operations_.plugin_command_names) {
+    for (std::string& name : operations_.plugin_command_names()) {
+      util::JsonObject object;
+      object["command"] = util::JsonValue(name);
+      object["usage"] = util::JsonValue(name);
+      object["label"] = util::JsonValue(name);
+      object["plugin"] = util::JsonValue(true);
+      commands.push_back(util::JsonValue(std::move(object)));
+    }
+  }
   return util::JsonValue(std::move(commands));
 }
 
