@@ -732,6 +732,78 @@ def flow_completion_keys(app: q.App) -> None:
     step(app, "clean up")
 
 
+# ---- debugger by keyboard ----------------------------------------------------------------
+
+
+def flow_debug_keys(app: q.App) -> None:
+    """The debugger by keyboard: F9 toggles a breakpoint on the caret's line, F5
+    starts a session from a plugin's launch configuration (`${workspaceFolder}`
+    expanded) and continues, Ctrl+Shift+F5
+    restarts it onto the breakpoint, the Breakpoints pane's Delete removes one,
+    Shift+F5 stops."""
+    from flows_lsp_debug import _require, _state
+    if not _require(app, "gdb"):
+        return
+    assert app.project is not None
+    # The launch configuration is the QA-only qa-launch plugin's: configurations
+    # come from plugins (there is no launch.json import).
+    app.send("set-setting", "debug.enabled", "true")
+    open_file(app, "src/scheduler.cpp")
+    app.click_text(19, 5)
+    app.key("F9")
+    step(app, "F9", 0.3)
+    lines = [b["line"] for f in app.query("breakpoints") for b in f["breakpoints"]]
+    app.expect(lines == [19], f"F9 sets a breakpoint on the caret's line ({lines})")
+    app.key("F9")
+    step(app, "F9 again", 0.3)
+    lines = [b["line"] for f in app.query("breakpoints") for b in f["breakpoints"]]
+    app.expect(lines == [], f"F9 again removes it ({lines})")
+    app.key("F9")
+    step(app, "F9 once more", 0.3)
+
+    app.key("F5")
+    step(app, "F5", 0.6)
+    if app.ui()["overlay"].get("mode") == "launch-config-picker" or app.elements("overlay-row"):
+        app.key("Return")
+        step(app, "pick the launch configuration", 0.5)
+    app.wait_until(lambda: _state(app).get("stopped") and _state(app).get("line") == 19, 40.0,
+                   "F5 to start and stop at the breakpoint")
+    step(app, "stopped", 0.5)
+    app.key("F5")
+    app.wait_until(lambda: _state(app).get("stopped") and _state(app).get("line") == 19, 15.0,
+                   "F5 to continue onto the breakpoint's next hit")
+    app.key("ctrl+shift+F5")
+    step(app, "ctrl+shift+F5", 1.0)
+    app.wait_until(lambda: _state(app).get("stopped") and _state(app).get("line") == 19, 40.0,
+                   "Ctrl+Shift+F5 to restart onto the breakpoint")
+
+    app.send("debug-pane-breakpoints")
+    step(app, "breakpoints pane", 0.5)
+    rows = app.elements("debug-row", prefix="debug-row:breakpoints/")
+    app.expect(bool(rows), "the Breakpoints pane lists the breakpoint")
+    tab = next(iter(app.elements("debug-tab", prefix="debug-tab:breakpoints")), None)
+    if rows and tab:
+        # A click on a row goes to the breakpoint's line (focusing the editor), so
+        # take the pane by its tab and walk to the row with the keyboard.
+        app.click(*app.center(tab))
+        step(app, "focus the Breakpoints pane", 0.3)
+        # A live session lists its exception filters above the breakpoints.
+        for _ in range(12):
+            selected = next((e for e in app.elements("debug-row", prefix="debug-row:breakpoints/")
+                             if e.get("selected")), {})
+            if "scheduler.cpp:19" in selected.get("label", ""):
+                break
+            app.key("Down")
+            step(app, "Down", 0.15)
+        app.key("Delete")
+        step(app, "Delete", 0.4)
+        lines = [b["line"] for f in app.query("breakpoints") for b in f["breakpoints"]]
+        app.expect(lines == [], f"Delete in the Breakpoints pane removes it ({lines})")
+    app.key("shift+F5")
+    app.wait_until(lambda: not _state(app).get("stopped") and not _state(app).get("frames"), 15.0,
+                   "Shift+F5 to stop the session")
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -1043,8 +1115,10 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "groups-keyboard": flow_groups_keyboard,
     "settings-keyboard": flow_settings_keyboard,
     "completion-keys": flow_completion_keys,
+    "debug-keys": flow_debug_keys,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
     "completion-keys": ("cpp-lsp",),
+    "debug-keys": ("gdb-dap", "qa-launch"),
 }
