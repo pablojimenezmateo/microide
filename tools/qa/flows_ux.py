@@ -560,6 +560,73 @@ def flow_search_options(app: q.App) -> None:
     dismiss(app)
 
 
+# ---- editor groups by keyboard ------------------------------------------------------
+
+
+def _groups(app: q.App) -> list[dict]:
+    return app.editor_state().get("groups", [])
+
+
+def _focused_group(app: q.App) -> int:
+    return next((i for i, g in enumerate(_groups(app)) if g.get("focused")), -1)
+
+
+def flow_groups_keyboard(app: q.App) -> None:
+    """Editor groups without the mouse: Ctrl+\\ splits, Ctrl+1/Ctrl+2 and the Ctrl+K
+    Ctrl+arrow chords focus, Ctrl+K Ctrl+Shift+arrow moves a group, Ctrl+K Ctrl+0 /
+    Ctrl+K Ctrl+J fold and unfold everything, and closing a group's last editor
+    closes the group."""
+    open_file(app, "src/scheduler.cpp")
+    app.key("ctrl+backslash")
+    step(app, "ctrl+\\", 0.4)
+    app.expect(len(_groups(app)) == 2 and _focused_group(app) == 1,
+               f"Ctrl+\\ splits right and focuses the new group ({len(_groups(app))}, {_focused_group(app)})")
+    app.key("ctrl+1")
+    step(app, "ctrl+1", 0.3)
+    app.expect(_focused_group(app) == 0, f"Ctrl+1 focuses the first group ({_focused_group(app)})")
+    app.key("ctrl+2")
+    step(app, "ctrl+2", 0.3)
+    app.expect(_focused_group(app) == 1, f"Ctrl+2 focuses the second ({_focused_group(app)})")
+    app.key("ctrl+k")
+    app.key("ctrl+Left")
+    step(app, "ctrl+k ctrl+Left", 0.3)
+    app.expect(_focused_group(app) == 0, f"Ctrl+K Ctrl+Left focuses the group to the left ({_focused_group(app)})")
+    app.key("ctrl+k")
+    app.key("ctrl+Right")
+    step(app, "ctrl+k ctrl+Right", 0.3)
+    app.expect(_focused_group(app) == 1, f"Ctrl+K Ctrl+Right focuses the group to the right ({_focused_group(app)})")
+
+    app.send("open", "src/main.cpp")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "main.cpp", 3.0, "main.cpp in group 2")
+    app.send("focus", "editor")
+    app.key("ctrl+k")
+    app.key("ctrl+shift+Left")
+    step(app, "ctrl+k ctrl+shift+Left", 0.4)
+    groups = _groups(app)
+    first_titles = [t.get("title") for t in groups[0].get("tabs", [])] if groups else []
+    app.expect("main.cpp" in first_titles and _focused_group(app) == 0,
+               f"Ctrl+K Ctrl+Shift+Left moves the group (with main.cpp) to the left ({first_titles})")
+
+    app.key("ctrl+k")
+    app.key("ctrl+0")
+    step(app, "ctrl+k ctrl+0", 0.4)
+    app.expect(len(app.buffer().get("folded", [])) > 0,
+               f"Ctrl+K Ctrl+0 folds everything ({app.buffer().get('folded')})")
+    app.key("ctrl+k")
+    app.key("ctrl+j")
+    step(app, "ctrl+k ctrl+j", 0.4)
+    app.expect(not app.buffer().get("folded"), f"Ctrl+K Ctrl+J unfolds everything ({app.buffer().get('folded')})")
+
+    before = len(_groups(app))
+    for _ in range(4):
+        if len(_groups(app)) < before:
+            break
+        app.key("ctrl+w")
+        step(app, "ctrl+w", 0.3)
+    app.expect(len(_groups(app)) == before - 1,
+               f"closing a group's last editor closes the group ({before} -> {len(_groups(app))})")
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -868,6 +935,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "undo-semantics": flow_undo_semantics,
     "mouse-and-wrap": flow_mouse_and_wrap,
     "search-options": flow_search_options,
+    "groups-keyboard": flow_groups_keyboard,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}
