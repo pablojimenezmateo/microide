@@ -6,7 +6,8 @@ local ide = require("microide")
 --
 -- Adapter-only by design: there is no hardcoded launch config. Point a session at
 -- a binary with the `debug-run` command (control channel or command palette),
--- e.g. `debug-run ./build/app`, or define a project launch config of type "gdb".
+-- e.g. `debug-run ./build/app`, or contribute a launch config of type "gdb" from a
+-- plugin (`ctx.debug.addConfig`, `${workspaceFolder}` expands in its arguments).
 --
 -- Reverse / time-travel debugging:
 --   * type "gdb"    — launch normally, then run `record` in the debug console to

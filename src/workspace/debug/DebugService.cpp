@@ -105,7 +105,9 @@ bool DebugService::IsActiveSession(int session_id) const {
 // BuildExecutionView / BuildThreadViews prebuilt-view helpers) live in
 // DebugServiceCallbacks.cpp.
 
-int DebugService::LaunchSession(const LaunchConfig& config, const std::string& cwd, bool replace) {
+int DebugService::LaunchSession(const LaunchConfig& unexpanded, const std::string& cwd, bool replace) {
+  LaunchConfig config = unexpanded;
+  ExpandLaunchVariables(config.arguments, cwd);
   last_launch_config_ = config;
   last_cwd_ = cwd;
   // A new session: forget the prior session's variable expansion and re-arm the

@@ -3174,9 +3174,28 @@ void TestDebugSessionStopWithoutThreadIdResolvesThread() {
   manager.ShutdownAll();
 }
 
+// `${workspaceFolder}` in a launch config's arguments becomes the project root,
+// in nested arrays and objects too (VS Code's launch variables). A plugin's config
+// is global and could not name a program under the project without it.
+void TestLaunchArgumentsExpandWorkspaceFolder() {
+  auto parsed = util::ParseJson(
+      R"({"program": "${workspaceFolder}/build/app", "args": ["--root", "${workspaceFolder}"],)"
+      R"( "env": {"HOME": "${workspaceFolder}/home"}, "stopOnEntry": true})");
+  Expect(parsed.has_value(), "the fixture parses");
+  if (!parsed) {
+    return;
+  }
+  workspace::ExpandLaunchVariables(*parsed, "/p/proj");
+  Expect((*parsed)["program"].AsString() == "/p/proj/build/app", "program expands");
+  Expect((*parsed)["args"].AsArray()[1].AsString() == "/p/proj", "array items expand");
+  Expect((*parsed)["env"]["HOME"].AsString() == "/p/proj/home", "nested objects expand");
+  Expect((*parsed)["stopOnEntry"].AsBool(), "non-strings are left alone");
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DebugService/LaunchArgumentsExpandWorkspaceFolder", TestLaunchArgumentsExpandWorkspaceFolder);
   AddTest(tests, "DebugService/ValueTreeNodeIdsAreMonotonic",
           TestDebugValueTreeNodeIdsAreMonotonic);
   AddTest(tests, "DebugService/ValueTreePagingBoundaries", TestDebugValueTreePagingBoundaries);
