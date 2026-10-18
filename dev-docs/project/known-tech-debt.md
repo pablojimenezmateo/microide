@@ -444,6 +444,31 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-362 — two monkey stale frames that do not replay; no Show Hover by keyboard. [OPEN]
+
+The QA monkey (`run.py monkey --seeds 10-13 --steps 300`, 2026-10-18) found two
+stale partial frames that a replay of the same seed does not reproduce, so they
+are timing-dependent and unpinned:
+
+- seed 10, step 255: the search view's case toggle kept its hover outline after
+  the pointer left it; the frame repainted only the menu bar. Just before: a
+  `layout-mode-toggle`, a click on the window's maximize button, F12, a wheel
+  over the editor. Suspect a hover rect computed against one layout and painted
+  in another.
+- seed 12, step 295: an 8x36 strip of a find-match highlight in a binary file
+  opened as text (the monkey had opened the `taskflow` executable).
+
+Also found on that pass, not a bug: the control channel is byte-transparent by
+design (remote mirror file names and terminal scrollback rely on it), so a raw
+byte from a binary file reaches a `ui` answer; the harness now decodes with
+replacement and holds only composed chrome labels to valid UTF-8. But LSP/DAP
+payloads go through the same serializer, and a server's JSON parser may reject a
+non-UTF-8 document -- sanitising belongs at the LSP boundary, not in the shared
+serializer.
+
+Missing for keyboard users: VS Code's Show Hover (Ctrl+K Ctrl+I) -- the hover
+card here is pointer-only.
+
 ### TD-2026-10-18-361 — inert chrome VS Code makes interactive: breadcrumbs, the encoding/EOL segment. [OPEN]
 
 Found probing the chrome for the QA `mouse-and-wrap` pass:

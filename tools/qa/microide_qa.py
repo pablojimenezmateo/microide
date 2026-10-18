@@ -143,6 +143,7 @@ class App:
     # (time, x, y) of the last press, for the double-click guard in click().
     _last_click: tuple[float, float, float] = (0.0, -1e9, -1e9)
     _launches: int = 0
+    _reported_bad_utf8: bool = False
     _extra_args: list[str] = field(default_factory=list)
 
     # ---- lifecycle -------------------------------------------------------
@@ -309,8 +310,10 @@ class App:
     # ---- control channel -------------------------------------------------
 
     def _control(self, args: list[str], timeout: float = 10.0) -> subprocess.CompletedProcess:
+        # errors="replace": a malformed byte in an answer is the app's bug to report,
+        # not a reason for the run to die mid-scenario (the monkey did, seed 12).
         return subprocess.run([str(self.binary), *args], env=self.env, capture_output=True,
-                              text=True, timeout=timeout)
+                              text=True, errors="replace", timeout=timeout)
 
     def _control_ready(self) -> bool:
         result = self._control(["control-list"], timeout=3.0)
@@ -365,7 +368,26 @@ class App:
         reply = _last_json(result.stdout)
         if not reply or not reply.get("ok"):
             raise QaFailure(f"query {verb!r} failed: {result.stdout or result.stderr}")
+        if verb == "ui" and "\ufffd" in result.stdout:
+            self._check_chrome_utf8(reply.get("result", {}))
         return reply.get("result", {})
+
+    # Element kinds whose labels are chrome the app composes itself (menus, the
+    # status bar, buttons, settings), not text copied from a file or typed into a
+    # field -- the channel is byte-transparent, and a binary file opened as text
+    # legitimately puts raw bytes into a find query or a tab title.
+    _CHROME_KINDS = ("menu", "menu-item", "status", "button", "setting", "settings-category",
+                     "debug-tab", "panel-tab", "sidebar-view")
+
+    def _check_chrome_utf8(self, ui: dict[str, Any]) -> None:
+        if self._reported_bad_utf8:
+            return
+        for element in ui.get("elements", []):
+            if element.get("kind") in self._CHROME_KINDS and "\ufffd" in element.get("label", ""):
+                self._reported_bad_utf8 = True
+                self.expect(False, f"{element['name']} draws a label cut through a character: "
+                                   f"{element.get('label')!r}")
+                return
 
     def output(self, channel: str | None = None) -> list[str]:
         """The lines of an output channel (references, call hierarchy, workspace

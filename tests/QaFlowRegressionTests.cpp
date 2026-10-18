@@ -941,6 +941,33 @@ void TestCtrlKChordSurvivesReleasingCtrl() {
              std::to_string(TestAccess::FocusedGroupIndex(fixture.shell)));
 }
 
+// Column selection (Ctrl+Shift+Alt+arrows) steps by visual columns; over multibyte
+// text it must still never put a selection edge inside a character, or a find
+// query or a copy seeded from it holds half of one. (Probed while chasing a
+// monkey run whose find query was one raw byte -- copied, it turned out, from a
+// binary file opened as text, which is that file's real content.)
+void TestColumnSelectionNeverSplitsACharacter() {
+  FlowFixture fixture("utf8.txt", "a\xE2\x80\x94" "b\nc\xC3\xA9" "d\n");
+  const SDL_Keymod column = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT);
+  for (const SDL_Keycode key : {SDLK_RIGHT, SDLK_LEFT}) {
+    for (std::size_t start = 0; start <= 4; ++start) {
+      TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, start);
+      (void)DispatchEvents(fixture.shell, {KeyDownEvent(key, column), KeyDownEvent(SDLK_DOWN, column)});
+      const std::string selected = TestAccess::ActiveEditor(fixture.shell).SelectedText();
+      for (std::size_t i = 0; i < selected.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(selected[i]);
+        Expect(!(c >= 0x80 && c < 0xC0 && (i == 0 || static_cast<unsigned char>(selected[i - 1]) < 0x80)),
+               "a column selection from column " + std::to_string(start) + " split a character");
+      }
+      (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+    }
+  }
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL)});
+  const std::string query = TestAccess::ControlUi(fixture.shell)["overlay"]["query"].AsString();
+  Expect(query.empty() || static_cast<unsigned char>(query[0]) < 0x80 || static_cast<unsigned char>(query[0]) >= 0xC0,
+         "the find query should not start inside a character");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1062,6 +1089,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ShiftWheelScrollsTheEditorSideways", TestShiftWheelScrollsTheEditorSideways);
   AddTest(tests, "QaFlowRegression/CtrlShiftFSeedsTheSelection", TestCtrlShiftFSeedsTheSelection);
   AddTest(tests, "QaFlowRegression/CtrlKChordSurvivesReleasingCtrl", TestCtrlKChordSurvivesReleasingCtrl);
+  AddTest(tests, "QaFlowRegression/ColumnSelectionNeverSplitsACharacter", TestColumnSelectionNeverSplitsACharacter);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
