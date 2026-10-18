@@ -952,7 +952,10 @@ std::size_t WorkspaceShell::EditorGroupCount() const {
   return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().EditorGroupCount();
 }
 
-bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
+// By value: callers pass paths that live in workspace state (a compare tab's
+// path, a tree row's), and opening a tab can reallocate or rebuild that state
+// before the path is read again -- Alt+O from a diff read its own freed path.
+bool WorkspaceShell::OpenFileInNewTab(std::filesystem::path path) {
   // A host file outside a remote project (a system header a language server named)
   // is fetched first, read-only, off the UI thread; it opens when it arrives.
   if (glue_->remote_host_service != nullptr &&

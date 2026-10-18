@@ -906,6 +906,34 @@ void TestWorkspaceShellCompareBracketMatchIsMemoized() {
          "moving the caret re-keys the memo rather than serving the old match");
 }
 
+// Alt+O from a diff opens its working file. The path handed to OpenFile was the
+// compare tab's own, and opening the file added a tab -- reallocating the tab
+// storage under that reference before it was read again: a null dereference
+// under the slow QA coverage build and every time under ASan
+// (`tools/qa` compare-keys). OpenFileInNewTab now takes its path by value.
+void TestWorkspaceShellCompareAltOOpensTheWorkingFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare open fixture", "compare open fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "the compare open fixture should open its diff");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "the diff should be the active tab");
+
+  Expect(SendKeyDown(shell, SDLK_O, SDL_KMOD_ALT), "Alt+O on a diff should be handled");
+  Expect(!WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "Alt+O should activate an editor tab");
+  const editor::TextViewport* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport != nullptr && viewport->path() == source,
+         "Alt+O should open the diff's working file");
+}
+
 void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3287,6 +3315,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellComparePaintsPluginDecorations);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneIndentsAndOutdents",
           TestWorkspaceShellCompareEditablePaneIndentsAndOutdents);
+  AddTest(tests, "WorkspaceShell/CompareAltOOpensTheWorkingFile",
+          TestWorkspaceShellCompareAltOOpensTheWorkingFile);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
   AddTest(tests, "WorkspaceShell/CompareClickAboveFirstRowIsNotHandled",
