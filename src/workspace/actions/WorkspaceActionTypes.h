@@ -164,6 +164,7 @@ enum class ActionId {
   RenamePath,
   Reopen,
   ReopenClosedEditor,
+  SaveAs,
   FocusEditorGroup,
   NavigateBack,
   NavigateForward,

@@ -623,6 +623,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+c` / `Ctrl+x` / `Ctrl+v` | Copy / Cut / Paste |
 | `Ctrl+z` / `Ctrl+y` | Undo / Redo |
 | `Ctrl+s` | Save |
+| `Ctrl+Shift+s` | Save As… (starts from the file's path; untitled files ask on Ctrl+s too) |
 | `Ctrl+Shift+p` / `F1` | Open command palette |
 | `Ctrl+1` … `Ctrl+8` | Focus editor group N (the next one is created by splitting right) |
 | `Alt+Left` / `Alt+Right` | Go back / forward through the places the caret jumped to (another file, or more than ten lines away) |
@@ -816,6 +817,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `navigate-back`
 - `navigate-forward`
 - `save [path]`
+- `save-as [path]`
 - `search [query]`
 - `find-next`
 - `find-previous`

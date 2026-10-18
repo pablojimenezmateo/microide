@@ -319,6 +319,17 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .skips_terminal = false,
       },
       KeybindingSpec{
+          .id = "save-as",
+          .action = ActionId::SaveAs,
+          .key = SDLK_S,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+      },
+      KeybindingSpec{
           .id = "reopen-closed-editor",
           .action = ActionId::ReopenClosedEditor,
           .key = SDLK_T,

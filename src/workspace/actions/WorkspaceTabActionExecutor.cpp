@@ -245,6 +245,29 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
                  ? DispatchResult::Handled
                  : DispatchResult::Rejected;
     }
+    case ActionId::SaveAs: {
+      // VS Code's Ctrl+Shift+S: `save-as <path>` saves there; bare, it asks,
+      // starting from the file's own project-relative path.
+      if (!args.empty()) {
+        return Execute(ActionId::Save, args, source) ? DispatchResult::Handled
+                                                    : DispatchResult::Rejected;
+      }
+      const editor::TextViewport* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr) {
+        return reject("No editable file");
+      }
+      std::string initial;
+      if (!viewport->path().empty()) {
+        std::error_code error;
+        const std::filesystem::path relative =
+            std::filesystem::relative(viewport->path(), context_.ProjectRoot(), error);
+        initial = !error && !relative.empty() && !relative.string().starts_with("..")
+                      ? relative.generic_string()
+                      : viewport->path().string();
+      }
+      context_.OpenSaveAsPrompt(std::move(initial));
+      return DispatchResult::Handled;
+    }
     case ActionId::Reopen:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

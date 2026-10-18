@@ -980,11 +980,11 @@ bool WorkspaceActionContext::OpenNewBufferInNewTab(const std::filesystem::path& 
   return operations_.open_new_buffer_in_new_tab && operations_.open_new_buffer_in_new_tab(path);
 }
 
-void WorkspaceActionContext::OpenSaveAsPrompt() {
+void WorkspaceActionContext::OpenSaveAsPrompt(std::string initial) {
   if (operations_.open_prompt_surface) {
     operations_.open_prompt_surface(PromptSurfaceState::Action::SaveAs,
                                     PromptSurfaceState::Kind::TextInput, ProjectRoot(),
-                                    std::string{});
+                                    std::move(initial));
   }
 }
 

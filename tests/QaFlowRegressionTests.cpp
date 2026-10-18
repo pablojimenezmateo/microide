@@ -1071,6 +1071,25 @@ void TestAutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus() {
   Expect(ReadFile(other).starts_with("B"), "moving the keyboard to the sidebar should auto-save other.txt");
 }
 
+// VS Code's Ctrl+Shift+S: Save As on a file that already has a name. Only an
+// untitled buffer could reach the Save As prompt.
+void TestCtrlShiftSSavesANamedFileAs() {
+  FlowFixture fixture("orig.txt", "orig\n");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("X")});
+  (void)DispatchEvents(fixture.shell,
+                       {KeyDownEvent(SDLK_S, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))});
+  const util::JsonValue prompt = TestAccess::ControlUi(fixture.shell)["prompt"];
+  Expect(prompt["title"].AsString() == "Save As" && prompt["input"].AsString() == "orig.txt",
+         "Ctrl+Shift+S should ask where, starting from orig.txt, got '" + prompt["input"].AsString() + "'");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_A, SDL_KMOD_CTRL), TextInputEvent("copy.txt"),
+                                       KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  Expect(ReadFile(fixture.root / "copy.txt") == "Xorig\n", "the buffer should be written to copy.txt");
+  Expect(ReadFile(fixture.file) == "orig\n", "orig.txt should be left as it was on disk");
+  const auto paths = TestAccess::GroupTabPaths(fixture.shell, 0);
+  const std::size_t active = TestAccess::ActiveTabIndex(fixture.shell);
+  Expect(active < paths.size() && paths[active].filename() == "copy.txt", "the tab should now be copy.txt");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1200,6 +1219,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestALayoutChangeWithNoDamageOfItsOwnRepaints);
   AddTest(tests, "QaFlowRegression/AutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus",
           TestAutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus);
+  AddTest(tests, "QaFlowRegression/CtrlShiftSSavesANamedFileAs", TestCtrlShiftSSavesANamedFileAs);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

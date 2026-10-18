@@ -545,7 +545,8 @@ class WorkspaceActionContext {
   // A path that does not exist yet opens as an empty buffer bound to it.
   bool OpenNewBufferInNewTab(const std::filesystem::path& path);
   // The Save As prompt (Ctrl+S on an untitled buffer).
-  void OpenSaveAsPrompt();
+  // `initial` prefills the path (a named file's own, for Save As on it).
+  void OpenSaveAsPrompt(std::string initial = {});
   void ResetCaretBlink();
   // Split the focused editor group in the given orientation, optionally opening
   // `path` in the new group instead of the cloned active document.

@@ -439,6 +439,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::NavigateForward:
       return !context_.current_project_state.root.empty() &&
              context_.current_project_state.navigation_history.CanGoForward();
+    case ActionId::SaveAs:
+      return !context_.current_project_state.root.empty() && active_editable_viewport != nullptr;
     case ActionId::ReopenClosedEditor:
       // Offered while this project has closed an editor (a file deleted since is
       // skipped when it runs).

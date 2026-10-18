@@ -88,6 +88,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::RemoteOpenFolder),
       MenuSeparator(),
       MenuItem(ActionId::Save),
+      MenuItem(ActionId::SaveAs, {}, "Ctrl+Shift+S"),
       MenuItem(ActionId::CloseActiveTab),
       MenuItem(ActionId::CloseAllTabs),
       MenuItem(ActionId::ReopenClosedEditor, {}, "Ctrl+Shift+T"),
