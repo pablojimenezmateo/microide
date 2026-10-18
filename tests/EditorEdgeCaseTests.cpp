@@ -172,6 +172,15 @@ void TestMultiCaretEndOnWrappedRowsUsesViewLineEnd() {
              viewport.secondary_carets().front().column == 8,
          std::string("the secondary caret should stop at its own wrap point: ") +
              CaretDump(viewport));
+  // A second End goes on to the end of the whole line (VS Code's cursorEnd).
+  viewport.MoveCursorLineEnd();
+  Expect(viewport.cursor_column() == 16,
+         "a second End should reach the line's end, got " + std::to_string(viewport.cursor_column()));
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front().column == 16,
+         std::string("and so should the secondary caret: ") + CaretDump(viewport));
+  viewport.MoveCursorLineEnd();
+  Expect(viewport.cursor_column() == 16, "a third End stays at the line's end");
 }
 
 // --- 7. Down on a wrapped line steps one visual row, not one logical line. ---

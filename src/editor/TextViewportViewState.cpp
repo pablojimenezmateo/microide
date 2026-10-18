@@ -466,17 +466,25 @@ void TextViewport::MoveCursorLineEnd(bool extend_selection) {
 
   document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
-  const ViewLineBounds primary_bounds =
-      ViewLineBoundsForCaret(TextPosition{cursor_line_, cursor_column_}, EffectiveCaretAffinity());
-  PlacePrimaryCaret(cursor_line_, primary_bounds.last, /*keep_preferred_column=*/false,
-                    primary_bounds.last_is_wrap_point ? WrapRowAffinity::kPreviousRow
-                                                      : WrapRowAffinity::kNextRow);
+  // VS Code's cursorEnd: the end of the wrapped row the caret is on, and from
+  // there (a second End) the end of the whole line.
+  const auto end_target = [this](const TextPosition& caret, WrapRowAffinity affinity) {
+    const ViewLineBounds bounds = ViewLineBoundsForCaret(caret, affinity);
+    if (bounds.last_is_wrap_point && caret.column == bounds.last &&
+        affinity == WrapRowAffinity::kPreviousRow) {
+      return std::pair{document_->lines.LineLength(caret.line), WrapRowAffinity::kNextRow};
+    }
+    return std::pair{bounds.last, bounds.last_is_wrap_point ? WrapRowAffinity::kPreviousRow
+                                                            : WrapRowAffinity::kNextRow};
+  };
+  const auto [primary_column, primary_affinity] =
+      end_target(TextPosition{cursor_line_, cursor_column_}, EffectiveCaretAffinity());
+  PlacePrimaryCaret(cursor_line_, primary_column, /*keep_preferred_column=*/false, primary_affinity);
   for (SecondaryCaret& caret : secondary_carets_) {
     if (caret.position.line < document_->lines.size()) {
-      const ViewLineBounds bounds = ViewLineBoundsForCaret(caret.position, caret.wrap_affinity);
-      caret.position.column = bounds.last;
-      caret.wrap_affinity =
-          bounds.last_is_wrap_point ? WrapRowAffinity::kPreviousRow : WrapRowAffinity::kNextRow;
+      const auto [column, affinity] = end_target(caret.position, caret.wrap_affinity);
+      caret.position.column = column;
+      caret.wrap_affinity = affinity;
     }
     caret.preferred_column = PreferredColumnForCaret(caret.position, caret.wrap_affinity);
   }
