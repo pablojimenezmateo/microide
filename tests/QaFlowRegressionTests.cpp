@@ -812,6 +812,45 @@ void TestTreeF2RenamesAndDeleteDeletes() {
   Expect(std::filesystem::exists(fixture.root / "victim.txt"), "nothing is deleted before the answer");
 }
 
+// Quick Open (Ctrl+P) as VS Code's: `file:line` opens the file at the line, `>`
+// switches to the command palette and `:` to Go to Line, keeping what follows.
+// QA: all three matched no file and Enter did nothing.
+void TestQuickOpenPrefixesAndLineSuffix() {
+  FlowFixture fixture("first.txt", "one\n");
+  std::string lines;
+  for (int i = 1; i <= 30; ++i) {
+    lines += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.root / "second.txt", lines);
+  TestAccess::ForceFileIndexRefreshAndDrain(fixture.shell);
+  const SDL_Keymod ctrl = SDL_KMOD_CTRL;
+  const auto ui = [&]() { return TestAccess::ControlUi(fixture.shell); };
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl), TextInputEvent("second.txt:12")});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  const auto paths = TestAccess::GroupTabPaths(fixture.shell, 0);
+  const std::size_t active = TestAccess::ActiveTabIndex(fixture.shell);
+  Expect(active < paths.size() && paths[active].filename() == "second.txt",
+         "second.txt:12 should open second.txt");
+  Expect(TestAccess::ActiveEditor(fixture.shell).cursor_line() == 11,
+         "at line 12, got " + std::to_string(TestAccess::ActiveEditor(fixture.shell).cursor_line() + 1));
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl), TextInputEvent(">sort")});
+  Expect(ui()["overlay"]["mode"].AsString() == "command-palette" && ui()["overlay"]["query"].AsString() == "sort",
+         "> should switch to the command palette with 'sort', got " + ui()["overlay"]["mode"].AsString() +
+             " '" + ui()["overlay"]["query"].AsString() + "'");
+  Expect(ui()["overlay"]["count"].AsInt() > 0, "and list the sort commands");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl), TextInputEvent(":3")});
+  Expect(ui()["prompt"]["input"].AsString() == "3", "':' should open Go to Line with '3', got '" +
+                                                        ui()["prompt"]["input"].AsString() + "'");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  Expect(TestAccess::ActiveEditor(fixture.shell).cursor_line() == 2, "and Enter should go to line 3");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl)});
+  Expect(ui()["overlay"]["query"].AsString().empty(), "the next Ctrl+P should open on an empty query");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -926,6 +965,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/CtrlHInTheFindWidgetOpensReplace", TestCtrlHInTheFindWidgetOpensReplace);
   AddTest(tests, "QaFlowRegression/ShiftAltRightExpandsTheSelection", TestShiftAltRightExpandsTheSelection);
   AddTest(tests, "QaFlowRegression/TreeF2RenamesAndDeleteDeletes", TestTreeF2RenamesAndDeleteDeletes);
+  AddTest(tests, "QaFlowRegression/QuickOpenPrefixesAndLineSuffix", TestQuickOpenPrefixesAndLineSuffix);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

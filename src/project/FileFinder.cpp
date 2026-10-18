@@ -136,6 +136,32 @@ void FileFinder::SetRecentRelativePaths(std::vector<std::filesystem::path> paths
   recent_relative_paths_ = std::move(paths);
 }
 
+FileFinderQueryParts SplitFileFinderQuery(std::string_view query) {
+  // Peel up to two `:<digits>` groups off the end: `a:12:4`, `a:12`.
+  const auto peel = [](std::string_view text) -> std::optional<std::pair<std::string_view, std::size_t>> {
+    const std::size_t colon = text.rfind(':');
+    if (colon == std::string_view::npos || colon + 1 == text.size()) {
+      return std::nullopt;
+    }
+    std::size_t value = 0;
+    for (const char c : text.substr(colon + 1)) {
+      if (c < '0' || c > '9' || value > 100'000'000) {
+        return std::nullopt;
+      }
+      value = value * 10 + static_cast<std::size_t>(c - '0');
+    }
+    return std::pair{text.substr(0, colon), value};
+  };
+  const auto last = peel(query);
+  if (!last.has_value() || last->second == 0) {
+    return {.path = query, .target = std::nullopt};
+  }
+  if (const auto first = peel(last->first); first.has_value() && first->second > 0) {
+    return {.path = first->first, .target = FileFinderLineTarget{first->second, last->second}};
+  }
+  return {.path = last->first, .target = FileFinderLineTarget{last->second, 0}};
+}
+
 void FileFinder::Refresh() {
   util::PerformanceTrace::Scope perf_scope("FileFinder::Refresh");
   results_size_ = 0;
@@ -146,7 +172,9 @@ void FileFinder::Refresh() {
   }
   EnsureCacheBuilt();
 
-  const std::string lower_query = util::Utf8CaseFold(query_.text());
+  // `main.cpp:12` matches `main.cpp`; the line is for whoever opens the pick.
+  const std::string_view match_query = SplitFileFinderQuery(query_.text()).path;
+  const std::string lower_query = util::Utf8CaseFold(match_query);
   const std::uint64_t query_mask = CharPresenceMask(lower_query);
 
   // While the query is empty, lead with recent files (newest-first) so the finder is
@@ -240,7 +268,7 @@ void FileFinder::Refresh() {
       ++mask_rejects;
       return;
     }
-    const int score = RankMatchCached(entry, lower_query, query(), query_mask);
+    const int score = RankMatchCached(entry, lower_query, match_query, query_mask);
     if (score == std::numeric_limits<int>::max()) {
       return;
     }

@@ -318,7 +318,19 @@ bool WorkspaceShell::ActivateOverlaySelection() {
     case OverlayMode::FileFinder:
     default:
       if (const auto selected = context_.current_project_state.file_finder.SelectedPath(); selected.has_value()) {
-        OpenFile(context_.current_project_state.root / *selected);
+        const std::filesystem::path path = context_.current_project_state.root / *selected;
+        if (const auto target = context_.current_project_state.file_finder.line_target();
+            target.has_value()) {
+          // `main.cpp:12[:4]`: `reveal` opens it there, also when the read lands later.
+          DismissOverlay(true);
+          (void)ExecuteCommandName("reveal",
+                                   {path.string(), std::to_string(target->line) +
+                                                       (target->column > 0 ? ":" + std::to_string(target->column)
+                                                                           : std::string{})},
+                                   ActionSource::Command, nullptr);
+          return true;
+        }
+        OpenFile(path);
       }
       DismissOverlay(true);
       return true;
@@ -372,11 +384,26 @@ void WorkspaceShell::OpenCommandPalette(std::string seed) {
   ShowOverlay(OverlayMode::CommandPalette);
 }
 
+namespace {
+// The palette's query without VS Code's `>` command prefix: typing `>` first (a
+// habit from Ctrl+P, where it switches to commands) must not filter every row out.
+std::string_view PaletteQueryText(const CommandPaletteState& palette) {
+  std::string_view text = palette.query.text();
+  if (text.starts_with('>')) {
+    text.remove_prefix(1);
+    while (!text.empty() && text.front() == ' ') {
+      text.remove_prefix(1);
+    }
+  }
+  return text;
+}
+}  // namespace
+
 void WorkspaceShell::RefreshCommandPalette() {
   CommandPaletteState& palette = context_.current_project_state.overlay.workflow.command_palette;
   palette.matches.clear();
   palette.selected_index = 0;
-  const std::string query = util::ToLowerAscii(palette.query.text());
+  const std::string query = util::ToLowerAscii(PaletteQueryText(palette));
   // Every whitespace-separated word of the query has to appear somewhere in the
   // row, in any order (VS Code's command palette matches words, not one contiguous
   // substring), so `line move` and `move line` both find "Move Line Down".
@@ -436,7 +463,7 @@ bool WorkspaceShell::CommandPaletteQueryIsCommandLine() const {
   // also surfaces "Unknown command: …" for genuine typos).
   const CommandPaletteState& palette =
       context_.current_project_state.overlay.workflow.command_palette;
-  const ParsedCommandLine parsed = ParseCommandLine(palette.query.text());
+  const ParsedCommandLine parsed = ParseCommandLine(PaletteQueryText(palette));
   if (parsed.tokens.empty() || parsed.open_quote != '\0') {
     return false;
   }
@@ -462,7 +489,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
   // (which failed on a path named "with"), and "open file" picks Open File….
   bool verb_with_arguments = false;
   {
-    const ParsedCommandLine parsed = ParseCommandLine(palette.query.text());
+    const ParsedCommandLine parsed = ParseCommandLine(PaletteQueryText(palette));
     if (parsed.tokens.size() > 1 && parsed.open_quote == '\0') {
       const std::string verb = util::ToLowerAscii(parsed.tokens.front().text);
       for (const CommandPaletteItem& item : palette.items) {
@@ -474,7 +501,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
     }
     if (verb_with_arguments && palette.selected_index < palette.matches.size()) {
       const std::string& label = palette.items[palette.matches[palette.selected_index]].primary_label;
-      const std::string query = util::ToLowerAscii(palette.query.text());
+      const std::string query = util::ToLowerAscii(PaletteQueryText(palette));
       verb_with_arguments = util::ToLowerAscii(label).rfind(query, 0) != 0;
     }
   }
@@ -496,7 +523,7 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
   // No row matched: run the typed line (verb + args) through the shared executor.
   if (CommandPaletteQueryIsCommandLine()) {
     // Copy the query before dismissing — the dispatch may reopen overlays / mutate state.
-    const std::string command_line = palette.query.text();
+    const std::string command_line(PaletteQueryText(palette));
     DismissOverlay(true);
     const bool ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
     if (const std::string& feedback = context_.current_project_state.panel.feedback.text;

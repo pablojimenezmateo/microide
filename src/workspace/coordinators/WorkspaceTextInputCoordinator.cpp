@@ -218,6 +218,10 @@ void TextInputCoordinator::RequestSingleLineTextRedraw(TextInputSurface surface,
       }
       break;
     case TextInputSurface::FileFinder:
+      if (text_changed && operations_.switch_quick_open_mode &&
+          operations_.switch_quick_open_mode(state_.file_finder.query())) {
+        break;
+      }
       if (text_changed) {
         state_.file_finder.Refresh();
         operations_.reset_overlay_scroll();

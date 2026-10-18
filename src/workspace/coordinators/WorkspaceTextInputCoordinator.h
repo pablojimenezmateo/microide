@@ -31,6 +31,9 @@ class TextInputCoordinator {
     std::function<void()> refresh_buffer_search;
     std::function<void()> refresh_project_search;
     std::function<void()> reset_overlay_scroll;
+    // Quick Open's prefixes (VS Code): `>` switches to the command palette and `:`
+    // to Go to Line, each taking the rest of the query. True when it switched.
+    std::function<bool(std::string_view)> switch_quick_open_mode;
     std::function<editor::SingleLineEditor*()> settings_query_editor;
     std::function<editor::SingleLineEditor*()> settings_value_editor;
     std::function<editor::SingleLineEditor*()> terminal_find_query_editor;

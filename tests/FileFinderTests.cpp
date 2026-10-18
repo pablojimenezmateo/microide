@@ -117,6 +117,35 @@ void TestFileFinderIncludesHiddenIndexedPaths() {
          "file finder hidden-path behavior should remain compatible with indexed hidden entries");
 }
 
+// VS Code's `file:line[:column]`: the suffix is where to open, the rest is what
+// is matched (QA: `main.cpp:5` used to match nothing).
+void TestFileFinderLineSuffixIsNotMatched() {
+  const auto split = [](std::string_view q) { return project::SplitFileFinderQuery(q); };
+  Expect(split("main.cpp:12").path == "main.cpp" && split("main.cpp:12").target->line == 12 &&
+             split("main.cpp:12").target->column == 0,
+         "main.cpp:12 should be main.cpp at line 12");
+  Expect(split("src/a.cpp:3:7").path == "src/a.cpp" && split("src/a.cpp:3:7").target->line == 3 &&
+             split("src/a.cpp:3:7").target->column == 7,
+         "a.cpp:3:7 should be line 3, column 7");
+  Expect(!split("main.cpp").target.has_value() && !split("main.cpp:").target.has_value() &&
+             !split("c:x").target.has_value() && !split("main.cpp:0").target.has_value(),
+         "no target without a positive number after the colon");
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "the index should take its root");
+  Expect(index.ApplyBatch(MakeInitialBatch({"src/main.cpp", "src/other.cpp"})), "the batch should apply");
+  FileFinder finder;
+  finder.SetIndex(&index);
+  finder.SetQuery("main.cpp:5");
+  Expect(finder.results().size() == 1 && finder.results().front().path_string == "src/main.cpp",
+         "main.cpp:5 should find src/main.cpp");
+  Expect(finder.line_target().has_value() && finder.line_target()->line == 5,
+         "and remember line 5 for the open");
+}
+
 // Typing in the finder Refreshes on every keystroke. With the index version
 // unchanged, the cheap version check must short-circuit before the O(index)
 // snapshot copy/rebuild: the cache is built exactly once across many queries,
@@ -864,6 +893,7 @@ void RegisterFileFinderTests(std::vector<TestCase>& tests) {
           TestFileFinderWarmRefreshDoesNotRebuildPerKeystroke);
   AddTest(tests, "FileFinder/IncludesHiddenIndexedPaths",
           TestFileFinderIncludesHiddenIndexedPaths);
+  AddTest(tests, "FileFinder/LineSuffixIsNotMatched", TestFileFinderLineSuffixIsNotMatched);
 }
 
 }  // namespace microide::tests

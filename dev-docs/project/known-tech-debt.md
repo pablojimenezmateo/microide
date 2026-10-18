@@ -444,6 +444,16 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-360 — no Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open). [OPEN]
+
+Found by the QA quick-open probe: VS Code's Ctrl+Shift+O and an `@` typed into
+Ctrl+P list the active file's symbols (documentSymbol) and filter them as you
+type; here Ctrl+Shift+O is unbound and `@` matches no file. The symbols are
+already fetched for the Outline view (`flows_more.py` `outline`), so this is a
+picker over that list -- a new OverlayMode whose rows are the outline's, Enter
+revealing the symbol -- plus the `@` prefix in `switch_quick_open_mode` next to
+`>` and `:` (added 2026-10-18).
+
 ### TD-2026-10-18-359 — the file tree cannot move or copy files. [OPEN]
 
 Found writing the QA `tree-keys` flow against VS Code's explorer: there is no

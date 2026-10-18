@@ -608,7 +608,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+p` | Open file finder (fuzzy quick-open) |
+| `Ctrl+p` | Open file finder (fuzzy quick-open; `file:line[:col]` opens at a line, a leading `>` switches to commands, `:` to Go to Line) |
 | `Ctrl+b` | Toggle sidebar |
 | `Ctrl+Tab` | Cycle focus: sidebar → editor → command/terminal pane |
 | `Ctrl+w` | Close active tab |

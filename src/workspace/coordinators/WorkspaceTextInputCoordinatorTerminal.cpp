@@ -331,6 +331,25 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
+          .switch_quick_open_mode =
+              [this](std::string_view query) {
+                const bool to_commands = query.starts_with('>');
+                const bool to_line = query.starts_with(':') && ActiveEditorViewport() != nullptr;
+                if (!to_commands && !to_line) {
+                  return false;
+                }
+                std::string rest(query.substr(1));
+                // The next Ctrl+P opens on files again, not on this prefix.
+                context_.current_project_state.file_finder.SetQuery("");
+                if (to_commands) {
+                  OpenCommandPalette(std::move(rest));
+                } else {
+                  DismissOverlay(false);
+                  OpenPromptSurface(PromptSurfaceState::Action::GoToLine, PromptSurfaceState::Kind::TextInput,
+                                    std::filesystem::path{}, std::move(rest));
+                }
+                return true;
+              },
           .settings_query_editor =
               [this]() -> editor::SingleLineEditor* {
                 return &settings_overlay_service_.QueryEditor();

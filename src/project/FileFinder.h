@@ -30,6 +30,19 @@ struct FileFinderResult {
   int score = 0;
 };
 
+// VS Code's `file:line[:column]` in Quick Open: a trailing `:<digits>[:<digits>]`
+// says where to open the file, and only what is before it is matched. 1-based, as
+// typed; `column` is 0 when not given.
+struct FileFinderLineTarget {
+  std::size_t line = 0;
+  std::size_t column = 0;
+};
+struct FileFinderQueryParts {
+  std::string_view path;
+  std::optional<FileFinderLineTarget> target;
+};
+FileFinderQueryParts SplitFileFinderQuery(std::string_view query);
+
 class FileFinder {
  public:
   void SetIndex(const FileIndex* index);
@@ -43,6 +56,10 @@ class FileFinder {
   void MoveSelection(int delta);
 
   const std::string& query() const { return query_.text(); }
+  // Where the query asks the picked file to open (`main.cpp:12:4`), if anywhere.
+  std::optional<FileFinderLineTarget> line_target() const {
+    return SplitFileFinderQuery(query_.text()).target;
+  }
   editor::SingleLineEditor& query_state() { return query_; }
   const editor::SingleLineEditor& query_state() const { return query_; }
   // A span over the live prefix of `results_storage_`, not the vector itself.
