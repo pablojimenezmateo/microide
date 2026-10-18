@@ -475,6 +475,24 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
   }
+  // The window's regions as painted. A region that appears, vanishes or moves
+  // repaints where it was and where it is, whatever moved it: a plugin clearing
+  // its panel surface hid the bottom panel and asked only for the editor, and
+  // the sidebar's newly exposed bottom kept the panel's pixels (QA plugins-ui).
+  {
+    const std::array<SDL_FRect, PreparedFrameState::kTrackedRegions> regions = {
+        layout.sidebar,     layout.bottom_panel, layout.editor_surface,
+        layout.right_pane,  layout.status_bar,   layout.tab_strip};
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+      SDL_FRect& painted = frame_state_.painted_regions[i];
+      if (frame_state_.painted_regions_valid && !RectsEqual(painted, regions[i])) {
+        RequestRedrawRect(painted);
+        RequestRedrawRect(regions[i]);
+      }
+      painted = regions[i];
+    }
+    frame_state_.painted_regions_valid = true;
+  }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");
     RefreshStatusBar();

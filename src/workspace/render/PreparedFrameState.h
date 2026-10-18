@@ -52,6 +52,11 @@ struct PreparedFrameState {
   std::array<std::uint64_t, kMaxEditorGroups> painted_fold_markers{};
   // The breakpoint stores' revisions as painted (gutter dots, Breakpoints pane).
   std::uint64_t painted_breakpoints = 0;
+  // The window's regions as painted (sidebar, bottom panel, editor surface, right
+  // pane, status bar, tab strip), so one that moves repaints old and new.
+  static constexpr std::size_t kTrackedRegions = 6;
+  std::array<SDL_FRect, kTrackedRegions> painted_regions{};
+  bool painted_regions_valid = false;
   // The tab strips painted mid-slide (kind None: none). A new drag can take a
   // strip's animation slot while it still glides, and that strip's tabs then
   // snap back with no frame of their own.

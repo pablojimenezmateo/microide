@@ -1022,6 +1022,26 @@ void TestBreakpointCommandsRepaintTheGutterAndThePane() {
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "breakpoint-remove");
 }
 
+// plugins-ui: a plugin cleared its panel surface, the bottom panel went away, and
+// the sidebar's newly exposed bottom kept the panel's pixels -- the path asked
+// only for the editor. A region that appears, vanishes or moves repaints where
+// it was and where it is, whatever changed it.
+void TestALayoutChangeWithNoDamageOfItsOwnRepaints() {
+  FlowFixture fixture("layout.txt", "x\n");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "layout", 5);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the output panel shown");
+  Expect(TestAccess::BottomPanelVisible(fixture.shell), "the panel should be up");
+  // As the plugin path did: the panel goes, and the only damage asked for is the
+  // editor's (here a caret move's).
+  TestAccess::HideBottomPanel(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DOWN, SDL_KMOD_NONE)}),
+                      "the panel gone with only the editor damaged");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1147,6 +1167,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DeleteInTheBreakpointsPaneRemovesIt", TestDeleteInTheBreakpointsPaneRemovesIt);
   AddTest(tests, "QaFlowRegression/BreakpointCommandsRepaintTheGutterAndThePane",
           TestBreakpointCommandsRepaintTheGutterAndThePane);
+  AddTest(tests, "QaFlowRegression/ALayoutChangeWithNoDamageOfItsOwnRepaints",
+          TestALayoutChangeWithNoDamageOfItsOwnRepaints);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
