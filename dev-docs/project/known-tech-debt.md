@@ -444,6 +444,15 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-363 — no colour-theme picker. [OPEN]
+
+Found writing the QA `plugins-ui` flow: VS Code's Ctrl+K Ctrl+T opens a picker of
+every colour theme (built-in and extension-contributed) that previews each as the
+selection moves. Here a scheme is applied by name (`colorscheme <name>`; `list`
+names them since 2026-10-18), Toggle Light/Dark flips between two, and a plugin's
+scheme cannot be found without its name. The palette-as-picker idea in
+TD-2026-10-18-360 (rows that run an action with arguments) would serve this too.
+
 ### TD-2026-10-18-362 — two monkey stale frames that do not replay; no Show Hover by keyboard. [OPEN]
 
 The QA monkey (`run.py monkey --seeds 10-13 --steps 300`, 2026-10-18) found two

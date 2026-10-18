@@ -885,6 +885,114 @@ def flow_terminal_keys(app: q.App) -> None:
                    "the relaunched shell to answer")
 
 
+# ---- files: recents and auto-save ------------------------------------------------
+
+
+def flow_recents_and_autosave(app: q.App) -> None:
+    """An empty Quick Open leads with the files opened most recently, newest
+    first; auto-save `on_focus_change` writes a dirty file when another tab takes
+    the editor, and `after_delay` writes it once typing stops."""
+    open_file(app, "notes/first.txt", "first\n")
+    open_file(app, "notes/second.txt", "second\n")
+    open_file(app, "notes/third.txt", "third\n")
+    app.key("ctrl+p")
+    step(app, "ctrl+p", 0.4)
+    labels = [r.get("label", "") for r in app.elements("overlay-row")]
+    order = [name for label in labels for name in ("third.txt", "second.txt", "first.txt") if name in label]
+    app.expect(order[:3] == ["third.txt", "second.txt", "first.txt"],
+               f"an empty Quick Open lists the recent files newest first ({labels[:5]})")
+    dismiss(app)
+
+    app.send("set-setting", "editor.autosave", "on_focus_change")
+    open_file(app, "notes/second.txt")
+    app.key("ctrl+End")
+    app.type("autosaved on focus change")
+    step(app, "type in second.txt")
+    app.expect(read(app, "notes/second.txt") == "second\n", "nothing is written while the tab has the editor")
+    app.send("open", "notes/third.txt")
+    app.wait_until(lambda: "autosaved on focus change" in read(app, "notes/second.txt"), 3.0,
+                   "switching tabs to write second.txt")
+
+    app.send("set-setting", "editor.autosave", "after_delay")
+    app.send("set-setting", "editor.autosave.delay_ms", "300")
+    open_file(app, "notes/first.txt")
+    app.key("ctrl+End")
+    app.type("autosaved after a delay")
+    app.wait_until(lambda: "autosaved after a delay" in read(app, "notes/first.txt"), 4.0,
+                   "the delay to write first.txt")
+    app.wait_until(lambda: not app.buffer().get("dirty"), 2.0, "the tab to be clean after the auto-save")
+    app.send("set-setting", "editor.autosave", "off")
+
+
+# ---- plugin-contributed UI ------------------------------------------------------------
+
+
+def flow_plugins_ui(app: q.App) -> None:
+    """What the bundled demo plugins put on screen, driven as a user would: a
+    status item whose click runs the plugin's command and updates it, a plugin
+    colour scheme picked from the palette, a plugin surface opened as a panel tab
+    and closed again, and a buffer carrying TODO/BUG markers the decoration
+    plugins annotate."""
+    status = None
+    app.wait_until(lambda: any("Index" in e.get("label", "") for e in app.elements("status")), 10.0,
+                   "the demo plugin's status item")
+    status = next((e for e in app.elements("status") if "Index" in e.get("label", "")), None)
+    if status:
+        for _ in range(4):
+            current = next((e for e in app.elements("status") if e["name"] == status["name"]), {})
+            if current.get("label") == "Indexed":
+                break
+            app.click(*app.center(current or status))
+            step(app, "click the status item", 0.4)
+        app.expect(any(e.get("label") == "Indexed" for e in app.elements("status")),
+                   f"clicking the status item runs its command until it reads Indexed "
+                   f"({[e.get('label') for e in app.elements('status')]})")
+
+    open_file(app, "notes/markers.txt", "first line\n// TODO: tidy this\nint x; // BUG: off by one\n")
+    step(app, "decorated buffer", 0.6)
+    app.click_text(3, 1)
+    app.type("y")
+    step(app, "type on a decorated line", 0.4)
+    app.key("ctrl+z")
+    step(app, "undo", 0.3)
+
+    if palette_run(app, "surface-preview.show", "surface"):
+        app.wait_until(lambda: len(app.elements("panel-tab")) > 0 and app.ui()["panel"]["visible"], 5.0,
+                       "the plugin surface to open as a panel tab")
+        step(app, "surface shown", 0.4)
+        tabs = [t.get("label", "") for t in app.elements("panel-tab")]
+        app.expect(any(t for t in tabs), f"the surface has a panel tab ({tabs})")
+        if palette_run(app, "surface-preview.hide", "surface"):
+            step(app, "surface hidden", 0.4)
+
+    # No colour-theme picker (TD-2026-10-18-363): the plugin's scheme is listed
+    # and applied by name.
+    listed = app.send("colorscheme", "list").get("feedback", "")
+    app.expect("midnight" in listed, f"the plugin's colour scheme is listed ({listed[:200]!r})")
+    applied = app.send("colorscheme", "presentation.demo.midnight")
+    step(app, "apply the plugin's scheme", 0.6)
+    app.expect(applied.get("ok") is True, f"the plugin's scheme applies ({applied})")
+    app.send("colorscheme", "dark")
+    step(app, "back to dark", 0.4)
+
+
+def palette_run(app: q.App, command: str, hint: str) -> bool:
+    """Runs `command` from the palette by typing it and picking the first row
+    whose label or command mentions `hint`; False (and a finding) if none."""
+    app.key("ctrl+shift+p")
+    step(app, "palette", 0.3)
+    app.type(command)
+    step(app, f"type {command}", 0.4)
+    rows = app.elements("overlay-row")
+    if not rows:
+        app.expect(False, f"the palette lists {command}")
+        dismiss(app)
+        return False
+    app.key("Return")
+    step(app, f"run {command}", 0.5)
+    return True
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -967,6 +1075,76 @@ def flow_git_discard(app: q.App) -> None:
         app.wait_until(lambda: set(_git(app, "diff", "--cached", "--name-only").splitlines())
                        == {"src/scheduler.cpp", "notes/untracked.txt"}, 5.0,
                        "Stage All to stage the change and the untracked file")
+
+
+def flow_git_remote(app: q.App) -> None:
+    """Remote workflows against a local bare repository: Publish Branch, the Sync
+    button pushing a commit (its label counting what is ahead), and Fetch / Pull
+    bringing in another clone's commit -- the open, clean editor reloading it."""
+    assert app.project is not None
+    remote = app.project.parent / "remote.git"
+    other = app.project.parent / "other-clone"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    _git(app, "remote", "add", "origin", str(remote))
+    branch = _git(app, "rev-parse", "--abbrev-ref", "HEAD")
+    open_file(app, "README.md")
+    app.key("ctrl+shift+g")
+    step(app, "git view", 0.5)
+    app.send("git-refresh")
+    step(app, "refresh", 0.5)
+
+    if _palette_contains(app, "git: publish branch"):
+        app.wait_until(lambda: subprocess.run(["git", "--git-dir", str(remote), "rev-parse", branch],
+                                              capture_output=True, text=True).returncode == 0, 10.0,
+                       "Publish Branch to push the branch to origin")
+
+    write(app, "notes/ahead.txt", "ahead\n")
+    _git(app, "add", "notes/ahead.txt")
+    _git(app, "commit", "-q", "-m", "qa: ahead by one")
+    app.send("git-refresh")
+    app.wait_until(lambda: "1" in _sync_label(app), 10.0,
+                   f"the Sync button to count the commit ahead ({_sync_label(app)!r})")
+    sync = app.wait_for("button:git/sync", 2.0)
+    if sync:
+        app.click(*app.center(sync))
+        step(app, "click Sync", 1.0)
+        app.wait_until(lambda: subprocess.run(["git", "--git-dir", str(remote), "rev-parse", branch],
+                                              capture_output=True, text=True).stdout.strip()
+                       == _git(app, "rev-parse", "HEAD"), 10.0, "Sync to push the commit")
+
+    subprocess.run(["git", "clone", "-q", "-b", branch, str(remote), str(other)], check=True)
+    (other / "README.md").write_text((other / "README.md").read_text() + "upstream line\n")
+    for args in (["add", "README.md"], ["-c", "user.name=QA", "-c", "user.email=qa@example.com",
+                                        "commit", "-q", "-m", "qa: upstream"], ["push", "-q"]):
+        subprocess.run(["git", *args], cwd=other, check=True)
+    if _palette_contains(app, "git: fetch"):
+        app.send("git-refresh")
+        app.wait_until(lambda: "1" in _sync_label(app), 10.0,
+                       f"Fetch to count the commit behind ({_sync_label(app)!r})")
+    if _palette_contains(app, "git: pull"):
+        app.wait_until(lambda: "upstream line" in read(app, "README.md"), 10.0, "Pull to bring the commit in")
+        app.send("open", "README.md")
+        app.wait_until(lambda: "upstream line" in app.text(), 5.0, "the clean editor to reload the pulled file")
+
+
+def _sync_label(app: q.App) -> str:
+    return next((e.get("label", "") for e in app.elements("button") if e["name"] == "button:git/sync"), "")
+
+
+def _palette_contains(app: q.App, label: str) -> bool:
+    """Runs the palette row whose label starts with `label` (case-insensitive)."""
+    app.key("ctrl+shift+p")
+    step(app, "palette", 0.3)
+    app.type(label)
+    step(app, f"type {label}", 0.4)
+    row = next((r for r in app.elements("overlay-row") if r.get("label", "").lower().startswith(label)), None)
+    app.expect(row is not None, f"the palette lists {label!r} ({[r.get('label') for r in app.elements('overlay-row')][:5]})")
+    if row is None:
+        dismiss(app)
+        return False
+    app.click(*app.center(row))
+    step(app, f"run {label}", 1.0)
+    return True
 
 
 # ---- terminal ----------------------------------------------------------------
@@ -1198,9 +1376,13 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "completion-keys": flow_completion_keys,
     "debug-keys": flow_debug_keys,
     "terminal-keys": flow_terminal_keys,
+    "recents-and-autosave": flow_recents_and_autosave,
+    "plugins-ui": flow_plugins_ui,
+    "git-remote": flow_git_remote,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
     "completion-keys": ("cpp-lsp",),
     "debug-keys": ("gdb-dap", "qa-launch"),
+    "plugins-ui": ("presentation-demo", "eol-annotations", "surface-preview", "todo-highlight"),
 }
