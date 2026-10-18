@@ -231,6 +231,10 @@ void TerminalPanelService::CloseTerminalTab(std::size_t index) {
     if (PanelVisible() != was_visible) {
       operations_.note_layout_inputs_changed();
       operations_.request_window_redraw();
+    } else {
+      // The panel stays up showing an output channel, and its tab strip still
+      // lists the terminal that just closed.
+      operations_.request_bottom_panel_redraw();
     }
     return;
   }

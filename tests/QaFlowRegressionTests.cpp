@@ -99,6 +99,34 @@ struct FlowFixture {
   SoftwareCanvas canvas{kWidth, kHeight};
 };
 
+// monkey (seed 1, step 223): `term-close` on the last terminal while the panel
+// showed an output channel left the closed terminal's tab on the panel's tab
+// strip. Closing it changed neither the panel's content nor whether it was
+// visible, and those were the only changes that asked for a repaint.
+void TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("term.txt", "text\n");
+  if (TestAccess::TerminalTabCount(fixture.shell) == 0) {
+    TestAccess::OpenTerminalViaService(fixture.shell);
+  }
+  while (TestAccess::TerminalTabCount(fixture.shell) > 1) {
+    (void)TestAccess::ExecuteCommandLine(fixture.shell, "term-close");
+  }
+  Expect(TestAccess::TerminalTabCount(fixture.shell) == 1, "the fixture should have one terminal");
+  TestAccess::ShowOutputChannelWithLines(fixture.shell, "qa", 3);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term-close"), "term-close should close the terminal");
+  Expect(TestAccess::TerminalTabCount(fixture.shell) == 0, "no terminal should be left");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
+                      "closing the last terminal under an output channel");
+}
+
 // edit-find-replace: Replace (and Replace All) from the find widget made a clean
 // buffer dirty without repainting the tab strip, so the tab kept its close
 // button where a dirty dot belonged until something else repainted it.
@@ -1402,6 +1430,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPaletteAsksForTheArgumentsACommandNeeds);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
+  AddTest(tests, "QaFlowRegression/ClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip",
+          TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
 }
