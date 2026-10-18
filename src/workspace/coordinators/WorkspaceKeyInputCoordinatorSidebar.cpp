@@ -368,6 +368,14 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     return true;
   }
   switch (event.key) {
+    // VS Code's explorer keys: F2 renames and Delete deletes the selected entry,
+    // through the same prompts as the context menu.
+    case SDLK_F2:
+      (void)operations_.execute_action(ActionId::RenamePath, {}, ActionSource::Shortcut);
+      return true;
+    case SDLK_DELETE:
+      (void)operations_.execute_action(ActionId::DeletePath, {}, ActionSource::Shortcut);
+      return true;
     case SDLK_LEFT:
       state_.directory_tree.CollapseSelection();
       operations_.reveal_selected_tree_sidebar_line();

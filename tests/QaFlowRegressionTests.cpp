@@ -791,6 +791,27 @@ void TestShiftAltRightExpandsTheSelection() {
   Expect(selected() == "alpha", "Shift+Alt+Left should shrink back to the word, got '" + selected() + "'");
 }
 
+// wb-tree: F2 and Delete on a tree entry did nothing; in VS Code's explorer they
+// rename and delete it, through the same prompts as the context menu.
+void TestTreeF2RenamesAndDeleteDeletes() {
+  FlowFixture fixture("keep.txt", "keep\n");
+  WriteFile(fixture.root / "victim.txt", "x\n");
+  (void)TestAccess::ExecuteTreeRefresh(fixture.shell);
+  Expect(TestAccess::SelectTreePath(fixture.shell, fixture.root / "victim.txt"),
+         "the tree should list victim.txt");
+  TestAccess::SetFocusSidebar(fixture.shell);
+  const auto prompt = [&]() { return TestAccess::ControlUi(fixture.shell)["prompt"]; };
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F2, SDL_KMOD_NONE)});
+  Expect(prompt()["input"].AsString() == "victim.txt",
+         "F2 should open the rename prompt on the entry, got '" + prompt()["input"].AsString() + "'");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  TestAccess::SetFocusSidebar(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_DELETE, SDL_KMOD_NONE)});
+  Expect(prompt()["kind"].AsString() == "confirm",
+         "Delete should ask before deleting, prompt is " + prompt()["kind"].AsString());
+  Expect(std::filesystem::exists(fixture.root / "victim.txt"), "nothing is deleted before the answer");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -904,6 +925,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/CtrlFSeedsTheWordUnderTheCaret", TestCtrlFSeedsTheWordUnderTheCaret);
   AddTest(tests, "QaFlowRegression/CtrlHInTheFindWidgetOpensReplace", TestCtrlHInTheFindWidgetOpensReplace);
   AddTest(tests, "QaFlowRegression/ShiftAltRightExpandsTheSelection", TestShiftAltRightExpandsTheSelection);
+  AddTest(tests, "QaFlowRegression/TreeF2RenamesAndDeleteDeletes", TestTreeF2RenamesAndDeleteDeletes);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

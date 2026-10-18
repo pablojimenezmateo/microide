@@ -144,6 +144,11 @@ struct FocusFixture {
   // Re-establish the focus before every chord: a key no binding took still
   // reaches the surface (Escape closes the palette, a letter moves the tree).
   void Apply() {
+    // A key that reached the tree can open a prompt (F2 renames, Delete deletes the
+    // selected entry), which would take every key after it.
+    while (TestAccess::PromptSurfaceVisible(shell)) {
+      (void)shell.HandleEvent(KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE));
+    }
     switch (focus) {
       case Focus::Editor:
         TestAccess::SetFocusEditor(shell);
