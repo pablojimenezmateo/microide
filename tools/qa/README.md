@@ -60,10 +60,11 @@ actions on the same state and nothing touches your real configuration.
 | session | `session-restore`, `untitled-save-as`, `unicode-editing`, `drag-drop-text`, `terminal-find`, `projects`, `compare-merge` | quit and relaunch, first save, non-ASCII text, several projects, a real conflicting merge |
 | advanced | `lsp-signature-help`, `lsp-code-actions`, `snippets`, `sticky-scroll`, `themes`, `tab-overflow`, `dbg-conditions` | parameter hints, quick fixes, snippet placeholders, pinned scopes, every colour scheme, a crowded tab strip, conditional breakpoints |
 | coverage | `edit-transforms`, `save-transforms`, `settings-scopes`, `dbg-stepping`, `git-branches`, `lsp-more`, `compare-clipboard`, `tab-reopen` | sort/join/block comment/bracket jump/JSON format/column select, trim and final newline on save, user vs project settings across projects and a restart, a debugger driven from its toolbar and pane (call stack, variables, watch, restart), branches and the stash, type definition/workspace symbols/next problem/call hierarchy, compare with clipboard, Reopen Closed Editor |
+| ux | `nav-history`, `caret-motion`, `indentation`, `find-options` | Go Back / Go Forward through files and far jumps (menu state, a closed file reopened, the terminal keeping Alt+Left), Home/End/word/page/document motion, Ctrl+Down scrolling, Ctrl+L and Expand/Shrink Selection, Tab/Shift+Tab over lines, Enter after a brace, Backspace in an indent, whole word/regex by chord and click, Ctrl+H from the find field, a `$1` replace, the query seeded from the word under the caret |
 
 The flows live in `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`,
-`flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`
-and `flows_coverage.py`; `scenarios.py` holds the chrome scenarios and the registry
+`flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`,
+`flows_coverage.py` and `flows_ux.py`; `scenarios.py` holds the chrome scenarios and the registry
 (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`). A scenario's plugins are bundled
 ones (`plugins/<name>`) or QA-only ones under `plugins/` here, for test content no
 bundled plugin ships (`qa-snippets`).
@@ -203,7 +204,7 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
 | `scenarios.py` | the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
 | `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit` |
-| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`, `flows_coverage.py` | the flows, by group |
+| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`, `flows_coverage.py`, `flows_ux.py` | the flows, by group |
 | `plugins/` | QA-only plugins a scenario seeds (`qa-snippets`) |
 | `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |

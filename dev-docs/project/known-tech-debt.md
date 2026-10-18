@@ -444,6 +444,19 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-358 — no Find in Selection in the find widget. [OPEN]
+
+Found by the QA `find-options` flow: VS Code's widget has a fourth toggle, Find in
+Selection (Alt+L), that limits the matches -- and Replace All -- to the selection
+the widget opened over, shading that scope in the editor. Here the find widget
+has only `Aa`, `ab` and `.*`. Doing it properly touches more than a filter: the
+find-as-you-type refine cache must key on the scope, the regex Replace All
+rewrites the whole '\n'-joined document (`ApplyBufferRegexReplaceAll`) and would
+have to substitute inside the scope only, and the scope must follow edits (a
+replace inside it changes its end), which wants a tracked range rather than two
+positions. `kFindWidgetMaxToggles` (3) and the toggle label/tooltip/`ui` name
+tables grow by one.
+
 ### TD-2026-10-18-357 — commands that need arguments ask for a raw command line. [OPEN]
 
 Found by the QA `git-branches` flow. A labelled command whose usage needs an
