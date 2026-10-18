@@ -436,6 +436,18 @@ class App:
                 return x, row["y"] + pane["lineHeight"] / 2
         raise QaFailure(f"line {line} is not on screen in pane {pane.get('group')}")
 
+    def terminal_point(self, row: int, column: int) -> tuple[float, float]:
+        """The window point of the active terminal pane's cell at 0-based transcript
+        `row` (the `terminal-output` line) and `column`, from `ui.terminal`."""
+        geometry = self.ui().get("terminal")
+        if not geometry:
+            raise QaFailure("no terminal pane on screen")
+        visible = row - geometry["firstRow"]
+        if not 0 <= visible < geometry["visibleRows"]:
+            raise QaFailure(f"terminal row {row} is not on screen (first {geometry['firstRow']})")
+        return (geometry["textX"] + (column + 0.3) * geometry["charWidth"],
+                geometry["firstLineY"] + (visible + 0.5) * geometry["lineHeight"])
+
     def click_text(self, line: int, column: int, clicks: int = 1,
                    modifiers: tuple[str, ...] = (), group: int | None = None,
                    button: int = 1) -> None:

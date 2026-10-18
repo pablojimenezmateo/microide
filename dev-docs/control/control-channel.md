@@ -224,7 +224,10 @@ charWidth, gutterX, gutterWidth, foldHitX, stickyRows, scrollColumn, rows:[{line
 `rows` naming the buffer line each visible row shows (a collapsed fold skips lines) --
 so a driver clicks a line and column at `textX + (column - 1 - scrollColumn + 0.2) *
 charWidth` and a row's `y + lineHeight / 2`, and a fold marker between `foldHitX` and
-`gutterX + gutterWidth`, without knowing the font.
+`gutterX + gutterWidth`, without knowing the font. `terminal`, while a terminal pane shows, is the active
+pane's `{rect, textX, firstLineY, lineHeight, charWidth, firstRow, visibleRows}`:
+transcript row `r` (the `terminal-output` line) and column `c` sit at `textX + (c + 0.3) *
+charWidth`, `firstLineY + (r - firstRow + 0.5) * lineHeight`.
 
 **What the caret is in (`buffer`).** The focused group's active buffer (an editor, a
 compare tab's editable side, a merge result): `{available, kind, path, language,

@@ -4,6 +4,7 @@
 #include "support/SoftwareCanvas.h"
 
 #include "TerminalSessionTestAccess.h"
+#include "util/JsonValue.h"
 #include "workspace/ListSelection.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -1114,6 +1115,34 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
          "dragging across terminal cells should create a selection");
   Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) == "select",
          "terminal drag selection should capture the selected transcript text");
+}
+
+// The ui query's `terminal` geometry is the one the mouse path resolves against:
+// a drag between the points it gives for (row 0, col 0) and (row 0, col 6) selects
+// those six cells (QA terminal-clipboard drives the terminal this way).
+void TestWorkspaceShellUiTerminalGeometryResolvesCells() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "select me");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const util::JsonValue terminal = WorkspaceShellTestAccess::ControlUi(shell)["terminal"];
+  Expect(terminal.IsObject(), "the ui query should describe the terminal pane");
+  const auto point = [&](int row, int column) {
+    return SDL_FPoint{
+        static_cast<float>(terminal["textX"].AsDouble() + (column + 0.3) * terminal["charWidth"].AsDouble()),
+        static_cast<float>(terminal["firstLineY"].AsDouble() +
+                           (row - terminal["firstRow"].AsInt() + 0.5) * terminal["lineHeight"].AsDouble())};
+  };
+  const SDL_FPoint start = point(0, 0);
+  const SDL_FPoint end = point(0, 6);
+  (void)SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT);
+  (void)SendMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK);
+  (void)SendMouseUp(shell, end.x, end.y, SDL_BUTTON_LEFT);
+  Expect(WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) == "select",
+         "a drag between the ui query's cell points should select 'select', got '" +
+             WorkspaceShellTestAccess::ActiveTerminalSelectedText(shell) + "'");
 }
 
 // TD-2026-08-13-205: the terminal was the fourth text surface to drag a selection
@@ -2590,6 +2619,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalCtrlSlashReachesTheShell);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
+  AddTest(tests, "WorkspaceShell/UiTerminalGeometryResolvesCells",
+          TestWorkspaceShellUiTerminalGeometryResolvesCells);
   AddTest(tests, "WorkspaceShell/TerminalDoubleClickSelectsWordTripleClickSelectsLine",
           TestWorkspaceShellTerminalDoubleClickSelectsWordTripleClickSelectsLine);
   AddTest(tests, "WorkspaceShell/TerminalSelectionWritesPrimaryBufferAndMiddleClickPastes",

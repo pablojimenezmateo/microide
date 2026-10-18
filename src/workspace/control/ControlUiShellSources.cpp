@@ -812,6 +812,31 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               editors.push_back(util::JsonValue(std::move(entry)));
             }
             root["editors"] = util::JsonValue(std::move(editors));
+
+            // The active terminal pane's text geometry, as its mouse path resolves
+            // a point (CellInPaneLayout): row r of the transcript (0-based, the
+            // `terminal-output` line) sits at firstLineY + (r - firstRow) *
+            // lineHeight, column c at textX + c * charWidth.
+            if (const TerminalPaneState* pane = ActiveTerminalPane(); pane != nullptr && BottomPanelVisible()) {
+              const auto panel_layout = ComputeBottomPanelLogLayout(layout, pane->session.LineCount());
+              const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
+              util::JsonObject terminal;
+              util::JsonArray rect;
+              for (const float v : {panel_layout.content_rect.x, panel_layout.content_rect.y,
+                                    panel_layout.content_rect.w, panel_layout.content_rect.h}) {
+                rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
+              }
+              terminal["rect"] = util::JsonValue(std::move(rect));
+              terminal["textX"] = num(panel_layout.text_x);
+              terminal["firstLineY"] = num(panel_layout.text_y);
+              terminal["lineHeight"] = num(panel_layout.line_height);
+              terminal["charWidth"] = num(std::max(1.0f, terminal_text_renderer_.CharWidth()));
+              terminal["firstRow"] =
+                  util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.vertical_scroll)));
+              terminal["visibleRows"] =
+                  util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.visible_rows)));
+              root["terminal"] = util::JsonValue(std::move(terminal));
+            }
           },
   };
 }
