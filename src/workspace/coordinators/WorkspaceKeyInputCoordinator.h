@@ -244,7 +244,6 @@ class KeyInputCoordinator {
   bool HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event);
   bool HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                            SDL_Keymod modifiers,
-                           bool active_compare_tab,
                            bool active_merge_tab);
   std::optional<bool> HandleCtrlKChord(const SDL_KeyboardEvent& event,
                                        SDL_Keymod modifiers,

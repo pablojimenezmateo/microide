@@ -1155,6 +1155,14 @@ void TestTypingOnTheDiffsWorkingSideNeverRunsReviewLetters() {
   const std::string text = TestAccess::ControlQuery(shell, "buffer")["text"].AsString();
   Expect(text.find("beta changedadjkoc") != std::string::npos,
          "every typed letter should land in the working side, got '" + text + "'");
+  // Ctrl+S writes the working side, as Ctrl+S in any editor does.
+  (void)DispatchEvents(shell, {KeyDownEvent(SDLK_S, SDL_KMOD_CTRL)});
+  for (int i = 0; i < 100 && ReadFile(file).find("adjkoc") == std::string::npos; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    (void)DispatchEvents(shell, {});
+  }
+  Expect(ReadFile(file).find("beta changedadjkoc") != std::string::npos,
+         "Ctrl+S in the diff should write the working side, disk has '" + ReadFile(file) + "'");
 }
 
 // compare-keys: stepping between a diff's changes left the previous change's

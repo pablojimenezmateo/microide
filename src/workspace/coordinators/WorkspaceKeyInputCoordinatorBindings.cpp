@@ -9,7 +9,6 @@ namespace microide::workspace {
 
 bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                                               SDL_Keymod modifiers,
-                                              bool active_compare_tab,
                                               bool active_merge_tab) {
   if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
     const bool surface_accepts_paste =
@@ -91,9 +90,6 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   }
   if (binding->action == ActionId::SelectAll &&
       operations_.active_navigable_viewport() == nullptr) {
-    return false;
-  }
-  if (binding->action == ActionId::Save && active_compare_tab) {
     return false;
   }
   if (!binding->command_name.empty() && state_.overlay.visible) {

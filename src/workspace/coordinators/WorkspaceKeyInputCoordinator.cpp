@@ -132,7 +132,7 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
 
   const bool active_compare_tab = operations_.active_tab_is_compare();
   const bool active_merge_tab = operations_.active_tab_is_merge();
-  if (HandleGlobalKeyDown(event, modifiers, active_compare_tab, active_merge_tab)) {
+  if (HandleGlobalKeyDown(event, modifiers, active_merge_tab)) {
     return true;
   }
   if (HandleSurfaceNavigationKeyDown(event, modifiers)) {
