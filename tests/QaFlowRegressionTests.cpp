@@ -776,6 +776,21 @@ void TestCtrlHInTheFindWidgetOpensReplace() {
   Expect(replace_active, "the replace field should take the keyboard");
 }
 
+// caret-motion: Shift+Alt+Right extended the selection by a character; it is VS
+// Code's Expand Selection (word, brackets, ...) and Shift+Alt+Left shrinks it back.
+void TestShiftAltRightExpandsTheSelection() {
+  FlowFixture fixture("expand.cpp", "x = f(alpha);\n");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 8);
+  const SDL_Keymod shift_alt = static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT);
+  const auto selected = [&]() { return TestAccess::ActiveEditor(fixture.shell).SelectedText(); };
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RIGHT, shift_alt)});
+  Expect(selected() == "alpha", "Shift+Alt+Right should select the word, got '" + selected() + "'");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RIGHT, shift_alt)});
+  Expect(selected() == "(alpha)", "again should take the parentheses, got '" + selected() + "'");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_LEFT, shift_alt)});
+  Expect(selected() == "alpha", "Shift+Alt+Left should shrink back to the word, got '" + selected() + "'");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -888,6 +903,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/GitCommitButtonHoverRepaints", TestGitCommitButtonHoverRepaints);
   AddTest(tests, "QaFlowRegression/CtrlFSeedsTheWordUnderTheCaret", TestCtrlFSeedsTheWordUnderTheCaret);
   AddTest(tests, "QaFlowRegression/CtrlHInTheFindWidgetOpensReplace", TestCtrlHInTheFindWidgetOpensReplace);
+  AddTest(tests, "QaFlowRegression/ShiftAltRightExpandsTheSelection", TestShiftAltRightExpandsTheSelection);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

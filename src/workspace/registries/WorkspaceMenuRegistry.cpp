@@ -106,6 +106,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CopySelectionWithContext),
       MenuItem(ActionId::PasteClipboard),
       MenuItem(ActionId::SelectAll),
+      MenuItem(ActionId::ExpandSelection, {}, "Shift+Alt+Right"),
+      MenuItem(ActionId::ShrinkSelection, {}, "Shift+Alt+Left"),
       MenuSeparator(),
       MenuItem(ActionId::AddCursorAtNextMatch, {}, "Ctrl+D"),
       MenuItem(ActionId::AddCursorAtAllMatches, {}, "Ctrl+Shift+L"),

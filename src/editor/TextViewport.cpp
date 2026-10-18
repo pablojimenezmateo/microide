@@ -1,4 +1,6 @@
 #include "editor/TextViewport.h"
+
+#include "editor/SmartSelect.h"
 #include "editor/PathKey.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewportInternal.h"
@@ -91,6 +93,7 @@ TextViewport::TextViewport(const TextViewport& other)
       highlight_state_advances_(other.highlight_state_advances_),
       highlight_checkpoint_advances_(other.highlight_checkpoint_advances_),
       selection_anchor_(other.selection_anchor_),
+      expand_selection_history_(other.expand_selection_history_),
       last_applied_edit_(other.last_applied_edit_),
       last_applied_edit_line_span_(other.last_applied_edit_line_span_),
       folding_model_(nullptr) {
@@ -184,6 +187,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       highlight_state_advances_(other.highlight_state_advances_),
       highlight_checkpoint_advances_(other.highlight_checkpoint_advances_),
       selection_anchor_(std::move(other.selection_anchor_)),
+      expand_selection_history_(std::move(other.expand_selection_history_)),
       last_applied_edit_(std::move(other.last_applied_edit_)),
       last_applied_edit_line_span_(std::move(other.last_applied_edit_line_span_)),
       folding_model_(nullptr) {
@@ -257,6 +261,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   highlight_state_advances_ = other.highlight_state_advances_;
   highlight_checkpoint_advances_ = other.highlight_checkpoint_advances_;
   selection_anchor_ = std::move(other.selection_anchor_);
+  expand_selection_history_ = std::move(other.expand_selection_history_);
   last_applied_edit_ = std::move(other.last_applied_edit_);
   last_applied_edit_line_span_ = std::move(other.last_applied_edit_line_span_);
   folding_model_ = nullptr;
@@ -1405,6 +1410,56 @@ void TextViewport::SelectLineAtCursor() {
   // and triple-click-then-drag-one-line disagreed about their own first line.
   const SelectionRange range = LineRangeAt(cursor_line_);
   selection_anchor_ = range.start;
+  cursor_line_ = range.end.line;
+  cursor_column_ = range.end.column;
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  EnsureCursorVisible();
+}
+
+bool TextViewport::ExpandSelection() {
+  SyncCaretsIfDocumentChangedElsewhere();
+  const TextPosition caret{cursor_line_, cursor_column_};
+  const SelectionRange current = selection_range().value_or(SelectionRange{caret, caret});
+  const std::optional<SelectionRange> next = ExpandSelectionRange(document_->lines, current);
+  if (!next.has_value()) {
+    return false;
+  }
+  // The ladder continues only from the range its last step selected; a
+  // selection made any other way starts a new one from itself.
+  const bool continues = !expand_selection_history_.empty() &&
+                         expand_selection_history_.back().start == current.start &&
+                         expand_selection_history_.back().end == current.end;
+  if (!continues) {
+    expand_selection_history_.assign(1, current);
+  }
+  expand_selection_history_.push_back(*next);
+  SelectRangeForExpansion(*next);
+  return true;
+}
+
+bool TextViewport::ShrinkSelection() {
+  SyncCaretsIfDocumentChangedElsewhere();
+  const TextPosition caret{cursor_line_, cursor_column_};
+  const SelectionRange current = selection_range().value_or(SelectionRange{caret, caret});
+  if (expand_selection_history_.size() < 2 || !(expand_selection_history_.back().start == current.start) ||
+      !(expand_selection_history_.back().end == current.end)) {
+    expand_selection_history_.clear();
+    return false;
+  }
+  expand_selection_history_.pop_back();
+  SelectRangeForExpansion(expand_selection_history_.back());
+  if (expand_selection_history_.size() == 1) {
+    expand_selection_history_.clear();  // back where the ladder started
+  }
+  return true;
+}
+
+void TextViewport::SelectRangeForExpansion(const SelectionRange& range) {
+  if (range.start == range.end) {
+    selection_anchor_.reset();
+  } else {
+    selection_anchor_ = range.start;
+  }
   cursor_line_ = range.end.line;
   cursor_column_ = range.end.column;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});

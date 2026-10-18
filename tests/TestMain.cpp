@@ -44,6 +44,7 @@ void RegisterKeybindingReachabilityTests(std::vector<TestCase>& tests);
 void RegisterTypeNavigationTests(std::vector<TestCase>& tests);
 void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests);
 void RegisterEditorNavigationHistoryTests(std::vector<TestCase>& tests);
+void RegisterSmartSelectTests(std::vector<TestCase>& tests);
 void RegisterTerminalPaneLayoutTests(std::vector<TestCase>& tests);
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
 void RegisterGitServiceTests(std::vector<TestCase>& tests);
@@ -210,6 +211,7 @@ void RegisterShellTests(std::vector<TestCase>& tests) {
   RegisterTypeNavigationTests(tests);
   RegisterEditorSplitTreeTests(tests);
   RegisterEditorNavigationHistoryTests(tests);
+  RegisterSmartSelectTests(tests);
   RegisterTerminalPaneLayoutTests(tests);
   RegisterRecentsServiceTests(tests);
   RegisterWorkspaceShellSharedCoreTests(tests);

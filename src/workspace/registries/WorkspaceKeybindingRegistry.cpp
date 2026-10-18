@@ -935,6 +935,27 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // VS Code's smartSelect.expand / shrink.
+      KeybindingSpec{
+          .id = "expand-selection",
+          .action = ActionId::ExpandSelection,
+          .key = SDLK_RIGHT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "shrink-selection",
+          .action = ActionId::ShrinkSelection,
+          .key = SDLK_LEFT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "add-cursor-above",
           .action = ActionId::AddCursorAbove,

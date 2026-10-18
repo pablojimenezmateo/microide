@@ -555,6 +555,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::ExpandSelection:
+    case ActionId::ShrinkSelection: {
+      // A selection, not an edit: read-only buffers take it too.
+      auto* viewport = context_.ActiveNavigableViewport();
+      if (viewport == nullptr) return DispatchResult::Handled;
+      if (id == ActionId::ExpandSelection ? viewport->ExpandSelection() : viewport->ShrinkSelection()) {
+        context_.NotifyEditorCaretMoved();
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::AddCursorAbove:
     case ActionId::AddCursorBelow:
     case ActionId::AddCursorsToLineEnds: {

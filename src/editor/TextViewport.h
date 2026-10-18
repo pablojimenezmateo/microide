@@ -852,6 +852,12 @@ class TextViewport {
   // multi-line line-granular selection joins up across the newlines.
   SelectionRange LineRangeAt(std::size_t line_index) const;
   void SelectLineAtCursor();
+  // Expand / Shrink Selection (VS Code's Shift+Alt+Right / Left) on the primary
+  // caret: the next larger range of the ladder in editor/SmartSelect.h, and back
+  // down the ranges an expansion passed through. A selection changed any other
+  // way starts a new ladder. False when there was nothing to do.
+  bool ExpandSelection();
+  bool ShrinkSelection();
   // Non-mutating seed span for occurrences highlight / match actions (single logical line).
   std::optional<SelectionRange> OccurrenceSeedSpanForHighlight() const;
   void InvalidateSyntaxHighlighting();
@@ -992,6 +998,7 @@ class TextViewport {
   // Anchor..cursor on the caret's own line, with the preferred column restamped.
   // Shared by the word/line selection verbs, which each open-coded it.
   void SelectOnCursorLine(std::size_t start_column, std::size_t end_column);
+  void SelectRangeForExpansion(const SelectionRange& range);
   void ClampCursorColumn();
   void ClampScrollState();
   void EnsureCursorVisible();
@@ -1454,6 +1461,9 @@ class TextViewport {
   mutable std::size_t highlight_state_advances_ = 0;
   mutable std::size_t highlight_checkpoint_advances_ = 0;
   std::optional<TextPosition> selection_anchor_;
+  // The selections Expand Selection grew from, innermost last; valid while the
+  // selection is still the one the last expansion made.
+  std::vector<SelectionRange> expand_selection_history_;
   std::optional<AppliedEdit> last_applied_edit_;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
   // Set only by SuppressEntryCaretCapture, above; see its comment. Transient, so

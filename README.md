@@ -629,6 +629,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
 | `Home` / `End` | Start / end of the view line (the wrapped row under word wrap); `Home` toggles between the first non-whitespace character and column 0 |
 | `Ctrl+Shift+Alt+arrows` | Column (box) selection |
+| `Shift+Alt+Right` / `Shift+Alt+Left` | Expand / shrink the selection (word, string, brackets, line, document) |
 | `Ctrl+Left` / `Ctrl+Right` | Move by word (`Shift` extends) |
 | `Ctrl+Backspace` / `Ctrl+Delete` | Delete the word before / after the caret |
 | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Insert line below / above |
@@ -880,6 +881,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `sort-lines-descending`
 - `add-cursor-next-match`
 - `add-cursor-all-matches`
+- `expand-selection`
+- `shrink-selection`
 - `add-cursor-above`
 - `add-cursor-below`
 - `add-cursors-to-line-ends`

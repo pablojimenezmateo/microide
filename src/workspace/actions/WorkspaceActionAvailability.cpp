@@ -533,6 +533,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::JoinLines:
       return active_editable_viewport != nullptr &&
              SettingEnabled(operations_, "editor.shaping.line_ops.enabled", true);
+    case ActionId::ExpandSelection:
+    case ActionId::ShrinkSelection:
+      return active_viewport != nullptr;
     case ActionId::SortLinesAscending:
     case ActionId::SortLinesDescending:
       return active_editable_viewport != nullptr &&

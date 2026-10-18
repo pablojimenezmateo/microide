@@ -476,6 +476,7 @@ set(MICROIDE_CORE_SOURCES
   src/app/SdlWaker.cpp
   src/editor/CompletionFilter.cpp
   src/editor/BracketScanner.cpp
+  src/editor/SmartSelect.cpp
   src/editor/BreakpointRender.cpp
   src/editor/BreakpointStore.cpp
   src/editor/FunctionBreakpointStore.cpp
@@ -1337,6 +1338,7 @@ add_executable(microide_tests
   tests/WorkspaceShellRenderPromptsTests.cpp
   tests/EditorHoverTargetTests.cpp
   tests/EditorBracketJumpTests.cpp
+  tests/SmartSelectTests.cpp
   tests/EditorDiagnosticNavigationTests.cpp
   tests/EditorUndoRedoWiringTests.cpp
   tests/EditorCopySurfacePriorityTests.cpp
@@ -1992,6 +1994,7 @@ endif()
 add_executable(microide_diff_bench
   $<TARGET_OBJECTS:microide_runtime_syntax_generated>
   src/editor/BracketScanner.cpp
+  src/editor/SmartSelect.cpp
   src/editor/BreakpointRender.cpp
   src/editor/DecoratedTextGridRenderer.cpp
   src/editor/DiagnosticsRender.cpp
