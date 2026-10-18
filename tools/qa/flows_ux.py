@@ -1147,6 +1147,48 @@ def _palette_contains(app: q.App, label: str) -> bool:
     return True
 
 
+def flow_compare_keys(app: q.App) -> None:
+    """A diff by keyboard: Alt+] / Alt+[ step between the changes, the working side
+    takes an edit that Ctrl+S writes, and Alt+O opens the working file beside the
+    diff."""
+    text = "".join(f"line {i}\n" for i in range(1, 61))
+    write(app, "notes/diff.txt", text)
+    _git(app, "add", "notes/diff.txt")
+    _git(app, "commit", "-q", "-m", "qa: diff fixture")
+    changed = text.replace("line 5\n", "line five\n").replace("line 40\n", "line forty\n")
+    write(app, "notes/diff.txt", changed)
+    app.key("ctrl+shift+g")
+    step(app, "git view", 0.5)
+    row = app.wait_for("row:git/diff.txt", 5.0)
+    if row is None:
+        return
+    app.click(*app.center(row))
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open")
+    step(app, "compare tab", 0.5)
+    app.send("focus", "editor")
+    def line() -> int:
+        return app.cursors()[0][0] if app.cursors() else 0
+
+    app.expect(line() == 5, f"the diff opens on its first change ({app.cursors()})")
+    app.key("alt+bracketright")
+    step(app, "alt+]", 0.3)
+    app.expect(line() == 40, f"Alt+] steps to the next change ({app.cursors()})")
+    app.key("alt+bracketleft")
+    step(app, "alt+[", 0.3)
+    app.expect(line() == 5, f"Alt+[ steps back to the first ({app.cursors()})")
+
+    app.key("End")
+    app.type(" edited")
+    step(app, "type on the working side", 0.3)
+    app.key("ctrl+s")
+    app.wait_until(lambda: " edited\n" in read(app, "notes/diff.txt"), 3.0, "Ctrl+S to write the working side")
+    app.key("alt+o")
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "editor"
+                   and (app.active_tab() or {}).get("title") == "diff.txt", 3.0, "Alt+O to open the working file")
+    tabs_before = [t.get("kind") for g in app.editor_state().get("groups", []) for t in g.get("tabs", [])]
+    app.expect("compare" in tabs_before, f"the compare tab stays open beside it ({tabs_before})")
+
+
 # ---- terminal ----------------------------------------------------------------
 
 
@@ -1379,6 +1421,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "recents-and-autosave": flow_recents_and_autosave,
     "plugins-ui": flow_plugins_ui,
     "git-remote": flow_git_remote,
+    "compare-keys": flow_compare_keys,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
