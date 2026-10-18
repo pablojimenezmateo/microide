@@ -5,6 +5,7 @@
 #include "workspace/git/GitSidebarHeaderLayout.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <cctype>
 #include <string_view>
 
@@ -1112,8 +1113,70 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
   }
 
-  // Sidebar list rows for whichever mode is active.
+  // Sidebar: the view tabs and each view's header buttons, then its list rows.
   if (context_.current_project_state.sidebar.visible && Contains(layout.sidebar, x, y)) {
+    if (!MenuSurfaceCapturingMouse()) {
+      const auto first_containing = [x, y](std::initializer_list<std::optional<SDL_FRect>> rects)
+          -> std::optional<SDL_FRect> {
+        for (const std::optional<SDL_FRect>& rect : rects) {
+          if (rect.has_value() && Contains(*rect, x, y)) {
+            return rect;
+          }
+        }
+        return std::nullopt;
+      };
+      const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
+      for (int i = 0; i < mode_row.tab_count; ++i) {
+        if (Contains(mode_row.tabs[static_cast<std::size_t>(i)].rect, x, y)) {
+          return mode_row.tabs[static_cast<std::size_t>(i)].rect;
+        }
+      }
+      if (mode_row.has_overflow && Contains(mode_row.overflow_rect, x, y)) {
+        return mode_row.overflow_rect;
+      }
+      const SDL_FRect sidebar = layout.sidebar;
+      std::optional<SDL_FRect> button;
+      switch (ActiveSidebarMode()) {
+        case SidebarMode::Search:
+          button = first_containing({project_search_panel::ModeButtonRect(sidebar),
+                                     project_search_panel::CaseButtonRect(sidebar),
+                                     project_search_panel::HiddenButtonRect(sidebar),
+                                     project_search_panel::ScopeButtonRect(sidebar),
+                                     project_search_panel::ReplaceAllButtonRect(sidebar)});
+          break;
+        case SidebarMode::Git: {
+          // A disabled button paints no hover, so it is not one.
+          const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
+          const auto if_enabled = [](bool enabled, SDL_FRect rect) {
+            return enabled ? std::optional<SDL_FRect>(rect) : std::nullopt;
+          };
+          button = first_containing(
+              {if_enabled(CanStageAllGitSidebarEntries(), git_sidebar_header::StageAllButtonRect(sidebar)),
+               if_enabled(CanDiscardAllGitSidebarEntries(),
+                          git_sidebar_header::DiscardAllButtonRect(sidebar)),
+               git_sidebar_header::BranchButtonRect(sidebar), git_sidebar_header::SyncButtonRect(sidebar),
+               git_sidebar_header::RefreshButtonRect(sidebar),
+               // The header's Commit button, or the open draft's confirm button
+               // (its rect is the one the draft's render cached).
+               if_enabled(!workflow.open, git_sidebar_header::CommitButtonRect(sidebar)),
+               if_enabled(workflow.open, workflow.commit_button_rect),
+               GitSidebarOutgoingBaseButtonRect(sidebar)});
+          break;
+        }
+        case SidebarMode::Tree:
+          button = first_containing(
+              {context_.current_project_state.directory_tree.CanCollapseAll()
+                   ? std::optional<SDL_FRect>(TreeSidebarCollapseButtonRect(sidebar))
+                   : std::nullopt,
+               TreeSidebarRefreshButtonRect(sidebar)});
+          break;
+        default:
+          break;
+      }
+      if (button.has_value()) {
+        return button;
+      }
+    }
     const auto row_band = [&](const ScrollableListLayout& list_layout,
                               std::size_t count) -> std::optional<SDL_FRect> {
       const auto idx = ScrollableListIndexAtY(list_layout, y);
@@ -1180,6 +1243,12 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
   // changes as the pointer crosses rows (the render lifts each row on hover).
   if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
       Contains(layout.right_pane, x, y)) {
+    const DebugPaneModeRowLayout modes = DebugPaneModeRow(layout.right_pane);
+    for (int i = 0; i < modes.tab_count; ++i) {
+      if (Contains(modes.tabs[static_cast<std::size_t>(i)].rect, x, y)) {
+        return modes.tabs[static_cast<std::size_t>(i)].rect;
+      }
+    }
     const std::size_t row_count = DebugPaneActiveRowCount();
     const auto panel_layout = ComputeDebugPaneListLayout(layout, row_count);
     if (panel_layout.line_height > 0.0f && Contains(panel_layout.content_rect, x, y) &&

@@ -160,107 +160,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
     return lhs.x == rhs.x && lhs.y == rhs.y && lhs.w == rhs.w && lhs.h == rhs.h;
   };
-  const auto request_hover_button_redraw = [this](const SDL_FRect& rect) {
-    RequestRedrawRect(MakeRect(rect.x - 1.0f, rect.y - 1.0f, rect.w + 2.0f, rect.h + 2.0f));
-  };
-  const auto sidebar_hover_button_rect_at =
-      [this, &layout](float x, float y) -> std::optional<SDL_FRect> {
-    if (!context_.current_project_state.sidebar.visible || MenuSurfaceCapturingMouse() ||
-        !Contains(layout.sidebar, x, y)) {
-      return std::nullopt;
-    }
-
-    const SidebarModeRowLayout mode_row = SidebarModeRow(layout.sidebar);
-    for (int i = 0; i < mode_row.tab_count; ++i) {
-      const SDL_FRect tab_rect = mode_row.tabs[static_cast<std::size_t>(i)].rect;
-      if (Contains(tab_rect, x, y)) {
-        return tab_rect;
-      }
-    }
-    if (mode_row.has_overflow && Contains(mode_row.overflow_rect, x, y)) {
-      return mode_row.overflow_rect;
-    }
-
-    switch (ActiveSidebarMode()) {
-      case SidebarMode::Search: {
-        const SDL_FRect mode_rect = project_search_panel::ModeButtonRect(layout.sidebar);
-        if (Contains(mode_rect, x, y)) {
-          return mode_rect;
-        }
-        const SDL_FRect case_rect = project_search_panel::CaseButtonRect(layout.sidebar);
-        if (Contains(case_rect, x, y)) {
-          return case_rect;
-        }
-        const SDL_FRect hidden_rect = project_search_panel::HiddenButtonRect(layout.sidebar);
-        if (Contains(hidden_rect, x, y)) {
-          return hidden_rect;
-        }
-        const SDL_FRect scope_rect = project_search_panel::ScopeButtonRect(layout.sidebar);
-        if (Contains(scope_rect, x, y)) {
-          return scope_rect;
-        }
-        const SDL_FRect replace_all_rect = project_search_panel::ReplaceAllButtonRect(layout.sidebar);
-        if (Contains(replace_all_rect, x, y)) {
-          return replace_all_rect;
-        }
-        return std::nullopt;
-      }
-      case SidebarMode::Git: {
-        if (CanStageAllGitSidebarEntries()) {
-          const SDL_FRect stage_rect = git_sidebar_header::StageAllButtonRect(layout.sidebar);
-          if (Contains(stage_rect, x, y)) {
-            return stage_rect;
-          }
-        }
-        if (CanDiscardAllGitSidebarEntries()) {
-          const SDL_FRect discard_rect = git_sidebar_header::DiscardAllButtonRect(layout.sidebar);
-          if (Contains(discard_rect, x, y)) {
-            return discard_rect;
-          }
-        }
-        const SDL_FRect branch_rect = git_sidebar_header::BranchButtonRect(layout.sidebar);
-        if (Contains(branch_rect, x, y)) {
-          return branch_rect;
-        }
-        const SDL_FRect sync_rect = git_sidebar_header::SyncButtonRect(layout.sidebar);
-        if (Contains(sync_rect, x, y)) {
-          return sync_rect;
-        }
-        const SDL_FRect refresh_rect = git_sidebar_header::RefreshButtonRect(layout.sidebar);
-        if (Contains(refresh_rect, x, y)) {
-          return refresh_rect;
-        }
-        if (const auto outgoing_base_rect = GitSidebarOutgoingBaseButtonRect(layout.sidebar);
-            outgoing_base_rect.has_value() && Contains(*outgoing_base_rect, x, y)) {
-          return outgoing_base_rect;
-        }
-        return std::nullopt;
-      }
-      case SidebarMode::Tree: {
-        if (context_.current_project_state.directory_tree.CanCollapseAll()) {
-          const SDL_FRect collapse_rect = TreeSidebarCollapseButtonRect(layout.sidebar);
-          if (Contains(collapse_rect, x, y)) {
-            return collapse_rect;
-          }
-        }
-        const SDL_FRect refresh_rect = TreeSidebarRefreshButtonRect(layout.sidebar);
-        if (Contains(refresh_rect, x, y)) {
-          return refresh_rect;
-        }
-        return std::nullopt;
-      }
-      case SidebarMode::None:
-      case SidebarMode::Problems:
-      case SidebarMode::Tests:
-      case SidebarMode::Plugin:
-      case SidebarMode::Outline:
-      case SidebarMode::HostChanges:
-        return std::nullopt;
-    }
-
-    return std::nullopt;
-  };
-
   if (context_.interaction_state.drag_target != DragTarget::None) {
     UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y), false);
     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
@@ -550,37 +449,9 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           "WorkspaceShell::HandleMouseMotion::UpdateMouseCursor");
       UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
     }
-    const std::optional<SDL_FRect> previous_sidebar_hover_button_rect_optional =
-        previous_mouse_position_valid
-            ? sidebar_hover_button_rect_at(previous_mouse_x, previous_mouse_y)
-            : std::nullopt;
-    const std::optional<SDL_FRect> current_sidebar_hover_button_rect_optional =
-        sidebar_hover_button_rect_at(static_cast<float>(event.motion.x),
-                                     static_cast<float>(event.motion.y));
-    const bool previous_has_button_rect = previous_sidebar_hover_button_rect_optional.has_value();
-    const bool current_has_button_rect = current_sidebar_hover_button_rect_optional.has_value();
-    SDL_FRect previous_button_rect = MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-    SDL_FRect current_button_rect = MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
-    if (previous_has_button_rect) {
-      previous_button_rect = *previous_sidebar_hover_button_rect_optional;
-    }
-    if (current_has_button_rect) {
-      current_button_rect = *current_sidebar_hover_button_rect_optional;
-    }
-    sidebar_hover_button_changed =
-        previous_has_button_rect != current_has_button_rect ||
-        (previous_has_button_rect && !rects_equal(previous_button_rect, current_button_rect));
-    if (sidebar_hover_button_changed) {
-      if (previous_has_button_rect) {
-        request_hover_button_redraw(previous_button_rect);
-      }
-      if (current_has_button_rect) {
-        request_hover_button_redraw(current_button_rect);
-      }
-    }
-
-    // Generic hover-background surfaces (menu-bar items, tab strips, sidebar/overlay
-    // list rows, bottom-panel tabs, debug-pane rows). Rendering is surface-granular,
+    // Generic hover-background surfaces (menu-bar items, tab strips, the sidebar's
+    // view tabs, header buttons and rows, overlay list rows, bottom-panel tabs, the
+    // debug pane's mode tabs and rows). Rendering is surface-granular,
     // so damaging the changed element's rect re-renders that surface with the new
     // hover. One unified probe keeps every list/tab hover affordance in lockstep.
     const std::optional<SDL_FRect> previous_interactive_rect =
@@ -596,11 +467,15 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     if (previous_interactive_present != current_interactive_present ||
         (previous_interactive_present && current_interactive_present &&
          !rects_equal(previous_interactive, current_interactive))) {
+      // One pixel past the element: a button's hover outline sits on its edge.
+      const auto request = [this](const SDL_FRect& rect) {
+        RequestRedrawRect(MakeRect(rect.x - 1.0f, rect.y - 1.0f, rect.w + 2.0f, rect.h + 2.0f));
+      };
       if (previous_interactive_present) {
-        RequestRedrawRect(previous_interactive);
+        request(previous_interactive);
       }
       if (current_interactive_present) {
-        RequestRedrawRect(current_interactive);
+        request(current_interactive);
       }
       sidebar_hover_button_changed = true;  // reuse the "redraw was requested" return signal
     }

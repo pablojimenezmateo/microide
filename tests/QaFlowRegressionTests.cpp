@@ -635,6 +635,76 @@ void TestCtrlShiftTReopensClosedEditorsNewestFirst() {
          "with nothing left to reopen, Ctrl+Shift+T should say so");
 }
 
+// dbg-stepping and wb-git: a pointer moving onto a debug-pane mode tab, or onto the
+// git view's Commit button, lit it up in a full repaint but not on screen. The
+// hover probe frame prep and pointer motion share (HoveredInteractiveRect) did not
+// know either control, and the git view's buttons had a probe of their own in the
+// motion handler that frame prep never ran.
+void TestDebugPaneModeTabHoverRepaints() {
+  FlowFixture fixture("hover.txt", "plain\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled on"),
+         "the debugger should enable");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane should open");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  for (const char* tab : {"debug-tab:callstack", "debug-tab:watch"}) {
+    const std::optional<SDL_FRect> rect = fixture.ElementRect(tab);
+    Expect(rect.has_value(), std::string("the debug pane should show ") + tab);
+    if (!rect.has_value()) {
+      return;
+    }
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(rect->x + rect->w / 2.0f,
+                                                                        rect->y + rect->h / 2.0f)}),
+                        std::string("the pointer moving onto ") + tab);
+  }
+}
+
+void TestGitCommitButtonHoverRepaints() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the hover fixture", "git hover fixture");
+  WriteFile(root / "a.txt", "a changed\n");
+  Expect(RunGitCommand(root, {"add", "a.txt"}) == 0, "staging a.txt should succeed");
+
+  WorkspaceShell shell;
+  SoftwareCanvas canvas{FlowFixture::kWidth, FlowFixture::kHeight};
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the hover fixture should open");
+  TestAccess::SetWindowSize(shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  TestAccess::ShowGitSidebar(shell);
+  (void)WaitForGitSidebarEntryCount(shell, 1);
+  TestAccess::NoteLayoutInputsChanged(shell);
+  (void)SettleGitSidebarRefresh(shell);
+  shell.Render(canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  std::optional<SDL_FRect> commit;
+  {
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["name"].AsString() == "button:git/commit") {
+        const auto& r = entry["rect"].AsArray();
+        commit = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                           static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+      }
+    }
+  }
+  Expect(commit.has_value(), "the git view should show its Commit button");
+  if (!commit.has_value()) {
+    return;
+  }
+  const auto redraw =
+      DispatchEvents(shell, {MouseMotionEvent(commit->x + commit->w / 2.0f, commit->y + commit->h / 2.0f)});
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight, redraw);
+  Expect(diff.identical(), "the pointer moving onto Commit should light it up on screen; " +
+                               DescribePixelDiff(diff));
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -741,6 +811,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
+  AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);
+  AddTest(tests, "QaFlowRegression/GitCommitButtonHoverRepaints", TestGitCommitButtonHoverRepaints);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",
