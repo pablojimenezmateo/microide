@@ -57,6 +57,9 @@ struct PreparedFrameState {
   static constexpr std::size_t kTrackedRegions = 6;
   std::array<SDL_FRect, kTrackedRegions> painted_regions{};
   bool painted_regions_valid = false;
+  // The editor viewport that had the keyboard last frame (null: none did), for
+  // the on_focus_change auto-save.
+  const void* focused_editor = nullptr;
   // The tab strips painted mid-slide (kind None: none). A new drag can take a
   // strip's animation slot while it still glides, and that strip's tabs then
   // snap back with no frame of their own.

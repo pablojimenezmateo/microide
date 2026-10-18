@@ -1042,6 +1042,35 @@ void TestALayoutChangeWithNoDamageOfItsOwnRepaints() {
                       "the panel gone with only the editor damaged");
 }
 
+// recents-and-autosave: `editor.autosave = on_focus_change` saved on a tab-strip
+// switch and on window blur only. Opening another file (Ctrl+P, the tree, a jump)
+// or moving the keyboard to the sidebar or the terminal left the buffer dirty;
+// VS Code saves whenever the editor loses focus.
+void TestAutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus() {
+  FlowFixture fixture("focus.txt", "start\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.autosave on_focus_change"),
+         "the setting should apply");
+  const std::filesystem::path other = fixture.root / "other.txt";
+  WriteFile(other, "other\n");
+  const auto frame = [&] {
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  };
+  frame();
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("A")});
+  frame();
+  Expect(ReadFile(fixture.file) == "start\n", "typing alone should not write the file");
+  Expect(TestAccess::OpenFileInNewTab(fixture.shell, other), "other.txt should open");
+  frame();
+  Expect(ReadFile(fixture.file).starts_with("A"), "opening another file should auto-save focus.txt");
+
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("B")});
+  frame();
+  TestAccess::SetFocusSidebar(fixture.shell);
+  frame();
+  Expect(ReadFile(other).starts_with("B"), "moving the keyboard to the sidebar should auto-save other.txt");
+}
+
 // TD-2026-10-16-353: Alt+Left / Alt+Right are VS Code's Go Back / Go Forward. A
 // far jump in a file and a switch to another file are places; going back to a
 // file closed since reopens it with the caret where it was.
@@ -1169,6 +1198,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestBreakpointCommandsRepaintTheGutterAndThePane);
   AddTest(tests, "QaFlowRegression/ALayoutChangeWithNoDamageOfItsOwnRepaints",
           TestALayoutChangeWithNoDamageOfItsOwnRepaints);
+  AddTest(tests, "QaFlowRegression/AutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus",
+          TestAutosaveOnFocusChangeCoversEveryWayTheEditorLosesFocus);
   AddTest(tests, "QaFlowRegression/AltLeftRightNavigateBackAndForward",
           TestAltLeftRightNavigateBackAndForward);
   AddTest(tests, "QaFlowRegression/CtrlShiftTReopensClosedEditorsNewestFirst",

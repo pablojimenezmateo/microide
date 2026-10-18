@@ -475,6 +475,26 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
   }
+  // `editor.autosave = on_focus_change`: the editor that had the keyboard last frame
+  // lost it -- another file opened (Ctrl+P, the tree, a jump), the sidebar or the
+  // terminal took the keys. Tab-strip switches and window blur saved before; every
+  // other way out did not (QA recents-and-autosave). The find widget, completion
+  // and code actions are part of the editor, as in VS Code.
+  {
+    const OverlayMode overlay_mode = project_state.overlay.mode;
+    const bool editor_widget = project_state.overlay.visible &&
+                               (overlay_mode == OverlayMode::BufferSearch ||
+                                overlay_mode == OverlayMode::BufferReplace ||
+                                overlay_mode == OverlayMode::Completion ||
+                                overlay_mode == OverlayMode::CodeActions);
+    const bool editor_has_keys = project_state.surface.focus == FocusTarget::Editor ||
+                                 (project_state.surface.focus == FocusTarget::Overlay && editor_widget);
+    const void* focused_editor = editor_has_keys ? ActiveEditorViewport() : nullptr;
+    if (frame_state_.focused_editor != nullptr && focused_editor != frame_state_.focused_editor) {
+      MaybeAutosaveDirtyTabs(/*on_focus_change=*/true);
+    }
+    frame_state_.focused_editor = focused_editor;
+  }
   // The window's regions as painted. A region that appears, vanishes or moves
   // repaints where it was and where it is, whatever moved it: a plugin clearing
   // its panel surface hid the bottom panel and asked only for the editor, and
