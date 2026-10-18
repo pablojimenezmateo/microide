@@ -444,6 +444,18 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-18-359 — the file tree cannot move or copy files. [OPEN]
+
+Found writing the QA `tree-keys` flow against VS Code's explorer: there is no
+drag-and-drop of a tree entry onto a folder (VS Code moves it, Ctrl-drag copies),
+and no Cut / Copy / Paste of entries (Ctrl+X / Ctrl+C / Ctrl+V in the explorer,
+pasting a copy as `name copy.ext` on a clash). Rename can move a file by typing a
+path, and that is the only way. Moving wants the same follow-up Rename already
+does -- open tabs retargeted, LSP didRename/willRename, git status refreshed --
+so the move should go through Rename's path, not a second implementation. F2 and
+Delete were added as tree keys (not bindings, so sidebar text fields keep them);
+Ctrl+C/X/V would join them, keeping the editor's Ctrl+C unaffected.
+
 ### TD-2026-10-18-358 — no Find in Selection in the find widget. [OPEN]
 
 Found by the QA `find-options` flow: VS Code's widget has a fourth toggle, Find in

@@ -448,6 +448,93 @@ def flow_terminal_clipboard(app: q.App) -> None:
     app.key("Delete")
 
 
+# ---- file tree ---------------------------------------------------------------
+
+
+def _tree_rows(app: q.App) -> list[str]:
+    return [e["name"] for e in app.elements("row", prefix="row:tree/")]
+
+
+def _tree_selected(app: q.App) -> list[str]:
+    return [e["name"] for e in app.elements("row", prefix="row:tree/") if e.get("selected")]
+
+
+def flow_tree_keys(app: q.App) -> None:
+    """The explorer by keyboard: the tree follows the active editor, typing
+    selects by name, F2 renames and Delete deletes (asking first), a folder made
+    from the context menu, Collapse All."""
+    write(app, "notes/alpha.txt", "a\n")
+    write(app, "notes/beta.txt", "b\n")
+    app.click_named("sidebar-view:tree")
+    step(app, "tree view", 0.3)
+    open_file(app, "notes/beta.txt")
+    app.wait_until(lambda: _tree_selected(app) == ["row:tree/beta.txt"], 3.0,
+                   "the tree to select the active editor's file")
+    app.send("focus", "sidebar")
+    step(app, "focus the tree", 0.2)
+    app.type("al")
+    step(app, "type al", 0.2)
+    app.expect(_tree_selected(app) == ["row:tree/alpha.txt"],
+               f"typing selects the entry whose name starts with it ({_tree_selected(app)})")
+
+    app.key("F2")
+    step(app, "F2", 0.3)
+    prompt = app.ui().get("prompt") or {}
+    app.expect(prompt.get("kind") == "input" and prompt.get("input") == "alpha.txt",
+               f"F2 asks for alpha.txt's new name ({prompt})")
+    if prompt.get("kind") == "input":
+        app.key("ctrl+a")
+        app.type("gamma.txt")
+        app.key("Return")
+        step(app, "rename to gamma.txt", 0.5)
+        assert app.project is not None
+        app.wait_until(lambda: (app.project / "notes" / "gamma.txt").exists()
+                       and not (app.project / "notes" / "alpha.txt").exists(), 3.0, "the rename on disk")
+        app.wait_until(lambda: "row:tree/gamma.txt" in _tree_rows(app), 3.0, "the tree to show gamma.txt")
+
+    app.send("focus", "sidebar")
+    app.type("ga")
+    step(app, "select gamma", 0.2)
+    app.key("Delete")
+    step(app, "Delete", 0.3)
+    prompt = app.ui().get("prompt") or {}
+    app.expect(prompt.get("kind") == "confirm", f"Delete asks first ({prompt})")
+    confirm = next((e for e in app.elements("button", prefix="button:prompt/")
+                    if e.get("label") == "Delete"), None)
+    if confirm:
+        app.click(*app.center(confirm))
+        step(app, "confirm Delete", 0.5)
+        assert app.project is not None
+        app.wait_until(lambda: not (app.project / "notes" / "gamma.txt").exists(), 3.0, "the delete on disk")
+        app.wait_until(lambda: "row:tree/gamma.txt" not in _tree_rows(app), 3.0, "the tree to drop it")
+    dismiss(app)
+
+    notes = app.wait_for("row:tree/notes", 2.0)
+    if notes:
+        app.click(*app.center(notes), button=3)
+        step(app, "right-click notes", 0.3)
+        new_folder = next((e for e in app.elements("menu-item", prefix="menu-item:context/")
+                           if e.get("label", "").startswith("New Folder")), None)
+        app.expect(new_folder is not None, "a folder's context menu offers New Folder")
+        if new_folder:
+            app.click(*app.center(new_folder))
+            step(app, "New Folder", 0.3)
+            app.type("drafts")
+            app.key("Return")
+            step(app, "name drafts", 0.5)
+            assert app.project is not None
+            app.wait_until(lambda: (app.project / "notes" / "drafts").is_dir(), 3.0, "the folder on disk")
+            app.wait_until(lambda: "row:tree/drafts" in _tree_rows(app), 3.0, "the tree to show drafts")
+        dismiss(app)
+    collapse = app.wait_for("button:sidebar/Collapse", 2.0)
+    app.expect(collapse is not None, "the tree header has Collapse All")
+    if collapse:
+        app.click(*app.center(collapse))
+        step(app, "Collapse All", 0.3)
+        app.expect("row:tree/beta.txt" not in _tree_rows(app),
+                   f"Collapse All folds every folder ({_tree_rows(app)[:8]})")
+
+
 # ---- notifications ---------------------------------------------------------------
 
 
@@ -503,6 +590,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "git-discard": flow_git_discard,
     "terminal-clipboard": flow_terminal_clipboard,
     "notifications": flow_notifications,
+    "tree-keys": flow_tree_keys,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}
