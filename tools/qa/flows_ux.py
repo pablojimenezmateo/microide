@@ -627,6 +627,56 @@ def flow_groups_keyboard(app: q.App) -> None:
                f"closing a group's last editor closes the group ({before} -> {len(_groups(app))})")
 
 
+# ---- settings by keyboard -------------------------------------------------------------
+
+
+def flow_settings_keyboard(app: q.App) -> None:
+    """Settings by keyboard: the filter, Space on the selected row toggles it and
+    the editor follows, the row's reset button puts the default back, a category
+    jumps to its settings, Escape closes, and the next Ctrl+, opens unfiltered."""
+    open_file(app, "src/main.cpp")
+    app.key("ctrl+comma")
+    step(app, "ctrl+,", 0.4)
+    app.type("line numbers")
+    step(app, "filter", 0.4)
+    row = app.wait_for("setting:editor.line_numbers", 2.0)
+    app.expect(row is not None and row.get("selected") is True,
+               f"the only row left is selected ({row})")
+    before = (row or {}).get("label")
+    app.key("Down")
+    app.key("space")
+    step(app, "Space", 0.3)
+    after = app.element("setting:editor.line_numbers").get("label")
+    app.expect(before != after, f"Space toggles the selected setting ({before} -> {after})")
+    reset = next((e for e in app.elements("button", prefix="button:setting/editor.line_numbers/")
+                  if e["name"].endswith("/reset")), None)
+    app.expect(reset is not None, "a changed setting offers Reset")
+    if reset:
+        app.click(*app.center(reset))
+        step(app, "Reset", 0.3)
+        app.expect(app.element("setting:editor.line_numbers").get("label") == before,
+                   f"Reset puts the default back ({app.element('setting:editor.line_numbers').get('label')})")
+    app.click_named("field:settings/filter")
+    app.key("ctrl+a")
+    app.key("BackSpace")
+    step(app, "clear the filter", 0.3)
+    debugger = app.wait_for("settings-category:Debugger", 2.0)
+    if debugger:
+        app.click(*app.center(debugger))
+        step(app, "the Debugger category", 0.3)
+        names = [r["name"] for r in app.elements("setting")]
+        app.expect(bool(names) and names[0].startswith("setting:debug."),
+                   f"a category scrolls its settings to the top ({names[:3]})")
+    app.key("Escape")
+    step(app, "Escape", 0.3)
+    app.expect(app.ui().get("modal") is None and app.ui()["focus"] == "editor",
+               f"Escape closes Settings back to the editor ({app.ui().get('modal')}, {app.ui()['focus']})")
+    app.key("ctrl+comma")
+    step(app, "ctrl+, again", 0.4)
+    app.expect(app.field_text("field:settings/filter") == "", "Settings reopens unfiltered")
+    dismiss(app)
+
+
 # ---- git ---------------------------------------------------------------------
 
 
@@ -936,6 +986,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "mouse-and-wrap": flow_mouse_and_wrap,
     "search-options": flow_search_options,
     "groups-keyboard": flow_groups_keyboard,
+    "settings-keyboard": flow_settings_keyboard,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {}

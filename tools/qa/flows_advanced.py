@@ -171,6 +171,11 @@ def flow_debug_conditions(app: q.App) -> None:
     app.send("debug-pane-watch")
     app.send("debug-repl")
     step(app, "debug console", 0.3)
+    app.expect(app.ui().get("modal") == "prompt", "debug-repl asks for an expression")
+    # A modal takes the pointer: close it before hovering (the hover card used to
+    # show through it, which is how this flow passed with the prompt still up).
+    app.key("Escape")
+    step(app, "close the console prompt", 0.3)
     # The stop is the one the condition allows: hovering `task` shows priority 8.
     hover = None
     app.move(*app.text_point(19, 26))
