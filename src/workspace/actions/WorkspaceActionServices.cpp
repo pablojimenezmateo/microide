@@ -497,12 +497,54 @@ bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_messag
   if (target == nullptr) target = wrap;
   viewport->JumpCursorTo(target->range.start.line, target->range.start.column);
   NotifyEditorCaretMoved();
-  const NotificationService::Tone tone =
-      target->severity == editor::DiagnosticSeverity::Error     ? NotificationService::Tone::Error
-      : target->severity == editor::DiagnosticSeverity::Warning ? NotificationService::Tone::Warning
-                                                                 : NotificationService::Tone::Info;
-  Notify(tone, target->message);
+  NotifyDiagnostic(*target);
   return true;
+}
+
+void WorkspaceActionContext::NotifyDiagnostic(const editor::PublishedDiagnostic& diagnostic) {
+  const NotificationService::Tone tone =
+      diagnostic.severity == editor::DiagnosticSeverity::Error     ? NotificationService::Tone::Error
+      : diagnostic.severity == editor::DiagnosticSeverity::Warning ? NotificationService::Tone::Warning
+                                                                    : NotificationService::Tone::Info;
+  Notify(tone, diagnostic.message);
+}
+
+std::optional<editor::PublishedDiagnostic> WorkspaceActionContext::ProblemInFiles(int delta) {
+  // Sorted by path, then position (DiagnosticsStore::SortDiagnostics).
+  std::vector<editor::PublishedDiagnostic> all = state_.diagnostics_store.SnapshotAll();
+  if (all.empty()) {
+    return std::nullopt;
+  }
+  // Where the caret is, in the store's own spelling of the active file's path (a
+  // server's URI and the tab's path need not be byte-identical).
+  const editor::TextViewport* viewport = operations_.active_navigable_viewport();
+  std::filesystem::path here_path;
+  editor::TextPosition here{};
+  if (viewport != nullptr && !viewport->path().empty()) {
+    const auto* in_file = state_.diagnostics_store.FindByPath(viewport->path());
+    here_path = in_file != nullptr && !in_file->empty() ? in_file->front().path : viewport->path();
+    here = {viewport->cursor_line(), viewport->cursor_column()};
+  }
+  const auto after_here = [&](const editor::PublishedDiagnostic& d) {
+    if (d.path.native() != here_path.native()) {
+      return here_path.native() < d.path.native();
+    }
+    return here.line < d.range.start.line ||
+           (here.line == d.range.start.line && here.column < d.range.start.column);
+  };
+  const auto before_here = [&](const editor::PublishedDiagnostic& d) {
+    if (d.path.native() != here_path.native()) {
+      return d.path.native() < here_path.native();
+    }
+    return d.range.start.line < here.line ||
+           (d.range.start.line == here.line && d.range.start.column < here.column);
+  };
+  if (delta > 0) {
+    const auto next = std::find_if(all.begin(), all.end(), after_here);
+    return next != all.end() ? *next : all.front();
+  }
+  const auto previous = std::find_if(all.rbegin(), all.rend(), before_here);
+  return previous != all.rend() ? *previous : all.back();
 }
 
 void WorkspaceActionContext::StepBufferSearch(int delta) {

@@ -188,6 +188,23 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::GoToNextProblemInFiles:
+    case ActionId::GoToPreviousProblemInFiles: {
+      const std::optional<editor::PublishedDiagnostic> target =
+          context_.ProblemInFiles(id == ActionId::GoToNextProblemInFiles ? 1 : -1);
+      if (!target.has_value()) {
+        return reject("No problems");
+      }
+      // `reveal` opens the file when the problem is in another one.
+      if (!Execute(ActionId::Reveal,
+                   {target->path.string(), std::to_string(target->range.start.line + 1) + ":" +
+                                               std::to_string(target->range.start.column + 1)},
+                   source)) {
+        return DispatchResult::Rejected;
+      }
+      context_.NotifyDiagnostic(*target);
+      return DispatchResult::Handled;
+    }
     case ActionId::GoToDefinition: {
       std::string error_message;
       if (!context_.GoToLspDefinition(&error_message)) {

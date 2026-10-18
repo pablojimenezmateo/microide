@@ -196,8 +196,10 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::FindReferences),
       MenuItem(ActionId::CallHierarchy),
       MenuSeparator(),
-      MenuItem(ActionId::GoToNextDiagnostic),
-      MenuItem(ActionId::GoToPreviousDiagnostic),
+      MenuItem(ActionId::GoToNextProblemInFiles, {}, "F8"),
+      MenuItem(ActionId::GoToPreviousProblemInFiles, {}, "Shift+F8"),
+      MenuItem(ActionId::GoToNextDiagnostic, {}, "Alt+F8"),
+      MenuItem(ActionId::GoToPreviousDiagnostic, {}, "Shift+Alt+F8"),
   });
   static const auto kGitItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarShow, "Source Control Sidebar", "Ctrl+Shift+G",

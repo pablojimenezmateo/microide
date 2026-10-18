@@ -710,7 +710,8 @@ Wiring:
   sidebar-toggle moved to Ctrl+P / Ctrl+B to match VSCode). `restart` is deferred
   to Phase 7. (2026-10-16: F5 is `debug-start-or-continue` -- VS Code's F5, which
   starts a session when none is running and continues a stopped one -- and
-  Shift+F5 stops; F8 still starts.)
+  Shift+F5 stops. 2026-10-18: F8 / Shift+F8 are VS Code's Go to Next / Previous
+  Problem across files again; Start Debugging keeps its command and the F5 route.)
 - Theme: `debug_execution_line` + `debug_execution_arrow` (with `debug-execution-
   line` / `debug-execution-arrow` theme-file keys).
 

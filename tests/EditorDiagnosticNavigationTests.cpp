@@ -2,6 +2,7 @@
 
 #include "editor/DiagnosticsStore.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
+#include "WorkspaceShellEventHelpers.h"
 
 #include <filesystem>
 #include <string>
@@ -227,9 +228,60 @@ void TestSingleDiagnosticIsStableUnderRepeatedSteps() {
   }
 }
 
+// F8 / Shift+F8 (VS Code's Go to Next / Previous Problem): every file's problems
+// in path order, opening the next file when the active one has no more, and
+// wrapping at the ends. F8 used to start the debugger -- which, with debugging
+// off, only toasted "Debugging is disabled" (QA, notifications exploration).
+void TestF8StepsThroughProblemsAcrossFiles() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path a = root / "a.cpp";
+  const std::filesystem::path b = root / "b.cpp";
+  WriteFile(a, "int a0;\nint a1;\nint a2;\n");
+  WriteFile(b, "int b0;\nint b1;\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 800);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, a);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  const auto problem = [](std::size_t line) {
+    Diagnostic d;
+    d.range.start = {line, 4};
+    d.range.end = {line, 6};
+    d.severity = DiagnosticSeverity::Error;
+    d.message = "problem on line " + std::to_string(line);
+    return d;
+  };
+  Expect(WorkspaceShellTestAccess::SetDiagnosticsForTest(shell, a, {problem(1)}), "a.cpp's problem");
+  Expect(WorkspaceShellTestAccess::SetDiagnosticsForTest(shell, b, {problem(0), problem(1)}),
+         "b.cpp's problems");
+  const auto where = [&]() -> std::string {
+    auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+    return viewport == nullptr ? "none"
+                               : viewport->path().filename().string() + ":" +
+                                     std::to_string(viewport->cursor_line());
+  };
+  const auto press = [&](SDL_Keymod modifiers) {
+    (void)shell.HandleEvent(KeyDownEvent(SDLK_F8, modifiers));
+  };
+  press(SDL_KMOD_NONE);
+  Expect(where() == "a.cpp:1", "F8 should go to a.cpp's problem, got " + where());
+  press(SDL_KMOD_NONE);
+  Expect(where() == "b.cpp:0", "F8 again should open b.cpp at its first problem, got " + where());
+  press(SDL_KMOD_NONE);
+  Expect(where() == "b.cpp:1", "then b.cpp's second, got " + where());
+  press(SDL_KMOD_NONE);
+  Expect(where() == "a.cpp:1", "and wrap to the first file, got " + where());
+  press(SDL_KMOD_SHIFT);
+  Expect(where() == "b.cpp:1", "Shift+F8 should wrap back to the last problem, got " + where());
+}
+
 }  // namespace
 
 void RegisterEditorDiagnosticNavigationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorDiagnosticNavigation/F8StepsThroughProblemsAcrossFiles",
+          TestF8StepsThroughProblemsAcrossFiles);
   AddTest(tests, "EditorDiagnosticNavigation/NextVisitsEveryDiagnosticInDocumentOrder",
           TestNextVisitsEveryDiagnosticInDocumentOrder);
   AddTest(tests, "EditorDiagnosticNavigation/PreviousVisitsEveryDiagnosticInReverse",

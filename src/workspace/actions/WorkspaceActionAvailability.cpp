@@ -95,6 +95,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // Steps the buffer find term, or opens the widget when there is none: any
       // open editor qualifies.
       return active_viewport != nullptr;
+    case ActionId::GoToNextProblemInFiles:
+    case ActionId::GoToPreviousProblemInFiles:
+      return !context_.current_project_state.root.empty();
     case ActionId::GoToNextDiagnostic:
     case ActionId::GoToPreviousDiagnostic:
       // Diagnostics come from servers and plugins alike; the executor reports an

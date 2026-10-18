@@ -345,17 +345,27 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
       // keys are inert until a session is active. F5/F10/F11/Shift+F11 mirror
       // VSCode, and F6=Pause matches VSCode as well. F8=Start fills the gap left
       // by F5 only *continuing* an already-paused session; F6/F8 were reclaimed
-      // from the former file-finder/sidebar-toggle bindings.
+      // from the former file-finder/sidebar-toggle bindings. F5 has since become
+      // start-or-continue, so F8 went back to VS Code's Go to Next Problem (below).
       KeybindingSpec{
-          .id = "debug-start",
-          .action = ActionId::StartDebugging,
+          .id = "next-problem",
+          .action = ActionId::GoToNextProblemInFiles,
           .key = SDLK_F8,
           .modifiers = SDL_KMOD_NONE,
           .context = KeybindingContext::Global,
           .args = {},
           .arg_count = 0,
           .command_name = {},
-          .skips_terminal = true,
+      },
+      KeybindingSpec{
+          .id = "previous-problem",
+          .action = ActionId::GoToPreviousProblemInFiles,
+          .key = SDLK_F8,
+          .modifiers = SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
       },
       KeybindingSpec{
           .id = "debug-pause",

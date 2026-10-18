@@ -484,6 +484,12 @@ class WorkspaceActionContext {
   // diagnostic of the active file, wrapping at either end, and toast its message.
   // Returns false (with `error_message`) when there is no file or no diagnostic.
   bool StepDiagnostic(int delta, std::string* error_message);
+  // F8 / Shift+F8 (VS Code's marker.nextInFiles): the problem after (delta > 0) or
+  // before the caret in every file with problems, files in path order, wrapping
+  // at the ends. nullopt when there are none; the caller reveals it.
+  std::optional<editor::PublishedDiagnostic> ProblemInFiles(int delta);
+  // Toasts a diagnostic's message in its severity's tone.
+  void NotifyDiagnostic(const editor::PublishedDiagnostic& diagnostic);
   void OpenBufferReplace();
   std::filesystem::path ResolveComparePath(const std::filesystem::path& requested_path,
                                            ActionSource source) const;
