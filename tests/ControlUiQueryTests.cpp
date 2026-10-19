@@ -349,6 +349,36 @@ void TestInjectedInputLeavesTheReceiptToWhatItRan() {
              std::to_string(actions["dispatched"].AsInt() - before) + " x " + actions["last"].AsString());
 }
 
+// A context-menu row clicked through `pointer` runs, in the tree as in the editor.
+void TestPointerRunsATreeContextMenuRow() {
+  UiFixture fixture;
+  const auto center = [](const UiElement& element) {
+    return std::to_string(element.rect.x + element.rect.w / 2.0f) + " " +
+           std::to_string(element.rect.y + element.rect.h / 2.0f);
+  };
+  const auto row = Find(TestAccess::ControlUi(fixture.shell), "row:tree/alpha.cpp");
+  Expect(row.has_value(), "alpha.cpp should be a tree row");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer click " + center(*row) + " right"),
+         "right-click the row");
+  const util::JsonValue menu = TestAccess::ControlUi(fixture.shell);
+  std::optional<UiElement> split;
+  for (const UiElement& element : Elements(menu)) {
+    if (element.name == "menu-item:context/Split Right") {
+      split = element;
+    }
+  }
+  Expect(split.has_value(), "the tree context menu should offer Split Right");
+  if (!split.has_value()) {
+    return;
+  }
+  const std::int64_t before = menu["actions"]["dispatched"].AsInt();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer click " + center(*split)), "click Split Right");
+  const util::JsonValue actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(actions["dispatched"].AsInt() == before + 1 && actions["last"].AsString() == "split-right",
+         "the row should run split-right: " + std::to_string(actions["dispatched"].AsInt() - before) + " x " +
+             actions["last"].AsString());
+}
+
 // The debug pane's mode tabs and rows are named with the rects its mouse path
 // hit-tests: a click on `debug-tab:watch` switches the mode, and a click on a
 // breakpoint row goes to the breakpoint (QA flows drive the pane this way).
@@ -546,6 +576,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
+  AddTest(tests, "ControlUiQuery/PointerRunsATreeContextMenuRow", TestPointerRunsATreeContextMenuRow);
   AddTest(tests, "ControlUiQuery/InjectedInputLeavesTheReceiptToWhatItRan",
           TestInjectedInputLeavesTheReceiptToWhatItRan);
   AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);

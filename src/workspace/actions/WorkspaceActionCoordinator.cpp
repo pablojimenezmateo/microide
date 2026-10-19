@@ -15,11 +15,14 @@ ActionCoordinator::ActionCoordinator(WorkspaceActionContext& context) : context_
 bool ActionCoordinator::Execute(ActionId id,
                                 const std::vector<std::string>& args,
                                 ActionSource source) {
-  context_.PrepareForAction(source);
-  // `key` and `pointer` are input, not actions: what the key or click runs leaves
-  // its own receipt, and when it runs nothing there is none -- counted, a driver
-  // read "key ran" for every key the terminal took.
-  if (id != ActionId::PressKey && id != ActionId::Pointer) {
+  // `key` and `pointer` are input, not actions: what the key or click runs is the
+  // action, so it prepares for itself and leaves its own receipt. Prepared as an
+  // action, a `pointer` click closed the tree context menu it was aimed at before
+  // it landed; counted as one, a driver read "key ran" for every key the terminal
+  // took (both: the QA sweeps on Wayland, where all input goes this way).
+  const bool input = id == ActionId::PressKey || id == ActionId::Pointer;
+  if (!input) {
+    context_.PrepareForAction(source);
     context_.NoteActionDispatched(id, source);
   }
   // QA dry run (tools/qa's `keys` and `context-menus` sweeps): a key, a menu row
