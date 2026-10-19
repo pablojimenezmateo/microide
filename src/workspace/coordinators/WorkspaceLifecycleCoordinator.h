@@ -15,6 +15,8 @@ class LifecycleCoordinator {
     std::function<void()> initialize_project_search_runtime;
     std::function<void()> register_wake_events;
     std::function<void()> restore_user_config;
+    // The `--set` overrides, applied over the user config before any project opens.
+    std::function<void()> apply_startup_setting_overrides;
     std::function<void()> refresh_available_colorscheme_names;
     std::function<void(bool)> reset_project_scoped_state;
     std::function<bool()> skip_workspace_session_restore;

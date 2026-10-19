@@ -50,6 +50,13 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
     util::StartupTrace::Scope restore_config_scope("WorkspaceShell::RestoreUserConfig");
     operations_.restore_user_config();
   }
+  // Before the session restore opens a project: what opening does reads settings --
+  // a remote project reconnects with remote.ssh_command -- and an override applied
+  // only afterwards (Application re-applies them once the window is up, over the
+  // project settings the open reloads) reached that reconnect too late.
+  if (operations_.apply_startup_setting_overrides) {
+    operations_.apply_startup_setting_overrides();
+  }
   {
     util::StartupTrace::Scope refresh_colors_scope(
         "WorkspaceShell::RefreshAvailableColorschemeNames");
@@ -312,6 +319,7 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
           .initialize_project_search_runtime = [this]() { project_search_runtime_.Initialize(); },
           .register_wake_events = [this]() { RegisterLifecycleWakeEvents(); },
           .restore_user_config = [this]() { MakePersistenceCoordinator().RestoreUserConfig(); },
+          .apply_startup_setting_overrides = [this]() { ApplyStartupSettingOverrides(); },
           .refresh_available_colorscheme_names =
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .reset_project_scoped_state = [this](bool show_welcome) {

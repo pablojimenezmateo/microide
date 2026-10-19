@@ -178,6 +178,29 @@ void TestDisablePluginsSkipsUserPluginsAndSyntax() {
          "plugin syntax should not be loaded when plugins are disabled");
 }
 
+// `--set` overrides are in effect before the startup project opens. They were
+// applied only once the window was up, after Initialize had restored the session:
+// a remote project reconnected with the configured ssh instead of the override's
+// (`--set remote.ssh_command "ssh -F ..."` relaunching on a mirror stayed
+// disconnected -- found by tools/qa/remote.py's L against a loopback sshd).
+void TestSettingOverridesApplyBeforeTheStartupProjectOpens() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  ScopedPluginConfigHomeEnv env(config_home);
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  WriteFile(project / "a.txt", "a\n");
+
+  WorkspaceShell shell;
+  microide::workspace::WorkspaceStartupOptions options;
+  options.project_path = project;
+  options.setting_overrides = {{"remote.ssh_command", "ssh -F /qa/ssh_config"}};
+  shell.SetStartupOptions(std::move(options));
+  Expect(shell.Initialize(project), "the project should open");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "remote.ssh_command") ==
+             std::optional<std::string>("ssh -F /qa/ssh_config"),
+         "the override should be in effect once Initialize returns, before anything re-applies it");
+}
+
 // `microide notes.txt`: a startup path that names a regular file opens its
 // directory as the project and the file as the first tab, as `code notes.txt`
 // does. It used to be handed to the tree and the index as a project root, which
@@ -306,6 +329,8 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
           TestParseDapLogBeforeFlagUsesDefault);
   AddTest(tests, "AppStartupOptions/DisablePluginsSkipsPluginsAndSyntax",
           TestDisablePluginsSkipsUserPluginsAndSyntax);
+  AddTest(tests, "AppStartupOptions/SettingOverridesApplyBeforeTheStartupProjectOpens",
+          TestSettingOverridesApplyBeforeTheStartupProjectOpens);
   AddTest(tests, "AppStartupOptions/FilePathAtStartupOpensItsDirectoryAndTheFile",
           TestFilePathAtStartupOpensItsDirectoryAndTheFile);
   AddTest(tests, "AppStartupOptions/ExplicitProjectRestoresItsOwnSession",
