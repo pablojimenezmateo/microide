@@ -52,6 +52,69 @@ void TestWorkspaceLspManagerReportsAServerThatDiesAtStartup() {
          "and the manager says why, naming the command: '" + error + "'");
 }
 
+// The client declares that it takes pushed diagnostics. typescript-language-server
+// publishes only to a client whose initialize says `textDocument.publishDiagnostics`;
+// microide never said it, so every TypeScript error went unreported while clangd,
+// which pushes regardless, hid the gap (QA lsp-typescript).
+void TestWorkspaceLspClientDeclaresPublishDiagnostics() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto capabilities_path = temp_dir.path() / "capabilities.json";
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import pathlib
+import sys
+
+out = pathlib.Path(sys.argv[1])
+
+def read_message():
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":", 1)[1].strip())
+    return json.loads(sys.stdin.buffer.read(length)) if length else None
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii") + data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    if msg.get("method") == "initialize":
+        out.write_text(json.dumps(msg["params"]["capabilities"]), encoding="utf-8")
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {"textDocumentSync": 1}}})
+    elif msg.get("method") == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif msg.get("method") == "exit":
+        break
+)py"));
+  LspClient client;
+  Expect(client.Start(platform::LocalProcessLauncher(),
+                      {"python3", server_path.string(), capabilities_path.string()}, "file:///tmp", "typescript"),
+         "the capability fixture should start");
+  Expect(WaitUntil([&] { return client.IsInitialized(); }, std::chrono::seconds(5)),
+         "the capability fixture should initialize");
+  client.Shutdown();
+  const std::optional<util::JsonValue> capabilities = util::ParseJson(ReadFile(capabilities_path));
+  Expect(capabilities.has_value(), "the server should have recorded the client capabilities");
+  if (!capabilities.has_value()) {
+    return;
+  }
+  const util::JsonValue& publish = (*capabilities)["textDocument"]["publishDiagnostics"];
+  Expect(publish.IsObject(), "textDocument.publishDiagnostics should be declared");
+  Expect(publish["versionSupport"].AsBool(), "with versionSupport: stale versions are dropped by version");
+}
+
 void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -2364,6 +2427,8 @@ void TestLspCompletionSortsByServerRank() {
 }
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/DeclaresPublishDiagnostics",
+          TestWorkspaceLspClientDeclaresPublishDiagnostics);
   AddTest(tests, "WorkspaceLspManager/ReportsAServerThatDiesAtStartup",
           TestWorkspaceLspManagerReportsAServerThatDiesAtStartup);
   AddTest(tests, "WorkspaceLspClient/TimeoutReportsTimeoutOutcome",

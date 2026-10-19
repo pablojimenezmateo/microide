@@ -176,6 +176,15 @@ void LspClient::Impl::DoInitializeBlocking() {
   text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
   text_document_caps["semanticTokens"] = JsonValue(std::move(semantic_tokens_caps));
   {
+    // Pushed diagnostics. Some servers publish only to a client that says it takes
+    // them -- typescript-language-server reported nothing at all without this, while
+    // clangd, which pushes regardless, hid the gap. versionSupport: a publish for a
+    // superseded document version is dropped by version (DispatchMessage).
+    JsonObject publish_diagnostics_caps;
+    publish_diagnostics_caps["versionSupport"] = JsonValue(true);
+    text_document_caps["publishDiagnostics"] = JsonValue(std::move(publish_diagnostics_caps));
+  }
+  {
     JsonObject inlay_hint_caps;
     inlay_hint_caps["dynamicRegistration"] = JsonValue(false);
     text_document_caps["inlayHint"] = JsonValue(std::move(inlay_hint_caps));
