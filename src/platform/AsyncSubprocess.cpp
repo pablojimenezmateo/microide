@@ -155,7 +155,7 @@ AsyncSubprocess& AsyncSubprocess::operator=(AsyncSubprocess&& other) noexcept {
 #if defined(__unix__) || defined(__APPLE__)
 
 bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd,
-                            const SubprocessSandbox& sandbox) {
+                            const SubprocessSandbox& sandbox, int stderr_fd) {
   if (impl_ == nullptr) {
     return false;
   }
@@ -207,6 +207,9 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   if (pid == 0) {
     dup2(stdin_pipe[0], STDIN_FILENO);
     dup2(stdout_pipe[1], STDOUT_FILENO);
+    if (stderr_fd >= 0) {
+      dup2(stderr_fd, STDERR_FILENO);
+    }
 
     close(stdin_pipe[0]);
     close(stdin_pipe[1]);
@@ -668,7 +671,7 @@ std::wstring BuildCommandLine(const std::vector<std::string>& argv) {
 }  // namespace
 
 bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::string& cwd,
-                            const SubprocessSandbox& /*sandbox*/) {
+                            const SubprocessSandbox& /*sandbox*/, int /*stderr_fd*/) {
   // Windows: kernel confinement is Linux-only; the contribution is still gated in-process.
   if (argv.empty() || impl_->running) {
     return false;
@@ -870,7 +873,7 @@ int AsyncSubprocess::stdin_fd() const { return -1; }
 #else  // non-POSIX stubs
 
 bool AsyncSubprocess::Start(const std::vector<std::string>&, const std::string&,
-                            const SubprocessSandbox&) {
+                            const SubprocessSandbox&, int) {
   return false;
 }
 bool AsyncSubprocess::Adopt(int, int, std::shared_ptr<AsyncProcessController>) { return false; }

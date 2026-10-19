@@ -131,7 +131,7 @@ bool EnsureServerSocketDir(const std::filesystem::path& dir, std::string* error)
         *error = walked.string() + " has mode " + OctalMode(st.st_mode) + " owned by uid " +
                  std::to_string(st.st_uid) +
                  "; a parent of the socket directory must be owned by you or root and not "
-                 "writable by others";
+                 "writable by its group or others (chmod go-w " + walked.string() + ")";
         ok = false;
         break;
       }

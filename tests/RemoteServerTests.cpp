@@ -277,6 +277,29 @@ void TestListeningPortsParseProcNetTcp() {
          "::1, :: and ::ffff:127.0.0.1, not a global address");
 }
 
+// A connection that dies before the hello carries the host's own reason. The
+// attach command's stderr went wherever the editor's did, so a server refusing to
+// start ("... has mode 0775 ...; a parent of the socket directory must ...")
+// reached the user as "the peer closed the connection" and nothing else (found
+// standing up tools/qa/local-sshd.sh, whose state directory was group-writable).
+void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
+  auto client = std::make_shared<remote::RemoteServerClient>();
+  std::string error;
+  Expect(!client->ConnectCommand({"sh", "-c", "echo 'microide-server: the socket directory is unsafe' >&2; exit 3"},
+                                 remote::HelloRequest{.release = "test", .root = "/"}, &error),
+         "a command that exits before the hello does not connect");
+#if defined(__linux__)
+  Expect(error.find("the socket directory is unsafe") != std::string::npos,
+         "the error carries what the command printed: " + error);
+#endif
+  // And a command that connects keeps working: its stderr is sealed, not grown.
+  TemporaryDirectory root;
+  auto good = std::make_shared<remote::RemoteServerClient>();
+  Expect(good->ConnectCommand({Server(), "serve-stdio"},
+                              remote::HelloRequest{.release = "test", .root = root.path().string()}, &error),
+         "a real server still connects: " + error);
+}
+
 // ports/subscribe end to end: the answer is what listens now, and a port this
 // user starts listening on afterwards is pushed (the sampler's 2 s period).
 void TestPortsSubscribePushesANewListener() {
@@ -322,6 +345,8 @@ void TestPortsSubscribePushesANewListener() {
 
 void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "RemoteServer/AConnectionThatDiesEarlyReportsWhatTheHostSaid",
+          TestAConnectionThatDiesEarlyReportsWhatTheHostSaid);
   AddTest(tests, "RemoteServer/SocketDirIsCreatedPrivateAndBadModesAreRefused",
           TestSocketDirIsCreatedPrivateAndBadModesAreRefused);
   AddTest(tests, "RemoteServer/SymlinkedComponentIsRefusedByName",

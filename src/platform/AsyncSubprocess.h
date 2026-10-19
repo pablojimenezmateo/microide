@@ -38,8 +38,10 @@ class AsyncSubprocess {
 
   // Launch the process. Returns false on failure. When `sandbox.enabled`, the child is confined
   // (Linux Landlock/seccomp/setrlimit) between fork and exec — used for plugin-contributed servers.
+  // `stderr_fd` >= 0 becomes the child's stderr (the caller keeps and closes it);
+  // otherwise the child inherits this process's.
   bool Start(const std::vector<std::string>& argv, const std::string& cwd = {},
-             const SubprocessSandbox& sandbox = {});
+             const SubprocessSandbox& sandbox = {}, int stderr_fd = -1);
 
   // Take over a process started elsewhere: `stdin_fd` is written to feed its stdin,
   // `stdout_fd` read for its stdout (both now owned, made non-blocking), and

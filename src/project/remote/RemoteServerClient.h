@@ -187,6 +187,11 @@ class RemoteServerClient {
   void DeliverTerminalFrame(std::uint64_t handle, std::string bytes);
 
   platform::AsyncSubprocess command_;  // the server (or ssh), when ConnectCommand ran it
+  // The command's stderr (an anonymous memory file), read when the connection fails
+  // before the hello: the host's own reason ("... mode 0775 ...") instead of only
+  // "the peer closed the connection". -1 off Linux.
+  int command_stderr_fd_ = -1;
+  void AppendCommandStderr(std::string* error);
   RemotePeer peer_;
   std::atomic<bool> connected_{false};  // read by the I/O thread's close handler
   bool incompatible_ = false;

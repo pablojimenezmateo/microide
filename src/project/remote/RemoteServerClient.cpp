@@ -8,6 +8,10 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
+#if defined(__linux__)
+#include <fcntl.h>
+#include <sys/mman.h>
+#endif
 #endif
 
 namespace microide::project::remote {
@@ -38,11 +42,19 @@ RemoteServerClient::~RemoteServerClient() {
   if (command_.IsRunning()) {
     command_.Shutdown(2000);
   }
+  if (command_stderr_fd_ >= 0) {
+    ::close(command_stderr_fd_);
+  }
 }
 
 bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
                                         const HelloRequest& hello, std::string* error) {
-  if (!command_.Start(argv)) {
+#if defined(__linux__)
+  if (command_stderr_fd_ < 0) {
+    command_stderr_fd_ = ::memfd_create("microide-remote-stderr", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+  }
+#endif
+  if (!command_.Start(argv, {}, {}, command_stderr_fd_)) {
     *error = "could not run " + (argv.empty() ? std::string("<nothing>") : argv.front());
     return false;
   }
@@ -55,7 +67,45 @@ bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
     *error = "could not start the connection";
     return false;
   }
-  return Handshake(hello, error);
+  if (!Handshake(hello, error)) {
+    AppendCommandStderr(error);
+    return false;
+  }
+#if defined(__linux__)
+  // Connected: what the command printed getting here is no longer wanted, and it
+  // keeps this stderr for the whole session. Empty the file and seal it against
+  // growth, so anything it prints later fails to write instead of piling up.
+  if (command_stderr_fd_ >= 0 && ::ftruncate(command_stderr_fd_, 0) == 0) {
+    (void)::fcntl(command_stderr_fd_, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL);
+  }
+#endif
+  return true;
+}
+
+void RemoteServerClient::AppendCommandStderr(std::string* error) {
+  if (command_stderr_fd_ < 0 || error == nullptr) {
+    return;
+  }
+  // The command is exiting; let what it printed land (bounded).
+  (void)command_exit_code(std::chrono::seconds(2));
+  std::string text;
+  char buffer[4096];
+  off_t offset = 0;
+  for (ssize_t n = 0; (n = ::pread(command_stderr_fd_, buffer, sizeof(buffer), offset)) > 0;) {
+    text.append(buffer, static_cast<std::size_t>(n));
+    offset += n;
+    if (text.size() > 64 * 1024) {
+      break;
+    }
+  }
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+    text.pop_back();
+  }
+  const std::size_t newline = text.find_last_of('\n');
+  const std::string last = newline == std::string::npos ? text : text.substr(newline + 1);
+  if (!last.empty()) {
+    *error += " (" + last + ")";
+  }
 }
 
 std::optional<int> RemoteServerClient::command_exit_code(std::chrono::milliseconds wait) {
