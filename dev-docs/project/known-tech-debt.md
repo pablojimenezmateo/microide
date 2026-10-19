@@ -449,6 +449,20 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-19-367 — a warm terminal reattach lost what the shell printed while detached, once, under TSan. [OPEN]
+
+`RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing` failed one TSan
+lane run (2026-10-19, `tools/run-checks.sh tsan`, kernel shard 7, the box also
+compiling): the shell prints `early-1..20`, sleeps a second and prints `late-42`;
+the link is dropped after `early-20` and the session warm-reattaches at its resume
+point. The screen kept `early-1..20` and never showed `late-42` -- the wait ran
+its full 60 s (15 s x the sanitizer scale), so this is a loss, not slowness. It
+passed 4 of 4 alone and 12 of 12 run six at a time on the same TSan binary. Suspect
+the window where the host prints between the drop and the reattach's resume point
+being taken: the bytes printed then are neither in the client's mirror nor
+replayed. Next: stress the whole shard under TSan with an artificial delay between
+`peer().Fail` and `Attach`, and log the resume offset against the host's buffer.
+
 ### TD-2026-10-19-366 — copy without a fresh input serial is refused on Wayland. [OPEN]
 
 Found running the QA suite on weston (`MQA_BACKEND=wayland`): a Wayland compositor

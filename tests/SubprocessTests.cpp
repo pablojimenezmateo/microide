@@ -559,8 +559,13 @@ void TestSandboxReadFilesGrantsOnlyThatFile() {
   if (!microide::platform::ProbeSandboxSupport().landlock_runtime_available) {
     return;  // the layer is fail-open on kernels without Landlock
   }
-  const std::filesystem::path dir =
-      std::filesystem::current_path() / ("sandbox-read-files-" + std::to_string(::getpid()));
+  // Under the build tree -- unless that is under /tmp (a worktree there), where
+  // the probe would prove nothing; the user's cache is closed to the child too.
+  std::filesystem::path base = std::filesystem::current_path();
+  if (const char* home = std::getenv("HOME"); base.string().starts_with("/tmp/") && home != nullptr) {
+    base = std::filesystem::path(home) / ".cache";
+  }
+  const std::filesystem::path dir = base / ("sandbox-read-files-" + std::to_string(::getpid()));
   std::filesystem::create_directories(dir);
   WriteFile(dir / "allowed.txt", "allowed\n");
   WriteFile(dir / "neighbour.txt", "neighbour\n");
