@@ -392,6 +392,55 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               }
               AddControlUiElement(out, kButton, "banner/dismiss", buttons.dismiss);
             }
+            // The merge editor's buttons, from the geometry its mouse path tests:
+            // the toolbar, and each visible conflict's accept buttons (shown while
+            // the pointer is over that conflict, which hovering the button does).
+            if (MergeTabState* merge_tab = ActiveTabIsMerge() ? ActiveMergeTab() : nullptr;
+                merge_tab != nullptr) {
+              const SDL_FRect surface_rect = layout.editor_surface;
+              const MergeSurfaceLayout surface = ComputeMergeSurfaceLayout(surface_rect, *merge_tab);
+              const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(surface_rect, surface);
+              AddControlUiElement(out, kButton, "merge/prev", toolbar.prev_rect, "Previous");
+              AddControlUiElement(out, kButton, "merge/next", toolbar.next_rect, "Next");
+              AddControlUiElement(out, kButton, "merge/open", toolbar.open_rect, "Open Result");
+              AddControlUiElement(out, kButton, "merge/save", toolbar.save_rect, "Save");
+              for (const std::string_view label : {"Unresolved", "Toggle Base", "Mark Resolved"}) {
+                if (const auto rect = ComputeMergeSecondaryToolbarButtonRect(surface_rect, surface, label);
+                    rect.has_value() && UiRectHasArea(*rect)) {
+                  AddControlUiElement(out, kButton, "merge/" + std::string(label), *rect, std::string(label));
+                }
+              }
+              const MergeInteractionLayout interaction =
+                  BuildMergeInteractionLayout(surface_rect, surface, *merge_tab);
+              const auto visible = [&](const SDL_FRect& rect) {
+                return UiRectHasArea(rect) && rect.y >= surface.rows_y &&
+                       rect.y + rect.h <= surface_rect.y + surface_rect.h;
+              };
+              constexpr std::array<std::string_view, 4> kResultActions = {"base", "incoming", "current",
+                                                                          "both"};
+              for (std::size_t i = 0; i < merge_tab->conflicts.size(); ++i) {
+                const MergeTrackedConflict& conflict = merge_tab->conflicts[i];
+                if (!conflict.valid) {
+                  continue;
+                }
+                const std::string prefix = "merge/" + std::to_string(i) + "/";
+                for (const bool incoming : {true, false}) {
+                  const SDL_FRect rect = BuildMergeSourceActionButtonRect(surface, interaction, conflict, incoming);
+                  if (visible(rect)) {
+                    AddControlUiElement(out, kButton, prefix + (incoming ? "accept-incoming" : "accept-current"),
+                                        rect);
+                  }
+                }
+                const std::array<SDL_FRect, 4> actions =
+                    BuildMergeResultActionButtonRects(surface, interaction, conflict);
+                for (std::size_t a = 0; a < actions.size(); ++a) {
+                  if (visible(actions[a])) {
+                    AddControlUiElement(out, kButton, prefix + "result-" + std::string(kResultActions[a]),
+                                        actions[a]);
+                  }
+                }
+              }
+            }
             const NotificationsViewModel toasts = RenderViewModelBuilder(context_).BuildNotifications(
                 notification_service_, layout.status_bar, text_renderer_);
             for (const NotificationEntryViewModel& entry : toasts.entries) {
