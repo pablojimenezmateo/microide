@@ -320,8 +320,9 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   (a Wayland session, an agent). `pointer click 640 12` presses and releases the
   left button, `pointer click X Y right`, `pointer click X Y left 2` is a double
   click, `pointer ctrl+click X Y` holds Ctrl for it, `pointer down`/`move X Y
-  left`/`up` is a drag, and `pointer wheel X Y 3` scrolls three notches down
-  (negative: up). Every verb moves the pointer there first, so hover state
+  left`/`up` is a drag, `pointer wheel X Y 3` scrolls three notches down
+  (negative: up), and `pointer drop X Y <path>` releases a file dragged in from
+  another application. Every verb moves the pointer there first, so hover state
   follows it. `term <command>` runs the command through `$SHELL -lc`; an argument
   quoted when typed stays one word (`term bash -c "make; echo done"`). Worked
   example, used to check Claude Code runs in the terminal: `panel-maximize`,

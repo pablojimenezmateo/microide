@@ -379,6 +379,18 @@ void TestPointerRunsATreeContextMenuRow() {
              actions["last"].AsString());
 }
 
+// `pointer drop` is a file dragged in from another application: the drop path
+// (WorkspaceFileDrop) opens it, as a real drop does.
+void TestPointerDropOpensTheFile() {
+  UiFixture fixture;
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "pointer drop 700 300 \"" + (fixture.root / "src" / "gamma.cpp").string() + "\""),
+         "pointer drop should run");
+  Expect(Find(TestAccess::ControlUi(fixture.shell), "tab:0/gamma.cpp").has_value(),
+         "dropping gamma.cpp should open it in a tab");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "pointer drop 700 300"), "a drop needs a path");
+}
+
 // The debug pane's mode tabs and rows are named with the rects its mouse path
 // hit-tests: a click on `debug-tab:watch` switches the mode, and a click on a
 // breakpoint row goes to the breakpoint (QA flows drive the pane this way).
@@ -576,6 +588,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
+  AddTest(tests, "ControlUiQuery/PointerDropOpensTheFile", TestPointerDropOpensTheFile);
   AddTest(tests, "ControlUiQuery/PointerRunsATreeContextMenuRow", TestPointerRunsATreeContextMenuRow);
   AddTest(tests, "ControlUiQuery/InjectedInputLeavesTheReceiptToWhatItRan",
           TestInjectedInputLeavesTheReceiptToWhatItRan);

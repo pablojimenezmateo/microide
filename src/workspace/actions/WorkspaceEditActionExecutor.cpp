@@ -409,7 +409,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       // layout units, the coordinates `ui` reports. Every verb moves the pointer
       // there first, as a real hand would; `move x y left` is a drag step.
       static constexpr std::string_view kUsage =
-          "usage: pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks]";
+          "usage: pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks], "
+          "or pointer drop <x> <y> <path>";
       if (args.size() < 3) {
         return reject(std::string(kUsage));
       }
@@ -437,7 +438,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         return std::nullopt;
       };
       std::optional<Uint8> button;
-      if (args.size() > 3 && verb != "wheel") {
+      if (args.size() > 3 && verb != "wheel" && verb != "drop") {
         button = parse_button(args[3]);
         if (!button.has_value()) {
           return reject("pointer: button is left, middle or right");
@@ -483,6 +484,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         } else {
           press(which, verb == "down", clicks);
         }
+      } else if (verb == "drop") {
+        // A file dragged in from another application and released here.
+        if (args.size() < 4 || args[3].empty()) {
+          return reject("usage: pointer drop <x> <y> <path>");
+        }
+        move(0);
+        SDL_Event event{};
+        event.type = SDL_EVENT_DROP_FILE;
+        event.drop.x = *x;
+        event.drop.y = *y;
+        event.drop.data = args[3].c_str();
+        context_.InjectPointerEvent(event, modifiers);
       } else if (verb == "wheel") {
         const std::optional<int> notches = args.size() > 3 ? util::ParseInt(args[3]) : std::optional<int>(1);
         if (!notches.has_value() || *notches == 0 || *notches < -100 || *notches > 100) {

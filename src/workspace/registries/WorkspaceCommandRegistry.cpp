@@ -361,7 +361,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::InsertText, "type", "type <text>", "Insert Text", ""},
       ActionSpec{ActionId::PressKey, "key", "key <chord> [count]", "Press Key", ""},
       ActionSpec{ActionId::Pointer, "pointer",
-                 "pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks]",
+                 "pointer [mods+]<move|down|up|click|wheel|drop> <x> <y> [button|notches|path] [clicks]",
                  "Pointer", ""},
       ActionSpec{ActionId::SelectAll, "select-all", "select-all", "Select All", "Ctrl+A"},
       ActionSpec{ActionId::Undo, "undo", "undo", "Undo", "Ctrl+Z"},
