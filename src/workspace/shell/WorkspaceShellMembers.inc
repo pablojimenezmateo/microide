@@ -519,6 +519,10 @@
     // fits std::function's inline buffer and stops the functor allocating.
     std::uint64_t generation = 0;
     State state = State::Empty;
+    // When a cell got no answer (Failed). No answer is not one for good -- a
+    // server still loading its project says nothing -- so after kNoHoverRetryMs
+    // the next look at the cell asks again.
+    Uint64 failed_at_ms = 0;
     plugin::PluginHost::HoverResult result;
     bool Matches(const std::filesystem::path& other_path, std::size_t other_line,
                  std::size_t other_column) const {
@@ -965,7 +969,6 @@
                                    std::size_t visible_columns) const;
   void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_columns) const;
   void RevealActiveMergeSelection();
-  void OpenComparePicker();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
   void OpenOutgoingBaseRefPicker();

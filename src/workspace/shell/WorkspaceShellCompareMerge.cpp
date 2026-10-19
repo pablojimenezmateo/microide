@@ -415,10 +415,6 @@ bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {
   return MakeCompareMergeService().OpenGitConflictMerge(path);
 }
 
-void WorkspaceShell::OpenComparePicker() {
-  MakeCompareMergeService().OpenPicker();
-}
-
 bool WorkspaceShell::OpenComparePickerForPath(const std::filesystem::path& path,
                                               std::string_view commit_spec) {
   return MakeCompareMergeService().OpenPickerForPath(path, commit_spec);

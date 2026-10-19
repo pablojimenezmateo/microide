@@ -33,6 +33,10 @@ namespace {
 // which for a 512 MB line was an ~8 GB alloc on a single mouse-move -> OOM.
 constexpr std::size_t kMaxHoverResolveLineBytes = 1u << 20;  // 1 MiB
 
+// How long "no hover here" stands for a cell before the next look asks again: the
+// server may have been loading (csharp-ls answers nothing until MSBuild is done).
+constexpr Uint64 kNoHoverRetryMs = 1000;
+
 // The debug-hover path runs on every mouse-move frame, so an unguarded trace
 // would flood the log. These dedupe on the reason's string-literal identity and
 // only emit when the furthest-reached gate changes, keeping the log readable
@@ -280,7 +284,10 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   const std::size_t query_line = document_line + 1;
   const std::size_t query_column = text_column + 1;
   plugin::PluginHost::HoverResult hover;
-  if (plugin_hover_cache_.Matches(path, query_line, query_column)) {
+  // A cell that got no answer asks again once kNoHoverRetryMs has passed.
+  const bool retry_no_answer = plugin_hover_cache_.state == PluginHoverCache::State::Failed &&
+                               SDL_GetTicks() - plugin_hover_cache_.failed_at_ms >= kNoHoverRetryMs;
+  if (plugin_hover_cache_.Matches(path, query_line, query_column) && !retry_no_answer) {
     switch (plugin_hover_cache_.state) {
       case PluginHoverCache::State::Resolved:
         hover = plugin_hover_cache_.result;

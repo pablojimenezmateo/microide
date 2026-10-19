@@ -640,6 +640,15 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
 
   if (previous_target.has_value()) {
     ++editor_hover_target_generation_;
+    // The pointer left the card: the answer it showed was the server's at that
+    // moment, so coming back asks again (VS Code asks on every rest). Kept for
+    // good, a hover taken before the server had loaded the project, or before
+    // another file changed the symbol, stayed that answer for the session.
+    if (plugin_hover_cache_.state == PluginHoverCache::State::Resolved ||
+        plugin_hover_cache_.state == PluginHoverCache::State::Failed) {
+      plugin_hover_cache_.state = PluginHoverCache::State::Empty;
+      ++plugin_hover_cache_.generation;
+    }
   }
   active_editor_hover_target_.reset();
 }
@@ -691,6 +700,7 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
                                      std::size_t column) {
   const auto fail = [&]() {
     plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+    plugin_hover_cache_.failed_at_ms = SDL_GetTicks();
     QueueEditorHoverRefresh();
     RequestFocusedEditorRedraw();
   };
@@ -733,6 +743,7 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
             result.has_value() ? lsp_protocol::ParseHoverContents(*result) : std::string{};
         if (content.empty()) {
           plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+          plugin_hover_cache_.failed_at_ms = SDL_GetTicks();
         } else {
           plugin::PluginHost::HoverResult hover;
           hover.content = std::move(content);

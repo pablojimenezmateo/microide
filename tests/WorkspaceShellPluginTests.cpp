@@ -3348,6 +3348,108 @@ return ide.plugin({
   Expect(hover_text().empty(), "moving the caret puts the card away");
 }
 
+// A hover is asked again when the pointer comes back to a symbol: the card cached
+// one answer per cell for as long as the editor ran, so a hover taken before the
+// server had loaded the project ("import twice", where the signature belongs) or
+// before another file changed the symbol stayed that answer forever (QA
+// lsp-typescript, under a loaded suite).
+void TestWorkspaceShellHoverAsksAgainWhenThePointerReturns() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\n\n");
+  WritePluginInit(plugins_root, "pylsp",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "the project should open");
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  int answers = 0;
+  bool answers_are_empty = false;
+  stub->SetTestHoverHandler([&answers, &answers_are_empty](std::string uri,
+                                                           workspace::LspClient::HoverCallback cb) {
+    (void)uri;
+    if (answers_are_empty) {
+      cb(util::ParseJson("null"));
+      return;
+    }
+    ++answers;
+    cb(util::ParseJson(R"({"contents":{"kind":"plaintext","value":"answer )" + std::to_string(answers) +
+                       R"("}})"));
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "a stub python client should attach");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas{1280, 720};
+  const auto frame = [&] {
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+  };
+  frame();
+  const auto hover_text = [&]() -> std::string {
+    const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+    const util::JsonValue& hover = ui["popups"]["hover"];
+    return hover.IsObject() ? hover["text"].AsString() : std::string();
+  };
+  const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+  const util::JsonValue& pane = ui["editors"][std::size_t{0}];
+  const float x = static_cast<float>(pane["textX"].AsDouble() + 1.5 * pane["charWidth"].AsDouble());
+  const float on_value = static_cast<float>(pane["firstLineY"].AsDouble() + 0.5 * pane["lineHeight"].AsDouble());
+  // The gutter beside the line: on no symbol, and clear of the card and the bridge
+  // to it (where a card is kept while the pointer travels toward it).
+  const float gutter_x = static_cast<float>(pane["gutterX"].AsDouble() + 2.0);
+  const auto rest_at = [&](float y, float at_x) {
+    (void)DispatchEvents(shell, {MouseMotionEvent(at_x, y)});
+    for (int i = 0; i < 4; ++i) {
+      frame();
+    }
+  };
+  rest_at(on_value, x);
+  Expect(hover_text() == "answer 1", "the first hover asks the server: '" + hover_text() + "'");
+  rest_at(on_value + 1.0f, x);
+  Expect(hover_text() == "answer 1", "resting on the same symbol keeps the answer: '" + hover_text() + "'");
+  rest_at(on_value, gutter_x);
+  Expect(hover_text().empty(), "off the symbol, no card: '" + hover_text() + "'");
+  rest_at(on_value, x);
+  Expect(hover_text() == "answer 2", "back on the symbol, the server is asked again: '" + hover_text() + "'");
+
+  // No answer is not an answer for good: a server still loading its project
+  // (csharp-ls through MSBuild) says nothing, and that cell stayed silent for the
+  // session unless another symbol was hovered in between (QA lsp-csharp).
+  rest_at(on_value, gutter_x);
+  answers_are_empty = true;
+  rest_at(on_value, x);
+  Expect(hover_text().empty(), "the server has nothing yet: '" + hover_text() + "'");
+  answers_are_empty = false;
+  rest_at(on_value, gutter_x);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+  rest_at(on_value, x);
+  Expect(hover_text().rfind("answer ", 0) == 0, "a second later the server is asked again: '" + hover_text() + "'");
+}
+
 void TestWorkspaceShellDisablingLspClearsEveryServerOverlay() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6860,6 +6962,8 @@ return ide.plugin({
 }
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/HoverAsksAgainWhenThePointerReturns",
+          TestWorkspaceShellHoverAsksAgainWhenThePointerReturns);
   AddTest(tests, "WorkspaceShell/ShowHoverAtTheCaret", TestWorkspaceShellShowHoverAtTheCaret);
   AddTest(tests, "WorkspaceShell/ServerRegisteredAfterOpenStartsForTheActiveFile",
           TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile);

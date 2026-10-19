@@ -958,6 +958,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     .pointer_y = last_mouse_y_,
                     .pointer_valid = last_mouse_position_valid_,
                 };
+                // Asked for: a fresh answer, not one kept from an earlier hover.
+                if (plugin_hover_cache_.state == PluginHoverCache::State::Resolved ||
+                    plugin_hover_cache_.state == PluginHoverCache::State::Failed) {
+                  plugin_hover_cache_.state = PluginHoverCache::State::Empty;
+                  ++plugin_hover_cache_.generation;
+                }
                 UpdateEditorHover(last_mouse_x_, last_mouse_y_);
                 RequestWindowRedraw();
                 // Resolved at the caret, or being fetched (a language server's
