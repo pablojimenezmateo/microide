@@ -16,7 +16,12 @@ bool ActionCoordinator::Execute(ActionId id,
                                 const std::vector<std::string>& args,
                                 ActionSource source) {
   context_.PrepareForAction(source);
-  context_.NoteActionDispatched(id, source);
+  // `key` and `pointer` are input, not actions: what the key or click runs leaves
+  // its own receipt, and when it runs nothing there is none -- counted, a driver
+  // read "key ran" for every key the terminal took.
+  if (id != ActionId::PressKey && id != ActionId::Pointer) {
+    context_.NoteActionDispatched(id, source);
+  }
   // QA dry run (tools/qa's `keys` and `context-menus` sweeps): a key, a menu row
   // or a context-menu row records which action it reached and runs nothing, so
   // every one can be used in every context without closing tabs, starting

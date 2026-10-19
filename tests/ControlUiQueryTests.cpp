@@ -327,6 +327,28 @@ void TestUiQueryReportsTheLastAction() {
              " from " + actions["source"].AsString());
 }
 
+// `key` and `pointer` are input, not actions: the receipt names what the key or
+// click ran, once, and nothing when it ran nothing. Counted as actions, the
+// Wayland run of the `keys` sweep read "the terminal owns this key, but key ran"
+// for every key the terminal took, and two actions for every menu row clicked.
+void TestInjectedInputLeavesTheReceiptToWhatItRan() {
+  UiFixture fixture;
+  const std::int64_t before = TestAccess::ControlUi(fixture.shell)["actions"]["dispatched"].AsInt();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "key ctrl+b"), "key ctrl+b should run");
+  util::JsonValue actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(actions["dispatched"].AsInt() == before + 1 && actions["last"].AsString() == "sidebar-toggle" &&
+             actions["source"].AsString() == "shortcut",
+         "`key ctrl+b` should leave one receipt, sidebar-toggle from a shortcut: " +
+             std::to_string(actions["dispatched"].AsInt() - before) + " x " + actions["last"].AsString());
+  TestAccess::SetFocusEditor(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "key x"), "key x should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer move 600 400"), "pointer move should run");
+  actions = TestAccess::ControlUi(fixture.shell)["actions"];
+  Expect(actions["dispatched"].AsInt() == before + 1,
+         "typing a letter and moving the pointer run no action: " +
+             std::to_string(actions["dispatched"].AsInt() - before) + " x " + actions["last"].AsString());
+}
+
 // The debug pane's mode tabs and rows are named with the rects its mouse path
 // hit-tests: a click on `debug-tab:watch` switches the mode, and a click on a
 // breakpoint row goes to the breakpoint (QA flows drive the pane this way).
@@ -524,6 +546,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
+  AddTest(tests, "ControlUiQuery/InjectedInputLeavesTheReceiptToWhatItRan",
+          TestInjectedInputLeavesTheReceiptToWhatItRan);
   AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);
   AddTest(tests, "ControlUiQuery/LargeEditorFontKeepsTheChromeSize", TestLargeEditorFontKeepsTheChromeSize);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
