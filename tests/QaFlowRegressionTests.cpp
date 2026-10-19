@@ -38,6 +38,13 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using TestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
+// Pins the caret's blink phase before each of the two paints a redraw diff makes.
+// Unpinned, a slow run (TSan) crossed a blink between the partial frame and the
+// full repaint and diffed the caret (CI: 1x18 pixels in CompareHunkStep...).
+std::function<void()> PinCaretOf(WorkspaceShell& shell) {
+  return [&shell]() { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+}
+
 struct FlowFixture {
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
@@ -620,7 +627,7 @@ void TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives() {
                     redraw.Merge(shell.ConsumePendingRenderInvalidation());
                   });
   Expect(b_status() == project::GitFileStatus::Modified, "the refresh should mark b.txt modified");
-  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw);
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, PinCaretOf(shell));
   Expect(diff.identical(), "the tree should repaint the badge the refresh gave b.txt; " +
                                DescribePixelDiff(diff));
 }
@@ -881,7 +888,8 @@ void TestGitCommitButtonHoverRepaints() {
   }
   const auto redraw =
       DispatchEvents(shell, {MouseMotionEvent(commit->x + commit->w / 2.0f, commit->y + commit->h / 2.0f)});
-  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight, redraw);
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight, redraw,
+                                                PinCaretOf(shell));
   Expect(diff.identical(), "the pointer moving onto Commit should light it up on screen; " +
                                DescribePixelDiff(diff));
 }
@@ -1252,7 +1260,9 @@ void TestColorschemeListSaysWhichSchemesThereAre() {
   FlowFixture fixture("theme.txt", "x\n");
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "colorscheme list"), "colorscheme list should run");
   const std::string feedback = TestAccess::CommandFeedbackText(fixture.shell);
-  Expect(feedback.find("dark") != std::string::npos && feedback.find("light") != std::string::npos,
+  // The two built-in schemes, on any machine (CI's list is exactly these; "dark"
+  // comes from whatever else a developer has installed).
+  Expect(feedback.find("default") != std::string::npos && feedback.find("light") != std::string::npos,
          "colorscheme list should name the schemes, said '" + feedback + "'");
 }
 
@@ -1336,7 +1346,7 @@ void TestCompareHunkStepRepaintsTheSelectionMarkers() {
   for (int step = 0; step < 3; ++step) {
     const auto diff = PaintAndDiffWithFullRepaint(
         shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight,
-        DispatchEvents(shell, {KeyDownEvent(SDLK_RIGHTBRACKET, SDL_KMOD_ALT)}));
+        DispatchEvents(shell, {KeyDownEvent(SDLK_RIGHTBRACKET, SDL_KMOD_ALT)}), PinCaretOf(shell));
     Expect(diff.identical(), "Alt+] should repaint the old and new change's markers; " + DescribePixelDiff(diff));
   }
 }
@@ -1374,7 +1384,7 @@ void TestCompareHeaderRepaintsWhenAnEditChangesIt() {
   (void)shell.ConsumePendingRenderInvalidation();
   const std::string before = compare.review_header.summary_line;
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, FlowFixture::kWidth, FlowFixture::kHeight,
-                                                DispatchEvents(shell, {TextInputEvent("X")}));
+                                                DispatchEvents(shell, {TextInputEvent("X")}), PinCaretOf(shell));
   Expect(TestAccess::ActiveCompare(shell).review_header.summary_line != before,
          "the edit should add a hunk to the header");
   Expect(diff.identical(), "the header should repaint with its new hunk count; " + DescribePixelDiff(diff));

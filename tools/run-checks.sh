@@ -477,6 +477,7 @@ check_coverage() {
     set -e
     cmake -S . -B '"$build_dir"' -G Ninja \
       -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_COMPILER=clang \
       -DCMAKE_CXX_COMPILER=clang++ \
       -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
       -DMICROIDE_TEST_SHARDS=1 \
@@ -490,10 +491,14 @@ check_coverage() {
     # (TD-2026-09-22-303), so a report over microide_tests alone would read every
     # kernel file as newly uncovered.
     cd '"$build_dir"'
+    # The unversioned names where the toolchain installs them, else the newest
+    # versioned ones (Ubuntu ships llvm-cov-17, ...); they must match clang.
+    llvm_tool() { command -v "$1" || ls /usr/bin/"$1"-[0-9]* 2>/dev/null | sort -V | tail -1; }
+    profdata=$(llvm_tool llvm-profdata); cov=$(llvm_tool llvm-cov)
     LLVM_PROFILE_FILE=coverage-shell.profraw ./microide/microide_tests
     LLVM_PROFILE_FILE=coverage-kernel.profraw ./microide/microide_kernel_tests
-    llvm-profdata merge -sparse coverage-shell.profraw coverage-kernel.profraw -o coverage.profdata
-    llvm-cov report ./microide/microide_tests \
+    "$profdata" merge -sparse coverage-shell.profraw coverage-kernel.profraw -o coverage.profdata
+    "$cov" report ./microide/microide_tests \
       -object ./microide/microide_kernel_tests \
       -instr-profile=coverage.profdata \
       -ignore-filename-regex="(tests/|third_party/|/usr/)" > coverage-report.txt

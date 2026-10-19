@@ -1719,6 +1719,8 @@ if(MICROIDE_FUZZ)
     src/project/GitMetadataSource.cpp
     src/util/TextFileIO.cpp
     src/util/DurableFile.cpp
+    src/platform/ProcessLauncher.cpp
+    src/platform/AsyncSubprocess.cpp
     src/platform/Subprocess.cpp
     src/platform/SubprocessSandbox.cpp
     tests/fuzz/GitPorcelainV2ParserFuzz.cpp
@@ -1826,6 +1828,11 @@ if(MICROIDE_FUZZ)
     src/terminal/TerminalMouseEncoder.cpp
     src/terminal/TerminalOscClipboard.cpp
     src/terminal/TerminalSearch.cpp
+    src/terminal/TerminalPredictionOverlay.cpp
+    src/platform/ProcessLauncher.cpp
+    src/platform/AsyncSubprocess.cpp
+    src/platform/Subprocess.cpp
+    src/platform/SubprocessSandbox.cpp
     src/platform/ShellProcess.cpp
     src/platform/TerminalBackend.cpp
     src/util/AnsiPalette.cpp
