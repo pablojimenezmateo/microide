@@ -1484,6 +1484,35 @@ void TestF1AndCtrlNumberFocusGroups() {
          "Ctrl+5 with two groups should be refused, not split");
 }
 
+// A hover over a function body scrolled under its sticky header asks about the
+// line under the pointer. Hover resolved points against a grid with no sticky band,
+// so it asked about the line the band's height further down -- and showed that
+// line's symbol -- while a click on the same spot landed right.
+void TestHoverUnderAStickyBandResolvesThePointersLine() {
+  std::string body = "int outer() {\n";
+  for (int i = 0; i < 80; ++i) {
+    body += "  int v" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  body += "}\n";
+  FlowFixture fixture("sticky.cpp", body);
+  // Scroll into the body, so `int outer() {` pins above it.
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_PAGEDOWN), KeyDownEvent(SDLK_PAGEDOWN)});
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& pane = ui["editors"][std::size_t{0}];
+  Expect(pane["stickyRows"].AsInt() >= 1, "the fixture should show a sticky band");
+  const util::JsonValue& rows = pane["rows"];
+  Expect(rows.AsArray().size() > 4, "the pane should show rows");
+  const std::int64_t line = rows[std::size_t{3}]["line"].AsInt();
+  const float x = static_cast<float>(pane["textX"].AsDouble() + 6.5 * pane["charWidth"].AsDouble());
+  const float y = static_cast<float>(pane["firstLineY"].AsDouble() + 3.5 * pane["lineHeight"].AsDouble());
+  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)});
+  Expect(TestAccess::HoverCacheLineForTesting(fixture.shell) == static_cast<std::size_t>(line),
+         "the hover should ask about line " + std::to_string(line) + ", the one under the pointer, not " +
+             std::to_string(TestAccess::HoverCacheLineForTesting(fixture.shell)));
+}
+
 // Hovering a merge toolbar button lights it, and the frame shows it: the buttons
 // read the pointer at paint time, but merge hover tracking knew only conflict
 // regions, so moving onto Save requested no repaint of it and the next partial
@@ -1524,6 +1553,8 @@ void TestMergeToolbarHoverRepaintsTheButton() {
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/HoverUnderAStickyBandResolvesThePointersLine",
+          TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",

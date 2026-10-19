@@ -27,6 +27,10 @@
     ++shell.plugin_hover_cache_.generation;
     shell.KickOffLspHover(path, line, column);
   }
+  // The cell (1-based line) the last hover hit-test asked a provider about.
+  static std::size_t HoverCacheLineForTesting(const WorkspaceShell& shell) {
+    return shell.plugin_hover_cache_.line;
+  }
   static std::string HoverCacheContentForTesting(const WorkspaceShell& shell) {
     return shell.plugin_hover_cache_.result.content;
   }

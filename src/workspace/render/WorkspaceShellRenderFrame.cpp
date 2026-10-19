@@ -1375,6 +1375,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
               editor_text_renderer_, *viewport, pane.rect, welcome_sticky_rows, line_numbers_enabled);
           viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         }
+        viewport->SetStickyBandRows(metrics.sticky_scroll_rows);
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
@@ -1416,6 +1417,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             editor_text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       }
+      viewport->SetStickyBandRows(metrics.sticky_scroll_rows);
       // Named for the whole pane, because that is what it covers: the view-model
       // build, the blame overlay, the find-highlight fragments, the row render and
       // the insets. It used to be called `BuildEditorViewModel`, which is only the

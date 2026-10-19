@@ -850,15 +850,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               if (viewport == nullptr || viewport->is_placeholder()) {
                 continue;
               }
-              const float line_height = std::max(1.0f, editor_text_renderer_.LineHeight());
-              const std::size_t max_rows = static_cast<std::size_t>(
-                  std::max(1, static_cast<int>(std::floor((pane.rect.h - 12.0f) / line_height))));
-              const std::size_t sticky =
-                  viewport->visible_lines() > 0 && viewport->visible_lines() < max_rows
-                      ? max_rows - viewport->visible_lines()
-                      : 0;
+              // The band the last frame painted, as a hover resolves it.
               const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-                  editor_text_renderer_, *viewport, pane.rect, sticky, line_numbers);
+                  editor_text_renderer_, *viewport, pane.rect, viewport->sticky_band_rows(), line_numbers);
               const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
               util::JsonObject entry;
               entry["group"] = util::JsonValue(static_cast<std::int64_t>(pane.group_index));

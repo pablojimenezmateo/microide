@@ -465,6 +465,12 @@ class TextViewport {
   std::size_t scroll_line() const { return scroll_line_; }
   std::size_t horizontal_scroll() const { return horizontal_scroll_; }
   std::size_t visible_lines() const { return visible_lines_; }
+  // Rows the sticky-scroll band covered in the last frame painted (0 with none, or
+  // before a first frame). Anything that turns a point in the pane into a row, and
+  // is not the painter, reads it: a hover resolved against a grid without the band
+  // named the line the band's height below the pointer.
+  void SetStickyBandRows(std::size_t rows) { sticky_band_rows_ = rows; }
+  std::size_t sticky_band_rows() const { return sticky_band_rows_; }
   std::size_t visible_columns() const { return visible_columns_; }
   std::size_t line_count() const { return document_->lines.size(); }
   std::uint64_t content_revision() const {
@@ -1346,6 +1352,7 @@ class TextViewport {
   std::size_t scroll_line_ = 0;
   std::size_t horizontal_scroll_ = 0;
   std::size_t visible_lines_ = 1;
+  std::size_t sticky_band_rows_ = 0;
   // CenterLine's target until the next SetViewportSize (see CenterLine). Copied
   // with the rest: a pane cloned from a just-revealed tab is centred the same way
   // on its own first sizing.

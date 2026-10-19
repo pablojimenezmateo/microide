@@ -45,6 +45,7 @@ TextViewport::TextViewport(const TextViewport& other)
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
       visible_lines_(other.visible_lines_),
+      sticky_band_rows_(other.sticky_band_rows_),
       pending_center_line_(other.pending_center_line_),
       visible_columns_(other.visible_columns_),
       tab_size_(other.tab_size_),
@@ -142,6 +143,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
       visible_lines_(other.visible_lines_),
+      sticky_band_rows_(other.sticky_band_rows_),
       pending_center_line_(other.pending_center_line_),
       visible_columns_(other.visible_columns_),
       tab_size_(other.tab_size_),
@@ -218,6 +220,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   scroll_line_ = other.scroll_line_;
   horizontal_scroll_ = other.horizontal_scroll_;
   visible_lines_ = other.visible_lines_;
+  sticky_band_rows_ = other.sticky_band_rows_;
   pending_center_line_ = other.pending_center_line_;
   visible_columns_ = other.visible_columns_;
   tab_size_ = other.tab_size_;

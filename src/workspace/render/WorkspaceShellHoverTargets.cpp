@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/render/EditorInteractionGrid.h"
+
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -54,23 +56,6 @@ void LogHoverGate(const char* reason, std::string_view expr) {
   util::DebugTrace::Note("hover-gate", reason, expr);
 }
 
-TextGridInteractionLayout BuildEditorInteractionLayout(
-    const render::TextRenderer& text_renderer,
-    const editor::TextViewport& viewport,
-    const SDL_FRect& rect,
-    bool show_line_numbers) {
-  const editor::EditorViewMetrics metrics =
-      editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
-                                                 show_line_numbers);
-  return ComputeTextGridInteractionLayout(
-      rect, metrics.text_x, metrics.first_line_y, metrics.line_height, text_renderer.CharWidth(),
-      // visual_line_count(), not line_count(): the layout clamps the scroll it is
-      // handed against this total, and `scroll_line()` is a visual row -- so under
-      // wrap every hover hit test past (line_count - visible_rows) resolved
-      // against a scroll position that had been clamped back down.
-      viewport.scroll_line(), viewport.visual_line_count(), viewport.horizontal_scroll(),
-      metrics.visible_rows, metrics.visible_columns);
-}
 
 // Resolve the command bound to a clickable end-of-line code lens under (x,y) for
 // a single viewport. Pure given its inputs: lays the line's EOL decorations out
@@ -467,7 +452,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
         surface.center_width, surface.show_horizontal);
     return DiagnosticHoverTargetForViewport(
         merge_tab->result_viewport,
-        BuildEditorInteractionLayout(editor_text_renderer_, merge_tab->result_viewport, result_rect,
+        BuildEditorInteractionGrid(editor_text_renderer_, merge_tab->result_viewport, result_rect,
                                      LineNumbersEnabled()),
         visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
   }
@@ -483,7 +468,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     return diagnostics != nullptr
                ? DiagnosticHoverTargetForViewport(
                      *active_viewport,
-                     BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport,
+                     BuildEditorInteractionGrid(editor_text_renderer_, *active_viewport,
                                                   layout.editor_surface, LineNumbersEnabled()),
                      visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)),
                      x, y)
@@ -502,7 +487,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     }
 
     if (const auto target = DiagnosticHoverTargetForViewport(
-            *viewport, BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()),
+            *viewport, BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()),
             visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
         target.has_value()) {
       return target;
@@ -563,7 +548,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
         surface.center_width, surface.show_horizontal);
     return PluginHoverTargetForViewport(
         merge_tab->result_viewport,
-        BuildEditorInteractionLayout(editor_text_renderer_, merge_tab->result_viewport, result_rect,
+        BuildEditorInteractionGrid(editor_text_renderer_, merge_tab->result_viewport, result_rect,
                                      LineNumbersEnabled()), x, y);
   }
 
@@ -576,7 +561,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return PluginHoverTargetForViewport(
         *active_viewport,
-        BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport, layout.editor_surface,
+        BuildEditorInteractionGrid(editor_text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()), x, y);
   }
 
@@ -587,7 +572,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     }
 
     if (const auto target = PluginHoverTargetForViewport(
-            *viewport, BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
+            *viewport, BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
         target.has_value()) {
       return target;
     }
@@ -735,7 +720,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return DebugValueHoverTargetForViewport(
         *active_viewport,
-        BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport, layout.editor_surface,
+        BuildEditorInteractionGrid(editor_text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()), x, y);
   }
   for (const EditorPaneLayout& pane : panes) {
@@ -744,7 +729,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
       continue;
     }
     if (const auto target = DebugValueHoverTargetForViewport(
-            *viewport, BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
+            *viewport, BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
         target.has_value()) {
       return target;
     }
@@ -814,7 +799,7 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(flo
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return CodeLensForViewport(
         editor_text_renderer_, *active_viewport,
-        BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport, layout.editor_surface,
+        BuildEditorInteractionGrid(editor_text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()),
         decorations_for(*active_viewport), x, y);
   }
@@ -826,7 +811,7 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(flo
     }
     if (auto lens = CodeLensForViewport(
             editor_text_renderer_, *viewport,
-            BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect,
+            BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect,
                                          LineNumbersEnabled()),
             decorations_for(*viewport), x, y);
         lens.has_value()) {
