@@ -244,6 +244,9 @@ class WorkspaceActionContext {
     // A mouse event (layout coordinates) delivered the same way, with `modifiers`
     // held for it: what the shell reads from SDL_GetModState for a click.
     std::function<void(const SDL_Event&, SDL_Keymod)> inject_pointer_event;
+    // Show Hover: pin the editor hover to the caret. False when there is no
+    // editor or the caret is off screen.
+    std::function<bool()> show_hover_at_caret;
     std::function<void()> refresh_available_colorscheme_names;
     std::function<std::vector<std::string>()> available_colorscheme_names;
     // False when no theme of that name exists (built-in, on disk, or plugin).
@@ -609,6 +612,7 @@ class WorkspaceActionContext {
   void InsertText(std::string text);
   void PressKey(SDL_Keycode key, SDL_Keymod modifiers);
   void InjectPointerEvent(const SDL_Event& event, SDL_Keymod modifiers);
+  bool ShowHoverAtCaret();
 
   void RefreshAvailableColorschemeNames();
   // Says which colour schemes `colorscheme <name>` takes (feedback and a toast).

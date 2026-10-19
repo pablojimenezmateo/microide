@@ -943,6 +943,27 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 dispatch_injected(event);
                 SDL_SetModState(previous);
               },
+          .show_hover_at_caret =
+              [this]() {
+                const editor::TextViewport* viewport = ActiveEditableViewport();
+                if (viewport == nullptr) {
+                  return false;
+                }
+                context_.interaction_state.caret_hover = InteractionState::CaretHover{
+                    .active = true,
+                    .viewport = viewport,
+                    .line = viewport->cursor_line(),
+                    .column = viewport->cursor_column(),
+                    .pointer_x = last_mouse_x_,
+                    .pointer_y = last_mouse_y_,
+                    .pointer_valid = last_mouse_position_valid_,
+                };
+                UpdateEditorHover(last_mouse_x_, last_mouse_y_);
+                RequestWindowRedraw();
+                // Resolved at the caret, or being fetched (a language server's
+                // answer arrives later and re-resolves into the card).
+                return context_.interaction_state.caret_hover.active;
+              },
           .refresh_available_colorscheme_names =
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .available_colorscheme_names = [this]() { return available_colorscheme_names_; },

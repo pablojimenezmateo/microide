@@ -65,6 +65,41 @@ def flow_lsp_hover(app: q.App) -> None:
     step(app, "move away")
 
 
+def flow_lsp_show_hover(app: q.App) -> None:
+    """Show Hover by keyboard (Ctrl+K Ctrl+I): the card for the caret's symbol with
+    the pointer elsewhere; Escape puts it away, and so does moving the caret."""
+    if not _require(app, "clangd") or not _lsp_ready(app):
+        return
+    app.click_text(9, 8)
+    step(app, "caret on queue_", 0.3)
+    surface = app.ui()["surfaces"]["sidebar"]
+    app.move(surface[0] + 20, surface[1] + surface[3] - 30)  # the pointer well away
+    app.wait_until(lambda: app.ui()["popups"]["hover"] is None, 4.0, "no card under the pointer")
+    shown: dict = {}
+
+    def card() -> bool:
+        hover = app.ui()["popups"]["hover"]
+        if hover and hover.get("text"):
+            shown.update(hover)
+            return True
+        return False
+    app.key("ctrl+k")
+    app.key("ctrl+i")
+    app.wait_until(card, 8.0, "Ctrl+K Ctrl+I to show the hover at the caret")
+    step(app, "show hover", 0.3)
+    app.expect("queue_" in shown.get("text", ""), f"the card is the caret's symbol ({shown.get('text')!r})")
+    app.key("Escape")
+    app.wait_until(lambda: app.ui()["popups"]["hover"] is None, 4.0, "Escape to put the card away")
+    step(app, "escape", 0.2)
+    app.expect(app.buffer().get("cursors", [{}])[0].get("line") == 9, "Escape left the caret where it was")
+    app.key("ctrl+k")
+    app.key("ctrl+i")
+    app.wait_until(card, 8.0, "the card again")
+    app.key("Down")
+    app.wait_until(lambda: app.ui()["popups"]["hover"] is None, 4.0, "a caret move to put the card away")
+    step(app, "caret moved", 0.2)
+
+
 def flow_lsp_navigation(app: q.App) -> None:
     """F12 and Ctrl+click go to a definition; Shift+F12 lists references."""
     if not _require(app, "clangd") or not _lsp_ready(app, "src/main.cpp"):
@@ -258,6 +293,7 @@ def flow_debug_session(app: q.App) -> None:
 
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-hover": flow_lsp_hover,
+    "lsp-show-hover": flow_lsp_show_hover,
     "lsp-navigation": flow_lsp_navigation,
     "lsp-completion": flow_lsp_completion,
     "lsp-diagnostics": flow_lsp_diagnostics,

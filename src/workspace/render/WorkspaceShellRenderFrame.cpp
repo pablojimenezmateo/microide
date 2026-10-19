@@ -987,7 +987,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // runs here, not in paint: RenderClip ran it only when it painted the editor, so
   // a partial frame that skipped the editor kept the old hover card while a full
   // render of the same frame dropped it (QA monkey, seed 7).
-  if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
+  // A card pinned to the caret (Show Hover) refreshes with no pointer at all.
+  if (editor_hover_refresh_pending_ &&
+      (last_mouse_position_valid_ || context_.interaction_state.caret_hover.active)) {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshHover");
     UpdateEditorHover(last_mouse_x_, last_mouse_y_);
     editor_hover_refresh_pending_ = false;

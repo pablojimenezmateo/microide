@@ -593,7 +593,10 @@ non-UTF-8 document -- sanitising belongs at the LSP boundary, not in the shared
 serializer.
 
 Missing for keyboard users: VS Code's Show Hover (Ctrl+K Ctrl+I) -- the hover
-card here is pointer-only.
+card here is pointer-only. **[RESOLVED 2026-10-19: `show-hover`, Ctrl+K Ctrl+I,
+pins the card to the caret until the caret or the pointer moves or Escape;
+QA `lsp-show-hover`.]** The LSP note above was a real bug too: one invalid byte
+made clangd drop a document's didOpen (fixed f70eb371: stray bytes go as '?').
 
 ### TD-2026-10-18-361 — inert chrome VS Code makes interactive: breadcrumbs, the encoding/EOL segment. [OPEN]
 

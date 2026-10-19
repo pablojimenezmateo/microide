@@ -15,6 +15,7 @@
 #include "workspace/lsp/LspProtocol.h"
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/HoverTextWrap.h"
+#include "workspace/render/EditorInteractionGrid.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -543,6 +544,43 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     active_editor_hover_target_.reset();
     editor_hover_refresh_pending_ = false;
     return;
+  }
+  // Show Hover pinned the card to the caret: resolve there instead of at the
+  // pointer, until the caret moves, the pointer moves, or the caret scrolls away.
+  if (InteractionState::CaretHover& pin = context_.interaction_state.caret_hover; pin.active) {
+    const editor::TextViewport* viewport = ActiveEditableViewport();
+    const bool pointer_moved = last_mouse_position_valid_ &&
+                               (!pin.pointer_valid || x != pin.pointer_x || y != pin.pointer_y);
+    std::optional<SDL_FPoint> caret;
+    if (viewport != nullptr && viewport == pin.viewport && viewport->cursor_line() == pin.line &&
+        viewport->cursor_column() == pin.column && !pointer_moved) {
+      if (const std::optional<WorkspaceLayout> layout = CurrentWorkspaceLayout(); layout.has_value()) {
+        for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(*layout)) {
+          if (!pane.active) {
+            continue;
+          }
+          // The same grid the pointer path resolves a point against, so the
+          // caret's point maps back to the caret's position exactly.
+          const TextGridInteractionLayout grid =
+              BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled());
+          const std::size_t row = viewport->VisualRowForLine(pin.line);
+          const std::size_t column = viewport->VisualColumnAt(pin.line, pin.column);
+          if (row >= grid.scroll_line && row < grid.scroll_line + grid.visible_rows &&
+              column >= grid.horizontal_scroll) {
+            caret = SDL_FPoint{
+                grid.text_x + (static_cast<float>(column - grid.horizontal_scroll) + 0.5f) * grid.char_width,
+                grid.first_line_y + (static_cast<float>(row - grid.scroll_line) + 0.5f) * grid.line_height};
+          }
+          break;
+        }
+      }
+    }
+    if (caret.has_value()) {
+      x = caret->x;
+      y = caret->y;
+    } else {
+      pin.active = false;
+    }
   }
   const std::optional<EditorHoverTarget> previous_target = active_editor_hover_target_;
   // The (const) resolver records a debug-value cache miss here; clear it first so a

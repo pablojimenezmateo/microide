@@ -168,6 +168,20 @@ struct TabSlideState {
 };
 
 struct InteractionState {
+  // Show Hover (Ctrl+K Ctrl+I): the editor hover resolved at the caret instead of
+  // the pointer, for as long as neither moves -- VS Code's keyboard hover. The
+  // viewport is an identity only (never dereferenced), so this header keeps no
+  // editor-type dependency.
+  struct CaretHover {
+    bool active = false;
+    const void* viewport = nullptr;
+    std::size_t line = 0;
+    std::size_t column = 0;
+    float pointer_x = 0.0f;
+    float pointer_y = 0.0f;
+    bool pointer_valid = false;
+  };
+  CaretHover caret_hover;
   bool window_has_input_focus = true;
   bool mouse_selecting = false;
   DragTarget drag_target = DragTarget::None;

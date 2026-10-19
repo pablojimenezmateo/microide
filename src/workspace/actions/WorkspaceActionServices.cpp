@@ -1416,6 +1416,10 @@ void WorkspaceActionContext::InjectPointerEvent(const SDL_Event& event, SDL_Keym
   }
 }
 
+bool WorkspaceActionContext::ShowHoverAtCaret() {
+  return operations_.show_hover_at_caret && operations_.show_hover_at_caret();
+}
+
 void WorkspaceActionContext::InsertText(std::string text) {
   InsertTextIntoActiveSurface(std::move(text));
 }

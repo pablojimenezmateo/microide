@@ -874,6 +874,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `redo`
 - `type <text>`
 - `key <chord> [count]`
+- `show-hover`
 - `pointer [mods+]<move|down|up|click|wheel|drop> <x> <y> [button|notches|path] [clicks]`
 - `select-all`
 - `undo`

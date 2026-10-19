@@ -360,6 +360,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::ReplaceInBuffer, "", "", "Replace in Buffer", "Ctrl+H"},
       ActionSpec{ActionId::InsertText, "type", "type <text>", "Insert Text", ""},
       ActionSpec{ActionId::PressKey, "key", "key <chord> [count]", "Press Key", ""},
+      ActionSpec{ActionId::ShowHover, "show-hover", "show-hover", "Show Hover", "Ctrl+K Ctrl+I"},
       ActionSpec{ActionId::Pointer, "pointer",
                  "pointer [mods+]<move|down|up|click|wheel|drop> <x> <y> [button|notches|path] [clicks]",
                  "Pointer", ""},

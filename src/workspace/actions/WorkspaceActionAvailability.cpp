@@ -415,6 +415,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_editable_viewport != nullptr || active_single_line_selection;
     case ActionId::Redo:
     case ActionId::Undo:
+    case ActionId::ShowHover:
       return active_editable_viewport != nullptr;
     case ActionId::SelectAll:
       return active_viewport != nullptr || IsSingleLineTextInputSurface(text_input_surface);

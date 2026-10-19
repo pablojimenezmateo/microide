@@ -403,6 +403,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::ShowHover:
+      if (!context_.ShowHoverAtCaret()) {
+        return reject("No hover at the caret");
+      }
+      return DispatchResult::Handled;
     case ActionId::Pointer: {
       // `pointer [mods+]<verb> <x> <y> ...`: the mouse, for a driver with no
       // window-system input to send (a Wayland session, an agent) -- x and y in

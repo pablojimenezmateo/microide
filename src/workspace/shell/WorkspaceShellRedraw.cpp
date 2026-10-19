@@ -635,7 +635,9 @@ void WorkspaceShell::RequestPromptRedraw() {
 }
 
 void WorkspaceShell::QueueEditorHoverRefresh() {
-  editor_hover_refresh_pending_ = last_mouse_position_valid_;
+  // A card pinned to the caret (Show Hover) refreshes with no pointer at all.
+  editor_hover_refresh_pending_ =
+      last_mouse_position_valid_ || context_.interaction_state.caret_hover.active;
 }
 
 // Each piece of chrome that floats over the workspace while it is open: the menu

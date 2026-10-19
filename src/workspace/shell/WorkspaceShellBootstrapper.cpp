@@ -19,6 +19,18 @@
 namespace microide::workspace {
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
+  // Escape puts away a card Show Hover pinned to the caret, before anything else
+  // reads the key -- as in VS Code, where it closes the hover and nothing more.
+  if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE &&
+      context_.interaction_state.caret_hover.active) {
+    context_.interaction_state.caret_hover.active = false;
+    if (active_editor_hover_target_.has_value()) {
+      active_editor_hover_target_.reset();
+      ++editor_hover_target_generation_;
+    }
+    RequestWindowRedraw();
+    return EventResult{.handled = true, .redraw = ConsumePendingRenderInvalidation()};
+  }
   const FocusTarget focus_before = context_.current_project_state.surface.focus;
   const DragTarget drag_before = context_.interaction_state.drag_target;
   // A keystroke a read-only view refused is said out loud (VS Code's "Cannot edit

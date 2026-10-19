@@ -251,6 +251,8 @@ enum class ActionId {
   // `pointer <verb> <x> <y> ...`: a mouse move, press, release, click or wheel
   // at a point in layout units (what `ui` reports), through the same path.
   Pointer,
+  // Ctrl+K Ctrl+I: the hover card for the symbol at the caret, by keyboard.
+  ShowHover,
   SelectAll,
   Undo,
   // Editor essentials: structural & shape actions

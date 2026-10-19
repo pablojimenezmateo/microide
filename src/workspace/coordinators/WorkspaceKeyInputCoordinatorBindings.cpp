@@ -163,6 +163,10 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
         if (event.key == SDLK_J) {
           return operations_.execute_action(ActionId::UnfoldAll, {}, ActionSource::Shortcut);
         }
+        if (event.key == SDLK_I) {
+          // VS Code's Show Hover: the hover card for the caret, by keyboard.
+          return operations_.execute_action(ActionId::ShowHover, {}, ActionSource::Shortcut);
+        }
       }
       // VS Code's git chords for a diff: Ctrl+K Ctrl+Alt+S stages the selected
       // ranges, Ctrl+K Ctrl+N unstages them, Ctrl+K Ctrl+R reverts them.
