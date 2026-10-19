@@ -29,9 +29,9 @@ void Expect(bool condition, std::string_view message);
 // rather than the code there (see kWaitTimeoutScale in TestSupport.cpp).
 bool IsSanitizerBuild();
 
-// True while the machine runs well past its cores (1-minute load average above
-// 1.25x the hardware threads): a starved thread can halve a measured rate without
-// inflating the minimum it also measured, so a throughput bound means nothing then.
+// True while the machine runs past its cores (1-minute load average above the
+// hardware threads): a starved thread can halve a measured rate without inflating
+// the minimum it also measured, so a throughput bound means nothing then.
 bool MachineIsOversubscribed();
 
 // Poll `predicate` until it holds or `timeout` elapses, running `pump` (if set)

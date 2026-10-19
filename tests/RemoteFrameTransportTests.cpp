@@ -257,7 +257,10 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   // hardened lane at load 17 on 12 threads: 9.5 MB/s, base RTT fine).
   if (!IsSanitizerBuild() && !MachineIsOversubscribed() &&
       base < 2 * std::chrono::duration<double>(kRtt).count()) {
-    Expect(throughput > kBytesPerSecond * 0.8,
+    // 75 %, not 80: a window too small to fill the link shows as a large
+    // shortfall, while a loaded parallel run measured 9.5 and 9.86 of 12.5 MB/s
+    // (79 %) with the window exactly right.
+    Expect(throughput > kBytesPerSecond * 0.75,
            "the link stays full: " + std::to_string(throughput / 1e6) + " MB/s");
     // Below by a measurement's worth (2%): the window comes from the MEASURED
     // bandwidth, which a busy box reads a fraction low -- 499392 against 500000
