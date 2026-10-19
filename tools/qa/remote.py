@@ -22,7 +22,7 @@ What it checks, each as the user would see it, with the measured latencies:
                                 on reconnect
   F  link death                 the ssh master is killed; a save still lands after the
                                 automatic reconnect
-  G  host terminal              `hostname` prints the host's name
+  G  host terminal              `hostname` prints the host's own name
   H  clangd on the host         go to definition in a self-contained file
   I  host branch switch         no crash; the tree follows
   J  agent churn                saves land while N host agents rewrite the tree; the
@@ -30,7 +30,9 @@ What it checks, each as the user would see it, with the measured latencies:
   L  relaunch on the mirror     the project reconnects from its record and a save pushes
 
 Without MQA_REMOTE_HOST the suite prints why it did not run and exits 0: it is
-on-demand, never a lane. Any FAIL or oracle finding exits 1. Findings and
+on-demand against a real host. `tools/qa/local-sshd.sh` stands up a loopback-only
+sshd as the current user (no install, no system service) and prints the variables
+that point this suite at it; `tools/run-checks.sh qa-remote` does that end to end. Any FAIL or oracle finding exits 1. Findings and
 screenshots land in --out (default /tmp/mqa-remote-<time>).
 """
 
@@ -50,6 +52,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import microide_qa as q  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
+# An ssh client config for the host (tools/qa/local-sshd.sh writes one for a
+# loopback-only sshd); the suite's own ssh/scp and the app's ssh both read it.
+SSH_CONFIG = os.environ.get("MQA_SSH_CONFIG")
+
+
+def ssh_cmd(*args: str) -> list[str]:
+    return ["ssh", "-o", "BatchMode=yes", *(["-F", SSH_CONFIG] if SSH_CONFIG else []), *args]
 EDIT_FILE = "LICENSE"  # the agents never touch it (not a source extension)
 
 
@@ -60,7 +69,7 @@ class Host:
         self.agents = ""
 
     def ssh(self, cmd: str, timeout: float = 120) -> str:
-        return subprocess.run(["ssh", "-o", "BatchMode=yes", self.name, cmd], capture_output=True,
+        return subprocess.run(ssh_cmd(self.name, cmd), capture_output=True,
                               text=True, timeout=timeout).stdout
 
     def file(self, rel: str) -> str:
@@ -77,8 +86,10 @@ class Host:
 
     def install_agents(self) -> None:
         self.agents = self.ssh("mktemp -d /tmp/mqa-agents.XXXXXX").strip() + "/agents.py"
-        subprocess.run(["scp", "-q", str(Path(__file__).with_name("agents.py")),
-                        f"{self.name}:{self.agents}"], check=True)
+        # Over the ssh connection itself, not scp: scp speaks SFTP, which a minimal
+        # sshd (tools/qa/local-sshd.sh) does not serve.
+        subprocess.run(ssh_cmd(self.name, f"cat > {self.agents}"), check=True,
+                       input=Path(__file__).with_name("agents.py").read_text(), text=True)
 
 
 def mirror_hashes(mirror: Path) -> dict[str, str]:
@@ -277,9 +288,11 @@ class Suite:
             app.check("F")
 
         if self.runs("G"):
+            # The host's own name, not the ssh alias (they differ for a config alias).
+            hostname = host.ssh("hostname").strip()
             reply = app.send("remote-terminal", host.name); app.settle(2.5)
             app.send("type", "echo QA-TERM-$(hostname)"); app.send("key", "enter")
-            out, dt = wait_for(lambda: (lambda o: o if f"QA-TERM-{host.name}" in o.get("text", "") else None)(
+            out, dt = wait_for(lambda: (lambda o: o if f"QA-TERM-{hostname}" in o.get("text", "") else None)(
                 app.query("terminal-output")), 20, 0.5)
             self.record("G.host-terminal", out is not None, f"{reply} {dt:.2f}s")
             app.screenshot("G-terminal"); app.check("G")
@@ -323,8 +336,7 @@ class Suite:
             app.send("open", EDIT_FILE); app.settle(0.5)
             app.send("split-right", "README.md"); app.settle(0.5)  # a second pane repaints too
             app.send("focus-group-left"); app.settle(0.2)
-            churn = subprocess.Popen(["ssh", "-o", "BatchMode=yes", host.name,
-                                      f"python3 {host.agents} churn {host.root} 4 25"],
+            churn = subprocess.Popen(ssh_cmd(host.name, f"python3 {host.agents} churn {host.root} 4 25"),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             saves, latencies = 0, []
             for i in range(8):
@@ -370,13 +382,15 @@ def main() -> int:
     print("host reset:", host.reset())
     fixture = q.make_fixture(out / "fixture")
     env = {"MICROIDE_SERVER_BINARY": server}
+    ssh_args = ["--set", "remote.ssh_command", f"ssh -F {SSH_CONFIG}"] if SSH_CONFIG else []
     results: list[tuple[str, str, str]] = []
     findings: list[q.Finding] = []
     mirror: Path | None = None
     work: Path | None = None
     only = set(args.scenarios)
     try:
-        with q.App.launch(project=fixture, shots=out / "shots", keep_home=True, extra_env=env) as app:
+        with q.App.launch(project=fixture, shots=out / "shots", keep_home=True, extra_env=env,
+                          extra_args=ssh_args) as app:
             suite = Suite(app, host, only)
             suite.run_all()
             results, mirror, work = suite.results, suite.mirror, app.work
@@ -387,7 +401,7 @@ def main() -> int:
             same_dirs = {k: str(work / k.split("_")[1].lower()) for k in
                          ("XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME")}
             with q.App.launch(project=mirror, shots=out / "shots", keep_home=True,
-                              extra_env={**env, **same_dirs}) as app2:
+                              extra_env={**env, **same_dirs}, extra_args=ssh_args) as app2:
                 suite2 = Suite(app2, host, only); suite2.mirror = mirror
                 app2.settle(1.0); msg, dt, ok = suite2.wait_ready(120)
                 suite2.record("L.relaunch-reconnects", ok, f"{msg} after {dt:.1f}s")

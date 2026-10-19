@@ -595,9 +595,52 @@ check_qa() {
   return $rc
 }
 
+# The GUI QA suite against the ASan build: a slow binary under a memory checker. The
+# fast build hid a use-after-free (Alt+O from a diff read its own freed path) that
+# this ran into every time; the scenario oracles report any sanitizer line.
+check_qa_asan() {
+  local log="${LOG_DIR}/microide-qa-asan.log"
+  local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-asan-out}"
+  local qa_jobs="${MICROIDE_QA_JOBS:-$(( JOBS < 6 ? JOBS : 6 ))}"
+  run_logged "$log" bash -c '
+    set -e
+    rm -rf '"$out"'
+    cmake --preset microide-asan >/dev/null
+    cmake --build build/microide-asan --target microide -j'"$JOBS"'
+    python3 tools/qa/run.py --out '"$out"' suite --jobs '"$qa_jobs"' \
+      --binary build/microide-asan/microide/microide
+  '
+  local rc=$?
+  echo "run-checks: qa-asan finished (exit $rc); log at $log, findings under $out"
+  return $rc
+}
+
+# The remote-project scenarios (tools/qa/remote.py) against a loopback-only sshd
+# run as the current user (tools/qa/local-sshd.sh): no real host, no system
+# service. Builds the app and the static x86_64 server the editor installs.
+check_qa_remote() {
+  local log="${LOG_DIR}/microide-qa-remote.log"
+  local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-remote-out}"
+  run_logged "$log" bash -c '
+    set -e
+    rm -rf '"$out"'
+    cmake -S . -B build >/dev/null
+    cmake --build build --target microide -j'"$JOBS"'
+    bash tools/build-server.sh x86_64
+    eval "$(tools/qa/local-sshd.sh start)"
+    trap "tools/qa/local-sshd.sh stop" EXIT
+    python3 tools/qa/remote.py --out '"$out"'
+  '
+  local rc=$?
+  echo "run-checks: qa-remote finished (exit $rc); log at $log, findings under $out"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-asan|qa-remote|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
+  echo "       tools/run-checks.sh qa-asan       # the GUI QA suite on the ASan build" >&2
+  echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd" >&2
   echo "       tools/run-checks.sh hardened      # whole suite with _GLIBCXX_ASSERTIONS armed" >&2
   echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
   echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
@@ -626,6 +669,8 @@ main() {
     coverage) check_coverage "${2:-}" ;;
     hardened) check_hardened ;;
     qa) check_qa ;;
+    qa-asan) check_qa_asan ;;
+    qa-remote) check_qa_remote ;;
     all)
       local overall=0
       check_tests            || overall=1

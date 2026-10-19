@@ -144,6 +144,8 @@ tools/run-checks.sh perf-canary # -> /tmp/microide-perf-canary.log (proves the p
 tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler, warnings-as-errors)
 tools/run-checks.sh hardened    # -> /tmp/microide-hardened.log (_GLIBCXX_ASSERTIONS; catches library-precondition UB the sanitizers cannot)
 tools/run-checks.sh qa          # -> /tmp/microide-qa.log (GUI QA on Xvfb: scenario suite + 300-step monkey, redraw verifier on; see tools/qa/README.md)
+tools/run-checks.sh qa-asan     # -> /tmp/microide-qa-asan.log (the GUI QA suite on the ASan build: a slow binary under a memory checker)
+tools/run-checks.sh qa-remote   # -> /tmp/microide-qa-remote.log (remote-project scenarios against a loopback-only sshd run as you; tools/qa/local-sshd.sh)
 tools/run-checks.sh all     # all four in sequence
 ```
 
