@@ -63,6 +63,7 @@ class MergeMouseCoordinator {
         const WorkspaceShell::MergeSurfaceLayout&,
         std::string_view)>
         merge_secondary_toolbar_button_rect;
+    std::function<void(const SDL_FRect&)> request_redraw_rect;
   };
 
   MergeMouseCoordinator(ProjectWorkspaceState& state,

@@ -1484,9 +1484,48 @@ void TestF1AndCtrlNumberFocusGroups() {
          "Ctrl+5 with two groups should be refused, not split");
 }
 
+// Hovering a merge toolbar button lights it, and the frame shows it: the buttons
+// read the pointer at paint time, but merge hover tracking knew only conflict
+// regions, so moving onto Save requested no repaint of it and the next partial
+// frame (a caret blink) kept the unlit button (QA merge-mouse, both lanes).
+void TestMergeToolbarHoverRepaintsTheButton() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  const std::filesystem::path base = fixture.root / "base.txt";
+  const std::filesystem::path incoming = fixture.root / "incoming.txt";
+  const std::filesystem::path current = fixture.root / "current.txt";
+  const std::filesystem::path output = fixture.root / "result.txt";
+  WriteFile(base, "alpha\none\ntwo\n");
+  WriteFile(incoming, "incoming\none\ntwo\n");
+  WriteFile(current, "current\none\ntwo\n");
+  WriteFile(output, "alpha\none\ntwo\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, base, incoming, current, output),
+         "the merge editor should open");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto away = fixture.ElementRect("button:merge/save");
+  Expect(away.has_value(), "the ui query should name the merge Save button");
+  for (const std::string_view name : {"button:merge/save", "button:merge/open", "button:merge/prev",
+                                      "button:merge/Toggle Base", "button:merge/Mark Resolved"}) {
+    const auto rect = fixture.ElementRect(name);
+    Expect(rect.has_value(), "the ui query should name " + std::string(name));
+    if (!rect.has_value()) {
+      continue;
+    }
+    const float x = rect->x + rect->w / 2.0f;
+    const float y = rect->y + rect->h / 2.0f;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}),
+                        "hovering " + std::string(name));
+    // Off every button, onto the result pane's header band below the toolbar.
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y + 120.0f)}),
+                        "leaving " + std::string(name));
+  }
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
+          TestMergeToolbarHoverRepaintsTheButton);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);

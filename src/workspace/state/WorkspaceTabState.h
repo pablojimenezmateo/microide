@@ -331,6 +331,9 @@ struct MergeTabState {
   mutable std::uint64_t visual_conflicts_key = 0;
   mutable bool visual_conflicts_valid = false;
   std::optional<MergeHoverState> hover_state;
+  // The toolbar button under the pointer: the buttons light up from the pointer
+  // at paint time, so a change here is what tells the frame to repaint them.
+  std::optional<SDL_FRect> hovered_toolbar_button;
   std::size_t selected_hunk = 0;
   int scroll_row = 0;
   std::size_t horizontal_scroll = 0;
