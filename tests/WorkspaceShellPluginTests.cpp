@@ -3218,6 +3218,55 @@ return ide.plugin({
 // to clear only diagnostics and semantic tokens, so inlay hints stayed painted
 // after the subsystem was switched off and its servers were retired — output from
 // a server that is no longer running, with no way to get rid of it.
+// A server that registers after its file opened still starts for it. A fresh
+// project's plugins load off the UI thread, and a file opened before they land
+// (an agent's `project-open` then `open`, a quick Ctrl+P) found no server; the
+// reload engaged nothing when it did land, so the status read "Starting…" with no
+// process ever started (QA lsp-csharp, lsp-typescript).
+void TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "# notes\n");
+  std::filesystem::create_directories(plugins_root);
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "the fixture should open its project");
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  Expect(!WorkspaceShellTestAccess::LspManagerForTesting(shell).HasServer("markdown"),
+         "no server is registered yet");
+
+  // The plugin's contribution lands now, as a reload that finished after the open.
+  WritePluginInit(
+      plugins_root, "mdlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown",
+                  command = { "/bin/sh", "-c", "exec sleep 30" } })
+  end
+})
+)");
+  Expect(WorkspaceShellTestAccess::ReloadPluginsIfPluginAssetsChanged(shell, true),
+         "the new plugin should be picked up");
+  workspace::LspManager& manager = WorkspaceShellTestAccess::LspManagerForTesting(shell);
+  Expect(manager.HasServer("markdown"), "the reload registers the markdown server");
+  Expect(manager.IsServerRunning("markdown"),
+         "and starts it for the markdown file already active, as opening it would have");
+}
+
 void TestWorkspaceShellDisablingLspClearsEveryServerOverlay() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -6730,6 +6779,8 @@ return ide.plugin({
 }
 
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ServerRegisteredAfterOpenStartsForTheActiveFile",
+          TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile);
   AddTest(tests, "WorkspaceShell/EditorPreferencesReachAllSplitGroups",
           TestWorkspaceShellEditorPreferencesReachAllSplitGroups);
   AddTest(tests, "WorkspaceShell/WorkspaceEditRefreshesFolds",

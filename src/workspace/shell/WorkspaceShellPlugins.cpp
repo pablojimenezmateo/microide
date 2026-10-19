@@ -959,6 +959,15 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     util::PerformanceTrace::Scope perf_open_buffers_scope(
         "WorkspaceShell::ReloadPluginsForCurrentProject::NotifyPluginsAboutOpenBuffers");
     NotifyPluginsAboutOpenBuffers(request.replay_buffer_opens, request.open_lsp_documents);
+    // The reload ran off the UI thread, so a file can have become the active
+    // editor before the servers it contributes were registered: its open found no
+    // server, and the status read "Starting…" with nothing ever started (QA
+    // lsp-csharp: `project-open` then `open`). A server becoming available for the
+    // active editor is the moment activating it would have engaged one.
+    if (const editor::TextViewport* active = ActiveEditableViewport();
+        active != nullptr && !active->path().empty()) {
+      NotifyLspBufferOpen(active->path());
+    }
   }
   {
     util::StartupTrace::Scope chrome_redraw_scope("RequestChromeRedraw");
