@@ -290,8 +290,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       if (editor_segments_cache_.errors != errors || editor_segments_cache_.warnings != warnings) {
         editor_segments_cache_.errors = errors;
         editor_segments_cache_.warnings = warnings;
-        editor_segments_cache_.problems_text =
-            std::to_string(errors) + " errors, " + std::to_string(warnings) + " warnings";
+        editor_segments_cache_.problems_text = ProblemsSegmentText(errors, warnings);
       }
       problems.text = editor_segments_cache_.problems_text;
       problems.tooltip = "Open Problems";
@@ -328,6 +327,11 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     }
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Lsp, lsp);
+}
+
+std::string ProblemsSegmentText(std::size_t errors, std::size_t warnings) {
+  return std::to_string(errors) + (errors == 1 ? " error, " : " errors, ") + std::to_string(warnings) +
+         (warnings == 1 ? " warning" : " warnings");
 }
 
 }  // namespace microide::workspace

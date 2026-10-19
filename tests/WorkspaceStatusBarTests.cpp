@@ -400,9 +400,18 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
          "a project outside any repository still reports no-scm");
 }
 
+void TestStatusBarProblemsTextAgreesInNumber() {
+  Expect(workspace::ProblemsSegmentText(1, 0) == "1 error, 0 warnings",
+         "one error: " + workspace::ProblemsSegmentText(1, 0));
+  Expect(workspace::ProblemsSegmentText(2, 1) == "2 errors, 1 warning",
+         "one warning: " + workspace::ProblemsSegmentText(2, 1));
+  Expect(workspace::ProblemsSegmentText(0, 3) == "0 errors, 3 warnings", "plural");
+}
+
 }  // namespace
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceStatusBar/ProblemsTextAgreesInNumber", TestStatusBarProblemsTextAgreesInNumber);
   AddTest(tests, "WorkspaceStatusBar/SetSegmentReportsPaintedChanges",
           TestStatusBarSetSegmentReportsPaintedChanges);
   AddTest(tests, "WorkspaceStatusBar/RendersUnknownGitAvailabilityAsUnknown",

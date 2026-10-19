@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <cstddef>
 #include <string>
 
 #include "editor/RuntimeSyntaxRegistry.h"
@@ -124,5 +125,9 @@ class StatusBarModelService {
   ProjectSegmentCache project_segment_cache_;
   EditorSegmentsCache editor_segments_cache_;
 };
+
+// The problems segment's text: "1 error, 2 warnings" (counts agree with their
+// nouns; "1 errors" is what the segment used to say).
+std::string ProblemsSegmentText(std::size_t errors, std::size_t warnings);
 
 }  // namespace microide::workspace
