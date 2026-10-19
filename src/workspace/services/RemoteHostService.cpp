@@ -427,6 +427,11 @@ bool RemoteHostService::RemoveMirror(const std::filesystem::path& root, bool dis
   }
   std::size_t unsent = 0;
   if (it != projects_.end()) {
+    // A save tells the engine through its queue (NotifyLocalWrite journals it there),
+    // so a removal right after a save could count before the journal and delete an
+    // edit the host never got (CI hit it). Let the queue drain first: the project is
+    // closed, so what is left is that journaling and any push already under way.
+    it->second.project->engine().Flush();
     const remote::MirrorSyncEngine::Status sync = it->second.project->engine().status();
     unsent = sync.dirty + sync.conflicts;
   } else {
