@@ -384,6 +384,89 @@ void TestUiQueryNamesToasts() {
   }
 }
 
+// What `pointer` and `key` change reaches the screen: they hand the shell an event
+// from inside the control command, and the damage that nested dispatch returned
+// was dropped -- so the frame after a control click repainted only what was still
+// pending, and the newly active tab kept its old look (QA on Wayland, `chrome`).
+void TestInjectedInputRepaintsWhatItChanged() {
+  UiFixture fixture;
+  const auto alpha_tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
+  Expect(alpha_tab.has_value() && alpha_tab->active == false, "alpha.cpp should be an inactive tab");
+  const std::string x = std::to_string(alpha_tab->rect.x + alpha_tab->rect.w / 2.0f);
+  const std::string y = std::to_string(alpha_tab->rect.y + alpha_tab->rect.h / 2.0f);
+  for (const std::string& line : {"pointer click " + x + " " + y, std::string("key ctrl+end"),
+                                  std::string("key z")}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, line), "should run: " + line);
+    // The app loop: the control event's own result is what the shell has pending.
+    const workspace::RenderInvalidation redraw = fixture.shell.ConsumePendingRenderInvalidation();
+    const render::PixelDiffResult diff = PaintAndDiffWithFullRepaint(
+        fixture.shell, fixture.canvas, UiFixture::kWidth, UiFixture::kHeight, redraw,
+        [&] { TestAccess::SetCaretBlinkEpochMs(fixture.shell, SDL_GetTicks()); });
+    Expect(diff.count == 0, line + " should repaint what it changed: " + DescribePixelDiff(diff));
+  }
+}
+
+// `key` is a key press with the text a keyboard types: an agent answering a TUI's
+// `[y/N]` with `key y` got nothing, since every text surface reads the text event
+// and the command sent only the press and the release.
+void TestKeyCommandTypesPrintableKeys() {
+  UiFixture fixture;
+  TestAccess::SetFocusEditor(fixture.shell);
+  for (const char* line : {"key ctrl+end", "key y", "key shift+n", "key space", "key ctrl+a"}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, line), std::string("should run: ") + line);
+  }
+  const util::JsonValue buffer = TestAccess::ControlQuery(fixture.shell, "buffer");
+  Expect(buffer["text"].AsString() == "int beta = 2;\nyN ",
+         "printable keys should type, shifted and plain, and a chord should not: " +
+             buffer["text"].AsString());
+}
+
+// `pointer` is the mouse for a driver with no window-system input (a Wayland
+// session, an agent): it lands where `ui` says, in the same layout units, and
+// runs what a real click there would.
+void TestPointerCommandClicksWhatTheUiNames() {
+  UiFixture fixture;
+  const auto center = [](const UiElement& element) {
+    return std::to_string(element.rect.x + element.rect.w / 2.0f) + " " +
+           std::to_string(element.rect.y + element.rect.h / 2.0f);
+  };
+  const auto edit = Find(TestAccess::ControlUi(fixture.shell), "menu:Edit");
+  Expect(edit.has_value(), "the Edit menu should be on the bar");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer click " + center(*edit)),
+         "pointer click should run");
+  Expect(TestAccess::ActiveMenuId(fixture.shell) == WorkspaceShell::MenuId::Edit &&
+             TestAccess::MenuBarOpen(fixture.shell),
+         "pointer click at menu:Edit should open the Edit menu");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "key escape"), "key escape should run");
+  Expect(!TestAccess::MenuBarOpen(fixture.shell), "key escape should close the menu");
+
+  const auto alpha_tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
+  Expect(alpha_tab.has_value() && alpha_tab->active == false, "alpha.cpp should be an inactive tab");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer click " + center(*alpha_tab)),
+         "pointer click on a tab should run");
+  const auto after = Find(TestAccess::ControlUi(fixture.shell), "tab:0/alpha.cpp");
+  Expect(after.has_value() && after->active == true, "pointer click on a tab should activate it");
+
+  // A middle click closes a tab: the button argument reaches the handler.
+  const auto beta_tab = Find(TestAccess::ControlUi(fixture.shell), "tab:0/beta.cpp");
+  Expect(beta_tab.has_value(), "beta.cpp should still have a tab");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer click " + center(*beta_tab) + " middle"),
+         "pointer middle click should run");
+  Expect(!Find(TestAccess::ControlUi(fixture.shell), "tab:0/beta.cpp").has_value(),
+         "a middle click on a tab should close it");
+
+  // Modifiers are held for the click only.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "pointer ctrl+shift+move 10 10"),
+         "a modifier prefix should parse");
+  Expect(SDL_GetModState() == SDL_KMOD_NONE, "pointer should release the modifiers it held");
+
+  for (const char* bad : {"pointer", "pointer click 1", "pointer fling 1 1", "pointer click x 1",
+                          "pointer click 1 1 fourth", "pointer click 1 1 left 9", "pointer wheel 1 1 0",
+                          "pointer hyper+click 1 1"}) {
+    Expect(!TestAccess::ExecuteCommandLine(fixture.shell, bad), std::string("should reject: ") + bad);
+  }
+}
+
 }  // namespace
 
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
@@ -403,6 +486,10 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
+  AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);
+  AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
+  AddTest(tests, "ControlUiQuery/PointerCommandClicksWhatTheUiNames",
+          TestPointerCommandClicksWhatTheUiNames);
 }
 
 }  // namespace microide::tests

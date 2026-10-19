@@ -311,7 +311,18 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   `key enter`, `key down 3`, `key shift+enter`, `key ctrl+c` — through the
   window's real keyboard path, so the terminal encodes them exactly as a
   keystroke (kitty keyboard protocol included) and focus/shortcut routing
-  applies. `term <command>` runs the command through `$SHELL -lc`; an argument
+  applies. A printable key types its character as a keyboard does (`key y`
+  answers a `[y/N]` prompt; `key shift+n` types `N`); a chord with Ctrl, Alt or
+  Super types nothing.
+- The mouse: `pointer [mods+]<verb> <x> <y> [button|notches] [clicks]`, at a
+  point in layout units -- the coordinates the `ui` query's rects are in, so a
+  driver clicks an element at its rect's center with no window-system input
+  (a Wayland session, an agent). `pointer click 640 12` presses and releases the
+  left button, `pointer click X Y right`, `pointer click X Y left 2` is a double
+  click, `pointer ctrl+click X Y` holds Ctrl for it, `pointer down`/`move X Y
+  left`/`up` is a drag, and `pointer wheel X Y 3` scrolls three notches down
+  (negative: up). Every verb moves the pointer there first, so hover state
+  follows it. `term <command>` runs the command through `$SHELL -lc`; an argument
   quoted when typed stays one word (`term bash -c "make; echo done"`). Worked
   example, used to check Claude Code runs in the terminal: `panel-maximize`,
   `term claude`, `key down`, `key enter`, `type hello`, `key shift+enter`,

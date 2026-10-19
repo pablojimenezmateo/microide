@@ -378,6 +378,14 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
   // panel so the answer lands where the user is looking. References forgot to,
   // so Shift+F12 wrote its results into a channel nobody had open (QA flow
   // lsp-navigation).
+  // `key` and `pointer` hand the shell an event from inside a control command. The
+  // app loop paints what an event returns; this one returns into the command, so
+  // its damage goes back on the pending list the command's own event returns --
+  // dropped, the frame after a control click repainted only what was still
+  // pending (QA on Wayland: a newly active tab kept its old look).
+  const auto dispatch_injected = [this](const SDL_Event& event) {
+    pending_render_invalidation_.Merge(HandleEvent(event).redraw);
+  };
   const auto show_results_channel = [this](const char* channel_id) {
     EnsureOutputChannelTabOpen(channel_id);
     context_.current_project_state.panel.content = PanelContentKind::Output;
@@ -896,17 +904,44 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 MakeTextInputCoordinator().PasteTextIntoTerminal(std::move(text));
               },
           .press_key =
-              [this](SDL_Keycode key, SDL_Keymod modifiers) {
+              [dispatch_injected](SDL_Keycode key, SDL_Keymod modifiers) {
                 SDL_Event event{};
                 event.type = SDL_EVENT_KEY_DOWN;
                 event.key.key = key;
                 event.key.mod = modifiers;
                 event.key.scancode = SDL_GetScancodeFromKey(key, nullptr);
                 event.key.down = true;
-                (void)HandleEvent(event);
+                dispatch_injected(event);
+                // A printable key also types its character: SDL sends the text
+                // as its own event between the press and the release, and every
+                // text surface (the editor, the terminal, a query) reads only
+                // that. Without it `key y` answered no TUI prompt at all. Where
+                // no surface takes text, the text handler drops it.
+                const bool chorded = (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) != 0;
+                if (!chorded) {
+                  const SDL_Keycode typed =
+                      (modifiers & SDL_KMOD_SHIFT) != 0
+                          ? SDL_GetKeyFromScancode(event.key.scancode, SDL_KMOD_SHIFT, false)
+                          : key;
+                  if (typed >= 0x20 && typed < 0x7F) {
+                    const char text[2] = {static_cast<char>(typed), '\0'};
+                    SDL_Event text_event{};
+                    text_event.type = SDL_EVENT_TEXT_INPUT;
+                    text_event.text.text = text;
+                    dispatch_injected(text_event);
+                  }
+                }
                 event.type = SDL_EVENT_KEY_UP;
                 event.key.down = false;
-                (void)HandleEvent(event);
+                dispatch_injected(event);
+              },
+          .inject_pointer_event =
+              [dispatch_injected](const SDL_Event& event, SDL_Keymod modifiers) {
+                // Click handlers read the held modifiers from SDL, not the event.
+                const SDL_Keymod previous = SDL_GetModState();
+                SDL_SetModState(modifiers);
+                dispatch_injected(event);
+                SDL_SetModState(previous);
               },
           .refresh_available_colorscheme_names =
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },

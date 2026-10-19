@@ -248,6 +248,9 @@ enum class ActionId {
   // external/headless caller enters characters into the active editor.
   InsertText,
   PressKey,
+  // `pointer <verb> <x> <y> ...`: a mouse move, press, release, click or wheel
+  // at a point in layout units (what `ui` reports), through the same path.
+  Pointer,
   SelectAll,
   Undo,
   // Editor essentials: structural & shape actions

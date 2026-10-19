@@ -1410,6 +1410,12 @@ void WorkspaceActionContext::PressKey(SDL_Keycode key, SDL_Keymod modifiers) {
   }
 }
 
+void WorkspaceActionContext::InjectPointerEvent(const SDL_Event& event, SDL_Keymod modifiers) {
+  if (operations_.inject_pointer_event) {
+    operations_.inject_pointer_event(event, modifiers);
+  }
+}
+
 void WorkspaceActionContext::InsertText(std::string text) {
   InsertTextIntoActiveSurface(std::move(text));
 }

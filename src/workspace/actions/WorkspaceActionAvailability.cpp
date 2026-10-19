@@ -419,7 +419,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::SelectAll:
       return active_viewport != nullptr || IsSingleLineTextInputSurface(text_input_surface);
     case ActionId::PressKey:
-      // `key <chord>` goes wherever a real keystroke would.
+    case ActionId::Pointer:
+      // `key <chord>` goes wherever a real keystroke would; `pointer` wherever a
+      // real click would.
       return true;
     case ActionId::InsertText:
       // `type <text>` targets the active editable viewport or a text-input

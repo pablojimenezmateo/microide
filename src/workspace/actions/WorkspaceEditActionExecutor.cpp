@@ -3,6 +3,7 @@
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"
 #include "util/Parse.h"
+#include "util/StringUtil.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -399,6 +400,106 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       for (int i = 0; i < count; ++i) {
         context_.PressKey(key, modifiers);
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::Pointer: {
+      // `pointer [mods+]<verb> <x> <y> ...`: the mouse, for a driver with no
+      // window-system input to send (a Wayland session, an agent) -- x and y in
+      // layout units, the coordinates `ui` reports. Every verb moves the pointer
+      // there first, as a real hand would; `move x y left` is a drag step.
+      static constexpr std::string_view kUsage =
+          "usage: pointer [mods+]<move|down|up|click|wheel> <x> <y> [button|notches] [clicks]";
+      if (args.size() < 3) {
+        return reject(std::string(kUsage));
+      }
+      const std::string_view chord = args[0];
+      const std::size_t plus = chord.rfind('+');
+      const std::string verb = util::ToLowerAscii(plus == std::string_view::npos ? chord : chord.substr(plus + 1));
+      SDL_Keymod modifiers = SDL_KMOD_NONE;
+      if (plus != std::string_view::npos) {
+        // The modifier prefix spelled as for `key`, on a stand-in key.
+        SDL_Keycode ignored = SDLK_UNKNOWN;
+        if (!ParseKeyChord(std::string(chord.substr(0, plus + 1)) + "a", &ignored, &modifiers)) {
+          return reject(std::string(kUsage));
+        }
+      }
+      const std::optional<float> x = util::ParseFloat(args[1]);
+      const std::optional<float> y = util::ParseFloat(args[2]);
+      if (!x.has_value() || !y.has_value()) {
+        return reject("pointer: x and y are numbers (layout units)");
+      }
+      const auto parse_button = [](std::string_view name) -> std::optional<Uint8> {
+        const std::string lower = util::ToLowerAscii(name);
+        if (lower == "left" || lower == "1") return SDL_BUTTON_LEFT;
+        if (lower == "middle" || lower == "2") return SDL_BUTTON_MIDDLE;
+        if (lower == "right" || lower == "3") return SDL_BUTTON_RIGHT;
+        return std::nullopt;
+      };
+      std::optional<Uint8> button;
+      if (args.size() > 3 && verb != "wheel") {
+        button = parse_button(args[3]);
+        if (!button.has_value()) {
+          return reject("pointer: button is left, middle or right");
+        }
+      }
+      int clicks = 1;
+      if (args.size() > 4) {
+        const std::optional<int> parsed = util::ParseInt(args[4]);
+        if (!parsed.has_value() || *parsed < 1 || *parsed > 3) {
+          return reject("pointer: clicks must be 1-3");
+        }
+        clicks = *parsed;
+      }
+      const auto move = [&](SDL_MouseButtonFlags held) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_MOTION;
+        event.motion.x = *x;
+        event.motion.y = *y;
+        event.motion.state = held;
+        context_.InjectPointerEvent(event, modifiers);
+      };
+      const auto press = [&](Uint8 which, bool down, int count) {
+        SDL_Event event{};
+        event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
+        event.button.button = which;
+        event.button.down = down;
+        event.button.clicks = static_cast<Uint8>(count);
+        event.button.x = *x;
+        event.button.y = *y;
+        context_.InjectPointerEvent(event, modifiers);
+      };
+      if (verb == "move") {
+        move(button.has_value() ? SDL_BUTTON_MASK(*button) : 0);
+      } else if (verb == "down" || verb == "up" || verb == "click") {
+        const Uint8 which = button.value_or(SDL_BUTTON_LEFT);
+        move(verb == "up" ? SDL_BUTTON_MASK(which) : 0);
+        if (verb == "click") {
+          // A double click is two presses, the second counted 2: what SDL sends.
+          for (int count = 1; count <= clicks; ++count) {
+            press(which, /*down=*/true, count);
+            press(which, /*down=*/false, count);
+          }
+        } else {
+          press(which, verb == "down", clicks);
+        }
+      } else if (verb == "wheel") {
+        const std::optional<int> notches = args.size() > 3 ? util::ParseInt(args[3]) : std::optional<int>(1);
+        if (!notches.has_value() || *notches == 0 || *notches < -100 || *notches > 100) {
+          return reject("pointer: wheel notches are -100..100, not 0 (positive scrolls down)");
+        }
+        move(0);
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_WHEEL;
+        event.wheel.direction = SDL_MOUSEWHEEL_NORMAL;
+        // SDL's y is positive away from the user (up); a notch down is -1.
+        event.wheel.y = static_cast<float>(-*notches);
+        event.wheel.integer_y = -*notches;
+        event.wheel.mouse_x = *x;
+        event.wheel.mouse_y = *y;
+        context_.InjectPointerEvent(event, modifiers);
+      } else {
+        return reject(std::string(kUsage));
       }
       return DispatchResult::Handled;
     }

@@ -241,6 +241,9 @@ class WorkspaceActionContext {
     // A key press (down then up) delivered through the window's event path, as
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.
     std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
+    // A mouse event (layout coordinates) delivered the same way, with `modifiers`
+    // held for it: what the shell reads from SDL_GetModState for a click.
+    std::function<void(const SDL_Event&, SDL_Keymod)> inject_pointer_event;
     std::function<void()> refresh_available_colorscheme_names;
     std::function<std::vector<std::string>()> available_colorscheme_names;
     // False when no theme of that name exists (built-in, on disk, or plugin).
@@ -605,6 +608,7 @@ class WorkspaceActionContext {
   // `type <text>` command / control-channel verb.
   void InsertText(std::string text);
   void PressKey(SDL_Keycode key, SDL_Keymod modifiers);
+  void InjectPointerEvent(const SDL_Event& event, SDL_Keymod modifiers);
 
   void RefreshAvailableColorschemeNames();
   // Says which colour schemes `colorscheme <name>` takes (feedback and a toast).
