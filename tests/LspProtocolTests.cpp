@@ -296,6 +296,29 @@ void TestLspProtocolHoverMarkdownBecomesText() {
          "only a real heading (1-6 '#' and a space) loses its marker");
 }
 
+// Code is code: the converter used to strip `**`/`__` everywhere, fenced blocks
+// and code spans included (fences were dropped before it ran), so a Python hover
+// `def f(*args, **kwargs)` read "def f(*args, kwargs)" and `__init__` read "init".
+// A code span is CommonMark's: a matching run of backticks, its content literal,
+// one padding space stripped from each end -- csharp-ls sends
+// "`` int Util.Twice(int value) ``", which drew with the spaces (QA lsp-csharp).
+void TestLspProtocolHoverMarkdownKeepsCodeVerbatim() {
+  const std::string fenced = "```python\ndef f(*args, **kwargs): __init__\n```\nCalls **it**.";
+  Expect(codec::HoverMarkdownToText(fenced) == "def f(*args, **kwargs): __init__\nCalls it.",
+         "a fenced block keeps its text verbatim: [" + codec::HoverMarkdownToText(fenced) + "]");
+  Expect(codec::HoverMarkdownToText("`` int Util.Twice(int value) ``") == "int Util.Twice(int value)",
+         "a padded code span loses one space each side: [" +
+             codec::HoverMarkdownToText("`` int Util.Twice(int value) ``") + "]");
+  Expect(codec::HoverMarkdownToText("`a__b__c` and `` `x` `` and **bold**") == "a__b__c and `x` and bold",
+         "a code span's content is literal, backticks inside a longer run included: [" +
+             codec::HoverMarkdownToText("`a__b__c` and `` `x` `` and **bold**") + "]");
+  Expect(codec::HoverMarkdownToText("a lone ` stays") == "a lone ` stays",
+         "an unmatched backtick is literal text");
+  const std::string parsed = codec::ParseHoverContents(
+      Json(R"({"contents":{"kind":"markdown","value":"```python\ndef g(**kw): ...\n```"}})"));
+  Expect(parsed == "def g(**kw): ...", "a markdown hover keeps its fenced code: [" + parsed + "]");
+}
+
 // J27: ParseHoverContents caps a hostile MarkedString[] by element count AND total
 // bytes, truncating on a UTF-8 boundary with an explicit marker, so a near-64 MiB
 // hover cannot force an unbounded concatenation on the callback path.
@@ -782,6 +805,7 @@ void RegisterLspProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "LspProtocol/ParsesPrepareRename", TestLspProtocolParsesPrepareRename);
   AddTest(tests, "LspProtocol/ParsesTextEdits", TestLspProtocolParsesTextEdits);
   AddTest(tests, "LspProtocol/ParsesHoverContents", TestLspProtocolParsesHoverContents);
+  AddTest(tests, "LspProtocol/HoverMarkdownKeepsCodeVerbatim", TestLspProtocolHoverMarkdownKeepsCodeVerbatim);
   AddTest(tests, "LspProtocol/HoverMarkdownBecomesText", TestLspProtocolHoverMarkdownBecomesText);
   AddTest(tests, "LspProtocol/HoverContentsAreBounded", TestLspProtocolHoverContentsAreBounded);
   AddTest(tests, "LspProtocol/ClampsOutOfRangePositions",

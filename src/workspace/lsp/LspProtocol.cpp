@@ -467,11 +467,40 @@ std::string StripMarkdownFences(std::string text) {
 std::string HoverMarkdownToText(std::string_view markdown) {
   std::string out;
   out.reserve(markdown.size());
+  // Inside a fenced block (``` or ~~~): its lines are code and pass verbatim; the
+  // fence lines themselves go. Fences used to be stripped before this ran, so the
+  // emphasis pass below ate `**kwargs` and `__init__` out of every code block.
+  std::string_view open_fence;
   std::size_t start = 0;
   while (start <= markdown.size()) {
     const std::size_t end = markdown.find('\n', start);
     const std::size_t stop = end == std::string_view::npos ? markdown.size() : end;
     std::string_view line = markdown.substr(start, stop - start);
+    std::string_view fence_probe = line;
+    while (!fence_probe.empty() && (fence_probe.front() == ' ' || fence_probe.front() == '\t')) {
+      fence_probe.remove_prefix(1);
+    }
+    const bool fence_line = fence_probe.starts_with("```") || fence_probe.starts_with("~~~");
+    if (fence_line && (open_fence.empty() || fence_probe.starts_with(open_fence))) {
+      open_fence = open_fence.empty() ? fence_probe.substr(0, 3) : std::string_view{};
+      if (end == std::string_view::npos) {
+        break;
+      }
+      start = end + 1;
+      continue;
+    }
+    if (!open_fence.empty()) {
+      while (!line.empty() && line.back() == '\r') {
+        line.remove_suffix(1);
+      }
+      out.append(line);
+      if (end == std::string_view::npos) {
+        break;
+      }
+      out += '\n';
+      start = end + 1;
+      continue;
+    }
     while (!line.empty() && (line.back() == ' ' || line.back() == '\r' || line.back() == '\t')) {
       line.remove_suffix(1);  // a trailing "  " hard break is the newline itself
     }
@@ -501,7 +530,43 @@ std::string HoverMarkdownToText(std::string_view markdown) {
           continue;
         }
         if (c == '`') {
-          continue;  // inline code: keep the code, drop the ticks
+          // A code span (CommonMark): a run of N backticks up to the next run of
+          // exactly N. Its content is literal -- no escapes, no emphasis -- and
+          // loses one space each side when it has one on both and is not all
+          // spaces. With no closing run the backticks are text.
+          std::size_t run = 1;
+          while (i + run < line.size() && line[i + run] == '`') {
+            ++run;
+          }
+          std::size_t close = std::string_view::npos;
+          for (std::size_t j = i + run; j < line.size();) {
+            if (line[j] != '`') {
+              ++j;
+              continue;
+            }
+            std::size_t other = 0;
+            while (j + other < line.size() && line[j + other] == '`') {
+              ++other;
+            }
+            if (other == run) {
+              close = j;
+              break;
+            }
+            j += other;
+          }
+          if (close == std::string_view::npos) {
+            out.append(line.substr(i, run));
+            i += run - 1;
+            continue;
+          }
+          std::string_view code = line.substr(i + run, close - (i + run));
+          if (code.size() >= 2 && code.front() == ' ' && code.back() == ' ' &&
+              code.find_first_not_of(' ') != std::string_view::npos) {
+            code = code.substr(1, code.size() - 2);
+          }
+          out.append(code);
+          i = close + run - 1;
+          continue;
         }
         if ((c == '*' || c == '_') && i + 1 < line.size() && line[i + 1] == c) {
           ++i;  // strong emphasis markers
@@ -539,8 +604,9 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   // string or `MarkupContent { value }` was previously returned in full, so a
   // server could push a tens-of-MiB hover payload (inside the 64 MiB frame cap)
   // onto the callback/render path. The array shape already caps below.
+  // Fences stay for HoverMarkdownToText, which keeps what they enclose verbatim;
+  // a code (non-markdown) value never had any to drop.
   const auto cap_string = [&](std::string s) {
-    s = StripMarkdownFences(std::move(s));
     if (s.size() > kMaxHoverBytes) {
       TruncateUtf8InPlace(s, kMaxHoverBytes);
       s += kTruncationMarker;
@@ -578,7 +644,7 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
       }
       // A string element is markdown; a {language, value} one is code.
       const std::string piece = element.IsString()
-                                    ? HoverMarkdownToText(StripMarkdownFences(element.AsString()))
+                                    ? HoverMarkdownToText(element.AsString())
                                     : StripMarkdownFences(StringOrValueField(element));
       if (piece.empty()) {
         continue;
