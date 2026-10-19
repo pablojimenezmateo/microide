@@ -451,6 +451,17 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-19:** `tools/qa` flows `terminal-programs` (SGR, OSC title, less,
+vim, mouse reporting), `unsaved-continuations` (rename, Close All, Close Project,
+quit), `branch-review` and `selected-ranges` now drive four of the gaps below.
+Writing them found and fixed: branch-review marks that never showed and never
+survived a refresh or restart (36acc248), partial staging unreachable from a
+working-tree diff (0eaca65c, VS Code's Selected Ranges), no Ctrl+Q (1d3c64fe), the
+Alt+O freed path (fae8834d) and a stale terminal tab (bedb92bc). Still open: remote
+in the lane, the host-process terminal and prediction, the merge editor by mouse,
+save participants and the non-C++ plugins, and the Wayland, configuration and
+speed dimensions.
+
 Measured 2026-10-18 by running the whole `tools/qa` suite (87 scenarios) against a
 clang source-coverage build of `microide` (`-fprofile-instr-generate
 -fcoverage-mapping -mllvm -runtime-counter-relocation`, `LLVM_PROFILE_FILE=...%c`

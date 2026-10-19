@@ -6,6 +6,7 @@ rename, and branch review.
 
 from __future__ import annotations
 
+import subprocess
 import time
 from typing import Callable
 
@@ -196,7 +197,93 @@ def flow_unsaved_continuations(app: q.App) -> None:
     app.expect(app.ui().get("modal") is None, "the relaunched app asks nothing")
 
 
+def _git(app: q.App, *args: str) -> str:
+    assert app.project is not None
+    return subprocess.run(["git", "-C", str(app.project), *args], capture_output=True, text=True).stdout
+
+
+def _git_labels(app: q.App) -> dict[str, str]:
+    return {e["name"]: e.get("label", "") for e in app.elements("row", prefix="row:git/")}
+
+
+def flow_branch_review(app: q.App) -> None:
+    """Branch review from the git view: an Outgoing file's diff marked reviewed
+    shows the marker on its row (the ui label is the painted one), survives a
+    restart, and clears; the marks are refused, not silently "ok", outside such a
+    diff."""
+    _git(app, "checkout", "-q", "-b", "qa-review")
+    write(app, "notes/r1.txt", "one\n")
+    write(app, "notes/r2.txt", "two\n")
+    _git(app, "add", "-A")
+    _git(app, "commit", "-q", "-m", "qa: review fixture")
+    reply = app.send("mark-branch-file-reviewed")
+    app.expect(not reply.get("ok"), f"marking with no branch-review diff open is refused ({reply})")
+    app.key("ctrl+shift+g")
+    if app.wait_for("row:git/r1.txt", 5.0) is None:
+        app.expect(False, f"the git view lists the outgoing files ({_git_labels(app)})")
+        return
+    app.click_named("row:git/r1.txt")
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "r1.txt's diff")
+    step(app, "outgoing diff", 0.3)
+    app.expect(app.send("mark-branch-file-reviewed").get("ok") is True, "marking the outgoing diff runs")
+    app.wait_until(lambda: _git_labels(app).get("row:git/r1.txt", "").startswith("["), 3.0,
+                   f"the reviewed marker on r1.txt's row ({_git_labels(app)})")
+    app.expect(not _git_labels(app).get("row:git/r2.txt", "").startswith("["), "r2.txt stays unmarked")
+    app.restart()
+    app.key("ctrl+shift+g")
+    app.wait_until(lambda: _git_labels(app).get("row:git/r1.txt", "").startswith("["), 5.0,
+                   f"the mark survives a restart ({_git_labels(app)})")
+    app.click_named("row:git/r1.txt")
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "r1.txt's diff again")
+    app.send("clear-branch-review-state")
+    app.wait_until(lambda: not _git_labels(app).get("row:git/r1.txt", "[").startswith("["), 3.0,
+                   f"clearing removes the marker ({_git_labels(app)})")
+
+
+def flow_selected_ranges(app: q.App) -> None:
+    """Partial staging from a working-tree diff, by VS Code's chords: Ctrl+K
+    Ctrl+Alt+S stages the change at the caret and nothing else; Ctrl+K Ctrl+R on
+    the other change asks first and, confirmed, reverts it in the working tree."""
+    head = "".join(f"line {i}\n" for i in range(1, 41))
+    write(app, "notes/ranges.txt", head)
+    _git(app, "add", "notes/ranges.txt")
+    _git(app, "commit", "-q", "-m", "qa: ranges fixture")
+    edited = head.replace("line 3\n", "line three\n").replace("line 35\n", "line thirty-five\n")
+    write(app, "notes/ranges.txt", edited)
+    app.key("ctrl+shift+g")
+    row = app.wait_for("row:git/ranges.txt", 5.0)
+    if row is None:
+        app.expect(False, "the git view lists ranges.txt")
+        return
+    app.click(*app.center(row))
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff")
+    app.send("focus", "editor")
+    step(app, "diff", 0.4)
+    app.key("ctrl+k")
+    app.key("ctrl+alt+s")
+    app.wait_until(lambda: "line three" in _git(app, "show", ":notes/ranges.txt"), 5.0,
+                   "Ctrl+K Ctrl+Alt+S to stage the first change")
+    staged = _git(app, "show", ":notes/ranges.txt")
+    app.expect("line thirty-five" not in staged, "and only the first change")
+    app.key("alt+bracketright")
+    step(app, "next change", 0.3)
+    app.key("ctrl+k")
+    app.key("ctrl+r")
+    step(app, "revert asks", 0.4)
+    prompt = app.ui().get("prompt") or {}
+    app.expect(bool(prompt), f"Ctrl+K Ctrl+R asks before reverting ({prompt})")
+    confirm = [e for e in app.elements("button", prefix="button:prompt/")
+               if not e["name"].endswith("/Cancel")]
+    if confirm:
+        app.click(*app.center(confirm[0]))
+        app.wait_until(lambda: "line thirty-five" not in read(app, "notes/ranges.txt"), 5.0,
+                       "the revert in the working tree")
+        app.expect("line three" in read(app, "notes/ranges.txt"), "the staged change stays in the file")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "terminal-programs": flow_terminal_programs,
     "unsaved-continuations": flow_unsaved_continuations,
+    "branch-review": flow_branch_review,
+    "selected-ranges": flow_selected_ranges,
 }
