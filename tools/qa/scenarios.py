@@ -78,12 +78,25 @@ def scenario_menus(app: q.App) -> None:
         _escape_everything(app)
 
 
-# Layouts the click sweep repeats in: each moves the sidebar's controls under
-# different menu rows (with the project strip shown, File's fourth row lies over
-# the Search button).
-MENU_CLICK_LAYOUTS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
-    ("default", ()),
-    ("project strip", (("chrome.project_tabs.hide_when_single", "false"),)),
+# Layouts the click sweep repeats in, each with the sidebar views it walks: each
+# moves the chrome under different menu rows (with the project strip shown, File's
+# fourth row lies over the Search button -- the click-through fixed in 923aecee
+# needed exactly that one non-default setting). Every layout sets every key the
+# matrix uses, so no layout inherits another's.
+_MATRIX_DEFAULTS = (("chrome.project_tabs.hide_when_single", "true"), ("ui.layout_mode", "auto"),
+                    ("ui.scale", "1"), ("ui.show_status_bar", "true"), ("sidebar.file_icons", "false"))
+
+
+def _layout(**overrides: str) -> tuple[tuple[str, str], ...]:
+    return tuple((key, overrides.get(key.replace(".", "_"), value)) for key, value in _MATRIX_DEFAULTS)
+
+
+MENU_CLICK_LAYOUTS: tuple[tuple[str, tuple[tuple[str, str], ...], tuple[str, ...]], ...] = (
+    ("default", _layout(), ("tree", "search", "git")),
+    ("project strip", _layout(chrome_project_tabs_hide_when_single="false"), ("tree", "search", "git")),
+    ("compact", _layout(ui_layout_mode="compact"), ("tree",)),
+    ("scaled, no status bar, file icons",
+     _layout(ui_scale="1.5", ui_show_status_bar="false", sidebar_file_icons="true"), ("tree", "git")),
 )
 
 
@@ -132,12 +145,16 @@ def scenario_menu_clicks(app: q.App) -> None:
     its run and closes the menu without quitting, closing the project or opening a
     native picker."""
     _open_source(app)
-    for layout, settings in MENU_CLICK_LAYOUTS:
+    for layout, settings, views in MENU_CLICK_LAYOUTS:
         for key, value in settings:
-            app.send("set-setting", key, value)
+            reply = app.send("set-setting", key, value)
+            app.expect(bool(reply.get("ok")), f"{layout}: set-setting {key} {value} ({reply})")
         app.settle(0.3)
         app.check(f"layout {layout}")
-        for view in ("tree", "search", "git"):
+        for view in views:
+            if not any(e["name"] == f"sidebar-view:{view}" for e in app.elements("sidebar-view")):
+                app.expect(False, f"{layout}: no {view} view button ({[e['name'] for e in app.elements('sidebar-view')]})")
+                continue
             app.click_named(f"sidebar-view:{view}")
             app.settle(0.2)
             for menu in [e["name"] for e in app.elements("menu")]:
@@ -386,7 +403,7 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
 # (tools/qa/plugins/<name>).
 SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {**flows_lsp_debug.PLUGINS, **flows_more.PLUGINS,
                                                 **flows_advanced.PLUGINS, **flows_coverage.PLUGINS,
-                                                **flows_ux.PLUGINS}
+                                                **flows_ux.PLUGINS, **flows_depth.PLUGINS}
 
 # Environment a scenario's instance starts with, beyond App.launch's.
 SCENARIO_ENV: dict[str, dict[str, str]] = {

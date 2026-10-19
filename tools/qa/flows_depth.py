@@ -48,7 +48,9 @@ def _shell(app: q.App, command: str, until: str, label: str, timeout: float = 5.
 def flow_terminal_programs(app: q.App) -> None:
     """Real programs in the terminal: SGR colours and an OSC title, `less` on the
     alternate screen (page, quit back to the shell), `vim` editing and writing a
-    file, and a program that turns on mouse reporting receiving a click."""
+    file, a program that turns on mouse reporting receiving a click, and the
+    maximized terminal (Ctrl+Shift+J) -- the shell sees its size, `less` fills it,
+    and the restore gives the rows back."""
     write(app, "notes/long.txt", "".join(f"long line {i}\n" for i in range(1, 301)))
     _focus_terminal(app)
     _shell(app, "cd notes && clear", "$", "cd into notes")
@@ -107,6 +109,33 @@ def flow_terminal_programs(app: q.App) -> None:
     else:
         app.expect(False, "the ui query has no terminal geometry")
     step(app, "mouse reporting off", 0.3)
+
+    # The maximized ("immersive") terminal: Ctrl+Shift+J gives it the window, and
+    # the program inside sees the new size; a full-screen program fills it; the
+    # same chord gives the rows back.
+    def stty_rows() -> int | None:
+        app.type("clear; stty size\n")
+        step(app, "stty size", 0.6)
+        found = [l.split() for l in _screen(app, 60).splitlines() if l.strip()[:1].isdigit()]
+        return int(found[-1][0]) if found and len(found[-1]) == 2 else None
+
+    rows_before = (app.ui().get("terminal") or {}).get("visibleRows")
+    app.key("ctrl+shift+j")
+    app.wait_until(lambda: app.ui()["panel"].get("maximized") is True, 3.0, "Ctrl+Shift+J to maximize the terminal")
+    step(app, "maximized", 0.4)
+    rows_max = (app.ui().get("terminal") or {}).get("visibleRows")
+    app.expect(rows_max and rows_before and rows_max > rows_before,
+               f"the maximized terminal has more rows ({rows_before} -> {rows_max})")
+    app.expect(stty_rows() == rows_max, f"the shell sees the maximized size (stty vs {rows_max} rows)")
+    app.type("less long.txt\n")
+    app.wait_until(lambda: f"long line {rows_max - 1}" in _screen(app, 80), 5.0,
+                   f"less to fill the maximized terminal ({rows_max} rows)")
+    step(app, "less maximized", 0.3)
+    app.key("q")
+    step(app, "less quit", 0.3)
+    app.key("ctrl+shift+j")
+    app.wait_until(lambda: app.ui()["panel"].get("maximized") is False, 3.0, "Ctrl+Shift+J to restore")
+    app.expect(stty_rows() == rows_before, f"and the shell sees the restored size ({rows_before} rows)")
 
 
 def _tabs(app: q.App) -> list[str]:
@@ -281,9 +310,84 @@ def flow_selected_ranges(app: q.App) -> None:
         app.expect("line three" in read(app, "notes/ranges.txt"), "the staged change stays in the file")
 
 
+def flow_merge_mouse(app: q.App) -> None:
+    """The merge editor by mouse: two conflicts, the first resolved with its
+    incoming side's accept button, the second with the result pane's Both, then
+    the toolbar's Save -- the file holds those choices and no markers."""
+    base = "".join(f"line {i}\n" for i in range(1, 13))
+    write(app, "notes/merge.txt", base)
+    _git(app, "add", "notes/merge.txt")
+    _git(app, "commit", "-q", "-m", "qa: merge base")
+    _git(app, "checkout", "-q", "-b", "qa-incoming")
+    write(app, "notes/merge.txt", base.replace("line 2\n", "line 2 incoming\n").replace("line 10\n", "line 10 incoming\n"))
+    _git(app, "commit", "-q", "-am", "qa: incoming side")
+    _git(app, "checkout", "-q", "-")
+    write(app, "notes/merge.txt", base.replace("line 2\n", "line 2 current\n").replace("line 10\n", "line 10 current\n"))
+    _git(app, "commit", "-q", "-am", "qa: current side")
+    assert app.project is not None
+    merged = subprocess.run(["git", "-C", str(app.project), "merge", "qa-incoming"], capture_output=True, text=True)
+    app.expect(merged.returncode != 0, "the merge conflicts (the fixture is built to)")
+    app.send("git-refresh")
+    app.send("review-conflicts")
+    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "merge", 8.0, "a merge tab"):
+        return
+    step(app, "merge tab", 0.6)
+
+    def press(name: str) -> bool:
+        target = app.wait_for(name, 3.0)
+        if target is None:
+            app.expect(False, f"no {name} on screen ({[e['name'] for e in app.elements('button', prefix='button:merge/')]})")
+            return False
+        app.hover_named(name)
+        step(app, f"hover {name}", 0.2)
+        app.click_named(name)
+        step(app, f"click {name}", 0.3)
+        return True
+
+    press("button:merge/0/accept-incoming")
+    press("button:merge/1/result-both")
+    press("button:merge/save")
+    path = app.project / "notes" / "merge.txt"
+    app.wait_until(lambda: "<<<<<<<" not in path.read_text(), 5.0, f"Save to write the resolved file ({path.read_text()!r})")
+    text = path.read_text()
+    app.expect("line 2 incoming\n" in text and "line 2 current\n" not in text,
+               f"the first conflict took the incoming side ({text!r})")
+    app.expect("line 10 incoming\n" in text and "line 10 current\n" in text,
+               f"the second took both ({text!r})")
+
+
+def flow_save_pipeline(app: q.App) -> None:
+    """Save-time hooks from a plugin (the QA-only `qa-save`): Ctrl+S runs its save
+    participant (qa-todo -> qa-done) and, with format on save, its formatter (an
+    upper-casing subprocess) -- in that order, onto the disk; without format on
+    save only the participant runs."""
+    open_file(app, "notes/pipe.qasave", "keep qa-todo here\n")
+    app.wait_until(lambda: app.buffer().get("language") == "qasave", 3.0,
+                   f"the plugin's syntax to claim .qasave ({app.buffer().get('language')})")
+    app.send("set-setting", "editor.format_on_save", "false")
+    app.click_text(1, 1)
+    app.type("x")
+    app.key("ctrl+s")
+    app.wait_until(lambda: read(app, "notes/pipe.qasave") == "xkeep qa-done here\n", 5.0,
+                   f"the save participant alone ({read(app, 'notes/pipe.qasave')!r})")
+    app.send("set-setting", "editor.format_on_save", "true")
+    app.click_text(1, 1)
+    app.type("y")
+    app.key("ctrl+s")
+    app.wait_until(lambda: read(app, "notes/pipe.qasave") == "YXKEEP QA-DONE HERE\n", 5.0,
+                   f"participant then formatter ({read(app, 'notes/pipe.qasave')!r})")
+    app.wait_until(lambda: app.buffer().get("text") == "YXKEEP QA-DONE HERE\n" and not app.buffer().get("dirty"), 3.0,
+                   f"the buffer to show what was saved, clean ({app.buffer().get('text')!r})")
+
+
+PLUGINS: dict[str, tuple[str, ...]] = {"save-pipeline": ("qa-save",)}
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "terminal-programs": flow_terminal_programs,
     "unsaved-continuations": flow_unsaved_continuations,
     "branch-review": flow_branch_review,
     "selected-ranges": flow_selected_ranges,
+    "merge-mouse": flow_merge_mouse,
+    "save-pipeline": flow_save_pipeline,
 }
