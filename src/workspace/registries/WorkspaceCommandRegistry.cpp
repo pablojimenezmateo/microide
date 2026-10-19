@@ -257,7 +257,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Start Debugging (Program)", ""},
       ActionSpec{ActionId::SetSetting, "set-setting", "set-setting <id> <value>", "Set Setting",
                  ""},
-      ActionSpec{ActionId::Quit, "quit", "quit", "Quit", ""},
+      ActionSpec{ActionId::Quit, "quit", "quit", "Quit", "Ctrl+Q"},
       ActionSpec{ActionId::RenamePath, "", "", "Rename…", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reload from Disk", ""},
       ActionSpec{ActionId::ReopenClosedEditor, "reopen-closed-editor", "reopen-closed-editor",

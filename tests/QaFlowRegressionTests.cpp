@@ -186,6 +186,25 @@ void TestMarkingAnOutgoingFileReviewedMarksItsRow() {
          "the ui label of a reviewed row should carry its marker, not \"" + label + "\"");
 }
 
+// unsaved-continuations: Ctrl+Q did nothing; Quit had no key, while VS Code on
+// Linux quits on Ctrl+Q. From the editor and from a focused terminal alike (the
+// binding skips the shell, where Ctrl+Q is XON).
+void TestCtrlQQuits() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("quit.txt", "text\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Q, SDL_KMOD_CTRL)});
+  Expect(fixture.shell.ConsumeQuitRequested(), "Ctrl+Q in the editor should quit");
+  if (TestAccess::TerminalTabCount(fixture.shell) == 0) {
+    TestAccess::OpenTerminalViaService(fixture.shell);
+  }
+  TestAccess::SetPanelContentTerminal(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus panel"), "focus the terminal");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Q, SDL_KMOD_CTRL)});
+  Expect(fixture.shell.ConsumeQuitRequested(), "Ctrl+Q in a focused terminal should quit too");
+}
+
 // monkey (seed 1, step 223): `term-close` on the last terminal while the panel
 // showed an output channel left the closed terminal's tab on the panel's tab
 // strip. Closing it changed neither the panel's content nor whether it was
@@ -1519,6 +1538,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/MarkingAnOutgoingFileReviewedMarksItsRow",
           TestMarkingAnOutgoingFileReviewedMarksItsRow);
+  AddTest(tests, "QaFlowRegression/CtrlQQuits", TestCtrlQQuits);
   AddTest(tests, "QaFlowRegression/ClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip",
           TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",

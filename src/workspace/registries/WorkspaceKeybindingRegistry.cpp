@@ -329,6 +329,19 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
+      // VS Code on Linux: Ctrl+Q quits (a hot exit, so unsaved edits come back).
+      // Skips the terminal, where Ctrl+Q is XON and no one types it on purpose.
+      KeybindingSpec{
+          .id = "quit",
+          .action = ActionId::Quit,
+          .key = SDLK_Q,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+      },
       KeybindingSpec{
           .id = "reopen-closed-editor",
           .action = ActionId::ReopenClosedEditor,

@@ -96,7 +96,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::ProjectClose),
       MenuSeparator(),
-      MenuItem(ActionId::Quit),
+      MenuItem(ActionId::Quit, {}, "Ctrl+Q"),
   });
   static const auto kEditItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Undo),

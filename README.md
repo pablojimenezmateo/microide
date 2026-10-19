@@ -613,6 +613,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+Tab` | Cycle focus: sidebar → editor → command/terminal pane |
 | `Ctrl+w` | Close active tab |
 | `Ctrl+Shift+t` | Reopen the last closed editor, caret where it was (again for the one before) |
+| `Ctrl+q` | Quit (a hot exit: no prompt, unsaved edits come back on the next launch) |
 | `Ctrl+f` | Buffer search |
 | `Ctrl+h` | Replace in buffer |
 | `F3` / `Shift+F3` | Next / previous match of the current find term (widget open or not) |
