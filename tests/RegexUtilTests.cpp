@@ -207,6 +207,10 @@ void TestRegexUtilAsciiTwinAgreesOnAsciiLines() {
       "\\w+",        "\\bfoo\\b",     "caf.",          "[^a-z ]+",   "\\d{2,}",
       "x?|foo",      "(?i)K",         "s+",            "\\s*;$",     "[[:alpha:]]+",
       "\\W",         "(?<=a)b",       "\\x{e9}|e",     ".",           "^\\S+",
+      // A multibyte literal under a quantifier: one character to UTF mode, several
+      // bytes to byte mode, so the quantifier binds differently (SearchRegexFuzz:
+      // `ӥ?|foo` matched empty in one and nothing in the other on an ASCII line).
+      "\u04e5?|foo",  "\u00e9*x",      "(?:\u00fc)?a",
   };
   const std::vector<std::string> lines = {
       "foo bar_baz 42 KS ks;", "  int x = a_b(12);  ", "", "ab ab aab", "e E foo-foo  ;",

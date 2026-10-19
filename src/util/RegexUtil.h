@@ -142,9 +142,9 @@ class CompiledRegex {
  public:
   CompiledRegex() = default;
 
-  // `twin = AsciiTwin::Build` on a PCRE2_UTF pattern also compiles it without
-  // UTF/UCP/MATCH_INVALID_UTF, and Match() runs that one for a subject the caller
-  // says is ASCII. On such a subject the two compilations match identically --
+  // `twin = AsciiTwin::Build` on an all-ASCII PCRE2_UTF pattern also compiles it
+  // without UTF/UCP/MATCH_INVALID_UTF, and Match() runs that one for a subject the
+  // caller says is ASCII. On such a subject the two compilations match identically --
   // UTF and UCP only change behaviour at code points >= 0x80; the syntax
   // highlighter verified this over every built-in rule regex -- and byte mode is
   // the faster matcher (measured over this repository's sources: up to 2x for a
@@ -202,7 +202,12 @@ class CompiledRegex {
     } else if (!error_prefix_.empty()) {
       error_ = BuildRegexErrorMessage(error_prefix_, error_code, error_offset);
     }
-    if (code_ != nullptr && utf_mode_ && twin == AsciiTwin::Build) {
+    // Only for an all-ASCII PATTERN: a multibyte literal is one character to UTF
+    // mode and several bytes to byte mode, so a quantifier after it binds
+    // differently -- `ӥ?` is an optional character in one and a required 0xD3 plus
+    // an optional 0xA5 in the other, and on an ASCII line the first matches empty
+    // where the second matches nothing (found by SearchRegexFuzz).
+    if (code_ != nullptr && utf_mode_ && twin == AsciiTwin::Build && IsAllAscii(pattern)) {
       const uint32_t byte_options = options & ~(PCRE2_UTF | PCRE2_UCP | kMatchInvalidUtf);
       pcre2_code* ascii = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.data()),
                                         pattern.size(), byte_options, &error_code, &error_offset,
