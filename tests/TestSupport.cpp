@@ -62,6 +62,12 @@ constexpr int kWaitTimeoutScale = 1;
 
 bool IsSanitizerBuild() { return kWaitTimeoutScale != 1; }
 
+bool MachineIsOversubscribed() {
+  double load = 0.0;
+  const unsigned threads = std::max(1u, std::thread::hardware_concurrency());
+  return getloadavg(&load, 1) == 1 && load > 1.25 * threads;
+}
+
 bool WaitUntil(const std::function<bool()>& predicate,
                std::chrono::milliseconds timeout,
                std::chrono::milliseconds poll_interval,

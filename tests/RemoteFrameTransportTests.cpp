@@ -252,8 +252,11 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
              ", rule " + std::to_string(rule));
   // The absolute bound holds only where the simulated link behaves like one: not
   // in a sanitizer build (the relay itself cannot pace 100 Mbit/s there), and not
-  // when a loaded box starved the relay's threads (every sample inflated).
-  if (!IsSanitizerBuild() && base < 2 * std::chrono::duration<double>(kRtt).count()) {
+  // when a loaded box starved the relay's threads -- every sample inflated, or the
+  // box past its cores, which starves the pacing without moving the minimum (the
+  // hardened lane at load 17 on 12 threads: 9.5 MB/s, base RTT fine).
+  if (!IsSanitizerBuild() && !MachineIsOversubscribed() &&
+      base < 2 * std::chrono::duration<double>(kRtt).count()) {
     Expect(throughput > kBytesPerSecond * 0.8,
            "the link stays full: " + std::to_string(throughput / 1e6) + " MB/s");
     // Below by a measurement's worth (2%): the window comes from the MEASURED
@@ -310,7 +313,7 @@ void TestBulkWindowFillsALongLink() {
          "the window grew to the link's product: window " + std::to_string(window) +
              ", rule at the link's nominal rate " + std::to_string(nominal_rule) + ", product " +
              std::to_string(product));
-  if (!IsSanitizerBuild()) {
+  if (!IsSanitizerBuild() && !MachineIsOversubscribed()) {
     // Slow start included: a ramp of a few round trips, then a full link.
     Expect(throughput > kBytesPerSecond * 0.7,
            "the link fills: " + std::to_string(throughput / 1e6) + " MB/s of " +
