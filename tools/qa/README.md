@@ -41,6 +41,9 @@ eval "$(tools/qa/local-sshd.sh start)" && tools/qa/remote.py   # the same agains
 tools/run-checks.sh qa-remote               # that, as a lane (builds the app and the static server)
 tools/run-checks.sh qa-asan                 # the scenario suite on the ASan build
 tools/run-checks.sh qa                      # the lane: build, suite, 300-step monkey (seed 1)
+MQA_BACKEND=wayland tools/qa/run.py suite -j 4   # the same scenarios on a headless weston
+MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 tools/qa/run.py suite   # ... on a HiDPI output
+tools/run-checks.sh qa-wayland              # the suite on weston at scale 2, as a lane
 ```
 
 Exit status is non-zero on any finding; the summary names each finding's
@@ -50,6 +53,22 @@ Every run gets its own Xvfb (`-displayfd`, so two drivers can run at once), its 
 XDG config/state/data/runtime directories, and a fresh copy of the fixture
 (`tools/capture-media/make-fixture.sh`'s `taskflow`), so a seed means the same
 actions on the same state and nothing touches your real configuration.
+
+### The Wayland backend
+
+`MQA_BACKEND=wayland` runs each instance under its own headless weston (kiosk
+shell, `--scale` from `MQA_WAYLAND_SCALE`, a socket under the run's runtime
+directory) with `SDL_VIDEODRIVER=wayland`. A Wayland compositor takes input from no
+other client, so the driver's mouse and keyboard go through the control channel
+instead of xdotool: `pointer [mods+]<move|down|up|click|wheel> x y ...` and `key
+<chord>` (which types a printable key's character, as a keyboard does). The input
+enters at SDL's event level, not the seat: what that path cannot show -- the
+compositor's keyboard focus, a clipboard serial -- stays X11's to cover.
+Screenshots are blank there (no screen reader without weston's debug protocols);
+the redraw verifier, which renders in process, is what checks the paint.
+`tools/qa/weston.sh` unpacks weston from the distribution's package into
+`~/.cache/microide-qa/weston` when it is not installed; nothing is installed and no
+session is touched.
 
 ## The scenarios
 
@@ -64,11 +83,16 @@ actions on the same state and nothing touches your real configuration.
 | advanced | `lsp-signature-help`, `lsp-code-actions`, `snippets`, `sticky-scroll`, `themes`, `tab-overflow`, `dbg-conditions` | parameter hints, quick fixes, snippet placeholders, pinned scopes, every colour scheme, a crowded tab strip, conditional breakpoints |
 | coverage | `edit-transforms`, `save-transforms`, `settings-scopes`, `dbg-stepping`, `git-branches`, `lsp-more`, `compare-clipboard`, `tab-reopen` | sort/join/block comment/bracket jump/JSON format/column select, trim and final newline on save, user vs project settings across projects and a restart, a debugger driven from its toolbar and pane (call stack, variables, watch, restart), branches and the stash, type definition/workspace symbols/next problem/call hierarchy, compare with clipboard, Reopen Closed Editor |
 | depth | `terminal-programs`, `unsaved-continuations`, `branch-review`, `selected-ranges`, `merge-mouse`, `save-pipeline` | paths a coverage build of the suite never ran (TD-2026-10-18-364): SGR colours (16, 256, truecolour), an OSC title naming the pane, `less` paging on the alternate screen and quitting back, `vim` writing a file, a click reaching a program under mouse reporting as `ESC [ M`; the unsaved prompt before a rename (Cancel returns to the name typed), Close All Tabs (Save all writes both), Close Project (Discard leaves the disk alone), and a quit as a hot exit (no prompt, the edit back unsaved after a relaunch); an Outgoing file marked reviewed showing its marker on the git row, keeping it across a restart, and clearing (the marks refused outside such a diff); Ctrl+K Ctrl+Alt+S staging only the change at the caret of a working-tree diff, and Ctrl+K Ctrl+R asking before reverting the other; the maximized terminal (Ctrl+Shift+J: the shell sees its size, `less` fills it, the restore gives the rows back); two merge conflicts resolved by the merge editor's own buttons and saved; a plugin's save participant and formatter (`qa-save`) on Ctrl+S, with and without format on save |
+| resilience | `crash-recovery`, `big-repo`, `huge-file` | a SIGKILL mid-edit and the hot-exit restore after it; a 10k-file tree (quick open, project search, the tree) and a buffer past the 1 MiB text cap staying responsive |
+| matrix | `sweeps-matrix` | `keys` and `context-menus` again under each layout the default run never sees: the project strip, compact mode, ui.scale 1.5 with no status bar and file icons, the light theme with a 20pt editor font |
+| integration | `file-drop`, `control-spec`, `dbg-function-breakpoint` | a project file, an outside file, a folder and a missing path dropped on the window (`pointer drop`); a cold start from `--control --control-spec` (transient settings, files, a function breakpoint, commands, one `applied` line each); a breakpoint by function name |
+| languages | `lsp-typescript`, `lsp-csharp` | typescript-language-server (from `MQA_TS_NODE_MODULES`, default `~/.cache/microide-qa/ts/node_modules`) and csharp-ls (`~/.dotnet/tools`) through the bundled plugins: hover, F12 across files, a compile error reaching the problems count |
 | ux | `nav-history`, `caret-motion`, `indentation`, `find-options`, `git-discard`, `terminal-clipboard`, `notifications`, `tree-keys`, `quick-open`, `undo-semantics`, `mouse-and-wrap`, `search-options`, `groups-keyboard`, `settings-keyboard`, `completion-keys`, `debug-keys`, `terminal-keys`, `recents-and-autosave`, `plugins-ui`, `git-remote`, `compare-keys` | Go Back / Go Forward through files and far jumps (menu state, a closed file reopened, the terminal keeping Alt+Left), Home/End/word/page/document motion, Ctrl+Down scrolling, Ctrl+L and Expand/Shrink Selection, Tab/Shift+Tab over lines, Enter after a brace, Backspace in an indent, whole word/regex by chord and click, Ctrl+H from the find field, a `$1` replace, the query seeded from the word under the caret; untracked files, Stage/Unstage, Discard with Cancel and confirm (disk and open editor), Stage All; editor to shell by Ctrl+Shift+V and the context menu, a terminal row dragged and Ctrl+Shift+C'd into an editor; toasts named, clicked away, stacked, and reached by Focus Notifications; the tree following the active file, type-to-select, F2 rename, Delete with confirm, New Folder, Collapse All; Ctrl+P `file:line`, `>` and `:` prefixes, click to open; undo restoring the replaced selection, one step per multi-caret edit, paste and line move, the caret brought back, redo dropped by a new edit; Shift+wheel sideways, Alt+Z wrap with Down and a double End, a double-click on the tab strip's empty space; Find in Files seeded from the selection, its case/regex toggles, include/exclude globs, Enter on a result; editor groups by keyboard: Ctrl+\\, Ctrl+1/2, the Ctrl+K Ctrl+arrow focus and Ctrl+K Ctrl+Shift+arrow move chords, Ctrl+K Ctrl+0/J, a group closing with its last editor; Settings by keyboard: Space toggles the selected row, Reset, a category jump, Escape, reopening unfiltered; completion by keyboard: Down/Up, Tab to accept, a second Ctrl+Space, the list closing when the caret leaves the word; the debugger by keyboard: F9 on the caret's line, F5 from a plugin's launch configuration and to continue, Ctrl+Shift+F5, Delete in the Breakpoints pane, Shift+F5; the terminal by keyboard: Ctrl+Shift+`, Ctrl+PageUp/PageDown, Shift+PageUp scrollback and the snap back, Alt+Left/Right between split panes, Enter relaunching an exited shell; recent files leading an empty Quick Open, both auto-save modes; the demo plugins' status item (clicked until it updates), decorations, panel surface and colour scheme; Publish Branch, Sync pushing (its label counting what is ahead), Fetch and Pull from another clone through a local bare `origin`, the open editor reloading; a diff by keyboard: opening on its first change, Alt+] / Alt+[, an edit on the working side saved by Ctrl+S, Alt+O to the working file |
 
 The flows live in `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`,
 `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`,
-`flows_coverage.py`, `flows_ux.py` and `flows_depth.py`; `scenarios.py` holds the chrome scenarios and the registry
+`flows_coverage.py`, `flows_ux.py`, `flows_depth.py`, `flows_resilience.py`, `flows_matrix.py`,
+`flows_languages.py` and `flows_integration.py`; `scenarios.py` holds the chrome scenarios and the registry
 (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`). A scenario's plugins are bundled
 ones (`plugins/<name>`) or QA-only ones under `plugins/` here, for test content no
 bundled plugin ships (`qa-snippets`; `qa-launch`, a launch configuration for the fixture's binary).
@@ -216,3 +240,5 @@ assumptions (a column off by one, a key a focused terminal owns).
 | `invariants.py` | the editor-invariants sweep (formerly `tools/sweep-editor-invariants.py`) |
 | `run.py` | the CLI |
 | `remote.py`, `agents.py` | the remote-project scenarios against a real ssh host (on demand) |
+| `local-sshd.sh`, `slow-link.py` | a loopback sshd as the current user for `remote.py`, and its `qa-slow` alias: the same host behind a 60 ms each-way link (`MQA_SLOW_LINK_DELAY_MS`) |
+| `weston.sh` | unpacks weston for the Wayland backend |

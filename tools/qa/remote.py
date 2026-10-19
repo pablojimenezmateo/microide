@@ -55,6 +55,11 @@ REPO = Path(__file__).resolve().parents[2]
 # An ssh client config for the host (tools/qa/local-sshd.sh writes one for a
 # loopback-only sshd); the suite's own ssh/scp and the app's ssh both read it.
 SSH_CONFIG = os.environ.get("MQA_SSH_CONFIG")
+# Where the suite's own checks reach the host, when not the way the editor does:
+# against `qa-slow` (the loopback host behind a delayed link) the checks go over
+# `qa-local`, the same host undelayed, so a measured latency is the editor's and
+# not a fresh ssh handshake's six round trips on the slow link.
+CHECK_HOST = os.environ.get("MQA_REMOTE_CHECK_HOST")
 
 
 def ssh_cmd(*args: str) -> list[str]:
@@ -69,7 +74,7 @@ class Host:
         self.agents = ""
 
     def ssh(self, cmd: str, timeout: float = 120) -> str:
-        return subprocess.run(ssh_cmd(self.name, cmd), capture_output=True,
+        return subprocess.run(ssh_cmd(CHECK_HOST or self.name, cmd), capture_output=True,
                               text=True, timeout=timeout).stdout
 
     def file(self, rel: str) -> str:
@@ -88,7 +93,7 @@ class Host:
         self.agents = self.ssh("mktemp -d /tmp/mqa-agents.XXXXXX").strip() + "/agents.py"
         # Over the ssh connection itself, not scp: scp speaks SFTP, which a minimal
         # sshd (tools/qa/local-sshd.sh) does not serve.
-        subprocess.run(ssh_cmd(self.name, f"cat > {self.agents}"), check=True,
+        subprocess.run(ssh_cmd(CHECK_HOST or self.name, f"cat > {self.agents}"), check=True,
                        input=Path(__file__).with_name("agents.py").read_text(), text=True)
 
 
@@ -336,7 +341,7 @@ class Suite:
             app.send("open", EDIT_FILE); app.settle(0.5)
             app.send("split-right", "README.md"); app.settle(0.5)  # a second pane repaints too
             app.send("focus-group-left"); app.settle(0.2)
-            churn = subprocess.Popen(ssh_cmd(host.name, f"python3 {host.agents} churn {host.root} 4 25"),
+            churn = subprocess.Popen(ssh_cmd(CHECK_HOST or host.name, f"python3 {host.agents} churn {host.root} 4 25"),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             saves, latencies = 0, []
             for i in range(8):

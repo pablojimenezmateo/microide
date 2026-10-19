@@ -449,7 +449,59 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-19-366 — copy without a fresh input serial is refused on Wayland. [OPEN]
+
+Found running the QA suite on weston (`MQA_BACKEND=wayland`): a Wayland compositor
+accepts a clipboard selection only with the serial of a recent input event on the
+client, and SDL sets it from the last one it saw. Input the control channel
+delivers (`key`, `pointer`, `copy`) is not seat input and carries none, so
+`edit-selection-clipboard`, `compare-clipboard`, `terminal-clipboard` and
+`undo-semantics` cannot run there (they are skipped by name, `scenarios.UNSUPPORTED`).
+The same refusal reaches a person in one case: an agent driving a Wayland session
+through the control channel (`copy`, then `paste`) while the user has not touched
+the window since another client took the selection. A copy whose selection the
+compositor refused could keep an in-app clipboard for the app's own paste (VS Code
+does not; it has the serial from the keystroke). Covering it in QA needs real seat
+input: weston's test protocol is not packaged, so that would mean a compositor with
+a virtual-input protocol (sway's `wlr-virtual-pointer`/`virtual-keyboard` via
+`wlrctl` or `ydotool` against a headless wlroots compositor).
+
+### TD-2026-10-19-365 — the language-server plugins resolve their server once, at load, and may download one. [OPEN]
+
+Found writing the QA `lsp-typescript` / `lsp-csharp` flows. `plugins/typescript-lsp`
+and `plugins/dotnet-lsp` build their server command in `setup`, against whichever
+project was open when the plugin loaded: `typescript-lsp` checks that project's
+`node_modules/.bin/typescript-language-server` and bakes the answer in, so opening
+another project keeps the first one's choice (VS Code resolves per workspace). When
+nothing is found, the TypeScript fallback ends in `npx --yes
+typescript-language-server`, which silently downloads and runs a package from the
+network -- a capability the plugin does not declare and a surprise for the user. The
+fix belongs in the plugin API: a contributed server's command resolved per project
+when it starts (a resolver callback, or `${projectRoot}` in the argv), and no
+implicit network fallback (say what to install instead).
+
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
+
+**Update 2026-10-19 (evening):** the three dimensions now run. **Wayland:**
+`MQA_BACKEND=wayland` drives the suite on a headless weston (`tools/run-checks.sh
+qa-wayland`, at output scale 2) through a new control `pointer` command; making
+that work fixed `key` typing nothing, injected input losing its damage, the receipt
+counting the input itself and a `pointer` click closing the tree context menu it
+aimed at. 94 of 99 scenarios run there (the clipboard flows and window resizing
+cannot: TD-2026-10-19-366). **Configuration:** `sweeps-matrix` runs `keys` and
+`context-menus` under four layouts, and found that `editor.font_size` resized the
+whole chrome (8df85a3a). **Speed/scale/resilience:** `crash-recovery`, `big-repo`,
+`huge-file`, the remote suite over a 60 ms each-way link (saves land in 0.17 s),
+and the suite on the ASan build in `qa-asan`. **Languages:** `lsp-typescript` and
+`lsp-csharp` run the TypeScript and C# servers; they found a sandbox that refused
+per-user servers, a server never started for a file opened while plugins loaded,
+the missing `publishDiagnostics` capability (no TypeScript diagnostics at all) and
+hover code losing `**`/`__`. Also fixed from the same runs: the merge toolbar's
+hover repaint. **Integration:** `file-drop` (through a new `pointer drop`),
+`control-spec` (found a font size set before the first frame dropped, d18624e0) and
+`dbg-function-breakpoint`. Still open below: native dialogs, user syntax
+definitions beyond the QA plugin's, exception breakpoints; tool downloads are not
+reachable at all (the downloader is not wired to anything).
 
 **Update 2026-10-19:** `tools/qa` flows `terminal-programs` (SGR, OSC title, less,
 vim, mouse reporting), `unsaved-continuations` (rename, Close All, Close Project,

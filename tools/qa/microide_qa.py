@@ -96,6 +96,35 @@ SANITIZER_ENV = {
 
 # SDL's defaults (SDL_HINT_MOUSE_DOUBLE_CLICK_TIME / _RADIUS), with margin.
 DOUBLE_CLICK_SECONDS = 0.55
+
+# The window system a run drives: "x11" (Xvfb + xdotool, the default) or
+# "wayland" (a headless weston; input goes through the control channel's `pointer`
+# and `key` commands, since a Wayland compositor takes input from no other client).
+BACKEND = os.environ.get("MQA_BACKEND", "x11")
+# Integer output scale for the Wayland backend: 2 is a HiDPI screen.
+WAYLAND_SCALE = int(os.environ.get("MQA_WAYLAND_SCALE", "1"))
+# weston: on PATH, or unpacked by tools/qa/weston.sh under this root.
+WESTON_ROOT = Path(os.environ.get("MQA_WESTON_ROOT", str(Path.home() / ".cache" / "microide-qa" / "weston" / "root")))
+
+# xdotool keysyms as the app's `key` command spells them.
+_KEYSYM_TO_CHORD = {
+    "Return": "enter", "Escape": "escape", "BackSpace": "backspace", "Delete": "delete",
+    "Prior": "pageup", "Next": "pagedown", "Home": "home", "End": "end", "Tab": "tab",
+    "Up": "up", "Down": "down", "Left": "left", "Right": "right", "space": "space",
+    "Insert": "insert", "grave": "`", "comma": ",", "period": ".", "slash": "/",
+    "backslash": "\\", "bracketleft": "[", "bracketright": "]", "minus": "-", "equal": "=",
+    "semicolon": ";", "apostrophe": "'",
+}
+
+
+def chord_for_key_command(chord: str) -> str:
+    """An xdotool chord ("ctrl+shift+Prior", "G") as the `key` command spells it."""
+    *mods, key = chord.split("+") if chord != "+" else ["+"]
+    key = _KEYSYM_TO_CHORD.get(key, key)
+    if len(key) == 1 and key.isalpha() and key.isupper():
+        mods.append("shift")
+        key = key.lower()
+    return "+".join([m.lower().replace("control", "ctrl").replace("super", "meta") for m in mods] + [key])
 DOUBLE_CLICK_RADIUS = 40
 
 
@@ -168,7 +197,7 @@ class App:
         work = Path(tempfile.mkdtemp(prefix="mqa-", dir="/tmp"))
         env = dict(os.environ)
         env.update({
-            "SDL_VIDEODRIVER": "x11",
+            "SDL_VIDEODRIVER": "wayland" if BACKEND == "wayland" else "x11",
             # One SDL_Log line per frame and per clip under an open menu: the frame
             # sequence a finding is read against.
             "MICROIDE_TRACE_REDRAW_VERBOSE": "1",
@@ -212,10 +241,19 @@ class App:
         finally:
             app.stop()
 
+    @property
+    def wayland(self) -> bool:
+        return BACKEND == "wayland"
+
     def _start(self, project: Path | None, extra_args: list[str]) -> None:
         w, h = self.size
-        self._start_xvfb(w, h)
-        self.env["DISPLAY"] = self.display
+        if self.wayland:
+            self._start_weston(w, h)
+            self.env.pop("DISPLAY", None)
+            self.env["WAYLAND_DISPLAY"] = "mqa-wl"
+        else:
+            self._start_xvfb(w, h)
+            self.env["DISPLAY"] = self.display
         self._extra_args = list(extra_args)
         self._spawn(project, extra_args)
 
@@ -240,6 +278,23 @@ class App:
                 self.findings.append(Finding("log", line.strip()))
         if self.proc is not None and self.proc.returncode not in (0, None):
             self.expect(False, f"quit exited with status {self.proc.returncode}")
+        if self._socket is not None:
+            with contextlib.suppress(OSError):
+                self._socket.close()
+            self._socket = None
+        self.log_offset = 0
+        self._spawn(project if project is not None else self.project, self._extra_args)
+
+    def crash_and_relaunch(self, project: Path | None = None) -> None:
+        """Kills the app with SIGKILL -- no quit, no session save, the crash path --
+        and starts it again on the same display, XDG tree and project."""
+        if self.alive():
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self.proc.pid, signal.SIGKILL)
+            self.proc.wait(timeout=5)
+        for line in self.new_log_lines():
+            if any(marker in line for marker in FINDING_MARKERS):
+                self.findings.append(Finding("log", line.strip()))
         if self._socket is not None:
             with contextlib.suppress(OSError):
                 self._socket.close()
@@ -287,6 +342,37 @@ class App:
         _wait(lambda: subprocess.run(["xdpyinfo", "-display", self.display], env=self.env,
                                      capture_output=True).returncode == 0,
               5.0, "Xvfb never accepted connections")
+
+    def _start_weston(self, w: int, h: int) -> None:
+        """A headless weston of its own (kiosk shell: the one window fills the
+        output, as a maximized window does) on a socket under this run's
+        XDG_RUNTIME_DIR. Nothing reaches the user's own session."""
+        weston = WESTON_ROOT / "usr" / "bin" / "weston"
+        env = dict(self.env)
+        if weston.exists():
+            lib = WESTON_ROOT / "usr" / "lib" / "x86_64-linux-gnu"
+            env["LD_LIBRARY_PATH"] = f"{lib}:{lib / 'weston'}"
+            # Weston loads its modules from the absolute path it was built with.
+            env["WESTON_MODULE_MAP"] = ";".join(
+                f"{module.name}={module}" for module in
+                sorted(lib.glob("libweston-*/*.so")) + sorted((lib / "weston").glob("*.so")))
+        elif shutil.which("weston"):
+            weston = Path(shutil.which("weston"))
+        else:
+            raise FileNotFoundError("no weston: install it, or run tools/qa/weston.sh to unpack one")
+        # weston's --width/--height are the output's logical size and --scale its
+        # pixel density, so the window is the run's size in layout units at any scale.
+        self.xvfb = subprocess.Popen(
+            [str(weston), "--backend=headless", "--shell=kiosk", "--socket=mqa-wl", "--no-config",
+             f"--width={w}", f"--height={h}", f"--scale={WAYLAND_SCALE}"],
+            env=env, stdout=open(self.work / "weston.log", "wb"), stderr=subprocess.STDOUT,
+            start_new_session=True)
+        socket_path = Path(self.env["XDG_RUNTIME_DIR"]) / "mqa-wl"
+        _wait(lambda: socket_path.exists() or self.xvfb.poll() is not None, 10.0,
+              "weston never opened its socket")
+        if self.xvfb.poll() is not None:
+            raise QaFailure(f"weston exited at startup; log: {self.work / 'weston.log'}")
+        self.display = "wayland:mqa-wl"
 
     def stop(self) -> None:
         if self._socket is not None:
@@ -547,6 +633,8 @@ class App:
         subprocess.run(["timeout", "5", "xdotool", *args], env=self.env, capture_output=True)
 
     def _find_window(self) -> str | None:
+        if self.wayland:
+            return None
         for _ in range(25):
             result = subprocess.run(["xdotool", "search", "--name", "microide"], env=self.env,
                                     capture_output=True, text=True)
@@ -557,7 +645,7 @@ class App:
         return None
 
     def _window_origin(self) -> tuple[int, int]:
-        if not self.window:
+        if self.wayland or not self.window:
             return (0, 0)
         result = subprocess.run(["xdotool", "getwindowgeometry", "--shell", self.window],
                                 env=self.env, capture_output=True, text=True)
@@ -575,8 +663,32 @@ class App:
         if self.window:
             self._xdotool("windowfocus", self.window)
 
+    def _input(self, *words: str) -> dict[str, Any]:
+        """One input command (`key`, `pointer`, `type`) over the persistent control
+        connection: a process per keystroke made typing slow enough on the Wayland
+        backend for a toast to expire between two words of a palette query."""
+        def quote(word: str) -> str:
+            if word and not any(c.isspace() or c in "\"'\\" for c in word):
+                return word
+            return '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        try:
+            return self.send_line(" ".join(quote(w) for w in words), record=False)
+        except QaFailure as failure:
+            return {"ok": False, "error": str(failure)}
+
+    def _pointer(self, verb: str, x: float, y: float, *rest: Any, modifiers: tuple[str, ...] = ()) -> None:
+        """The Wayland backend's mouse: the control channel's `pointer`, in the
+        layout units every rect here is already in."""
+        prefix = "".join(f"{chord_for_key_command(m)}+" for m in modifiers)
+        answer = self._input("pointer", f"{prefix}{verb}", f"{x:.1f}", f"{y:.1f}", *(str(r) for r in rest))
+        if not answer.get("ok", False):
+            self.expect(False, f"pointer {verb} {x:.0f} {y:.0f} was refused: {answer}")
+
     def move(self, x: float, y: float) -> None:
         self._record({"move": [round(x), round(y)]})
+        if self.wayland:
+            self._pointer("move", x, y)
+            return
         self._xdotool("mousemove", *self._root(x, y))
 
     def click(self, x: float, y: float, button: int = 1, clicks: int = 1,
@@ -586,6 +698,10 @@ class App:
         self._await_click_gap(x, y)
         self._record({"click": [round(x), round(y)], "button": button, "clicks": clicks,
                       "modifiers": list(modifiers)})
+        if self.wayland:
+            self._pointer("click", x, y, button, clicks, modifiers=modifiers)
+            self._last_click = (time.monotonic(), x, y)
+            return
         for key in modifiers:
             self._xdotool("keydown", key)
         self._xdotool("mousemove", *self._root(x, y), "click", "--repeat", str(clicks),
@@ -608,6 +724,15 @@ class App:
         self._await_click_gap(x0, y0)
         self._record({"drag": [round(x0), round(y0), round(x1), round(y1)],
                       "modifiers": list(modifiers)})
+        if self.wayland:
+            self._pointer("down", x0, y0, 1, modifiers=modifiers)
+            for i in range(1, steps + 1):
+                self._pointer("move", x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, "left",
+                              modifiers=modifiers)
+                time.sleep(0.02)
+            self._pointer("up", x1, y1, 1, modifiers=modifiers)
+            self._last_click = (time.monotonic(), x1, y1)
+            return
         for key in modifiers:
             self._xdotool("keydown", key)
         self._xdotool("mousemove", *self._root(x0, y0), "mousedown", "1")
@@ -621,9 +746,18 @@ class App:
             self._xdotool("keyup", key)
         self._last_click = (time.monotonic(), x1, y1)
 
+    def drop(self, x: float, y: float, path: Path | str) -> None:
+        """A file dragged in from another application and released at (x, y). Through
+        the control channel on every backend: X cannot synthesize a drop either."""
+        self._record({"drop": [round(x), round(y)], "path": str(path)})
+        self._pointer("drop", x, y, str(path))
+
     def wheel(self, x: float, y: float, notches: int, modifiers: tuple[str, ...] = ()) -> None:
         """`notches` > 0 scrolls down; `modifiers` (xdotool key names) are held for it."""
         self._record({"wheel": [round(x), round(y)], "notches": notches, "modifiers": list(modifiers)})
+        if self.wayland:
+            self._pointer("wheel", x, y, notches, modifiers=modifiers)
+            return
         button = "5" if notches > 0 else "4"
         self._xdotool("mousemove", *self._root(x, y))
         for key in modifiers:
@@ -635,6 +769,11 @@ class App:
     def key(self, chord: str) -> None:
         """An xdotool chord: "ctrl+shift+f", "Escape", "alt+Up"."""
         self._record({"key": chord})
+        if self.wayland:
+            answer = self._input("key", chord_for_key_command(chord))
+            if not answer.get("ok", False):
+                self.expect(False, f"key {chord} was refused: {answer}")
+            return
         self._focus()
         args = ["key", "--clearmodifiers"]
         if self.window:
@@ -646,6 +785,23 @@ class App:
         types '\n' as the Linefeed keysym, which no keyboard sends and SDL drops,
         so a typed command line never ran."""
         self._record({"type": text})
+        if self.wayland:
+            # Key by key, as typed: `key <char>` is a key press with its text, so
+            # what reacts to keys (auto-closing pairs, a terminal's keyboard
+            # protocol) sees typing, not a paste. Past ASCII, the paste path.
+            for char in text:
+                if char == "\n":
+                    self._input("key", "enter")
+                elif char == "\t":
+                    self._input("key", "tab")
+                elif char == " ":
+                    self._input("key", "space")
+                elif char.isascii() and char.isprintable():
+                    self._input("key", chord_for_key_command(char))
+                else:
+                    self._record({"type-via-control": char})
+                    self._input("type", char)
+            return
         self._focus()
         args = ["type", "--clearmodifiers", "--delay", "25"]
         if self.window:
@@ -701,6 +857,10 @@ class App:
         time.sleep(seconds)
 
     def grab(self):
+        if self.wayland:
+            # No screen reader on a headless weston without its debug protocols:
+            # evidence is the frame trace and the redraw verifier's own dumps.
+            return Image.new("RGB", self.size, (0, 0, 0))
         xwd = subprocess.run(["xwd", "-display", self.display, "-root", "-silent"],
                              capture_output=True, env=self.env)
         import io

@@ -629,18 +629,47 @@ check_qa_remote() {
     bash tools/build-server.sh x86_64
     eval "$(tools/qa/local-sshd.sh start)"
     trap "tools/qa/local-sshd.sh stop" EXIT
-    python3 tools/qa/remote.py --out '"$out"'
+    status=0
+    python3 tools/qa/remote.py --out '"$out"'/loopback || status=1
+    # The same host behind a 60 ms each-way link (local-sshd.sh, slow-link.py):
+    # what only a far host reaches. The suite checks the host undelayed, so the
+    # latencies it reports are the editor'"'"'s.
+    MQA_REMOTE_HOST=qa-slow MQA_REMOTE_CHECK_HOST=qa-local \
+      python3 tools/qa/remote.py --out '"$out"'/slow-link || status=1
+    exit $status
   '
   local rc=$?
   echo "run-checks: qa-remote finished (exit $rc); log at $log, findings under $out"
   return $rc
 }
 
+# The scenario suite on a headless Wayland compositor at output scale 2: the
+# window system and the HiDPI path Xvfb never runs. tools/qa/weston.sh unpacks
+# weston when it is not installed; input goes through the control channel.
+check_qa_wayland() {
+  local log="${LOG_DIR}/microide-qa-wayland.log"
+  local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-wayland-out}"
+  local qa_jobs="${MICROIDE_QA_JOBS:-$(( JOBS < 6 ? JOBS : 6 ))}"
+  run_logged "$log" bash -c '
+    set -e
+    rm -rf '"$out"'
+    command -v weston >/dev/null || tools/qa/weston.sh >/dev/null
+    cmake -S . -B build >/dev/null
+    cmake --build build --target microide -j'"$JOBS"'
+    MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 \
+      python3 tools/qa/run.py --out '"$out"' suite --jobs '"$qa_jobs"'
+  '
+  local rc=$?
+  echo "run-checks: qa-wayland finished (exit $rc); log at $log, findings under $out"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-asan|qa-remote|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-asan|qa-remote|qa-wayland|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh qa-asan       # the GUI QA suite on the ASan build" >&2
-  echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd" >&2
+  echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
+  echo "       tools/run-checks.sh qa-wayland    # the GUI QA suite on headless weston at scale 2" >&2
   echo "       tools/run-checks.sh hardened      # whole suite with _GLIBCXX_ASSERTIONS armed" >&2
   echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
   echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
@@ -671,6 +700,7 @@ main() {
     qa) check_qa ;;
     qa-asan) check_qa_asan ;;
     qa-remote) check_qa_remote ;;
+    qa-wayland) check_qa_wayland ;;
     all)
       local overall=0
       check_tests            || overall=1

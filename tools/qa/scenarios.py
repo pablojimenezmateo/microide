@@ -375,6 +375,10 @@ import flows_advanced  # noqa: E402
 import flows_coverage  # noqa: E402
 import flows_ux  # noqa: E402
 import flows_depth  # noqa: E402
+import flows_resilience  # noqa: E402
+import flows_matrix  # noqa: E402
+import flows_languages  # noqa: E402
+import flows_integration  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -397,17 +401,35 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     **flows_coverage.FLOWS,
     **flows_ux.FLOWS,
     **flows_depth.FLOWS,
+    **flows_resilience.FLOWS,
+    **flows_matrix.SCENARIOS,
+    **flows_languages.FLOWS,
+    **flows_integration.FLOWS,
 }
 
 # Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
 # (tools/qa/plugins/<name>).
 SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {**flows_lsp_debug.PLUGINS, **flows_more.PLUGINS,
                                                 **flows_advanced.PLUGINS, **flows_coverage.PLUGINS,
-                                                **flows_ux.PLUGINS, **flows_depth.PLUGINS}
+                                                **flows_ux.PLUGINS, **flows_depth.PLUGINS,
+                                                **flows_languages.PLUGINS, **flows_integration.PLUGINS}
+
+# Scenarios a backend cannot drive, with why. The Wayland backend delivers input
+# through the control channel at SDL's event level, not the seat: no input serial
+# reaches the compositor, so it refuses the clipboard selection (copy and paste
+# between the editor, the shell and the compare view), and kiosk weston owns the
+# window size. The suite reports these as skipped, not as passed.
+UNSUPPORTED: dict[str, dict[str, str]] = {
+    "wayland": {
+        name: "the clipboard needs a seat input serial, which injected input has none of"
+        for name in ("edit-selection-clipboard", "compare-clipboard", "terminal-clipboard", "undo-semantics")
+    } | {"wb-layouts": "kiosk weston owns the window size"},
+}
 
 # Environment a scenario's instance starts with, beyond App.launch's.
 SCENARIO_ENV: dict[str, dict[str, str]] = {
     "menu-clicks": {"MICROIDE_QA_MENU_DRY_RUN": "1"},
     **flows_keys.ENV,
     **flows_context_menus.ENV,
+    **flows_matrix.ENV,
 }

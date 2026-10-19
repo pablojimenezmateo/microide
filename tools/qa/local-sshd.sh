@@ -56,6 +56,18 @@ PidFile $STATE/sshd.pid
 SetEnv HOME=$HOST_HOME
 EOF
   cat > "$STATE/ssh_config" <<EOF
+# The same host behind a far link: 60 ms each way (a 120 ms round trip), so the
+# remote suite exercises what only a slow link reaches (keystroke prediction).
+Host qa-slow
+  ProxyCommand python3 $REPO/tools/qa/slow-link.py --delay-ms \${MQA_SLOW_LINK_DELAY_MS:-60} 127.0.0.1 $PORT
+  User $USER
+  IdentityFile $STATE/client_ed25519
+  IdentitiesOnly yes
+  UserKnownHostsFile $STATE/known_hosts
+  StrictHostKeyChecking accept-new
+  HostKeyAlias qa-local
+  BatchMode yes
+
 Host qa-local
   HostName 127.0.0.1
   Port $PORT

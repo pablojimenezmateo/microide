@@ -145,7 +145,8 @@ tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler
 tools/run-checks.sh hardened    # -> /tmp/microide-hardened.log (_GLIBCXX_ASSERTIONS; catches library-precondition UB the sanitizers cannot)
 tools/run-checks.sh qa          # -> /tmp/microide-qa.log (GUI QA on Xvfb: scenario suite + 300-step monkey, redraw verifier on; see tools/qa/README.md)
 tools/run-checks.sh qa-asan     # -> /tmp/microide-qa-asan.log (the GUI QA suite on the ASan build: a slow binary under a memory checker)
-tools/run-checks.sh qa-remote   # -> /tmp/microide-qa-remote.log (remote-project scenarios against a loopback-only sshd run as you; tools/qa/local-sshd.sh)
+tools/run-checks.sh qa-remote   # -> /tmp/microide-qa-remote.log (remote-project scenarios against a loopback-only sshd run as you, then over a 60 ms each-way link; tools/qa/local-sshd.sh)
+tools/run-checks.sh qa-wayland  # -> /tmp/microide-qa-wayland.log (the GUI QA suite on headless weston at scale 2; input over the control channel's pointer/key)
 tools/run-checks.sh all     # all four in sequence
 ```
 

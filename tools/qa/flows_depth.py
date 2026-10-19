@@ -116,7 +116,7 @@ def flow_terminal_programs(app: q.App) -> None:
     def stty_rows() -> int | None:
         app.type("clear; stty size\n")
         step(app, "stty size", 0.6)
-        found = [l.split() for l in _screen(app, 60).splitlines() if l.strip()[:1].isdigit()]
+        found = [l.split() for l in _screen(app, 400).splitlines() if l.strip()[:1].isdigit()]
         return int(found[-1][0]) if found and len(found[-1]) == 2 else None
 
     rows_before = (app.ui().get("terminal") or {}).get("visibleRows")
@@ -126,7 +126,8 @@ def flow_terminal_programs(app: q.App) -> None:
     rows_max = (app.ui().get("terminal") or {}).get("visibleRows")
     app.expect(rows_max and rows_before and rows_max > rows_before,
                f"the maximized terminal has more rows ({rows_before} -> {rows_max})")
-    app.expect(stty_rows() == rows_max, f"the shell sees the maximized size (stty vs {rows_max} rows)")
+    shell_rows = stty_rows()
+    app.expect(shell_rows == rows_max, f"the shell sees the maximized size (stty {shell_rows} vs {rows_max} rows)")
     app.type("less long.txt\n")
     app.wait_until(lambda: f"long line {rows_max - 1}" in _screen(app, 80), 5.0,
                    f"less to fill the maximized terminal ({rows_max} rows)")

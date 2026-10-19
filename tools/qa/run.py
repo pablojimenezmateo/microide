@@ -43,6 +43,12 @@ REQUIRED_TOOLS = ("Xvfb", "xdotool", "xwd", "xdpyinfo")
 
 
 def require_tools() -> None:
+    if q.BACKEND == "wayland":
+        # Input and state go through the control channel; weston is the only tool.
+        if not (q.WESTON_ROOT / "usr" / "bin" / "weston").exists() and shutil.which("weston") is None:
+            raise SystemExit("MQA_BACKEND=wayland needs weston (apt install weston, or "
+                             "tools/qa/weston.sh to unpack one); not running is not a pass")
+        return
     missing = [tool for tool in REQUIRED_TOOLS if shutil.which(tool) is None]
     if missing:
         raise SystemExit(f"tools/qa needs {', '.join(missing)} on PATH (apt install xvfb "
@@ -127,6 +133,10 @@ def cmd_suite(args: argparse.Namespace) -> int:
             doc = (s.SCENARIOS[name].__doc__ or "").strip().splitlines()
             print(f"{name:28} {doc[0] if doc else ''}")
         return 0
+    unsupported = s.UNSUPPORTED.get(q.BACKEND, {})
+    for name in [n for n in names if n in unsupported]:
+        print(f"  skip  {name}: not on {q.BACKEND} -- {unsupported[name]}", flush=True)
+    names = [n for n in names if n not in unsupported]
     jobs = max(1, min(args.jobs, len(names)))
     print(f"suite: {len(names)} scenario(s), {jobs} at a time -> {args.out}", flush=True)
     failures = 0
