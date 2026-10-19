@@ -503,6 +503,19 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::GitStageSelectedRanges:
+    case ActionId::GitUnstageSelectedRanges:
+    case ActionId::GitRevertSelectedRanges: {
+      const GitRangeVerb verb = id == ActionId::GitStageSelectedRanges     ? GitRangeVerb::Stage
+                                : id == ActionId::GitUnstageSelectedRanges ? GitRangeVerb::Unstage
+                                                                           : GitRangeVerb::Revert;
+      // The patch service reports what it could not apply (no change at the caret,
+      // a target that cannot take the patch) on the feedback line itself.
+      if (!context_.ApplyGitSelectedRanges(verb)) {
+        return reject("Open a diff (from the git view) to stage, unstage or revert its changes");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::MarkBranchFileReviewed:
       if (!context_.ActiveTabIsBranchReview()) {
         return reject(std::string(kNotABranchReview));

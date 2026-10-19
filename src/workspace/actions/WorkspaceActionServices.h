@@ -27,6 +27,10 @@ class RemoteHostService;
 // signatures + a parameter), so forward-declare to avoid the heavy include.
 enum class GitSidebarActionId;
 
+// What the Selected Ranges commands do to a diff's selected lines (or the change at
+// the caret): stage them, unstage them, or revert them in the working tree.
+enum class GitRangeVerb { Stage, Unstage, Revert };
+
 enum class ProjectOpenPickerResult {
   Launched,
   AlreadyOpen,
@@ -216,6 +220,9 @@ class WorkspaceActionContext {
     std::function<void()> unmark_branch_hunk_reviewed;
     std::function<void()> clear_branch_review_state;
     std::function<void(std::string)> edit_branch_review_note;
+    // Stage, unstage or revert (after a preview prompt) the active diff's selected
+    // lines, else the change at the caret. False when no diff is active.
+    std::function<bool(GitRangeVerb)> apply_git_selected_ranges;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<MergeTabState*()> active_merge_tab;
@@ -517,6 +524,7 @@ class WorkspaceActionContext {
   void UnmarkBranchHunkReviewed();
   void ClearBranchReviewState();
   void EditBranchReviewNote(std::string note_text);
+  bool ApplyGitSelectedRanges(GitRangeVerb verb);
   void OpenMergeEditor(const std::filesystem::path& base_path,
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,

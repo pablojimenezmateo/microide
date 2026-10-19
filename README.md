@@ -660,6 +660,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Alt+1` / `Alt+2` in merge | Apply both, current first / incoming first |
 | `Alt+O` in compare/merge | Open the working-tree file at the corresponding line (bare `o` while reviewing compare rows) |
 | `j` `k` / `a` `A` / `c` `C` / `d` `D` reviewing compare rows | Move / stage hunk or lines / unstage hunk or lines / discard hunk or lines (letters are text while typing in the working side) |
+| `Ctrl+K Ctrl+Alt+S` / `Ctrl+K Ctrl+N` / `Ctrl+K Ctrl+R` in a diff | Stage / unstage / revert the selected lines, else the change at the caret (VS Code's Selected Ranges; also on the Git menu; revert asks first) |
 | `s` in git sidebar | Stage selected file |
 | `x` in git sidebar | Discard selected file |
 | `r` in git sidebar | Refresh |
@@ -749,6 +750,9 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `git-sync`
 - `git-stash [message]`
 - `git-stash-pop`
+- `git-stage-selected-ranges`
+- `git-unstage-selected-ranges`
+- `git-revert-selected-ranges`
 - `git-accept-current [path]`
 - `git-accept-incoming [path]`
 - `terminal-find [query]`

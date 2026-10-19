@@ -319,6 +319,66 @@ void TestWorkspaceShellCompareStagesHunksInSequence() {
              .c_str());
 }
 
+// A working-tree diff's right side is editable, so the review letters (`a` stage,
+// `d` discard) type text there, and nothing else staged or reverted one change:
+// partial staging was out of reach exactly where it is wanted. VS Code's Selected
+// Ranges commands do it -- the selected lines, else the change at the caret -- on
+// Ctrl+K Ctrl+Alt+S (stage), Ctrl+K Ctrl+N (unstage), Ctrl+K Ctrl+R (revert).
+void TestWorkspaceShellCompareSelectedRangesStageAndRevertFromAWorkingTreeDiff() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "f.txt";
+  WriteFile(source, "}\n\neps\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(source, "alpha\nalpha\n}\n\neps\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  const auto settle = [&]() {
+    for (int i = 0; i < 2; ++i) {
+      WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+      WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    }
+  };
+  const auto index_content = [&]() {
+    microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
+    return repo.Execute({"show", ":f.txt"}).output;
+  };
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).right_editable,
+         "a working-tree diff's right side is editable (where the review letters type)");
+
+  // The diff opens on its first change; the chord stages that change alone.
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL), "Ctrl+K arms the chord");
+  Expect(SendKeyDown(shell, SDLK_S, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT)),
+         "Ctrl+K Ctrl+Alt+S should be handled");
+  settle();
+  Expect(index_content() == "alpha\nalpha\n}\n\neps\n",
+         "Ctrl+K Ctrl+Alt+S stages the change at the caret and nothing else; index=[" + index_content() +
+             "] feedback=[" + WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]");
+
+  // Revert the remaining change: the command asks first, with the patch it would apply.
+  {
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+    Expect(!compare.model.hunks.empty(), "the tail change is still in the diff");
+    compare.selected_row = microide::compare::ComparePresentationRowForModelRow(
+        compare.presentation, static_cast<std::size_t>(compare.model.hunks.back().start_row));
+  }
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-revert-selected-ranges"),
+         "git-revert-selected-ranges should run in a diff");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "reverting asks first (the discard preview)");
+}
+
 // The other half of the same disagreement: `JumpCompareHunk` moved `selected_row`
 // and revealed it, but never moved the editable pane's caret. So after jumping to
 // a hunk in the middle of the file the reader was LOOKING at that hunk and TYPING
@@ -3317,6 +3377,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareEditablePaneIndentsAndOutdents);
   AddTest(tests, "WorkspaceShell/CompareAltOOpensTheWorkingFile",
           TestWorkspaceShellCompareAltOOpensTheWorkingFile);
+  AddTest(tests, "WorkspaceShell/CompareSelectedRangesStageAndRevertFromAWorkingTreeDiff",
+          TestWorkspaceShellCompareSelectedRangesStageAndRevertFromAWorkingTreeDiff);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
   AddTest(tests, "WorkspaceShell/CompareClickAboveFirstRowIsNotHandled",

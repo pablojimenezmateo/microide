@@ -831,6 +831,11 @@ void WorkspaceActionContext::EditBranchReviewNote(std::string note_text) {
   }
 }
 
+bool WorkspaceActionContext::ApplyGitSelectedRanges(GitRangeVerb verb) {
+  return operations_.apply_git_selected_ranges != nullptr &&
+         operations_.apply_git_selected_ranges(verb);
+}
+
 void WorkspaceActionContext::OpenMergeEditor(const std::filesystem::path& base_path,
                                              const std::filesystem::path& incoming_path,
                                              const std::filesystem::path& current_path,

@@ -221,6 +221,9 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::GitStashPop, "Pop Stash"),
       MenuSeparator(),
       MenuItem(ActionId::CompareHead),
+      MenuItem(ActionId::GitStageSelectedRanges, "Stage Selected Ranges", "Ctrl+K Ctrl+Alt+S"),
+      MenuItem(ActionId::GitUnstageSelectedRanges, "Unstage Selected Ranges", "Ctrl+K Ctrl+N"),
+      MenuItem(ActionId::GitRevertSelectedRanges, "Revert Selected Ranges", "Ctrl+K Ctrl+R"),
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),

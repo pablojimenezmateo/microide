@@ -839,6 +839,29 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .clear_branch_review_state = [this]() { ClearActiveBranchReviewState(); },
           .edit_branch_review_note =
               [this](std::string note_text) { EditActiveBranchReviewNote(note_text); },
+          .apply_git_selected_ranges =
+              [this](GitRangeVerb verb) {
+                const CompareTabState* compare_tab = ActiveCompareTab();
+                if (compare_tab == nullptr) {
+                  return false;
+                }
+                // VS Code's rule: the selected lines when there are any, else the
+                // change the caret is in.
+                const bool lines = compare_tab->right_view_active &&
+                                   compare_tab->right_viewport.selection_range().has_value();
+                switch (verb) {
+                  case GitRangeVerb::Stage:
+                    lines ? StageCompareSelectedLines() : StageCompareHunk();
+                    break;
+                  case GitRangeVerb::Unstage:
+                    lines ? UnstageCompareSelectedLines() : UnstageCompareHunk();
+                    break;
+                  case GitRangeVerb::Revert:
+                    lines ? OpenDiscardCompareSelectedLinesPrompt() : OpenDiscardCompareHunkPrompt();
+                    break;
+                }
+                return true;
+              },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
           .sync_compare_selection_from_viewport =

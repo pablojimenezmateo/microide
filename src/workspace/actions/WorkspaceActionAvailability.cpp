@@ -568,6 +568,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return tab != nullptr && tab->review_mode == compare::CompareReviewMode::Branch;
     }
     case ActionId::ClearBranchReviewState:
+    case ActionId::GitStageSelectedRanges:
+    case ActionId::GitUnstageSelectedRanges:
+    case ActionId::GitRevertSelectedRanges:
       return operations_.active_tab_is_compare();
     case ActionId::Fold:
     case ActionId::Unfold:

@@ -129,6 +129,11 @@ enum class ActionId {
   GitSync,
   GitStash,
   GitStashPop,
+  // VS Code's Stage / Unstage / Revert Selected Ranges, in a diff: the selected
+  // lines when there is a selection, else the change at the caret.
+  GitStageSelectedRanges,
+  GitUnstageSelectedRanges,
+  GitRevertSelectedRanges,
   // Opens (or re-focuses) the terminal panel's find-in-scrollback bar.
   TerminalFind,
   // Git sidebar entry context-menu actions (right-click on a changed-file row).

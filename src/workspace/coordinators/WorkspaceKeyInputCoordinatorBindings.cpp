@@ -164,6 +164,16 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
           return operations_.execute_action(ActionId::UnfoldAll, {}, ActionSource::Shortcut);
         }
       }
+      // VS Code's git chords for a diff: Ctrl+K Ctrl+Alt+S stages the selected
+      // ranges, Ctrl+K Ctrl+N unstages them, Ctrl+K Ctrl+R reverts them.
+      if (chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_ALT) && event.key == SDLK_S) {
+        return operations_.execute_action(ActionId::GitStageSelectedRanges, {}, ActionSource::Shortcut);
+      }
+      if (chord_mod == SDL_KMOD_CTRL && (event.key == SDLK_N || event.key == SDLK_R)) {
+        return operations_.execute_action(event.key == SDLK_N ? ActionId::GitUnstageSelectedRanges
+                                                              : ActionId::GitRevertSelectedRanges,
+                                          {}, ActionSource::Shortcut);
+      }
       if (chord_mod == SDL_KMOD_CTRL) {
         if (event.key == SDLK_O) {
           // File > Open Folder / Project Tab… advertises Ctrl+K Ctrl+O (VS Code's
