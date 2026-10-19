@@ -106,6 +106,11 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
   util::JsonObject window;
   window["width"] = util::JsonValue(static_cast<std::int64_t>(layout->full.w));
   window["height"] = util::JsonValue(static_cast<std::int64_t>(layout->full.h));
+  const SDL_FPoint per_unit = operations.window_per_unit ? operations.window_per_unit() : SDL_FPoint{1.0f, 1.0f};
+  util::JsonArray scale;
+  scale.emplace_back(static_cast<double>(per_unit.x));
+  scale.emplace_back(static_cast<double>(per_unit.y));
+  window["scale"] = util::JsonValue(std::move(scale));
   object["window"] = util::JsonValue(std::move(window));
   object["focus"] = util::JsonValue(std::string(ControlUiFocusName(state.surface.focus)));
 

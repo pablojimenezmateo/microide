@@ -52,6 +52,7 @@
     int logical_height = 0;
     float scale_x = 1.0f;
     float scale_y = 1.0f;
+    SDL_FPoint window_per_unit{1.0f, 1.0f};  // window coordinates per layout unit (ui.scale, HiDPI)
     WindowChromeState chrome{};
   };
   using RenderInvalidation = workspace::RenderInvalidation;

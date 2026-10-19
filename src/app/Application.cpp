@@ -81,11 +81,24 @@ std::optional<workspace::WorkspaceShell::WindowPresentationState> CaptureWindowP
       util::ComputeWindowPresentation(pixel_width, pixel_height,
                                       SDL_GetWindowDisplayScale(window), ui_scale);
   const SDL_WindowFlags flags = SDL_GetWindowFlags(window);
+  // SDL_LOGICAL_PRESENTATION_STRETCH: window coordinates are layout units times a
+  // factor, with no letterbox offset. ui.scale and the display's pixel density
+  // both live in it; the control channel's `ui` query reports it.
+  int window_width = 0;
+  int window_height = 0;
+  SDL_GetWindowSize(window, &window_width, &window_height);
   return workspace::WorkspaceShell::WindowPresentationState{
       .logical_width = presentation.logical_width,
       .logical_height = presentation.logical_height,
       .scale_x = presentation.presentation_scale_x,
       .scale_y = presentation.presentation_scale_y,
+      .window_per_unit =
+          SDL_FPoint{presentation.logical_width > 0 && window_width > 0
+                         ? static_cast<float>(window_width) / static_cast<float>(presentation.logical_width)
+                         : 1.0f,
+                     presentation.logical_height > 0 && window_height > 0
+                         ? static_cast<float>(window_height) / static_cast<float>(presentation.logical_height)
+                         : 1.0f},
       .chrome =
           workspace::WorkspaceShell::WindowChromeState{
               .custom_enabled = CustomWindowChromeEnabled(window),

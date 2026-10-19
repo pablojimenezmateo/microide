@@ -91,6 +91,9 @@ class ControlUiQuery {
 
   struct Operations {
     std::function<std::optional<WorkspaceLayout>()> layout;
+    // Window coordinates per layout unit (x, y): every rect and geometry field the
+    // query reports is in layout units; a driver multiplies by this to point.
+    std::function<SDL_FPoint()> window_per_unit;
     // The display label of a menu (`Edit`), for the menu state block.
     std::function<std::string(MenuId)> menu_label;
     // `<menu>/<label>` of a menu's row, the locator its `menu-item:` element uses.

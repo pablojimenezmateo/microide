@@ -128,6 +128,20 @@ void TestUiQueryNamesTheWorkspaceChrome() {
   Expect(beta.has_value() && beta->active == true, "the active tab should be marked active");
 }
 
+// Rects are in layout units; window.scale says how many window coordinates one is.
+// Without it a driver pointing at ui.scale 1.5 clicked two thirds of the way to
+// every row and ran the row above (tools/qa menu-clicks, "scaled" layout).
+void TestUiQueryReportsTheWindowScale() {
+  UiFixture fixture;
+  auto state = fixture.shell.CurrentWindowPresentationState().value_or(WorkspaceShell::WindowPresentationState{});
+  state.window_per_unit = SDL_FPoint{1.5f, 1.25f};
+  fixture.shell.SetWindowPresentationState(state);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto& scale = ui["window"]["scale"].AsArray();
+  Expect(scale.size() == 2 && scale[0].AsDouble() == 1.5 && scale[1].AsDouble() == 1.25,
+         "the ui query should report window coordinates per layout unit");
+}
+
 void TestUiQueryHitsWhatItNames() {
   UiFixture fixture;
   const auto edit = Find(TestAccess::ControlUi(fixture.shell), "menu:Edit");
@@ -375,6 +389,7 @@ void TestUiQueryNamesToasts() {
 void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesToasts", TestUiQueryNamesToasts);
   AddTest(tests, "ControlUiQuery/IsRegistered", TestUiQueryIsRegistered);
+  AddTest(tests, "ControlUiQuery/ReportsTheWindowScale", TestUiQueryReportsTheWindowScale);
   AddTest(tests, "ControlUiQuery/NamesTheDebugPane", TestUiQueryNamesTheDebugPane);
   AddTest(tests, "ControlUiQuery/NamesTheWorkspaceChrome", TestUiQueryNamesTheWorkspaceChrome);
   AddTest(tests, "ControlUiQuery/HitsWhatItNames", TestUiQueryHitsWhatItNames);

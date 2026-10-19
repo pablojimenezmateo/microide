@@ -173,13 +173,13 @@ binding runs, as the `ui` action receipt names it), `chord` spelled as the menus
 `skipsTerminal`.
 
 **What is on screen (`ui`).** The locator surface for automation (`tools/qa`):
-`{window:{width,height}, focus, modal, sidebar:{visible,view,temporary},
+`{window:{width,height,scale}, focus, modal, sidebar:{visible,view,temporary},
 overlay:{visible,mode}, menu:{open,menu,activeItem,submenu,contextMenu,overflow,rowsRun,lastRun},
 panel:{visible,content,maximized}, surfaces:{menuBar,projectTabStrip,tabStrip,
 breadcrumb,editorSurface,sidebar,rightPane,bottomPanel,statusBar}, elements:[...]}`.
 `modal` names the surface that owns the keyboard and pointer (`settings`, `help`,
 `prompt`, `unsaved-prompt`) or is null. Each element is `{name, kind, rect:[x,y,w,h], label?, enabled?, active?,
-selected?}` in window coordinates (what mouse events use). Names, by kind:
+selected?}` in layout units -- the coordinates the app's mouse paths test, which are window coordinates only at `ui.scale` 1 on a 1x display. `window.scale` is `[x, y]` window coordinates per layout unit (ui.scale and the display's pixel density): a driver multiplies a rect, or any geometry field below, by it before pointing (tools/qa's App does it in one place). Names, by kind:
 
 | name | element |
 |------|---------|

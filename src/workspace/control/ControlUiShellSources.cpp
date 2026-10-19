@@ -93,6 +93,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
   using namespace control_ui_kind;
   return ControlUiQuery::Operations{
       .layout = [this]() { return CurrentWorkspaceLayout(); },
+      .window_per_unit = [this]() { return window_presentation_.window_per_unit; },
       .menu_label =
           [](MenuId id) {
             const MenuSpec* spec = FindMenuSpec(id);

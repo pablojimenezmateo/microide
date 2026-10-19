@@ -396,7 +396,14 @@ class App:
 
     def ui(self) -> dict[str, Any]:
         """Named on-screen elements and focus/overlay/menu state (the `ui` query)."""
-        return self.query("ui")
+        answer = self.query("ui")
+        # Rects and geometry are in layout units; `window.scale` is window pixels
+        # per unit (ui.scale, HiDPI). Every point a flow takes from an answer goes
+        # through _root, which applies the latest one.
+        scale = (answer.get("window") or {}).get("scale")
+        if isinstance(scale, list) and len(scale) == 2:
+            self.window_scale = (float(scale[0]), float(scale[1]))
+        return answer
 
     def element(self, name: str) -> dict[str, Any]:
         """The element called `name` in the ui query (e.g. "menu:Edit", "tab:0/main.cpp")."""
@@ -561,7 +568,8 @@ class App:
             return (0, 0)
 
     def _root(self, x: float, y: float) -> tuple[str, str]:
-        return str(round(x) + self.origin[0]), str(round(y) + self.origin[1])
+        sx, sy = getattr(self, "window_scale", (1.0, 1.0))
+        return str(round(x * sx) + self.origin[0]), str(round(y * sy) + self.origin[1])
 
     def _focus(self) -> None:
         if self.window:
