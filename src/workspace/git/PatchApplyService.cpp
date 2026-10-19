@@ -75,6 +75,11 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     return std::nullopt;
   }
 
+  // Unwired (a shell built without its lifecycle, as the every-action tests build
+  // it): no repository to apply to.
+  if (!callbacks_.current_repository_state) {
+    return std::nullopt;
+  }
   const project::GitRepositoryState repository_state = callbacks_.current_repository_state();
   if (repository_state.repository_root.empty() || !repository_state.repo_available) {
     return std::nullopt;
