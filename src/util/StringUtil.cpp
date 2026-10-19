@@ -375,6 +375,25 @@ std::size_t Utf8CodepointCount(std::string_view text) {
   return count;
 }
 
+bool ReplaceInvalidUtf8Bytes(std::string& text, char replacement) {
+  bool replaced = false;
+  for (std::size_t offset = 0; offset < text.size();) {
+    if (static_cast<unsigned char>(text[offset]) <= 0x7F) {
+      ++offset;
+      continue;
+    }
+    const std::size_t length = Utf8SequenceLength(text, offset);
+    if (length <= 1) {
+      text[offset] = replacement;
+      replaced = true;
+      ++offset;
+      continue;
+    }
+    offset += length;
+  }
+  return replaced;
+}
+
 bool IsValidUtf8(std::string_view content) {
   for (std::size_t offset = 0; offset < content.size();) {
     const std::size_t sequence_length = Utf8SequenceLength(content, offset);

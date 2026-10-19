@@ -226,6 +226,13 @@ bool RemoveLastUtf8Codepoint(std::string* text);
 std::size_t Utf8ByteOffsetForCodepointCount(std::string_view text, std::size_t codepoint_count);
 std::size_t Utf8CodepointCount(std::string_view text);
 bool IsValidUtf8(std::string_view content);
+// Replaces each byte that is not part of a valid UTF-8 sequence with
+// `replacement` (an ASCII byte), in place: the length and every byte column stay
+// as they were, and the bytes it replaces are exactly the ones the editor's
+// column math (Utf8SequenceLength) counts as one-byte codepoints, so a column
+// means the same code-unit offset before and after. Returns whether it replaced
+// anything. For text sent where JSON must be valid UTF-8 (an LSP document).
+bool ReplaceInvalidUtf8Bytes(std::string& text, char replacement = '?');
 std::string NormalizeLineEndings(std::string_view text);
 void TrimTrailingLineEndings(std::string* text);
 // Trim leading and trailing ASCII whitespace (`std::isspace` semantics on the

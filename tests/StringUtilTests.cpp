@@ -682,6 +682,23 @@ void TestStringUtilFirstNonAsciiOrByte() {
   }
 }
 
+// An LSP document must be valid UTF-8 JSON: clangd drops a didOpen holding one
+// stray byte, so a Latin-1 comment cost the whole file its language server. The
+// repair keeps every byte column (and the code-unit count the column math gives
+// it) where it was.
+void TestReplaceInvalidUtf8BytesKeepsColumns() {
+  std::string latin = "// caf\xe9 au lait \xc3\xa9 ok \xe2\x82 cut \xf0\x9f\x98\x80\n";
+  const std::size_t size = latin.size();
+  Expect(microide::util::ReplaceInvalidUtf8Bytes(latin), "a stray byte should be replaced");
+  Expect(latin.size() == size, "the length is kept");
+  Expect(latin == "// caf? au lait \xc3\xa9 ok ?? cut \xf0\x9f\x98\x80\n",
+         "only the invalid bytes change, valid sequences stay: " + latin);
+  Expect(IsValidUtf8(latin), "the result is valid UTF-8");
+  std::string clean = "ascii and \xc3\xa9";
+  Expect(!microide::util::ReplaceInvalidUtf8Bytes(clean) && clean == "ascii and \xc3\xa9",
+         "valid text is untouched");
+}
+
 }  // namespace
 
 // The falsey/truthy token sets are shared by the env-var tracing switches and by
@@ -1013,6 +1030,7 @@ void TestUtilSha256MatchesReferenceVectors() {
 }
 
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "StringUtil/ReplaceInvalidUtf8BytesKeepsColumns", TestReplaceInvalidUtf8BytesKeepsColumns);
   AddTest(tests, "Util/Sha256MatchesReferenceVectors", TestUtilSha256MatchesReferenceVectors);
   AddTest(tests, "StringUtil/AsciiClassifiersAreLocaleIndependent",
           TestStringUtilAsciiClassifiersAreLocaleIndependent);

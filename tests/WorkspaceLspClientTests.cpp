@@ -115,6 +115,70 @@ while True:
   Expect(publish["versionSupport"].AsBool(), "with versionSupport: stale versions are dropped by version");
 }
 
+// A document with a stray byte still reaches the server: JSON must be UTF-8, and
+// clangd dropped the whole didOpen of a file with one Latin-1 byte in a comment
+// -- no diagnostics, hover or completion for it, and nothing said why. The byte
+// goes as '?', so the server's columns stay the editor's.
+void TestWorkspaceLspClientSendsInvalidUtf8AsValidJson() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto opened_path = temp_dir.path() / "opened.txt";
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import pathlib
+import sys
+
+out = pathlib.Path(sys.argv[1])
+
+def read_message():
+    length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":", 1)[1].strip())
+    # Strict, as a server's parser is: invalid UTF-8 raises here.
+    return json.loads(sys.stdin.buffer.read(length).decode("utf-8")) if length else None
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii") + data)
+    sys.stdout.buffer.flush()
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": {"capabilities": {"textDocumentSync": 1}}})
+    elif method == "textDocument/didOpen":
+        out.write_text(msg["params"]["textDocument"]["text"], encoding="utf-8")
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+  LspClient client;
+  Expect(client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string(), opened_path.string()},
+                      "file:///tmp", "cpp"),
+         "the fixture server should start");
+  Expect(WaitUntil([&] { return client.IsInitialized(); }, std::chrono::seconds(5)),
+         "the fixture server should initialize");
+  Expect(client.DidOpen("file:///tmp/latin.cpp", "cpp", std::string("// caf\xe9 au lait\nint x;\n")),
+         "didOpen should queue");
+  Expect(WaitUntil([&] { return std::filesystem::exists(opened_path); }, std::chrono::seconds(5)),
+         "the server should receive the document");
+  client.Shutdown();
+  Expect(ReadFile(opened_path) == "// caf? au lait\nint x;\n",
+         "the stray byte should arrive as '?', the rest as written: " + ReadFile(opened_path));
+}
+
 void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -2427,6 +2491,8 @@ void TestLspCompletionSortsByServerRank() {
 }
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspClient/SendsInvalidUtf8AsValidJson",
+          TestWorkspaceLspClientSendsInvalidUtf8AsValidJson);
   AddTest(tests, "WorkspaceLspClient/DeclaresPublishDiagnostics",
           TestWorkspaceLspClientDeclaresPublishDiagnostics);
   AddTest(tests, "WorkspaceLspManager/ReportsAServerThatDiesAtStartup",

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include "platform/ProcessLauncher.h"
+#include "util/StringUtil.h"
 
 #include "workspace/FileUri.h"
 #include "workspace/lsp/WorkspaceLspClientInternal.h"
@@ -195,6 +196,10 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
         text_doc["uri"] = JsonValue(uri);
         text_doc["languageId"] = JsonValue(language_id);
         text_doc["version"] = JsonValue(static_cast<std::int64_t>(open_version));
+        // A server's JSON parser rejects a message that is not valid UTF-8 -- clangd
+        // drops the whole didOpen, so one Latin-1 byte cost the file every feature.
+        // Stray bytes go as '?', which keeps every column the client sends.
+        util::ReplaceInvalidUtf8Bytes(text);
         text_doc["text"] = JsonValue(text);
         JsonObject params;
         params["textDocument"] = JsonValue(std::move(text_doc));
@@ -242,7 +247,11 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
         text_doc["uri"] = JsonValue(uri);
         text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
         JsonObject change;
-        change["text"] = JsonValue(std::move(text));
+        // The capture is const (the parameter was a const reference), and the
+        // JsonValue copied it anyway: copy once, then repair (see DidOpen).
+        std::string body = text;
+        util::ReplaceInvalidUtf8Bytes(body);
+        change["text"] = JsonValue(std::move(body));
         JsonArray changes;
         changes.push_back(JsonValue(std::move(change)));
         JsonObject params;
@@ -284,7 +293,9 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
         text_doc["version"] = JsonValue(static_cast<std::int64_t>(version));
         JsonObject change;
         change["range"] = lsp_protocol::MakeRange(changed_range);
-        change["text"] = JsonValue(std::move(new_text));
+        std::string body = new_text;  // see DidChange
+        util::ReplaceInvalidUtf8Bytes(body);
+        change["text"] = JsonValue(std::move(body));
         JsonArray changes;
         changes.push_back(JsonValue(std::move(change)));
         JsonObject params;
