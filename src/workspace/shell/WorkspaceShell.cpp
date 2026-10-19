@@ -53,8 +53,10 @@ void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path
   git_blame_service_.InvalidatePath(context_.current_project_state.root, normalized);
   // The inline blame on screen is about to change (it drops until the re-fetch
   // lands): the tree's Refresh invalidated it and nothing repainted the editor
-  // (found by the QA monkey).
-  if (const editor::TextViewport* viewport = ActiveEditorViewport();
+  // (found by the QA monkey). Any editable surface draws it -- a diff's working
+  // side, a merge's result pane -- and Save on a merge left its annotation on the
+  // result pane (QA merge-mouse).
+  if (const editor::TextViewport* viewport = ActiveEditableViewport();
       viewport != nullptr && viewport->path().lexically_normal() == normalized) {
     RequestFocusedEditorRedraw();
   }

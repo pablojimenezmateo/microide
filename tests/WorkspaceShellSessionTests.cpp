@@ -427,6 +427,35 @@ void TestWorkspaceShellShutdownPreservesDistinctWorkspaceProjectRoots() {
          "restored workspace should preserve the second saved project root");
 }
 
+// Saving a merge invalidates its file's blame, and the inline annotation on the
+// result pane's caret line drops until the re-fetch lands; the repaint asked for
+// it only when an EDITOR tab showed the file, so the merge result kept the old
+// annotation (QA merge-mouse: a stale "Ada Lovelace" beside the saved line).
+void TestWorkspaceShellMergeBlameInvalidationRepaintsTheResultPane() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "output.txt";
+  WriteFile(base, "line 1\nline 2\nline 3\n");
+  WriteFile(incoming, "line 1\nincoming 2\nline 3\n");
+  WriteFile(current, "line 1\ncurrent 2\nline 3\n");
+  WriteFile(output, "<<<<<<< ours\ncurrent 2\n=======\nincoming 2\n>>>>>>> theirs\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge blame fixture should open");
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  WorkspaceShellTestAccess::InvalidateEditorBlamePath(shell, output);
+  const auto redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(redraw.full || !redraw.rects.empty(),
+         "invalidating the merge result's blame should repaint the result pane");
+}
+
 void TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3258,6 +3287,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeWheelScrollsRows);
   AddTest(tests, "WorkspaceShell/MergeToolbarButtonsNavigateConflicts",
           TestWorkspaceShellMergeToolbarButtonsNavigateConflicts);
+  AddTest(tests, "WorkspaceShell/MergeBlameInvalidationRepaintsTheResultPane",
+          TestWorkspaceShellMergeBlameInvalidationRepaintsTheResultPane);
   AddTest(tests, "WorkspaceShell/MergeHorizontalNavigationInvalidatesResultPane",
           TestWorkspaceShellMergeHorizontalNavigationInvalidatesResultPane);
   AddTest(tests, "WorkspaceShell/MoveMergeSelectionInvalidatesConflictBand",
