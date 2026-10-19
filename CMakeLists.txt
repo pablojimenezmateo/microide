@@ -1988,7 +1988,10 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   add_test(NAME microide_perf_tests
            COMMAND microide_perf --smoke --iterations=1
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  set_tests_properties(microide_perf_tests PROPERTIES FIXTURES_REQUIRED perf_fixtures)
+  # RUN_SERIAL: a timing gate measured beside 24 test shards measures the shards.
+  # Under `ctest -j` load the async-open scenario's worst frame read 12.6 ms of
+  # shell-thread CPU against its 12 ms budget; alone it is 2.4-3.8 ms.
+  set_tests_properties(microide_perf_tests PROPERTIES FIXTURES_REQUIRED perf_fixtures RUN_SERIAL TRUE)
 endif()
 
 add_executable(microide_diff_bench
