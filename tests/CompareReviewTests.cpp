@@ -74,11 +74,25 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          operations.unmark_branch_file_reviewed = [&]() { ++unmarked_file; };
          operations.mark_branch_hunk_reviewed = [&]() { ++marked_hunk; };
          operations.unmark_branch_hunk_reviewed = [&]() { ++unmarked_hunk; };
+         // The marks apply to a diff opened from the Outgoing list only.
+         microide::workspace::CompareTabState branch_tab;
+         branch_tab.review_mode = microide::compare::CompareReviewMode::Branch;
+         microide::workspace::CompareTabState* active_tab = nullptr;
+         operations.active_compare_tab = [&]() { return active_tab; };
+         std::string feedback;
+         operations.reject_action = [&](ActionSource, std::string text) {
+           feedback = std::move(text);
+           return false;
+         };
 
          WorkspaceActionContext context(catalog, project_state, ui_scale, std::move(operations));
          ActionCoordinator coordinator(context);
 
          const std::vector<std::string> no_args;
+         Expect(!coordinator.Execute(ActionId::MarkBranchFileReviewed, no_args, ActionSource::Command) &&
+                    marked_file == 0 && !feedback.empty(),
+                "with no branch-review diff open the mark is refused with a reason, not run");
+         active_tab = &branch_tab;
          Expect(coordinator.Execute(ActionId::MarkBranchFileReviewed, no_args,
                                     ActionSource::Command),
                 "mark-branch-file-reviewed should dispatch");

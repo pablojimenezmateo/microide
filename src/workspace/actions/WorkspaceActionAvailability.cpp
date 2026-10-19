@@ -562,8 +562,12 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::UnmarkBranchFileReviewed:
     case ActionId::MarkBranchHunkReviewed:
     case ActionId::UnmarkBranchHunkReviewed:
+    case ActionId::EditBranchReviewNote: {
+      const CompareTabState* tab =
+          operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
+      return tab != nullptr && tab->review_mode == compare::CompareReviewMode::Branch;
+    }
     case ActionId::ClearBranchReviewState:
-    case ActionId::EditBranchReviewNote:
       return operations_.active_tab_is_compare();
     case ActionId::Fold:
     case ActionId::Unfold:

@@ -43,8 +43,11 @@ class BranchReviewStateService {
   BranchReviewTargetState* FindOrCreateTarget(const BranchReviewTargetIdentity& target);
   const BranchReviewTargetState* FindTarget(const BranchReviewTargetIdentity& target) const;
 
+  // `diff_fingerprint`: DiffContentFingerprint of the file's diff as reviewed (0
+  // when it is not at hand); a later diff that differs shows it as changed.
   void MarkFileReviewed(const BranchReviewTargetIdentity& target,
-                        const std::filesystem::path& path);
+                        const std::filesystem::path& path,
+                        std::uint64_t diff_fingerprint = 0);
   void MarkFileUnreviewed(const BranchReviewTargetIdentity& target,
                           const std::filesystem::path& path);
   void MarkHunkReviewed(const BranchReviewTargetIdentity& target,

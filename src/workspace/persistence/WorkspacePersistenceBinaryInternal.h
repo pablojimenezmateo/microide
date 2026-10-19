@@ -678,7 +678,7 @@ inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
                       [&](PrimitiveWriter& w) { return w.WritePath(file.path); }, &payload) ||
         !AppendRecord(BranchReviewFileEntryTag::ReviewedSnapshotGeneration,
                       [&](PrimitiveWriter& w) {
-                        return w.WriteI64(file.reviewed_snapshot_generation);
+                        return w.WriteI64(file.reviewed_diff_fingerprint);
                       },
                       &payload) ||
         !AppendRecord(BranchReviewFileEntryTag::ReviewedAtUnixMs,
@@ -772,7 +772,7 @@ inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
                       std::int64_t value = 0;
                       return file_reader.ReadI64(&value) && file_reader.remaining() == 0 &&
                              value >= 0 &&
-                             (file.reviewed_snapshot_generation = static_cast<std::uint64_t>(value),
+                             (file.reviewed_diff_fingerprint = static_cast<std::uint64_t>(value),
                               true);
                     }
                     case BranchReviewFileEntryTag::ReviewedAtUnixMs: {

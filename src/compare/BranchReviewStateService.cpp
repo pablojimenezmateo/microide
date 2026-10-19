@@ -50,6 +50,13 @@ struct ModelHunkIndex {
   std::unordered_map<std::uint64_t, std::size_t> by_position;
 };
 
+// A file marked with its diff at hand, looked at with a diff whose changed text
+// differs. Without either fingerprint nothing says it moved.
+bool FileDiffMoved(const BranchReviewFileReviewEntry& entry, const CompareModel* model) {
+  return model != nullptr && entry.reviewed_diff_fingerprint != 0 &&
+         entry.reviewed_diff_fingerprint != DiffContentFingerprint(*model);
+}
+
 ModelHunkIndex BuildModelHunkIndex(const CompareModel& model) {
   ModelHunkIndex index;
   index.keys.reserve(model.hunks.size());
@@ -163,15 +170,16 @@ void BranchReviewStateService::PruneTarget(BranchReviewTargetState& target_state
 }
 
 void BranchReviewStateService::MarkFileReviewed(const BranchReviewTargetIdentity& target,
-                                                const std::filesystem::path& path) {
+                                                const std::filesystem::path& path,
+                                                const std::uint64_t diff_fingerprint) {
   BranchReviewTargetState* target_state = FindOrCreateTarget(target);
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(path);
+  const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
   for (BranchReviewFileReviewEntry& entry : target_state->reviewed_files) {
     if (PathsEqual(entry.path, normalized)) {
-      entry.reviewed_snapshot_generation = target.snapshot_generation;
+      entry.reviewed_diff_fingerprint = diff_fingerprint;
       entry.reviewed_at_unix_ms = NowUnixMs();
       PruneTarget(*target_state);
       return;
@@ -179,7 +187,7 @@ void BranchReviewStateService::MarkFileReviewed(const BranchReviewTargetIdentity
   }
   target_state->reviewed_files.push_back(BranchReviewFileReviewEntry{
       .path = normalized,
-      .reviewed_snapshot_generation = target.snapshot_generation,
+      .reviewed_diff_fingerprint = diff_fingerprint,
       .reviewed_at_unix_ms = NowUnixMs(),
   });
   PruneTarget(*target_state);
@@ -193,7 +201,7 @@ void BranchReviewStateService::MarkFileUnreviewed(const BranchReviewTargetIdenti
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(path);
+  const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
   auto& files = target_state->reviewed_files;
   const std::size_t before = files.size();
   files.erase(std::remove_if(files.begin(), files.end(),
@@ -213,7 +221,7 @@ void BranchReviewStateService::MarkHunkReviewed(const BranchReviewTargetIdentity
     return;
   }
   const BranchReviewHunkIdentity normalized{
-      .path = NormalizeReviewPath(identity.path),
+      .path = NormalizeReviewPath(target.repository_root, identity.path),
       .old_start = identity.old_start,
       .old_count = identity.old_count,
       .new_start = identity.new_start,
@@ -242,7 +250,7 @@ void BranchReviewStateService::MarkHunkUnreviewed(const BranchReviewTargetIdenti
     return;
   }
   const BranchReviewHunkIdentity normalized{
-      .path = NormalizeReviewPath(identity.path),
+      .path = NormalizeReviewPath(target.repository_root, identity.path),
       .old_start = identity.old_start,
       .old_count = identity.old_count,
       .new_start = identity.new_start,
@@ -270,11 +278,11 @@ void BranchReviewStateService::SetNote(const BranchReviewTargetIdentity& target,
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(path);
+  const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
   std::optional<BranchReviewHunkIdentity> normalized_hunk;
   if (hunk_identity.has_value()) {
     normalized_hunk = *hunk_identity;
-    normalized_hunk->path = NormalizeReviewPath(normalized_hunk->path);
+    normalized_hunk->path = NormalizeReviewPath(target.repository_root, normalized_hunk->path);
   }
   for (BranchReviewNote& note : target_state->notes) {
     const bool same_scope = note.scope == scope;
@@ -309,11 +317,11 @@ void BranchReviewStateService::DeleteNote(const BranchReviewTargetIdentity& targ
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(path);
+  const std::filesystem::path normalized = NormalizeReviewPath(target.repository_root, path);
   std::optional<BranchReviewHunkIdentity> normalized_hunk;
   if (hunk_identity.has_value()) {
     normalized_hunk = *hunk_identity;
-    normalized_hunk->path = NormalizeReviewPath(normalized_hunk->path);
+    normalized_hunk->path = NormalizeReviewPath(target.repository_root, normalized_hunk->path);
   }
   auto& notes = target_state->notes;
   const std::size_t before = notes.size();
@@ -413,7 +421,7 @@ BranchReviewMarkerStatus BranchReviewStateService::FileStatus(
   if (target_state == nullptr) {
     return BranchReviewMarkerStatus::Unreviewed;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(input.path);
+  const std::filesystem::path normalized = NormalizeReviewPath(input.target.repository_root, input.path);
   const BranchReviewFileReviewEntry* file_entry = nullptr;
   for (const BranchReviewFileReviewEntry& entry : target_state->reviewed_files) {
     if (PathsEqual(entry.path, normalized)) {
@@ -424,7 +432,7 @@ BranchReviewMarkerStatus BranchReviewStateService::FileStatus(
   if (file_entry == nullptr) {
     return BranchReviewMarkerStatus::Unreviewed;
   }
-  if (file_entry->reviewed_snapshot_generation != input.target.snapshot_generation) {
+  if (FileDiffMoved(*file_entry, input.model)) {
     return BranchReviewMarkerStatus::ChangedSinceReviewed;
   }
   if (input.model != nullptr &&
@@ -452,7 +460,7 @@ void BranchReviewStateService::ResolveHunkMarkers(
   if (target_state == nullptr) {
     return;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(input.path);
+  const std::filesystem::path normalized = NormalizeReviewPath(input.target.repository_root, input.path);
   const ModelHunkIndex index = BuildModelHunkIndex(*input.model);
 
   // Pass 1 — each hunk's own reviewed entry, if it has one. First entry at a
@@ -487,7 +495,7 @@ void BranchReviewStateService::ResolveHunkMarkers(
       }
     }
     if (file_entry != nullptr) {
-      file_status = file_entry->reviewed_snapshot_generation != input.target.snapshot_generation ||
+      file_status = FileDiffMoved(*file_entry, input.model) ||
                             AnyReviewedHunkContentMoved(*target_state, normalized, index)
                         ? BranchReviewMarkerStatus::ChangedSinceReviewed
                         : BranchReviewMarkerStatus::Reviewed;
@@ -531,7 +539,7 @@ BranchReviewMarkerStatus BranchReviewStateService::HunkStatus(
     return BranchReviewMarkerStatus::Unreviewed;
   }
   const BranchReviewHunkIdentity current = ComputeBranchReviewHunkIdentity(
-      *input.model, input.selected_hunk_index, NormalizeReviewPath(input.path));
+      *input.model, input.selected_hunk_index, NormalizeReviewPath(input.target.repository_root, input.path));
   for (const BranchReviewHunkReviewEntry& entry : target_state->reviewed_hunks) {
     if (!PathsEqual(entry.identity.path, current.path)) {
       continue;
@@ -559,7 +567,7 @@ std::optional<std::string> BranchReviewStateService::NoteText(
   if (target_state == nullptr) {
     return std::nullopt;
   }
-  const std::filesystem::path normalized = NormalizeReviewPath(input.path);
+  const std::filesystem::path normalized = NormalizeReviewPath(input.target.repository_root, input.path);
   std::optional<BranchReviewHunkIdentity> current_hunk;
   if (scope == BranchReviewNoteScope::Hunk && input.model != nullptr &&
       input.selected_hunk_index >= 0) {

@@ -454,6 +454,12 @@ bool WorkspaceActionContext::ActiveTabIsCompare() const {
          state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Compare;
 }
 
+bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
+  const CompareTabState* tab =
+      operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
+  return tab != nullptr && tab->review_mode == compare::CompareReviewMode::Branch;
+}
+
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
   return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
          state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;

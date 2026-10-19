@@ -28,6 +28,8 @@
 #include "editor/PluginDecorationStore.h"
 #include "util/JsonValue.h"
 #include "workspace/HoverTextWrap.h"
+#include "workspace/git/BranchReviewStateBridge.h"
+#include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests {
@@ -98,6 +100,91 @@ struct FlowFixture {
   WorkspaceShell shell;
   SoftwareCanvas canvas{kWidth, kHeight};
 };
+
+// branch review: a file marked reviewed from the diff an Outgoing row opens showed
+// no marker on that row. The diff stored the mark under its absolute path and the
+// git view looked it up under git's repository-relative one. And with no
+// branch-review diff open the command reported success and did nothing.
+void TestMarkingAnOutgoingFileReviewedMarksItsRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "base.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  RequireGitCommandSuccess(root, {"checkout", "-b", "qa-review"}, "git checkout qa-review");
+  WriteFile(root / "notes" / "r1.txt", "one\n");
+  CommitAll(root, "feature", "feature");
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the review fixture should open its project");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the git view should list the outgoing file");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+
+  Expect(!TestAccess::ExecuteCommandLine(shell, "mark-branch-file-reviewed"),
+         "marking a file reviewed with no branch-review diff open should be refused, not report success");
+
+  std::optional<SDL_FRect> row;
+  const util::JsonValue before = TestAccess::ControlUi(shell);  // a named value: the loop must not outlive it
+  for (const util::JsonValue& entry : before["elements"].AsArray()) {
+    if (entry["name"].AsString() == "row:git/r1.txt") {
+      const auto& r = entry["rect"].AsArray();
+      row = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                      static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    }
+  }
+  Expect(row.has_value(), "the git view should show r1.txt as an outgoing row");
+  if (!row) {
+    return;
+  }
+  const float x = row->x + row->w / 2.0f;
+  const float y = row->y + row->h / 2.0f;
+  (void)DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+  Expect(TestAccess::ActiveTabIsCompare(shell), "clicking the outgoing row should open its diff");
+  Expect(TestAccess::ExecuteCommandLine(shell, "mark-branch-file-reviewed"),
+         "mark-branch-file-reviewed should run on the outgoing diff");
+
+  const auto& tab = TestAccess::ActiveCompare(shell);
+  const auto sidebar = microide::workspace::OutgoingBranchReviewTarget(
+      TestAccess::CurrentProjectState(shell).sidebar.git, root);
+  const auto describe = [](const microide::compare::BranchReviewTargetIdentity& t) {
+    return t.repository_root.string() + " base=" + t.base_commit + " head=" + t.head_commit +
+           " merge-base=" + t.merge_base_commit + " gen=" + std::to_string(t.snapshot_generation);
+  };
+  Expect(sidebar.has_value() && *sidebar == tab.branch_target,
+         "the diff should mark the target the git view reads: tab {" + describe(tab.branch_target) +
+             "} view {" + (sidebar ? describe(*sidebar) : std::string("none")) + "}");
+  const auto& project = TestAccess::CurrentProjectState(shell);
+  const microide::workspace::GitSidebarViewModel view =
+      microide::workspace::BuildGitSidebarViewModel(project.sidebar.git, root, project.branch_review);
+  std::string markers;
+  for (const auto& section : view.sections) {
+    for (const auto& r : section.rows) {
+      markers += r.relative_path + "=[" + r.review_marker_label + "] ";
+    }
+  }
+  Expect(markers.find("r1.txt=[]") == std::string::npos && markers.find("r1.txt=[") != std::string::npos,
+         "the git view's row for r1.txt should carry the reviewed marker: " + markers);
+  // The ui query names the row as before and labels it as painted.
+  std::string label;
+  const util::JsonValue after = TestAccess::ControlUi(shell);
+  for (const util::JsonValue& entry : after["elements"].AsArray()) {
+    if (entry["name"].AsString() == "row:git/r1.txt") {
+      label = entry["label"].AsString();
+    }
+  }
+  Expect(label.size() > std::string("r1.txt").size() && label.ends_with("r1.txt") && label.front() == '[',
+         "the ui label of a reviewed row should carry its marker, not \"" + label + "\"");
+}
 
 // monkey (seed 1, step 223): `term-close` on the last terminal while the panel
 // showed an output channel left the closed terminal's tab on the panel's tab
@@ -1430,6 +1517,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPaletteAsksForTheArgumentsACommandNeeds);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
+  AddTest(tests, "QaFlowRegression/MarkingAnOutgoingFileReviewedMarksItsRow",
+          TestMarkingAnOutgoingFileReviewedMarksItsRow);
   AddTest(tests, "QaFlowRegression/ClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip",
           TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",

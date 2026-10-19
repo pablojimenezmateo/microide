@@ -19,11 +19,13 @@ PersistedBranchReviewHunkIdentity ToPersistedHunkIdentity(
 // The persistence file is the one ingress into the review state that does not go
 // through a service mutator, so it is where the "stored paths are normalized"
 // invariant (see compare::NormalizeReviewPath) has to be re-established: a config
-// written by an older build, or hand-edited, can carry "./src/foo.cpp".
+// written by an older build, or hand-edited, can carry "./src/foo.cpp" -- or an
+// absolute path, which builds before 2026-10-19 stored for a mark made in a diff.
 compare::BranchReviewHunkIdentity FromPersistedHunkIdentity(
+    const std::filesystem::path& repository_root,
     const PersistedBranchReviewHunkIdentity& identity) {
   return compare::BranchReviewHunkIdentity{
-      .path = compare::NormalizeReviewPath(identity.path),
+      .path = compare::NormalizeReviewPath(repository_root, identity.path),
       .old_start = identity.old_start,
       .old_count = identity.old_count,
       .new_start = identity.new_start,
@@ -47,7 +49,7 @@ PersistedBranchReviewTarget ToPersistedTarget(const compare::BranchReviewTargetS
   for (const compare::BranchReviewFileReviewEntry& file : target_state.reviewed_files) {
     persisted.reviewed_files.push_back(PersistedBranchReviewFileEntry{
         .path = file.path,
-        .reviewed_snapshot_generation = file.reviewed_snapshot_generation,
+        .reviewed_diff_fingerprint = file.reviewed_diff_fingerprint,
         .reviewed_at_unix_ms = file.reviewed_at_unix_ms,
     });
   }
@@ -90,26 +92,26 @@ compare::BranchReviewTargetState FromPersistedTarget(const PersistedBranchReview
   };
   for (const PersistedBranchReviewFileEntry& file : persisted.reviewed_files) {
     target_state.reviewed_files.push_back(compare::BranchReviewFileReviewEntry{
-        .path = compare::NormalizeReviewPath(file.path),
-        .reviewed_snapshot_generation = file.reviewed_snapshot_generation,
+        .path = compare::NormalizeReviewPath(persisted.repository_root, file.path),
+        .reviewed_diff_fingerprint = file.reviewed_diff_fingerprint,
         .reviewed_at_unix_ms = file.reviewed_at_unix_ms,
     });
   }
   for (const PersistedBranchReviewHunkEntry& hunk : persisted.reviewed_hunks) {
     target_state.reviewed_hunks.push_back(compare::BranchReviewHunkReviewEntry{
-        .identity = FromPersistedHunkIdentity(hunk.identity),
+        .identity = FromPersistedHunkIdentity(persisted.repository_root, hunk.identity),
         .reviewed_at_unix_ms = hunk.reviewed_at_unix_ms,
     });
   }
   for (const PersistedBranchReviewNote& note : persisted.notes) {
     std::optional<compare::BranchReviewHunkIdentity> hunk_identity;
     if (note.hunk_identity.has_value()) {
-      hunk_identity = FromPersistedHunkIdentity(*note.hunk_identity);
+      hunk_identity = FromPersistedHunkIdentity(persisted.repository_root, *note.hunk_identity);
     }
     target_state.notes.push_back(compare::BranchReviewNote{
         .scope = note.scope == "hunk" ? compare::BranchReviewNoteScope::Hunk
                                       : compare::BranchReviewNoteScope::File,
-        .path = compare::NormalizeReviewPath(note.path),
+        .path = compare::NormalizeReviewPath(persisted.repository_root, note.path),
         .hunk_identity = hunk_identity,
         .text = note.text,
         .updated_at_unix_ms = note.updated_at_unix_ms,

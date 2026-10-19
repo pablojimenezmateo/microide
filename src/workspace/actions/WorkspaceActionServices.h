@@ -475,6 +475,9 @@ class WorkspaceActionContext {
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message);
   bool RunAllDiscoveredTests(std::string* error_message);
   bool ActiveTabIsCompare() const;
+  // A diff opened from the git view's Outgoing list: the only tabs the branch-review
+  // marks and notes apply to.
+  bool ActiveTabIsBranchReview() const;
   bool ActiveTabIsMerge() const;
   void OpenBufferSearch(std::string query);
   // F3 / Shift+F3: step to the next/previous match of the current find term,

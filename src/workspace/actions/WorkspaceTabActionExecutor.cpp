@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -14,6 +15,12 @@
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
+
+namespace {
+// The review marks and notes reported success on any other tab and did nothing.
+constexpr std::string_view kNotABranchReview =
+    "Not a branch review: open a file from the git view's Outgoing list";
+}  // namespace
 
 namespace {
 
@@ -497,21 +504,36 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::MarkBranchFileReviewed:
+      if (!context_.ActiveTabIsBranchReview()) {
+        return reject(std::string(kNotABranchReview));
+      }
       context_.MarkBranchFileReviewed();
       return DispatchResult::Handled;
     case ActionId::UnmarkBranchFileReviewed:
+      if (!context_.ActiveTabIsBranchReview()) {
+        return reject(std::string(kNotABranchReview));
+      }
       context_.UnmarkBranchFileReviewed();
       return DispatchResult::Handled;
     case ActionId::MarkBranchHunkReviewed:
+      if (!context_.ActiveTabIsBranchReview()) {
+        return reject(std::string(kNotABranchReview));
+      }
       context_.MarkBranchHunkReviewed();
       return DispatchResult::Handled;
     case ActionId::UnmarkBranchHunkReviewed:
+      if (!context_.ActiveTabIsBranchReview()) {
+        return reject(std::string(kNotABranchReview));
+      }
       context_.UnmarkBranchHunkReviewed();
       return DispatchResult::Handled;
     case ActionId::ClearBranchReviewState:
       context_.ClearBranchReviewState();
       return DispatchResult::Handled;
     case ActionId::EditBranchReviewNote: {
+      if (!context_.ActiveTabIsBranchReview()) {
+        return reject(std::string(kNotABranchReview));
+      }
       std::string note_text;
       if (!args.empty()) {
         note_text = args.front();

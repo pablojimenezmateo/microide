@@ -691,7 +691,8 @@ void WorkspaceShell::SetActiveBranchFileReviewed(bool reviewed) {
   }
   compare::BranchReviewStateService& review = context_.current_project_state.branch_review;
   if (reviewed) {
-    review.MarkFileReviewed(compare_tab->branch_target, compare_tab->path);
+    review.MarkFileReviewed(compare_tab->branch_target, compare_tab->path,
+                            compare::DiffContentFingerprint(compare_tab->model));
   } else {
     review.MarkFileUnreviewed(compare_tab->branch_target, compare_tab->path);
   }

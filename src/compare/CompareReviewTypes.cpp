@@ -87,8 +87,7 @@ BranchReviewTargetIdentity MakeBranchReviewTargetIdentity(
 
 bool BranchReviewTargetIdentity::operator==(const BranchReviewTargetIdentity& other) const {
   return repository_root == other.repository_root && base_commit == other.base_commit &&
-         head_commit == other.head_commit && merge_base_commit == other.merge_base_commit &&
-         snapshot_generation == other.snapshot_generation;
+         head_commit == other.head_commit && merge_base_commit == other.merge_base_commit;
 }
 
 }  // namespace microide::compare

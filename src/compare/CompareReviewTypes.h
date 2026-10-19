@@ -54,6 +54,9 @@ struct BranchReviewTargetIdentity {
   std::string base_commit;
   std::string head_commit;
   std::string merge_base_commit;
+  // The git snapshot the target was resolved at: informational, NOT identity. It
+  // counts refreshes within a session, so comparing it orphaned every mark on the
+  // next refresh and on every restart.
   std::uint64_t snapshot_generation = 0;
 
   bool operator==(const BranchReviewTargetIdentity& other) const;

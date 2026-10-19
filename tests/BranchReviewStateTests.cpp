@@ -209,6 +209,32 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "the hunk identities must differ so a changed hunk is not stale-reviewed");
                    }});
 
+  // The git view's snapshot counter counts refreshes within a session. It was part
+  // of the target's identity and the file entry's staleness check, so the next
+  // refresh -- and every restart -- made a mark vanish. A mark now goes stale only
+  // when the diff's changed text differs from the one reviewed; and the diff (an
+  // absolute path) and the git view (a repository-relative one) share one key.
+  tests.push_back({"BranchReviewState/AFileMarkOutlivesRefreshesAndFollowsTheDiff",
+                   [] {
+                     const auto reviewed_model = microide::compare::BuildCompareModel("old\n", "new\n");
+                     const auto changed_model = microide::compare::BuildCompareModel("old\n", "newer\n");
+                     BranchReviewStateService service;
+                     service.MarkFileReviewed(MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3),
+                                              std::filesystem::path("/repo/src/a.cpp"),
+                                              microide::compare::DiffContentFingerprint(reviewed_model));
+                     const BranchReviewTargetIdentity later =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 41);
+                     Expect(service.FileStatus({.target = later, .path = "src/a.cpp"}) ==
+                                BranchReviewMarkerStatus::Reviewed,
+                            "a later snapshot (a refresh, a restart) still sees the mark, by relative path");
+                     Expect(service.FileStatus({.target = later, .path = "/repo/src/a.cpp", .model = &reviewed_model}) ==
+                                BranchReviewMarkerStatus::Reviewed,
+                            "the same diff still reads as reviewed");
+                     Expect(service.FileStatus({.target = later, .path = "/repo/src/a.cpp", .model = &changed_model}) ==
+                                BranchReviewMarkerStatus::ChangedSinceReviewed,
+                            "a diff whose changed text moved reads as changed since reviewed");
+                   }});
+
   tests.push_back({"BranchReviewState/FileReviewSurvivesTargetReload",
                    [] {
                      const BranchReviewTargetIdentity target =
@@ -279,7 +305,7 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                          .last_accessed_unix_ms = 1,
                          .reviewed_files = {PersistedBranchReviewFileEntry{
                              .path = std::filesystem::path("./src/./a.cpp"),
-                             .reviewed_snapshot_generation = target.snapshot_generation,
+                             .reviewed_diff_fingerprint = 0,
                              .reviewed_at_unix_ms = 1,
                          }},
                          .reviewed_hunks = {PersistedBranchReviewHunkEntry{

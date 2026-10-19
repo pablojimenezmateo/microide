@@ -18,7 +18,13 @@ namespace microide::compare {
 // the query scans compare paths as plain strings instead of re-normalizing both
 // sides of every comparison (~12 allocations a call, in loops that run per
 // reviewed-hunk entry per hunk per row). A new ingress point must normalize here.
-std::filesystem::path NormalizeReviewPath(const std::filesystem::path& path);
+//
+// The key is `path` relative to the review target's repository root when it lies
+// inside it, lexically normal either way: the diff marks with its absolute path and
+// the git view queries with git's relative one, and with two keys a mark landed
+// where the view never looked.
+std::filesystem::path NormalizeReviewPath(const std::filesystem::path& repository_root,
+                                          const std::filesystem::path& path);
 
 // Debug-only guard for the invariant above: a path that reaches a comparison
 // un-normalized would silently compare unequal to its own stored form, which
@@ -62,7 +68,12 @@ struct BranchReviewHunkIdentity {
 
 struct BranchReviewFileReviewEntry {
   std::filesystem::path path;
-  std::uint64_t reviewed_snapshot_generation = 0;
+  // DiffContentFingerprint of the file's diff when it was marked, or 0 when the
+  // mark was made without the diff at hand. A diff whose fingerprint differs shows
+  // the file as changed since reviewed. (It held the git view's snapshot counter,
+  // which counts refreshes within one session: any refresh made a mark stale and a
+  // restart orphaned it.)
+  std::uint64_t reviewed_diff_fingerprint = 0;
   std::uint64_t reviewed_at_unix_ms = 0;
 };
 
@@ -107,6 +118,10 @@ BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel&
                                                              const CompareHunk& hunk);
 BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
                                                              int hunk_index);
+
+// One value for a file's diff: its hunks' content hashes folded in order. Two
+// diffs with the same changed text agree whatever the line numbers.
+std::uint64_t DiffContentFingerprint(const CompareModel& model);
 
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,
                                                          int hunk_index,

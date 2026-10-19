@@ -89,8 +89,17 @@ std::uint64_t HashHunkContent(const CompareModel& model, const CompareHunk& hunk
 
 }  // namespace
 
-std::filesystem::path NormalizeReviewPath(const std::filesystem::path& path) {
-  return path.lexically_normal();
+std::filesystem::path NormalizeReviewPath(const std::filesystem::path& repository_root,
+                                          const std::filesystem::path& path) {
+  std::filesystem::path normal = path.lexically_normal();
+  if (!normal.is_absolute() || repository_root.empty()) {
+    return normal;
+  }
+  std::filesystem::path relative = normal.lexically_relative(repository_root.lexically_normal());
+  if (relative.empty() || *relative.begin() == "..") {
+    return normal;
+  }
+  return relative;
 }
 
 #ifndef NDEBUG
@@ -135,6 +144,15 @@ BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel&
   }
   return ComputeBranchReviewHunkContentKey(model,
                                            model.hunks[static_cast<std::size_t>(hunk_index)]);
+}
+
+std::uint64_t DiffContentFingerprint(const CompareModel& model) {
+  std::uint64_t fingerprint = 0xcbf29ce484222325ULL;
+  for (const CompareHunk& hunk : model.hunks) {
+    fingerprint ^= HashHunkContent(model, hunk);
+    fingerprint *= 0x100000001b3ULL;
+  }
+  return fingerprint == 0 ? 1 : fingerprint;
 }
 
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,

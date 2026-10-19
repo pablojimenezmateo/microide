@@ -259,6 +259,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             std::size_t count = 0;
             std::size_t selected = 0;
             std::function<std::string(std::size_t)> label;
+            std::function<std::string(std::size_t)> shown;  // the painted text, when it differs
             if (mode == SidebarMode::Search) {
               const std::vector<int> line_map = BuildProjectSearchLineMap();
               const auto& search = state.overlay.workflow.project_search;
@@ -284,6 +285,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               list = ComputeGitSidebarListLayout(layout.sidebar, count);
               selected = state.sidebar.git.selected_index;
               label = [&lines](std::size_t index) { return lines[index].label; };
+              // The row as painted, its review marker included ("[R] r1.txt"); the
+              // name stays the bare label so a locator survives marking.
+              shown = [&lines](std::size_t index) {
+                return lines[index].display_label.empty() ? lines[index].label
+                                                          : lines[index].display_label;
+              };
             } else if (mode == SidebarMode::Problems) {
               const auto& entries = state.sidebar.problems.entries;
               count = entries.size();
@@ -320,7 +327,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               std::string text = label(index);
               AddControlUiElement(out, kRow,
                                   view + (text.empty() ? "#" + std::to_string(index) : text),
-                                  ScrollableListRowRect(list, visible), text);
+                                  ScrollableListRowRect(list, visible), shown ? shown(index) : text);
               out.back().selected = index == selected;
             }
           },
