@@ -41,23 +41,30 @@ def _lsp_ready(app: q.App, relative: str, timeout: float = 60.0) -> bool:
                           f"the language server for {relative} to be ready")
 
 
-def _hover_until(app: q.App, line: int, column: int, timeout: float) -> dict | None:
+def _hover_until(app: q.App, line: int, column: int, timeout: float,
+                 ready: Callable[[str], bool] = lambda text: True) -> dict | None:
     """Hovers until the server answers. A server can say Ready before it has loaded
     the project (csharp-ls loads it through MSBuild after initialize), and a hover
     is asked once per rest of the pointer, as in any editor -- so leave and come
     back, as a person would, rather than wait on an answer that was already empty."""
     deadline = time.monotonic() + timeout
+    last = None
     while time.monotonic() < deadline:
         app.move(*app.text_point(line, column))
         rest_until = time.monotonic() + 3.0
         while time.monotonic() < rest_until:
             hover = app.ui()["popups"]["hover"]
             if hover and hover.get("text"):
-                return hover
+                last = hover["text"]
+                if ready(hover["text"]):
+                    return hover
             time.sleep(0.1)
-        app.move(*app.text_point(line + 1, column))
+        # Away from the symbol AND its card (it opens right below the symbol, and a
+        # card is kept while the pointer is over it): the sidebar.
+        x, y, w, h = app.ui()["surfaces"]["sidebar"]
+        app.move(x + w / 2, y + h - 20)
         app.settle(0.3)
-    app.expect(False, f"no hover at {line}:{column} within {timeout:.0f}s")
+    app.expect(False, f"no hover at {line}:{column} within {timeout:.0f}s (last answer: {last!r})")
     return None
 
 
@@ -104,8 +111,11 @@ def flow_lsp_typescript(app: q.App) -> None:
     app.project = web
     if not _lsp_ready(app, "main.ts"):
         return
-    hover = _hover(app, 3, 26, 15.0)
-    app.expect(hover is not None and "twice" in hover.get("text", ""),
+    # Until tsserver has loaded ./util, `twice` is only the import's alias: its
+    # hover says "import twice" and F12 stops at the import line. A loaded suite run
+    # got there first; wait for the resolved signature, as a person would see it.
+    hover = _hover_until(app, 3, 26, 60.0, lambda text: "number" in text)
+    app.expect(hover is not None and "twice" in hover.get("text", "") and "number" in hover.get("text", ""),
                f"hovering twice() shows its signature ({hover})")
     _goes_to(app, 3, 26, "util.ts", 1)
     _diagnosed(app, "bad.ts", 'const n: number = "not a number";\n')
