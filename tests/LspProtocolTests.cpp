@@ -314,6 +314,9 @@ void TestLspProtocolHoverMarkdownKeepsCodeVerbatim() {
              codec::HoverMarkdownToText("`a__b__c` and `` `x` `` and **bold**") + "]");
   Expect(codec::HoverMarkdownToText("a lone ` stays") == "a lone ` stays",
          "an unmatched backtick is literal text");
+  Expect(codec::HoverMarkdownToText("\n```typescript\nimport twice\n```\n") == "import twice",
+         "tsserver's leading blank line goes: [" +
+             codec::HoverMarkdownToText("\n```typescript\nimport twice\n```\n") + "]");
   const std::string parsed = codec::ParseHoverContents(
       Json(R"({"contents":{"kind":"markdown","value":"```python\ndef g(**kw): ...\n```"}})"));
   Expect(parsed == "def g(**kw): ...", "a markdown hover keeps its fenced code: [" + parsed + "]");

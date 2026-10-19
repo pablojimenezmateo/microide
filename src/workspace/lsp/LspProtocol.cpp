@@ -594,6 +594,10 @@ std::string HoverMarkdownToText(std::string_view markdown) {
   while (!folded.empty() && folded.back() == '\n') {
     folded.pop_back();
   }
+  // Nor before the first: tsserver's hovers open with a blank line, which the fence
+  // stripper this replaced happened to drop.
+  folded.erase(0, folded.find_first_not_of('\n') == std::string::npos ? folded.size()
+                                                                      : folded.find_first_not_of('\n'));
   return folded;
 }
 
