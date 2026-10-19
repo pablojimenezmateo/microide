@@ -814,7 +814,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
             surface_layout.line_height, surface_layout.show_vertical, y);
         hit.has_value()) {
       const auto action_rects =
-          BuildCollapsedContextActionRects(text_renderer_, hit->block_rect,
+          BuildCollapsedContextActionRects(editor_text_renderer_, hit->block_rect,
                                            hit->row->previous_hunk_index >= 0,
                                            hit->row->next_hunk_index >= 0);
       if (CompareCollapsedContextActionAt(action_rects, x, y).has_value()) {
@@ -863,15 +863,15 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         .result = BuildMergeResultInteractionLayout(layout.editor_surface, surface_layout,
                                                     *merge_tab),
         .incoming_accept_button_width =
-            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Theirs")),
+            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Theirs")),
         .current_accept_button_width =
-            ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Ours")),
+            ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Ours")),
         .result_action_widths =
             {
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Theirs")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Ours")),
-                ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
+                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Base")),
+                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Theirs")),
+                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Ours")),
+                ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Both")),
             },
     };
     if (const auto hover = ClassifyMergeHoverState(surface_layout, interaction, *merge_tab, x, y);
@@ -925,7 +925,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
+      editor_text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
   const auto scroll_layout = ComputeEditorScrollLayout(pane_it->rect, *viewport, metrics);
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, x, y)) {

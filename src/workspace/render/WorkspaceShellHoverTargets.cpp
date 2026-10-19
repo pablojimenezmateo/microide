@@ -227,7 +227,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   const std::string_view line = viewport.lines().LineView(*line_index);
   for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
     const auto rect = editor::DiagnosticUnderlineRect(
-        text_renderer_, interaction.text_x, line_y, interaction.line_height, line, *line_index,
+        editor_text_renderer_, interaction.text_x, line_y, interaction.line_height, line, *line_index,
         interaction.horizontal_scroll, interaction.visible_columns, viewport.tab_size(),
         diagnostic);
     if (!rect.has_value()) {
@@ -412,7 +412,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     const CompareSurfaceLayout surface =
         ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
     const std::optional<CompareRightGridHit> hit =
-        HitTestCompareRightGrid(text_renderer_, surface, *compare_tab, x, y);
+        HitTestCompareRightGrid(editor_text_renderer_, surface, *compare_tab, x, y);
     if (!hit.has_value()) {
       return std::nullopt;
     }
@@ -428,7 +428,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     const float line_y = TextGridLineY(interaction, hit->visual_row);
     for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
       const auto rect = editor::DiagnosticUnderlineRect(
-          text_renderer_, interaction.text_x, line_y, surface.line_height, row.right_text,
+          editor_text_renderer_, interaction.text_x, line_y, surface.line_height, row.right_text,
           line_index, interaction.horizontal_scroll, hit->visible_columns,
           compare_tab->right_viewport.tab_size(), diagnostic);
       if (!rect.has_value()) {
@@ -467,7 +467,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
         surface.center_width, surface.show_horizontal);
     return DiagnosticHoverTargetForViewport(
         merge_tab->result_viewport,
-        BuildEditorInteractionLayout(text_renderer_, merge_tab->result_viewport, result_rect,
+        BuildEditorInteractionLayout(editor_text_renderer_, merge_tab->result_viewport, result_rect,
                                      LineNumbersEnabled()),
         visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
   }
@@ -483,7 +483,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     return diagnostics != nullptr
                ? DiagnosticHoverTargetForViewport(
                      *active_viewport,
-                     BuildEditorInteractionLayout(text_renderer_, *active_viewport,
+                     BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport,
                                                   layout.editor_surface, LineNumbersEnabled()),
                      visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)),
                      x, y)
@@ -502,7 +502,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     }
 
     if (const auto target = DiagnosticHoverTargetForViewport(
-            *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect, LineNumbersEnabled()),
+            *viewport, BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()),
             visible_diagnostics(std::span<const editor::PublishedDiagnostic>(*diagnostics)), x, y);
         target.has_value()) {
       return target;
@@ -532,7 +532,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     const CompareSurfaceLayout surface =
         ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
     const std::optional<CompareRightGridHit> hit =
-        HitTestCompareRightGrid(text_renderer_, surface, *compare_tab, x, y);
+        HitTestCompareRightGrid(editor_text_renderer_, surface, *compare_tab, x, y);
     if (!hit.has_value()) {
       return std::nullopt;
     }
@@ -563,7 +563,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
         surface.center_width, surface.show_horizontal);
     return PluginHoverTargetForViewport(
         merge_tab->result_viewport,
-        BuildEditorInteractionLayout(text_renderer_, merge_tab->result_viewport, result_rect,
+        BuildEditorInteractionLayout(editor_text_renderer_, merge_tab->result_viewport, result_rect,
                                      LineNumbersEnabled()), x, y);
   }
 
@@ -576,7 +576,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return PluginHoverTargetForViewport(
         *active_viewport,
-        BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface,
+        BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()), x, y);
   }
 
@@ -587,7 +587,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     }
 
     if (const auto target = PluginHoverTargetForViewport(
-            *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
+            *viewport, BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
         target.has_value()) {
       return target;
     }
@@ -735,7 +735,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return DebugValueHoverTargetForViewport(
         *active_viewport,
-        BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface,
+        BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()), x, y);
   }
   for (const EditorPaneLayout& pane : panes) {
@@ -744,7 +744,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
       continue;
     }
     if (const auto target = DebugValueHoverTargetForViewport(
-            *viewport, BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
+            *viewport, BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect, LineNumbersEnabled()), x, y);
         target.has_value()) {
       return target;
     }
@@ -813,8 +813,8 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(flo
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return CodeLensForViewport(
-        text_renderer_, *active_viewport,
-        BuildEditorInteractionLayout(text_renderer_, *active_viewport, layout.editor_surface,
+        editor_text_renderer_, *active_viewport,
+        BuildEditorInteractionLayout(editor_text_renderer_, *active_viewport, layout.editor_surface,
                                      LineNumbersEnabled()),
         decorations_for(*active_viewport), x, y);
   }
@@ -825,8 +825,8 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(flo
       continue;
     }
     if (auto lens = CodeLensForViewport(
-            text_renderer_, *viewport,
-            BuildEditorInteractionLayout(text_renderer_, *viewport, pane.rect,
+            editor_text_renderer_, *viewport,
+            BuildEditorInteractionLayout(editor_text_renderer_, *viewport, pane.rect,
                                          LineNumbersEnabled()),
             decorations_for(*viewport), x, y);
         lens.has_value()) {

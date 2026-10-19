@@ -459,7 +459,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       }
 
       const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
+          editor_text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
       const auto setting_on = [this](std::string_view id) {
@@ -488,7 +488,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       std::size_t visual_column =
           viewport->horizontal_scroll() +
           static_cast<std::size_t>(std::max(
-              0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth()))));
+              0L, std::lround(text_offset_x / std::max(1.0f, editor_text_renderer_.CharWidth()))));
       const int visual_row = static_cast<int>(viewport->scroll_line() + row);
       // Undo the mid-line inlay-hint display shift so the retargeted caret lands on
       // the glyph under the cursor (identity when no hints / soft-wrapped).
@@ -506,7 +506,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           const std::size_t row_start = viewport->horizontal_scroll();
           visual_column = editor::RealVisualColumnForDisplayColumn(
               inline_texts, &layout, nullptr, row_start, row_start + viewport->visible_columns(),
-              text_renderer_, text_renderer_.CharWidth(), visual_column);
+              editor_text_renderer_, editor_text_renderer_.CharWidth(), visual_column);
         }
       }
       // Screen-relative column, like the left-click path: LogicalPositionForVisualHit
@@ -679,7 +679,7 @@ bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_
   // copy the path out first -- acting on it changes the root the memo is keyed
   // on, which rebuilds the model the reference points into.
   const editor::WelcomeViewModel& model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
-  const float line_height = text_renderer_.LineHeight();
+  const float line_height = editor_text_renderer_.LineHeight();
   WelcomeProbeLayoutCache& cache = g_welcome_probe_layout_cache;
   if (!cache.valid || cache.recents_instance != recents_service_.instance_id() ||
       cache.recents_revision != recents_service_.revision() ||
@@ -801,7 +801,7 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(fl
       return std::nullopt;
     }
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-        text_renderer_, viewport, rect, 0, LineNumbersEnabled());
+        editor_text_renderer_, viewport, rect, 0, LineNumbersEnabled());
     const editor::InsetGapOptions options{.inline_surfaces = inline_surfaces,
                                           .code_lens_above = true,
                                           .code_lens_height = metrics.line_height};

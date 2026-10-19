@@ -889,7 +889,7 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
   glue_->editor_mouse_coordinator = std::make_unique<EditorMouseCoordinator>(
       context_.current_project_state,
       context_.interaction_state,
-      text_renderer_,
+      editor_text_renderer_,
       EditorMouseCoordinator::Operations{
           .compute_editor_pane_layouts =
               [this](const WorkspaceLayout& layout) { return ComputeEditorPaneLayouts(layout); },

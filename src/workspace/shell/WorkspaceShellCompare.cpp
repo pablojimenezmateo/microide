@@ -246,17 +246,17 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
       {compare_tab.derived_left_line_count, compare_tab.right_viewport.lines().size(), 1});
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
     CompareSurfaceLayout layout;
-    layout.line_height = text_renderer_.LineHeight();
+    layout.line_height = editor_text_renderer_.LineHeight();
     std::array<char, 20> line_count_buf;
     const auto [line_count_end, _] = std::to_chars(
         line_count_buf.data(), line_count_buf.data() + line_count_buf.size(), gutter_max_line);
     layout.gutter_width = std::max(
         28.0f,
-        text_renderer_.MeasureWidth(std::string_view{
+        editor_text_renderer_.MeasureWidth(std::string_view{
             line_count_buf.data(),
             static_cast<std::size_t>(line_count_end - line_count_buf.data())}) +
             12.0f);
-    layout.divider_width = std::max(1.0f, std::ceil(text_renderer_.CharWidth()));
+    layout.divider_width = std::max(1.0f, std::ceil(editor_text_renderer_.CharWidth()));
     layout.left_x = rect.x + 8.0f;
     layout.review_summary_y = rect.y + 4.0f;
     layout.header_y = layout.review_summary_y + layout.line_height;
@@ -266,7 +266,7 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
         reserve_vertical ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
     const float reserved_height =
         reserve_horizontal ? (kWorkspaceScrollbarThickness + kWorkspaceScrollbarInset) : 0.0f;
-    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float char_width = std::max(1.0f, editor_text_renderer_.CharWidth());
     const float min_pane_width = 8.0f + char_width;
     const float content_width = std::max(
         min_pane_width * 2.0f,
@@ -354,7 +354,7 @@ TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
       MakeRect(surface.right_x, surface.rows_y, surface.gutter_width + surface.right_width,
                static_cast<float>(surface.visible_rows) * surface.line_height),
       surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
-      text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
+      editor_text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
       // On-screen rows, not model rows: `scroll_line` above is one, so a mismatched
       // `line_count` clamped hit-tests into a different row space (the pointer-drag
       // path resolved a presentation row as if it were a model row).
@@ -479,7 +479,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
                surface_layout.gutter_width + surface_layout.right_width,
                static_cast<float>(surface_layout.visible_rows) * surface_layout.line_height),
       surface_layout.right_x + surface_layout.gutter_width, surface_layout.rows_y,
-      surface_layout.line_height, text_renderer_.CharWidth(),
+      surface_layout.line_height, editor_text_renderer_.CharWidth(),
       static_cast<std::size_t>(std::max(0, compare_tab->scroll_row)),
       CompareTabVisualRowCount(*compare_tab), compare_tab->horizontal_scroll,
       static_cast<std::size_t>(surface_layout.visible_rows), surface_layout.right_visible_columns);

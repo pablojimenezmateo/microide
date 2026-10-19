@@ -362,6 +362,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // of the dozens of ways the caret can move.
   MakeEditorTabService().ObserveNavigationLocation();
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
+  editor_text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   // The terminal renderer is only needed (and only pays for its glyph atlas) once a
   // terminal is actually shown; initialize + apply its font lazily at that point.
   if (BottomPanelShowsTerminal()) {
@@ -1356,7 +1357,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       // An empty group renders the welcome home surface (recents + shortcuts).
       if (viewport->is_placeholder()) {
         editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-            text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
+            editor_text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         editor::FoldingModel* welcome_fold =
             fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
@@ -1371,7 +1372,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                 .size();
         if (welcome_sticky_rows != 0) {
           metrics = editor::EditorViewRenderer::ComputeMetrics(
-              text_renderer_, *viewport, pane.rect, welcome_sticky_rows, line_numbers_enabled);
+              editor_text_renderer_, *viewport, pane.rect, welcome_sticky_rows, line_numbers_enabled);
           viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         }
         editor_render_builder.BuildEditorViewModelInto(
@@ -1383,7 +1384,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         // revision, project root) and the renderer only reads the model.
         const editor::WelcomeViewModel& welcome_vm =
             editor_render_builder.BuildWelcomeView(recents_service_);
-        editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
+        editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, *viewport, pane.rect,
                                      pane.active && draw_editor_caret, "", std::nullopt,
                                      std::nullopt, {}, &tls_editor_surface_vm,
                                      bracket_match_highlight_enabled, indent_guides_enabled,
@@ -1392,7 +1393,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       }
 
       editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
+          editor_text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       editor::FoldingModel* group_folding_model =
           fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
@@ -1412,7 +1413,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
               .size();
       if (sticky_rows != 0) {
         metrics = editor::EditorViewRenderer::ComputeMetrics(
-            text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
+            editor_text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       }
       // Named for the whole pane, because that is what it covers: the view-model
@@ -1438,7 +1439,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             "WorkspaceShell::Render::EditorPane::BlameOverlay");
         return (pane.active && blame_inline_enabled)
                    ? editor_blame_overlay_service_.EditorOverlayForFrame(
-                         prepared_frame_id_, project_state.root, text_renderer_,
+                         prepared_frame_id_, project_state.root, editor_text_renderer_,
                          git_blame_service_, *viewport,
                          pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size(),
                          line_numbers_enabled)
@@ -1468,7 +1469,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           (buffer_find_active && !buffer_search_state.regex)
               ? std::string_view(overlay_vm.buffer_search_query_text)
               : std::string_view{};
-      editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
+      editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, *viewport, pane.rect,
                                    pane.active && draw_editor_caret,
                                    buffer_search_query_for_render,
                                    pane.active ? ActiveBufferSearchMatch() : std::nullopt,
@@ -1502,7 +1503,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           const float x = metrics.text_x +
                           static_cast<float>(visual_column - std::min(visual_column,
                                                                       viewport->horizontal_scroll())) *
-                              text_renderer_.CharWidth();
+                              editor_text_renderer_.CharWidth();
           const float y = metrics.first_line_y +
                           static_cast<float>(visual_row - viewport->scroll_line()) *
                               metrics.line_height;

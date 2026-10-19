@@ -484,7 +484,7 @@ CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
           .build_compare_collapsed_context_action_rects =
               [this](const SDL_FRect& row_rect, const compare::ComparePresentationRow& row) {
                 return BuildCollapsedContextActionRects(
-                    text_renderer_, row_rect, row.previous_hunk_index >= 0,
+                    editor_text_renderer_, row_rect, row.previous_hunk_index >= 0,
                     row.next_hunk_index >= 0);
               },
           .expand_compare_collapsed_context =

@@ -45,7 +45,7 @@ WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(
     const SDL_FRect& rect,
     const MergeSurfaceLayout& surface) const {
   const auto make_button_rect = [&](float x, std::string_view label) {
-    const float width = ComputeChromeButtonWidth(text_renderer_.MeasureWidth(label));
+    const float width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth(label));
     return MakeRect(x, surface.button_y, width, kMergeToolbarButtonHeight);
   };
 
@@ -71,7 +71,7 @@ std::optional<SDL_FRect> WorkspaceShell::ComputeMergeSecondaryToolbarButtonRect(
     const SDL_FRect& rect,
     const MergeSurfaceLayout& surface,
     std::string_view label) const {
-  const float width = ComputeChromeButtonWidth(text_renderer_.MeasureWidth(label));
+  const float width = ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth(label));
   if (label == "Mark Resolved") {
     const float x = rect.x + rect.w - 8.0f - width;
     return MakeRect(x, surface.secondary_button_y, width, kMergeToolbarButtonHeight);
@@ -100,7 +100,7 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     const MergeTabState& merge_tab) const {
   const auto measure = [&](bool reserve_vertical, bool reserve_horizontal) {
     MergeSurfaceLayout layout;
-    layout.line_height = text_renderer_.LineHeight();
+    layout.line_height = editor_text_renderer_.LineHeight();
     const std::size_t max_line_count =
         std::max({merge_tab.model.incoming_lines.size(), merge_tab.result_viewport.lines().size(),
                   merge_tab.model.current_lines.size(), std::size_t{1}});
@@ -110,7 +110,7 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
                       max_line_count + 1);
     layout.gutter_width =
         std::max(28.0f,
-                 text_renderer_.MeasureWidth(std::string_view{
+                 editor_text_renderer_.MeasureWidth(std::string_view{
                      line_count_buf.data(),
                      static_cast<std::size_t>(line_count_end - line_count_buf.data())}) +
                      12.0f);
@@ -131,7 +131,7 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
                                       ? (kWorkspaceScrollbarThickness +
                                          kWorkspaceScrollbarInset)
                                       : 0.0f;
-    const float char_width = std::max(1.0f, text_renderer_.CharWidth());
+    const float char_width = std::max(1.0f, editor_text_renderer_.CharWidth());
     const float min_pane_width = 8.0f + char_width;
     const float content_width = std::max(
         min_pane_width * 3.0f,
@@ -167,7 +167,7 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
         0.0f, std::min({layout.left_width, layout.center_width, layout.right_width}) - 8.0f);
     layout.visible_columns = std::max<std::size_t>(
         1, static_cast<std::size_t>(
-               std::floor(pane_text_width / std::max(1.0f, text_renderer_.CharWidth()))));
+               std::floor(pane_text_width / std::max(1.0f, editor_text_renderer_.CharWidth()))));
     layout.show_vertical = reserve_vertical;
     layout.show_horizontal = reserve_horizontal;
     return layout;
@@ -236,7 +236,7 @@ TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
       MakeRect(pane_x, surface.rows_y, surface.gutter_width + pane_width,
                static_cast<float>(surface.visible_rows) * surface.line_height),
       pane_x + surface.gutter_width, surface.rows_y, surface.line_height,
-      text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)),
+      editor_text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)),
       line_count, merge_tab.horizontal_scroll, static_cast<std::size_t>(surface.visible_rows),
       surface.visible_columns);
 }
@@ -249,7 +249,7 @@ WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInt
       rect, surface.center_x, surface.rows_y, surface.gutter_width, surface.center_width,
       surface.show_horizontal);
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      text_renderer_, merge_tab.result_viewport, result_rect, 0, LineNumbersEnabled());
+      editor_text_renderer_, merge_tab.result_viewport, result_rect, 0, LineNumbersEnabled());
   const VisibleLineRangeLayout lines = {
       .first_line_y = metrics.first_line_y,
       .line_height = metrics.line_height,
@@ -262,7 +262,7 @@ WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInt
       .lines = lines,
       .text = ComputeTextGridInteractionLayout(
           result_rect, metrics.text_x, metrics.first_line_y, metrics.line_height,
-          text_renderer_.CharWidth(), merge_tab.result_viewport.scroll_line(),
+          editor_text_renderer_.CharWidth(), merge_tab.result_viewport.scroll_line(),
           static_cast<std::size_t>(std::max(0, merge_tab.result_viewport.VisualRowCount())),
           merge_tab.result_viewport.horizontal_scroll(), metrics.visible_rows,
           metrics.visible_columns),
@@ -290,14 +290,14 @@ WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayo
       .content_bottom = rect.y + std::max(0.0f, rect.h - bottom_reserved),
       .result = result,
       .incoming_accept_button_width =
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Theirs")),
+          ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Theirs")),
       .current_accept_button_width =
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Ours")),
+          ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Accept Ours")),
       .result_action_widths = {
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Base")),
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Theirs")),
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Ours")),
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Both")),
+          ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Base")),
+          ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Theirs")),
+          ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Ours")),
+          ComputeChromeButtonWidth(editor_text_renderer_.MeasureWidth("Both")),
       },
   };
 }

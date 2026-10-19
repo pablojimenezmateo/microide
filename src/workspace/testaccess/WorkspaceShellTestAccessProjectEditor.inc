@@ -413,7 +413,7 @@
     const SDL_FRect block_rect = CompareCollapsedContextBlockRect(
         layout.editor_surface, surface.rows_y, surface.line_height, surface.show_vertical,
         visible_row);
-    return BuildCollapsedContextActionRects(shell.text_renderer_, block_rect,
+    return BuildCollapsedContextActionRects(shell.editor_text_renderer_, block_rect,
                                             row->previous_hunk_index >= 0,
                                             row->next_hunk_index >= 0);
   }

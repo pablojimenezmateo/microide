@@ -232,7 +232,7 @@
   }
   static microide::editor::EditorViewMetrics ActiveEditorMetrics(WorkspaceShell& shell) {
     const SDL_FRect pane = ActiveEditorPaneRect(shell);
-    return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_,
+    return microide::editor::EditorViewRenderer::ComputeMetrics(shell.editor_text_renderer_,
                                                                 *shell.ActiveEditorViewport(),
                                                                 pane);
   }
@@ -266,7 +266,7 @@
     if (viewport == nullptr) {
       return {};
     }
-    return microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_, *viewport,
+    return microide::editor::EditorViewRenderer::ComputeMetrics(shell.editor_text_renderer_, *viewport,
                                                                 pane);
   }
   static std::size_t ActiveEditorStickyScrollRows(WorkspaceShell& shell,
@@ -280,7 +280,7 @@
     const int sticky_max_depth =
         ParseStickyScrollMaxDepthSetting(shell.GetSettingValue("editor.fold.sticky_scroll.max_depth"));
     const microide::editor::EditorViewMetrics base_metrics =
-        microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_, viewport, pane, 0);
+        microide::editor::EditorViewRenderer::ComputeMetrics(shell.editor_text_renderer_, viewport, pane, 0);
     viewport.SetViewportSize(base_metrics.visible_rows, base_metrics.visible_columns);
     microide::editor::FoldingModel* folding_model =
         fold_enabled ? shell.EnsureActiveFoldingModelFresh() : nullptr;
@@ -298,7 +298,7 @@
     }
     const std::size_t sticky_rows = ActiveEditorStickyScrollRows(shell, *viewport, pane);
     const microide::editor::EditorViewMetrics metrics =
-        microide::editor::EditorViewRenderer::ComputeMetrics(shell.text_renderer_, *viewport, pane,
+        microide::editor::EditorViewRenderer::ComputeMetrics(shell.editor_text_renderer_, *viewport, pane,
                                                              sticky_rows);
     viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
     return metrics;
@@ -317,7 +317,7 @@
       return std::nullopt;
     }
     const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-        shell.text_renderer_, *viewport, rect, 0, shell.LineNumbersEnabled());
+        shell.editor_text_renderer_, *viewport, rect, 0, shell.LineNumbersEnabled());
     return shell.ComputeEditorScrollLayout(rect, *viewport, metrics);
   }
   static std::optional<SDL_FRect> ActiveCompareRowRangeRect(WorkspaceShell& shell,
@@ -329,8 +329,9 @@
                                                           std::size_t conflict_index) {
     return shell.CurrentMergeConflictRect(conflict_index);
   }
-  static float TextCharWidth(WorkspaceShell& shell) { return shell.text_renderer_.CharWidth(); }
-  static float TextLineHeight(WorkspaceShell& shell) { return shell.text_renderer_.LineHeight(); }
+  static float TextCharWidth(WorkspaceShell& shell) { return shell.editor_text_renderer_.CharWidth(); }
+  static float TextLineHeight(WorkspaceShell& shell) { return shell.editor_text_renderer_.LineHeight(); }
+  static float ChromeTextLineHeight(WorkspaceShell& shell) { return shell.text_renderer_.LineHeight(); }
   // What the blame wake's handler does: finished blame becomes visible. A test
   // polling an overlay with no event loop pumps this in its wait.
   static bool ApplyGitBlameResults(WorkspaceShell& shell) {
@@ -354,14 +355,14 @@
     for (const auto& pane : panes) {
       if (pane.active) {
         return shell.editor_blame_overlay_service_.BuildEditorOverlay(
-            shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+            shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
             *viewport, pane.rect, 520.0f, ActiveEditorStickyScrollRows(shell, *viewport, pane.rect),
             shell.LineNumbersEnabled());
       }
     }
     return viewport->is_placeholder()
                ? shell.editor_blame_overlay_service_.BuildEditorOverlay(
-                     shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+                     shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
                      *viewport, layout.editor_surface, 520.0f, 0, shell.LineNumbersEnabled())
                : std::nullopt;
   }
@@ -374,7 +375,7 @@
     auto& compare = ActiveCompare(shell);
     const auto surface = shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare);
     return shell.editor_blame_overlay_service_.BuildCompareOverlay(
-        shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+        shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
         compare,
         EditorBlameOverlayService::CompareOverlayLayout{
             .pane_rect = MakeRect(surface.right_x, layout.editor_surface.y,
@@ -408,7 +409,7 @@
     }
     auto& merge = ActiveMerge(shell);
     return shell.editor_blame_overlay_service_.BuildEditorOverlay(
-        shell.context_.current_project_state.root, shell.text_renderer_, shell.git_blame_service_,
+        shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
         merge.result_viewport, ActiveMergeResultRect(shell), 280.0f, 0, shell.LineNumbersEnabled());
   }
   static void SetVisibleEditorBlameOverlay(

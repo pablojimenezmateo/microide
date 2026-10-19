@@ -850,7 +850,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               if (viewport == nullptr || viewport->is_placeholder()) {
                 continue;
               }
-              const float line_height = std::max(1.0f, text_renderer_.LineHeight());
+              const float line_height = std::max(1.0f, editor_text_renderer_.LineHeight());
               const std::size_t max_rows = static_cast<std::size_t>(
                   std::max(1, static_cast<int>(std::floor((pane.rect.h - 12.0f) / line_height))));
               const std::size_t sticky =
@@ -858,7 +858,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                       ? max_rows - viewport->visible_lines()
                       : 0;
               const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-                  text_renderer_, *viewport, pane.rect, sticky, line_numbers);
+                  editor_text_renderer_, *viewport, pane.rect, sticky, line_numbers);
               const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
               util::JsonObject entry;
               entry["group"] = util::JsonValue(static_cast<std::int64_t>(pane.group_index));
@@ -871,7 +871,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               entry["textX"] = num(metrics.text_x);
               entry["firstLineY"] = num(metrics.first_line_y);
               entry["lineHeight"] = num(metrics.line_height);
-              entry["charWidth"] = num(text_renderer_.CharWidth());
+              entry["charWidth"] = num(editor_text_renderer_.CharWidth());
               entry["gutterX"] = num(pane.rect.x);
               entry["gutterWidth"] = num(metrics.gutter_width);
               entry["foldHitX"] = num(editor::kGutterFoldHitLeft(pane.rect.x, metrics.gutter_width));

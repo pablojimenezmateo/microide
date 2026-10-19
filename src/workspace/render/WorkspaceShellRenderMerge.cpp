@@ -212,7 +212,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                bool selected,
                                bool primary = false) {
     const std::string_view display = TruncateLabelView(label, button_rect.w - 18.0f);
-    detail::DrawButtonCentered(text_renderer_, renderer, theme_, button_rect, display,
+    detail::DrawButtonCentered(editor_text_renderer_, renderer, theme_, button_rect, display,
                                detail::ButtonTone::Neutral,
                                detail::ButtonVisualState{
                                    .enabled = primary,
@@ -287,7 +287,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                            : std::string_view(merge_tab->status_message);
   const float status_max_width =
       std::max(0.0f, unresolved_rect.x - kMergeToolbarButtonGap - surface.left_x);
-  text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
+  editor_text_renderer_.DrawString(renderer, surface.left_x, surface.secondary_button_y,
                             theme_.text_secondary,
                             TruncateLabelView(status_text, status_max_width));
   draw_button(unresolved_rect, "Unresolved", false, !merge_tab->conflicts.empty());
@@ -303,12 +303,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
     const float base_y = surface.header_y - base_band_height;
     DrawFilledRect(renderer, MakeRect(surface.left_x, base_y, content_width, base_band_height),
                    theme_.surface_raised);
-    text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, base_y + 2.0f,
+    editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, base_y + 2.0f,
                               theme_.text_secondary,
                               TruncateLabelView(merge_tab->base_label, content_width - 16.0f));
     for (std::size_t row = 0; row < merge_tab->model.base_lines.size() && row < 4; ++row) {
       const float y = base_y + 2.0f + surface.line_height * static_cast<float>(row + 1);
-      text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
+      editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
                                 theme_.text_secondary,
                                 TruncateLabelView(merge_tab->model.base_lines[row],
                                                   content_width - 16.0f));
@@ -327,13 +327,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                                                                  : theme_.border);
 
   }
-  text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
+  editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(merge_tab->incoming_label, surface.left_width - 8.0f));
-  text_renderer_.DrawString(renderer, surface.center_x + surface.gutter_width, surface.header_y,
+  editor_text_renderer_.DrawString(renderer, surface.center_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(merge_tab->result_label, surface.center_width - 8.0f));
-  text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
+  editor_text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(merge_tab->current_label, surface.right_width - 8.0f));
 
@@ -345,7 +345,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   {
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderMergeSurface::SideRows");
   const bool wrapped = merge_tab->wrap_layout.active();
-  const float char_width_px = text_renderer_.CharWidth();
+  const float char_width_px = editor_text_renderer_.CharWidth();
   for (int row = 0; row < surface.visible_rows; ++row) {
     const std::size_t visual_row =
         static_cast<std::size_t>(std::max(0, merge_tab->scroll_row + row));
@@ -408,13 +408,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                            surface.gutter_width + surface.left_width, surface.line_height),
           .color = background,
       };
-      incoming_input.text_renderer = &text_renderer_;
+      incoming_input.text_renderer = &editor_text_renderer_;
       incoming_input.theme = &theme_;
       editor::DecoratedTextRow& incoming_row = merge_incoming_scratch_row_;
       editor::BuildDecoratedRow(incoming_row, incoming_input);
-      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
+      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, incoming_row);
       if (wrap_row.first) {
-        text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
+        editor_text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
                                   FormatLineNumber(line_index + 1, line_number_buf));
       }
     }
@@ -450,13 +450,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                            surface.gutter_width + surface.right_width, surface.line_height),
           .color = background,
       };
-      current_input.text_renderer = &text_renderer_;
+      current_input.text_renderer = &editor_text_renderer_;
       current_input.theme = &theme_;
       editor::DecoratedTextRow& current_row = merge_current_scratch_row_;
       editor::BuildDecoratedRow(current_row, current_input);
-      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
+      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, current_row);
       if (wrap_row.first) {
-        text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
+        editor_text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
                                   FormatLineNumber(line_index + 1, line_number_buf));
       }
     }
@@ -465,7 +465,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
 
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
       editor_blame_overlay_service_.EditorOverlayForFrame(prepared_frame_id_, project_root,
-                                                          text_renderer_, git_blame_service_,
+                                                          editor_text_renderer_, git_blame_service_,
                                                        merge_tab->result_viewport,
                                                        interaction.result.rect, 280.0f, 0,
                                                        LineNumbersEnabled());
@@ -484,7 +484,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   const bool render_whitespace_enabled =
       merge_setting_enabled("editor.view.render_whitespace", false);
   const bool line_numbers_enabled = merge_setting_enabled("editor.line_numbers", true);
-  editor_view_renderer_.Render(renderer, text_renderer_, theme_, merge_tab->result_viewport,
+  editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, merge_tab->result_viewport,
                                interaction.result.rect,
                                draw_caret, "", std::nullopt,
                                merge_blame_overlay,
@@ -560,7 +560,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           if (y >= interaction.result.rect.y + interaction.result.rect.h) {
             break;
           }
-          text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
+          editor_text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
                                       theme_.editor_background,
                                       FormatLineNumber(preview_first_line + line + 1,
                                                        line_number_buf));
@@ -574,7 +574,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           editor::RowDecorationInput preview_input;
           preview_input.text_x = interaction.result.metrics.text_x;
           preview_input.y = y;
-          preview_input.char_width = text_renderer_.CharWidth();
+          preview_input.char_width = editor_text_renderer_.CharWidth();
           preview_input.line_height = interaction.result.lines.line_height;
           preview_input.row_visual_start = merge_tab->horizontal_scroll;
           preview_input.row_visual_end =
@@ -586,11 +586,11 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           preview_input.layout = &preview_layout;
           preview_input.tab_size = merge_tab->result_viewport.tab_size();
           preview_input.has_background_fill = false;
-          preview_input.text_renderer = &text_renderer_;
+          preview_input.text_renderer = &editor_text_renderer_;
           preview_input.theme = &theme_;
           editor::DecoratedTextRow& preview_row = merge_incoming_scratch_row_;
           editor::BuildDecoratedRow(preview_row, preview_input);
-          kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, preview_row);
+          kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, preview_row);
         }
         DrawRect(renderer, *preview_rect, theme_.accent);
       }

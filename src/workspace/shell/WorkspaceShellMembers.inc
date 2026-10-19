@@ -2052,7 +2052,13 @@
                          bool during_frame_prepare = false);
 
   render::Theme theme_ = render::MakeDefaultTheme();
+  // Two glyph renderers: text_renderer_ draws the chrome (menus, tabs, sidebar,
+  // status bar, overlays, panels) at the fixed UI size, and editor_text_renderer_
+  // the editor area's document grid (panes, compare, merge) at `editor.font_size`.
+  // One renderer for both made a large editor font overflow every fixed-height
+  // chrome row (QA sweeps-matrix, "light theme, large font").
   render::TextRenderer text_renderer_;
+  render::TextRenderer editor_text_renderer_;
   // Dedicated glyph renderer for the terminal grid so `terminal.font_size` /
   // `terminal.font_family` are independent of the editor font. Lazily initialized only
   // when the bottom panel first shows a terminal, so a session that never opens one pays

@@ -256,7 +256,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
       compare_tab->right_editable && compare_tab->right_view_active
           ? editor_blame_overlay_service_.BuildCompareOverlay(
-                project_root, text_renderer_, git_blame_service_, *compare_tab,
+                project_root, editor_text_renderer_, git_blame_service_, *compare_tab,
                 EditorBlameOverlayService::CompareOverlayLayout{
                     .pane_rect = MakeRect(
                         surface.right_x, rect.y, surface.gutter_width + surface.right_width,
@@ -306,21 +306,21 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
 
   if (!compare_tab->review_header.summary_line.empty()) {
     constexpr std::string_view kShortcutHint = "Ctrl+E  keyboard-shortcuts";
-    const float hint_width = text_renderer_.MeasureWidth(kShortcutHint);
+    const float hint_width = editor_text_renderer_.MeasureWidth(kShortcutHint);
     const float hint_x = rect.x + std::max(8.0f, content_width - hint_width - 10.0f);
     const float summary_width =
         std::max(0.0f, (hint_x - 14.0f) - (rect.x + 8.0f));
-    text_renderer_.DrawString(renderer, rect.x + 8.0f, surface.review_summary_y,
+    editor_text_renderer_.DrawString(renderer, rect.x + 8.0f, surface.review_summary_y,
                               theme_.text_primary,
                               TruncateLabelView(compare_tab->review_header.summary_line,
                                                 summary_width));
-    text_renderer_.DrawString(renderer, hint_x, surface.review_summary_y,
+    editor_text_renderer_.DrawString(renderer, hint_x, surface.review_summary_y,
                               theme_.text_muted, kShortcutHint);
   }
-  text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
+  editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(compare_tab->left_label, surface.left_width - 8.0f));
-  text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
+  editor_text_renderer_.DrawString(renderer, surface.right_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(compare_tab->right_label, surface.right_width - 8.0f));
 
@@ -330,7 +330,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // exactly as the merge surface's did.
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderCompareSurface::SideRows");
   const bool wrapped = compare_tab->wrap_layout.active();
-  const float char_width_px = text_renderer_.CharWidth();
+  const float char_width_px = editor_text_renderer_.CharWidth();
   // Read once per frame, not per row: the lookup is string-keyed.
   const bool render_whitespace_enabled =
       SettingFlagEnabled(GetSettingValue("editor.view.render_whitespace"), false);
@@ -495,11 +495,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         DrawRect(renderer, button_rect, emphasized ? theme_.text_secondary : theme_.border);
         const float text_x =
             button_rect.x +
-            std::max(0.0f, (button_rect.w - text_renderer_.MeasureWidth(label)) * 0.5f);
+            std::max(0.0f, (button_rect.w - editor_text_renderer_.MeasureWidth(label)) * 0.5f);
         const float text_y =
             button_rect.y +
-            std::max(0.0f, (button_rect.h - text_renderer_.LineHeight()) * 0.5f);
-        text_renderer_.DrawStringOn(renderer, text_x, text_y,
+            std::max(0.0f, (button_rect.h - editor_text_renderer_.LineHeight()) * 0.5f);
+        editor_text_renderer_.DrawStringOn(renderer, text_x, text_y,
                                     emphasized ? theme_.text_primary : theme_.text_muted,
                                     fill, label);
       };
@@ -514,7 +514,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                                       0.30f));
         DrawRect(renderer, block_rect, selected ? theme_.accent : theme_.border);
         const auto action_rects = BuildCollapsedContextActionRects(
-            text_renderer_, block_rect, presentation_row->previous_hunk_index >= 0,
+            editor_text_renderer_, block_rect, presentation_row->previous_hunk_index >= 0,
             presentation_row->next_hunk_index >= 0);
         const auto hovered_action = [&compare_tab, presentation_index,
                                      presentation_row](CompareHoverKind kind) {
@@ -538,11 +538,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           draw_context_button(*action_rects.next_rect, "Show next 20",
                               hovered_action(CompareHoverKind::CollapsedContextNextAction));
         }
-        text_renderer_.DrawString(renderer, summary_x, y,
+        editor_text_renderer_.DrawString(renderer, summary_x, y,
                                   selected ? theme_.text_primary : theme_.text_secondary,
                                   TruncateLabelView(summary, summary_width));
       } else {
-        text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
+        editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, y,
                                   selected ? theme_.text_primary : theme_.text_muted,
                                   TruncateLabelView(summary, summary_width));
       }
@@ -568,7 +568,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       if (display_text.empty()) {
         return;
       }
-      text_renderer_.DrawString(renderer, x, y, color, display_text);
+      editor_text_renderer_.DrawString(renderer, x, y, color, display_text);
     };
     const SDL_Color neutral_text_color = selected ? theme_.text_primary : theme_.text_secondary;
     SDL_Color left_color = neutral_text_color;
@@ -689,11 +689,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                     left_input.text_x, y);
       left_input.prepositioned_fills =
           std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
-      left_input.text_renderer = &text_renderer_;
+      left_input.text_renderer = &editor_text_renderer_;
       left_input.theme = &theme_;
       editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
       editor::BuildDecoratedRow(left_row, left_input);
-      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
+      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, left_row);
       if (wrap_row.first) {
         draw_text(surface.left_x + kDiffGutterNumberInset,
                   surface.gutter_width - 4.0f - kDiffGutterNumberInset,
@@ -892,11 +892,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
             wrapped ? right_row_end - right_row_start : surface.right_visible_columns;
         right_input.tab_size = compare_tab->right_viewport.tab_size();
       }
-      right_input.text_renderer = &text_renderer_;
+      right_input.text_renderer = &editor_text_renderer_;
       right_input.theme = &theme_;
       editor::DecoratedTextRow& right_row = compare_right_scratch_row_;
       editor::BuildDecoratedRow(right_row, right_input);
-      kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
+      kDecoratedRowRenderer.RenderRow(renderer, editor_text_renderer_, right_row);
       if (right_diagnostics != nullptr && wrap_row.first) {
         if (const auto severity = editor::HighestDiagnosticSeverityForLine(
                 std::span<const editor::PublishedDiagnostic>(*right_diagnostics), right_line_index);
@@ -991,7 +991,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         }
         if (blame_index < blame_overlay->lines.size() &&
             blame_overlay->lines[blame_index].line_index == right_line_index) {
-          text_renderer_.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
+          editor_text_renderer_.DrawStringOn(renderer, blame_overlay->lines[blame_index].rect.x,
                                      blame_overlay->lines[blame_index].rect.y,
                                      theme_.text_disabled, right_row_background,
                                      blame_overlay->lines[blame_index].text);

@@ -805,8 +805,8 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
       if (content.code_lens != nullptr && !content.code_lens->text.empty()) {
         const float text_x = pane_rect.x + metrics.gutter_width + 4.0f;
         const float text_y = top + std::max(0.0f, (gap.height - metrics.line_height) * 0.5f);
-        text_renderer_.DrawString(renderer, text_x, text_y, theme_.accent,
-                                  content.code_lens->text);
+        editor_text_renderer_.DrawString(renderer, text_x, text_y, theme_.accent,
+                                         content.code_lens->text);
       }
       continue;
     }
@@ -815,9 +815,9 @@ void WorkspaceShell::DrawEditorInsets(SDL_Renderer* renderer, const SDL_FRect& p
       // Below-caret ghost-text rows, dimmed and aligned under the code (the first
       // line renders inline at the caret in EditorViewRenderer).
       for (std::size_t j = 0; j < content.ghost_text->below_lines.size(); ++j) {
-        text_renderer_.DrawString(renderer, metrics.text_x,
-                                  top + static_cast<float>(j) * metrics.line_height,
-                                  theme_.text_muted, content.ghost_text->below_lines[j]);
+        editor_text_renderer_.DrawString(renderer, metrics.text_x,
+                                         top + static_cast<float>(j) * metrics.line_height,
+                                         theme_.text_muted, content.ghost_text->below_lines[j]);
       }
       continue;
     }

@@ -104,12 +104,15 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
   // project activation, session restore, and live setting changes, so switching
   // projects automatically re-applies that project's font size. SetFontPointSize
   // no-ops when the size is unchanged, so the common case stays cheap.
-  text_renderer_.SetFontPointSize(
+  editor_text_renderer_.SetFontPointSize(
       static_cast<float>(context_.current_project_state.editor_preferences.font_size));
   // Font family is a user-scope, renderer-global setting (not an EditorPreferences
   // field); push it alongside the size so project activation / session restore
-  // re-applies it. SetFontFamily no-ops when the family is unchanged.
-  text_renderer_.SetFontFamily(GetSettingValue("editor.font_family").value_or(""));
+  // re-applies it. SetFontFamily no-ops when the family is unchanged. The chrome
+  // shares the editor's family but keeps its own size: `ui.scale` sizes the chrome.
+  const std::string font_family = GetSettingValue("editor.font_family").value_or("");
+  editor_text_renderer_.SetFontFamily(font_family);
+  text_renderer_.SetFontFamily(font_family);
   NoteLayoutInputsChanged();
   tab_strip_service_.InvalidateTabStripGeometry();
   RequestWindowRedraw();

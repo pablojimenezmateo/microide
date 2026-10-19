@@ -384,6 +384,44 @@ void TestUiQueryNamesToasts() {
   }
 }
 
+// A large editor font is the editor's: the chrome keeps its size. One renderer
+// drew both, so `editor.font_size 20` set every menu title, tab, tree row and
+// status segment in a font taller than its fixed row and the text overflowed --
+// clipped descenders, and stale glyph rows under a hovered context-menu row
+// (QA sweeps-matrix, "light theme, large font").
+void TestLargeEditorFontKeepsTheChromeSize() {
+  UiFixture fixture;
+  const float chrome_line = TestAccess::ChromeTextLineHeight(fixture.shell);
+  const float editor_line = TestAccess::TextLineHeight(fixture.shell);
+  Expect(TestAccess::SetSettingValue(fixture.shell, "editor.font_size", "24"), "set the editor font size");
+  fixture.shell.Render(fixture.canvas.renderer(), UiFixture::kWidth, UiFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::TextLineHeight(fixture.shell) > editor_line * 1.5f,
+         "the editor font grows: " + std::to_string(TestAccess::TextLineHeight(fixture.shell)));
+  Expect(TestAccess::ChromeTextLineHeight(fixture.shell) == chrome_line,
+         "the chrome font keeps its size: " + std::to_string(TestAccess::ChromeTextLineHeight(fixture.shell)) +
+             " (was " + std::to_string(chrome_line) + ")");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto row = Find(ui, "row:tree/alpha.cpp");
+  Expect(row.has_value() && TestAccess::ChromeTextLineHeight(fixture.shell) <= row->rect.h + 1.0f,
+         "a tree row still fits its text");
+  // The editor resolves a click with the font it draws: column 6 of line 1.
+  const util::JsonValue& pane = ui["editors"][std::size_t{0}];
+  Expect(pane["lineHeight"].AsDouble() > static_cast<double>(editor_line) * 1.5,
+         "the ui query reports the editor's own line height");
+  TestAccess::SetFocusEditor(fixture.shell);
+  const double x = pane["textX"].AsDouble() + 5.3 * pane["charWidth"].AsDouble();
+  const double y = pane["firstLineY"].AsDouble() + 0.5 * pane["lineHeight"].AsDouble();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "pointer click " + std::to_string(x) + " " + std::to_string(y)),
+         "click the editor text");
+  const util::JsonValue buffer = TestAccess::ControlQuery(fixture.shell, "buffer");
+  const util::JsonValue& caret = buffer["cursors"][std::size_t{0}];
+  Expect(caret["line"].AsInt() == 1 && caret["column"].AsInt() == 6,
+         "the click lands where the editor font put column 6: line " +
+             std::to_string(caret["line"].AsInt()) + " column " + std::to_string(caret["column"].AsInt()));
+}
+
 // What `pointer` and `key` change reaches the screen: they hand the shell an event
 // from inside the control command, and the damage that nested dispatch returned
 // was dropped -- so the frame after a control click repainted only what was still
@@ -487,6 +525,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
   AddTest(tests, "ControlUiQuery/KeyCommandTypesPrintableKeys", TestKeyCommandTypesPrintableKeys);
+  AddTest(tests, "ControlUiQuery/LargeEditorFontKeepsTheChromeSize", TestLargeEditorFontKeepsTheChromeSize);
   AddTest(tests, "ControlUiQuery/InjectedInputRepaintsWhatItChanged", TestInjectedInputRepaintsWhatItChanged);
   AddTest(tests, "ControlUiQuery/PointerCommandClicksWhatTheUiNames",
           TestPointerCommandClicksWhatTheUiNames);
