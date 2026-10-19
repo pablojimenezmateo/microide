@@ -77,6 +77,13 @@
       sandbox.read_roots.push_back(plugin->data_dir);
       sandbox.write_roots.push_back(plugin->data_dir);
     }
+    // A contributed server or formatter is usually installed per user
+    // (~/.dotnet/tools/csharp-ls, nvm's typescript-language-server): it must be able
+    // to exec itself and read its runtime.
+    const char* path_env = std::getenv("PATH");
+    const char* home = std::getenv("HOME");
+    platform::AllowUserToolchains(sandbox, path_env != nullptr ? path_env : "",
+                                  home != nullptr ? std::filesystem::path(home) : std::filesystem::path());
     return sandbox;
   }
 

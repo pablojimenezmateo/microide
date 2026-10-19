@@ -1,5 +1,7 @@
 #include "platform/SubprocessSandbox.h"
 
+#include <algorithm>
+
 #include <cstdlib>
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -260,6 +262,45 @@ void AllowUserGitConfiguration(SubprocessSandbox& sandbox) {
   } else if (home != nullptr && home[0] != '\0') {
     sandbox.read_roots.push_back(std::filesystem::path(home) / ".config" / "git");
   }
+}
+
+void AllowUserToolchains(SubprocessSandbox& sandbox, std::string_view path_env,
+                         const std::filesystem::path& home) {
+  if (home.empty() || !home.is_absolute()) {
+    return;
+  }
+  const std::filesystem::path normal_home = home.lexically_normal();
+  const auto strictly_under_home = [&](const std::filesystem::path& path) {
+    const std::filesystem::path relative = path.lexically_normal().lexically_relative(normal_home);
+    return !relative.empty() && relative != "." && *relative.begin() != "..";
+  };
+  std::vector<std::filesystem::path> roots;
+  const auto add = [&](std::filesystem::path path) {
+    path = path.lexically_normal();
+    if (std::find(roots.begin(), roots.end(), path) == roots.end()) {
+      roots.push_back(std::move(path));
+    }
+  };
+  std::size_t start = 0;
+  while (start <= path_env.size()) {
+    const std::size_t end = std::min(path_env.find(':', start), path_env.size());
+    const std::filesystem::path dir(path_env.substr(start, end - start));
+    start = end + 1;
+    if (!dir.is_absolute() || !strictly_under_home(dir)) {
+      continue;
+    }
+    add(dir);
+    const std::filesystem::path prefix = dir.lexically_normal().parent_path();
+    if (dir.lexically_normal().filename() == "bin" && strictly_under_home(prefix) &&
+        prefix != normal_home / ".local") {
+      add(prefix);
+    }
+  }
+  for (const char* name : {".dotnet", ".nuget", ".cargo", ".rustup", ".nvm", ".volta", ".bun", ".deno",
+                           "go", ".sdkman", ".pyenv", ".ghcup", ".elan", ".opam"}) {
+    add(normal_home / name);
+  }
+  sandbox.read_roots.insert(sandbox.read_roots.end(), roots.begin(), roots.end());
 }
 
 }  // namespace microide::platform

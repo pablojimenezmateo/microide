@@ -31,6 +31,27 @@ bool WaitForLspReadinessState(LspClient& client,
       std::chrono::milliseconds(timeout_ms), std::chrono::milliseconds(10));
 }
 
+// A server whose process dies during startup is Failed, with its reason, not
+// "Starting…" forever. The status asks FindStartedServer, which drops a dead
+// client, then LastServerError, which only EnsureStarted ever filled -- so a server
+// that started and then died (an exec the sandbox refused: csharp-ls under
+// ~/.dotnet/tools) read as starting for as long as the editor ran.
+void TestWorkspaceLspManagerReportsAServerThatDiesAtStartup() {
+  workspace::LspManager manager;
+  manager.RegisterServer({"qa"}, platform::LocalProcessLauncher(),
+                         {"/bin/sh", "-c", "echo cannot start >&2; exit 126"}, "file:///tmp", {},
+                         /*eager_start=*/true);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+  while (manager.IsServerRunning("qa") && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  Expect(!manager.IsServerRunning("qa"), "the server's process exits");
+  Expect(manager.FindStartedServer("qa") == nullptr, "a dead server is not a started one");
+  const std::string error = manager.LastServerError("qa");
+  Expect(!error.empty() && error.find("[command: sh") != std::string::npos,
+         "and the manager says why, naming the command: '" + error + "'");
+}
+
 void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
 #if !defined(__unix__) && !defined(__APPLE__)
   return;
@@ -2343,6 +2364,8 @@ void TestLspCompletionSortsByServerRank() {
 }
 
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceLspManager/ReportsAServerThatDiesAtStartup",
+          TestWorkspaceLspManagerReportsAServerThatDiesAtStartup);
   AddTest(tests, "WorkspaceLspClient/TimeoutReportsTimeoutOutcome",
           TestWorkspaceLspClientTimeoutReportsTimeoutOutcome);
   AddTest(tests, "WorkspaceLspClient/OutcomeTaxonomy",

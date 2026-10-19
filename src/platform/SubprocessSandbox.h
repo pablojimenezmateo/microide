@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 namespace microide::platform {
@@ -48,6 +49,17 @@ void ApplyChildSandbox(const SubprocessSandbox& sandbox);
 // not exist is simply never granted. Reads HOME and XDG_CONFIG_HOME, so call it in
 // the PARENT when building the sandbox, never in the forked child.
 void AllowUserGitConfiguration(SubprocessSandbox& sandbox);
+
+// Where a user installs language servers, formatters and their runtimes: the PATH
+// directories under `home` (~/.dotnet/tools, ~/.cargo/bin, nvm's node), the install
+// prefix a `<prefix>/bin` sits in when that prefix is not `home` or ~/.local (nvm's
+// bin links into its lib), and the toolchain roots runtimes read from (~/.dotnet,
+// ~/.nuget, ~/.cargo, ~/.rustup, ...). Read and execute only, appended to
+// `read_roots`; directories that do not exist grant nothing. Without it a server the
+// user installed per-user could not even exec (csharp-ls: "Permission denied") and
+// sat at "Starting…". `home` itself, ~/.ssh and the rest of it stay unreadable.
+void AllowUserToolchains(SubprocessSandbox& sandbox, std::string_view path_env,
+                         const std::filesystem::path& home);
 
 // Parent-side, read-only snapshot of whether the kernel-confinement layers used by
 // ApplyChildSandbox are actually usable on this host. Because that confinement is fail-open and

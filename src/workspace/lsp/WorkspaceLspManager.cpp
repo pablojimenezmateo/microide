@@ -254,7 +254,22 @@ bool LspManager::IsServerRunning(const std::string& language_id) const {
 
 std::string LspManager::LastServerError(const std::string& language_id) const {
   const ServerEntry* entry = ResolveEntry(language_id);
-  return entry == nullptr ? std::string{} : entry->last_error;
+  if (entry == nullptr) {
+    return {};
+  }
+  if (!entry->last_error.empty()) {
+    return entry->last_error;
+  }
+  // A client whose process died (an exec the sandbox refused, a crash during
+  // startup) says why itself; only EnsureStarted copied that into the entry, so a
+  // status that never re-started the server read nothing and showed "Starting…"
+  // forever (QA lsp-csharp: csharp-ls never ran and no one said so).
+  if (entry->client != nullptr && !entry->test_install && !entry->client->IsRunning()) {
+    const std::string why = entry->client->LastError();
+    return (why.empty() ? std::string("language server process exited unexpectedly") : why) +
+           " [command: " + SummarizeCommandForError(entry->command) + "]";
+  }
+  return {};
 }
 
 void LspManager::BeginShutdownAll() {

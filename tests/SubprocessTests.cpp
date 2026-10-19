@@ -5,6 +5,8 @@
 #include "platform/Subprocess.h"
 #include "platform/SubprocessSandbox.h"
 
+#include <algorithm>
+
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -24,6 +26,33 @@ namespace {
 using microide::platform::RunSubprocess;
 using microide::platform::SubprocessEnvironmentOverride;
 using microide::platform::SubprocessOptions;
+
+// A contributed language server installed per user must be able to exec itself and
+// read its runtime: the PATH directories under HOME, the prefix a <prefix>/bin sits
+// in (nvm's bin links into its lib), and the toolchain roots -- and nothing that
+// grants HOME itself, ~/.local's user data or a directory outside HOME.
+void TestAllowUserToolchainsGrantsPerUserInstallsOnly() {
+  platform::SubprocessSandbox sandbox;
+  const std::filesystem::path home = "/home/qa";
+  platform::AllowUserToolchains(
+      sandbox,
+      "/home/qa/.dotnet/tools:/usr/bin:/home/qa/.nvm/versions/node/v20/bin:/home/qa/.local/bin:"
+      "relative/bin:/home/qa:/home/qa/../other/bin:/home/qa/.cargo/bin",
+      home);
+  const auto has = [&](const char* path) {
+    return std::find(sandbox.read_roots.begin(), sandbox.read_roots.end(), std::filesystem::path(path)) !=
+           sandbox.read_roots.end();
+  };
+  Expect(has("/home/qa/.dotnet/tools"), "a PATH directory under HOME is readable/executable");
+  Expect(has("/home/qa/.nvm/versions/node/v20/bin") && has("/home/qa/.nvm/versions/node/v20"),
+         "and a bin directory's install prefix");
+  Expect(has("/home/qa/.local/bin") && !has("/home/qa/.local"), "~/.local/bin, but not ~/.local's data");
+  Expect(has("/home/qa/.dotnet") && has("/home/qa/.nuget") && has("/home/qa/.cargo"),
+         "the toolchain roots runtimes read from");
+  Expect(!has("/home/qa") && !has("/usr/bin") && !has("/home/other/bin") && !has("relative/bin"),
+         "never HOME itself, a system or relative directory, or one outside HOME");
+  Expect(sandbox.write_roots.empty(), "and read/execute only");
+}
 
 void TestSubprocessCapturesStdoutAndStdin() {
   const auto result = RunSubprocess({"cat"}, SubprocessOptions{
@@ -559,6 +588,8 @@ void TestSandboxReadFilesGrantsOnlyThatFile() {
 }  // namespace
 
 void RegisterSubprocessTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Subprocess/AllowUserToolchainsGrantsPerUserInstallsOnly",
+          TestAllowUserToolchainsGrantsPerUserInstallsOnly);
   AddTest(tests, "Subprocess/SandboxProbeReportsConsistentSupport",
           TestSandboxProbeReportsConsistentSupport);
 #if defined(__linux__)
