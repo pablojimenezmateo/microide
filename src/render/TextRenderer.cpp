@@ -38,6 +38,12 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
 #if MICROIDE_HAS_SDL3_TTF
     if (auto backend = SdlTtfTextBackend::Create(renderer); backend != nullptr) {
       backend_ = std::move(backend);
+      if (requested_point_size_.has_value()) {
+        backend_->SetFontPointSize(*requested_point_size_);
+      }
+      if (requested_family_.has_value()) {
+        (void)backend_->SetFontFamily(*requested_family_);
+      }
     } else {
       SDL_Log("microide text: SDL_ttf backend unavailable; falling back to SDL debug text");
     }
@@ -63,6 +69,7 @@ void TextRenderer::EnsureInitialized(SDL_Renderer* renderer,
 }
 
 void TextRenderer::SetFontPointSize(float points) {
+  requested_point_size_ = points;
   if (backend_ == nullptr) {
     return;
   }
@@ -74,6 +81,7 @@ void TextRenderer::SetFontPointSize(float points) {
 }
 
 bool TextRenderer::SetFontFamily(std::string_view family) {
+  requested_family_ = std::string(family);
   if (backend_ == nullptr) {
     return false;
   }

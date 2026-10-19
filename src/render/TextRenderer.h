@@ -5,6 +5,7 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -124,6 +125,11 @@ class TextRenderer {
 
   std::unique_ptr<TextRendererBackend> backend_;
   bool attempted_optional_backend_ = false;
+  // The size and family last asked for. The backend that EnsureInitialized swaps
+  // in starts at its defaults, so these are applied to it: a size set before the
+  // first frame (`--set editor.font_size`, a control spec) used to be dropped.
+  std::optional<float> requested_point_size_;
+  std::optional<std::string> requested_family_;
   // `width_cache_order_` stores std::string_view pointing at the map's keys. `unordered_map` does
   // not invalidate references to elements on rehash, so the views stay valid for the lifetime of
   // the entry. This avoids the per-entry duplicate std::string the previous deque held.

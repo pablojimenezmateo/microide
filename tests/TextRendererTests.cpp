@@ -1157,6 +1157,28 @@ void TestSdlTtfSetFontPointSizeResizesGlyphMetrics() {
          "an oversized request should clamp to the max supported size, not zero metrics");
 }
 
+// A size asked for before the first frame is the size the first frame draws at.
+// The renderer starts on a stand-in backend and swaps in SDL_ttf on its first
+// EnsureInitialized -- at the default 13pt, so a size set before that (`--set
+// editor.font_size`, a control spec, a project's saved size on a fast start) was
+// silently dropped (QA control-spec).
+void TestSdlTtfFontSizeSetBeforeInitializeIsKept() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 160);
+  microide::render::TextRenderer reference;
+  reference.EnsureInitialized(canvas.renderer());
+  reference.SetFontPointSize(24.0f);
+
+  microide::render::TextRenderer early;
+  early.SetFontPointSize(24.0f);
+  early.EnsureInitialized(canvas.renderer());
+  Expect(early.BackendName() == "sdl3_ttf", "the test should exercise the SDL_ttf backend");
+  Expect(std::abs(early.LineHeight() - reference.LineHeight()) <= 0.5f &&
+             std::abs(early.CharWidth() - reference.CharWidth()) <= 0.5f,
+         "a size set before initialisation should survive it: line height " +
+             std::to_string(early.LineHeight()) + " vs " + std::to_string(reference.LineHeight()));
+}
+
 void TestSdlTtfSetFontFamilyResilientToUnresolved() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 160);
@@ -3126,6 +3148,7 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextRenderer/FontSizeSetBeforeInitializeIsKept", TestSdlTtfFontSizeSetBeforeInitializeIsKept);
   AddTest(tests, "TextRenderer/NonAsciiMeasuresAndDrawsOnTheCellGrid",
           TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid);
   AddTest(tests, "TextRenderer/MeasureWidthDoesNotCacheOversizedStrings",
