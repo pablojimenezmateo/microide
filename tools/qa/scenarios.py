@@ -357,6 +357,7 @@ import flows_more  # noqa: E402
 import flows_advanced  # noqa: E402
 import flows_coverage  # noqa: E402
 import flows_ux  # noqa: E402
+import flows_depth  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -378,6 +379,7 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     **flows_advanced.FLOWS,
     **flows_coverage.FLOWS,
     **flows_ux.FLOWS,
+    **flows_depth.FLOWS,
 }
 
 # Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
