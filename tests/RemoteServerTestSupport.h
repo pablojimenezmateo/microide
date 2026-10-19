@@ -142,6 +142,9 @@ inline void StartServer(const ShortServerDir& dir, std::vector<std::string> extr
 struct FakeSshHost {
   ShortServerDir dir;
   std::filesystem::path home = dir.scratch() / "h";
+  // Where a session starts when it is not $HOME (empty: $HOME), as sshd starts one
+  // in the passwd home whatever $HOME says.
+  std::filesystem::path login_dir;
   std::filesystem::path shim = std::filesystem::path(MICROIDE_TEST_SOURCE_DIR) / "fixtures" /
                                "remote" / "fake-ssh";
 
@@ -162,6 +165,9 @@ struct FakeSshHost {
   // The `remote.ssh_command` that reaches it, as argv.
   std::vector<std::string> SshArgv(bool needs_auth = false) const {
     std::vector<std::string> argv = {"env", "FAKE_SSH_HOME=" + home.string()};
+    if (!login_dir.empty()) {
+      argv.push_back("FAKE_SSH_CWD=" + login_dir.string());
+    }
     if (needs_auth) {
       argv.push_back("FAKE_SSH_NEEDS_AUTH=1");
     }

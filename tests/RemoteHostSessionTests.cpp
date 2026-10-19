@@ -136,6 +136,27 @@ void TestFirstConnectInstallsTheServerAndReachesReady() {
   Expect(WaitForState(session, State::Disconnected), "it disconnects");
 }
 
+// A session that starts somewhere other than $HOME (sshd starts it in the passwd
+// home; sshd's SetEnv, a login script or a container can point $HOME elsewhere).
+// The install wrote relative to the working directory and the launch chain looked
+// under $HOME, so the server landed where it is never looked for and every connect
+// failed after the install (found standing up tools/qa/local-sshd.sh, whose
+// sessions get a HOME of their own).
+void TestTheServerInstallsUnderHomeWhereverTheSessionStarts() {
+  FakeHost host;
+  host.login_dir = host.dir.scratch() / "login";
+  std::filesystem::create_directories(host.login_dir);
+  StateLog log;
+  RemoteHostSession session(host.Config(), log.Listener());
+  session.Connect();
+  Expect(WaitForState(session, State::Ready), "the session is ready: " + log.Error());
+  Expect(std::filesystem::exists(host.home / ".local/share/microide/server/microide-server"),
+         "the server is installed under $HOME, where the launch looks");
+  Expect(!std::filesystem::exists(host.login_dir / ".local"), "and nothing lands in the login directory");
+  session.Disconnect();
+  Expect(WaitForState(session, State::Disconnected), "it disconnects");
+}
+
 // A compatible but OLDER server keeps serving (and keeps its terminals), and this
 // release's binary is installed beside it for the next start; a restart picks it
 // up. A server that is not older -- equal, newer, or unorderable -- is left alone.
@@ -479,6 +500,8 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
           TestInstallPicksTheBinaryForTheHostsArchitecture);
   AddTest(tests, "RemoteHostSession/AnOlderServerGetsTheNewBinaryBesideIt",
           TestAnOlderServerGetsTheNewBinaryBesideIt);
+  AddTest(tests, "RemoteHostSession/TheServerInstallsUnderHomeWhereverTheSessionStarts",
+          TestTheServerInstallsUnderHomeWhereverTheSessionStarts);
   AddTest(tests, "RemoteHostSession/FirstConnectInstallsTheServerAndReachesReady",
           TestFirstConnectInstallsTheServerAndReachesReady);
   AddTest(tests, "RemoteHostSession/NeedsAuthWaitsForTheInteractiveMaster",

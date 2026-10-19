@@ -42,6 +42,14 @@ std::filesystem::path DefaultServerSocketDir(const std::filesystem::path& home) 
   return canonical / ".local" / "state" / "microide" / "server";
 }
 
+std::string_view ServerInstallScript() {
+  return "umask 077 && d=\"$HOME/$0\" && mkdir -p \"$d\" && cat > \"$d/.microide-server.tmp\" && "
+         "chmod 700 \"$d/.microide-server.tmp\" && "
+         "mv -f \"$d/.microide-server.tmp\" \"$d/microide-server\"";
+}
+
+std::string_view ServerInstallDirectory() { return ".local/share/microide/server"; }
+
 std::filesystem::path ServerSocketPath(const std::filesystem::path& dir) {
   return dir / "server.sock";
 }

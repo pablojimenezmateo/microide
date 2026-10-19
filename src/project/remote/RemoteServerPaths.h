@@ -18,6 +18,14 @@ namespace microide::project::remote {
 // that symlinks /home (an ostree host's /home -> /var/home) is the administrator's
 // decision, made once; what is verified strictly is what the user owns below it.
 std::filesystem::path DefaultServerSocketDir(const std::filesystem::path& home);
+
+// How the client installs the server on a host (dev-docs/design/remote-projects.md
+// § 6.6): this fixed script, run by `sh -c` with the directory as `$0`, reads the
+// binary from stdin into "$HOME/<directory>/microide-server". Relative to $HOME, the
+// directory the launch chain looks in -- not the session's working directory, which
+// sshd sets to the passwd home whatever $HOME says.
+std::string_view ServerInstallScript();
+std::string_view ServerInstallDirectory();
 std::filesystem::path ServerSocketPath(const std::filesystem::path& dir);
 std::filesystem::path ServerLogPath(const std::filesystem::path& dir);
 

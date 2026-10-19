@@ -10,6 +10,7 @@
 #include "platform/Subprocess.h"
 #include "project/remote/RemoteProtocol.h"
 #include "project/remote/RemoteServerClient.h"
+#include "project/remote/RemoteServerPaths.h"
 #include "util/Sha256.h"
 #include "util/TextFileIO.h"
 
@@ -26,12 +27,7 @@ namespace {
 
 // The ONLY shell scripts this client sends to a host (dev-docs/design/
 // remote-projects.md § 6.6). Fixed text: nothing a user typed is spliced in. The
-// install directory travels as `$0`, relative to the login directory ($HOME).
-constexpr std::string_view kInstallDirectory = ".local/share/microide/server";
-constexpr std::string_view kInstallScript =
-    "umask 077 && mkdir -p \"$0\" && cat > \"$0/.microide-server.tmp\" && "
-    "chmod 700 \"$0/.microide-server.tmp\" && "
-    "mv -f \"$0/.microide-server.tmp\" \"$0/microide-server\"";
+// install script and its directory (relative to $HOME) live in RemoteServerPaths.
 // The server: the self-installed one, else one on PATH; 127 when neither exists,
 // which is what tells the client to install.
 constexpr std::string_view kServerChain =
@@ -515,7 +511,7 @@ std::string RemoteHostSession::InstallCommandText() const {
   if (config_.server_binary && !arch.empty()) {
     binary = config_.server_binary(arch);
   }
-  return JoinForDisplay(RemoteArgv(ShellCommand(kInstallScript, kInstallDirectory))) + " < " +
+  return JoinForDisplay(RemoteArgv(ShellCommand(ServerInstallScript(), ServerInstallDirectory()))) + " < " +
          (binary.empty() ? std::string("microide-server") : binary.string());
 }
 
@@ -633,7 +629,7 @@ bool RemoteHostSession::Install(std::string* error) {
     return false;
   }
   const platform::SubprocessResult result = platform::LocalProcessLauncher().Run(
-      RemoteArgv(ShellCommand(kInstallScript, kInstallDirectory)),
+      RemoteArgv(ShellCommand(ServerInstallScript(), ServerInstallDirectory())),
       platform::SubprocessOptions{.stdin_text = *binary, .timeout_ms = 120000});
   if (!result.success()) {
     *error = "installing the server failed: " +

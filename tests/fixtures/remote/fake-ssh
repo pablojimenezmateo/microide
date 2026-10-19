@@ -5,6 +5,7 @@
 # sends it (the words joined with spaces).
 #
 #   FAKE_SSH_HOME        the host's home directory (required)
+#   FAKE_SSH_CWD         where a session starts (default: FAKE_SSH_HOME)
 #   FAKE_SSH_NEEDS_AUTH  set: a BatchMode master fails the way a key with a
 #                        passphrase does; an interactive one succeeds
 #
@@ -59,5 +60,7 @@ fi
 [ -e "$ctl" ] || { echo "ssh: no master at $ctl" >&2; exit 255; }
 HOME="$FAKE_SSH_HOME"
 export HOME
-cd "$HOME" || exit 255
+# sshd starts a session in the account's passwd home, which need not be $HOME
+# (sshd's SetEnv, a login script, a container): FAKE_SSH_CWD stands for it.
+cd "${FAKE_SSH_CWD:-$HOME}" || exit 255
 exec sh -c "$*"

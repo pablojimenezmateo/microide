@@ -1379,8 +1379,8 @@ manifest hash. So:
   manifest check) through
 
   ```
-  ssh -S <ctl> -- <host> sh -c 'umask 077 && mkdir -p "$0" && cat > "$0/.microide-server.tmp" \
-    && chmod 700 "$0/.microide-server.tmp" && mv -f "$0/.microide-server.tmp" "$0/microide-server"' \
+  ssh -S <ctl> -- <host> sh -c 'umask 077 && d="$HOME/$0" && mkdir -p "$d" && cat > "$d/.microide-server.tmp" \
+    && chmod 700 "$d/.microide-server.tmp" && mv -f "$d/.microide-server.tmp" "$d/microide-server"' \
     <install_dir>
   ```
 
