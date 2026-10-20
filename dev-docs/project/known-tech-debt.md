@@ -554,6 +554,23 @@ implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-20 (evening):** re-measured at **63.2 % of lines, 70.0 % of
+functions** (from 60.4 %; 109 of 127 scenarios ran on the instrumented build,
+which timed out the harness's control client -- `MQA_SLOW_FACTOR` now stretches
+those timeouts). Added since the afternoon ledger: the git view and a plugin's
+view by keys, the debug pane by mouse (context menus, breakpoint rows, a value
+edited in place), closes that save first behind a slow formatter (`save-wait`:
+the wait row and its Cancel), terminal escape sequences read back from the
+screen, `dump-state` over every persisted file, and remote scenarios K/M/N (the
+git view, project search and tree operations against the host). Fixed from them:
+the ui query naming the wrong git row as selected, Reload from Disk refusing a
+dirty buffer silently, and Save As leaving the tree's selection on the previous
+file (F2 then renamed the wrong row). Largest remaining gaps by size: the remote
+engine (0 % outside the `qa-remote` lane), the host-process terminal, the tool
+downloader (wired to nothing), `ControlProtocol` (the command fuzzer's, not the
+suite's), `SurfaceTextureCache` (plugin raster surfaces), `LocalTreeOps`
+collisions (a rename onto an existing name, reserved names).
+
 **Update 2026-10-20 (afternoon):** the configuration dimension is swept:
 `settings-sweep` takes the catalogue from a new `settings` control query and sets
 every registered setting to every value it can take (190 values), with
