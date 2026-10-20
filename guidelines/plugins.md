@@ -60,6 +60,18 @@ Plugins may contribute capabilities such as:
 
 The exact mechanism should remain host-owned and registry-first.
 
+## Menu entries and keybindings (`ctx.menus.add`, `ctx.keybindings.add`)
+
+`ctx.menus.add { id, menu, action, label, accelerator?, separator_before? }` puts a
+row at the end of a menu-bar menu. `menu` names one of the menus on the bar, in any
+case: File, Edit, View, Go, Git, Terminal, Debug or Help. Any other name is a
+registration error (the call raises, naming it) -- there is no Tools menu.
+
+`ctx.keybindings.add { id, action, key, context? }` binds a chord. A chord a
+built-in (or an earlier plugin) already holds in an overlapping context is
+skipped, so Help and Settings never advertise a binding that cannot fire: pick a
+free chord (the `keybindings` control query lists the taken ones).
+
 ## Editor decorations (`ctx.decorations`)
 
 Plugins publish per-file editor decorations that the host renders. Like

@@ -76,7 +76,7 @@ class PluginHost {
 
   struct ContributedMenuEntry {
     std::string id;
-    std::string menu;           // "file", "edit", "view", "search"
+    std::string menu;           // lower-cased: file, edit, view, go, git, terminal, debug, help
     std::string action;         // built-in command name or plugin command name
     std::string label;
     std::string accelerator;

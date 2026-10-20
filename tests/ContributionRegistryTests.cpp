@@ -550,6 +550,53 @@ return ide.plugin({
   Expect(file_items.front().label == "Greet", "menu item label should match");
 }
 
+// A plugin names a menu as the bar does: "File", "Git", "Help" reach those menus
+// (only lowercase file/edit/view/go/terminal used to, so "Help" and every Git or
+// Debug entry vanished), and a menu that does not exist ("Tools", which the guide's
+// own example used) is a registration error the plugin is told about, not an entry
+// dropped without a word (QA plugin-api).
+void TestPluginMenuEntriesNameTheMenuBar() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp;
+  const std::filesystem::path plugins_dir = temp.path() / "config" / "microide" / "plugins";
+  WriteFile(plugins_dir / "contrib-menus" / "init.lua", R"(
+local ide = require("microide")
+return ide.plugin({
+  id = "contrib.menus",
+  setup = function(ctx)
+    ctx.commands.add("contrib.menus.greet", function() end)
+    ctx.menus.add({ id = "a", menu = "File", action = "contrib.menus.greet", label = "In File" })
+    ctx.menus.add({ id = "b", menu = "git", action = "contrib.menus.greet", label = "In Git" })
+    ctx.menus.add({ id = "c", menu = "Debug", action = "contrib.menus.greet", label = "In Debug" })
+    ctx.menus.add({ id = "d", menu = "Help", action = "contrib.menus.greet", label = "In Help" })
+    local ok, err = pcall(ctx.menus.add,
+                          { id = "e", menu = "Tools", action = "contrib.menus.greet", label = "Nowhere" })
+    ctx.log("tools:" .. tostring(ok) .. ":" .. tostring(err))
+  end,
+})
+)");
+
+  PluginHost host;
+  ScopedPluginConfigHomeEnv config_home(temp.path() / "config");
+  host.Reload(temp.path() / "project");
+  const auto label_in = [&](MenuId menu) {
+    const auto items = ContributedMenuItems(menu, host);
+    return items.empty() ? std::string() : items.front().label;
+  };
+  Expect(label_in(MenuId::File) == "In File", "\"File\" should reach the File menu: " + label_in(MenuId::File));
+  Expect(label_in(MenuId::Git) == "In Git", "\"git\" should reach the Git menu");
+  Expect(label_in(MenuId::Debug) == "In Debug", "\"Debug\" should reach the Debug menu");
+  Expect(label_in(MenuId::Help) == "In Help", "\"Help\" should reach the Help menu");
+  Expect(host.ContributedMenuEntries().size() == 4, "the unknown menu should not be registered");
+  bool told = false;
+  for (const std::string& line : host.Messages()) {
+    told = told || (line.find("tools:false") != std::string::npos && line.find("Tools") != std::string::npos);
+  }
+  Expect(told, "registering into a menu that does not exist should fail, naming it");
+}
+
 // ---------------------------------------------------------------------------
 // Plugin-contributed keybindings
 // ---------------------------------------------------------------------------
@@ -1505,6 +1552,7 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/ResolveDisabled", TestResolveKeybindingsDisabled);
   AddTest(tests, "KeybindingRegistry/ResolveLeftCtrlMatch",
           TestResolveKeybindingsFindLeftCtrlMatch);
+  AddTest(tests, "ContributionRegistry/PluginMenuEntriesNameTheMenuBar", TestPluginMenuEntriesNameTheMenuBar);
   AddTest(tests, "ContributionRegistry/FindKeybindingTerminalOwnsGlobalChordsUnlessSkipped",
           TestFindKeybindingTerminalOwnsGlobalChordsUnlessSkipped);
   AddTest(tests, "ContributionRegistry/ResolveKeybindingsSkipShellOverrides",

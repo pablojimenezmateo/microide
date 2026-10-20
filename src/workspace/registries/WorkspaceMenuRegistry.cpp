@@ -469,11 +469,15 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
 }
 
 MenuId ParseMenuId(std::string_view name) {
+  // Every menu on the bar (registration lower-cases the name and refuses others).
   if (name == "file") return MenuId::File;
   if (name == "edit") return MenuId::Edit;
   if (name == "view") return MenuId::View;
   if (name == "go") return MenuId::Go;
+  if (name == "git") return MenuId::Git;
   if (name == "terminal") return MenuId::Terminal;
+  if (name == "debug") return MenuId::Debug;
+  if (name == "help") return MenuId::Help;
   return MenuId::None;
 }
 

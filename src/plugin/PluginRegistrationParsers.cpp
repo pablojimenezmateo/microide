@@ -3,6 +3,7 @@
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <optional>
 
@@ -234,6 +235,22 @@ bool ParseMenuEntryRegistration(lua_State* state,
     }
     return false;
   }
+  // The menus on the bar, named as it shows them (any case). Anything else used to
+  // register and then appear nowhere -- "Tools", the guide's own example, among
+  // them -- so the plugin is told here instead.
+  static constexpr std::array<std::string_view, 8> kMenus = {"file", "edit",     "view",  "go",
+                                                             "git",  "terminal", "debug", "help"};
+  std::string menu_name = *menu_opt;
+  std::transform(menu_name.begin(), menu_name.end(), menu_name.begin(),
+                 [](unsigned char c) { return static_cast<char>(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c); });
+  if (std::find(kMenus.begin(), kMenus.end(), menu_name) == kMenus.end()) {
+    if (error_message != nullptr) {
+      *error_message = "menu entry names a menu that does not exist: \"" + *menu_opt +
+                       "\" (File, Edit, View, Go, Git, Terminal, Debug or Help)";
+    }
+    return false;
+  }
+  menu_opt = std::move(menu_name);
   std::string accelerator;
   if (auto accel_opt = ReadStringField(state, table_index, "accelerator")) {
     accelerator = std::move(*accel_opt);

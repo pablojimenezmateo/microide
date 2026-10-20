@@ -57,7 +57,7 @@ return ide.plugin({
     ctx.commands.add("qa.cov.cmd", function(ctx, args)
       return "ran:" .. table.concat(args or {}, ",")
     end)
-    ctx.menus.add({ id = "m", menu = "Tools", action = "qa.cov.cmd", label = "QA Cov" })
+    ctx.menus.add({ id = "m", menu = "Help", action = "qa.cov.cmd", label = "QA Cov" })
     ctx.keybindings.add({ id = "k", action = "qa.cov.cmd", key = "Ctrl+Alt+J", context = "editor" })
     ctx.status.add({ id = "s", text = "QA", tooltip = "t", alignment = "right", priority = 5 })
 
