@@ -2643,4 +2643,20 @@ std::uint64_t RenderViewModelBuilder::OccurrenceScanCacheMissesForTesting() {
   return g_occurrence_scan_misses;
 }
 
+bool RenderViewModelBuilder::OccurrenceSeedChanged(const editor::TextViewport& viewport) {
+  const auto& cache = g_occurrence_seed_cache;
+  if (cache.viewport != reinterpret_cast<std::uintptr_t>(&viewport)) {
+    return false;
+  }
+  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
+  const bool has_seed = seed.has_value() && seed->start.line == seed->end.line &&
+                        seed->start.column < seed->end.column && seed->start.line < viewport.lines().size() &&
+                        seed->end.column <= viewport.lines().LineLength(seed->start.line);
+  if (has_seed != cache.has_seed) {
+    return true;
+  }
+  return has_seed && viewport.lines().LineView(seed->start.line).substr(
+                         seed->start.column, seed->end.column - seed->start.column) != cache.needle;
+}
+
 }  // namespace microide::workspace

@@ -18,6 +18,7 @@
 #include "util/PerformanceTrace.h"
 #include "util/Waker.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
@@ -458,6 +459,13 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   if (viewport->soft_wrap()) {
     util::PerformanceTrace::Scope redraw_scope(
         "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SoftWrapFocusedPane");
+    RequestFocusedEditorRedraw();
+    return;
+  }
+  // The edit moved the caret off the highlighted word (or onto one): every line
+  // holding that word changes, not only this one. A keystroke used to leave the
+  // highlight on the others.
+  if (RenderViewModelBuilder::OccurrenceSeedChanged(*viewport)) {
     RequestFocusedEditorRedraw();
     return;
   }

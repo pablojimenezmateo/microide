@@ -575,6 +575,12 @@ class RenderViewModelBuilder {
   /// The returned span aliases the same builder-owned cache
   /// `BuildEditorViewModelInto` fills, so it stays valid until the next call on
   /// this thread.
+  /// Whether the word the occurrence highlight follows differs from the one the last
+  /// frame painted for `viewport`: an edit that moves the caret off a word (or onto
+  /// one) changes the highlight on every line holding it, not only the edited one.
+  /// False when the last frame painted another viewport (nothing to compare).
+  static bool OccurrenceSeedChanged(const editor::TextViewport& viewport);
+
   static std::span<const std::size_t> StickyScrollLines(const editor::TextViewport& viewport,
                                                         const editor::FoldingModel* folding_model,
                                                         bool sticky_scroll_enabled,

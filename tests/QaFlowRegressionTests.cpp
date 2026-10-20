@@ -1484,6 +1484,18 @@ void TestF1AndCtrlNumberFocusGroups() {
          "Ctrl+5 with two groups should be refused, not split");
 }
 
+// Typing that moves the caret off a highlighted word repaints every occurrence it
+// un-highlights: the occurrence highlight follows the word at the caret, and a
+// keystroke repainted only the line it changed, so the highlight on the word's
+// other lines stayed (QA plugin-api, accepting a completion after `greet`).
+void TestTypingOffAWordRepaintsItsOccurrences() {
+  FlowFixture fixture("words.txt", "greet one\nfiller\ngreet\n");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(2, 5);  // the end of the last `greet`
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(" ")}), "typing a space after the word");
+}
+
 // A hover over a function body scrolled under its sticky header asks about the
 // line under the pointer. Hover resolved points against a grid with no sticky band,
 // so it asked about the line the band's height further down -- and showed that
@@ -1553,6 +1565,8 @@ void TestMergeToolbarHoverRepaintsTheButton() {
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/TypingOffAWordRepaintsItsOccurrences",
+          TestTypingOffAWordRepaintsItsOccurrences);
   AddTest(tests, "QaFlowRegression/HoverUnderAStickyBandResolvesThePointersLine",
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
