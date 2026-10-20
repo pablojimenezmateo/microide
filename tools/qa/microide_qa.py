@@ -101,6 +101,10 @@ DOUBLE_CLICK_SECONDS = 0.55
 # "wayland" (a headless weston; input goes through the control channel's `pointer`
 # and `key` commands, since a Wayland compositor takes input from no other client).
 BACKEND = os.environ.get("MQA_BACKEND", "x11")
+# How much slower than a release build the binary under test is; every control
+# timeout is multiplied by it (a coverage build ran `control-list` past the 3 s a
+# fast build answers in 50 ms).
+SLOW_FACTOR = float(os.environ.get("MQA_SLOW_FACTOR", "1"))
 # Integer output scale for the Wayland backend: 2 is a HiDPI screen.
 WAYLAND_SCALE = int(os.environ.get("MQA_WAYLAND_SCALE", "1"))
 # weston: on PATH, or unpacked by tools/qa/weston.sh under this root.
@@ -398,8 +402,11 @@ class App:
     def _control(self, args: list[str], timeout: float = 10.0) -> subprocess.CompletedProcess:
         # errors="replace": a malformed byte in an answer is the app's bug to report,
         # not a reason for the run to die mid-scenario (the monkey did, seed 12).
+        # MQA_SLOW_FACTOR stretches every control timeout for an instrumented
+        # build (coverage, the sanitizers), whose control client alone can take
+        # longer than a fast build's whole query.
         return subprocess.run([str(self.binary), *args], env=self.tool_env, capture_output=True,
-                              text=True, errors="replace", timeout=timeout)
+                              text=True, errors="replace", timeout=timeout * SLOW_FACTOR)
 
     def _control_ready(self) -> bool:
         result = self._control(["control-list"], timeout=3.0)

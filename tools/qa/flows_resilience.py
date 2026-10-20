@@ -130,7 +130,45 @@ def flow_huge_file(app: q.App) -> None:
            f"a character typed at the end of a 2 MiB line (caret {app.cursors()[:1]})")
 
 
+def flow_state_dump(app: q.App) -> None:
+    """`microide dump-state <file>` decodes every persisted record file a session
+    wrote -- the user config, the project config, the session, the recents --
+    and names what it holds (the debug reader of the binary format; a CLI,
+    reached by nothing else)."""
+    import subprocess
+    assert app.project is not None
+    open_file(app, "src/scheduler.cpp")
+    app.send("open", "src/main.cpp")
+    app.send("set-setting", "editor.font_size", "14")
+    app.restart()
+    step(app, "after a restart", 0.5)
+    files = sorted(p for base in (app.work / "state" / "microide", app.work / "config" / "microide")
+                   for p in base.rglob("*") if p.is_file() and "plugins" not in p.parts and p.suffix not in (".log", ".txt", ".lua"))
+    app.expect(len(files) >= 3, f"a session leaves persisted files to dump ({[str(f.relative_to(app.work)) for f in files]})")
+    dumped = 0
+    for path in files:
+        result = subprocess.run([str(app.binary), "dump-state", str(path)], capture_output=True, text=True,
+                                env=app.tool_env, timeout=20)
+        if result.returncode != 0:
+            app.expect(False, f"dump-state {path.relative_to(app.work)}: exit {result.returncode}: {result.stderr.strip()[:200]}")
+            continue
+        app.expect(bool(result.stdout.strip()), f"dump-state {path.relative_to(app.work)} prints the records")
+        dumped += 1
+    print(f"state-dump: {dumped} of {len(files)} files decoded", flush=True)
+    result = subprocess.run([str(app.binary), "dump-state", str(app.project / "README.md")], capture_output=True,
+                            text=True, env=app.tool_env, timeout=20)
+    app.expect(result.returncode != 0 and "dump-state failed" in result.stderr,
+               f"a file that is not a record file is refused with why ({result.returncode}, {result.stderr.strip()[:120]!r})")
+    all_text = " ".join(subprocess.run([str(app.binary), "dump-state", str(p)], capture_output=True, text=True,
+                                       env=app.tool_env, timeout=20).stdout for p in files)
+    # The dump is structural: tags, lengths and decoded counts, not the strings.
+    app.expect("decoded.workspace_session.project_count: 1" in all_text, "the session dump decodes its project")
+    app.expect(any(line.startswith("decoded.") and "settings_count: 1" in line for line in all_text.splitlines()),
+               "a config dump counts the setting the session wrote")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
+    "state-dump": flow_state_dump,
     "big-repo": flow_big_repo,
     "huge-file": flow_huge_file,
     "crash-recovery": flow_crash_recovery,
