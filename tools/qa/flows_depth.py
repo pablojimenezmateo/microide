@@ -353,8 +353,14 @@ def flow_selected_ranges(app: q.App) -> None:
                if not e["name"].endswith("/Cancel")]
     if confirm:
         app.click(*app.center(confirm[0]))
-        app.wait_until(lambda: "line thirty-five" not in read(app, "notes/ranges.txt"), 5.0,
-                       "the revert in the working tree")
+        if not app.wait_until(lambda: "line thirty-five" not in read(app, "notes/ranges.txt"), 8.0,
+                              "the revert in the working tree"):
+            # What the app said about it, for a run that cannot be reproduced here
+            # (CI's runner reverted nothing where every local run reverts).
+            app.expect(False, "revert diagnostics: notifications="
+                              f"{[n.get('message') for n in app.query('notifications')]} "
+                              f"git={_git(app, '--version')!r} "
+                              f"log={[l for l in app.new_log_lines() if 'apply' in l or 'revert' in l or 'error' in l.lower()][-5:]}")
         app.expect("line three" in read(app, "notes/ranges.txt"), "the staged change stays in the file")
 
 

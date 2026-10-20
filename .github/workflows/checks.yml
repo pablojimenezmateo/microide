@@ -171,7 +171,9 @@ jobs:
       # Findings (frames, traces, replays) land under the log directory and are
       # uploaded with it; `run.py replay <finding>/replay.json` re-runs one.
       - name: Run the GUI QA suite
-        run: MICROIDE_QA_JOBS=4 tools/run-checks.sh qa
+        # The TypeScript and C# servers are not on the runner: their two flows
+        # are skipped, not failed (MQA_ALLOW_MISSING_TOOLS); clangd and gdb are installed above.
+        run: MQA_ALLOW_MISSING_TOOLS=1 MICROIDE_QA_JOBS=4 tools/run-checks.sh qa
 
       - name: Upload logs and findings
         if: always()
