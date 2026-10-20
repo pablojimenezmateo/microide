@@ -250,6 +250,17 @@ void TestReloadFromDiskRefusesADirtyBufferWithWhy() {
   Expect(TestAccess::ExecuteCommandLine(fixture.shell, "reopen"), "a clean buffer reloads");
 }
 
+// A buffer saved under a new name is a new file: the tree selects and reveals
+// it, as activating a tab does. It kept the previous selection, so F2 after a
+// first save renamed whatever row was selected before (QA remote scenario N).
+void TestSaveAsRevealsTheNewFileInTheTree() {
+  FlowFixture fixture("a.txt", "a\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "save notes/copy.txt"), "save as a new path");
+  Expect(TestAccess::SelectedTreePath(fixture.shell) == fixture.root / "notes" / "copy.txt",
+         "the tree selects the file the buffer was saved as (" +
+             TestAccess::SelectedTreePath(fixture.shell).string() + ")");
+}
+
 void TestCtrlQQuits() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2013,6 +2024,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalPaneCursorChangeRepaintsItsCaret",
           TestATerminalPaneCursorChangeRepaintsItsCaret);
   AddTest(tests, "QaFlowRegression/ASidebarScrollOfOneRowRepaints", TestASidebarScrollOfOneRowRepaints);
+  AddTest(tests, "QaFlowRegression/SaveAsRevealsTheNewFileInTheTree", TestSaveAsRevealsTheNewFileInTheTree);
   AddTest(tests, "QaFlowRegression/TheGitViewReportsTheSelectedEntrysRow", TestTheGitViewReportsTheSelectedEntrysRow);
   AddTest(tests, "QaFlowRegression/ReloadFromDiskRefusesADirtyBufferWithWhy", TestReloadFromDiskRefusesADirtyBufferWithWhy);
   AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
