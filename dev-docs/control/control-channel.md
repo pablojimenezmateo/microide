@@ -340,7 +340,7 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
 Agent navigation commands: `reveal <path> <line[:col]>` opens the file, puts the
 caret on the 1-based line and centres it (a large file still loading lands there
 when the load completes); `tab-to-group <group> [slot]` moves the focused pane's
-active tab into editor group `group` (0-based, layout order), at `slot` or the end.
+active tab into editor group `group` (counting from 1 in layout order, as `focus-group` and Ctrl+1/2 do), at `slot` or the end.
 Events: `stopped`, `terminated`, `output`. With `--control` (stdout mirror on),
 events surface even with zero socket clients; responses and `applied` lines are
 mirrored too. `ready`/`applied` lines are stdout-only.

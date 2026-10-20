@@ -8267,7 +8267,10 @@ void TestWorkspaceShellTabToGroupMovesTheActiveTabAcrossPanes() {
   const std::size_t before_left = WorkspaceShellTestAccess::GroupTabCount(shell, 0);
   const std::size_t before_right = WorkspaceShellTestAccess::GroupTabCount(shell, 1);
 
-  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 0"),
+  // Groups count from 1, as focus-group and Ctrl+1/2 do; 0 is not a group.
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 0"),
+         "group 0 is not a group: the numbering is the one focus-group uses");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab-to-group 1"),
          "tab-to-group into the other pane is accepted");
   Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == before_left + 1,
          "the target pane gained the tab");

@@ -170,6 +170,23 @@ void TestMalformedSpecsAreRejected() {
   const auto negative = BuildLineNavigationRequest({"-3"}, /*allow_zero_line=*/false);
   Expect(negative.has_value() && negative->requested_line == -3,
          "a negative line parses: it is from-end addressing, not an error");
+  // `jump +2` is the natural spelling of a relative jump forward; ParseInt64
+  // rejects the sign, and the jump silently went nowhere (QA commands-args).
+  const auto plus = BuildLineNavigationRequest({"+2:4"}, /*allow_zero_line=*/true);
+  Expect(plus.has_value() && plus->requested_line == 2 && plus->column == 4,
+         "a leading + parses as the plain number, column and all");
+}
+
+void TestJumpPlusMovesForwardAndAJunkArgumentIsRefused() {
+  GoToFixture fixture;
+  fixture.Goto("3");
+  fixture.Jump("+2");
+  Expect(fixture.Line() == 4, "jump +2 from line 3 lands on line 5 (0-based 4)");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "jump abc"),
+         "jump with a non-location argument is refused");
+  Expect(fixture.Line() == 4, "and the caret stays where it was");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "goto x:y"),
+         "goto with a non-location argument is refused");
 }
 
 }  // namespace
@@ -186,6 +203,8 @@ void RegisterEditorGoToLineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorGoToLine/ZeroLineRejectedForGotoAcceptedForJump",
           TestZeroLineIsRejectedForGotoAndAcceptedForJump);
   AddTest(tests, "EditorGoToLine/MalformedSpecsAreRejected", TestMalformedSpecsAreRejected);
+  AddTest(tests, "EditorGoToLine/JumpPlusMovesForwardAndAJunkArgumentIsRefused",
+          TestJumpPlusMovesForwardAndAJunkArgumentIsRefused);
 }
 
 }  // namespace microide::tests

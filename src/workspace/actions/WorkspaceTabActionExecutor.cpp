@@ -118,6 +118,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (args.empty()) {
         return reject("tab-to-group requires <group> [slot]");
       }
+      // Groups count from 1, as Ctrl+1/Ctrl+2 and `focus-group <n>` do. This
+      // took a 0-based index while its sibling took a 1-based one, so the number
+      // a person had just typed into focus-group named a different pane here
+      // (found by the QA commands-args flow).
       const std::optional<std::size_t> group = util::ParseSize(args[0]);
       std::optional<std::size_t> slot;
       if (args.size() > 1) {
@@ -126,7 +130,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
           return reject("tab-to-group slot must be a non-negative integer");
         }
       }
-      if (!group.has_value() || !context_.MoveActiveTabToGroup(*group, slot)) {
+      if (!group.has_value() || *group == 0) {
+        return reject("tab-to-group expects a group number from 1");
+      }
+      if (!context_.MoveActiveTabToGroup(*group - 1, slot)) {
         return reject("No editor group " + args[0] + " to move the tab to");
       }
       return DispatchResult::Handled;

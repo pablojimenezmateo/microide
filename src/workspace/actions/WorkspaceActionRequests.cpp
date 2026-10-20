@@ -20,7 +20,16 @@ bool ParseLineColumnSpec(std::string_view location,
   }
 
   const std::size_t colon = location.find(':');
-  const std::optional<std::int64_t> parsed_line = util::ParseInt64(location.substr(0, colon));
+  // ParseInt64 (std::from_chars) rejects a leading '+', so `jump +2` -- the
+  // natural spelling of a relative jump forward, and the form `tabswitch +n`
+  // and `tabmove +n` already take -- parsed as nothing and the jump went
+  // nowhere while the command reported success (found by the QA commands-args
+  // flow). A bare "+" still fails: nothing follows it.
+  std::string_view line_text = location.substr(0, colon);
+  if (!line_text.empty() && line_text.front() == '+') {
+    line_text.remove_prefix(1);
+  }
+  const std::optional<std::int64_t> parsed_line = util::ParseInt64(line_text);
   if (!parsed_line.has_value()) {
     return false;
   }

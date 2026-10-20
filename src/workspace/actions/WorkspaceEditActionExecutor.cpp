@@ -294,8 +294,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         // command palette still works for the keyboard-driven path.
         if (id == ActionId::Goto && args.empty()) {
           context_.OpenGoToLinePrompt();
+          return DispatchResult::Handled;
         }
-        return DispatchResult::Handled;
+        // An argument that is not a location: say so. Answering "handled" to
+        // `jump abc` left the caret where it was and the command line silent.
+        return reject(id == ActionId::Goto ? "goto expects line[:col]"
+                                           : "jump expects a signed line[:col], such as +3 or -2:1");
       }
 
       // `goto` is an ABSOLUTE 1-based line per its public contract (README, control
