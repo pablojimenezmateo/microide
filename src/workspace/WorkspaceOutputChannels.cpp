@@ -327,6 +327,7 @@ void WorkspaceOutputChannels::RemoveChannel(std::string_view id) {
 
 void WorkspaceOutputChannels::MarkDirty() {
   channel_infos_dirty_ = true;
+  ++channels_revision_;
 }
 
 }  // namespace microide::workspace

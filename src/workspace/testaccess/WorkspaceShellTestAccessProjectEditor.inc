@@ -1142,6 +1142,12 @@
                                                               std::string_view id) {
     return shell.OutputChannelEntries(id);
   }
+  // A line into an output channel, as a result arriving later does (creating the
+  // channel with its label when it is new).
+  static void AppendOutputLine(WorkspaceShell& shell, std::string_view id, std::string_view label,
+                               std::string line) {
+    shell.output_channels_.AppendLine(id, label, std::move(line));
+  }
   static void SetOutputChannelTabs(WorkspaceShell& shell,
                                    std::vector<std::string> open_channel_ids,
                                    std::string active_channel_id) {

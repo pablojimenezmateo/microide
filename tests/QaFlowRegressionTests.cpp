@@ -1484,6 +1484,21 @@ void TestF1AndCtrlNumberFocusGroups() {
          "Ctrl+5 with two groups should be refused, not split");
 }
 
+// An output tab opened before its channel's first line (Find References opens it
+// at once; the answer comes later) repaints when the line brings the channel's
+// label: the strip showed the id, "lsp.referenc...", until something unrelated
+// repainted it (QA plugin-api).
+void TestOutputTabRepaintsWhenItsChannelGetsALabel() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  TestAccess::SetOutputChannelTabs(fixture.shell, {"qa.late"}, "qa.late");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  TestAccess::AppendOutputLine(fixture.shell, "qa.late", "Late Results", "a result");
+  // The next frame -- any: a caret move here -- paints what the line changed.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)}),
+                      "the frame after the channel's first line");
+}
+
 // Typing that moves the caret off a highlighted word repaints every occurrence it
 // un-highlights: the occurrence highlight follows the word at the caret, and a
 // keystroke repainted only the line it changed, so the highlight on the word's
@@ -1565,6 +1580,8 @@ void TestMergeToolbarHoverRepaintsTheButton() {
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "QaFlowRegression/OutputTabRepaintsWhenItsChannelGetsALabel",
+          TestOutputTabRepaintsWhenItsChannelGetsALabel);
   AddTest(tests, "QaFlowRegression/TypingOffAWordRepaintsItsOccurrences",
           TestTypingOffAWordRepaintsItsOccurrences);
   AddTest(tests, "QaFlowRegression/HoverUnderAStickyBandResolvesThePointersLine",

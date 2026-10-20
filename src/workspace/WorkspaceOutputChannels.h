@@ -65,6 +65,9 @@ class WorkspaceOutputChannels {
   // moved, since the producers -- a debug adapter's output, an LSP log, a plugin
   // -- append from callbacks that know nothing about the panel.
   std::uint64_t ContentRevision() const { return content_revision_; }
+  // Bumps when the channel set or a channel's label changes: what the bottom
+  // panel's tab strip shows, which ContentRevision's content-only repaint misses.
+  std::uint64_t ChannelsRevision() const { return channels_revision_; }
   // Drop a channel entirely (entries + parsed cache). No-op if the id is unknown.
   // Used when a debug session is pruned so its console does not linger (Phase 10).
   void RemoveChannel(std::string_view id);
@@ -101,6 +104,7 @@ class WorkspaceOutputChannels {
   std::uint64_t content_revision_ = 0;
   std::size_t evicted_channel_count_ = 0;
   mutable bool channel_infos_dirty_ = true;
+  std::uint64_t channels_revision_ = 0;
   mutable std::vector<ChannelInfo> channel_infos_;
 };
 

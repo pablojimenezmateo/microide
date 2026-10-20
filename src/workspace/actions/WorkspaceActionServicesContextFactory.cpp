@@ -386,7 +386,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
   const auto dispatch_injected = [this](const SDL_Event& event) {
     pending_render_invalidation_.Merge(HandleEvent(event).redraw);
   };
-  const auto show_results_channel = [this](const char* channel_id) {
+  const auto show_results_channel = [this](const char* channel_id, const char* label) {
+    // With its label from the start: the answer comes later, and the tab showed the
+    // channel's id until then.
+    output_channels_.EnsureChannel(channel_id, label);
     EnsureOutputChannelTabOpen(channel_id);
     context_.current_project_state.panel.content = PanelContentKind::Output;
     context_.current_project_state.panel.output.channel_id = channel_id;
@@ -648,7 +651,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this, show_results_channel](std::string* error_message) {
                 const bool ok = assist_service_.FindLspReferences(error_message);
                 if (ok) {
-                  show_results_channel("lsp.references");
+                  show_results_channel("lsp.references", "LSP References");
                 }
                 return ok;
               },
@@ -656,7 +659,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this, show_results_channel](bool incoming, std::string* error_message) {
                 const bool ok = assist_service_.ShowCallHierarchy(incoming, error_message);
                 if (ok) {
-                  show_results_channel("lsp.callHierarchy");
+                  show_results_channel("lsp.callHierarchy", incoming ? "Incoming Calls" : "Outgoing Calls");
                 }
                 return ok;
               },
@@ -664,7 +667,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this, show_results_channel](const std::string& query, std::string* error_message) {
                 const bool ok = assist_service_.ShowWorkspaceSymbols(query, error_message);
                 if (ok) {
-                  show_results_channel("lsp.workspaceSymbols");
+                  show_results_channel("lsp.workspaceSymbols", "Workspace Symbols");
                 }
                 return ok;
               },
