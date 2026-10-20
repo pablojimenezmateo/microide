@@ -1,0 +1,24 @@
+#!/bin/sh
+# A stand-in for zenity, SDL's file-dialog fallback on Unix, for the QA
+# `native-dialogs` flow: the flow puts this directory first on PATH and sets
+# SDL_FILE_DIALOG_DRIVER=zenity, so File > Open Folder…, Open File… and the
+# font picker's Choose file… run this instead of a dialog nobody on an Xvfb can
+# click. The answer comes from $XDG_RUNTIME_DIR/zenity-result (the app's own
+# runtime directory, which the harness owns): `select <path>` prints the path
+# and exits 0, `cancel` exits 1 (ZENITY_CANCEL, as SDL sets it), anything else
+# exits 2 (a failure). The arguments SDL passed land in zenity-args, so a flow
+# can check the dialog asked for a directory, a default location or a filter.
+dir="${XDG_RUNTIME_DIR:-/tmp}"
+case "$1" in
+  # SDL probes `zenity --version` once per dialog; a failing probe is "no zenity
+  # here", which a flow asks for with the zenity-absent marker.
+  --version) [ -f "$dir/zenity-absent" ] && exit 1; echo 4.0.0; exit 0 ;;
+esac
+printf '%s\n' "$@" > "$dir/zenity-args"
+[ -f "$dir/zenity-result" ] || exit 2
+read -r verb rest < "$dir/zenity-result"
+case "$verb" in
+  select) printf '%s\n' "$rest"; exit 0 ;;
+  cancel) exit 1 ;;
+  *) exit 2 ;;
+esac

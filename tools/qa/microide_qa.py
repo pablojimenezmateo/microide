@@ -339,7 +339,7 @@ class App:
             if not number.isdigit():
                 raise QaFailure("Xvfb did not report a display number")
             self.display = f":{number}"
-        _wait(lambda: subprocess.run(["xdpyinfo", "-display", self.display], env=self.env,
+        _wait(lambda: subprocess.run(["xdpyinfo", "-display", self.display], env=self.tool_env,
                                      capture_output=True).returncode == 0,
               5.0, "Xvfb never accepted connections")
 
@@ -398,7 +398,7 @@ class App:
     def _control(self, args: list[str], timeout: float = 10.0) -> subprocess.CompletedProcess:
         # errors="replace": a malformed byte in an answer is the app's bug to report,
         # not a reason for the run to die mid-scenario (the monkey did, seed 12).
-        return subprocess.run([str(self.binary), *args], env=self.env, capture_output=True,
+        return subprocess.run([str(self.binary), *args], env=self.tool_env, capture_output=True,
                               text=True, errors="replace", timeout=timeout)
 
     def _control_ready(self) -> bool:
@@ -629,8 +629,16 @@ class App:
 
     # ---- input -----------------------------------------------------------
 
+    @property
+    def tool_env(self) -> dict[str, str]:
+        """The environment for the driver's own tools (xdotool, xwd, xdpyinfo, the
+        control client): the app's -- DISPLAY, the XDG tree -- with the driver's
+        PATH. A scenario's env may put a stand-in program first on the app's PATH
+        or drop PATH to nothing (`native-dialogs`); the tools must not notice."""
+        return {**self.env, "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+
     def _xdotool(self, *args: str) -> None:
-        subprocess.run(["timeout", "5", "xdotool", *args], env=self.env, capture_output=True)
+        subprocess.run(["timeout", "5", "xdotool", *args], env=self.tool_env, capture_output=True)
 
     def _find_window(self) -> str | None:
         if self.wayland:
@@ -861,10 +869,14 @@ class App:
             # No screen reader on a headless weston without its debug protocols:
             # evidence is the frame trace and the redraw verifier's own dumps.
             return Image.new("RGB", self.size, (0, 0, 0))
-        xwd = subprocess.run(["xwd", "-display", self.display, "-root", "-silent"],
-                             capture_output=True, env=self.env)
         import io
-        return _XWD.convert(io.BytesIO(xwd.stdout))
+        try:
+            xwd = subprocess.run(["xwd", "-display", self.display, "-root", "-silent"],
+                                 capture_output=True, env=self.tool_env, timeout=10)
+            return _XWD.convert(io.BytesIO(xwd.stdout))
+        except Exception as error:  # noqa: BLE001 - evidence must never abort the suite
+            print(f"grab failed: {error}", flush=True)
+            return Image.new("RGB", self.size, (0, 0, 0))
 
     def screenshot(self, label: str) -> str | None:
         if self.shots is None:
