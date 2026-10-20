@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include <initializer_list>
@@ -164,6 +165,14 @@ inline render::PixelDiffResult PaintAndDiffWithFullRepaint(
   (void)shell.ConsumePendingRenderInvalidation();
   SDL_FlushRenderer(canvas.renderer());
   const render::PixelDiffResult diff = DiffSurfaces(retained, canvas.surface());
+  // MICROIDE_TEST_DUMP_DIFF=<dir>: the two images of a differing pair, for reading
+  // a failure by eye (the QA harness keeps the same pair per stale frame).
+  if (const char* dump = std::getenv("MICROIDE_TEST_DUMP_DIFF"); dump != nullptr && diff.count != 0) {
+    static int dump_index = 0;
+    const std::string base = std::string(dump) + "/diff-" + std::to_string(dump_index++);
+    SDL_SaveBMP(retained, (base + "-retained.bmp").c_str());
+    SDL_SaveBMP(canvas.surface(), (base + "-reference.bmp").c_str());
+  }
   SDL_DestroySurface(retained);
   return diff;
 }

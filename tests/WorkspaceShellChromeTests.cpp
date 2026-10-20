@@ -209,27 +209,40 @@ void TestWorkspaceShellCompactMenuOverflowButtonIsInteractive() {
 // fill was never repainted; both found by the QA menu-clicks sweep the day it
 // started walking the compact layout.
 void TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints() {
-  constexpr int kWidth = 280;
+  constexpr int kWidth = 640;
   constexpr int kHeight = 480;
+  // With a focused editor: the caret's blink phase can flip in the very frame a
+  // popup closes, and that frame must paint the caret's column too (CI's
+  // runner, slower than a dev box, landed on that flip and found a 1x18 stale
+  // column after Escape).
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "proj";
+  std::filesystem::create_directories(root);
+  WriteFile(root / "a.txt", "alpha\nbeta\n");
   WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
   WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "a.txt");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
   const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
   Expect(chevron.has_value(), "the compact layout shows the menu chevron");
   const float cx = chevron->x + chevron->w * 0.5f;
   const float cy = chevron->y + chevron->h * 0.5f;
   const float away_x = static_cast<float>(kWidth) * 0.5f;
   const float away_y = static_cast<float>(kHeight) * 0.6f;
-  const auto no_caret = []() {};
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
 
   SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
   shell.Render(canvas.renderer(), kWidth, kHeight);
   (void)shell.ConsumePendingRenderInvalidation();
 
   const auto check = [&](const char* label, std::initializer_list<SDL_Event> events) {
     const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
-                                                  DispatchEvents(shell, events), no_caret);
+                                                  DispatchEvents(shell, events), pin_caret);
     Expect(diff.identical(), std::string(label) + " should paint what a full repaint paints; " +
                                  DescribePixelDiff(diff));
   };
@@ -240,6 +253,24 @@ void TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints() {
   Expect(WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "the click opened the popup");
   check("Escape closing the popup", {KeyDownEvent(SDLK_ESCAPE)});
   Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "Escape closed the popup");
+  // The caret in its OFF phase while the popup is up, ON again as Escape closes
+  // it: the close frame has only the popup's rect to paint and must add the
+  // caret's column, or the column the full render paints stays blank.
+  const auto caret_off = [&]() {
+    WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks() - 600);
+  };
+  caret_off();
+  {
+    const auto diff = PaintAndDiffWithFullRepaint(
+        shell, canvas, kWidth, kHeight,
+        DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, cx, cy),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, cx, cy)}),
+        caret_off);
+    Expect(diff.identical(), "opening the popup with the caret off should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  }
+  pin_caret();
+  check("Escape closing the popup as the caret comes back", {KeyDownEvent(SDLK_ESCAPE)});
   check("opening the popup again", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, cx, cy),
                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, cx, cy)});
   const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);

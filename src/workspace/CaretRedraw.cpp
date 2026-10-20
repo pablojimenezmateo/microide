@@ -78,8 +78,12 @@ bool WorkspaceShell::CaretBlinkAnimating() const {
 }
 
 bool WorkspaceShell::ShouldBlinkCaret() const {
-  if (context_.prompts.dirty_visible || context_.menu_state.menu_bar_open ||
-      context_.menu_state.tree_context_menu.open) {
+  // Every menu surface, the compact layout's overflow popup included: the popup
+  // takes the text input away (CurrentTextInputSurface is None under it), so
+  // the editor paints no caret while it is up -- and a caret still counted as
+  // visible here was never damaged back in when the popup closed (a 1x18 stale
+  // column, found by the QA menu-keyboard flow on CI's slower runner).
+  if (context_.prompts.dirty_visible || MenuSurfaceCapturingMouse()) {
     return false;
   }
 
