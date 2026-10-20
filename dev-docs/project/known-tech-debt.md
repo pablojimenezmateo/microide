@@ -449,6 +449,23 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-20-369 — parameter hints only on request; a shadowed plugin keybinding is dropped without a word. [OPEN]
+
+Found writing the QA `plugin-api` flow:
+
+- **Signature help never opens while typing.** VS Code shows parameter hints when
+  `(` or `,` is typed (a language server's `signatureHelpProvider.triggerCharacters`,
+  a provider's own trigger characters) and keeps them up across the call; here they
+  appear only on Ctrl+Shift+Space, for language servers and plugin providers alike,
+  and `ctx.signature_help.add` takes no trigger characters. Wanted: trigger on the
+  server's characters (default `(`, `,`), retrigger as the active parameter moves,
+  close on `)` or leaving the call.
+- **A plugin keybinding whose chord a built-in holds is skipped silently.** The
+  skip itself is right (Help and Settings never advertise a binding that cannot
+  fire), but the plugin author is not told: `ctx.keybindings.add({ key =
+  "Ctrl+Alt+J", ... })` registers nothing and logs nothing (Ctrl+Alt+J is Insert
+  Snippet). The plugin log should say which binding took the chord.
+
 ### TD-2026-10-20-368 — on Xvfb, keystrokes after a click are sometimes lost under a loaded suite. [OPEN]
 
 `lsp-diagnostics` failed both full X11 QA lanes of 2026-10-20 (qa and qa-asan, run
