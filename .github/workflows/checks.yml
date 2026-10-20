@@ -129,6 +129,59 @@ jobs:
   # defaults to OFF and every preset pins it OFF, so the extra-warning ratchet in
   # CMakeLists.txt was documented but unenforced. Compile-only: GCC already runs
   # the tests.
+  # The GUI QA suite on Xvfb: the shipped binary driven with real input, every
+  # frame checked against a full repaint (tools/qa/README.md). The flows found
+  # most of the UI bugs of the last month; a change that paints stale, routes a
+  # press to the wrong surface or breaks a workflow fails here, not on a desktop.
+  qa:
+    name: qa
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and QA dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev \
+            xvfb xdotool x11-apps x11-utils python3-pil fonts-dejavu-core \
+            clangd gdb
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-qa-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-qa-${{ runner.os }}-
+
+      # The scenario suite, 4 at a time on this runner, then the 300-step monkey.
+      # Findings (frames, traces, replays) land under the log directory and are
+      # uploaded with it; `run.py replay <finding>/replay.json` re-runs one.
+      - name: Run the GUI QA suite
+        run: MICROIDE_QA_JOBS=4 tools/run-checks.sh qa
+
+      - name: Upload logs and findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-qa
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 7
+
   clang-build:
     name: clang-build
     runs-on: ubuntu-24.04

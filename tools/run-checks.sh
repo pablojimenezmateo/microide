@@ -598,17 +598,28 @@ check_qa() {
 # The GUI QA suite against the ASan build: a slow binary under a memory checker. The
 # fast build hid a use-after-free (Alt+O from a diff read its own freed path) that
 # this ran into every time; the scenario oracles report any sanitizer line.
+# Then the seeded monkey over MICROIDE_QA_ASAN_SEEDS (default 1-4) on the same
+# binary: the monkey's value is breadth over seeds, and a memory checker is what
+# turns a wrong read it provokes into a report instead of a frame nobody notices.
+# MQA_SLOW_FACTOR stretches the harness's control timeouts for the slow binary.
 check_qa_asan() {
   local log="${LOG_DIR}/microide-qa-asan.log"
   local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-asan-out}"
   local qa_jobs="${MICROIDE_QA_JOBS:-$(( JOBS < 6 ? JOBS : 6 ))}"
+  local seeds="${MICROIDE_QA_ASAN_SEEDS:-1-4}"
+  local steps="${MICROIDE_QA_MONKEY_STEPS:-300}"
   run_logged "$log" bash -c '
     set -e
     rm -rf '"$out"'
     cmake --preset microide-asan >/dev/null
     cmake --build build/microide-asan --target microide -j'"$JOBS"'
-    python3 tools/qa/run.py --out '"$out"' suite --jobs '"$qa_jobs"' \
-      --binary build/microide-asan/microide/microide
+    export MQA_SLOW_FACTOR="${MQA_SLOW_FACTOR:-3}"
+    status=0
+    python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' \
+      --binary build/microide-asan/microide/microide || status=1
+    python3 tools/qa/run.py --out '"$out"'/monkey monkey --seeds '"$seeds"' --steps '"$steps"' \
+      --binary build/microide-asan/microide/microide || status=1
+    exit $status
   '
   local rc=$?
   echo "run-checks: qa-asan finished (exit $rc); log at $log, findings under $out"
@@ -667,7 +678,7 @@ check_qa_wayland() {
 usage() {
   echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-asan|qa-remote|qa-wayland|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
-  echo "       tools/run-checks.sh qa-asan       # the GUI QA suite on the ASan build" >&2
+  echo "       tools/run-checks.sh qa-asan       # the GUI QA suite + the monkey over seeds on the ASan build" >&2
   echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
   echo "       tools/run-checks.sh qa-wayland    # the GUI QA suite on headless weston at scale 2" >&2
   echo "       tools/run-checks.sh hardened      # whole suite with _GLIBCXX_ASSERTIONS armed" >&2

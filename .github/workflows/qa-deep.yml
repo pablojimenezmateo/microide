@@ -1,0 +1,129 @@
+# The deep GUI QA lanes: the scenario suite and the seeded monkey on the ASan
+# build, and the suite on a headless Wayland compositor at output scale 2.
+# Both are too long for every pull request, so they run on main and on demand.
+# Event-driven only (push / workflow_dispatch), per
+# openspec/specs/ci-workflow-reliability/spec.md, which forbids cron schedules:
+# every push to main is the "nightly".
+name: qa-deep
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/qa-deep.yml'
+      - 'tools/run-checks.sh'
+      - 'tools/qa/**'
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: 'monkey seeds on the ASan build, as a range'
+        default: '1-8'
+        required: false
+
+concurrency:
+  group: qa-deep-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  MICROIDE_LOG_DIR: ${{ github.workspace }}/ci-logs
+  CCACHE_SLOPPINESS: pch_defines,time_macros
+
+jobs:
+  qa-asan:
+    name: qa-asan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and QA dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev \
+            xvfb xdotool x11-apps x11-utils python3-pil fonts-dejavu-core \
+            clangd gdb
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-qa-asan-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-qa-asan-${{ runner.os }}-
+
+      # The suite, then the monkey over the seeds (1-4 on a push, the dispatch
+      # input on demand). A sanitizer line in any scenario or seed is a finding.
+      - name: Run the GUI QA suite and the monkey on the ASan build
+        run: |
+          MICROIDE_QA_JOBS=4 \
+          MICROIDE_QA_ASAN_SEEDS="${{ github.event.inputs.seeds || '1-4' }}" \
+          tools/run-checks.sh qa-asan
+
+      - name: Upload logs and findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-qa-asan
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 14
+
+  qa-wayland:
+    name: qa-wayland
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # weston from the distribution: tools/qa/weston.sh unpacks it only where
+      # none is on PATH, and a package install brings its libraries with it.
+      - name: Install build and QA dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev \
+            weston python3-pil fonts-dejavu-core clangd gdb
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-qa-wayland-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-qa-wayland-${{ runner.os }}-
+
+      - name: Run the GUI QA suite on weston at scale 2
+        run: MICROIDE_QA_JOBS=4 tools/run-checks.sh qa-wayland
+
+      - name: Upload logs and findings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-qa-wayland
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 14
