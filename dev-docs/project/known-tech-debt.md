@@ -449,6 +449,37 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [OPEN]
+
+Found by the `qa-deep` workflow's ASan monkey (seed 4, step 112) on both of its
+first two runs on `main` (8fea1a45 and the push before it), never locally: the
+same recording replayed on the local ASan build is clean, and the local
+`qa-asan` lane's four seeds are clean. The redraw verifier reports, on
+*scheduled* partial frames right after the monkey drags the sidebar divider to
+the window's edge (`drag [42,737] -> [1,737]`), a few pixels at the editor
+surface's new left edge and 9 px tall, just below the tab strip:
+
+- run 1: frame 221 `pixels=176 bbox=96,98,29,9 clips=95,85,1345,638`, then frame
+  228 `pixels=36 bbox=146,98,6,9 clips=145,85,1295,638`;
+- run 2: frame 226 `pixels=18 bbox=153,100,4,7 clips=153,85,1287,638`.
+
+The clip's left edge moves frame to frame (95, 145, 153: the sidebar's width as
+it collapses), and the stale pixels sit in the clip's first columns, at the
+height of the breadcrumb/gutter top. So the full render and the partial render
+of the same prepared frame disagree about those first columns while the layout
+is mid-collapse, and only when the machine is slow enough (an ASan binary on a
+four-core runner) for the scheduled frames to land between layout steps. Paint
+reads something the layout step has already moved, or the two renders see
+different widths. Evidence: the `logs-qa-asan` artifact of qa-deep run
+39471379906 (and 39444662532), `monkey/seed-4/finding-01-monkey-step-112/`
+with `frame-*-retained.png`, `frame-*-reference.png`, `trace.txt` and
+`replay.json`; `tools/qa/run.py replay <that>/replay.json --binary
+build/microide-asan/microide/microide` is the local repro that has not
+reproduced yet. Same class as TD-2026-10-18-362 (timing-dependent stale frames
+the replay does not reach); a unit test that collapses the sidebar by drag and
+diffs every scheduled frame against a full repaint is the way to pin it
+without the runner.
+
 ### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
 
 Found by the QA `settings-sweep`: `editor.colorscheme` is an enum whose values
