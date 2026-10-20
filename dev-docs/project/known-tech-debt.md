@@ -533,6 +533,20 @@ implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-20:** re-measured at 60.4% of lines (from 56.1%). The next gaps by
+size were the snippet engine (20%), the compare surface by mouse (27-29%), the
+action executors (27%: the menu and key sweeps are dry runs) and plugin provider
+interop. Flows now drive each: `snippets-deep`, `compare-mouse`, `commands-run`
+(every command for real, in a source file, a diff and with no project) and
+`plugin-api` (the `qa-api` plugin). They found: a click outside the completion
+list eaten and the next key typed into the file tree; a plugin's sidebar view
+painting the file tree; plugin menu entries naming menus that do not exist;
+occurrence highlights and a results tab label left stale; and eight commands that
+refused with the wrong sentence or acted on nothing (`term-relaunch`,
+`terminal-find`, `term-pane-left/right`, `find-previous`, a split from a diff,
+`tests-discover`, the remote mirror commands, and `compare-clipboard` diffing the
+welcome page).
+
 **Update 2026-10-19 (evening):** the three dimensions now run. **Wayland:**
 `MQA_BACKEND=wayland` drives the suite on a headless weston (`tools/run-checks.sh
 qa-wayland`, at output scale 2) through a new control `pointer` command; making

@@ -380,6 +380,7 @@ import flows_matrix  # noqa: E402
 import flows_languages  # noqa: E402
 import flows_integration  # noqa: E402
 import flows_plugin_api  # noqa: E402
+import flows_commands  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -407,6 +408,7 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     **flows_languages.FLOWS,
     **flows_integration.FLOWS,
     **flows_plugin_api.FLOWS,
+    **flows_commands.FLOWS,
 }
 
 # Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
