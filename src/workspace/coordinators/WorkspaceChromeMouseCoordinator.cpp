@@ -515,6 +515,15 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
 
   const SDL_FRect overlay = operations_.compute_overlay_rect(layout.editor_area);
   if (!Contains(overlay, event.button.x, event.button.y)) {
+    // The completion list floats at the caret, inline with typing: a press
+    // elsewhere closes it and still lands where it was aimed (VS Code's suggest
+    // widget). Dismissed like a modal picker, the click was eaten and focus went
+    // to the sidebar -- the caret stayed put and the next key typed into the
+    // file tree.
+    if (state_.overlay.mode == OverlayMode::Completion) {
+      operations_.dismiss_overlay(true);
+      return false;
+    }
     operations_.dismiss_overlay(false);
     operations_.request_overlay_redraw();
     return true;

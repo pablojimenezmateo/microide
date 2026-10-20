@@ -2652,6 +2652,54 @@ void TestWorkspaceShellCompletionClickAcceptsTheClickedRow() {
       });
 }
 
+// QA flow snippets-deep: the completion list floats at the caret, inline with
+// typing, so a click elsewhere in the editor closes it AND lands where it was
+// aimed. It was dismissed like a modal picker -- the click consumed, focus sent
+// to the sidebar -- so the caret stayed put and the next key typed went to the
+// file tree.
+void TestWorkspaceShellClickOutsideCompletionLandsInTheEditor() {
+  WithMarkdownCompletionServer(
+      "x = \nsecond line\nthird\n", 0, 4,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback cb) {
+        std::vector<workspace::LspClient::CompletionItem> items;
+        items.push_back(PlainCompletionItem("alpha"));
+        cb(workspace::LspClient::CompletionList{std::move(items), /*is_incomplete=*/false});
+      },
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        constexpr int kWidth = 1280;
+        constexpr int kHeight = 720;
+        EnsureDummySdlVideoInitialized();
+        WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        SoftwareCanvas canvas(kWidth, kHeight);
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "completion should run");
+        WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        Expect(CompletionListUp(shell), "the completion list should be up");
+        const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+        const auto& r = ui["surfaces"]["editorSurface"].AsArray();
+        // Well below the text: the press resolves to the last line.
+        const float x = static_cast<float>(r[0].AsInt() + r[2].AsInt() / 2);
+        const float y = static_cast<float>(r[1].AsInt() + r[3].AsInt() - 20);
+        (void)DispatchEvents(shell, {MouseMotionEvent(x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+        Expect(!CompletionListUp(shell), "the click should close the completion list");
+        Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+               "the click landed in the editor, so the editor keeps focus");
+        Expect(editor.cursor_line() > 0,
+               "the click should move the caret off the completion's line, caret on line " +
+                   std::to_string(editor.cursor_line()));
+        (void)DispatchEvents(shell, {TextInputEvent("Z")});
+        Expect(std::string(editor.lines()[0]) == "x = " &&
+                   editor.lines()[editor.cursor_line()].find('Z') != std::string_view::npos,
+               "the next key should type at the clicked line, line 1 [" + std::string(editor.lines()[0]) +
+                   "], caret line [" + std::string(editor.lines()[editor.cursor_line()]) + "]");
+      });
+}
+
 // Down then Enter in a narrowed completion list accepts the row Down moved to
 // (accepting re-filtered and reset the selection to the top).
 void TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow() {
@@ -7107,6 +7155,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompletionDownEnterAcceptsTheSecondRow);
   AddTest(tests, "WorkspaceShell/CompletionClickAcceptsTheClickedRow",
           TestWorkspaceShellCompletionClickAcceptsTheClickedRow);
+  AddTest(tests, "WorkspaceShell/ClickOutsideCompletionLandsInTheEditor",
+          TestWorkspaceShellClickOutsideCompletionLandsInTheEditor);
   AddTest(tests, "WorkspaceShell/CompletionPopupShrinkRepaintsWhatItLeft",
           TestWorkspaceShellCompletionPopupShrinkRepaintsWhatItLeft);
   AddTest(tests, "WorkspaceShell/CompletionReRequestsOnlyWhileIncomplete",
