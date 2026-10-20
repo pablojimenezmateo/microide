@@ -384,11 +384,112 @@ def flow_save_pipeline(app: q.App) -> None:
 PLUGINS: dict[str, tuple[str, ...]] = {"save-pipeline": ("qa-save",)}
 
 
+def flow_compare_mouse(app: q.App) -> None:
+    """A diff by mouse: the divider drags and a double-click restores it; a
+    collapsed-context block's buttons reveal the lines they hide; on the working
+    side a click places the caret, a double-click takes a word, a triple-click
+    the line, and a drag a range."""
+    lines = [f"line {i}" for i in range(1, 121)]
+    write(app, "notes/cmp.txt", "".join(f"{x}\n" for x in lines))
+    _git(app, "add", "notes/cmp.txt")
+    _git(app, "commit", "-q", "-m", "qa: compare fixture")
+    lines[4] = "line five"
+    lines[59] = "line sixty"
+    lines[114] = "line one-fifteen"
+    write(app, "notes/cmp.txt", "".join(f"{x}\n" for x in lines))
+    app.key("ctrl+shift+g")
+    step(app, "git view", 0.5)
+    row = app.wait_for("row:git/cmp.txt", 10.0)
+    if row is None:
+        app.expect(False, "the changed file is listed in the git view")
+        return
+    app.click(*app.center(row))
+    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open"):
+        return
+    step(app, "compare tab", 0.5)
+
+    # The divider: a drag moves it, a double-click puts it back.
+    divider = app.wait_for("divider:compare", 3.0)
+    if divider is None:
+        app.expect(False, "the compare divider is on screen")
+        return
+    x0 = divider["rect"][0]
+    cx, cy = app.center(divider)
+    app.drag(cx, cy, cx - 160, cy)
+    step(app, "drag the divider", 0.3)
+    moved = (app.element("divider:compare") or {}).get("rect", [x0])[0]
+    app.expect(moved < x0 - 100, f"the divider follows the drag ({x0} -> {moved})")
+    cx, cy = app.center(app.element("divider:compare") or divider)
+    app.click(cx, cy, clicks=2)
+    step(app, "double-click the divider", 0.3)
+    back = (app.element("divider:compare") or {}).get("rect", [0])[0]
+    app.expect(abs(back - x0) < 4, f"a double-click restores the even split ({x0} -> {back})")
+
+    # Collapsed context: "all" reveals a whole block.
+    blocks = app.elements("button", prefix="button:compare/context-")
+    alls = [e for e in blocks if e["name"].endswith("/all")]
+    app.expect(len(alls) >= 1, f"the unchanged stretches collapse into blocks ({[e['name'] for e in blocks]})")
+    if alls:
+        app.hover_named(alls[0]["name"])
+        step(app, "hover a context button", 0.2)
+        app.click_named(alls[0]["name"])
+        step(app, "show all hidden lines", 0.4)
+        after = [e for e in app.elements("button", prefix="button:compare/context-") if e["name"].endswith("/all")]
+        first_y = alls[0]["rect"][1]
+        app.expect(not any(abs(e["rect"][1] - first_y) < 2 for e in after),
+                   f"the block is gone once its lines show ({[(e['name'], e['rect']) for e in after]})")
+    # "Show next 20" / "Show previous 20" reveal part of a block: its count drops
+    # by 20 (the block stays put on screen, the view scrolls with it).
+    for which in ("next", "previous"):
+        block = next((e for e in app.elements("button", prefix="button:compare/context-")
+                      if e["name"].endswith("/" + which)), None)
+        if block is None:
+            continue
+        all_name = block["name"].rsplit("/", 1)[0] + "/all"
+        hidden = int((app.element(all_name)).get("label") or 0)
+        app.click_named(block["name"])
+        step(app, f"show {which} 20", 0.4)
+        now = next((e for e in app.elements("button", prefix="button:compare/context-")
+                    if e["name"] == all_name), None)
+        left = int(now.get("label") or 0) if now else 0
+        app.expect(left == max(hidden - 20, 0), f"Show {which} 20 reveals 20 of {hidden} hidden lines ({left} left)")
+
+    # The working side: click, double-click, triple-click, drag.
+    surface = app.ui()["surfaces"]["editorSurface"]
+    divider = app.element("divider:compare") or divider
+    rx = divider["rect"][0] + divider["rect"][2] + 70
+    ry = surface[1] + surface[3] * 0.45
+    app.click(rx, ry)
+    step(app, "click the working side", 0.3)
+    caret = app.cursors()[0] if app.cursors() else (0, 0)
+    app.expect(caret[0] > 0, f"a click on the working side places the caret ({app.cursors()})")
+    expected = lines[caret[0] - 1] if 0 < caret[0] <= len(lines) else ""
+    app.click(rx, ry, clicks=3)
+    step(app, "triple-click", 0.3)
+    selected = (app.buffer().get("selectedText") or "").rstrip("\n")
+    app.expect(selected == expected, f"a triple-click selects the line ({selected!r}, line {caret[0]} is {expected!r})")
+    app.click(rx, ry)
+    app.click(rx, ry, clicks=2)
+    step(app, "double-click", 0.3)
+    word = app.buffer().get("selectedText") or ""
+    app.expect(bool(word) and word in expected and " " not in word,
+               f"a double-click selects a word of the line ({word!r} in {expected!r})")
+    app.click(divider["rect"][0] + divider["rect"][2] + 50, ry)
+    app.drag(divider["rect"][0] + divider["rect"][2] + 50, ry, rx + 40, ry)
+    step(app, "drag-select", 0.3)
+    dragged = app.buffer().get("selectedText") or ""
+    app.expect(bool(dragged) and "\n" not in dragged and dragged in expected,
+               f"a drag selects part of the line ({dragged!r} in {expected!r})")
+    app.key("ctrl+a")
+    step(app, "select all", 0.2)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "terminal-programs": flow_terminal_programs,
     "unsaved-continuations": flow_unsaved_continuations,
     "branch-review": flow_branch_review,
     "selected-ranges": flow_selected_ranges,
     "merge-mouse": flow_merge_mouse,
+    "compare-mouse": flow_compare_mouse,
     "save-pipeline": flow_save_pipeline,
 }

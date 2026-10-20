@@ -20,6 +20,9 @@
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/control/ControlUiQuery.h"
+#include "workspace/git/CompareTabReview.h"
+#include "workspace/render/CompareMergeRender.h"
+#include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/render/RenderViewModelBuilder.h"
@@ -411,6 +414,10 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   AddControlUiElement(out, kButton, "merge/" + std::string(label), *rect, std::string(label));
                 }
               }
+              const auto dividers = MergeDividerHitRects(surface_rect, surface);
+              for (std::size_t i = 0; i < dividers.size(); ++i) {
+                AddControlUiElement(out, kDivider, "merge/" + std::to_string(i), dividers[i]);
+              }
               const MergeInteractionLayout interaction =
                   BuildMergeInteractionLayout(surface_rect, surface, *merge_tab);
               const auto visible = [&](const SDL_FRect& rect) {
@@ -439,6 +446,40 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                     AddControlUiElement(out, kButton, prefix + "result-" + std::string(kResultActions[a]),
                                         actions[a]);
                   }
+                }
+              }
+            }
+            // The compare surface: its divider, and each collapsed-context block's
+            // buttons, numbered top to bottom on screen and resolved through the
+            // helpers the click and the cursor shape use.
+            if (CompareTabState* compare_tab = ActiveTabIsCompare() ? ActiveCompareTab() : nullptr;
+                compare_tab != nullptr) {
+              const SDL_FRect surface_rect = layout.editor_surface;
+              const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(surface_rect, *compare_tab);
+              AddControlUiElement(out, kDivider, "compare", CompareDividerHitRect(surface_rect, surface));
+              int block = 0;
+              const float bottom = surface_rect.y + surface_rect.h;
+              for (float y = surface.rows_y + surface.line_height / 2.0f;
+                   surface.line_height > 0.0f && y < bottom; y += surface.line_height) {
+                const auto hit = CompareCollapsedContextRowAt(*compare_tab, surface_rect, surface.rows_y,
+                                                              surface.line_height, surface.show_vertical, y);
+                if (!hit.has_value()) {
+                  continue;
+                }
+                const CollapsedContextActionRects rects = BuildCollapsedContextActionRects(
+                    editor_text_renderer_, hit->block_rect, hit->row->previous_hunk_index >= 0,
+                    hit->row->next_hunk_index >= 0);
+                const std::string prefix = "compare/context-" + std::to_string(block++) + "/";
+                if (rects.previous_rect.has_value()) {
+                  AddControlUiElement(out, kButton, prefix + "previous", *rects.previous_rect);
+                }
+                // Labelled with the count the row shows: a partial reveal keeps the
+                // block where it was (the view scrolls with it), so the count is
+                // what tells a reveal happened.
+                AddControlUiElement(out, kButton, prefix + "all", rects.all_rect,
+                                    std::to_string(hit->row->collapsed_line_count));
+                if (rects.next_rect.has_value()) {
+                  AddControlUiElement(out, kButton, prefix + "next", *rects.next_rect);
                 }
               }
             }

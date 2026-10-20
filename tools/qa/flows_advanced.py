@@ -189,10 +189,139 @@ def flow_debug_conditions(app: q.App) -> None:
     app.wait_until(lambda: not app.query("debug-state").get("stopped"), 10.0, "the session to stop")
 
 
+def _line(app: q.App, n: int) -> str:
+    lines = app.buffer().get("text", "").split("\n")
+    return lines[n - 1] if 0 < n <= len(lines) else ""
+
+
+def _expand(app: q.App, line: int, prefix: str) -> None:
+    """Types `prefix` on an empty `line` and presses Tab: a unique exact prefix
+    expands in place (no picker)."""
+    app.click_text(line, 1)
+    app.key("End")
+    app.type(prefix)
+    if app.ui()["overlay"].get("visible"):
+        app.key("Escape")
+    app.key("Tab")
+    step(app, f"Tab expands {prefix}", 0.25)
+
+
+def _selected(app: q.App) -> str:
+    return app.buffer().get("selectedText") or ""
+
+
+def flow_snippets_deep(app: q.App) -> None:
+    """The snippet engine through the keyboard: Tab on a prefix expands it;
+    mirrors follow typing and Backspace; a choice cycles on Tab and Shift+Tab;
+    a nested placeholder grows its parent and is dropped when the parent is
+    typed over; variables resolve; one undo takes the expansion back; a
+    completion item that is a snippet starts a session when accepted."""
+    open_file(app, "src/deep.cpp", "\n\n\n\n\n\n\n")
+
+    # Mirrors.
+    _expand(app, 1, "mirr")
+    app.expect(_line(app, 1) == "name = name + 1;", f"mirr expands with its defaults ({_line(app, 1)!r})")
+    app.expect(_selected(app) == "name", f"the first placeholder is selected ({_selected(app)!r})")
+    app.type("total")
+    step(app, "type into a mirrored placeholder", 0.2)
+    app.expect(_line(app, 1) == "total = total + 1;", f"typing updates every mirror ({_line(app, 1)!r})")
+    app.key("BackSpace")
+    app.key("BackSpace")
+    step(app, "Backspace in a mirror", 0.2)
+    app.expect(_line(app, 1) == "tot = tot + 1;", f"Backspace edits every mirror ({_line(app, 1)!r})")
+    app.key("Tab")
+    step(app, "Tab to the second placeholder", 0.2)
+    app.expect(_selected(app) == "1", f"Tab selects the second placeholder ({_selected(app)!r})")
+    app.type("2")
+    app.key("Tab")
+    step(app, "Tab to the final stop", 0.2)
+    app.expect(_line(app, 1) == "tot = tot + 2;", f"the second placeholder took the typing ({_line(app, 1)!r})")
+    app.expect(app.cursors() and app.cursors()[0] == (1, len("tot = tot + 2;") + 1),
+               f"the last Tab lands on $0 at the end ({app.cursors()})")
+    app.type("x")
+    step(app, "type after $0", 0.2)
+    app.expect(_line(app, 1) == "tot = tot + 2;x", f"after $0 the session is over: typing is plain ({_line(app, 1)!r})")
+
+    # Choices.
+    _expand(app, 2, "pick")
+    app.expect(_line(app, 2) == "mode = fast;" and _selected(app) == "fast",
+               f"a choice expands to its first option, selected ({_line(app, 2)!r}, {_selected(app)!r})")
+    app.key("Tab")
+    step(app, "Tab cycles the choice", 0.2)
+    app.expect(_line(app, 2) == "mode = safe;" and _selected(app) == "safe",
+               f"Tab moves to the next option ({_line(app, 2)!r}, {_selected(app)!r})")
+    app.key("Tab")
+    app.key("shift+Tab")
+    step(app, "Shift+Tab cycles back", 0.2)
+    app.expect(_line(app, 2) == "mode = safe;", f"Shift+Tab steps back an option ({_line(app, 2)!r})")
+    app.key("Escape")
+    step(app, "Escape ends the session", 0.2)
+    app.expect(_selected(app) == "safe", f"Escape keeps the chosen option selected ({_selected(app)!r})")
+    app.key("Right")
+    app.key("Tab")
+    step(app, "Tab after Escape", 0.2)
+    app.expect(_line(app, 2).startswith("mode = safe") and "fast" not in _line(app, 2)
+               and "slow" not in _line(app, 2), f"after Escape Tab does not cycle ({_line(app, 2)!r})")
+
+    # Nesting.
+    _expand(app, 3, "nest")
+    app.expect(_line(app, 3) == "call(outer(inner));" and _selected(app) == "outer(inner)",
+               f"the outer placeholder is selected whole ({_line(app, 3)!r}, {_selected(app)!r})")
+    app.key("Tab")
+    step(app, "Tab into the nested placeholder", 0.2)
+    app.expect(_selected(app) == "inner", f"Tab selects the nested placeholder ({_selected(app)!r})")
+    app.type("deep")
+    app.key("shift+Tab")
+    step(app, "Shift+Tab back to the parent", 0.2)
+    app.expect(_selected(app) == "outer(deep)", f"the parent grew with its child ({_selected(app)!r})")
+    app.type("flat")
+    app.key("Tab")
+    step(app, "type over the parent", 0.2)
+    app.expect(_line(app, 3) == "call(flat);", f"typing over the parent drops its child ({_line(app, 3)!r})")
+    app.expect(app.cursors() and app.cursors()[0] == (3, len("call(flat);") + 1),
+               f"Tab goes straight to $0: the dropped child is not a stop ({app.cursors()})")
+
+    # Variables, and one undo for the whole expansion.
+    _expand(app, 4, "vars")
+    app.expect(_line(app, 4) == "// deep:4 fallback", f"variables resolve; an unknown one takes its default ({_line(app, 4)!r})")
+    app.key("ctrl+z")
+    step(app, "undo the expansion", 0.2)
+    app.expect(_line(app, 4) == "vars", f"one undo restores the prefix ({_line(app, 4)!r})")
+
+    # A caret that leaves the placeholder ends the session.
+    _expand(app, 5, "mirr")
+    app.click_text(6, 1)
+    app.type("q")
+    step(app, "click away and type", 0.2)
+    app.expect(_line(app, 5) == "name = name + 1;" and _line(app, 6) == "q",
+               f"typing elsewhere edits only there ({_line(app, 5)!r}, {_line(app, 6)!r})")
+    app.click_text(5, 2)
+    app.type("Z")
+    step(app, "type into a former mirror", 0.2)
+    app.expect(_line(app, 5) == "nZame = name + 1;", f"the mirrors no longer follow ({_line(app, 5)!r})")
+
+    # A snippet completion item.
+    app.click_text(7, 1)
+    app.type("qs")
+    app.key("ctrl+space")
+    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion", 5.0, "the completion list")
+    app.key("Return")
+    step(app, "accept a snippet completion", 0.25)
+    app.expect(_line(app, 7) == "qs_call(arg, n)" and _selected(app) == "arg",
+               f"the item expands as a snippet ({_line(app, 7)!r}, {_selected(app)!r})")
+    app.key("Tab")
+    step(app, "Tab in the completion's snippet", 0.2)
+    app.expect(_selected(app) == "n", f"Tab walks the completion's placeholders ({_selected(app)!r})")
+    app.key("Escape")
+    app.key("ctrl+s")
+    step(app, "save", 0.2)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-signature-help": flow_signature_help,
     "lsp-code-actions": flow_code_actions,
     "snippets": flow_snippets,
+    "snippets-deep": flow_snippets_deep,
     "sticky-scroll": flow_sticky_scroll,
     "themes": flow_themes,
     "tab-overflow": flow_tab_overflow,
@@ -204,4 +333,5 @@ PLUGINS: dict[str, tuple[str, ...]] = {
     "lsp-code-actions": ("cpp-lsp",),
     "dbg-conditions": ("gdb-dap",),
     "snippets": ("qa-snippets",),
+    "snippets-deep": ("qa-snippets",),
 }
