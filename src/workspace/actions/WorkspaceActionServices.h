@@ -217,6 +217,7 @@ class WorkspaceActionContext {
     std::function<void()> mark_branch_file_reviewed;
     std::function<void()> unmark_branch_file_reviewed;
     std::function<void()> mark_branch_hunk_reviewed;
+    std::function<bool(ActionId, std::string*)> run_compare_command;
     std::function<void()> unmark_branch_hunk_reviewed;
     std::function<void()> clear_branch_review_state;
     std::function<void(std::string)> edit_branch_review_note;
@@ -528,6 +529,10 @@ class WorkspaceActionContext {
   void MarkBranchFileReviewed();
   void UnmarkBranchFileReviewed();
   void MarkBranchHunkReviewed();
+  // One of the active diff's own verbs (ActionId::Compare*: whitespace toggles,
+  // copy as patch / path, the review's next and previous file). False, with the
+  // reason, when no diff is active or the verb has nothing to act on.
+  bool RunCompareCommand(ActionId id, std::string* error);
   void UnmarkBranchHunkReviewed();
   void ClearBranchReviewState();
   void EditBranchReviewNote(std::string note_text);

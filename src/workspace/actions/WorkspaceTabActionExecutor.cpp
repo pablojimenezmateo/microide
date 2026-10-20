@@ -543,6 +543,19 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::ClearBranchReviewState:
       context_.ClearBranchReviewState();
       return DispatchResult::Handled;
+    case ActionId::CompareToggleIgnoreWhitespace:
+    case ActionId::CompareToggleShowWhitespace:
+    case ActionId::CompareCopyHunkPatch:
+    case ActionId::CompareCopyFilePatch:
+    case ActionId::CompareCopyPath:
+    case ActionId::CompareNextReviewFile:
+    case ActionId::ComparePreviousReviewFile: {
+      std::string error;
+      if (!context_.RunCompareCommand(id, &error)) {
+        return reject(std::move(error));
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::EditBranchReviewNote: {
       if (!context_.ActiveTabIsBranchReview()) {
         return reject(std::string(kNotABranchReview));

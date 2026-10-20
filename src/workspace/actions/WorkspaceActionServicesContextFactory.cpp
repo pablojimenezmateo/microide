@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/StringUtil.h"
+#include "workspace/git/CompareTabReview.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/WorkspaceCommandParsing.h"
@@ -851,6 +852,51 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .mark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(true); },
           .unmark_branch_file_reviewed = [this]() { SetActiveBranchFileReviewed(false); },
           .mark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(true); },
+          .run_compare_command =
+              [this](ActionId id, std::string* error) {
+                const CompareTabState* tab = ActiveCompareTab();
+                if (tab == nullptr) {
+                  *error = "Not a diff: open one from the git view, a commit or Compare";
+                  return false;
+                }
+                CompareMergeService& compare = MakeCompareMergeService();
+                switch (id) {
+                  case ActionId::CompareToggleIgnoreWhitespace:
+                    compare.ToggleCompareIgnoreWhitespace();
+                    return true;
+                  case ActionId::CompareToggleShowWhitespace:
+                    compare.ToggleCompareShowWhitespace();
+                    return true;
+                  case ActionId::CompareCopyHunkPatch:
+                    if (CompareTabSelectedHunkIndex(*tab) < 0) {
+                      *error = "No change at the selection to copy";
+                      return false;
+                    }
+                    compare.CopyCompareHunkPatch();
+                    return true;
+                  case ActionId::CompareCopyFilePatch:
+                    if (tab->model.rows.empty()) {
+                      *error = "The diff is empty";
+                      return false;
+                    }
+                    compare.CopyCompareFilePatch();
+                    return true;
+                  case ActionId::CompareCopyPath:
+                    compare.CopyComparePath();
+                    return true;
+                  case ActionId::CompareNextReviewFile:
+                  case ActionId::ComparePreviousReviewFile:
+                    if (tab->review_files.size() < 2) {
+                      *error = "This diff is not part of a review of several files";
+                      return false;
+                    }
+                    compare.JumpCompareReviewFile(id == ActionId::CompareNextReviewFile ? 1 : -1);
+                    return true;
+                  default:
+                    *error = "Not a diff command";
+                    return false;
+                }
+              },
           .unmark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(false); },
           .clear_branch_review_state = [this]() { ClearActiveBranchReviewState(); },
           .edit_branch_review_note =

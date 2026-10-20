@@ -763,6 +763,13 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `unmark-branch-hunk-reviewed`
 - `clear-branch-review-state`
 - `branch-review-note <text>`
+- `diff-ignore-whitespace`
+- `diff-show-whitespace`
+- `diff-copy-hunk`
+- `diff-copy-patch`
+- `diff-copy-path`
+- `diff-next-file`
+- `diff-previous-file`
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open [path]`

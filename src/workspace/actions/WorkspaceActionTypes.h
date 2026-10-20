@@ -324,6 +324,16 @@ enum class ActionId {
   UnmarkBranchHunkReviewed,
   ClearBranchReviewState,
   EditBranchReviewNote,
+  // The active diff's own verbs. Implemented from the start on CompareMergeService
+  // but reachable from no key, menu or command until the commands-run QA sweep
+  // looked for them.
+  CompareToggleIgnoreWhitespace,
+  CompareToggleShowWhitespace,
+  CompareCopyHunkPatch,
+  CompareCopyFilePatch,
+  CompareCopyPath,
+  CompareNextReviewFile,
+  ComparePreviousReviewFile,
   // Debugger (DAP). Gated on the `debug.enabled` master toggle.
   // Master enable/disable toggle for the whole debugger feature. NOT gated on
   // `debug.enabled` — it flips that very setting, so it is always available.

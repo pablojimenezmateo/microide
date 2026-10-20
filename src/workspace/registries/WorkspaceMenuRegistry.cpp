@@ -224,6 +224,13 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::GitStageSelectedRanges, "Stage Selected Ranges", "Ctrl+K Ctrl+Alt+S"),
       MenuItem(ActionId::GitUnstageSelectedRanges, "Unstage Selected Ranges", "Ctrl+K Ctrl+N"),
       MenuItem(ActionId::GitRevertSelectedRanges, "Revert Selected Ranges", "Ctrl+K Ctrl+R"),
+      MenuSeparator(),
+      MenuItem(ActionId::CompareNextReviewFile, "Next File in Review"),
+      MenuItem(ActionId::ComparePreviousReviewFile, "Previous File in Review"),
+      MenuItem(ActionId::CompareToggleIgnoreWhitespace, "Diff: Ignore Whitespace"),
+      MenuItem(ActionId::CompareToggleShowWhitespace, "Diff: Show Whitespace"),
+      MenuItem(ActionId::CompareCopyHunkPatch, "Copy Change as Patch"),
+      MenuItem(ActionId::CompareCopyFilePatch, "Copy File as Patch"),
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),

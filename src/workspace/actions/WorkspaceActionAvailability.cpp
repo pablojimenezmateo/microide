@@ -561,6 +561,18 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return active_editable_viewport != nullptr;
     case ActionId::JumpToMatchingBracket:
       return active_viewport != nullptr;
+    case ActionId::CompareToggleIgnoreWhitespace:
+    case ActionId::CompareToggleShowWhitespace:
+    case ActionId::CompareCopyHunkPatch:
+    case ActionId::CompareCopyFilePatch:
+    case ActionId::CompareCopyPath:
+      return operations_.active_compare_tab != nullptr && operations_.active_compare_tab() != nullptr;
+    case ActionId::CompareNextReviewFile:
+    case ActionId::ComparePreviousReviewFile: {
+      const CompareTabState* tab =
+          operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
+      return tab != nullptr && tab->review_files.size() > 1;
+    }
     case ActionId::MarkBranchFileReviewed:
     case ActionId::UnmarkBranchFileReviewed:
     case ActionId::MarkBranchHunkReviewed:

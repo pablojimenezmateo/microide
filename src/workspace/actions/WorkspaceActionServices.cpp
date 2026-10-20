@@ -814,6 +814,14 @@ void WorkspaceActionContext::UnmarkBranchFileReviewed() {
   }
 }
 
+bool WorkspaceActionContext::RunCompareCommand(ActionId id, std::string* error) {
+  if (!operations_.run_compare_command) {
+    *error = "Diff commands are not available here";
+    return false;
+  }
+  return operations_.run_compare_command(id, error);
+}
+
 void WorkspaceActionContext::MarkBranchHunkReviewed() {
   if (operations_.mark_branch_hunk_reviewed != nullptr) {
     operations_.mark_branch_hunk_reviewed();

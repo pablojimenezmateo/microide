@@ -1314,6 +1314,52 @@ void TestCommandRefusalsSayWhatIsWrong() {
   expect_said("tests-discover", "No active project");
 }
 
+// commands-run: a diff's own verbs -- ignore / show whitespace, copy the change
+// or the file as a patch, copy the path, the review's next and previous file --
+// were implemented on CompareMergeService and reachable from no key, menu or
+// command. They are commands now, and each refuses with its reason.
+void TestTheDiffsOwnVerbsAreCommands() {
+  FlowFixture fixture("left.txt", "alpha\n  beta\ngamma\n");
+  const std::filesystem::path right = fixture.root / "right.txt";
+  WriteFile(right, "alpha\nbeta\ngamma changed\n");
+  std::string clipboard;
+  TestAccess::SetClipboardTextWriter(fixture.shell, [&](std::string_view text) {
+    clipboard = std::string(text);
+    return true;
+  });
+  const auto run = [&](const std::string& line) { return TestAccess::ExecuteCommandLine(fixture.shell, line); };
+  const auto feedback = [&]() { return TestAccess::CommandFeedbackText(fixture.shell); };
+
+  Expect(!run("diff-copy-path") && feedback().find("Not a diff") != std::string::npos,
+         "outside a diff the verbs refuse, said \"" + feedback() + "\"");
+  Expect(run("compare-files " + fixture.file.string() + " " + right.string()), "compare-files should open a diff");
+
+  const bool ignoring = TestAccess::ActiveCompare(fixture.shell).build_options.ignore_whitespace;
+  Expect(run("diff-ignore-whitespace") &&
+             TestAccess::ActiveCompare(fixture.shell).build_options.ignore_whitespace != ignoring,
+         "diff-ignore-whitespace should toggle the diff's option");
+  const bool showing = TestAccess::ActiveCompare(fixture.shell).show_whitespace;
+  Expect(run("diff-show-whitespace") && TestAccess::ActiveCompare(fixture.shell).show_whitespace != showing,
+         "diff-show-whitespace should toggle the diff's option");
+
+  Expect(run("diff-copy-path") && clipboard.ends_with("right.txt"),
+         "diff-copy-path should copy the diff's path, copied [" + clipboard + "]");
+  Expect(run("diff-copy-patch") && clipboard.find("@@") != std::string::npos &&
+             clipboard.find("+gamma changed") != std::string::npos,
+         "diff-copy-patch should copy a unified diff, copied [" + clipboard + "]");
+
+  TestAccess::ActiveCompare(fixture.shell).selected_row = 0;  // "alpha": no change there
+  clipboard.clear();
+  Expect(!run("diff-copy-hunk") && clipboard.empty() && feedback().find("No change") != std::string::npos,
+         "diff-copy-hunk on an unchanged row should refuse, said \"" + feedback() + "\"");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RIGHTBRACKET, SDL_KMOD_ALT)});
+  Expect(run("diff-copy-hunk") && clipboard.find("@@") != std::string::npos,
+         "diff-copy-hunk on a change should copy it, copied [" + clipboard + "], said \"" + feedback() + "\"");
+
+  Expect(!run("diff-next-file") && feedback().find("not part of a review") != std::string::npos,
+         "diff-next-file outside a review should say so, said \"" + feedback() + "\"");
+}
+
 // plugins-ui: `colorscheme list` refreshed the scheme names and reported nothing.
 void TestColorschemeListSaysWhichSchemesThereAre() {
   FlowFixture fixture("theme.txt", "x\n");
@@ -1714,6 +1760,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
+  AddTest(tests, "QaFlowRegression/TheDiffsOwnVerbsAreCommands", TestTheDiffsOwnVerbsAreCommands);
 }
 
 }  // namespace microide::tests
