@@ -167,6 +167,7 @@ ActionAvailability WorkspaceShell::Bootstrapper::BuildActionAvailability() const
           .active_tab_is_compare = [shell]() { return shell->ActiveTabIsCompare(); },
           .active_tab_is_merge = [shell]() { return shell->ActiveTabIsMerge(); },
           .active_compare_tab = [shell]() { return shell->ActiveCompareTab(); },
+          .active_merge_tab = [shell]() { return shell->ActiveMergeTab(); },
           .active_completion_available = [shell]() {
             return shell->HasActiveCompletionProvider();
           },

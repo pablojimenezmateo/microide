@@ -334,6 +334,10 @@ enum class ActionId {
   CompareCopyPath,
   CompareNextReviewFile,
   ComparePreviousReviewFile,
+  // The merge editor's: the selected conflict's incoming / current side to the
+  // clipboard (the side panes are read-only views with no selection of their own).
+  MergeCopyIncoming,
+  MergeCopyCurrent,
   // Debugger (DAP). Gated on the `debug.enabled` master toggle.
   // Master enable/disable toggle for the whole debugger feature. NOT gated on
   // `debug.enabled` — it flips that very setting, so it is always available.

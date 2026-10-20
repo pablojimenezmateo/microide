@@ -770,6 +770,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `diff-copy-path`
 - `diff-next-file`
 - `diff-previous-file`
+- `merge-copy-incoming`
+- `merge-copy-current`
 - `indent-width [n]`
 - `jump <line[:col]>`
 - `open [path]`

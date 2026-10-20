@@ -37,6 +37,7 @@ class ActionAvailability {
     std::function<bool()> active_tab_is_compare;
     std::function<bool()> active_tab_is_merge;
     std::function<const CompareTabState*()> active_compare_tab;
+    std::function<const MergeTabState*()> active_merge_tab;
     std::function<bool()> active_completion_available;
     std::function<bool()> active_code_actions_available;
     std::function<bool()> active_definition_available;

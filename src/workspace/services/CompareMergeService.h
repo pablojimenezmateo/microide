@@ -44,7 +44,6 @@ class CompareMergeService {
   bool OpenGitConflictMerge(const std::filesystem::path& path,
                             const project::GitRevisionBlobCache* prefetched = nullptr);
 
-  void OpenPicker();
   bool OpenPickerForPath(const std::filesystem::path& path, std::string_view commit_spec = {});
   void OpenOutgoingBasePicker();
   void OpenBranchSwitchPicker();

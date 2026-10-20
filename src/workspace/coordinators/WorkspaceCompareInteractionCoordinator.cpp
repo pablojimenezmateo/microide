@@ -63,24 +63,6 @@ CompareInteractionCoordinator::CompareInteractionCoordinator(ProjectWorkspaceSta
                                                              Operations operations)
     : state_(state), operations_(std::move(operations)) {}
 
-void CompareInteractionCoordinator::OpenPicker() {
-  if (!state_.sidebar.visible || operations_.active_sidebar_mode() != SidebarMode::Tree) {
-    return;
-  }
-
-  const auto& entries = state_.directory_tree.entries();
-  if (state_.directory_tree.selected_index() >= entries.size()) {
-    return;
-  }
-
-  const auto& entry = entries[state_.directory_tree.selected_index()];
-  if (entry.is_directory) {
-    return;
-  }
-
-  OpenPickerForPath(entry.path);
-}
-
 void CompareInteractionCoordinator::ApplyFileHistoryResult(
     const project::GitFileHistoryResult& history) {
   auto& picker = state_.overlay.workflow.compare_picker;

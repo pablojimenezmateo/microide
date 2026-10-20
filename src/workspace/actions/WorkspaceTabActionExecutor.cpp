@@ -549,7 +549,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::CompareCopyFilePatch:
     case ActionId::CompareCopyPath:
     case ActionId::CompareNextReviewFile:
-    case ActionId::ComparePreviousReviewFile: {
+    case ActionId::ComparePreviousReviewFile:
+    case ActionId::MergeCopyIncoming:
+    case ActionId::MergeCopyCurrent: {
       std::string error;
       if (!context_.RunCompareCommand(id, &error)) {
         return reject(std::move(error));

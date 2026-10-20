@@ -194,7 +194,6 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
   return CompareInteractionCoordinator(
       context_.current_project_state,
       CompareInteractionCoordinator::Operations{
-          .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .show_compare_picker_overlay = [this]() { ShowOverlay(OverlayMode::CommitPicker); },
           .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
           .request_overlay_redraw = [this]() { RequestOverlayRedraw(); },

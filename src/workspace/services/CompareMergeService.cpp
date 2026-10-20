@@ -58,10 +58,6 @@ bool CompareMergeService::OpenGitConflictMerge(const std::filesystem::path& path
   return diff_tabs_.OpenGitConflictMerge(path, prefetched);
 }
 
-void CompareMergeService::OpenPicker() {
-  interactions_.OpenPicker();
-}
-
 bool CompareMergeService::OpenPickerForPath(const std::filesystem::path& path,
                                             std::string_view commit_spec) {
   return interactions_.OpenPickerForPath(path, commit_spec);

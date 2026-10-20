@@ -231,6 +231,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CompareToggleShowWhitespace, "Diff: Show Whitespace"),
       MenuItem(ActionId::CompareCopyHunkPatch, "Copy Change as Patch"),
       MenuItem(ActionId::CompareCopyFilePatch, "Copy File as Patch"),
+      MenuItem(ActionId::MergeCopyIncoming, "Copy Incoming Side"),
+      MenuItem(ActionId::MergeCopyCurrent, "Copy Current Side"),
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),

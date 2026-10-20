@@ -1525,6 +1525,35 @@ void TestTheDiffsOwnVerbsAreCommands() {
          "diff-next-file outside a review should say so, said \"" + feedback() + "\"");
 }
 
+// The merge editor's side panes are read-only views with no selection of their
+// own; copying a conflict's side was implemented (CopyMergeSideSnippet) and
+// reachable from nothing. merge-copy-incoming / merge-copy-current copy the
+// selected conflict's side.
+void TestTheMergeEditorCopiesAConflictSide() {
+  FlowFixture fixture("base.txt", "one\ntwo\nthree\n");
+  const std::filesystem::path incoming = fixture.root / "incoming.txt";
+  const std::filesystem::path current = fixture.root / "current.txt";
+  WriteFile(incoming, "one\ntwo from incoming\nthree\n");
+  WriteFile(current, "one\ntwo from current\nthree\n");
+  std::string clipboard;
+  TestAccess::SetClipboardTextWriter(fixture.shell, [&](std::string_view text) {
+    clipboard = std::string(text);
+    return true;
+  });
+  const auto run = [&](const std::string& line) { return TestAccess::ExecuteCommandLine(fixture.shell, line); };
+  const auto feedback = [&]() { return TestAccess::CommandFeedbackText(fixture.shell); };
+
+  Expect(!run("merge-copy-incoming") && feedback().find("Not a merge") != std::string::npos,
+         "outside a merge it refuses, said \"" + feedback() + "\"");
+  Expect(run("merge " + fixture.file.string() + " " + incoming.string() + " " + current.string()),
+         "merge should open the merge editor, said \"" + feedback() + "\"");
+  Expect(run("merge-copy-incoming") && clipboard.find("two from incoming") != std::string::npos &&
+             clipboard.find("current") == std::string::npos,
+         "merge-copy-incoming should copy the incoming side, copied [" + clipboard + "]");
+  Expect(run("merge-copy-current") && clipboard.find("two from current") != std::string::npos,
+         "merge-copy-current should copy the current side, copied [" + clipboard + "]");
+}
+
 // plugins-ui: `colorscheme list` refreshed the scheme names and reported nothing.
 void TestColorschemeListSaysWhichSchemesThereAre() {
   FlowFixture fixture("theme.txt", "x\n");
@@ -1926,6 +1955,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTypingOnAFoldedOpenerRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
   AddTest(tests, "QaFlowRegression/TheDiffsOwnVerbsAreCommands", TestTheDiffsOwnVerbsAreCommands);
+  AddTest(tests, "QaFlowRegression/TheMergeEditorCopiesAConflictSide", TestTheMergeEditorCopiesAConflictSide);
   AddTest(tests, "QaFlowRegression/ATerminalTitleRepaintsItsTab", TestATerminalTitleRepaintsItsTab);
   AddTest(tests, "QaFlowRegression/ATerminalPaneCursorChangeRepaintsItsCaret",
           TestATerminalPaneCursorChangeRepaintsItsCaret);

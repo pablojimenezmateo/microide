@@ -11,7 +11,6 @@ namespace microide::workspace {
 class CompareInteractionCoordinator {
  public:
   struct Operations {
-    std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> show_compare_picker_overlay;
     std::function<void()> reset_overlay_scroll;
     std::function<void()> request_overlay_redraw;
@@ -74,7 +73,6 @@ class CompareInteractionCoordinator {
 
   CompareInteractionCoordinator(ProjectWorkspaceState& state, Operations operations);
 
-  void OpenPicker();
   bool OpenPickerForPath(const std::filesystem::path& path,
                          std::string_view commit_spec = {});
   void OpenOutgoingBasePicker();

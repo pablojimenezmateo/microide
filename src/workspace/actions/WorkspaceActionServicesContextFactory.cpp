@@ -854,6 +854,19 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .mark_branch_hunk_reviewed = [this]() { SetActiveBranchHunkReviewed(true); },
           .run_compare_command =
               [this](ActionId id, std::string* error) {
+                if (id == ActionId::MergeCopyIncoming || id == ActionId::MergeCopyCurrent) {
+                  const MergeTabState* merge = ActiveMergeTab();
+                  if (merge == nullptr) {
+                    *error = "Not a merge: open one from the git view's conflicts";
+                    return false;
+                  }
+                  if (merge->conflicts.empty()) {
+                    *error = "No conflict to copy";
+                    return false;
+                  }
+                  MakeCompareMergeService().CopyMergeSideSnippet(id == ActionId::MergeCopyIncoming);
+                  return true;
+                }
                 const CompareTabState* tab = ActiveCompareTab();
                 if (tab == nullptr) {
                   *error = "Not a diff: open one from the git view, a commit or Compare";
