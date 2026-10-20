@@ -411,6 +411,7 @@ import flows_commands  # noqa: E402
 import flows_settings  # noqa: E402
 import flows_inputs  # noqa: E402
 import flows_surfaces  # noqa: E402
+import flows_panes  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -442,6 +443,7 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     **flows_settings.FLOWS,
     **flows_inputs.FLOWS,
     **flows_surfaces.FLOWS,
+    **flows_panes.FLOWS,
 }
 
 # Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
@@ -450,7 +452,7 @@ SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {**flows_lsp_debug.PLUGINS, **flo
                                                 **flows_advanced.PLUGINS, **flows_coverage.PLUGINS,
                                                 **flows_ux.PLUGINS, **flows_depth.PLUGINS,
                                                 **flows_languages.PLUGINS, **flows_integration.PLUGINS,
-                                                **flows_plugin_api.PLUGINS}
+                                                **flows_plugin_api.PLUGINS, **flows_panes.PLUGINS}
 
 # Scenarios a backend cannot drive, with why. The Wayland backend delivers input
 # through the control channel at SDL's event level, not the seat: no input serial
