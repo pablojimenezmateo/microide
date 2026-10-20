@@ -866,8 +866,11 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
   const float mx = event.button.x;
   const float my = event.button.y;
 
-  // Any click outside the surface dismisses the modal.
-  if (!Contains(vm.rect, mx, my)) {
+  // Any click outside the surface dismisses the modal. The font picker's
+  // dropdown hangs below the card when its row is near the bottom, so its rect
+  // is part of the surface: a click on its lower rows (the pinned "Choose
+  // file…" among them) used to close Settings instead of picking.
+  if (!SettingsOverlayContains(vm, mx, my)) {
     CloseSettingsOverlay();
     return true;
   }

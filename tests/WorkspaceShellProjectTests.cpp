@@ -4892,6 +4892,43 @@ void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
          "Escape should close the settings overlay");
 }
 
+// The font picker's dropdown is part of the Settings surface even where it hangs
+// below the card: a click on its rows picks, it does not close Settings (a click
+// on "Choose file…" at the bottom of the list did, found by the QA
+// native-dialogs flow). The geometry half is pinned on a view model whose
+// picker lies entirely outside the card; the shell half clicks the real rows.
+void TestWorkspaceShellSettingsPickerRowsBelowTheCardStillPick() {
+  workspace::SettingsOverlayViewModel vm;
+  vm.rect = SDL_FRect{100.0f, 100.0f, 600.0f, 300.0f};
+  vm.value_picker.visible = true;
+  vm.value_picker.rect = SDL_FRect{500.0f, 380.0f, 220.0f, 120.0f};
+  Expect(workspace::SettingsOverlayContains(vm, 600.0f, 450.0f), "a point on the dropdown below the card is on the surface");
+  Expect(workspace::SettingsOverlayContains(vm, 150.0f, 150.0f), "a point on the card is on the surface");
+  Expect(!workspace::SettingsOverlayContains(vm, 50.0f, 450.0f), "a point beside both is outside");
+  vm.value_picker.visible = false;
+  Expect(!workspace::SettingsOverlayContains(vm, 600.0f, 450.0f), "a hidden dropdown claims nothing");
+
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "proj";
+  std::filesystem::create_directories(root);
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  WorkspaceShellTestAccess::BeginSettingValueEdit(shell, "editor.font_family");
+  Expect(WorkspaceShellTestAccess::SettingsEditingFonts(shell), "the font row's edit opens the picker");
+  const workspace::SettingsOverlayViewModel live = WorkspaceShellTestAccess::BuildSettingsOverlayViewModel(shell);
+  Expect(live.value_picker.visible && !live.value_picker.items.empty(), "the picker lists its rows");
+  const workspace::SettingsPickerItemViewModel& choose = live.value_picker.items.back();
+  Expect(choose.is_choose_file, "the last row is Choose file…");
+  Expect(SendMouseDown(shell, choose.rect.x + choose.rect.w * 0.5f, choose.rect.y + choose.rect.h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "a click on Choose file… is handled");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+         "the click picks (the native picker, disabled in tests) instead of closing Settings");
+  Expect(!WorkspaceShellTestAccess::SettingsEditingFonts(shell), "and the picker edit is over");
+}
+
 void TestWorkspaceShellSettingsOverlayWheelScrolls() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
@@ -8608,6 +8645,8 @@ void TestWorkspaceShellRegexReplaceAllInvalidReplacementAborts() {
 }
 
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/SettingsPickerRowsBelowTheCardStillPick",
+          TestWorkspaceShellSettingsPickerRowsBelowTheCardStillPick);
   AddTest(tests, "WorkspaceShell/RevealOpensAndCentresTheLine",
           TestWorkspaceShellRevealOpensAndCentresTheLine);
   AddTest(tests, "WorkspaceShell/TabToGroupMovesTheActiveTabAcrossPanes",

@@ -550,6 +550,18 @@ struct SettingsOverlayViewModel {
   SettingsPickerViewModel value_picker;    // font dropdown (visible while editing)
 };
 
+// Whether (x, y) is on the Settings surface: the card, or the font picker's
+// dropdown, which hangs below the card when the row it edits is near the
+// bottom. The click and cursor paths both ask this before "outside closes the
+// modal"; asking the card alone closed Settings on a click on the dropdown's
+// lower rows, "Choose file…" among them.
+inline bool SettingsOverlayContains(const SettingsOverlayViewModel& vm, float x, float y) {
+  const auto inside = [x, y](const SDL_FRect& rect) {
+    return x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h;
+  };
+  return inside(vm.rect) || (vm.value_picker.visible && inside(vm.value_picker.rect));
+}
+
 class RenderViewModelBuilder {
  public:
   explicit RenderViewModelBuilder(const WorkspaceContext& context);

@@ -237,7 +237,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     const SettingsOverlayViewModel vm =
         RenderViewModelBuilder(context_).BuildSettingsOverlay(layout, settings_overlay_service_,
                                                               text_renderer_);
-    if (!Contains(vm.rect, x, y)) {
+    if (!SettingsOverlayContains(vm, x, y)) {
       return CursorKind::Default;
     }
     if (vm.mode != SettingsOverlayMode::Settings) {
