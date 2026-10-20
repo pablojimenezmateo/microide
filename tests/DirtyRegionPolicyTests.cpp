@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -13,7 +14,9 @@ namespace microide::tests {
 namespace {
 
 using microide::app::AnalyzeDirtyRegions;
+using microide::app::DeviceClipHint;
 using microide::app::DirtyRegionAnalysis;
+using microide::app::PadClipForPresentationScale;
 using microide::app::ShouldPromotePartialFrameToFull;
 
 // Property: the merged clip rects COVER every damaged pixel.
@@ -208,6 +211,66 @@ void TestDirtyRegionsRejectNonFiniteAndHugeInput() {
          "the surviving clip is within surface bounds with a positive size");
 }
 
+// QA monkey (seed 1, step 186, ui.scale 1.25): a partial frame's clip is a
+// logical rect that SDL scales to device pixels as floor(x * s) wide by
+// ceil(w * s), which at a fractional scale can stop a device column short of a
+// rect drawn at the same logical bounds -- the blink left the caret's last column
+// on screen. Every device pixel a damaged rect touches must lie in its clip.
+void TestClipsCoverTheirDevicePixelsAtFractionalScales() {
+  constexpr int kWidth = 1152;
+  constexpr int kHeight = 720;
+  for (const float scale : {1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.25f}) {
+    const render::TextClipPadding padding = PadClipForPresentationScale({}, scale, scale);
+    for (int x = 800; x < 840; ++x) {
+      for (const int w : {1, 2, 8, 9}) {
+        const SDL_FRect damaged{static_cast<float>(x), 676.0f, static_cast<float>(w), 18.0f};
+        const DirtyRegionAnalysis analysis = AnalyzeDirtyRegions({damaged}, padding, kWidth, kHeight);
+        Expect(analysis.merged_clip_rects.size() == 1, "one damaged rect should make one clip");
+        if (analysis.merged_clip_rects.empty()) {
+          return;
+        }
+        const SDL_Rect& clip = analysis.merged_clip_rects.front();
+        // SDL_render's conversion of a logical clip to device pixels.
+        const int device_x0 = static_cast<int>(std::floor(static_cast<float>(clip.x) * scale));
+        const int device_x1 = device_x0 + static_cast<int>(std::ceil(static_cast<float>(clip.w) * scale));
+        const int device_y0 = static_cast<int>(std::floor(static_cast<float>(clip.y) * scale));
+        const int device_y1 = device_y0 + static_cast<int>(std::ceil(static_cast<float>(clip.h) * scale));
+        // The device pixels a fill of the damaged rect touches.
+        const int fill_x0 = static_cast<int>(std::floor(damaged.x * scale));
+        const int fill_x1 = static_cast<int>(std::ceil((damaged.x + damaged.w) * scale));
+        const int fill_y0 = static_cast<int>(std::floor(damaged.y * scale));
+        const int fill_y1 = static_cast<int>(std::ceil((damaged.y + damaged.h) * scale));
+        if (fill_x0 < device_x0 || fill_x1 > device_x1 || fill_y0 < device_y0 || fill_y1 > device_y1) {
+          Expect(false, "at scale " + std::to_string(scale) + " the clip of x=" + std::to_string(x) +
+                            " w=" + std::to_string(w) + " covers device columns [" +
+                            std::to_string(device_x0) + "," + std::to_string(device_x1) +
+                            ") but the rect fills [" + std::to_string(fill_x0) + "," +
+                            std::to_string(fill_x1) + ")");
+          return;
+        }
+      }
+    }
+  }
+}
+
+// QA sweeps-matrix (ui.scale 1.5): a sidebar clip [0, 289) reaches device
+// column 433, half of which is the editor's (it starts at 289 = device 433.5).
+// The hint the clip was painted with was the integer rect, which the editor only
+// touches, so the editor was skipped and that column lost its edge. The hint is
+// the clip's device extent.
+void TestTheDirtyHintIsTheClipsDeviceExtent() {
+  const SDL_Rect clip{0, 57, 289, 389};
+  const SDL_FRect hint = DeviceClipHint(clip, 1.5f, 1.5f);
+  const SDL_FRect editor{289.0f, 57.0f, 300.0f, 389.0f};
+  Expect(hint.x + hint.w > editor.x, "the hint should reach into the editor's first device column, ends at " +
+                                         std::to_string(hint.x + hint.w));
+  const SDL_FRect same = DeviceClipHint(clip, 1.0f, 1.0f);
+  Expect(same.x == 0.0f && same.y == 57.0f && same.w == 289.0f && same.h == 389.0f,
+         "at scale 1 the hint is the clip");
+  const SDL_FRect doubled = DeviceClipHint(clip, 2.0f, 2.0f);
+  Expect(doubled.x == 0.0f && doubled.w == 289.0f && doubled.h == 389.0f, "at scale 2 the hint is the clip");
+}
+
 }  // namespace
 
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
@@ -221,6 +284,10 @@ void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
           TestDirtyCoverageStaysBounded);
   AddTest(tests, "DirtyRegionPolicy/PromotionUsesCoalescedClipCount",
           TestPromotionUsesCoalescedClipCount);
+  AddTest(tests, "DirtyRegionPolicy/TheDirtyHintIsTheClipsDeviceExtent",
+          TestTheDirtyHintIsTheClipsDeviceExtent);
+  AddTest(tests, "DirtyRegionPolicy/ClipsCoverTheirDevicePixelsAtFractionalScales",
+          TestClipsCoverTheirDevicePixelsAtFractionalScales);
   AddTest(tests, "DirtyRegionPolicy/MergeCoversEveryDamagedPixel",
           TestDirtyRegionMergeCoversEveryDamagedPixel);
 }

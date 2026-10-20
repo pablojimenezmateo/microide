@@ -838,7 +838,12 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   }
 
   const std::size_t dirty_rect_count = dirty_rects.size();
-  const render::TextClipPadding clip_padding = workspace_shell_.PartialRedrawClipPadding();
+  // Padded a logical pixel at a fractional presentation scale: SDL scales a clip
+  // to device pixels by its origin and width, not out to its far edge.
+  const auto presentation = workspace_shell_.CurrentWindowPresentationState();
+  const render::TextClipPadding clip_padding = PadClipForPresentationScale(
+      workspace_shell_.PartialRedrawClipPadding(), presentation ? presentation->scale_x : 1.0f,
+      presentation ? presentation->scale_y : 1.0f);
   const DirtyRegionAnalysis dirty_region_analysis =
       AnalyzeDirtyRegions(dirty_rects, clip_padding, width, height);
   const std::size_t merged_clip_count = dirty_region_analysis.merged_clip_rects.size();
@@ -902,9 +907,9 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
             "Application::WorkspaceRender(partial-clip)");
-        const SDL_FRect dirty_rect_hint{
-            static_cast<float>(clip_rect.x), static_cast<float>(clip_rect.y),
-            static_cast<float>(clip_rect.w), static_cast<float>(clip_rect.h)};
+        const SDL_FRect dirty_rect_hint = DeviceClipHint(
+            clip_rect, presentation ? presentation->scale_x : 1.0f,
+            presentation ? presentation->scale_y : 1.0f);
         workspace_shell_.RenderClip(frame_token, renderer_, width, height, dirty_rect_hint);
         util::AddPerformanceCounter(util::PerfCounterId::RenderPartialClips);
         util::AddPerformanceCounter(

@@ -160,6 +160,37 @@ DirtyRegionAnalysis AnalyzeDirtyRegions(const std::vector<SDL_FRect>& dirty_rect
   return analysis;
 }
 
+render::TextClipPadding PadClipForPresentationScale(render::TextClipPadding padding,
+                                                    float scale_x,
+                                                    float scale_y) {
+  const auto fractional = [](float scale) {
+    return std::isfinite(scale) && std::fabs(scale - std::round(scale)) > 1e-3f;
+  };
+  if (fractional(scale_x)) {
+    padding.left += 1.0f;
+    padding.right += 1.0f;
+  }
+  if (fractional(scale_y)) {
+    padding.top += 1.0f;
+    padding.bottom += 1.0f;
+  }
+  return padding;
+}
+
+SDL_FRect DeviceClipHint(const SDL_Rect& clip, float scale_x, float scale_y) {
+  const auto valid = [](float scale) { return std::isfinite(scale) && scale > 0.0f; };
+  if (!valid(scale_x) || !valid(scale_y)) {
+    return SDL_FRect{static_cast<float>(clip.x), static_cast<float>(clip.y),
+                     static_cast<float>(clip.w), static_cast<float>(clip.h)};
+  }
+  // SDL_render: floor(x * s) wide by ceil(w * s), back in logical units.
+  const float device_x = std::floor(static_cast<float>(clip.x) * scale_x);
+  const float device_y = std::floor(static_cast<float>(clip.y) * scale_y);
+  const float device_w = std::ceil(static_cast<float>(clip.w) * scale_x);
+  const float device_h = std::ceil(static_cast<float>(clip.h) * scale_y);
+  return SDL_FRect{device_x / scale_x, device_y / scale_y, device_w / scale_x, device_h / scale_y};
+}
+
 bool ShouldPromotePartialFrameToFull(const DirtyRegionAnalysis& analysis) {
   const std::size_t merged_clip_count = analysis.merged_clip_rects.size();
   if (merged_clip_count >= kPromoteFragmentedMergedClipThreshold) {
