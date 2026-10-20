@@ -306,6 +306,12 @@ bool TextInputCoordinator::HandleTextEditing(const SDL_TextEditingEvent& event) 
 }
 
 bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
+  if (text_input_state_.swallow_next_text_input) {
+    // The text of the key press that just put a field into edit; see
+    // TextInputState::swallow_next_text_input.
+    text_input_state_.swallow_next_text_input = false;
+    return true;
+  }
   if (menu_state_.menu_bar_open || menu_state_.tree_context_menu.open) {
     return true;
   }

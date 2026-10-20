@@ -151,11 +151,15 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           return true;
         }
         return false;
+      // The four field shortcuts are printable keys: the TEXT_INPUT behind the
+      // press must not land in the field they just opened.
       case SDLK_EQUALS:
         operations_.begin_project_search_edit(ProjectSearchEditField::Replace);
+        operations_.set_swallow_next_text_input(true);
         return true;
       case SDLK_SLASH:
         operations_.begin_project_search_edit(ProjectSearchEditField::Query);
+        operations_.set_swallow_next_text_input(true);
         return true;
       case SDLK_I:
         // "files to include" / "files to exclude" — expand the scope section on
@@ -163,6 +167,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         if (input_character == 'i') {
           search_state.scope_expanded = true;
           operations_.begin_project_search_edit(ProjectSearchEditField::Include);
+          operations_.set_swallow_next_text_input(true);
           return true;
         }
         return false;
@@ -170,6 +175,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
         if (input_character == 'x') {
           search_state.scope_expanded = true;
           operations_.begin_project_search_edit(ProjectSearchEditField::Exclude);
+          operations_.set_swallow_next_text_input(true);
           return true;
         }
         return false;

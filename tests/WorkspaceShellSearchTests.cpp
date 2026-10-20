@@ -27,6 +27,59 @@ void WaitForProjectSearch(WorkspaceShell& shell) {
   Expect(finished, "workspace project search should finish");
 }
 
+// `/` on the search view's result list edits the query -- and, being a printable
+// key, SDL follows the press with a TEXT_INPUT "/" that typed into the field it
+// had just opened: the query read "alpha/" and the search went empty (found by
+// the QA search-view-keys flow). The press's text is dropped; the next one types.
+void TestWorkspaceShellSearchFieldShortcutsDoNotTypeThemselves() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "visible.txt", "alpha\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  if (WorkspaceShellTestAccess::ProjectSearchEditing(shell)) {
+    SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  }
+  Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell), "the list, not a field, has the keys");
+
+  const auto press = [&](SDL_Keycode key, const char* text) {
+    SendKeyDown(shell, key, SDL_KMOD_NONE);
+    shell.HandleEvent(TextInputEvent(text));
+  };
+  const auto buffer = [&]() { return WorkspaceShellTestAccess::ProjectSearchEditBufferText(shell); };
+  SendKeyDown(shell, SDLK_SLASH, SDL_KMOD_NONE);
+  Expect(WorkspaceShellTestAccess::TextInputSwallowArmed(shell), "the / press arms the swallow");
+  shell.HandleEvent(TextInputEvent("/"));
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell) &&
+             WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
+                 microide::workspace::ProjectSearchEditField::Query,
+         "/ opens the query field");
+  Expect(buffer() == "alpha", "the / itself is not typed into it (" + buffer() + ")");
+  shell.HandleEvent(TextInputEvent("z"));
+  Expect(buffer() == "alphaz", "the next character types (" + buffer() + ")");
+  SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  for (const auto& [key, text, field] : {
+           std::tuple{SDLK_EQUALS, "=", microide::workspace::ProjectSearchEditField::Replace},
+           std::tuple{SDLK_I, "i", microide::workspace::ProjectSearchEditField::Include},
+           std::tuple{SDLK_X, "x", microide::workspace::ProjectSearchEditField::Exclude}}) {
+    press(key, text);
+    Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell) &&
+               WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) == field,
+           std::string(text) + " opens its field");
+    Expect(buffer().empty(), std::string(text) + " is not typed into it (" + buffer() + ")");
+    SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  }
+  // A press that arms but is followed by another KEY_DOWN, not text: the arm is
+  // spent, so the character after it still types.
+  press(SDLK_SLASH, "/");
+  SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE);
+  shell.HandleEvent(TextInputEvent("q"));
+  Expect(buffer() == "alphaq", "a key after the shortcut disarms it (" + buffer() + ")");
+}
+
 void TestWorkspaceShellProjectSearchHiddenToggleReruns() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1567,6 +1620,8 @@ void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
 }
 
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/SearchFieldShortcutsDoNotTypeThemselves",
+          TestWorkspaceShellSearchFieldShortcutsDoNotTypeThemselves);
   AddTest(tests, "WorkspaceShell/WorkbenchShortcutsWorkFromTheTree",
           TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree);
   AddTest(tests, "WorkspaceShell/FindMatchesFollowAnEditUnderTheWidget",

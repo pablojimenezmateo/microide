@@ -28,6 +28,9 @@ KeyInputCoordinator::KeyInputCoordinator(ProjectWorkspaceState& state, PromptSta
 bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   key_damage_mark_ = operations_.damage_generation();
   dispatch_probe_.last = nullptr;
+  if (operations_.set_swallow_next_text_input) {
+    operations_.set_swallow_next_text_input(false);  // a new press: the last arm is spent
+  }
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
 
@@ -565,6 +568,8 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 }
                 return MakeTextInputCoordinator().HandleTerminalKeyDown(event, modifiers);
               },
+          .set_swallow_next_text_input =
+              [this](bool swallow) { context_.text_input.swallow_next_text_input = swallow; },
           .confirm_dirty_prompt = [this]() { ConfirmDirtyPrompt(); },
           .keycode_to_ascii =
               [](SDL_Keycode key, SDL_Keymod modifiers) {
@@ -582,7 +587,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .close_menu_bar = [this]() { MakeMenuCoordinator().CloseMenuBar(); },
           .menu_overflow_item_count = [this]() { return MakeMenuCoordinator().MenuOverflowItemCount(); },
           .open_menu_overflow_item = [this](std::size_t i) { return MakeMenuCoordinator().OpenMenuOverflowItem(i); },
-          .close_menu_overflow_popup = [this]() { CloseMenuOverflowPopup(context_.menu_state); },
+          .close_menu_overflow_popup = [this]() { MakeMenuCoordinator().CloseMenuOverflowPopup(); },
           .switch_menu_bar_menu =
               [this](int delta) { return MakeMenuCoordinator().SwitchMenuBarMenu(delta); },
           .move_active_menu_item =

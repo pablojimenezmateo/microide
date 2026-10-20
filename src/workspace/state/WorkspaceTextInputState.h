@@ -49,6 +49,13 @@ struct TextCompositionState {
 struct TextInputState {
   TextInputSurface active_surface = TextInputSurface::None;
   TextCompositionState composition;
+  // A printable key that puts a field into edit (the search view's `/`, `=`,
+  // `i`, `x`) is followed by SDL's TEXT_INPUT for the same press, which went into
+  // the field it had just focused: `/` on the result list left the query reading
+  // "queue/" and the search empty (found by the QA search-view-keys flow). The
+  // key path arms this; the next TEXT_INPUT is dropped and the next KEY_DOWN
+  // disarms it, so a press with no text behind it cannot eat a later character.
+  bool swallow_next_text_input = false;
 };
 
 // True for the four single-line fields in the search sidebar's header (query,

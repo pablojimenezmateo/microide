@@ -47,6 +47,9 @@ class KeyInputCoordinator {
     std::function<TextInputSurface()> current_text_input_surface;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_single_line_key_down;
     std::function<bool(const SDL_KeyboardEvent&, SDL_Keymod)> text_input_handle_terminal_key_down;
+    // Arms / disarms TextInputState::swallow_next_text_input: a printable key
+    // that begins a field edit must not also type into it.
+    std::function<void(bool)> set_swallow_next_text_input;
     std::function<void()> confirm_dirty_prompt;
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
     std::function<void()> close_tree_context_menu;
