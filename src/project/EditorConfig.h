@@ -38,11 +38,25 @@ struct EditorConfigProperties {
   std::optional<bool> insert_final_newline;
   // max_line_length = <n> | off. Parsed for completeness; no consumer yet.
   std::optional<int> max_line_length;
+  // Keys this section sets to `unset`: the fold removes the inherited value, so
+  // the editor's own setting rules again (the spec: as if never set). A parsed
+  // section cannot express that with the optionals alone -- an empty optional
+  // means "no opinion", which the fold keeps the parent's value for.
+  enum UnsetKey : unsigned {
+    kUnsetIndentStyle = 1u << 0,
+    kUnsetIndentSize = 1u << 1,
+    kUnsetTabWidth = 1u << 2,
+    kUnsetEndOfLine = 1u << 3,
+    kUnsetTrimTrailingWhitespace = 1u << 4,
+    kUnsetInsertFinalNewline = 1u << 5,
+    kUnsetMaxLineLength = 1u << 6,
+  };
+  unsigned unset = 0;
 
   bool any() const {
     return soft_tabs.has_value() || indent_width.has_value() || tab_size.has_value() ||
            line_ending.has_value() || trim_trailing_whitespace.has_value() ||
-           insert_final_newline.has_value() || max_line_length.has_value();
+           insert_final_newline.has_value() || max_line_length.has_value() || unset != 0;
   }
 
   // Overlay `other` on top of this, with `other` winning where it has a value.

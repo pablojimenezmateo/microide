@@ -65,9 +65,26 @@ void AppendSectionPatterns(std::string_view header, std::vector<std::string>& ou
 void ApplyProperty(std::string_view key, std::string_view raw_value,
                    EditorConfigProperties& properties) {
   const std::string value = LowerAscii(util::TrimAsciiWhitespaceView(raw_value));
-  // "unset" restores the default by removing any inherited value; modelling that
-  // as "no opinion" is right for us because our fallback is the user's setting.
+  // "unset" removes the inherited value when the sections fold, so the editor's
+  // own setting rules again (the spec: as if the property were never set). It
+  // used to return before recording anything, which left the parent section's
+  // value standing -- `[plain/*] indent_size = unset` under `[*] indent_size = 2`
+  // still gave 2 (found by the QA editorconfig flow).
   if (value == "unset") {
+    static constexpr std::pair<std::string_view, unsigned> kUnsetKeys[] = {
+        {"indent_style", EditorConfigProperties::kUnsetIndentStyle},
+        {"indent_size", EditorConfigProperties::kUnsetIndentSize},
+        {"tab_width", EditorConfigProperties::kUnsetTabWidth},
+        {"end_of_line", EditorConfigProperties::kUnsetEndOfLine},
+        {"trim_trailing_whitespace", EditorConfigProperties::kUnsetTrimTrailingWhitespace},
+        {"insert_final_newline", EditorConfigProperties::kUnsetInsertFinalNewline},
+        {"max_line_length", EditorConfigProperties::kUnsetMaxLineLength},
+    };
+    for (const auto& [name, flag] : kUnsetKeys) {
+      if (key == name) {
+        properties.unset |= flag;
+      }
+    }
     return;
   }
 
@@ -137,6 +154,27 @@ void ApplyProperty(std::string_view key, std::string_view raw_value,
 }  // namespace
 
 void EditorConfigProperties::MergeOver(const EditorConfigProperties& other) {
+  if (other.unset & kUnsetIndentStyle) {
+    soft_tabs.reset();
+  }
+  if (other.unset & kUnsetIndentSize) {
+    indent_width.reset();
+  }
+  if (other.unset & kUnsetTabWidth) {
+    tab_size.reset();
+  }
+  if (other.unset & kUnsetEndOfLine) {
+    line_ending.reset();
+  }
+  if (other.unset & kUnsetTrimTrailingWhitespace) {
+    trim_trailing_whitespace.reset();
+  }
+  if (other.unset & kUnsetInsertFinalNewline) {
+    insert_final_newline.reset();
+  }
+  if (other.unset & kUnsetMaxLineLength) {
+    max_line_length.reset();
+  }
   if (other.soft_tabs.has_value()) {
     soft_tabs = other.soft_tabs;
   }

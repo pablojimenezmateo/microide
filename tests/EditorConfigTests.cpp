@@ -196,6 +196,39 @@ indent_style = space
          "root = true must stop the walk before the parent's indent_size");
 }
 
+// `unset` in a later section removes what an earlier one set, so the editor's
+// own setting rules again. It used to be ignored, leaving the inherited value
+// standing (found by the QA `editorconfig` flow).
+void TestResolverUnsetRemovesAnInheritedValue() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "proj";
+  std::filesystem::create_directories(root / "plain");
+  WriteFile(root / ".editorconfig", R"(root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = crlf
+
+[plain/*]
+indent_size = unset
+indent_style = unset
+end_of_line = unset
+)");
+  WriteFile(root / "plain" / "p.txt", "p\n");
+  WriteFile(root / "a.txt", "a\n");
+
+  EditorConfigResolver resolver;
+  resolver.SetProjectRoot(root);
+  const EditorConfigProperties& plain = resolver.Resolve(root / "plain" / "p.txt");
+  Expect(!plain.soft_tabs.has_value(), "indent_style = unset removes the inherited indent_style");
+  Expect(!plain.indent_width.has_value(), "indent_size = unset removes the inherited indent_size");
+  Expect(!plain.line_ending.has_value(), "end_of_line = unset removes the inherited end_of_line");
+  const EditorConfigProperties& other = resolver.Resolve(root / "a.txt");
+  Expect(other.soft_tabs.value_or(false) && other.indent_width.value_or(0) == 2,
+         "a file the unset section does not match keeps the [*] values");
+}
+
 void TestResolverHandlesGlobShapes() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "proj";
@@ -370,6 +403,8 @@ void RegisterEditorConfigTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorConfig/ResolverIsFreeWithoutAnyConfig",
           TestResolverIsFreeWithoutAnyConfig);
   AddTest(tests, "EditorConfig/ResolverBoundsSectionCount", TestResolverBoundsSectionCount);
+  AddTest(tests, "EditorConfig/ResolverUnsetRemovesAnInheritedValue",
+          TestResolverUnsetRemovesAnInheritedValue);
   AddTest(tests, "EditorConfig/ParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious",
           TestParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious);
 }
