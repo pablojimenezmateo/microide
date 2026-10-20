@@ -10,6 +10,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <string>
 #include <variant>
 
@@ -295,7 +296,19 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               const std::vector<GitSidebarLine>& lines = BuildGitSidebarLines();
               count = lines.size();
               list = ComputeGitSidebarListLayout(layout.sidebar, count);
-              selected = state.sidebar.git.selected_index;
+              // The selection is an ENTRY index (what the keys move and the
+              // actions act on); the rows are lines, with headers and directories
+              // among them. Report the line that holds the selected entry, as the
+              // paint highlights it -- reporting the entry index as a line index
+              // named the row above the real one (QA git-view-keys).
+              selected = std::numeric_limits<std::size_t>::max();
+              for (std::size_t i = 0; i < lines.size(); ++i) {
+                if (lines[i].kind == GitSidebarLine::Kind::Entry &&
+                    lines[i].entry_index == static_cast<int>(state.sidebar.git.selected_index)) {
+                  selected = i;
+                  break;
+                }
+              }
               label = [&lines](std::size_t index) { return lines[index].label; };
               // The row as painted, its review marker included ("[R] r1.txt"); the
               // name stays the bare label so a locator survives marking.

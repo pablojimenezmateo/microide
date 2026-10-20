@@ -197,6 +197,59 @@ void TestMarkingAnOutgoingFileReviewedMarksItsRow() {
 // unsaved-continuations: Ctrl+Q did nothing; Quit had no key, while VS Code on
 // Linux quits on Ctrl+Q. From the editor and from a focused terminal alike (the
 // binding skips the shell, where Ctrl+Q is XON).
+// The git view's keyboard selection is an ENTRY index; the rows the `ui` query
+// lists are lines, with section headers and directories among them. The query
+// reported the entry index as a line index, so with "Unstaged (3)" and a
+// directory row above the files, the row it called selected was two above the
+// one painted and acted on (QA git-view-keys read Enter as opening the wrong file).
+void TestTheGitViewReportsTheSelectedEntrysRow() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "keys" / "alpha.txt", "alpha\n");
+  WriteFile(root / "keys" / "beta.txt", "beta\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "keys" / "alpha.txt", "alpha changed\n");
+  WriteFile(root / "keys" / "beta.txt", "beta changed\n");
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open its project");
+  TestAccess::SetWindowSize(shell, 1280, 720);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2), "the git view should list both changes");
+  TestAccess::SetFocusSidebar(shell);
+  SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE);
+  SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE);  // the second entry: beta.txt
+  const util::JsonValue ui = TestAccess::ControlUi(shell);
+  std::vector<std::string> selected;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() == "row" && entry["selected"].AsBool()) {
+      selected.push_back(entry["name"].AsString());
+    }
+  }
+  Expect(selected == std::vector<std::string>{"row:git/beta.txt"},
+         "the selected row is the second entry's, not the line two above it (" +
+             (selected.empty() ? std::string("none") : selected.front()) + ")");
+}
+
+// Reload from Disk on a dirty buffer did nothing and said nothing (the reload
+// refuses rather than throw the edits away, and the executor answered
+// "handled"). It now refuses with why, and the edit stays.
+void TestReloadFromDiskRefusesADirtyBufferWithWhy() {
+  FlowFixture fixture("disk.txt", "disk\n");
+  TestAccess::ActiveEditor(fixture.shell).InsertText(" edited");
+  Expect(TestAccess::ActiveEditor(fixture.shell).dirty(), "typing dirties the buffer");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "reopen"), "reopen on a dirty buffer is refused");
+  const std::string feedback = TestAccess::CommandFeedbackText(fixture.shell);
+  Expect(feedback.find("unsaved") != std::string::npos, "and says why (\"" + feedback + "\")");
+  Expect(TestAccess::ActiveEditor(fixture.shell).dirty(), "the edit is kept");
+  TestAccess::ActiveEditor(fixture.shell).Undo();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "reopen"), "a clean buffer reloads");
+}
+
 void TestCtrlQQuits() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -1960,6 +2013,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalPaneCursorChangeRepaintsItsCaret",
           TestATerminalPaneCursorChangeRepaintsItsCaret);
   AddTest(tests, "QaFlowRegression/ASidebarScrollOfOneRowRepaints", TestASidebarScrollOfOneRowRepaints);
+  AddTest(tests, "QaFlowRegression/TheGitViewReportsTheSelectedEntrysRow", TestTheGitViewReportsTheSelectedEntrysRow);
+  AddTest(tests, "QaFlowRegression/ReloadFromDiskRefusesADirtyBufferWithWhy", TestReloadFromDiskRefusesADirtyBufferWithWhy);
   AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
   AddTest(tests, "QaFlowRegression/TypingThatReshapesADiffRepaintsIt", TestTypingThatReshapesADiffRepaintsIt);
 }

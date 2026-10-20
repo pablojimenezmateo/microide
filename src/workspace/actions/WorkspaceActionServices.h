@@ -558,7 +558,9 @@ class WorkspaceActionContext {
   std::size_t OpenTabCount() const;
   std::size_t ActiveTabIndex() const;
   void MoveActiveTabTo(std::size_t index);
-  void ReopenActiveTab();
+  // False when there is nothing to reload: no editor tab, no file on disk, or
+  // unsaved changes the reload would throw away.
+  bool ReopenActiveTab();
   // The newest recently closed editor whose file still exists, removed from the
   // list (entries for files gone since are dropped on the way); nullopt for none.
   std::optional<ProjectWorkspaceState::ClosedEditor> TakeRecentlyClosedEditor();

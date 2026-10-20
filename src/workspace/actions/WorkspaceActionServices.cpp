@@ -978,8 +978,8 @@ std::optional<ProjectWorkspaceState::ClosedEditor> WorkspaceActionContext::TakeR
   return std::nullopt;
 }
 
-void WorkspaceActionContext::ReopenActiveTab() {
-  operations_.reopen_active_tab();
+bool WorkspaceActionContext::ReopenActiveTab() {
+  return operations_.reopen_active_tab();
 }
 
 bool WorkspaceActionContext::SaveTab(std::size_t index) {

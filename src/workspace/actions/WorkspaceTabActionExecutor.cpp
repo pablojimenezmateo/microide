@@ -286,7 +286,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.ReopenActiveTab();
+      // A dirty buffer is not reloaded (the reload would throw the edits away);
+      // the menu row used to do nothing and say nothing about it.
+      if (!context_.ReopenActiveTab()) {
+        return reject("Reload from Disk needs a saved file: the buffer has unsaved changes, "
+                      "or is not a file on disk");
+      }
       return DispatchResult::Handled;
     case ActionId::Save:
       if (!context_.HasProjectRoot()) {
