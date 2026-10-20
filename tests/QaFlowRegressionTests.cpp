@@ -302,6 +302,109 @@ void TestATerminalPaneCursorChangeRepaintsItsCaret() {
   fixture.ExpectFresh(elsewhere, "an inactive pane's cursor showing again elsewhere");
 }
 
+// The sidebar's repaint-on-change check keyed the view, selection, scroll and
+// tree revision into one value and then forced it non-zero with `key |= 1`,
+// which erased any change living only in bit 0 of the last term: in the git,
+// problems and search views a one-row scroll from an even row (2 to 3) that
+// landed between frames repainted nothing.
+void TestASidebarScrollOfOneRowRepaints() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  for (int i = 0; i < 40; ++i) {
+    WriteFile(root / ("f" + std::to_string(i) + ".txt"), "base\n");
+  }
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  for (int i = 0; i < 40; ++i) {
+    WriteFile(root / ("f" + std::to_string(i) + ".txt"), "changed\n");
+  }
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open its project");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 40), "the git view should list the forty changed files");
+  TestAccess::NoteLayoutInputsChanged(shell);
+  TestAccess::SetSidebarScrollRow(shell, 2);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::SidebarScrollRow(shell) == 2, "the list should stay scrolled to row 2");
+
+  TestAccess::SetSidebarScrollRow(shell, 3);
+  // A frame drawn for something else.
+  workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(SDL_FRect{kWidth - 6.0f, kHeight - 6.0f, 4.0f, 4.0f});
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, elsewhere,
+                                                [&]() { TestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); });
+  Expect(diff.identical(), "a one-row scroll of the git view should repaint it; " + DescribePixelDiff(diff));
+}
+
+// QA monkey (seed 1, step 254): with a menu open, the pointer moved over the
+// sidebar and a button there painted hovered -- with no repaint asked for it, so
+// a clip that happened to cover part of it left the rest unhovered. An open menu
+// owns the pointer (a press outside it only closes it): nothing beneath it
+// hovers, as nothing beneath a modal does.
+void TestNothingBeneathAnOpenMenuHovers() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("menu.txt", "text\n");
+  const auto help = fixture.ElementRect("menu:Help");
+  const auto view = fixture.ElementRect("sidebar-view:search");
+  Expect(help.has_value() && view.has_value(), "the Help menu and the search view button should be on screen");
+  if (!help || !view) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*help), "opening the Help menu");
+  Expect(TestAccess::MenuBarOpen(fixture.shell), "the Help menu should be open");
+  const float x = view->x + view->w / 2.0f;
+  const float y = view->y + view->h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}),
+                      "the pointer moving over the sidebar beneath an open menu");
+}
+
+// QA monkey (seed 2, step 62): typing on a diff's working side can regroup the
+// whole diff while the keystroke's damage names only the edited line. The left
+// side's first line was deleted and its empty second line paired with the
+// working side's empty first line; typing there made that pair a change too, so
+// the hunk grew a row and every row below it moved down -- on screen they stayed.
+void TestTypingThatReshapesADiffRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  std::string body;
+  for (int i = 1; i <= 30; ++i) {
+    body += "line " + std::to_string(i) + "\n";
+  }
+  FlowFixture fixture("left.txt", "# title\n\n" + body);
+  const std::filesystem::path right = fixture.root / "right.txt";
+  WriteFile(right, "\n" + body);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "compare-files " + fixture.file.string() + " " + right.string()),
+         "compare-files should open a diff");
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(0, 0);
+  TestAccess::SetFocusEditor(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const int scroll_before = compare.scroll_row;
+
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("b")}),
+                      "a keystroke that grows a hunk and moves every row below it");
+  Expect(TestAccess::ActiveCompare(fixture.shell).scroll_row == scroll_before,
+         "the keystroke should not scroll the diff (the test is about its shape)");
+}
+
 // edit-find-replace: Replace (and Replace All) from the find widget made a clean
 // buffer dirty without repainting the tab strip, so the tab kept its close
 // button where a dirty dot belonged until something else repainted it.
@@ -1826,6 +1929,9 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATerminalTitleRepaintsItsTab", TestATerminalTitleRepaintsItsTab);
   AddTest(tests, "QaFlowRegression/ATerminalPaneCursorChangeRepaintsItsCaret",
           TestATerminalPaneCursorChangeRepaintsItsCaret);
+  AddTest(tests, "QaFlowRegression/ASidebarScrollOfOneRowRepaints", TestASidebarScrollOfOneRowRepaints);
+  AddTest(tests, "QaFlowRegression/NothingBeneathAnOpenMenuHovers", TestNothingBeneathAnOpenMenuHovers);
+  AddTest(tests, "QaFlowRegression/TypingThatReshapesADiffRepaintsIt", TestTypingThatReshapesADiffRepaintsIt);
 }
 
 }  // namespace microide::tests

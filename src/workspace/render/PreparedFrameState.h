@@ -136,6 +136,14 @@ struct PreparedFrameState {
   // edit in the working side that adds or removes a hunk changes the line's hunk
   // count while damaging only the edited row.
   std::uint64_t painted_compare_header = 0;
+  // The active diff's shape as painted -- each presentation row's kind, model row,
+  // hunk and collapsed count -- recomputed only when its presentation revision
+  // moves. An edit on the working side can regroup the whole diff (a hunk grows,
+  // a collapsed block moves) while its damage names the edited line (QA monkey,
+  // seed 2).
+  const void* painted_compare_tab = nullptr;
+  std::uint64_t painted_compare_presentation_revision = 0;
+  std::uint64_t painted_compare_shape = 0;
   // The sidebar list selection painted (view and row): the tree follows the
   // active editor's file, and that selection change damaged nothing.
   std::uint64_t painted_sidebar_selection = 0;

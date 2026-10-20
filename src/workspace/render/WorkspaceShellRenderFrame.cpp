@@ -849,6 +849,26 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_compare_header = header;
     }
   }
+  // The diff's shape (see PreparedFrameState::painted_compare_shape).
+  if (const CompareTabState* compare = ActiveCompareTab(); compare == nullptr) {
+    frame_state_.painted_compare_tab = nullptr;
+  } else if (compare != frame_state_.painted_compare_tab ||
+             compare->presentation_revision != frame_state_.painted_compare_presentation_revision) {
+    std::uint64_t shape = 0xCBF29CE484222325ull ^ compare->presentation.rows.size();
+    for (const compare::ComparePresentationRow& row : compare->presentation.rows) {
+      shape = (shape ^ static_cast<std::uint64_t>(row.kind)) * 0x100000001B3ull;
+      shape = (shape ^ row.model_row_index) * 0x100000001B3ull;
+      shape = (shape ^ static_cast<std::uint64_t>(static_cast<std::int64_t>(row.hunk_index))) * 0x100000001B3ull;
+      shape = (shape ^ static_cast<std::uint64_t>(static_cast<std::int64_t>(row.collapsed_line_count))) *
+              0x100000001B3ull;
+    }
+    if (compare == frame_state_.painted_compare_tab && shape != frame_state_.painted_compare_shape) {
+      RequestEditorSurfaceRedraw();
+    }
+    frame_state_.painted_compare_tab = compare;
+    frame_state_.painted_compare_presentation_revision = compare->presentation_revision;
+    frame_state_.painted_compare_shape = shape;
+  }
   // The output panel's lines (see PreparedFrameState::painted_output_revision).
   {
     const bool shows_output =
@@ -934,7 +954,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     if (ActiveSidebarMode() == SidebarMode::Tree) {
       key = key * 0x100000001B3ull ^ project_state.directory_tree.entries_revision();
     }
-    key |= 1u;  // never 0: 0 means "nothing painted yet"
+    // Never 0 (0 means "nothing painted yet") -- without touching bit 0: `key |= 1`
+    // erased any change that lived only there in the last term mixed in, which
+    // made a tree revision going from even to odd, or a one-row scroll from an
+    // even row in any other view, invisible to this check.
+    if (key == 0) {
+      key = 1;
+    }
     if (key != frame_state_.painted_sidebar_selection && frame_state_.painted_sidebar_selection != 0) {
       RequestRedrawRect(layout.sidebar);
     }
@@ -986,6 +1012,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       if (Contains(piece, last_mouse_x_, last_mouse_y_)) {
         frame_state_.pointer_occluder = piece;
       }
+    }
+    // An open menu owns the pointer too: a press outside its pieces only closes
+    // it, so nothing beneath hovers. A sidebar button lit up under an open menu
+    // with no repaint asked for it, and a clip that covered part of it left the
+    // rest unhovered (QA monkey, seed 1).
+    if (!frame_state_.pointer_occluder.has_value() && MenuSurfaceCapturingMouse()) {
+      frame_state_.pointer_occluder = SDL_FRect{};
     }
     if (!frame_state_.pointer_occluder.has_value() && project_state.overlay.visible) {
       const SDL_FRect card = ComputeOverlayRect(layout.overlay_anchor);
