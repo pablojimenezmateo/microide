@@ -497,6 +497,14 @@
   static bool ProjectSearchEditing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.editing;
   }
+  static bool TextInputSwallowArmed(const WorkspaceShell& shell) {
+    return shell.context_.text_input.swallow_next_text_input;
+  }
+  // The text of the field being edited, as the search view paints it.
+  static std::string ProjectSearchEditBufferText(const WorkspaceShell& shell) {
+    return std::string(
+        shell.context_.current_project_state.overlay.workflow.project_search.edit_buffer.text());
+  }
   static const project::ProjectSearchOptions& ProjectSearchOptions(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.options;
   }
@@ -879,6 +887,25 @@
     return it->second;
   }
   static void OpenSettingsOverlay(WorkspaceShell& shell) { shell.OpenSettingsOverlay(); }
+  // A row's value edit (the font picker for a font row), as a click on its value
+  // box begins it.
+  static void BeginSettingValueEdit(WorkspaceShell& shell, std::string_view id) {
+    shell.BeginSettingValueEdit(id);
+  }
+  static bool SettingsEditingFonts(const WorkspaceShell& shell) {
+    return shell.settings_overlay_service_.EditingFonts();
+  }
+  static SettingsOverlayViewModel BuildSettingsOverlayViewModel(WorkspaceShell& shell) {
+    const auto layout = shell.CurrentWorkspaceLayout();
+    if (!layout.has_value()) {
+      return {};
+    }
+    return RenderViewModelBuilder(shell.context_)
+        .BuildSettingsOverlay(*layout, shell.settings_overlay_service_, shell.text_renderer_);
+  }
+  static const editor::SingleLineEditor& PromptSurfaceInputEditor(const WorkspaceShell& shell) {
+    return shell.context_.prompts.surface.input;
+  }
   // The Settings row stepper / segmented control / checkbox, one step.
   static void StepSetting(WorkspaceShell& shell, std::string_view id, bool forward) {
     shell.StepSetting(id, forward);

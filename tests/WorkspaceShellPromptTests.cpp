@@ -1390,7 +1390,57 @@ void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
   WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 2);
 }
 
+// A drag across a prompt's field selects the text under it, and Shift+click
+// extends from the caret: both went through "anchor at the caret, then move",
+// which left no selection (found by the QA prompts-keyboard flow).
+void TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "proj";
+  std::filesystem::create_directories(root);
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenPromptSurfaceForTest(shell, workspace::PromptSurfaceState::Action::RenamePath,
+                                                     workspace::PromptSurfaceState::Kind::TextInput, root / "a.txt",
+                                                     "Rename", "drag me");
+  const workspace::WorkspaceLayout layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_FRect field =
+      workspace::ComputePromptSurfaceInputRect(workspace::ComputePromptSurfaceRect(layout.full));
+  const float y = field.y + field.h * 0.5f;
+  const float left = field.x + 2.0f;
+  const float right = field.x + field.w - 2.0f;
+
+  Expect(SendMouseDown(shell, left, y, SDL_BUTTON_LEFT), "a press on the field is handled");
+  const auto& input = WorkspaceShellTestAccess::PromptSurfaceInputEditor(shell);
+  Expect(input.caret() == 0 && !input.HasSelection(), "the press places the caret, selecting nothing");
+  for (int i = 1; i <= 4; ++i) {
+    SendMouseMotion(shell, left + (right - left) * static_cast<float>(i) / 4.0f, y, SDL_BUTTON_LMASK);
+  }
+  Expect(input.HasSelection() && input.SelectedText() == "drag me",
+         "a drag to the field's end selects the whole text (" + input.SelectedText() + ")");
+  SendMouseUp(shell, right, y, SDL_BUTTON_LEFT);
+  Expect(input.SelectedText() == "drag me", "the release keeps the selection");
+
+  Expect(SendMouseDown(shell, left, y, SDL_BUTTON_LEFT), "a plain click collapses the selection");
+  SendMouseUp(shell, left, y, SDL_BUTTON_LEFT);
+  Expect(!input.HasSelection() && input.caret() == 0, "the click placed the caret at the start");
+  SDL_Event shift_click{};
+  shift_click.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  shift_click.button.button = SDL_BUTTON_LEFT;
+  shift_click.button.x = right;
+  shift_click.button.y = y;
+  shift_click.button.clicks = 1;
+  SDL_SetModState(SDL_KMOD_SHIFT);
+  shell.HandleEvent(shift_click);
+  SDL_SetModState(SDL_KMOD_NONE);
+  SendMouseUp(shell, right, y, SDL_BUTTON_LEFT);
+  Expect(input.SelectedText() == "drag me",
+         "Shift+click extends the selection from the caret (" + input.SelectedText() + ")");
+}
+
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/PromptFieldSelectsByDragAndShiftClick",
+          TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick);
   AddTest(tests, "WorkspaceShell/ClosingOneViewOfASharedDirtyBufferDoesNotPrompt",
           TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt);
   AddTest(tests, "WorkspaceShell/RenameRetargetsAllEditorGroups",

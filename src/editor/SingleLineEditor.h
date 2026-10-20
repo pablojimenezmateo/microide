@@ -32,6 +32,12 @@ class SingleLineEditor {
   void Append(std::string text);
   void SetCaret(std::size_t caret);
   void SetSelectionAnchor(std::optional<std::size_t> selection_anchor);
+  // Moves the caret to `caret`, keeping the selection's anchor -- or anchoring
+  // it where the caret was when there is none. The pointer's extend gestures
+  // (a drag, Shift+click) go through here: setting the anchor to the caret and
+  // THEN moving the caret cannot work, because an anchor equal to the caret is
+  // an empty selection and is normalized away on the spot.
+  void ExtendSelectionTo(std::size_t caret);
 
   std::optional<SingleLineSelection> Selection() const;
   bool HasSelection() const;

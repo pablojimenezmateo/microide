@@ -28,12 +28,13 @@ constexpr float kOverlayFieldHeight = 18.0f;
 void PlaceCaret(editor::SingleLineEditor& state, std::size_t byte_offset, bool extend) {
   const std::size_t clamped = std::min(byte_offset, state.text().size());
   if (extend) {
-    if (!state.selection_anchor().has_value()) {
-      state.SetSelectionAnchor(state.caret());
-    }
-  } else {
-    state.SetSelectionAnchor(std::nullopt);
+    // Shift+click. Anchoring first and moving second left no selection at all:
+    // an anchor equal to the caret is empty and was normalized away before the
+    // caret moved. Found by the QA prompts-keyboard flow dragging across a field.
+    state.ExtendSelectionTo(clamped);
+    return;
   }
+  state.SetSelectionAnchor(std::nullopt);
   state.SetCaret(clamped);
 }
 
@@ -550,16 +551,13 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     return false;
   }
 
-  // Anchor the selection at the original press point if no anchor has been set
-  // yet — happens when the initial press placed the caret without selecting.
-  if (!hit->mutable_state->selection_anchor().has_value()) {
-    hit->mutable_state->SetSelectionAnchor(hit->mutable_state->caret());
-  }
-
+  // The press placed the caret without selecting; the first motion anchors the
+  // selection there and every motion moves its other end (see ExtendSelectionTo
+  // for why the anchor cannot be set ahead of the caret).
   const float relative_x = static_cast<float>(event.motion.x) - hit->text_rect.x;
   const std::size_t byte =
       HitTestSingleLineByteOffset(*hit->state, hit->prefix, hit->available_width, relative_x);
-  hit->mutable_state->SetCaret(byte);
+  hit->mutable_state->ExtendSelectionTo(byte);
   ResetCaretBlink();
   return true;
 }

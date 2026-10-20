@@ -108,6 +108,14 @@ void SingleLineEditor::SetSelectionAnchor(std::optional<std::size_t> selection_a
   Normalize();
 }
 
+void SingleLineEditor::ExtendSelectionTo(std::size_t caret) {
+  if (!selection_anchor_.has_value()) {
+    selection_anchor_ = caret_;
+  }
+  caret_ = caret;
+  Normalize();
+}
+
 std::optional<SingleLineSelection> SingleLineEditor::Selection() const {
   if (!selection_anchor_.has_value() || *selection_anchor_ == caret_) {
     return std::nullopt;

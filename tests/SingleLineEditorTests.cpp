@@ -50,6 +50,27 @@ void TestSingleLineEditorSupportsMovementAndSelectionInvariants() {
   ExpectEditorState(editor, "alpha", 5, std::nullopt, "move end");
 }
 
+// ExtendSelectionTo is the pointer's extend gesture: the first call anchors
+// where the caret was, later ones keep that anchor. Anchoring first and moving
+// the caret second (SetSelectionAnchor(caret) then SetCaret) produced no
+// selection, because an anchor equal to the caret normalizes away at once --
+// which is why no single-line field ever selected by drag or Shift+click.
+void TestSingleLineEditorExtendSelectionToAnchorsAtTheCaret() {
+  editor::SingleLineEditor editor("drag me");
+  editor.SetCaret(1);
+  editor.ExtendSelectionTo(4);
+  ExpectEditorState(editor, "drag me", 4, editor::SingleLineSelection{1, 4}, "first extend anchors at 1");
+  editor.ExtendSelectionTo(7);
+  ExpectEditorState(editor, "drag me", 7, editor::SingleLineSelection{1, 7}, "later extends keep the anchor");
+  editor.ExtendSelectionTo(0);
+  ExpectEditorState(editor, "drag me", 0, editor::SingleLineSelection{0, 1}, "an extend past the anchor flips");
+  editor.ExtendSelectionTo(1);
+  ExpectEditorState(editor, "drag me", 1, std::nullopt, "back on the anchor is no selection");
+  editor.SetCaret(0);
+  editor.ExtendSelectionTo(3);
+  Expect(editor.Insert("Y") && editor.text() == "Yg me", "typing replaces a dragged selection (" + editor.text() + ")");
+}
+
 void TestSingleLineEditorSupportsSelectAllCopyCutPaste() {
   editor::SingleLineEditor editor("hello");
   Expect(editor.SelectAll(), "select-all should select non-empty text");
@@ -336,6 +357,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineEditorSupportsWordMotionAndDeletion);
   AddTest(tests, "SingleLineEditor/WordMotionHandlesUnicode",
           TestSingleLineEditorWordMotionHandlesUnicode);
+  AddTest(tests, "SingleLineEditor/ExtendSelectionToAnchorsAtTheCaret",
+          TestSingleLineEditorExtendSelectionToAnchorsAtTheCaret);
   AddTest(tests, "SingleLineEditor/KeyHandlerBindsWordShortcuts",
           TestSingleLineKeyHandlerBindsWordShortcuts);
 }
