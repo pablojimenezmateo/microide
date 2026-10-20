@@ -291,6 +291,7 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
   Expect(reader_running.load(std::memory_order_acquire),
          "async subprocess concurrency fixture should start its background reader");
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   Expect(process.Write("ping\n"),
          "async subprocess concurrency fixture should accept stdin while reads are pending");
   const auto elapsed =
@@ -322,7 +323,7 @@ void TestAsyncSubprocessReadTimeoutDoesNotBlockConcurrentWrite() {
   }
   process.Shutdown(0);
 
-  Expect(elapsed.count() < 500,
+  Expect(start_timing.Within(elapsed, std::chrono::milliseconds(500)),
          "async subprocess writes should not stall behind read timeouts on another thread");
   Expect(echoed.find("ping\n") != std::string::npos,
          "async subprocess concurrency fixture should echo the written payload");

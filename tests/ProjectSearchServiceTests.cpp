@@ -920,6 +920,7 @@ void TestProjectSearchServiceCatastrophicRegexIsBounded() {
   regex_options.pattern_mode = ProjectSearchPatternMode::Regex;
 
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   const auto result = RunProjectSearch(root, "(a+)+b", regex_options);
   const auto elapsed = std::chrono::steady_clock::now() - start;
 
@@ -928,7 +929,7 @@ void TestProjectSearchServiceCatastrophicRegexIsBounded() {
   // RunProjectSearch's own deadline is 2s; a bounded match limit finishes far faster.
   // Assert comfortably under the deadline so a regression that removed the limit
   // (and hung to the deadline) would fail here.
-  Expect(elapsed < std::chrono::milliseconds(1500),
+  Expect(start_timing.Within(elapsed, std::chrono::milliseconds(1500)),
          "the bounded match limit must let the search complete well before the deadline");
 }
 

@@ -735,24 +735,26 @@ void TestWorkspaceShellProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses(
   WorkspaceShellTestAccess::OnFramePresented(shell);
 
   const auto refresh_start = std::chrono::steady_clock::now();
+  const TimingWindow refresh_start_timing;
   WorkspaceShellTestAccess::RefreshProjectFiles(shell);
   const auto refresh_elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                             refresh_start)
           .count();
-  Expect(refresh_elapsed < 250,
+  Expect(refresh_start_timing.Within(std::chrono::milliseconds(refresh_elapsed), std::chrono::milliseconds(250)),
          "refreshing project files should rebuild the tree without synchronously collecting git "
          "statuses");
 
   WorkspaceShellTestAccess::SetFileIndexHasPendingChanges(shell, true);
   const auto reload_start = std::chrono::steady_clock::now();
+  const TimingWindow reload_start_timing;
   Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false),
          "file-index reload should refresh the directory tree");
   const auto reload_elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                             reload_start)
           .count();
-  Expect(reload_elapsed < 250,
+  Expect(reload_start_timing.Within(std::chrono::milliseconds(reload_elapsed), std::chrono::milliseconds(250)),
          "file-index reload should not synchronously collect git statuses on the main thread");
 }
 
@@ -773,11 +775,12 @@ void TestWorkspaceShellTerminalWakeDoesNotForceProjectScan() {
          "terminal wake non-blocking fixture should open");
 
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
           .count();
-  Expect(elapsed < 250,
+  Expect(start_timing.Within(std::chrono::milliseconds(elapsed), std::chrono::milliseconds(250)),
          "terminal wake should not synchronously arm the project watcher or scan the tree");
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "terminal wake should request source-control refresh asynchronously");
@@ -805,11 +808,12 @@ void TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking() {
          "non-blocking git refresh fixture should open");
 
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   WorkspaceShellTestAccess::ShowGitSidebar(shell);
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start)
           .count();
-  Expect(elapsed < 250,
+  Expect(start_timing.Within(std::chrono::milliseconds(elapsed), std::chrono::milliseconds(250)),
          "activating the git sidebar should dispatch status refresh without blocking the main thread");
   Expect(WorkspaceShellTestAccess::GitSidebarRefreshing(shell),
          "activating git sidebar should transition immediately into refreshing state");

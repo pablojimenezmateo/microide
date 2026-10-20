@@ -440,6 +440,7 @@ void TestFileIndexWatcherWatchReturnsPromptly() {
   watcher.SetCallback([](IndexUpdateBatch /*batch*/) {});
 
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   const bool ok = watcher.Watch(root);
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
@@ -447,7 +448,7 @@ void TestFileIndexWatcherWatchReturnsPromptly() {
   // The watch-tree build runs on a background thread; Watch() itself should be fast.
   // 200ms is loose to absorb sanitizer / loaded-CI overhead while still catching the
   // pre-fix behavior where this took ~1s on real projects.
-  Expect(elapsed.count() < 200,
+  Expect(start_timing.Within(elapsed, std::chrono::milliseconds(200)),
          "FileIndexWatcher::Watch should return promptly while watches build asynchronously");
 
   watcher.Unwatch();

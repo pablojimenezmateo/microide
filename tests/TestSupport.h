@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -33,6 +34,38 @@ bool IsSanitizerBuild();
 // hardware threads): a starved thread can halve a measured rate without inflating
 // the minimum it also measured, so a throughput bound means nothing then.
 bool MachineIsOversubscribed();
+
+// A measured stretch of wall time, and how much of it the machine spent with
+// runnable work waiting for a CPU (Linux pressure stall information,
+// /proc/pressure/cpu "some", read at both ends). An assertion about elapsed time
+// or a rate measures the machine as much as the code when the stretch it timed was
+// starved -- and the 1-minute load average MachineIsOversubscribed reads lags a
+// parallel ctest that started seconds earlier, which is how the throughput and
+// LSP-startup tests flaked with the guard in place.
+class TimingWindow {
+ public:
+  TimingWindow();
+  std::chrono::steady_clock::duration Elapsed() const;
+  // The share of the elapsed wall time with a task waiting for a CPU, 0..1; 0
+  // where the kernel does not report it.
+  double StalledFraction() const;
+  // The machine kept time over this window: not a sanitizer build, not starved
+  // (StalledFraction under 10%), not oversubscribed. Gate rate assertions on it.
+  bool Trustworthy() const;
+  // Elapsed() within `budget`, the budget scaled as WaitUntil's timeouts are in a
+  // sanitizer build and four times again over a starved window. For "this did
+  // not block" bounds, which must keep their meaning on a busy machine.
+  bool Within(std::chrono::milliseconds budget) const;
+  // The same for a duration the test measured itself (a stretch inside the window).
+  bool Within(std::chrono::steady_clock::duration measured, std::chrono::milliseconds budget) const;
+  // "took N ms (M% of it starved)", for assertion messages.
+  std::string Describe() const;
+
+ private:
+  std::chrono::steady_clock::time_point start_;
+  std::uint64_t start_stall_us_ = 0;
+  bool stall_known_ = false;
+};
 
 // Poll `predicate` until it holds or `timeout` elapses, running `pump` (if set)
 // before each check and once more after the deadline. Returns the final predicate

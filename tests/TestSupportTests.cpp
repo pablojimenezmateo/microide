@@ -1,9 +1,12 @@
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <optional>
 #include <thread>
+#include <vector>
 
 namespace microide::tests {
 namespace {
@@ -82,6 +85,34 @@ void TestWaitUntilSupportsValueReadPattern() {
   Expect(value.has_value() && *value == 42, "the awaited value should be readable after the wait");
 }
 
+// TimingWindow must see a starved stretch, or the timing assertions it gates
+// would run on a starved machine as if it kept time (and the flakes they had with
+// the load-average guard would be back). Twice as many spinning threads as cores
+// for a third of a second is starved by any measure.
+void TestTimingWindowSeesAStarvedStretch() {
+  std::ifstream pressure("/proc/pressure/cpu");
+  if (!pressure.good()) {
+    return;  // no PSI here: the window reports 0 and the guard falls back to the load average
+  }
+  const unsigned threads = std::max(1u, std::thread::hardware_concurrency()) * 2;
+  const TimingWindow window;
+  std::atomic<bool> stop{false};
+  std::vector<std::thread> spinners;
+  for (unsigned i = 0; i < threads; ++i) {
+    spinners.emplace_back([&stop]() {
+      while (!stop.load(std::memory_order_relaxed)) {
+      }
+    });
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  stop.store(true);
+  for (std::thread& spinner : spinners) {
+    spinner.join();
+  }
+  Expect(window.StalledFraction() > 0.10 && !window.Trustworthy(),
+         "a stretch with every core oversubscribed twice should read as starved: " + window.Describe());
+}
+
 }  // namespace
 
 void RegisterTestSupportTests(std::vector<TestCase>& tests) {
@@ -91,6 +122,7 @@ void RegisterTestSupportTests(std::vector<TestCase>& tests) {
           TestWaitUntilReturnsFalseOnTimeout);
   AddTest(tests, "TestSupport/WaitUntilRunsPumpEachIteration",
           TestWaitUntilRunsPumpEachIteration);
+  AddTest(tests, "TestSupport/TimingWindowSeesAStarvedStretch", TestTimingWindowSeesAStarvedStretch);
   AddTest(tests, "TestSupport/WaitUntilSupportsValueReadPattern",
           TestWaitUntilSupportsValueReadPattern);
 }

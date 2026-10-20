@@ -4,9 +4,10 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstdlib>
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -66,6 +67,71 @@ bool MachineIsOversubscribed() {
   double load = 0.0;
   const unsigned threads = std::max(1u, std::thread::hardware_concurrency());
   return getloadavg(&load, 1) == 1 && load > threads;
+}
+
+namespace {
+
+// The cumulative microseconds with some task stalled waiting for a CPU, or
+// nullopt where the kernel has no PSI (not Linux, or built without it).
+std::optional<std::uint64_t> CpuStallTotalMicros() {
+  std::ifstream pressure("/proc/pressure/cpu");
+  std::string line;
+  while (std::getline(pressure, line)) {
+    if (!line.starts_with("some ")) {
+      continue;
+    }
+    const std::size_t at = line.find("total=");
+    if (at == std::string::npos) {
+      return std::nullopt;
+    }
+    return std::strtoull(line.c_str() + at + 6, nullptr, 10);
+  }
+  return std::nullopt;
+}
+
+constexpr double kStarvedFraction = 0.10;
+
+}  // namespace
+
+TimingWindow::TimingWindow() : start_(std::chrono::steady_clock::now()) {
+  if (const auto total = CpuStallTotalMicros(); total.has_value()) {
+    start_stall_us_ = *total;
+    stall_known_ = true;
+  }
+}
+
+std::chrono::steady_clock::duration TimingWindow::Elapsed() const {
+  return std::chrono::steady_clock::now() - start_;
+}
+
+double TimingWindow::StalledFraction() const {
+  const auto total = CpuStallTotalMicros();
+  const auto elapsed_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(Elapsed()).count();
+  if (!stall_known_ || !total.has_value() || elapsed_us <= 0 || *total < start_stall_us_) {
+    return 0.0;
+  }
+  return std::min(1.0, static_cast<double>(*total - start_stall_us_) / static_cast<double>(elapsed_us));
+}
+
+bool TimingWindow::Trustworthy() const {
+  return !IsSanitizerBuild() && !MachineIsOversubscribed() && StalledFraction() < kStarvedFraction;
+}
+
+bool TimingWindow::Within(std::chrono::milliseconds budget) const {
+  return Within(Elapsed(), budget);
+}
+
+bool TimingWindow::Within(std::chrono::steady_clock::duration measured,
+                          std::chrono::milliseconds budget) const {
+  const int starved = StalledFraction() < kStarvedFraction ? 1 : 4;
+  return measured <= budget * kWaitTimeoutScale * starved;
+}
+
+std::string TimingWindow::Describe() const {
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Elapsed()).count();
+  return "took " + std::to_string(ms) + " ms (" +
+         std::to_string(static_cast<int>(StalledFraction() * 100.0)) + "% of it starved)";
 }
 
 bool WaitUntil(const std::function<bool()>& predicate,

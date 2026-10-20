@@ -893,6 +893,7 @@ return ide.plugin({
          "restored inactive tab should remain deferred before activation");
 
   const Uint64 start = SDL_GetTicks();
+  const TimingWindow start_timing;
   WorkspaceShellTestAccess::ActivateTab(restored, 1);
   const Uint64 elapsed = SDL_GetTicks() - start;
   const auto& after_tabs = WorkspaceShellTestAccess::OpenTabs(restored);
@@ -900,7 +901,7 @@ return ide.plugin({
          "activating deferred tab should hydrate immediately");
   Expect(WorkspaceShellTestAccess::ActiveEditor(restored).path() == beta.lexically_normal(),
          "activating deferred tab should switch active editor before delayed didOpen diagnostics");
-  Expect(elapsed < 250,
+  Expect(start_timing.Within(std::chrono::milliseconds(elapsed), std::chrono::milliseconds(250)),
          "activating deferred tab should not block on delayed didOpen diagnostics");
 
   const auto* immediate_diagnostics = WorkspaceShellTestAccess::DiagnosticsForPath(restored, beta);

@@ -338,10 +338,12 @@ while True:
   Expect(client.IsInitialized(), "async graceful shutdown fixture should initialize before shutdown");
 
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   client.BeginShutdown();
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
-  Expect(elapsed.count() < 100, "begin shutdown should not block on graceful server exit");
+  Expect(start_timing.Within(elapsed, std::chrono::milliseconds(100)),
+         "begin shutdown should not block on graceful server exit");
 
   client.Shutdown();
   Expect(std::filesystem::exists(marker_path),
@@ -451,10 +453,12 @@ time.sleep(10)
   Expect(std::filesystem::exists(marker_path), "preinit cancel fixture should launch");
 
   const auto begin = std::chrono::steady_clock::now();
+  const TimingWindow begin_timing;
   client.BeginShutdown();
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin);
-  Expect(elapsed.count() < 100, "begin shutdown should not block for pre-init servers");
+  Expect(begin_timing.Within(elapsed, std::chrono::milliseconds(100)),
+         "begin shutdown should not block for pre-init servers");
 
   client.Shutdown();
   Expect(client.IsShutdownComplete(), "pre-init server shutdown should complete after explicit wait");

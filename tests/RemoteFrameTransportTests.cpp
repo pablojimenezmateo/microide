@@ -229,14 +229,14 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
   Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
   constexpr int kChunks = 200;  // 12.5 MiB: about a second on this link
-  const auto start = std::chrono::steady_clock::now();
+  const TimingWindow timing;
   for (int i = 0; i < kChunks; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
   }
   Expect(WaitUntil([&] { return receiver_inbox.Count() == kChunks; }, std::chrono::seconds(30),
                    std::chrono::milliseconds(5)),
          "everything arrives");
-  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  const double seconds = std::chrono::duration<double>(timing.Elapsed()).count();
   const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
   const double window = static_cast<double>(sender.bulk_window());
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
@@ -252,11 +252,13 @@ void TestBulkWindowSettlesAtTheBandwidthDelayProduct() {
              ", rule " + std::to_string(rule));
   // The absolute bound holds only where the simulated link behaves like one: not
   // in a sanitizer build (the relay itself cannot pace 100 Mbit/s there), and not
-  // when a loaded box starved the relay's threads -- every sample inflated, or the
-  // box past its cores, which starves the pacing without moving the minimum (the
-  // hardened lane at load 17 on 12 threads: 9.5 MB/s, base RTT fine).
-  if (!IsSanitizerBuild() && !MachineIsOversubscribed() &&
-      base < 2 * std::chrono::duration<double>(kRtt).count()) {
+  // when the transfer's own stretch of time was starved -- every sample inflated,
+  // or the relay's pacing slowed without moving the minimum (the hardened lane at
+  // load 17 on 12 threads: 9.5 MB/s, base RTT fine). TimingWindow reads the CPU
+  // stall over exactly that stretch: the 1-minute load average this used to ask
+  // lagged a parallel ctest that had just started, and the test failed at 9.1 and
+  // 9.3 MB/s with its guard in place.
+  if (timing.Trustworthy() && base < 2 * std::chrono::duration<double>(kRtt).count()) {
     // 75 %, not 80: a window too small to fill the link shows as a large
     // shortfall, while a loaded parallel run measured 9.5 and 9.86 of 12.5 MB/s
     // (79 %) with the window exactly right.
@@ -289,14 +291,14 @@ void TestBulkWindowFillsALongLink() {
   Expect(receiver.Start(far, far, receiver_inbox.Callbacks(), {}), "start the receiver");
   const std::string chunk(RemoteFrameTransport::kMaxBulkChunkBytes, 'b');
   constexpr int kChunks = 160;  // 10 MiB: ~3.4 s on this link
-  const auto start = std::chrono::steady_clock::now();
+  const TimingWindow timing;
   for (int i = 0; i < kChunks; ++i) {
     Expect(sender.Send(FrameType::ProcStdout, Lane::Bulk, 1, chunk), "queue bulk");
   }
   Expect(WaitUntil([&] { return receiver_inbox.Count() == kChunks; }, std::chrono::seconds(60),
                    std::chrono::milliseconds(5)),
          "everything arrives");
-  const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  const double seconds = std::chrono::duration<double>(timing.Elapsed()).count();
   const double throughput = kChunks * static_cast<double>(chunk.size()) / seconds;
   const double product = kBytesPerSecond * std::chrono::duration<double>(kRtt).count();
   const double window = static_cast<double>(sender.bulk_window());
@@ -312,11 +314,15 @@ void TestBulkWindowFillsALongLink() {
       kBytesPerSecond * (std::chrono::duration<double>(kRtt).count() +
                          std::chrono::duration<double>(RemoteFrameTransport::kQueueAllowance).count()) -
       static_cast<double>(RemoteFrameTransport::kMaxBulkChunkBytes);
-  Expect(window >= nominal_rule * 0.95,
-         "the window grew to the link's product: window " + std::to_string(window) +
-             ", rule at the link's nominal rate " + std::to_string(nominal_rule) + ", product " +
-             std::to_string(product));
-  if (!IsSanitizerBuild() && !MachineIsOversubscribed()) {
+  // Both bounds below measure the machine as well: the window comes from the
+  // bandwidth the acks measured, which a starved relay delivers short (355 KB
+  // against a 419 KB rule at load 12.3 on 12 threads). Only over a window of time
+  // the machine kept.
+  if (timing.Trustworthy()) {
+    Expect(window >= nominal_rule * 0.95,
+           "the window grew to the link's product: window " + std::to_string(window) +
+               ", rule at the link's nominal rate " + std::to_string(nominal_rule) + ", product " +
+               std::to_string(product));
     // Slow start included: a ramp of a few round trips, then a full link.
     Expect(throughput > kBytesPerSecond * 0.7,
            "the link fills: " + std::to_string(throughput / 1e6) + " MB/s of " +

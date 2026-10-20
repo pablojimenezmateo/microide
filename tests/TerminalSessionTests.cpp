@@ -1449,12 +1449,13 @@ void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
   TerminalSessionTestAccess::SetChildProcess(session, child_pid);
 
   const auto start = std::chrono::steady_clock::now();
+  const TimingWindow start_timing;
   session.Stop();
   const auto elapsed =
       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
                                                             start);
 
-  Expect(elapsed < std::chrono::milliseconds(1000),
+  Expect(start_timing.Within(elapsed, std::chrono::milliseconds(1000)),
          "terminal stop should not block for long when the child ignores hangup and terminate");
   Expect(!session.running(),
          "terminal stop should clear the running flag after forcing the child down");
