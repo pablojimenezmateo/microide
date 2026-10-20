@@ -568,8 +568,11 @@ dirty buffer silently, and Save As leaving the tree's selection on the previous
 file (F2 then renamed the wrong row). Largest remaining gaps by size: the remote
 engine (0 % outside the `qa-remote` lane), the host-process terminal, the tool
 downloader (wired to nothing), `ControlProtocol` (the command fuzzer's, not the
-suite's), `SurfaceTextureCache` (plugin raster surfaces), `LocalTreeOps`
-collisions (a rename onto an existing name, reserved names).
+suite's), `SurfaceTextureCache` (plugin raster surfaces). `LocalTreeOps`' refusals are
+now driven by `tree-collisions`; one small thing it showed and left: the New
+File / New Folder / Rename prompt refuses a reserved name (`.`, `..`, a name
+with a `..` component) by keeping the prompt open and saying nothing, where an
+inline "not a valid name" would tell the user what is wrong.
 
 **Update 2026-10-20 (afternoon):** the configuration dimension is swept:
 `settings-sweep` takes the catalogue from a new `settings` control query and sets
