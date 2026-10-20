@@ -449,6 +449,22 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-20-368 — on Xvfb, keystrokes after a click are sometimes lost under a loaded suite. [OPEN]
+
+`lsp-diagnostics` failed both full X11 QA lanes of 2026-10-20 (qa and qa-asan, run
+on an otherwise idle box) the same way: `click_text(16, 19)` placed the caret, then
+`End` did not move it and the typed ` int broken = ;` never reached the buffer --
+so no diagnostic and five follow-on findings. Alone, and in batches of three or
+six, it passes; on the Wayland lane, where input goes over the control channel
+(`pointer`, `key`), it passed too, as did every other keyboard flow. Earlier
+loaded runs lost keys the same way in `lsp-rename`, `untitled-save-as`,
+`settings-keyboard`. Not inline blame (clicking that spot and typing works). The
+suite retries an expectation-only failure once (`--retries`) and reports a pass
+as flaky, so this no longer fails a lane silently or loudly; what loses the keys
+-- xdotool's `windowfocus` racing its `key`, SDL's focus on Xvfb -- is still to
+find. A driver that sends keys over the control channel on X11 too would sidestep
+it, at the cost of no longer exercising X keysyms.
+
 ### TD-2026-10-19-367 — a warm terminal reattach lost what the shell printed while detached, once, under TSan. [OPEN]
 
 `RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing` failed one TSan
@@ -460,7 +476,11 @@ its full 60 s (15 s x the sanitizer scale), so this is a loss, not slowness. It
 passed 4 of 4 alone and 12 of 12 run six at a time on the same TSan binary. Suspect
 the window where the host prints between the drop and the reattach's resume point
 being taken: the bytes printed then are neither in the client's mirror nor
-replayed. Next: stress the whole shard under TSan with an artificial delay between
+replayed. Ruled out so far: frames that arrive before `ReattachHost` are applied,
+not dropped (`HostConnectionLost` keeps `host_channel_`); and the product path
+(`Reattach` -> `Attached(reattach=true)`) reattaches the session before frames
+register, while this test uses the static `Attach` and calls `ReattachHost`
+itself. Next: stress the whole shard under TSan with an artificial delay between
 `peer().Fail` and `Attach`, and log the resume offset against the host's buffer.
 
 ### TD-2026-10-19-366 — copy without a fresh input serial is refused on Wayland. [OPEN]

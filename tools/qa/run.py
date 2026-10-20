@@ -91,14 +91,16 @@ def select_scenarios(patterns: list[str]) -> list[str]:
     return chosen
 
 
-def run_scenario(name: str, args: argparse.Namespace) -> tuple[str, list[str], int]:
+def run_scenario(name: str, args: argparse.Namespace,
+                 out: Path | None = None) -> tuple[str, list[str], int, set[str]]:
     """One scenario on its own Xvfb, fixture and XDG tree. Returns its report
-    lines and finding count (threads print nothing themselves)."""
-    project = fixture("taskflow", args.out / "fixtures")
+    lines, finding count and finding kinds (threads print nothing themselves)."""
+    out = out or args.out
+    project = fixture("taskflow", out / "fixtures")
     env = s.SCENARIO_ENV.get(name, {})
     plugins = s.SCENARIO_PLUGINS.get(name, ())
     started = time.monotonic()
-    with q.App.launch(project=project, binary=args.binary, shots=args.out / name,
+    with q.App.launch(project=project, binary=args.binary, shots=out / name,
                       extra_env=env, plugins=plugins) as app:
         app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env,
                              "plugins": list(plugins)}
@@ -112,7 +114,7 @@ def run_scenario(name: str, args: argparse.Namespace) -> tuple[str, list[str], i
                               f"{traceback.format_exc(limit=4)}")
         app.check(f"end of {name}")
         lines = report_lines(f"{name} ({time.monotonic() - started:.0f}s)", app)
-        return name, lines, len(app.findings)
+        return name, lines, len(app.findings), {finding.kind for finding in app.findings}
 
 
 def report_lines(name: str, app: q.App) -> list[str]:
@@ -140,15 +142,36 @@ def cmd_suite(args: argparse.Namespace) -> int:
     jobs = max(1, min(args.jobs, len(names)))
     print(f"suite: {len(names)} scenario(s), {jobs} at a time -> {args.out}", flush=True)
     failures = 0
+    retryable: list[str] = []
     lock = threading.Lock()
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(run_scenario, name, args) for name in names]
         for future in concurrent.futures.as_completed(futures):
-            name, lines, found = future.result()
+            name, lines, found, kinds = future.result()
             with lock:
                 print("\n".join(lines), flush=True)
             failures += 1 if found else 0
-    print(f"suite: {len(names) - failures}/{len(names)} clean")
+            # Only expectations: a step that timed out or a key that did not land on
+            # a loaded box. A crash, stale paint or sanitizer report is never retried.
+            if found and kinds == {"expect"}:
+                retryable.append(name)
+    flaky: list[str] = []
+    for attempt in range(args.retries):
+        still: list[str] = []
+        for name in retryable:
+            _, lines, found, kinds = run_scenario(name, args, args.out / f"retry-{attempt + 1}")
+            if found:
+                print("\n".join(line.replace("  FAIL  ", "  FAIL  (retry) ", 1) for line in lines), flush=True)
+                if kinds == {"expect"}:
+                    still.append(name)
+            else:
+                print(f"  flaky {name}: passed on retry {attempt + 1}, alone; the first run's findings are above",
+                      flush=True)
+                flaky.append(name)
+                failures -= 1
+        retryable = still
+    note = f" ({len(flaky)} flaky: {', '.join(flaky)})" if flaky else ""
+    print(f"suite: {len(names) - failures}/{len(names)} clean{note}")
     return 1 if failures else 0
 
 
@@ -233,6 +256,9 @@ def main() -> int:
     suite.add_argument("--jobs", "-j", type=int, default=int(os.environ.get("MQA_JOBS", "1")),
                        help="scenarios run at once, each on its own display (default 1, $MQA_JOBS)")
     suite.add_argument("--list", action="store_true", help="list the scenarios and exit")
+    suite.add_argument("--retries", type=int, default=int(os.environ.get("MQA_RETRIES", "1")),
+                       help="re-runs, one at a time, of a scenario whose only findings are failed "
+                            "expectations (default 1, $MQA_RETRIES); a pass is reported as flaky")
     monkey = sub.add_parser("monkey", parents=[common(False)])
     monkey.add_argument("--seed", type=int, default=1)
     monkey.add_argument("--seeds", help="a range like 1-8 (overrides --seed)")

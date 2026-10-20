@@ -32,6 +32,13 @@ def _lsp_ready(app: q.App, relative: str = "src/scheduler.cpp") -> bool:
 
 
 def _hover(app: q.App, line: int, column: int, timeout: float = 8.0) -> dict | None:
+    # A card already up is another symbol's -- the pointer starts at the screen's
+    # centre, over whatever text is there -- and a poll can be answered before the
+    # app has seen the move: clear it first, so the card read is this one's.
+    if app.ui()["popups"]["hover"] is not None:
+        x, y, w, h = app.ui()["surfaces"]["sidebar"]
+        app.move(x + w / 2, y + h - 20)
+        app.wait_until(lambda: app.ui()["popups"]["hover"] is None, 4.0, "the card already up to go")
     app.move(*app.text_point(line, column))
     found: dict = {}
 

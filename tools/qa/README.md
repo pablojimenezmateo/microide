@@ -47,7 +47,11 @@ tools/run-checks.sh qa-wayland              # the suite on weston at scale 2, as
 ```
 
 Exit status is non-zero on any finding; the summary names each finding's
-directory. `--out DIR` chooses where findings land (default `/tmp/mqa-out-<time>`).
+directory. A scenario whose only findings are failed expectations (a step that
+timed out, a key that did not land on a loaded box) is run again once, alone,
+after the parallel pass (`--retries`, `$MQA_RETRIES`, default 1): a pass then is
+reported as `flaky`, with the first run's findings kept above it. A crash, stale
+paint or a sanitizer report is never retried. `--out DIR` chooses where findings land (default `/tmp/mqa-out-<time>`).
 
 Every run gets its own Xvfb (`-displayfd`, so two drivers can run at once), its own
 XDG config/state/data/runtime directories, and a fresh copy of the fixture
