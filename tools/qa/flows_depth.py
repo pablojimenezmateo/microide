@@ -165,6 +165,8 @@ def flow_terminal_escapes(app: q.App) -> None:
     _shell(app, "printf '\\033[2J\\033[Hcleared\\n'", "cleared", "erase display")
     app.expect("r4" not in _screen(app), "erase display cleared the earlier lines")
     # Bracketed paste: with ?2004h on, a paste arrives wrapped in ESC[200~ ... ESC[201~.
+    if app.wayland:
+        return  # the clipboard needs a seat input serial (TD-2026-10-19-366)
     app.send("focus", "editor")
     open_file(app, "notes/paste-src.txt", "pasted-text")
     app.click_text(1, 1)
