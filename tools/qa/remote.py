@@ -137,7 +137,14 @@ class Suite:
         return self.app.query("notifications")
 
     def remote(self) -> dict:
-        return self.app.query("status").get("remote") or {}
+        # A status query can time out while the shell thread is busy with the
+        # connection itself (the server install, the first sync); one timed-out
+        # poll is "not ready yet", not a reason for the suite to die.
+        try:
+            return self.app.query("status").get("remote") or {}
+        except q.QaFailure as failure:
+            print(f"[INFO] status query failed: {failure}", flush=True)
+            return {}
 
     def wait_ready(self, timeout: float = 180):
         seen: list[str] = []
@@ -362,6 +369,59 @@ class Suite:
             self.record("J.tab-clean", bool(tab and not tab["dirty"]), f"tab={tab}")
             app.screenshot("J-after-churn"); app.send("focus-group-right"); app.send("close-group"); app.check("J")
 
+        if self.runs("K"):
+            # The git view against the host's repository: the saved edit is a
+            # change there, `s` stages it on the host, the commit workflow commits it.
+            app.send("open", EDIT_FILE); app.settle(0.3)
+            self.type_line(f"QA-GIT-{tok}"); app.send("save")
+            self.host_has(f"QA-GIT-{tok}")
+            app.send("sidebar-show", "git"); app.send("git-refresh"); app.settle(1.5)
+            row, dt = wait_for(lambda: next((e for e in app.elements("row", prefix="row:git/")
+                                            if e["name"].endswith("/" + EDIT_FILE)), None), 20, 0.5)
+            self.record("K.change-listed", row is not None, f"{dt:.1f}s rows={[e['name'] for e in app.elements('row', prefix='row:git/')][:6]}")
+            if row is not None:
+                app.click(*app.center(row)); app.settle(0.3); app.send("focus", "sidebar")
+                app.send("key", "s")
+                status, dt = wait_for(lambda: (lambda o: o if o.startswith("M ") else None)(
+                    host.ssh(f"cd {host.root} && git status --porcelain -- {EDIT_FILE}")), 20, 0.5)
+                self.record("K.stage-on-host", status is not None, f"{dt:.1f}s porcelain={status!r}")
+                app.click_named("button:git/commit"); app.settle(0.5)
+                app.send("type", f"qa remote commit {tok}")
+                app.click_named("button:git/confirm-commit")
+                head, dt = wait_for(lambda: (lambda o: o if f"qa remote commit {tok}" in o else None)(
+                    host.ssh(f"cd {host.root} && git log --oneline -1")), 30, 0.5)
+                self.record("K.commit-on-host", head is not None, f"{dt:.1f}s head={head!r}")
+            app.check("K")
+        if self.runs("M"):
+            # Project search over the mirror finds a file the host just created.
+            host.ssh(f"mkdir -p {host.root}/qa && printf 'needle-{tok} here\\n' > {host.root}/qa/needle.txt")
+            self.mirror_has("qa/needle.txt", f"needle-{tok}", 20)
+            app.send("project-search", f"needle-{tok}")
+            rows, dt = wait_for(lambda: [e["name"] for e in app.elements("row", prefix="row:search/")] or None, 20, 0.5)
+            self.record("M.search-finds-host-file", bool(rows) and any("needle.txt" in r for r in rows), f"{dt:.1f}s rows={rows}")
+            app.send("key", "escape"); app.check("M")
+        if self.runs("N"):
+            # Tree operations on the mirror reach the host: a new file, a rename, a delete.
+            app.send("tab", f"qa/made-{tok}.txt"); app.send("type", "made here\n"); app.send("save")
+            made, dt = wait_for(lambda: "made here" in host.file(f"qa/made-{tok}.txt"), 20, 0.5)
+            self.record("N.new-file-reaches-host", bool(made), f"{dt:.1f}s")
+            # Opening the file makes it the tree's selection (the tree follows the
+            # active file); a buffer saved for the first time is not revealed by itself.
+            app.send("open", f"qa/made-{tok}.txt"); app.settle(0.5)
+            app.send("sidebar-show", "tree"); app.send("focus", "sidebar"); app.settle(0.5)
+            selected = [e["name"] for e in app.elements("row", prefix="row:tree/") if e.get("selected")]
+            self.record("N.tree-selects-the-file", selected == [f"row:tree/made-{tok}.txt"], f"selected={selected}")
+            app.send("key", "F2"); app.settle(0.4)
+            app.send("key", "ctrl+a"); app.send("type", f"renamed-{tok}.txt"); app.send("key", "enter")
+            renamed, dt = wait_for(lambda: "made here" in host.file(f"qa/renamed-{tok}.txt"), 20, 0.5)
+            self.record("N.rename-reaches-host", bool(renamed), f"{dt:.1f}s ls={host.ssh(f'ls {host.root}/qa')!r}")
+            app.send("focus", "sidebar"); app.settle(0.3)
+            app.send("key", "Delete"); app.settle(0.4); app.send("key", "enter")
+            gone, dt = wait_for(lambda: f"renamed-{tok}" not in host.ssh(f"ls {host.root}/qa"), 20, 0.5)
+            state = self.remote()
+            self.record("N.delete-reaches-host", bool(gone) or state.get("heldDeletes", 0) > 0,
+                        f"{dt:.1f}s held={state.get('heldDeletes')} ls={host.ssh(f'ls {host.root}/qa')!r}")
+            app.check("N")
         self.info("notifications-at-end", str([(n["key"], n["message"]) for n in self.notifs()]))
 
 

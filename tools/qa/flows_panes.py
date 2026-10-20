@@ -228,6 +228,30 @@ def flow_debug_pane_mouse(app: q.App) -> None:
             step(app, "Remove Breakpoint", 0.3)
             app.expect(not any(b["line"] == 19 for f in app.query("breakpoints") for b in f.get("breakpoints", [])),
                        "the context menu removes the breakpoint")
+    # A double-click on an editable variable edits its value in place: the
+    # typed value reaches the debuggee (gdb's setVariable) and the row shows it.
+    _show_debug_mode(app, "variables")
+    editable = next((r for r in _debug_rows(app, "variables")
+                     if "=" in r.get("label", "")
+                     and r.get("label", "").split("=", 1)[1].split(":")[0].strip().lstrip("-").isdigit()), None)
+    if app.expect(editable is not None, f"an integer variable to edit ({[r.get('label') for r in _debug_rows(app, 'variables')][:6]})"):
+        name = editable["label"].split("=")[0].strip()
+        app.click(*app.center(editable), clicks=2)
+        step(app, "double-click the variable", 0.3)
+        app.key("ctrl+a")
+        app.type("4242")
+        app.key("Return")
+        app.wait_until(lambda: any(r.get("label", "").startswith(name) and "4242" in r.get("label", "")
+                                   for r in _debug_rows(app, "variables")), 5.0, "the edited value in the row")
+        step(app, "Enter commits the value", 0.3)
+        app.expect(any(r.get("label", "").startswith(name) and "4242" in r.get("label", "") for r in _debug_rows(app, "variables")),
+                   f"the row shows the value typed ({[r.get('label') for r in _debug_rows(app, 'variables') if r.get('label', '').startswith(name)]})")
+        app.click(*app.center(next(r for r in _debug_rows(app, "variables") if r.get("label", "").startswith(name))), clicks=2)
+        app.type("9")
+        app.key("Escape")
+        step(app, "Escape abandons an edit", 0.3)
+        app.expect(any(r.get("label", "").startswith(name) and "4242" in r.get("label", "") for r in _debug_rows(app, "variables")),
+                   "Escape leaves the value as it was")
     _show_debug_mode(app, "callstack")
     pane = app.ui()["surfaces"]["rightPane"]
     if pane:
@@ -285,7 +309,82 @@ def flow_dirty_close_group(app: q.App) -> None:
     dismiss(app)
 
 
+def flow_save_wait(app: q.App) -> None:
+    """A close that has to save first, while the save's formatter is still
+    running (two seconds, the qa-save formatter's slow mode): Close All Tabs with
+    Save all closes the tabs once both writes land; Close Project with Save all
+    shows a progress row with Cancel while it waits, and Cancel keeps the project
+    (the saves still finish)."""
+    assert app.project is not None
+    (app.work / "run" / "qa-slow-format").write_text("")
+    app.send("set-setting", "editor.format_on_save", "true")
+
+    def dirty(name: str) -> None:
+        open_file(app, f"notes/{name}.qasave", f"{name} qa-todo\n")
+        app.wait_until(lambda: app.buffer().get("language") == "qasave", 3.0, "the plugin's language")
+        app.click_text(1, 1)
+        app.key("End")
+        app.type(" more")
+
+    def save_button() -> dict | None:
+        return next((e for e in app.elements("button", prefix="button:prompt/")
+                     if e["name"].split("/")[-1].startswith("Save")), None)
+
+    def wait_row() -> bool:
+        return any("Cancel" in (a.get("label", "") for a in n.get("actions", [])) for n in app.query("notifications"))
+
+    dirty("one")
+    dirty("two")
+    step(app, "two dirty buffers with a slow formatter", 0.3)
+    app.click_named("menu:File")
+    app.settle(0.15)
+    app.click_named("menu-item:File/Close All Tabs")
+    if not app.wait_until(lambda: app.ui().get("modal") == "unsaved-prompt", 3.0, "the unsaved prompt"):
+        return
+    button = save_button()
+    if not app.expect(button is not None, f"a Save button ({[e['name'] for e in app.elements('button', prefix='button:prompt/')]})"):
+        return
+    app.click(*app.center(button))
+    step(app, "Save all", 0.3)
+    app.expect(bool(app.query("tabs")), "the tabs are still open while their formatter runs")
+    app.wait_until(lambda: not app.query("tabs"), 10.0, "the tabs to close once the writes land")
+    step(app, "the writes landed", 0.4)
+    app.expect(not app.query("tabs"), f"every tab closed after its save ({[t.get('title') for t in app.query('tabs')]})")
+    app.expect(read(app, "notes/one.qasave") == "ONE QA-DONE MORE\n" and read(app, "notes/two.qasave") == "TWO QA-DONE MORE\n",
+               f"both files carry the participant's and the formatter's work ({read(app, 'notes/one.qasave')!r})")
+
+    # Close Project waits behind a progress row with Cancel; Cancel keeps the project.
+    dirty("three")
+    app.send("project-close")
+    if app.wait_until(lambda: app.ui().get("modal") == "unsaved-prompt", 3.0, "the unsaved prompt before the project closes"):
+        button = save_button()
+        if button is not None:
+            app.click(*app.center(button))
+        app.wait_until(wait_row, 3.0, "a progress row with Cancel while the formatter runs")
+        step(app, "Close Project: waiting on the save", 0.3)
+        app.expect(wait_row(), f"the close waits on the save behind a row with Cancel ({[n.get('message') for n in app.query('notifications')]})")
+        cancel = next((e for e in app.elements("button", prefix="button:notification/") if e["name"].endswith("/Cancel")), None)
+        if app.expect(cancel is not None, f"the row has a Cancel button ({[e['name'] for e in app.elements('button', prefix='button:notification/')]})"):
+            app.click(*app.center(cancel))
+            step(app, "Cancel the wait", 0.4)
+        # Cancel abandons the writes still formatting: the buffer stays open and
+        # dirty, the disk untouched (a save landing after Cancel is one the user
+        # no longer asked for), and the project stays.
+        app.settle(2.5)
+        step(app, "after the formatter would have landed", 0.3)
+        app.expect(bool(app.query("projects")) and any(t.get("title") == "three.qasave" for t in app.query("tabs")),
+                   f"Cancel kept the project and its tab ({[t.get('title') for t in app.query('tabs')]})")
+        app.expect(app.buffer().get("dirty") and read(app, "notes/three.qasave") == "three qa-todo\n",
+                   f"the cancelled save never lands: the buffer stays dirty and the disk as it was ({read(app, 'notes/three.qasave')!r})")
+        app.key("ctrl+s")
+        app.wait_until(lambda: read(app, "notes/three.qasave") == "THREE QA-DONE MORE\n", 8.0, "a fresh Ctrl+S saving it")
+        app.expect(not app.buffer().get("dirty"), "and a fresh save lands as usual")
+    (app.work / "run" / "qa-slow-format").unlink(missing_ok=True)
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
+    "save-wait": flow_save_wait,
     "git-view-keys": flow_git_view_keys,
     "plugin-sidebar-keys": flow_plugin_sidebar_keys,
     "debug-pane-mouse": flow_debug_pane_mouse,
@@ -293,6 +392,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
+    "save-wait": ("qa-save",),
     "plugin-sidebar-keys": ("qa-api",),
     "debug-pane-mouse": ("gdb-dap",),
 }

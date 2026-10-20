@@ -139,6 +139,51 @@ def flow_terminal_programs(app: q.App) -> None:
     app.expect(stty_rows() == rows_before, f"and the shell sees the restored size ({rows_before} rows)")
 
 
+def flow_terminal_escapes(app: q.App) -> None:
+    """Escape sequences a program emits one by one, each read back from the
+    screen: cursor motion and overwrite, erase in line and display, save and
+    restore cursor, insert and delete line, a scroll region, tab stops, the
+    cursor hidden and shown, an OSC 8 hyperlink, and bracketed paste reaching
+    `cat -v` as the markers a shell expects."""
+    _focus_terminal(app)
+    app.type("clear\n")
+    app.settle(0.4)
+    checks = [
+        ("printf 'abc\\033[2Dxy\\n'", "axy", "cursor left overwrites in place"),
+        ("printf 'A\\0337BC\\0338X\\n'", "AXC", "DECSC/DECRC restore the cursor"),
+        ("printf 'tab\\there\\n'", "tab     here", "a tab stop every eight columns"),
+        ("printf 'keep\\033[Kthis\\033[2Kgone\\033[Gline\\n'", "line", "erase in line clears what was typed"),
+        ("printf 'up\\ndown\\033[A\\033[Cside\\033[B\\n'", "up   side", "cursor up and right land on the line above"),
+        ("printf '1\\n2\\n3\\033[2A\\033[Linserted\\033[B\\033[B\\n'", "inserted", "insert line opens a row"),
+        ("printf 'x\\033]8;;http://example.invalid\\033\\\\link\\033]8;;\\033\\\\y\\n'", "xlinky", "an OSC 8 hyperlink shows its text"),
+        ("printf '\\033[?25lhidden\\033[?25h\\n'", "hidden", "the cursor hidden and shown"),
+    ]
+    for command, until, label in checks:
+        app.expect(_shell(app, command, until, label), f"{label}: {until!r} on screen")
+    _shell(app, "printf 'top\\n\\033[2;3r\\033[2;1Hr1\\nr2\\nr3\\nr4\\033[r\\033[6;1H'", "r4", "a scroll region keeps the top line")
+    app.expect("top" in _screen(app), "the line above the scroll region stays")
+    _shell(app, "printf '\\033[2J\\033[Hcleared\\n'", "cleared", "erase display")
+    app.expect("r4" not in _screen(app), "erase display cleared the earlier lines")
+    # Bracketed paste: with ?2004h on, a paste arrives wrapped in ESC[200~ ... ESC[201~.
+    app.send("focus", "editor")
+    open_file(app, "notes/paste-src.txt", "pasted-text")
+    app.click_text(1, 1)
+    app.key("shift+End")
+    app.key("ctrl+c")
+    _focus_terminal(app)
+    app.type("printf '\\033[?2004h'; cat -v\n")
+    app.settle(0.4)
+    app.key("ctrl+shift+v")
+    app.key("Return")
+    app.wait_until(lambda: "^[[200~pasted-text^[[201~" in _screen(app), 5.0, "the paste wrapped in bracketed-paste markers")
+    step(app, "bracketed paste", 0.3)
+    app.expect("^[[200~pasted-text^[[201~" in _screen(app), f"cat -v shows the paste markers ({_screen(app).splitlines()[-3:]})")
+    app.key("ctrl+d")
+    app.settle(0.3)
+    app.type("printf '\\033[?2004l'\n")
+    app.settle(0.3)
+
+
 def _tabs(app: q.App) -> list[str]:
     return [tab["title"] for group in app.editor_state().get("groups", []) for tab in group.get("tabs", [])]
 
@@ -486,6 +531,7 @@ def flow_compare_mouse(app: q.App) -> None:
 
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "terminal-programs": flow_terminal_programs,
+    "terminal-escapes": flow_terminal_escapes,
     "unsaved-continuations": flow_unsaved_continuations,
     "branch-review": flow_branch_review,
     "selected-ranges": flow_selected_ranges,

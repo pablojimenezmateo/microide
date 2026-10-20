@@ -12,11 +12,14 @@ return ide.plugin({
       return { text = (buffer.text:gsub("qa%-todo", "qa-done")) }
     end)
     -- The formatter format-on-save runs: upper-cases the buffer through `tr`.
+    -- With $XDG_RUNTIME_DIR/qa-slow-format present the formatter takes two
+    -- seconds: the `save-wait` flow needs a save that is still formatting when
+    -- the close, quit or project close that asked for it waits on it.
     ctx.formatters.add({
       id = "qa-upper",
       language_id = "qasave",
       label = "QA Uppercase",
-      command = { "sh", "-c", "tr '[:lower:]' '[:upper:]'" },
+      command = { "sh", "-c", "[ -f \"$XDG_RUNTIME_DIR/qa-slow-format\" ] && sleep 2; tr '[:lower:]' '[:upper:]'" },
     })
   end,
 })
