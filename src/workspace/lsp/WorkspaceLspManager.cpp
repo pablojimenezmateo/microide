@@ -9,6 +9,19 @@
 
 namespace microide::workspace {
 
+namespace {
+
+// Why a server whose process is gone is gone: the client's own reason (an exec
+// the sandbox refused, a crash) and the command. One text whichever path notices
+// first -- EnsureStarted dropping the client or LastServerError reading it.
+std::string DeadServerError(const std::vector<std::string>& command, const LspClient& client) {
+  const std::string why = client.LastError();
+  return (why.empty() ? std::string("language server process exited unexpectedly") : why) +
+         " [command: " + SummarizeCommandForError(command) + "]";
+}
+
+}  // namespace
+
 LspManager::LspManager() = default;
 
 LspManager::~LspManager() { ShutdownAll(); }
@@ -152,8 +165,12 @@ LspClient* LspManager::EnsureStarted(ServerEntry& entry) {
   if (entry.client->IsRunning()) {
     return entry.client.get();
   }
+  // Died -- possibly before Start() returned, which a server whose exec fails at
+  // once does on a busy machine. Keep the client's own reason and the command,
+  // the text LastServerError gives for a client still in place; this path used
+  // to record a bare "exited unexpectedly" and drop both.
   if (entry.last_error.empty()) {
-    entry.last_error = "language server process exited unexpectedly";
+    entry.last_error = DeadServerError(entry.command, *entry.client);
   }
   entry.client = nullptr;
   return nullptr;
@@ -265,9 +282,7 @@ std::string LspManager::LastServerError(const std::string& language_id) const {
   // status that never re-started the server read nothing and showed "Starting…"
   // forever (QA lsp-csharp: csharp-ls never ran and no one said so).
   if (entry->client != nullptr && !entry->test_install && !entry->client->IsRunning()) {
-    const std::string why = entry->client->LastError();
-    return (why.empty() ? std::string("language server process exited unexpectedly") : why) +
-           " [command: " + SummarizeCommandForError(entry->command) + "]";
+    return DeadServerError(entry->command, *entry->client);
   }
   return {};
 }
