@@ -271,6 +271,37 @@ void TestATerminalTitleRepaintsItsTab() {
   fixture.ExpectFresh(body, "the shell setting its title");
 }
 
+// QA monkey (seed 1, step 186): with the terminal split, the inactive pane's
+// caret outline stayed on screen after its cursor hid (or moved) with no row of
+// text changing. Frame prep samples each pane's cursor but compared it with
+// nothing, so the old caret rect was only repainted if something else covered it.
+void TestATerminalPaneCursorChangeRepaintsItsCaret() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("caret.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term-split"), "term-split should split the terminal");
+  Expect(TestAccess::TerminalPaneCount(fixture.shell) == 2, "the terminal should have two panes");
+  const std::size_t inactive = TestAccess::ActiveTerminalPaneIndex(fixture.shell) == 0 ? 1 : 0;
+  auto& session = TestAccess::TerminalPaneSession(fixture.shell, inactive);
+  TerminalSessionTestAccess::Reset(session, 8, 40);
+  TerminalSessionTestAccess::AppendOutput(session, "prompt$ ");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+
+  // The cursor hides (DECTCEM), then moves while hidden: no row's text changes.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?25l");
+  // A frame drawn for something else (the blink of another caret, say).
+  workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(SDL_FRect{2.0f, 2.0f, 4.0f, 4.0f});
+  fixture.ExpectFresh(elsewhere, "an inactive pane's cursor hiding");
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?25h\x1b[3;5H");
+  fixture.ExpectFresh(elsewhere, "an inactive pane's cursor showing again elsewhere");
+}
+
 // edit-find-replace: Replace (and Replace All) from the find widget made a clean
 // buffer dirty without repainting the tab strip, so the tab kept its close
 // button where a dirty dot belonged until something else repainted it.
@@ -1793,6 +1824,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
   AddTest(tests, "QaFlowRegression/TheDiffsOwnVerbsAreCommands", TestTheDiffsOwnVerbsAreCommands);
   AddTest(tests, "QaFlowRegression/ATerminalTitleRepaintsItsTab", TestATerminalTitleRepaintsItsTab);
+  AddTest(tests, "QaFlowRegression/ATerminalPaneCursorChangeRepaintsItsCaret",
+          TestATerminalPaneCursorChangeRepaintsItsCaret);
 }
 
 }  // namespace microide::tests
