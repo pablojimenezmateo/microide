@@ -132,6 +132,12 @@ class TabStripService {
   const std::vector<BottomPanelTabModel>& BuildBottomPanelTabs(
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
+  // The fingerprint of the tab models BuildBottomPanelTabs last built (0 before
+  // the first): what the strip shows -- every terminal's label (an OSC title
+  // renames it), its activity dots, the output channels and their labels.
+  std::uint64_t BottomPanelTabsFingerprint() const {
+    return bottom_panel_tabs_cache_.valid ? bottom_panel_tabs_cache_.fingerprint : 0;
+  }
   const std::vector<VisibleStripTab>& ComputeVisibleBottomPanelTabs(
       const ProjectWorkspaceState& state,
       const SDL_FRect& panel_header,

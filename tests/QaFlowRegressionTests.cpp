@@ -7,6 +7,7 @@
 // stated, checked against the same queries the harness reads.
 #include "TestSupport.h"
 #include "TestSupportSdl.h"
+#include "TerminalSessionTestAccess.h"
 
 #include <chrono>
 #include <cstdio>
@@ -238,6 +239,36 @@ void TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip() {
   Expect(TestAccess::TerminalTabCount(fixture.shell) == 0, "no terminal should be left");
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(),
                       "closing the last terminal under an output channel");
+}
+
+// qa-wayland terminal-programs: a shell setting its title (OSC 0) renames its tab
+// in the panel strip, but only the terminal's body was repainted for the output
+// that carried it, so the strip kept "bash" until something else covered it.
+void TestATerminalTitleRepaintsItsTab() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("title.txt", "text\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, 8, 80);
+  TerminalSessionTestAccess::SetLaunchLabel(session, "bash");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.PinCaret();
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["panel"]["visible"].AsBool(), "the panel should show the terminal");
+  const auto& panel = ui["surfaces"]["bottomPanel"].AsArray();
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b]0;qa-title\x07title-set");
+  // What the output's arrival repaints: the terminal's body, below the strip.
+  workspace::RenderInvalidation body;
+  body.rects.push_back(SDL_FRect{static_cast<float>(panel[0].AsInt()),
+                                 static_cast<float>(panel[1].AsInt()) + workspace::kWorkspaceBottomPanelHeaderHeight,
+                                 static_cast<float>(panel[2].AsInt()),
+                                 static_cast<float>(panel[3].AsInt()) - workspace::kWorkspaceBottomPanelHeaderHeight});
+  fixture.ExpectFresh(body, "the shell setting its title");
 }
 
 // edit-find-replace: Replace (and Replace All) from the find widget made a clean
@@ -1761,6 +1792,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTypingOnAFoldedOpenerRepaintsItsRow);
   AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
   AddTest(tests, "QaFlowRegression/TheDiffsOwnVerbsAreCommands", TestTheDiffsOwnVerbsAreCommands);
+  AddTest(tests, "QaFlowRegression/ATerminalTitleRepaintsItsTab", TestATerminalTitleRepaintsItsTab);
 }
 
 }  // namespace microide::tests

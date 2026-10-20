@@ -860,15 +860,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
       frame_state_.painted_output_revision = revision;
     }
-    // A channel's tab in the strip (shared with the terminals') takes the label its
-    // first line brings: a results tab opened before its answer showed the id.
-    const bool panel_shown = layout.bottom_panel.h > 0.0f;
-    const std::uint64_t channels = panel_shown ? output_channels_.ChannelsRevision() + 1 : 0;
-    if (channels != frame_state_.painted_output_channels_revision) {
+    // The strip's tabs (terminals' and channels'): a label changes with nothing
+    // else drawn there -- a results tab takes its first line's label, a shell's
+    // OSC title renames its tab while only the terminal's body repaints.
+    const bool panel_shown = layout.bottom_panel.h > 0.0f && panel_vm.content != PanelContentKind::None;
+    const std::uint64_t tabs = panel_shown ? tab_strip_service_.BottomPanelTabsFingerprint() + 1 : 0;
+    if (tabs != frame_state_.painted_bottom_panel_tabs) {
       if (panel_shown) {
         RequestBottomPanelRedraw();
       }
-      frame_state_.painted_output_channels_revision = channels;
+      frame_state_.painted_bottom_panel_tabs = tabs;
     }
   }
   // The debug toolbar's run state (see PreparedFrameState::painted_debug_toolbar).

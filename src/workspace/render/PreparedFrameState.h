@@ -123,9 +123,11 @@ struct PreparedFrameState {
   // The output channels' content revision the output panel was painted at
   // (WorkspaceOutputChannels::ContentRevision); 0 while it shows something else.
   std::uint64_t painted_output_revision = 0;
-  // The output channel set and labels the bottom panel's tab strip was painted
-  // with (WorkspaceOutputChannels::ChannelsRevision); 0 while the panel is hidden.
-  std::uint64_t painted_output_channels_revision = 0;
+  // The bottom panel's tab models as painted (TabStripService::
+  // BottomPanelTabsFingerprint); 0 while the panel is hidden. A strip label
+  // changes with nothing else on screen: a results channel's first line, a
+  // shell's OSC title -- whose output repaints only the terminal's body.
+  std::uint64_t painted_bottom_panel_tabs = 0;
   // The active merge tab's status as painted (result state, conflicts left, the
   // selected one): a git refresh or the file watcher marks a merge result stale
   // or saved asynchronously, and the header kept reading the old state.
