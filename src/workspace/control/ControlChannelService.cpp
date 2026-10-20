@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <optional>
 #include <system_error>
 
@@ -470,6 +471,9 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
   if (verb == "keybindings") {
     return BuildKeybindings();
   }
+  if (verb == "settings") {
+    return BuildSettings();
+  }
   if (verb == "buffer") {
     const ControlActiveBuffer active =
         operations_.active_buffer ? operations_.active_buffer() : ControlActiveBuffer{};
@@ -808,6 +812,75 @@ util::JsonValue ControlChannelService::BuildCommands() const {
     }
   }
   return util::JsonValue(std::move(commands));
+}
+
+// Every registered setting with its current value, so a driver can sweep the
+// catalogue without reading the registry's source: the type decides what to
+// set (every enum value, both booleans, the ends of a numeric range).
+util::JsonValue ControlChannelService::BuildSettings() const {
+  util::JsonArray rows;
+  if (!operations_.settings) {
+    return util::JsonValue(std::move(rows));
+  }
+  const auto type_name = [](SettingType type) {
+    switch (type) {
+      case SettingType::Bool: return "bool";
+      case SettingType::Int: return "int";
+      case SettingType::Float: return "float";
+      case SettingType::Enum: return "enum";
+      case SettingType::String: break;
+    }
+    return "string";
+  };
+  for (const SettingInfo& info : operations_.settings()) {
+    util::JsonObject row;
+    row["id"] = util::JsonValue(info.id);
+    row["label"] = util::JsonValue(info.label);
+    row["description"] = util::JsonValue(info.description);
+    row["type"] = util::JsonValue(std::string(type_name(info.type)));
+    row["scope"] = util::JsonValue(std::string(info.scope == SettingScope::User ? "user" : "project"));
+    if (!info.plugin_id.empty()) {
+      row["plugin"] = util::JsonValue(info.plugin_id);
+    }
+    row["group"] = util::JsonValue(info.group);
+    row["default"] = util::JsonValue(SerializeSettingValue(info.default_value));
+    const std::optional<std::string> value =
+        operations_.setting_value ? operations_.setting_value(info.id) : std::nullopt;
+    row["value"] = value.has_value() ? util::JsonValue(*value) : util::JsonValue(nullptr);
+    if (info.type == SettingType::Enum) {
+      util::JsonArray values;
+      for (const std::string& enum_value : info.enum_values) {
+        values.push_back(util::JsonValue(enum_value));
+      }
+      row["enumValues"] = util::JsonValue(std::move(values));
+    }
+    if (const SettingSpec* spec = FindBuiltinSettingSpec(info.id); spec != nullptr) {
+      if (spec->type == SettingType::Int) {
+        if (spec->min_int != std::numeric_limits<int>::min()) {
+          row["min"] = util::JsonValue(static_cast<std::int64_t>(spec->min_int));
+        }
+        if (spec->max_int != std::numeric_limits<int>::max()) {
+          row["max"] = util::JsonValue(static_cast<std::int64_t>(spec->max_int));
+        }
+        row["step"] = util::JsonValue(static_cast<std::int64_t>(spec->int_step));
+      } else if (spec->type == SettingType::Float) {
+        if (spec->min_float != std::numeric_limits<float>::lowest()) {
+          row["min"] = util::JsonValue(static_cast<double>(spec->min_float));
+        }
+        if (spec->max_float != std::numeric_limits<float>::max()) {
+          row["max"] = util::JsonValue(static_cast<double>(spec->max_float));
+        }
+      }
+      if (spec->suggests_fonts) {
+        row["suggestsFonts"] = util::JsonValue(true);
+      }
+    }
+    rows.push_back(util::JsonValue(std::move(row)));
+    if (rows.size() >= kMaxControlQueryEntries) {
+      break;
+    }
+  }
+  return util::JsonValue(std::move(rows));
 }
 
 // Every resolved keybinding, in dispatch order: what a driver presses, and where

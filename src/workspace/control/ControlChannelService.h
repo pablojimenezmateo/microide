@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "platform/ControlSocketServer.h"
@@ -11,6 +13,7 @@
 #include "workspace/control/ControlBufferQuery.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"
+#include "workspace/registries/WorkspaceSettingsRegistry.h"
 #include "workspace/services/NotificationService.h"
 
 namespace microide::workspace {
@@ -118,6 +121,11 @@ class ControlChannelService {
     // Plugin-contributed command names, listed by the `commands` query after the
     // built-ins (the palette lists them too).
     std::function<std::vector<std::string>()> plugin_command_names;
+    // Every registered setting, built-in and plugin-contributed, and one
+    // setting's current value, for the `settings` query. Null in tests that do
+    // not exercise it (the query then answers an empty list).
+    std::function<std::vector<SettingInfo>()> settings;
+    std::function<std::optional<std::string>(std::string_view id)> setting_value;
   };
 
   // A single accepted control query (`debug-state`, `breakpoints`, `tabs`,
@@ -190,6 +198,9 @@ class ControlChannelService {
   util::JsonValue BuildNotifications() const;
   util::JsonValue BuildOutput(const util::JsonValue& args) const;
   util::JsonValue BuildKeybindings() const;
+  // Every registered setting: {id, label, description, type, scope, plugin?,
+  // group, default, value, enumValues?, min?, max?, step?, suggestsFonts?}.
+  util::JsonValue BuildSettings() const;
   // Every editor group with its tabs (cursor/scroll/dirty per tab, the visible
   // range of the focused active tab) and the split tree in its pre-order form.
   util::JsonValue BuildEditor() const;

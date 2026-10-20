@@ -174,7 +174,12 @@ enum class SettingStepDirection {
   Backward,
 };
 
-int WrapSteppedInt(int value, int min_value, int max_value, int step, SettingStepDirection direction) {
+// Saturating: a stepper held at a bound stays there. It used to wrap (16 -> 1
+// on the tab size, 32 -> 8 on the font size, 3.0 -> 0.75 on the UI scale), so
+// one tap too many on "+" handed the user the smallest value instead of the
+// largest; VS Code's number inputs clamp, and so does every stepper a person has
+// met. The enum control still cycles: a segmented control has no bounds.
+int ClampSteppedInt(int value, int min_value, int max_value, int step, SettingStepDirection direction) {
   if (min_value > max_value) {
     std::swap(min_value, max_value);
   }
@@ -182,13 +187,7 @@ int WrapSteppedInt(int value, int min_value, int max_value, int step, SettingSte
   // int parses into the store), so `value + step` in `int` is signed-overflow UB.
   const std::int64_t delta = direction == SettingStepDirection::Forward ? step : -step;
   const std::int64_t stepped = static_cast<std::int64_t>(value) + delta;
-  if (stepped > max_value) {
-    return min_value;
-  }
-  if (stepped < min_value) {
-    return max_value;
-  }
-  return static_cast<int>(stepped);
+  return static_cast<int>(std::clamp<std::int64_t>(stepped, min_value, max_value));
 }
 
 std::string NextSettingValue(const SettingSpec& spec,
@@ -226,29 +225,22 @@ std::string NextSettingValue(const SettingSpec& spec,
       if (bounded) {
         // Single source of truth: the spec owns each setting's range + step, so the
         // stepper and the store-time clamp (ParseSettingValue) never disagree.
-        value = WrapSteppedInt(value, spec.min_int, spec.max_int, spec.int_step, direction);
+        value = ClampSteppedInt(value, spec.min_int, spec.max_int, spec.int_step, direction);
       } else {
         // Fallback for any future Int setting without an explicit range: a
         // default±20 safety-net window, not a correct range.
-        value = WrapSteppedInt(value, spec.default_int - 20, spec.default_int + 20, 1, direction);
+        value = ClampSteppedInt(value, spec.default_int - 20, spec.default_int + 20, 1, direction);
       }
       return std::to_string(value);
     }
     case SettingType::Float: {
       // ui.scale is the only Float setting. Step by the 0.25 preset spacing and
-      // wrap across the full [kMinUiScale, kMaxUiScale] = [0.75, 3.0] range so the
-      // overlay stepper reaches the same maximum as the dedicated ui-scale command
-      // (the old 0.1 step capped at 2.0, leaving 2.25..3.0 unreachable here and
-      // producing off-preset values).
+      // stop at the spec's range (the same [kMinUiScale, kMaxUiScale] the
+      // ui-scale command and the store-time clamp use).
       const auto parsed = util::ParseFloat(current);
-      float value = parsed.value_or(spec.default_float) +
-                    (direction == SettingStepDirection::Forward ? 0.25f : -0.25f);
-      if (value > 3.0f) {
-        value = 0.75f;
-      } else if (value < 0.75f) {
-        value = 3.0f;
-      }
-      return SerializeSettingValue(value);
+      const float stepped = parsed.value_or(spec.default_float) +
+                            (direction == SettingStepDirection::Forward ? 0.25f : -0.25f);
+      return SerializeSettingValue(std::clamp(stepped, spec.min_float, spec.max_float));
     }
     case SettingType::String:
       return std::string(current);

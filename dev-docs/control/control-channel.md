@@ -163,7 +163,15 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `ui`, `buffer`, `output`.
+`keybindings`, `settings`, `ui`, `buffer`, `output`.
+
+**Settings.** `settings` lists every registered setting, built-in and
+plugin-contributed, with its current value: `{id, label, description, type
+(bool|int|float|string|enum), scope (user|project), plugin?, group, default,
+value, enumValues?, min?, max?, step?, suggestsFonts?}`. `value` is the resolved
+value as `set-setting` would write it; a driver sweeping the catalogue takes what
+to set from `type` (both booleans, every `enumValues` entry, the ends of a
+numeric range).
 
 **Keybindings.** `keybindings` lists the resolved bindings in dispatch order:
 `{id, chord, context, skipsTerminal, plugin, command}` (`command`: the command the

@@ -879,6 +879,10 @@
     return it->second;
   }
   static void OpenSettingsOverlay(WorkspaceShell& shell) { shell.OpenSettingsOverlay(); }
+  // The Settings row stepper / segmented control / checkbox, one step.
+  static void StepSetting(WorkspaceShell& shell, std::string_view id, bool forward) {
+    shell.StepSetting(id, forward);
+  }
   static void OpenHelpAboutOverlay(WorkspaceShell& shell) { shell.OpenHelpAboutOverlay(); }
   static std::vector<HelpAboutRow> HelpAboutRows(const WorkspaceShell& shell) {
     return shell.settings_overlay_service_.HelpRows();

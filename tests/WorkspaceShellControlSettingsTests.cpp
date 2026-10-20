@@ -76,6 +76,43 @@ void TestSetSettingStoresClampedBuiltinValue() {
          "the stored value must be clamped to the spec min, not the raw 1");
 }
 
+// The Settings stepper saturates at the range's ends. It wrapped (16 -> 1 on the
+// tab size), so a tap too many on "+" handed the user the smallest value;
+// found by the QA `settings-controls` flow holding "+" past the maximum. The
+// enum control keeps cycling: a segmented control has no bounds.
+void TestSettingsStepperStopsAtTheBounds() {
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+
+  WorkspaceShell shell;
+  shell.Initialize({});
+
+  const SettingSpec* tab = FindBuiltinSettingSpec("editor.tab_size");
+  Expect(tab != nullptr && tab->type == SettingType::Int, "tab_size must be an int spec");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", std::to_string(tab->max_int));
+  WorkspaceShellTestAccess::StepSetting(shell, "editor.tab_size", /*forward=*/true);
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.tab_size") == std::to_string(tab->max_int),
+         "stepping up from the maximum stays at the maximum");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", std::to_string(tab->min_int));
+  WorkspaceShellTestAccess::StepSetting(shell, "editor.tab_size", /*forward=*/false);
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.tab_size") == std::to_string(tab->min_int),
+         "stepping down from the minimum stays at the minimum");
+
+  const SettingSpec* scale = FindBuiltinSettingSpec("ui.scale");
+  Expect(scale != nullptr && scale->type == SettingType::Float, "ui.scale must be a float spec");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "ui.scale", microide::workspace::SerializeSettingValue(scale->max_float));
+  WorkspaceShellTestAccess::StepSetting(shell, "ui.scale", /*forward=*/true);
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "ui.scale") == microide::workspace::SerializeSettingValue(scale->max_float),
+         "stepping the UI scale up from its maximum stays there");
+
+  const SettingSpec* autosave = FindBuiltinSettingSpec("editor.autosave");
+  Expect(autosave != nullptr && autosave->type == SettingType::Enum, "autosave must be an enum spec");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.autosave", std::string(autosave->enum_values.back().value));
+  WorkspaceShellTestAccess::StepSetting(shell, "editor.autosave", /*forward=*/true);
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.autosave") == std::string(autosave->enum_values.front().value),
+         "an enum keeps cycling past its last option");
+}
+
 // A transient (`--set` / spec) override applies live but is stripped before the
 // user config is serialized, so it never clobbers the saved config; a persisting
 // write of a sibling setting survives the round-trip.
@@ -292,6 +329,8 @@ void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
           TestSetSettingCommandFlipsAndRejects);
   AddTest(tests, "WorkspaceShellControlSettings/SetSettingStoresClampedBuiltinValue",
           TestSetSettingStoresClampedBuiltinValue);
+  AddTest(tests, "WorkspaceShellControlSettings/SettingsStepperStopsAtTheBounds",
+          TestSettingsStepperStopsAtTheBounds);
   AddTest(tests, "WorkspaceShellControlSettings/TransientSettingNotPersisted",
           TestTransientSettingNotPersisted);
   AddTest(tests, "WorkspaceShellControlSettings/StartupOverridesAreTransient",

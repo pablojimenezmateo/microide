@@ -583,7 +583,17 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               out.back().selected = category.selected;
             }
             const auto has_area = [](const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; };
+            // The rows the pane shows, not the category's whole list: a row laid
+            // out below the pane has a rect, but no click can reach it, and a
+            // driver reading "the first row" after a wheel must see it move.
+            const auto in_pane = [&](const SDL_FRect& rect) {
+              return rect.y + rect.h > vm.right_pane_rect.y &&
+                     rect.y < vm.right_pane_rect.y + vm.right_pane_rect.h;
+            };
             for (const SettingsRowViewModel& row : vm.rows) {
+              if (!in_pane(row.row_rect)) {
+                continue;
+              }
               const std::string id(row.id);
               // The row's label is its current value as shown: the checkbox state,
               // or the stepper/segmented/text value.
@@ -605,6 +615,18 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 add_control("reset", row.reset_rect);
               }
               add_control("scope", row.scope_rect);
+            }
+            // The font picker's rows while a font row is being edited: the same
+            // overlay-row kind as every other list a person picks from, `selected`
+            // on the highlighted one.
+            if (vm.value_picker.visible) {
+              for (const SettingsPickerItemViewModel& item : vm.value_picker.items) {
+                if (!has_area(item.rect)) {
+                  continue;
+                }
+                AddControlUiElement(out, kOverlayRow, std::string(item.text), item.rect, std::string(item.text));
+                out.back().selected = item.highlighted;
+              }
             }
           },
       .fields =
