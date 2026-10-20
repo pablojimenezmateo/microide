@@ -481,13 +481,14 @@ SidebarMode SidebarModeFromViewId(std::string_view view_id) {
   if (view_id == "host-changes") {
     return SidebarMode::HostChanges;
   }
-  if (view_id == "plugin") {
-    return SidebarMode::Plugin;
-  }
   if (view_id == "tree") {
     return SidebarMode::Tree;
   }
-  return SidebarMode::None;
+  // Any other id is a plugin's view ("plugin" included). This table knew only the
+  // built-ins, so every plugin view came out None and the sidebar painted the file
+  // tree under the plugin's rows; a view whose provider went away is reset to the
+  // tree by the sidebar coordinator (RefreshPlugin).
+  return view_id.empty() ? SidebarMode::None : SidebarMode::Plugin;
 }
 
 void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,

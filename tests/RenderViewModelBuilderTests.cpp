@@ -878,6 +878,24 @@ void TestComputeWelcomeLayoutProducesHitRegions() {
   }
 }
 
+// A plugin's sidebar view renders as itself: the builder resolved view ids with a
+// private table of the built-ins, so every plugin view id ("qa-api", a linter's
+// "problems-plus") came out None and the sidebar painted the file tree under the
+// plugin's rows -- the rows the pointer and the ui query hit (QA plugin-api).
+void TestSidebarSurfaceResolvesPluginViews() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  const auto mode_for = [&](const char* view_id) {
+    context.current_project_state.sidebar.view_id = view_id;
+    return builder.BuildSidebarSurface().mode;
+  };
+  Expect(mode_for("qa-api") == microide::workspace::SidebarMode::Plugin,
+         "a plugin view id should resolve to the plugin sidebar");
+  Expect(mode_for("tree") == microide::workspace::SidebarMode::Tree, "the tree stays the tree");
+  Expect(mode_for("outline") == microide::workspace::SidebarMode::Outline, "built-ins keep their mode");
+  Expect(mode_for("") == microide::workspace::SidebarMode::None, "no view id is no view");
+}
+
 }  // namespace
 
 void TestSettingsOverlayWrapsLongDescriptions() {
@@ -1463,6 +1481,7 @@ void TestSingleLineViewMetricsCaretWindow() {
 }
 
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/SidebarSurfaceResolvesPluginViews", TestSidebarSurfaceResolvesPluginViews);
   AddTest(tests, "RenderViewModelBuilder/SingleLineViewMetricsCaretWindow",
           TestSingleLineViewMetricsCaretWindow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCategoryIndexIsRebuiltPerFilter",
