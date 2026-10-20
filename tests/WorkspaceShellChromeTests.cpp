@@ -201,6 +201,66 @@ void TestWorkspaceShellCompactMenuOverflowButtonIsInteractive() {
          "compact menu redraw must include the popup area, not just the title bar");
 }
 
+// The compact layout's chevron and its popup, frame by frame against a full
+// repaint: the chevron's hover fill on the way in and out, the popup opening,
+// closing by Escape and by a press outside, and a row opening its menu. The
+// popup's pixels stayed behind on every close (the chrome redraw was computed
+// after the close, when the popup was no longer chrome) and the chevron's hover
+// fill was never repainted; both found by the QA menu-clicks sweep the day it
+// started walking the compact layout.
+void TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints() {
+  constexpr int kWidth = 280;
+  constexpr int kHeight = 480;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  WorkspaceShellTestAccess::SetLayoutMode(shell, microide::workspace::LayoutMode::Compact);
+  const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
+  Expect(chevron.has_value(), "the compact layout shows the menu chevron");
+  const float cx = chevron->x + chevron->w * 0.5f;
+  const float cy = chevron->y + chevron->h * 0.5f;
+  const float away_x = static_cast<float>(kWidth) * 0.5f;
+  const float away_y = static_cast<float>(kHeight) * 0.6f;
+  const auto no_caret = []() {};
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto check = [&](const char* label, std::initializer_list<SDL_Event> events) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                                  DispatchEvents(shell, events), no_caret);
+    Expect(diff.identical(), std::string(label) + " should paint what a full repaint paints; " +
+                                 DescribePixelDiff(diff));
+  };
+  check("hovering the chevron", {MouseMotionEvent(cx, cy)});
+  check("leaving the chevron", {MouseMotionEvent(away_x, away_y)});
+  check("opening the popup", {MouseMotionEvent(cx, cy), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, cx, cy),
+                              MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, cx, cy)});
+  Expect(WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "the click opened the popup");
+  check("Escape closing the popup", {KeyDownEvent(SDLK_ESCAPE)});
+  Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "Escape closed the popup");
+  check("opening the popup again", {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, cx, cy),
+                                    MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, cx, cy)});
+  const auto popup = WorkspaceShellTestAccess::MenuOverflowPopupRect(shell);
+  Expect(popup.has_value(), "the open popup has a rect");
+  const float row_x = popup->x + popup->w * 0.5f;
+  const float row_y = popup->y + 12.0f;
+  check("a popup row opening its menu", {MouseMotionEvent(row_x, row_y),
+                                         MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, row_x, row_y),
+                                         MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, row_x, row_y)});
+  Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell) && WorkspaceShellTestAccess::MenuBarOpen(shell),
+         "the row closed the popup and opened its menu");
+  check("Escape closing the menu", {KeyDownEvent(SDLK_ESCAPE)});
+  check("opening the popup a third time", {MouseMotionEvent(cx, cy),
+                                           MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, cx, cy),
+                                           MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, cx, cy)});
+  check("a press outside closing the popup", {MouseMotionEvent(away_x, away_y),
+                                              MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, away_x, away_y),
+                                              MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, away_x, away_y)});
+  Expect(!WorkspaceShellTestAccess::MenuOverflowPopupOpen(shell), "the outside press closed the popup");
+}
+
 void TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 280, 720);
@@ -5989,6 +6049,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMenuBarShowsChevronWhenTruncated);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowButtonIsInteractive",
           TestWorkspaceShellCompactMenuOverflowButtonIsInteractive);
+  AddTest(tests, "WorkspaceShell/CompactMenuOverflowPaintsWhatAFullRepaintPaints",
+          TestWorkspaceShellCompactMenuOverflowPaintsWhatAFullRepaintPaints);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowRowsOpenAnchoredMenus",
           TestWorkspaceShellCompactMenuOverflowRowsOpenAnchoredMenus);
   AddTest(tests, "WorkspaceShell/GitSidebarHeaderButtonsHaveTooltips",

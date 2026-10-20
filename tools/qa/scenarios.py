@@ -157,11 +157,38 @@ def scenario_menu_clicks(app: q.App) -> None:
                 continue
             app.click_named(f"sidebar-view:{view}")
             app.settle(0.2)
-            for menu in [e["name"] for e in app.elements("menu")]:
+            menus = [e["name"] for e in app.elements("menu")]
+            for menu in menus:
                 label = menu.split(":", 1)[1]
                 _click_rows(app, f"{layout}, {view} view, {label}",
                             lambda: (app.click_named(menu), app.settle(0.15)),
                             f"menu-item:{label}/")
+            # The menus the bar could not fit sit behind its chevron (every menu, in
+            # compact mode): open the popup, pick the menu, then sweep its rows the
+            # same way. A layout with neither menus nor a chevron swept nothing and
+            # passed, which is what the compact layout did until 2026-10-20.
+            chevron = any(e["name"] == "button:menu-bar/more" for e in app.elements("button"))
+            app.expect(menus or chevron, f"{layout}: the menu bar shows its menus or a chevron to them")
+            if chevron:
+                app.click_named("button:menu-bar/more")
+                app.settle(0.2)
+                app.check(f"{layout}: open the menu chevron")
+                app.expect(app.ui()["menu"]["overflow"], f"{layout}: the chevron opens the overflow popup")
+                folded = [e["label"] for e in app.elements("menu-item", prefix="menu-item:more/")]
+                app.key("Escape")
+                app.settle(0.1)
+                app.expect(len(folded) + len(menus) >= 8, f"{layout}: every menu is reachable ({menus} + {folded})")
+                for label in folded:
+                    def reopen(label: str = label) -> None:
+                        app.click_named("button:menu-bar/more")
+                        app.settle(0.15)
+                        app.click_named(f"menu-item:more/{label}")
+                        app.settle(0.15)
+                    reopen()
+                    app.expect(app.ui()["menu"]["menu"] == label, f"{layout}: the popup's {label} row opens that menu")
+                    app.key("Escape")
+                    app.settle(0.1)
+                    _click_rows(app, f"{layout}, {view} view, {label} (via chevron)", reopen, f"menu-item:{label}/")
             # The sidebar's views menu, anchored on its button over the tree.
             if any(e["name"] == "button:sidebar/more" for e in app.elements("button")):
                 _click_rows(app, f"{layout}, {view} view, sidebar views menu",
@@ -382,6 +409,8 @@ import flows_integration  # noqa: E402
 import flows_plugin_api  # noqa: E402
 import flows_commands  # noqa: E402
 import flows_settings  # noqa: E402
+import flows_inputs  # noqa: E402
+import flows_surfaces  # noqa: E402
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -411,6 +440,8 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     **flows_plugin_api.FLOWS,
     **flows_commands.FLOWS,
     **flows_settings.FLOWS,
+    **flows_inputs.FLOWS,
+    **flows_surfaces.FLOWS,
 }
 
 # Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
@@ -439,4 +470,5 @@ SCENARIO_ENV: dict[str, dict[str, str]] = {
     **flows_keys.ENV,
     **flows_context_menus.ENV,
     **flows_matrix.ENV,
+    **flows_inputs.ENV,
 }

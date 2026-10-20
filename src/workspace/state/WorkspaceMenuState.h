@@ -40,6 +40,11 @@ struct MenuSurfaceState {
   int hovered_submenu_row_index = -1;
   bool overflow_popup_open = false;
   std::optional<SDL_FRect> overflow_popup_anchor_rect;
+  // The pointer is over the menu bar's overflow chevron. The chevron paints its
+  // hover fill from the pointer, so the motion path has to issue damage when
+  // the pointer enters or leaves it; without this the fill stayed stale (found
+  // by the QA menu-clicks sweep in the compact layout).
+  bool chevron_hovered = false;
   // Keyboard-selected row in the overflow popup, or -1 for none. The popup's
   // hover fill reads this and nothing else: the mouse motion path writes it too,
   // so the pointer and the keyboard can never highlight two different rows.

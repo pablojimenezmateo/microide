@@ -108,6 +108,7 @@ class ChromeMouseCoordinator {
   // render path highlights from state rather than from the live pointer, and
   // the keyboard and the mouse cannot select two different rows.
   bool HandleMenuOverflowPopupMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  void CloseOverflowPopupWithRedraw(const WorkspaceLayout& layout);
   bool HandleOverlayButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleTreeContextMenuButtonDown(const SDL_Event& event);
   bool HandleTreeContextMenuMotion(const SDL_Event& event);

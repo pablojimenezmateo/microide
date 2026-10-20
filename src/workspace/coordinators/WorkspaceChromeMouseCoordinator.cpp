@@ -94,11 +94,37 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 }
 
 bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const WorkspaceLayout& layout) {
+  // The chevron's hover fill follows the pointer; repaint it on the way in and
+  // on the way out. Before anything that may consume the motion: a popup open
+  // under the pointer still leaves the chevron drawn from the pointer.
+  if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
+      chevron.has_value()) {
+    const bool hovered = Contains(*chevron, event.motion.x, event.motion.y);
+    if (hovered != menu_state_.chevron_hovered) {
+      menu_state_.chevron_hovered = hovered;
+      operations_.request_redraw_rect(*chevron);
+    }
+  } else if (menu_state_.chevron_hovered) {
+    menu_state_.chevron_hovered = false;
+  }
   if (HandleTreeContextMenuMotion(event)) {
     return true;
   }
 
   return HandleMenuMotion(event, layout);
+}
+
+// Closes the overflow popup and repaints what it covered. The generic chrome
+// redraw is computed from the state AFTER the close, when the popup is no
+// longer chrome, so a close that relied on it left the popup's pixels behind
+// (found by the QA menu-clicks sweep in the compact layout).
+void ChromeMouseCoordinator::CloseOverflowPopupWithRedraw(const WorkspaceLayout& layout) {
+  if (menu_state_.overflow_popup_open && menu_state_.overflow_popup_anchor_rect.has_value()) {
+    const auto overflow_specs = operations_.compute_overflow_menu_bar_items(layout.menu_bar);
+    operations_.request_redraw_rect(
+        ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow_specs.size()));
+  }
+  CloseMenuOverflowPopup(menu_state_);
 }
 
 bool ChromeMouseCoordinator::HandleWheel(const SDL_Event& event,
@@ -170,7 +196,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
       chevron_rect.has_value() &&
       Contains(*chevron_rect, event.button.x, event.button.y)) {
     if (menu_state_.overflow_popup_open) {
-      CloseMenuOverflowPopup(menu_state_);
+      CloseOverflowPopupWithRedraw(layout);
     } else {
       operations_.close_menu_bar();
       OpenMenuOverflowPopup(menu_state_, *chevron_rect);
@@ -189,7 +215,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
           row.has_value()) {
         const MenuId picked = overflow_specs[*row];
         const SDL_FRect row_rect = MenuOverflowPopupRowRect(popup, *row);
-        CloseMenuOverflowPopup(menu_state_);
+        CloseOverflowPopupWithRedraw(layout);
         operations_.open_anchored_menu(picked, row_rect);
         operations_.request_chrome_redraw();
       }
@@ -197,7 +223,7 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     }
     // A press outside the popup closes it and stops there, like a menu's; one on
     // the menu bar goes on to open what it landed on.
-    CloseMenuOverflowPopup(menu_state_);
+    CloseOverflowPopupWithRedraw(layout);
     operations_.request_chrome_redraw();
     if (!Contains(layout.menu_bar, event.button.x, event.button.y)) {
       return true;

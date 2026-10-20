@@ -91,9 +91,18 @@ bool MenuCoordinator::OpenMenuOverflowItem(std::size_t index) {
       ComputeMenuOverflowPopupRect(*menu_state_.overflow_popup_anchor_rect, overflow.size()),
       index);
   const MenuId picked = overflow[index];
-  CloseMenuOverflowPopup(menu_state_);
+  CloseMenuOverflowPopup();
   OpenAnchoredMenu(picked, row);
   return true;
+}
+
+void MenuCoordinator::CloseMenuOverflowPopup() {
+  if (menu_state_.overflow_popup_open && menu_state_.overflow_popup_anchor_rect.has_value() &&
+      operations_.request_redraw_rect) {
+    operations_.request_redraw_rect(ComputeMenuOverflowPopupRect(
+        *menu_state_.overflow_popup_anchor_rect, operations_.overflow_menu_bar_items().size()));
+  }
+  workspace::CloseMenuOverflowPopup(menu_state_);
 }
 
 void MenuCoordinator::OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect) {
@@ -288,6 +297,7 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
       context_.menu_state,
       MenuCoordinator::Operations{
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
+          .request_redraw_rect = [this](const SDL_FRect& rect) { RequestRedrawRect(rect); },
           .menu_items = [this](MenuId id) { return MenuItems(id); },
           .is_menu_item_enabled =
               [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },

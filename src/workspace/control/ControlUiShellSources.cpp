@@ -141,6 +141,14 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               AddControlUiElement(out, kMenu, name, item.rect, name);
               out.back().active = menus.menu_bar_open && menus.active_menu_id == item.id;
             }
+            // The chevron that stands in for the menus the bar could not fit (all of
+            // them in compact mode): a driver walking "every menu" in a layout with
+            // no `menu:` elements must find the door to them here, or it sweeps
+            // nothing and reports green.
+            if (const auto chevron = MenuOverflowChevronRect(layout.menu_bar); chevron.has_value()) {
+              AddControlUiElement(out, kButton, "menu-bar/more", *chevron);
+              out.back().active = menus.overflow_popup_open;
+            }
             for (const auto& button : ComputeVisibleWindowControlButtons(layout.menu_bar)) {
               const std::string_view name =
                   button.id == WindowControlButtonId::Minimize   ? "window/minimize"
@@ -350,10 +358,22 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                      output_channels_.Channels())) {
               AddControlUiElement(out, kPanelTab, tab.display_title, tab.rect, tab.display_title);
               out.back().active = tab.active;
+              if (UiRectHasArea(tab.close_rect)) {
+                AddControlUiElement(out, kButton, "close-panel-tab/" + tab.display_title, tab.close_rect);
+              }
             }
             if (context_.current_project_state.panel.content == PanelContentKind::Terminal) {
               AddControlUiElement(out, kButton, "panel/new-terminal",
                                   tab_strip_service_.BottomPanelTerminalNewTabRect(mode, header));
+              // The dividers between a split terminal's panes, by the boundary
+              // they move (the same index the pane layout and the drag use).
+              if (const auto* tab = context_.current_project_state.active_terminal_tab(); tab != nullptr) {
+                for (const TerminalPaneDividerRect& divider :
+                     tab->PaneRects(BottomPanelContentRect(layout)).dividers) {
+                  AddControlUiElement(out, kDivider, "terminal/" + std::to_string(divider.boundary),
+                                      divider.rect);
+                }
+              }
             }
             AddControlUiElement(out, kButton, "panel/maximize",
                                 tab_strip_service_.BottomPanelMaximizeButtonRect(mode, header));

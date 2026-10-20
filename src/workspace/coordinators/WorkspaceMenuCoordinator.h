@@ -16,6 +16,10 @@ class MenuCoordinator {
  public:
   struct Operations {
     std::function<void()> request_chrome_redraw;
+    // One rect's worth of damage: what a closing popup covered, requested
+    // BEFORE the close, since the chrome redraw is computed from the state
+    // after it and no longer knows the popup.
+    std::function<void(const SDL_FRect&)> request_redraw_rect;
     std::function<std::span<const MenuItemSpec>(MenuId)> menu_items;
     std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
     // The menu-bar items that did not fit, in order. Depends on the live
@@ -39,6 +43,8 @@ class MenuCoordinator {
   // the popup — the same landing the click path produces.
   std::size_t MenuOverflowItemCount() const;
   bool OpenMenuOverflowItem(std::size_t index);
+  // Closes the popup and repaints what it covered.
+  void CloseMenuOverflowPopup();
   void OpenSubmenu(MenuId id, const SDL_FRect& anchor_rect);
   void CloseSubmenu();
   void CloseMenuBar();
