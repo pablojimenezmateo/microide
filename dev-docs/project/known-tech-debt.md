@@ -449,6 +449,27 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
+
+Found by the QA `settings-sweep`: `editor.colorscheme` is an enum whose values
+come from a static table (`kColorschemeValues` in `WorkspaceSettingsRegistry.cpp`)
+holding one entry, while `colorscheme list` names `default`, `light`, `dark` and
+every plugin-contributed scheme. The Settings row therefore cycles through one
+value and cannot pick a scheme at all; the only ways are the `colorscheme`
+command and Toggle Light/Dark. The row's values should come from the theme
+registry (bundled files plus plugin contributions), rebuilt when a plugin loads;
+TD-2026-10-18-363 (a theme picker) would sit on the same list.
+
+### TD-2026-10-20-370 — `files <root>` opens a project as the side effect of a finder command. [OPEN]
+
+Found by the QA `commands-args` flow: `files [root]` is documented as the file
+finder, but with a root argument it OPENS THAT ROOT AS A PROJECT (`OpenProject`)
+and then shows the finder there, so `files src` leaves the user with a second
+project tab for `src` and every later relative path resolving under it. The
+legacy verb predates project tabs. Either the argument should scope the finder
+to a subtree of the current project without opening one, or the verb should say
+what it does (`project-open` already exists for the other reading).
+
 ### TD-2026-10-20-369 — parameter hints only on request; a shadowed plugin keybinding is dropped without a word. [OPEN]
 
 Found writing the QA `plugin-api` flow:
@@ -532,6 +553,28 @@ when it starts (a resolver callback, or `${projectRoot}` in the argv), and no
 implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
+
+**Update 2026-10-20 (afternoon):** the configuration dimension is swept:
+`settings-sweep` takes the catalogue from a new `settings` control query and sets
+every registered setting to every value it can take (190 values), with
+`settings-controls` and `settings-persist` behind it. Then twelve flows for what
+the sweeps touch only by hover: the desktop file dialogs (SDL's zenity driver
+with a stand-in `tools/qa/fakebin/zenity`), menus and prompts by keyboard, a tab
+dragged, file operations under open editors, the terminal's selections, a
+`.editorconfig`, every argument-taking command with an argument, the search
+view by keys, the panel by mouse, the ruler, a wrapped diff. They found and the
+fixes landed: the Settings stepper wrapping at its bounds, the font picker's
+rows below the card closing Settings, a drag or Shift+click in ANY single-line
+field selecting nothing, `.editorconfig`'s `unset` ignored, the compact menu
+popup's pixels left behind on every close and the chevron never repainting on
+hover (the compact layout had been swept against an empty menu list), `jump +N`
+succeeding without moving, `tab-to-group` counting from 0 beside `focus-group`
+counting from 1, and the search view's `/` `=` `i` `x` typing themselves into
+the field they opened. Not bugs, noted so the next pass does not re-ask: the
+terminal has no Shift+click extension and the overview ruler is paint, not a
+click target (VS Code has neither, and a flow adds no features); the quick-open
+query is in `ui.overlay.query`, not a `field:` element. Filed: TD-370 (`files
+<root>` opens a project), TD-371 (the colour-scheme Settings row).
 
 **Update 2026-10-20:** re-measured at 60.4% of lines (from 56.1%). The next gaps by
 size were the snippet engine (20%), the compare surface by mouse (27-29%), the
