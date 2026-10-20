@@ -329,6 +329,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         case ActionId::RemoteRemoveMirror: {
           // Bare: the active project's mirror, which is open -- the service says so,
           // and the user closes it first. A root argument names a closed one.
+          if (args.empty() && !context_.HasProjectRoot()) {
+            return reject("No active project");
+          }
           const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
                                                           : std::filesystem::path(args[0]);
           const bool discard = args.size() > 1 && args[1] == "discard";
@@ -339,6 +342,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
           return DispatchResult::Handled;
         }
         case ActionId::RemoteApplyHeldDeletes: {
+          if (args.empty() && !context_.HasProjectRoot()) {
+            return reject("No active project");
+          }
           const std::filesystem::path root = args.empty() ? context_.ProjectRoot()
                                                           : std::filesystem::path(args[0]);
           if (!hosts->ApplyHeldDeletes(root)) {

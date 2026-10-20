@@ -324,9 +324,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return true;
     case ActionId::SelectForCompare:
     case ActionId::CompareWithClipboard:
-      // Need a resolvable "current side": an active editor buffer, or a file
-      // targeted in the tree.
-      return active_viewport != nullptr ||
+      // Need a resolvable "current side": an active editor buffer (not the
+      // welcome page of a group with no tab), or a file targeted in the tree.
+      return (active_viewport != nullptr && !active_viewport->is_placeholder()) ||
              ActiveTreeTargetKind() == TreeContextTargetKind::File;
     case ActionId::CompareWithSelected:
       return context_.current_project_state.compare_selection.has_value() &&

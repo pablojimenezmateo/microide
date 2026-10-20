@@ -458,6 +458,7 @@ class WorkspaceActionContext {
   bool CycleTerminal(int delta);
   // Restart the active pane's exited session in place.
   bool RelaunchTerminal();
+  bool HasActiveTerminalPane() const;
   void ToggleTerminal();
   void TogglePanel();
   void TogglePanelMaximized();

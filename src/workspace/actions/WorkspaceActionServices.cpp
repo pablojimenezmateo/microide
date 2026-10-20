@@ -321,6 +321,10 @@ bool WorkspaceActionContext::RelaunchTerminal() {
   return operations_.relaunch_terminal && operations_.relaunch_terminal();
 }
 
+bool WorkspaceActionContext::HasActiveTerminalPane() const {
+  return operations_.active_terminal_pane && operations_.active_terminal_pane() != nullptr;
+}
+
 void WorkspaceActionContext::ToggleTerminal() {
   if (operations_.toggle_terminal) {
     operations_.toggle_terminal();
@@ -688,8 +692,11 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
   }
 
   // Otherwise prefer the active editor buffer — its live, possibly-unsaved text.
+  // Not the welcome page a group with no tab shows: that is not a buffer (it
+  // was diffed as "Untitled").
   if (operations_.active_editor_viewport != nullptr) {
-    if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
+    if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+        viewport != nullptr && !viewport->is_placeholder()) {
       const std::filesystem::path path = viewport->path().lexically_normal();
       CompareInput input;
       input.content = viewport->SerializeDocumentText();
@@ -1006,6 +1013,18 @@ void WorkspaceActionContext::ResetCaretBlink() {
 bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation,
                                               const std::filesystem::path& path,
                                               std::string* error_message) {
+  // The split clones the active tab, which only an editor tab can do; say which
+  // rule refused rather than "Failed to split".
+  const char* refusal = ActiveTabIsCompare() || ActiveTabIsMerge()
+                            ? "A diff or merge tab cannot be split: split from an editor tab"
+                        : state_.editor_split.full() ? "No room for another editor group"
+                                                     : nullptr;
+  if (refusal != nullptr) {
+    if (error_message != nullptr) {
+      *error_message = refusal;
+    }
+    return false;
+  }
   const bool open_path = !path.empty();
   // A split always carves a NEW group holding a clone of the source tab, so
   // replacing that clone's view is safe: it shares the source buffer and no

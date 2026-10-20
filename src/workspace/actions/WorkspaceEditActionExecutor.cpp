@@ -522,6 +522,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::TestsDiscover: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
       std::string error_message;
       if (!context_.DiscoverTestsForActiveBuffer(&error_message)) {
         return reject(error_message.empty() ? "Test discovery failed" : error_message);

@@ -20,6 +20,9 @@ bool WorkspaceShell::DiscoverTestsForActiveBuffer(std::string* error_message) {
   }
   editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) {
+      *error_message = "No active file";  // was the bare "Test discovery failed"
+    }
     return false;
   }
 

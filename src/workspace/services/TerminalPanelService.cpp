@@ -476,6 +476,17 @@ void TerminalPanelService::ToggleTerminal() {
   NotePanelVisibilityChanged(was_visible);
 }
 
+bool TerminalPanelService::RevealTerminal() {
+  if (state_.terminal_tabs.empty()) {
+    return false;
+  }
+  const bool was_visible = PanelVisible();
+  ShowTerminalContent(true);
+  operations_.note_layout_inputs_changed();
+  NotePanelVisibilityChanged(was_visible);
+  return true;
+}
+
 void TerminalPanelService::SetPanelMaximized(bool maximized) {
   const bool was_visible = PanelVisible();
   if (maximized && !PanelVisible()) {

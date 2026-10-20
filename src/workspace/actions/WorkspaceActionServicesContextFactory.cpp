@@ -583,11 +583,16 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this]() { MakeTerminalPanelService().TogglePanelMaximized(); },
           .open_terminal_find =
               [this](std::string query) {
-                // A seedless invocation preloads the terminal selection, matching
-                // "Ctrl+F with something selected" everywhere else in the shell.
-                if (!BottomPanelShowsTerminal() || ActiveTerminalPane() == nullptr) {
+                // A terminal behind a hidden panel or another panel tab is still
+                // one to search: bring it up (it answered "No terminal to search").
+                if (ActiveTerminalPane() == nullptr) {
                   return false;
                 }
+                if (!BottomPanelShowsTerminal() && !MakeTerminalPanelService().RevealTerminal()) {
+                  return false;
+                }
+                // A seedless invocation preloads the terminal selection, matching
+                // "Ctrl+F with something selected" everywhere else in the shell.
                 if (query.empty() && TerminalHasSelection()) {
                   query = SelectedTerminalText();
                   // A multi-line selection is not a useful seed for a per-row scan.

@@ -42,11 +42,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       return DispatchResult::Handled;
     case ActionId::TerminalFocusPaneLeft:
     case ActionId::TerminalFocusPaneRight:
-      // Declined SILENTLY (empty feedback) when there is no pane that way: from
-      // the Alt+Left/Right shortcut the key then falls through to the shell, so a
-      // single-pane terminal keeps the chord for its own programs.
+      // Declined SILENTLY (empty feedback) from the Alt+Left/Right shortcut when
+      // there is no pane that way: the key then falls through to the shell, so a
+      // single-pane terminal keeps the chord for its own programs. Asked for by
+      // name, the answer says why ("command failed" said nothing).
       if (!context_.FocusTerminalPane(id == ActionId::TerminalFocusPaneLeft ? -1 : 1)) {
-        return reject("");
+        if (source == ActionSource::Shortcut) {
+          return reject("");
+        }
+        return reject(id == ActionId::TerminalFocusPaneLeft ? "No terminal pane to the left"
+                                                            : "No terminal pane to the right");
       }
       return DispatchResult::Handled;
     case ActionId::TerminalNext:
@@ -57,7 +62,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       return DispatchResult::Handled;
     case ActionId::TerminalRelaunch:
       if (!context_.RelaunchTerminal()) {
-        return reject("The terminal is still running");
+        return reject(context_.HasActiveTerminalPane() ? "The terminal is still running"
+                                                       : "No terminal to relaunch");
       }
       return DispatchResult::Handled;
     case ActionId::TerminalToggle:
@@ -131,7 +137,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
     case ActionId::FindNext:
     case ActionId::FindPrevious:
       if (context_.ActiveTabIsCompare() || context_.ActiveTabIsMerge()) {
-        return reject("find-next is unavailable in compare and merge tabs");
+        return reject(std::string(id == ActionId::FindNext ? "find-next" : "find-previous") +
+                      " is unavailable in compare and merge tabs");
       }
       context_.StepBufferSearch(id == ActionId::FindNext ? 1 : -1);
       return DispatchResult::Handled;

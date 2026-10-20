@@ -131,6 +131,10 @@ class TerminalPanelService {
   // panel); when the terminal already has the keyboard, hide the panel and give
   // focus back to the editor.
   void ToggleTerminal();
+  // Show the panel's terminal and focus it, never hiding it: what a command that
+  // acts on the terminal (terminal-find) does when the panel is hidden or shows
+  // another tab. False when there is no terminal.
+  bool RevealTerminal();
   // Maximized ("immersive") panel: only the menu bar and project strip remain.
   // Turning it on shows the panel and focuses it.
   void TogglePanelMaximized();

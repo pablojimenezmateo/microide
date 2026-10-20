@@ -1255,6 +1255,65 @@ void TestDecorationsFollowTheBufferGoingDirtyAndClean() {
                       "undo back to the saved text");
 }
 
+// commands-run: every command once, bare. A refusal must say what is wrong, and
+// a command must not act on what is not there:
+//  - term-relaunch with no terminal said "The terminal is still running";
+//  - terminal-find said "No terminal to search" while the panel showed another
+//    tab over a live terminal (it now brings the terminal up and opens find);
+//  - term-pane-left/right from the command line said "command failed" (the
+//    silent decline is for the Alt+Left/Right chord, which then goes to the shell);
+//  - find-previous in a diff named find-next;
+//  - split-right in a diff said "Failed to split the active editor";
+//  - compare-clipboard with no project diffed the welcome page as "Untitled";
+//  - with no project, remote-remove-mirror / remote-apply-deletes named an empty
+//    path, and tests-discover (there, and with no file open) said "Test
+//    discovery failed".
+void TestCommandRefusalsSayWhatIsWrong() {
+  FlowFixture fixture("refuse.txt", "text\n");
+  const std::filesystem::path other = fixture.root / "other.txt";
+  WriteFile(other, "other\n");
+  const auto said = [&](const std::string& line) {
+    (void)TestAccess::ExecuteCommandLine(fixture.shell, line);
+    return TestAccess::CommandFeedbackText(fixture.shell);
+  };
+  const auto expect_said = [&](const std::string& line, std::string_view want) {
+    const std::string feedback = said(line);
+    Expect(feedback.find(want) != std::string::npos,
+           line + " should say \"" + std::string(want) + "\", said \"" + feedback + "\"");
+  };
+  // The project's own terminals first: with none left, there is nothing to relaunch.
+  for (int i = 0; i < 8 && TestAccess::ExecuteCommandLine(fixture.shell, "term-close"); ++i) {
+  }
+  expect_said("term-relaunch", "No terminal to relaunch");
+
+  TestAccess::OpenTerminalViaService(fixture.shell);
+  expect_said("term-pane-left", "No terminal pane to the left");
+  expect_said("term-pane-right", "No terminal pane to the right");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-toggle"), "panel-toggle should hide the panel");
+  Expect(!TestAccess::ControlUi(fixture.shell)["panel"]["visible"].AsBool(), "the panel should be hidden");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "terminal-find"),
+         "terminal-find should run with a terminal behind a hidden panel, said \"" +
+             TestAccess::CommandFeedbackText(fixture.shell) + "\"");
+  const util::JsonValue panel = TestAccess::ControlUi(fixture.shell)["panel"];
+  Expect(panel["visible"].AsBool() && panel["content"].AsString() == "terminal",
+         "terminal-find should bring the terminal up, panel " + util::SerializeJson(panel));
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell,
+                                        "compare-files " + fixture.file.string() + " " + other.string()),
+         "compare-files should open a diff");
+  expect_said("find-previous", "find-previous is unavailable");
+  expect_said("split-right", "cannot be split");
+
+  TestAccess::ExecuteCloseAllTabs(fixture.shell);
+  expect_said("tests-discover", "No active file");
+
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "project-close"), "project-close should run");
+  expect_said("compare-clipboard", "No file or buffer selected to compare");
+  expect_said("remote-remove-mirror", "No active project");
+  expect_said("remote-apply-deletes", "No active project");
+  expect_said("tests-discover", "No active project");
+}
+
 // plugins-ui: `colorscheme list` refreshed the scheme names and reported nothing.
 void TestColorschemeListSaysWhichSchemesThereAre() {
   FlowFixture fixture("theme.txt", "x\n");
@@ -1654,6 +1713,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestClosingTheLastTerminalUnderAnOutputChannelRepaintsTheTabStrip);
   AddTest(tests, "QaFlowRegression/TypingOnAFoldedOpenerRepaintsItsRow",
           TestTypingOnAFoldedOpenerRepaintsItsRow);
+  AddTest(tests, "QaFlowRegression/CommandRefusalsSayWhatIsWrong", TestCommandRefusalsSayWhatIsWrong);
 }
 
 }  // namespace microide::tests
