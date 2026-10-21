@@ -29,14 +29,40 @@
 
 namespace {
 
+// The test the run loop is in, for the terminate handler (the watchdog reads it
+// too). Null between tests.
+std::atomic<const std::string*> g_current_test_name{nullptr};
+
 // A std::terminate in a shard printed one line — "terminate called without an
 // active exception" — and the test running at the time was often not the one at
 // fault (a thread from an earlier test). Print the stack of the thread that
-// called terminate, so the culprit names itself.
+// called terminate, so the culprit names itself. The stack alone did not: a CI
+// binary's addresses do not symbolize against a local build, so an Expect that
+// threw through a noexcept frame (its message is the whole diagnosis) left only
+// offsets. Name the running test and the exception in flight first.
 [[noreturn]] void TerminateWithBacktrace() {
 #if defined(__GLIBC__)
-  static constexpr char kHeader[] = "\n*** std::terminate — backtrace of the calling thread:\n";
-  (void)!::write(STDERR_FILENO, kHeader, sizeof(kHeader) - 1);
+  const auto write_text = [](std::string_view text) {
+    (void)!::write(STDERR_FILENO, text.data(), text.size());
+  };
+  write_text("\n*** std::terminate");
+  if (const std::string* running = g_current_test_name.load(std::memory_order_acquire)) {
+    write_text(" in test ");
+    write_text(*running);
+  }
+  write_text("\n");
+  if (const std::exception_ptr in_flight = std::current_exception()) {
+    try {
+      std::rethrow_exception(in_flight);
+    } catch (const std::exception& error) {
+      write_text("*** with an exception in flight: ");
+      write_text(error.what());
+      write_text("\n");
+    } catch (...) {
+      write_text("*** with a non-std exception in flight\n");
+    }
+  }
+  write_text("*** backtrace of the calling thread:\n");
   void* frames[64];
   const int count = ::backtrace(frames, 64);
   ::backtrace_symbols_fd(frames, count, STDERR_FILENO);
@@ -325,7 +351,7 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
   // whole-shard ctest timeout. It watches an atomic "current test started at"
   // stamp; the run loop clears it between tests.
   std::atomic<std::int64_t> current_test_started{0};  // 0 == no test running
-  std::atomic<const std::string*> current_test_name{nullptr};
+  std::atomic<const std::string*>& current_test_name = g_current_test_name;
   std::atomic<bool> watchdog_stop{false};
   std::thread watchdog;
   if (watchdog_ms > 0) {
@@ -389,6 +415,7 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
     }
     const std::int64_t elapsed_ms = to_ms(Clock::now() - start);
     current_test_started.store(0, std::memory_order_release);
+    current_test_name.store(nullptr, std::memory_order_release);
     timings.emplace_back(elapsed_ms, &test.name);
     if (slow_ms > 0 && elapsed_ms >= slow_ms) {
       std::cerr << name << ": SLOW " << elapsed_ms << "ms " << test.name << '\n';

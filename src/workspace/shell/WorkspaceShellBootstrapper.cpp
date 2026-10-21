@@ -15,8 +15,37 @@
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/WorkspaceFileDrop.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/control/ControlUiQuery.h"
+#include "util/PerformanceTrace.h"
 
 namespace microide::workspace {
+
+namespace {
+
+// MICROIDE_TRACE_INPUT=1: one log line per key and text event, naming the focus
+// it met, the focus it left, and whether a handler took it. A keystroke the QA
+// suite saw go missing on a slow runner (TD-2026-10-20-368) left a buffer
+// without it and nothing that said where it went.
+void TraceTypedEvent(const SDL_Event& event, FocusTarget before, FocusTarget after, bool handled) {
+  static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_INPUT");
+  if (!enabled) {
+    return;
+  }
+  const std::string_view from = ControlUiFocusName(before);
+  const std::string_view to = ControlUiFocusName(after);
+  if (event.type == SDL_EVENT_TEXT_INPUT) {
+    SDL_Log("microide input: text=\"%s\" focus=%.*s->%.*s handled=%d", event.text.text,
+            static_cast<int>(from.size()), from.data(), static_cast<int>(to.size()), to.data(),
+            handled ? 1 : 0);
+    return;
+  }
+  SDL_Log("microide input: key=%s mod=0x%x repeat=%d focus=%.*s->%.*s handled=%d",
+          SDL_GetKeyName(event.key.key), static_cast<unsigned>(event.key.mod),
+          event.key.repeat ? 1 : 0, static_cast<int>(from.size()), from.data(),
+          static_cast<int>(to.size()), to.data(), handled ? 1 : 0);
+}
+
+}  // namespace
 
 WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) {
   // Escape puts away a card Show Hover pinned to the caret, before anything else
@@ -50,6 +79,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   // old ring is erased and the new one drawn. This is the single chokepoint for that
   // invalidation, independent of which coordinator mutated the focus field.
   const FocusTarget focus_after = context_.current_project_state.surface.focus;
+  if (typing) {
+    TraceTypedEvent(event, focus_before, focus_after, result.handled);
+  }
   if (result.handled && !result.redraw.full && focus_after != focus_before) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       const auto add_focus_surface_redraw = [&](FocusTarget focus) {

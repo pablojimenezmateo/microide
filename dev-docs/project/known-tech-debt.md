@@ -449,6 +449,21 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-21-373 — a kernel shard aborts in std::terminate on CI's ASan job only. [OPEN]
+
+`checks` run 39560059038 (be9f0526), job `asan`: `microide_kernel_tests_shard_7`
+aborted 3.5 s in, right after `RemoteWorkspace/ManifestStreamsTheHostTree` built
+its 1501-file git fixture. The frames were `_Unwind_Resume` ->
+`__gxx_personality_v0` -> `__cxa_call_terminate`: an exception (most likely an
+`Expect` failing on the slow runner) unwound into a `noexcept` frame, so the
+test's message was never printed and the runner's handler left only addresses,
+which do not symbolize against a local build. Locally the shard passes 3/3 on
+the ASan binary. The handler now prints the running test's name and the
+exception in flight (`tests/TestRunner.cpp`), so the next occurrence names
+itself; until then the `noexcept` frame is unidentified (candidates: the
+`RemoteServerClient`/`RemoteWorkspace` teardown with the server child still
+streaming, a peer callback invoked from a destructor).
+
 ### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [OPEN]
 
 Found by the `qa-deep` workflow's ASan monkey (seed 4, step 112) on both of its
@@ -533,6 +548,16 @@ as flaky, so this no longer fails a lane silently or loudly; what loses the keys
 -- xdotool's `windowfocus` racing its `key`, SDL's focus on Xvfb -- is still to
 find. A driver that sends keys over the control channel on X11 too would sidestep
 it, at the cost of no longer exercising X keysyms.
+
+**2026-10-21:** not random. `git-branches` failed both qa-asan runs of
+be9f0526 (the run and its retry) identically: after Git: Switch Branch to
+`main`, `type("// stashed\n")` produced `// d` -- the same six characters lost
+both times, the toast "Switched to main" still up. It does not reproduce
+locally on the ASan binary, nor pinned to one busy core. The app now logs every
+key and text event with the focus it met and left (`MICROIDE_TRACE_INPUT=1`,
+on in every QA run), and a failed expectation saves the log's tail and the last
+40 actions beside its screenshot (`<shot>.txt`), so the next CI occurrence says
+which surface took the keys.
 
 ### TD-2026-10-19-367 — a warm terminal reattach lost what the shell printed while detached, once, under TSan. [OPEN]
 

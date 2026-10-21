@@ -82,6 +82,12 @@ FINDING_MARKERS = (
     "corrupted size",
 )
 
+
+def is_finding_line(line: str) -> bool:
+    """A log line an oracle reports. The input trace echoes what was typed, so a
+    typed "Assertion" is not one."""
+    return "microide input: " not in line and any(marker in line for marker in FINDING_MARKERS)
+
 # Sanitizer runtime defaults for a QA run (a sanitizer build reads them; others
 # ignore them). halt_on_error so the first report is the one attributable to the
 # last action, not the cascade after a corrupted heap; leaks off unless asked
@@ -206,6 +212,9 @@ class App:
             # sequence a finding is read against.
             "MICROIDE_TRACE_REDRAW_VERBOSE": "1",
             "MICROIDE_TRACE_MENU_HOVER": "1",
+            # One line per key and text event with the focus that took it: where a
+            # keystroke that never reached the buffer went (TD-2026-10-20-368).
+            "MICROIDE_TRACE_INPUT": "1",
             "XDG_CONFIG_HOME": str(work / "config"),
             "XDG_STATE_HOME": str(work / "state"),
             "XDG_DATA_HOME": str(work / "data"),
@@ -278,7 +287,7 @@ class App:
         # The oracles over what the first run logged up to its exit; the exit
         # itself is the point, not a crash (check() would report it as one).
         for line in self.new_log_lines():
-            if any(marker in line for marker in FINDING_MARKERS):
+            if is_finding_line(line):
                 self.findings.append(Finding("log", line.strip()))
         if self.proc is not None and self.proc.returncode not in (0, None):
             self.expect(False, f"quit exited with status {self.proc.returncode}")
@@ -297,7 +306,7 @@ class App:
                 os.killpg(self.proc.pid, signal.SIGKILL)
             self.proc.wait(timeout=5)
         for line in self.new_log_lines():
-            if any(marker in line for marker in FINDING_MARKERS):
+            if is_finding_line(line):
                 self.findings.append(Finding("log", line.strip()))
         if self._socket is not None:
             with contextlib.suppress(OSError):
@@ -910,7 +919,7 @@ class App:
         found: list[Finding] = []
         self.recent_log = self.new_log_lines()
         for line in self.recent_log:
-            if any(marker in line for marker in FINDING_MARKERS):
+            if is_finding_line(line):
                 found.append(Finding("log", line.strip()))
         if not self.alive():
             code = self.proc.returncode if self.proc else None
@@ -954,11 +963,30 @@ class App:
         self.grab().save(path)
         return str(path)
 
+    def log_tail(self, max_bytes: int = 96 * 1024) -> str:
+        """The end of the app's log, without consuming it (the oracles read the log
+        incrementally from their own offset)."""
+        if self.log_path is None or not self.log_path.exists():
+            return ""
+        with open(self.log_path, "rb") as log:
+            log.seek(0, os.SEEK_END)
+            size = log.tell()
+            log.seek(max(0, size - max_bytes))
+            return log.read().decode("utf-8", "replace")
+
     def expect(self, condition: bool, message: str) -> bool:
         """Records a finding when `condition` is false; returns the condition, so a
-        flow can gate its next steps on it (`if not app.expect(...): return`)."""
+        flow can gate its next steps on it (`if not app.expect(...): return`).
+        Beside the screenshot go the last actions and the app log's tail (frames,
+        and every key and text event with the focus that took it): an expectation
+        that fails only on a CI runner had nothing else to read."""
         if not condition:
             shot = self.screenshot("expect-" + message[:40])
+            if shot is not None:
+                with contextlib.suppress(Exception):
+                    recent = json.dumps(self.actions[-40:], indent=1)
+                    Path(shot).with_suffix(".txt").write_text(
+                        f"{message}\n\n--- the last actions\n{recent}\n\n--- the app log's tail\n{self.log_tail()}")
             self.findings.append(Finding("expect", message, shot))
         return bool(condition)
 
