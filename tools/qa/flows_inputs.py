@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_root, dismiss, expect_text, open_file, read, step, tree_rows, write
+from flows_common import active_root, active_title, dismiss, expect_text, open_file, read, step, tree_rows, write
 
 FAKEBIN = Path(__file__).resolve().parent / "fakebin"
 
@@ -760,8 +760,82 @@ def flow_editorconfig(app: q.App) -> None:
     app.expect(app.buffer().get("tabSize") == 8, "and back on, the file's section applies again")
 
 
+def flow_terminal_links(app: q.App) -> None:
+    """The terminal's links and mouse: a click on a printed `path:line:col`
+    opens the file at that place, a click on a `file://` URL opens the file; the
+    middle button pastes the primary selection at the prompt; a program that
+    turned mouse reporting on gets the wheel as escape sequences (`cat -v` shows
+    them) instead of the terminal scrolling.
+
+    None of this was clicked by a flow (TD-364: the panel's mouse path at 64 %)."""
+    assert app.project is not None
+    open_file(app, "notes/links.txt", "")
+    if not app.ui()["panel"]["visible"]:
+        app.key("ctrl+grave")
+        app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
+    app.send("focus", "panel")
+    step(app, "focus the terminal", 0.3)
+
+    def output() -> str:
+        return app.query("terminal-output").get("text", "")
+
+    def row_of(text: str) -> int | None:
+        lines = output().split("\n")
+        return next((i for i in range(len(lines) - 1, -1, -1) if lines[i].startswith(text)), None)
+
+    app.type("clear; echo see src/main.cpp:3:5 here; echo file://$PWD/README.md\n")
+    app.wait_until(lambda: row_of("file://") is not None, 5.0, "the two links printed")
+    step(app, "print two links", 0.3)
+    row = row_of("see src/main.cpp")
+    if app.expect(row is not None, "the path:line:col line is on screen"):
+        app.click(*app.terminal_point(row, 8))
+        app.wait_until(lambda: active_title(app) == "main.cpp", 3.0, "the click to open main.cpp")
+        step(app, "click path:line:col", 0.3)
+        app.expect(active_title(app) == "main.cpp" and app.cursors() and app.cursors()[0] == (3, 5),
+                   f"a click on src/main.cpp:3:5 opens it at line 3, column 5 ({active_title(app)}, {app.cursors()})")
+    app.send("focus", "panel")
+    row = row_of("file://")
+    if app.expect(row is not None, "the file:// line is on screen"):
+        app.click(*app.terminal_point(row, 12))
+        app.wait_until(lambda: active_title(app) == "README.md", 3.0, "the click to open README.md")
+        step(app, "click file://", 0.3)
+        app.expect(active_title(app) == "README.md", f"a click on a file:// URL opens the file ({active_title(app)})")
+
+    # The middle button pastes the primary selection (X11 only).
+    app.send("focus", "panel")
+    if not app.wayland:
+        app.type("clear; echo primaryword\n")
+        app.wait_until(lambda: row_of("primaryword") is not None, 5.0, "the word printed")
+        row = row_of("primaryword")
+        if row is not None:
+            app.click(*app.terminal_point(row, 3), clicks=2)
+            step(app, "double-click a word", 0.2)
+            app.click(*app.terminal_point(row, 3), button=2)
+            app.wait_until(lambda: output().rstrip().endswith("primaryword"), 3.0, "the middle-click paste at the prompt")
+            step(app, "middle-click paste", 0.3)
+            app.expect(output().rstrip().endswith("primaryword"),
+                       f"a middle-click pastes the selection at the prompt ({output().rstrip()[-40:]!r})")
+            app.key("ctrl+u")
+
+    # Mouse reporting: the wheel goes to the program, not the scrollback.
+    app.type("clear; printf '\\033[?1000h\\033[?1006h'; cat -v\n")
+    app.settle(0.6)
+    geometry = app.ui().get("terminal") or {}
+    if app.expect(bool(geometry), "the terminal reports its geometry"):
+        x = geometry["textX"] + 10 * geometry["charWidth"]
+        y = geometry["firstLineY"] + 2 * geometry["lineHeight"]
+        app.wheel(x, y, 2)
+        app.key("Return")
+        app.wait_until(lambda: "^[[<65;" in output(), 3.0, "the wheel's report")
+        step(app, "wheel with mouse reporting on", 0.3)
+        app.expect("^[[<65;" in output(), f"the wheel reaches the program as SGR reports ({output().rstrip()[-60:]!r})")
+    app.key("ctrl+c")
+    app.type("printf '\\033[?1000l\\033[?1006l'; clear\n")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "native-dialogs": flow_native_dialogs,
+    "terminal-links": flow_terminal_links,
     "menu-keyboard": flow_menu_keyboard,
     "prompts-keyboard": flow_prompts_keyboard,
     "tab-drag": flow_tab_drag,
