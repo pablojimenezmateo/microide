@@ -124,10 +124,14 @@ WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   layout.bottom_panel =
       MakeRect(0.0f, window_height - content_bottom_reserved, window_width,
                resolved_bottom_panel_height);
+  // Hidden, the bar is a zero-height strip along the window's bottom edge, not
+  // {0,0,0,0}: the toast stack is anchored on it, and at the origin every toast
+  // was laid out above the window and never seen (QA). Area-zero still reads as
+  // hidden to everything that asks (`w > 0 && h > 0`, the ui query's surfaces).
   layout.status_bar =
       reserve_status_bar
           ? MakeRect(0.0f, window_height - status_bar_height, window_width, status_bar_height)
-          : MakeRect(0.0f, 0.0f, 0.0f, 0.0f);
+          : MakeRect(0.0f, window_height, window_width, 0.0f);
   layout.content =
       MakeRect(0.0f, content_top, window_width,
                std::max(0.0f, window_height - content_top - content_bottom_reserved));
