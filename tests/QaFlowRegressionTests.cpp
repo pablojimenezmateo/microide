@@ -1081,6 +1081,81 @@ void TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh() {
   fixture.ExpectFresh(fixture.Click(*toggle_after), "Toggle Base (hidden)");
 }
 
+// QA merge-panes: a conflict scrolled out of sight still had buttons -- its
+// accept buttons clamped to the bottom of the source panes and its result
+// buttons fell back to the top of the result pane, where hovering line 1 showed
+// them and a click applied a choice to a conflict 78 lines away. A conflict with
+// no row on screen has no buttons, and the ui names only the buttons there are.
+void TestAConflictOutOfSightHasNoButtons() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  std::string base;
+  for (int i = 1; i <= 90; ++i) {
+    base += "line " + std::to_string(i) + "\n";
+  }
+  const auto with = [&](const std::string& side) {
+    std::string text = base;
+    for (const int n : {2, 80}) {
+      const std::string from = "line " + std::to_string(n) + "\n";
+      text.replace(text.find(from), from.size(), "line " + std::to_string(n) + " " + side + "\n");
+    }
+    return text;
+  };
+  std::string result = base;
+  for (const int n : {80, 2}) {
+    const std::string from = "line " + std::to_string(n) + "\n";
+    result.replace(result.find(from), from.size(),
+                   "<<<<<<< HEAD\nline " + std::to_string(n) + " current\n=======\nline " + std::to_string(n) +
+                       " incoming\n>>>>>>> in\n");
+  }
+  WriteFile(fixture.root / "base.txt", base);
+  WriteFile(fixture.root / "incoming.txt", with("incoming"));
+  WriteFile(fixture.root / "current.txt", with("current"));
+  WriteFile(fixture.root / "result.txt", result);
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::ActiveMerge(fixture.shell).conflicts.size() == 2, "the fixture has two conflicts");
+
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  std::vector<std::string> phantom;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string name = entry["name"].AsString();
+    if (name.starts_with("button:merge/1/")) {
+      phantom.push_back(name);
+    }
+  }
+  Expect(phantom.empty(), "the ui names no button for the conflict out of sight: " +
+                              (phantom.empty() ? std::string() : phantom.front()));
+  // The file scrolls, so there is a vertical bar: beside the rows, not over the
+  // toolbar, whose Save and Mark Resolved it cut off.
+  const workspace::ScrollSurfaceLayout scroll = TestAccess::ActiveMergeScrollLayout(fixture.shell);
+  Expect(scroll.vertical_scrollbar.has_value(), "a long merge has a vertical scrollbar");
+  for (const char* button : {"button:merge/save", "button:merge/Mark Resolved"}) {
+    const auto rect = fixture.ElementRect(button);
+    Expect(rect.has_value() && scroll.vertical_scrollbar.has_value() &&
+               !RectsIntersect(*rect, scroll.vertical_scrollbar->track),
+           std::string(button) + " is clear of the scrollbar");
+  }
+  // Where its result buttons used to fall: the top of the result pane, beside the
+  // first conflict's own row.
+  const auto first_base = fixture.ElementRect("button:merge/0/result-base");
+  Expect(first_base.has_value(), "the first conflict's result buttons are on screen");
+  if (first_base.has_value()) {
+    const float x = first_base->x + 4.0f;
+    for (float y = first_base->y - 60.0f; y < first_base->y; y += 4.0f) {
+      (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)});
+      const auto& hover = TestAccess::ActiveMerge(fixture.shell).hover_state;
+      if (hover.has_value() && hover->conflict_index == 1) {
+        Expect(false, "hovering above the first conflict targets the one out of sight (y " +
+                          std::to_string(static_cast<int>(y)) + ")");
+        break;
+      }
+    }
+  }
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2419,6 +2494,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",
           TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/AConflictOutOfSightHasNoButtons", TestAConflictOutOfSightHasNoButtons);
   AddTest(tests, "QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther",
           TestAnEditInOneHalfOfASplitShowsInTheOther);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",

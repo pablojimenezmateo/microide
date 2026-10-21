@@ -288,7 +288,9 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     // Source-pane accept buttons anchor to the SOURCE pane's own scroll, not the
     // result pane's. When a source pane is longer than the result the result scroll
     // clamps lower, so using it here would drift the button off its rendered row.
-    if (Contains(ComputeMergeSourceActionButtonRect(surface.left_x, surface.gutter_width,
+    if (MergeRowsOnScreen(conflict.incoming_start_line, conflict.incoming_end_line,
+                          interaction.incoming.scroll_line, interaction.incoming.visible_rows) &&
+        Contains(ComputeMergeSourceActionButtonRect(surface.left_x, surface.gutter_width,
                                                     surface.rows_y, surface.line_height,
                                                     static_cast<int>(interaction.incoming.scroll_line),
                                                     conflict.incoming_end_line,
@@ -302,7 +304,9 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
           .preview_choice = compare::MergeChoice::Incoming,
       };
     }
-    if (Contains(ComputeMergeSourceActionButtonRect(surface.right_x, surface.gutter_width,
+    if (MergeRowsOnScreen(conflict.current_start_line, conflict.current_end_line,
+                          interaction.current.scroll_line, interaction.current.visible_rows) &&
+        Contains(ComputeMergeSourceActionButtonRect(surface.right_x, surface.gutter_width,
                                                     surface.rows_y, surface.line_height,
                                                     static_cast<int>(interaction.current.scroll_line),
                                                     conflict.current_end_line,
@@ -317,12 +321,16 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
       };
     }
 
+    const std::optional<SDL_FRect> conflict_rect = ComputeVisibleLineRangeRect(
+        interaction.result.rect, interaction.result.lines, conflict.start_line,
+        std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
+    if (!conflict_rect.has_value()) {
+      continue;  // out of sight in the result: its buttons would fall at the pane's top
+    }
     const auto action_rects = ComputeMergeResultActionButtonRects(
         surface.center_x + surface.gutter_width, surface.rows_y, interaction.content_bottom,
-        ComputeVisibleLineRangeRect(interaction.result.rect, interaction.result.lines,
-                                    conflict.start_line,
-                                    std::max(conflict.end_line, conflict.start_line + std::size_t{1})),
-        interaction.result_action_widths, interaction.button_height, interaction.button_gap);
+        conflict_rect, interaction.result_action_widths, interaction.button_height,
+        interaction.button_gap);
     if (Contains(action_rects[0], x, y)) {
       return MergeHoverState{
           .kind = MergeHoverState::Kind::ResultAction,

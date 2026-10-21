@@ -298,6 +298,11 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
   }
+  static ScrollSurfaceLayout ActiveMergeScrollLayout(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto surface = shell.ComputeMergeSurfaceLayout(layout.editor_surface, ActiveMerge(shell));
+    return shell.ComputeMergeScrollLayout(layout.editor_surface, surface, ActiveMerge(shell));
+  }
   static WorkspaceShell::MergeInteractionLayout ActiveMergeInteractionLayout(WorkspaceShell& shell) {
     auto& merge = ActiveMerge(shell);
     const WorkspaceLayout layout = CurrentLayout(shell);

@@ -188,6 +188,15 @@ struct MergeHoverResultLayout {
   TextGridInteractionLayout text{};
 };
 
+// Whether any of rows [start, end) of a pane show, scrolled to `scroll_line` with
+// `visible_rows` rows (an empty span counts as its first row). A conflict with no
+// row on screen has no buttons: they clamped to the pane's edge, where hovering
+// them acted on a conflict out of sight (QA merge-panes).
+inline bool MergeRowsOnScreen(std::size_t start, std::size_t end, std::size_t scroll_line,
+                              std::size_t visible_rows) {
+  return start < scroll_line + visible_rows && std::max(end, start + 1) > scroll_line;
+}
+
 struct MergeHoverInteractionLayout {
   float content_bottom = 0.0f;
   TextGridInteractionLayout incoming{};

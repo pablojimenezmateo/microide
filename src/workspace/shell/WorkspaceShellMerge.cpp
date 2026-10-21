@@ -222,7 +222,12 @@ ScrollSurfaceLayout WorkspaceShell::ComputeMergeScrollLayout(
   // horizontal scrollbar is produced.
   const std::size_t content_columns =
       merge_tab.result_viewport.soft_wrap() ? 0 : merge_tab.max_visual_columns;
-  return ComputeScrollSurfaceLayout(rect, MergeTotalVisualRowCount(merge_tab),
+  // The bars scroll the rows, so they run beside the rows: over the whole surface
+  // the vertical bar sat on the toolbar, under Save and Mark Resolved, whose
+  // labels it cut off once the file was long enough to scroll (QA merge-panes).
+  const SDL_FRect rows_area =
+      MakeRect(rect.x, surface.rows_y, rect.w, std::max(0.0f, rect.y + rect.h - surface.rows_y));
+  return ComputeScrollSurfaceLayout(rows_area, MergeTotalVisualRowCount(merge_tab),
                                     surface.visible_rows, merge_tab.scroll_row, content_columns,
                                     surface.visible_columns, merge_tab.horizontal_scroll);
 }

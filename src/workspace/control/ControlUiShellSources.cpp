@@ -497,6 +497,19 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               };
               constexpr std::array<std::string_view, 4> kResultActions = {"base", "incoming", "current",
                                                                           "both"};
+              constexpr std::array<compare::MergeChoice, 4> kResultChoices = {
+                  compare::MergeChoice::Base, compare::MergeChoice::Incoming, compare::MergeChoice::Current,
+                  compare::MergeChoice::Both};
+              // A button is named when hovering its centre resolves to it -- the
+              // question the click path asks -- so a conflict out of sight, whose
+              // rects clamp to a pane's edge, has none.
+              const auto resolves_to = [&](const SDL_FRect& rect, std::size_t conflict_index,
+                                           MergeHoverState::Kind kind, compare::MergeChoice choice) {
+                const auto hover = ClassifyMergeHoverState(surface, interaction, *merge_tab,
+                                                           rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f);
+                return hover.has_value() && hover->conflict_index == conflict_index && hover->kind == kind &&
+                       hover->preview_choice == choice;
+              };
               for (std::size_t i = 0; i < merge_tab->conflicts.size(); ++i) {
                 const MergeTrackedConflict& conflict = merge_tab->conflicts[i];
                 if (!conflict.valid) {
@@ -505,7 +518,10 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 const std::string prefix = "merge/" + std::to_string(i) + "/";
                 for (const bool incoming : {true, false}) {
                   const SDL_FRect rect = BuildMergeSourceActionButtonRect(surface, interaction, conflict, incoming);
-                  if (visible(rect)) {
+                  if (visible(rect) &&
+                      resolves_to(rect, i,
+                                  incoming ? MergeHoverState::Kind::IncomingAccept : MergeHoverState::Kind::CurrentAccept,
+                                  incoming ? compare::MergeChoice::Incoming : compare::MergeChoice::Current)) {
                     AddControlUiElement(out, kButton, prefix + (incoming ? "accept-incoming" : "accept-current"),
                                         rect);
                   }
@@ -513,7 +529,8 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 const std::array<SDL_FRect, 4> actions =
                     BuildMergeResultActionButtonRects(surface, interaction, conflict);
                 for (std::size_t a = 0; a < actions.size(); ++a) {
-                  if (visible(actions[a])) {
+                  if (visible(actions[a]) &&
+                      resolves_to(actions[a], i, MergeHoverState::Kind::ResultAction, kResultChoices[a])) {
                     AddControlUiElement(out, kButton, prefix + "result-" + std::string(kResultActions[a]),
                                         actions[a]);
                   }

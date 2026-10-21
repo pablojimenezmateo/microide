@@ -338,7 +338,11 @@ ScrollSurfaceLayout WorkspaceShell::ComputeCompareScrollLayout(
   // report a content width that fits, so no horizontal scrollbar is produced.
   const std::size_t content_columns =
       compare_tab.right_viewport.soft_wrap() ? 0 : compare_tab.max_visual_columns;
-  return ComputeScrollSurfaceLayout(rect, CompareTabVisualRowCount(compare_tab),
+  // Beside the rows, as the merge editor's: over the whole surface the bar sat
+  // on the review header's right-aligned text.
+  const SDL_FRect rows_area =
+      MakeRect(rect.x, surface.rows_y, rect.w, std::max(0.0f, rect.y + rect.h - surface.rows_y));
+  return ComputeScrollSurfaceLayout(rows_area, CompareTabVisualRowCount(compare_tab),
                                   surface.visible_rows,
                                     compare_tab.scroll_row, content_columns,
                                     surface.visible_columns, compare_tab.horizontal_scroll);
