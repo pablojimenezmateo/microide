@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, messages, open_file, step, write
+from flows_common import active_title, dismiss, git, messages, open_file, read, step, write
 
 
 def _rows(app: q.App) -> list[str]:
@@ -128,6 +128,108 @@ def flow_tree_collisions(app: q.App) -> None:
     dismiss(app)
 
 
+def _rename(app: q.App, row: str, new_name: str) -> bool:
+    app.click_named("sidebar-view:tree")
+    app.settle(0.2)
+    if f"row:tree/{row}" not in _rows(app) and "row:tree/ren" in _rows(app):
+        app.click_named("row:tree/ren")  # expand the fixture's folder
+        app.settle(0.3)
+    if not _select(app, row):
+        return False
+    app.key("F2")
+    if not app.wait_until(lambda: app.ui().get("modal") == "prompt", 3.0, f"the rename prompt for {row}"):
+        return False
+    app.key("ctrl+a")
+    app.type(new_name)
+    app.key("Return")
+    return True
+
+
+def _tab_titles(app: q.App) -> list[tuple[int, str]]:
+    return [(gi, t.get("title", "")) for gi, g in enumerate(app.editor_state().get("groups", []))
+            for t in g.get("tabs", [])]
+
+
+def flow_rename_open_tabs(app: q.App) -> None:
+    """A rename under every kind of open tab: a file's diff follows it; a dirty
+    file open in two editor groups asks first, and Save writes the edit under the
+    new name with both tabs following; Discard renames the file as it is on disk
+    and reopens the tab there, the edit dropped.
+
+    `tree-file-ops` renames clean files in one group; the retargeting of a diff
+    tab, of a second group's tab and of a discarded buffer ran at a quarter in the
+    coverage build (TD-2026-10-18-364)."""
+    assert app.project is not None
+    write(app, "ren/diffme.txt", "one\ntwo\n")
+    git(app, "add", "ren/diffme.txt")
+    git(app, "commit", "-q", "-m", "qa: rename fixture")
+    write(app, "ren/diffme.txt", "one\nTWO\n")
+    app.key("ctrl+shift+g")
+    row = app.wait_for("row:git/diffme.txt", 5.0)
+    if app.expect(row is not None, "the git view lists diffme.txt"):
+        app.click(*app.center(row))
+        app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open")
+        step(app, "the diff of diffme.txt", 0.3)
+        if app.expect(_rename(app, "diffme.txt", "diffed.txt"), "renaming diffme.txt from the tree"):
+            app.wait_until(lambda: (app.project / "ren" / "diffed.txt").exists(), 3.0, "the rename on disk")
+            step(app, "rename under the diff", 0.4)
+            compare = [t for g in app.editor_state().get("groups", []) for t in g.get("tabs", [])
+                       if t.get("kind") == "compare"]
+            app.expect(len(compare) == 1 and "diffed.txt" in compare[0].get("title", "")
+                       and "diffme.txt" not in compare[0].get("title", ""),
+                       f"the diff tab follows the rename ({[t.get('title') for t in compare]})")
+
+    # A dirty file in two groups: Save, then rename.
+    open_file(app, "ren/split.txt", "split\n")
+    app.send("split-right")
+    app.wait_until(lambda: sum(1 for _, t in _tab_titles(app) if t == "split.txt") == 2, 3.0,
+                   "split.txt in both groups")
+    app.send("focus", "editor")
+    app.click_text(1, 1)
+    app.key("End")
+    app.type(" edited")
+    app.wait_until(lambda: app.buffer().get("dirty"), 3.0, "the edit to dirty the buffer")
+    if app.expect(_rename(app, "split.txt", "split2.txt"), "renaming split.txt from the tree"):
+        if app.wait_until(lambda: app.ui().get("modal") == "unsaved-prompt", 3.0, "the unsaved prompt before the rename"):
+            step(app, "rename a dirty file", 0.3)
+            # "Save all": the file is open in two groups, two dirty editors.
+            save = next((e for e in app.elements("button", prefix="button:prompt/")
+                         if e["name"].split("/")[-1].startswith("Save")), None)
+            if not app.expect(save is not None, "the prompt offers Save"):
+                return
+            app.click(*app.center(save))
+            app.wait_until(lambda: (app.project / "ren" / "split2.txt").exists(), 3.0, "the rename after the save")
+            step(app, "saved, then renamed", 0.4)
+            titles = _tab_titles(app)
+            app.expect(sum(1 for _, t in titles if t == "split2.txt") == 2 and not any(t == "split.txt" for _, t in titles),
+                       f"both groups' tabs follow the rename ({titles})")
+            app.expect(read(app, "ren/split2.txt") == "split edited\n" and not (app.project / "ren" / "split.txt").exists(),
+                       f"the edit is saved under the new name ({read(app, 'ren/split2.txt')!r})")
+            app.expect(not app.buffer().get("dirty"), "and the buffer is clean")
+
+    # A dirty file: Discard, then rename.
+    app.send("focus-group", "1")
+    open_file(app, "ren/drop.txt", "keep me\n")
+    app.send("focus", "editor")
+    app.click_text(1, 1)
+    app.key("End")
+    app.type(" dropped")
+    app.wait_until(lambda: app.buffer().get("dirty"), 3.0, "the edit to dirty the buffer")
+    if app.expect(_rename(app, "drop.txt", "drop2.txt"), "renaming drop.txt from the tree"):
+        if app.wait_until(lambda: app.ui().get("modal") == "unsaved-prompt", 3.0, "the unsaved prompt before the rename"):
+            app.click_named("button:prompt/Discard")
+            app.wait_until(lambda: (app.project / "ren" / "drop2.txt").exists(), 3.0, "the rename after the discard")
+            step(app, "discarded, then renamed", 0.4)
+            titles = _tab_titles(app)
+            app.expect(any(t == "drop2.txt" for _, t in titles) and not any(t == "drop.txt" for _, t in titles),
+                       f"the tab follows the rename ({titles})")
+            app.expect(read(app, "ren/drop2.txt") == "keep me\n", f"the file is renamed as it was on disk ({read(app, 'ren/drop2.txt')!r})")
+            app.send("focus", "editor")
+            app.expect(active_title(app) == "drop2.txt" and app.text() == "keep me\n" and not app.buffer().get("dirty"),
+                       f"the tab shows the file as it is, the edit dropped ({active_title(app)}, {app.text()!r})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tree-collisions": flow_tree_collisions,
+    "rename-open-tabs": flow_rename_open_tabs,
 }
