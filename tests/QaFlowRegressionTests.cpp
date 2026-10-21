@@ -699,6 +699,39 @@ void TestATabDraggedAcrossACloseButtonLeavesItIdle() {
   }
 }
 
+// QA plugins-reload: Escape on the completion list moved keyboard focus to the
+// file tree, so the next key (a Backspace) edited nothing -- every overlay that
+// closed "without a target" (the palette, completion, code actions, the commit
+// and launch-config pickers) handed focus to the sidebar whenever it was shown,
+// wherever the overlay had been opened from. VS Code returns focus to where it
+// was.
+void TestEscapeReturnsFocusToWhereTheOverlayOpened() {
+  FlowFixture fixture("main.txt", "alpha beta\n");
+  const SDL_Keymod ctrl_shift = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+
+  TestAccess::SetFocusEditor(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl_shift)});
+  Expect(TestAccess::OverlayVisible(fixture.shell), "Ctrl+Shift+P should open the palette");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  Expect(!TestAccess::OverlayVisible(fixture.shell), "Escape should close the palette");
+  Expect(TestAccess::FocusIsEditor(fixture.shell),
+         "the palette opened from the editor gives focus back to the editor, not the visible sidebar");
+
+  TestAccess::SetFocusEditor(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_SPACE, SDL_KMOD_CTRL)});
+  if (TestAccess::OverlayVisible(fixture.shell)) {
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+    Expect(TestAccess::FocusIsEditor(fixture.shell),
+           "the completion list closed by Escape gives focus back to the editor");
+  }
+
+  TestAccess::SetFocusSidebar(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl_shift)});
+  Expect(TestAccess::OverlayVisible(fixture.shell), "Ctrl+Shift+P from the tree should open the palette");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  Expect(TestAccess::FocusIsSidebar(fixture.shell), "the palette opened from the tree gives focus back to the tree");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2026,6 +2059,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/EscapeReturnsFocusToWhereTheOverlayOpened",
+          TestEscapeReturnsFocusToWhereTheOverlayOpened);
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossACloseButtonLeavesItIdle",
           TestATabDraggedAcrossACloseButtonLeavesItIdle);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);

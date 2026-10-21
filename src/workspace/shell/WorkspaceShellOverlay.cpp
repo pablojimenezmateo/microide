@@ -21,16 +21,17 @@ namespace {
 constexpr std::size_t kFileFinderRecentLimit = 8;
 }  // namespace
 
-WorkspaceShell::FocusTarget WorkspaceShell::PrimarySurfaceFocusTarget() const {
-  return PrimarySurfaceFocus(context_.current_project_state);
-}
-
 void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   RequestOverlayRedraw();
   InvalidateCursorKindFingerprint();
   // An opening overlay (completion, code actions, pickers) supersedes the
   // caret-anchored signature popup; drop it so the two never stack.
   active_signature_help_.reset();
+  // An overlay replacing another (the palette's `>`/`:` prefixes, a picker opened
+  // from the palette) keeps the surface the first one was opened from.
+  if (context_.current_project_state.surface.focus != FocusTarget::Overlay) {
+    context_.current_project_state.overlay.opened_from = context_.current_project_state.surface.focus;
+  }
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
   if (mode == OverlayMode::Completion) {
@@ -82,7 +83,8 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
     ResetBufferSearchFoldRevealState(preserve_buffer_search_expansions);
   }
   context_.current_project_state.overlay.visible = false;
-  context_.current_project_state.surface.focus = focus_editor ? FocusTarget::Editor : PrimarySurfaceFocusTarget();
+  context_.current_project_state.surface.focus =
+      focus_editor ? FocusTarget::Editor : FocusAfterOverlay(context_.current_project_state);
   RequestOverlayRedraw();
 }
 

@@ -1367,7 +1367,6 @@
   void OpenBufferReplace();
   void OpenBufferSearchSurface(OverlayMode mode);
   std::string SingleLineEditorSelectionSeed() const;
-  FocusTarget PrimarySurfaceFocusTarget() const;
   void ShowOverlay(OverlayMode mode);
   void DismissOverlay(bool focus_editor = false);
   void RevealBufferSearchMatch(const editor::SelectionRange& match);

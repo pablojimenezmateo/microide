@@ -245,8 +245,10 @@ void TestArchitectureFileSizes() {
              // the declaration of the synchronous forced-rescan helper.
              // 1695: -2 for folding the three contract toggles in the live-settings
              // snapshot into one fingerprint that also covers the overrides.
+             // 1694: PrimarySurfaceFocusTarget, dead once overlays restore the
+             // focus they were opened from.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1695);
+                                                     1694);
            });
 
   AssertRuleResultsPass(results);

@@ -543,6 +543,9 @@ struct OverlayState {
   // code actions) opens, so the popup can render as a compact list next to the caret
   // instead of a large centered modal that hides the code being completed.
   std::optional<SDL_FRect> caret_anchor;
+  // The surface that had keyboard focus when the overlay opened: where a
+  // dismissal with no target of its own (Escape) gives it back, as VS Code does.
+  FocusTarget opened_from = FocusTarget::Editor;
 };
 
 struct OutputPanelState {
@@ -1133,6 +1136,28 @@ inline FocusTarget PrimarySurfaceFocus(const ProjectWorkspaceState& state) {
   return state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
 }
 
+// Where focus goes when an overlay closes without a target of its own: back to
+// the surface it was opened from while that surface is still shown, else the
+// primary surface. Handing it to the primary surface unconditionally sent every
+// Escape from the palette, completion or a picker opened in the editor to the
+// file tree whenever the tree was visible (QA plugins-reload).
+inline FocusTarget FocusAfterOverlay(const ProjectWorkspaceState& state) {
+  switch (state.overlay.opened_from) {
+    case FocusTarget::Editor:
+      return FocusTarget::Editor;
+    case FocusTarget::Sidebar:
+      return state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+    case FocusTarget::Panel:
+      return state.panel.content != PanelContentKind::None ? FocusTarget::Panel
+                                                           : PrimarySurfaceFocus(state);
+    case FocusTarget::DebugPane:
+      return state.debug_pane.visible ? FocusTarget::DebugPane : PrimarySurfaceFocus(state);
+    case FocusTarget::Overlay:
+      break;
+  }
+  return PrimarySurfaceFocus(state);
+}
+
 // Hide the overlay and ensure keyboard focus never strands on the now-hidden
 // surface (the root cause of several "dead input" bugs). Shell-level dismissal
 // (fold-reveal cleanup, redraw requests, cursor-kind invalidation) lives in
@@ -1141,7 +1166,7 @@ inline FocusTarget PrimarySurfaceFocus(const ProjectWorkspaceState& state) {
 inline void HideOverlay(ProjectWorkspaceState& state) {
   state.overlay.visible = false;
   if (state.surface.focus == FocusTarget::Overlay) {
-    state.surface.focus = PrimarySurfaceFocus(state);
+    state.surface.focus = FocusAfterOverlay(state);
   }
 }
 
