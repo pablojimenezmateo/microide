@@ -896,6 +896,66 @@ void TestDraggingTheSidebarShutKeepsEveryFrameFresh() {
   }
 }
 
+// The sidebar's overflow (TD-372) generalized: every divider the ui names --
+// the panel's, the debug pane's, an editor split's -- dragged to both of its
+// extremes, a scheduled frame after each motion, each against a full repaint.
+// A surface that paints past its own rect once it is small shows up here.
+void TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha beta gamma delta\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right other.txt"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane opens");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "sidebar, split, debug pane, panel");
+  std::vector<std::string> dividers;
+  {
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["kind"].AsString() == "divider") {
+        dividers.push_back(entry["name"].AsString());
+      }
+    }
+  }
+  Expect(dividers.size() >= 3, "the ui names the dividers (" + std::to_string(dividers.size()) + ")");
+  for (const std::string& name : dividers) {
+    for (const int direction : {-1, 1}) {
+      const auto rect = fixture.ElementRect(name);
+      if (!rect) {
+        continue;  // a previous drag closed or folded what holds it
+      }
+      const bool vertical = rect->h > rect->w;  // a vertical bar moves along x
+      const float x0 = rect->x + rect->w / 2.0f;
+      const float y0 = rect->y + rect->h / 2.0f;
+      const float extreme_x = direction < 0 ? 1.0f : static_cast<float>(FlowFixture::kWidth) - 2.0f;
+      const float extreme_y = direction < 0 ? 1.0f : static_cast<float>(FlowFixture::kHeight) - 2.0f;
+      const std::string what = name + (direction < 0 ? " toward the start" : " toward the end");
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y0),
+                                                         MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y0)}),
+                          "pressing " + what);
+      for (int step = 1; step <= 8; ++step) {
+        const float t = static_cast<float>(step) / 8.0f;
+        SDL_Event motion = MouseMotionEvent(vertical ? x0 + (extreme_x - x0) * t : x0,
+                                            vertical ? y0 : y0 + (extreme_y - y0) * t);
+        motion.motion.state = SDL_BUTTON_LMASK;
+        fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}), "dragging " + what + ", step " + std::to_string(step));
+        fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                            "a scheduled frame dragging " + what + ", step " + std::to_string(step));
+      }
+      const float x1 = vertical ? extreme_x : x0;
+      const float y1 = vertical ? y0 : extreme_y;
+      fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y1)}),
+                          "releasing " + what);
+      fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw, "a scheduled frame after " + what);
+    }
+  }
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2230,6 +2290,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestOpeningAModalUnderThePointerDropsTheHoverItTakes);
   AddTest(tests, "QaFlowRegression/DraggingTheSidebarShutKeepsEveryFrameFresh",
           TestDraggingTheSidebarShutKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh",
+          TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",
           TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",

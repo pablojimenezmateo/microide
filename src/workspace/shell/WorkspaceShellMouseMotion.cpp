@@ -219,12 +219,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         // cover that band's matching slice. A horizontal divider only restacks
         // panes inside one column, whose strips do not move.
         const SDL_FRect editor_area = drag_layout.editor_area;
+        // `pair_extent` is the two panes' shares; the divider between them is not
+        // in it, so the span they tile is that plus one divider (without it the
+        // second pane's far edge went unrepainted).
+        const float pair_span = divider.pair_extent + kWorkspaceEditorSplitDividerThickness;
         SDL_FRect damage =
             divider.vertical
-                ? MakeRect(divider.pair_start, editor_area.y, divider.pair_extent,
-                           editor_area.h)
-                : MakeRect(divider.rect.x, divider.pair_start, divider.rect.w,
-                           divider.pair_extent);
+                ? MakeRect(divider.pair_start, editor_area.y, pair_span, editor_area.h)
+                : MakeRect(divider.rect.x, divider.pair_start, divider.rect.w, pair_span);
         if (divider.vertical) {
           const SDL_FRect& strip = drag_layout.tab_strip;
           const float top = std::min(damage.y, strip.y);

@@ -1405,6 +1405,13 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (pane.active && active_editor_pane_rect != nullptr) {
         *active_editor_pane_rect = pane.rect;
       }
+      // A pane paints inside itself: squeezed by a split divider, a glyph at its
+      // edge overhung onto the neighbouring border in a full frame and not in a
+      // partial one of the pane (QaFlowRegression/
+      // EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
+      const render::ScopedRenderClip pane_clip(
+          renderer, SDL_Rect{static_cast<int>(std::floor(pane.rect.x)), static_cast<int>(std::floor(pane.rect.y)),
+                             static_cast<int>(std::ceil(pane.rect.w)), static_cast<int>(std::ceil(pane.rect.h))});
 
       // An empty group renders the welcome home surface (recents + shortcuts).
       if (viewport->is_placeholder()) {

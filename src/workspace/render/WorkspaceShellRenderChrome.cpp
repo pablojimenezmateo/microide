@@ -1,3 +1,5 @@
+#include <optional>
+#include "render/ScopedRenderClip.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -258,6 +260,16 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                    },
                    group_tab_palette);
     } else if (HasActiveProjectCatalogEntry()) {
+      // The tabs and their chevrons stay inside the group's strip: with the pane
+      // beside it squeezed to its minimum, a tab painted past the strip's end over
+      // the debug pane, and a partial frame of the strip disagreed with a full one
+      // (QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh).
+      // The drag ghost below is not clipped: it follows the pointer across strips.
+      std::optional<render::ScopedRenderClip> strip_clip;
+      strip_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(group_tab_strip.x)),
+                                            static_cast<int>(std::floor(group_tab_strip.y)),
+                                            static_cast<int>(std::ceil(group_tab_strip.w)),
+                                            static_cast<int>(std::ceil(group_tab_strip.h))});
       for (const VisibleStripTab& tab : visible_tabs) {
         if (tab_lifted(TabDragKind::Editor, gi, tab.index)) {
           continue;  // rendered as the floating ghost below
@@ -289,6 +301,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       DrawTabStripOverflowButton(text_renderer_, renderer, theme_, tab_overflow.right_button,
                                  /*point_right=*/true, tab_overflow.hidden_right,
                                  PointerOver(tab_overflow.right_button));
+      strip_clip.reset();
       if (const TabDragState& drag = context_.interaction_state.tab_drag;
           drag.dragging && drag.kind == TabDragKind::Editor && gi == drag.target_group_index) {
         // The ghost tracks the pointer, so it paints over the strip the pointer is

@@ -45,6 +45,17 @@ void ComputeVisibleStripLayoutsInto(std::vector<StripSlotLayout>& out,
     });
     x += width + gap;
   }
+  // A strip narrower than its first item still shows that item, cut to the room
+  // there is. Placing nothing made an editor group with a file open in it show
+  // the empty strip's "Welcome" placeholder (a split pane squeezed by its divider),
+  // as VS Code never does: it keeps the active tab, truncated.
+  if (out.empty() && max_x > start_x) {
+    out.push_back(StripSlotLayout{
+        .index = clamped_first,
+        .x = start_x,
+        .width = std::min(widths[clamped_first], max_x - start_x),
+    });
+  }
 }
 
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
