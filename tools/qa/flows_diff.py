@@ -260,6 +260,14 @@ def flow_merge_toolbar(app: q.App) -> None:
                    f"the result holds each conflict's choice ({text!r})")
         status = git(app, "status", "--porcelain", "notes/merge.txt")
         app.expect(status.startswith("M ") or status == "", f"Mark Resolved stages it ({status!r})")
+    # Open Result: the result file in an editor of its own, beside the merge.
+    if press("open", "Open Result"):
+        app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "editor", 3.0, "Open Result to open an editor")
+        tab = app.active_tab() or {}
+        app.expect(tab.get("kind") == "editor" and tab.get("title") == "merge.txt",
+                   f"Open Result opens merge.txt in an editor ({tab})")
+        app.expect("line 2 incoming" in app.text() and "line 10 current" in app.text(),
+                   "showing the resolved text")
 
 
 def _outgoing(app: q.App) -> set[str]:
