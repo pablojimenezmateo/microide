@@ -443,6 +443,74 @@ void TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret() {
          "typing after a hunk jump should edit the hunk the reader is looking at");
 }
 
+// QA diff-hunk-keys: from a row that is not in any change, ] counted from the
+// FIRST change -- "no hunk selected" became hunk 0, then +1 -- so from above the
+// first change it went to the second, from between the second and third back to
+// the second, and [ after the last change went to the first. From any row, next
+// is the first change below it and previous the last change above it (VS Code's
+// next/previous change).
+void TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  std::string committed;
+  std::string edited;
+  for (int line = 0; line < 400; ++line) {
+    committed += "line " + std::to_string(line) + "\n";
+    edited += (line == 50 || line == 200 || line == 350 ? "changed " : "line ") + std::to_string(line) + "\n";
+  }
+  WriteFile(source, committed);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add hunk-jump fixture", "hunk jump fixture");
+  WriteFile(source, edited);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  if (compare.model.hunks.size() < 3) {
+    Expect(false, "the fixture should produce three hunks");
+    return;
+  }
+  const auto selected_hunk = [&]() { return microide::workspace::CompareTabSelectedHunkIndex(compare); };
+  // The presentation row of a model row outside every change, past `after`.
+  const auto context_row_after = [&](std::size_t after) -> std::optional<std::size_t> {
+    for (std::size_t row = 0; row < compare.presentation.rows.size(); ++row) {
+      if (compare.presentation.rows[row].kind != microide::compare::ComparePresentationRowKind::Model) {
+        continue;
+      }
+      const std::size_t model = microide::compare::ComparePresentationToModelRow(compare.presentation, row);
+      if (model > after && model < compare.model.rows.size() && compare.model.rows[model].hunk < 0) {
+        return row;
+      }
+    }
+    return std::nullopt;
+  };
+
+  compare.selected_row = 0;
+  Expect(selected_hunk() < 0, "the top row is in no change");
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_ALT), "Alt+] runs");
+  Expect(selected_hunk() == compare.model.hunks[0].index, "from above the first change, ] goes to the first");
+
+  const auto between = context_row_after(static_cast<std::size_t>(compare.model.hunks[1].start_row));
+  Expect(between.has_value(), "there is a context row between the second and third changes");
+  if (!between.has_value()) {
+    return;
+  }
+  compare.selected_row = *between;
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_ALT), "Alt+] runs");
+  Expect(selected_hunk() == compare.model.hunks[2].index,
+         "from between the second and third, ] goes to the third");
+  compare.selected_row = *between;
+  Expect(SendKeyDown(shell, SDLK_LEFTBRACKET, SDL_KMOD_ALT), "Alt+[ runs");
+  Expect(selected_hunk() == compare.model.hunks[1].index,
+         "and [ goes back to the second");
+}
+
 void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3454,6 +3522,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange);
   AddTest(tests, "WorkspaceShell/CompareHunkJumpMovesTheEditableCaret",
           TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret);
+  AddTest(tests, "WorkspaceShell/CompareHunkJumpFromBetweenChangesGoesToTheNearestOne",
+          TestWorkspaceShellCompareHunkJumpFromBetweenChangesGoesToTheNearestOne);
   AddTest(tests, "WorkspaceShell/CompareHorizontalScrollRepaintsTheSurface",
           TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface);
   AddTest(tests, "WorkspaceShell/StagesHunksInSequence",

@@ -348,21 +348,40 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
     return;
   }
 
-  int target_hunk = CompareTabSelectedHunkIndex(*compare_tab);
-  if (target_hunk < 0) {
-    target_hunk = 0;
-  } else {
-    for (std::size_t i = 0; i < compare_tab->model.hunks.size(); ++i) {
-      const int hunk_index = compare_tab->model.hunks[i].index;
-      if (hunk_index == target_hunk) {
-        target_hunk = static_cast<int>(i);
+  const int hunk_count = static_cast<int>(compare_tab->model.hunks.size());
+  int target_hunk = -1;
+  if (const int selected_hunk = CompareTabSelectedHunkIndex(*compare_tab); selected_hunk >= 0) {
+    for (int i = 0; i < hunk_count; ++i) {
+      if (compare_tab->model.hunks[static_cast<std::size_t>(i)].index == selected_hunk) {
+        target_hunk = std::clamp(i + delta, 0, hunk_count - 1);
         break;
       }
     }
   }
+  if (target_hunk < 0) {
+    // On a row in no change (above the first, between two, past the last): the
+    // nearest change in the direction of travel, as VS Code's next/previous
+    // change does from any line. Counting from the first change instead sent ]
+    // from above it to the second one (QA diff-hunk-keys).
+    const auto model_row = static_cast<int>(CompareTabSelectedModelRow(*compare_tab));
+    target_hunk = delta > 0 ? hunk_count - 1 : 0;
+    if (delta > 0) {
+      for (int i = 0; i < hunk_count; ++i) {
+        if (compare_tab->model.hunks[static_cast<std::size_t>(i)].start_row > model_row) {
+          target_hunk = i;
+          break;
+        }
+      }
+    } else {
+      for (int i = hunk_count - 1; i >= 0; --i) {
+        if (compare_tab->model.hunks[static_cast<std::size_t>(i)].start_row < model_row) {
+          target_hunk = i;
+          break;
+        }
+      }
+    }
+  }
   const std::size_t previous_selected_row = compare_tab->selected_row;
-  target_hunk = std::clamp(target_hunk + delta, 0,
-                           static_cast<int>(compare_tab->model.hunks.size()) - 1);
   const int hunk_index = compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].index;
   if (const auto presentation_row = CompareTabPresentationRowForHunk(*compare_tab, hunk_index);
       presentation_row.has_value()) {
