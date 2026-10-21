@@ -103,6 +103,14 @@ void TestNarrowsInDevicePixelsAtAFractionalScale() {
   Expect(red(10, 16), "the device row the two clips share is painted");
   Expect(!red(10, 15), "and still nothing above the nested clip");
 
+  // The outer clip starts inside the surface and runs past its end (CI's qa,
+  // menu-clicks: a tab strip under an open submenu). Nothing may be painted above
+  // the outer clip's first device row -- a fallback to the surface's own start
+  // painted the tab over the submenu above.
+  fill_red_under(SDL_Rect{0, 46, 200, 28}, SDL_Rect{0, 27, 50, 30});
+  Expect(!red(10, 68), "nothing above the outer clip (device row 69 on)");
+  Expect(red(10, 69) && red(10, 84), "and the rows the two share are painted");
+
   // Really disjoint stays a zero-area clip.
   fill_red_under(SDL_Rect{0, 0, 200, 10}, SDL_Rect{0, 40, 50, 20});
   Expect(!red(10, 61) && !red(10, 5), "clips with no device row in common draw nothing");

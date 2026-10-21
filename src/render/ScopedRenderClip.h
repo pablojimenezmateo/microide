@@ -37,12 +37,13 @@ inline SDL_FPoint DeviceScale(SDL_Renderer* renderer) {
 // One axis of the narrowing. SDL maps a clip's [start, start + length) to the
 // device as [floor(start*s), floor(start*s) + ceil(length*s)) -- SDL 3.2's
 // UpdatePixelClipRect -- so at a fractional scale the logical intersection is
-// not the device intersection. This returns a logical span whose device span
-// covers the device intersection of `outer` and `requested` and stays inside
-// `requested`'s device span: rows the outer clip covers are painted (a row left
-// out keeps whatever an earlier frame drew there), and nothing lands outside the
-// surface that asked. It may reach a device row past the outer clip, inside the
-// requested rect -- the surface repainting its own pixels.
+// not the device intersection, and not every device span is a logical one. This
+// returns a logical span starting exactly where the device intersection starts
+// and reaching its end: rows the outer clip covers are painted (a row left out
+// keeps whatever an earlier frame drew there). Where the end cannot be hit
+// exactly it overshoots by at most one device row -- never before the start:
+// starting the span at the surface's own edge instead painted a tab strip over
+// the submenu above the outer clip (CI qa, menu-clicks).
 struct Span {
   int start = 0;
   int length = 0;
@@ -61,7 +62,6 @@ inline Span NarrowAxis(int outer_start, int outer_length, int start, int length,
   if (target_end <= target_start) {
     return Span{std::max(outer_start, start), 0};
   }
-  const int requested_end = device_end(start, length);
   const int logical_end = start + length;
   // The shortest span from `from` whose device end reaches target_end.
   const auto covering_length = [&](int from) {
@@ -72,13 +72,7 @@ inline Span NarrowAxis(int outer_start, int outer_length, int start, int length,
     return span;
   };
   const int narrowed = std::max(outer_start, start);
-  const int span = covering_length(narrowed);
-  if (device_end(narrowed, span) <= requested_end) {
-    return Span{narrowed, span};
-  }
-  // From the narrowed start the rounding overshoots the surface's own edge;
-  // from the surface's start it cannot (the whole surface ends exactly there).
-  return Span{start, covering_length(start)};
+  return Span{narrowed, covering_length(narrowed)};
 }
 
 }  // namespace scoped_render_clip_detail
