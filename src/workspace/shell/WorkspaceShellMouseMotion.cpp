@@ -483,6 +483,46 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       }
       sidebar_hover_button_changed = true;  // reuse the "redraw was requested" return signal
     }
+    // A tab's close glyph lights on its own while the pointer is on it. Moving from
+    // the tab's body onto its close button leaves the tab hovered -- the probe above
+    // sees the same rect and repaints nothing -- so the glyph stayed unlit (QA
+    // monkey, seed 1).
+    {
+      const auto hovered_tab_close = [&](float x, float y) -> std::optional<SDL_FRect> {
+        const auto close_of = [x, y](std::span<const VisibleStripTab> tabs) -> std::optional<SDL_FRect> {
+          for (const VisibleStripTab& tab : tabs) {
+            if (tab.close_rect.w > 0.0f && tab.close_rect.h > 0.0f && Contains(tab.close_rect, x, y)) {
+              return tab.close_rect;
+            }
+          }
+          return std::nullopt;
+        };
+        if (layout.project_tab_strip.w > 0.0f && Contains(layout.project_tab_strip, x, y)) {
+          return close_of(tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip));
+        }
+        const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+        for (std::size_t gi = 0; gi < group_rects.groups.size(); ++gi) {
+          const SDL_FRect strip = group_rects.groups[gi].tab_strip;
+          if (strip.w > 0.0f && strip.h > 0.0f && Contains(strip, x, y)) {
+            return close_of(tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip));
+          }
+        }
+        return std::nullopt;
+      };
+      const std::optional<SDL_FRect> previous_close =
+          previous_mouse_position_valid ? hovered_tab_close(previous_mouse_x, previous_mouse_y) : std::nullopt;
+      const std::optional<SDL_FRect> current_close =
+          hovered_tab_close(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
+      if (previous_close.has_value() != current_close.has_value() ||
+          (previous_close.has_value() && !rects_equal(*previous_close, *current_close))) {
+        for (const auto& close : {previous_close, current_close}) {
+          if (close.has_value()) {
+            RequestRedrawRect(MakeRect(close->x - 1.0f, close->y - 1.0f, close->w + 2.0f, close->h + 2.0f));
+          }
+        }
+        sidebar_hover_button_changed = true;
+      }
+    }
     const bool current_action_hovered =
         EditorHoverPopupPrimaryActionHovered(static_cast<float>(event.motion.x),
                                              static_cast<float>(event.motion.y));

@@ -509,7 +509,17 @@ kernel tests under the ASan binary in a loop with `taskset -c 0` (one core,
 the runner's scheduling) and a `std::set_terminate` that dumps every thread
 (`gdb -batch -ex "thread apply all bt"` on the core).
 
-### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [RESOLVED 2026-10-21 for seed 4]
+### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [RESOLVED 2026-10-22]
+
+**Resolved (seeds 2 and 7, 2026-10-22):** the close glyph left in the wrong
+hover tint was a real bug, not timing: the local monkey's seed 1 reproduced it
+on every replay once the driver ordered its input, and the minimized replay
+(10 steps) came down to the pointer moving from a tab's body onto its own close
+button. The motion path repaints when the hovered element's rect changes, and a
+tab reported its whole rect on the body and on the close button alike, so the
+glyph whose tint changed was never repainted -- a slow runner only made it more
+likely that no later frame happened to cover it. A tab's close button is now
+probed on its own (`QaFlowRegression/MovingOntoATabsCloseButtonLightsIt`).
 
 **Resolved (seed 4):** `QaFlowRegression/DraggingTheSidebarShutKeepsEveryFrameFresh`
 reproduced it in process -- the divider dragged toward the window's edge with a

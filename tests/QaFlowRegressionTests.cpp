@@ -1156,6 +1156,36 @@ void TestAConflictOutOfSightHasNoButtons() {
   }
 }
 
+// The QA monkey (seed 1): moving from a tab's body onto its own close button
+// left the close glyph unlit. The motion path repaints when the hovered element
+// changes, and a tab reported its whole rect for both, so nothing repainted the
+// glyph whose hover tint had changed. The close button is an element of its own.
+void TestMovingOntoATabsCloseButtonLightsIt() {
+  FlowFixture fixture("main.txt", "main\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "other.txt");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto tab = fixture.ElementRect("tab:0/other.txt");
+  const auto close = fixture.ElementRect("button:close-tab/0/other.txt");
+  Expect(tab.has_value() && close.has_value(), "the active tab and its close button are named");
+  if (!tab.has_value() || !close.has_value()) {
+    return;
+  }
+  const float y = close->y + close->h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(tab->x + 20.0f, y)}), "onto the tab");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(close->x + close->w / 2.0f, y)}),
+                      "onto its close button");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(tab->x + 20.0f, y)}),
+                      "back onto the tab");
+  // And straight onto the close button from outside the tab: the tab's hover
+  // fill changes too (QA monkey, seed 1, once the close button repainted alone).
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(tab->x + tab->w + 40.0f, y + 200.0f)}),
+                      "off the strip");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(close->x + close->w / 2.0f, y)}),
+                      "onto the close button from outside the tab");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2495,6 +2525,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",
           TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AConflictOutOfSightHasNoButtons", TestAConflictOutOfSightHasNoButtons);
+  AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);
   AddTest(tests, "QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther",
           TestAnEditInOneHalfOfASplitShowsInTheOther);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",
