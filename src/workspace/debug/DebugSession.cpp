@@ -1,5 +1,6 @@
 #include "workspace/debug/DebugSession.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <string_view>
@@ -312,9 +313,21 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       callbacks_.on_breakpoint_changed(path, dap_protocol::ParseBreakpoint(bp));
     }
   } else if (event == "thread") {
-    // A thread started or exited. Refresh the thread list so the Call Stack thread
+    // A thread started or exited. Keep the known ids (Pause needs one while the
+    // program runs), then refresh the thread list so the Call Stack thread
     // selector stays current between stops (a stop already refreshes it). Reuses
     // the stop-epoch guard, so a refresh superseded by a new stop is dropped.
+    if (const util::JsonValue& id = body["threadId"]; id.IsInt()) {
+      const int thread_id = static_cast<int>(id.AsInt());
+      const auto known = std::find(known_thread_ids_.begin(), known_thread_ids_.end(), thread_id);
+      if (body["reason"].IsString() && body["reason"].AsString() == "exited") {
+        if (known != known_thread_ids_.end()) {
+          known_thread_ids_.erase(known);
+        }
+      } else if (known == known_thread_ids_.end()) {
+        known_thread_ids_.push_back(thread_id);
+      }
+    }
     RefreshThreadList();
   } else if (event == "capabilities") {
     // The adapter changed its advertised capabilities after initialize. gdb does
@@ -562,11 +575,16 @@ void DebugSession::RequestThreads(
   }
   client_->SendRequestAsync(
       "threads", util::JsonValue(nullptr),
-      [callback = std::move(callback)](const dap_protocol::DapResponse& response) {
+      [this, callback = std::move(callback)](const dap_protocol::DapResponse& response) {
         if (!response.success) {
           return;
         }
-        callback(dap_protocol::ParseThreads(response.body));
+        std::vector<dap_protocol::DapThread> threads = dap_protocol::ParseThreads(response.body);
+        known_thread_ids_.clear();
+        for (const dap_protocol::DapThread& thread : threads) {
+          known_thread_ids_.push_back(thread.id);
+        }
+        callback(std::move(threads));
       });
 }
 

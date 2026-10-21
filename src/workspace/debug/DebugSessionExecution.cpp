@@ -81,8 +81,14 @@ void DebugSession::Pause() {
   if (state_ != State::Running || !client_->IsInitialized()) {
     return;
   }
-  // `pause` requires a threadId. When running we have no stopped thread, so ask
-  // the adapter for its threads and pause the first one.
+  // `pause` requires a threadId. When running there is no stopped thread: pause
+  // the first one the adapter announced. Asking for the thread list now is the
+  // fallback only -- gdb answers no request while the program runs, so the
+  // request timed out and `pause` was never sent (QA dbg-pause).
+  if (!known_thread_ids_.empty()) {
+    client_->SendRequestAsync("pause", ThreadIdArgs(known_thread_ids_.front()), {});
+    return;
+  }
   RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
     // The target may have stopped, terminated, or another action may have run
     // before this threads response landed — only send `pause` if still Running.
@@ -100,6 +106,8 @@ void DebugSession::Restart() {
   // A re-emitted `initialized` (some adapters send one on restart) must re-install
   // breakpoints and re-finalize, so re-arm the configurationDone guard.
   configuration_done_sent_ = false;
+  // A restarted program's threads are announced afresh.
+  known_thread_ids_.clear();
   // The DAP `restart` request optionally carries the original launch/attach
   // arguments under `arguments`; pass them through when we have them.
   util::JsonObject args;

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <string>
 #include <utility>
 #include <vector>
@@ -169,6 +170,12 @@ struct SetBreakpointInput {
   std::string hit_condition;
   std::string log_message;
 };
+
+// A hit count as the adapter reads it. The UI's (and VS Code's) "3" means stop on
+// the third hit; gdb's DAP sets the breakpoint's IGNORE count to the value, so it
+// stopped on the fourth (QA dbg-breakpoint-kinds). For such an adapter a plain
+// count N goes as N - 1; anything else (an expression) goes as typed.
+std::string AdapterHitCondition(std::string_view hit_condition, bool ignore_count_semantics);
 
 // Build the `setBreakpoints` arguments object:
 //   {"source":{"path":...},"breakpoints":[{"line":N,"condition":...},...]}

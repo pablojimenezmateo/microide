@@ -65,19 +65,19 @@ void DebugService::ConsumeDapCallbacks() {
   // active session; a background prune leaves the active view untouched.
   const std::vector<PrunedSession> removed = manager.PruneTerminated();
   if (!removed.empty()) {
-    // Settle each pruned session's console. A clean exit drops its channel + tab so
-    // dead consoles do not accumulate (Phase 10). A non-clean end (crash / kill /
-    // launch rejection) keeps its console so the adapter's output stays inspectable,
-    // and appends why it ended — otherwise the session would vanish silently. Done
-    // before re-projecting the survivor so the active console switch below lands on
-    // a still-live channel.
+    // Settle each pruned session's console. A clean exit keeps it, says so, and
+    // drops it when the next session starts (VS Code's debug console reads the
+    // same way): dropping it here took a finished program's output with it. A
+    // non-clean end (crash / kill / launch rejection) keeps its console for good
+    // and appends why it ended -- otherwise the session would vanish silently.
     for (const PrunedSession& pruned : removed) {
       if (pruned.failed) {
         if (!pruned.error.empty()) {
           AppendConsoleLine(pruned.id, pruned.console_label, "[debug] " + pruned.error);
         }
-      } else if (operations_.remove_debug_console) {
-        operations_.remove_debug_console(pruned.id);
+      } else {
+        AppendConsoleLine(pruned.id, pruned.console_label, "[debug] session ended");
+        ended_console_ids_.push_back(pruned.id);
       }
     }
     if (manager.ActiveSessionId() != active_before) {
@@ -113,6 +113,13 @@ int DebugService::LaunchSession(const LaunchConfig& unexpanded, const std::strin
   // A new session: forget the prior session's variable expansion and re-arm the
   // Locals-open-by-default one-shot so Locals opens on this session's first stop.
   CurrentProjectState().debug_variables.BeginSession();
+  // The ended sessions' consoles were kept for reading until now.
+  if (operations_.remove_debug_console) {
+    for (const int ended : ended_console_ids_) {
+      operations_.remove_debug_console(ended);
+    }
+  }
+  ended_console_ids_.clear();
   const std::string label = !config.name.empty() ? config.name : config.type;
   DapManager& manager = CurrentDapManager();
   auto factory = [this, label](int id) { return BuildSessionCallbacks(id, label); };

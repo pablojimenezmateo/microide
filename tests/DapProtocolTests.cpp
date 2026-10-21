@@ -604,6 +604,14 @@ void TestDapProtocolListsAreCapped() {
 //
 // Both now share one framer. This pins the tolerance on the DAP side (with the
 // DAP frame ceiling) so the two cannot drift apart again.
+void TestDapHitConditionForAnIgnoreCountAdapter() {
+  Expect(codec::AdapterHitCondition("3", false) == "3", "an ordinary adapter gets the count as typed");
+  Expect(codec::AdapterHitCondition("3", true) == "2", "gdb stops on the third hit with ignore count 2");
+  Expect(codec::AdapterHitCondition(" 1 ", true) == "0", "the first hit is ignore count 0");
+  Expect(codec::AdapterHitCondition("0", true) == "0", "a zero count is passed through");
+  Expect(codec::AdapterHitCondition("n + 1", true) == "n + 1", "an expression goes as typed");
+}
+
 void TestDapFramingToleratesHeaderCasingAndSpacing() {
   const std::string body = R"({"type":"event","event":"initialized"})";
   const auto expect_frames = [&](const std::string& header) {
@@ -647,6 +655,7 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DapProtocol/FramingOversizedFrameSkipsAndResyncs",
           TestDapFramingOversizedFrameSkipsAndResyncs);
   AddTest(tests, "DapProtocol/DecodeRobustness", TestDapProtocolDecodeRobustness);
+  AddTest(tests, "DapProtocol/HitConditionForAnIgnoreCountAdapter", TestDapHitConditionForAnIgnoreCountAdapter);
   AddTest(tests, "DapProtocol/StackFramesAreCapped", TestDapProtocolStackFramesAreCapped);
   AddTest(tests, "DapProtocol/ListsAreCapped", TestDapProtocolListsAreCapped);
   AddTest(tests, "DapProtocol/EncodesRequestEnvelope", TestDapProtocolEncodesRequestEnvelope);

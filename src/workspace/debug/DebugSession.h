@@ -295,6 +295,10 @@ class DebugSession {
   std::string last_error_;
   bool launch_sent_ = false;
   bool configuration_done_sent_ = false;
+  // Threads the adapter announced (`thread` events) or listed (`threads`), oldest
+  // first: what Pause pauses while the program runs. gdb answers no request then,
+  // so a `threads` round trip at Pause time never came back (QA dbg-pause).
+  std::vector<int> known_thread_ids_;
   // True when the adapter command looks like gdb (`gdb --interpreter=dap`); gates
   // the gdb-specific value-formatting limits.
   bool is_gdb_adapter_ = false;

@@ -44,8 +44,9 @@ class DebugService {
     // Surface (open + select) a session's console channel. Called on session start
     // and on a session switch so the console follows the active session.
     std::function<void(int session_id, const std::string& label)> show_debug_console;
-    // Drop a pruned session's console channel + close its tab (Phase 10 cleanup),
-    // so terminated sessions' consoles do not linger.
+    // Drop an ended session's console channel + close its tab (Phase 10 cleanup),
+    // so terminated sessions' consoles do not pile up. A clean end keeps its
+    // console until the next session starts (its output is what the user reads).
     std::function<void(int session_id)> remove_debug_console;
     // Notify on session state changes (drives status text / redraw).
     std::function<void(DebugSession::State state)> notify_session_state_changed;
@@ -310,6 +311,10 @@ class DebugService {
   // Remembered for the terminate+relaunch restart fallback.
   LaunchConfig last_launch_config_{};
   std::string last_cwd_;
+  // Consoles of sessions that ended cleanly, kept for reading until the next
+  // session starts. Dropping them at the prune took a finished program's output
+  // and its logpoint lines with it (QA dbg-breakpoint-kinds).
+  std::vector<int> ended_console_ids_;
   // Generation guards for async stale-state. DAP responses arrive a frame or more
   // after their request; by then the user may have switched frame/thread/session
   // or the adapter may have resumed and re-stopped, and the adapter recycles

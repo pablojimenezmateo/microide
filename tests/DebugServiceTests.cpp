@@ -513,6 +513,41 @@ void TestDebugSessionPauseFromRunning() {
   manager.ShutdownAll();
 }
 
+// QA dbg-pause: F6 on a program running under gdb did nothing. Pause asked the
+// adapter for its threads first, and gdb answers no request while the program
+// runs -- the `threads` request timed out and `pause` was never sent. The thread
+// the adapter announced by a `thread` event is the one to pause.
+void TestDebugSessionPausesAThreadAnnouncedByEvent() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+
+  DapManager manager;
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(),
+                          MockAdapterCommand(server_path, "pause_silent_threads"));
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session != nullptr && session->CurrentState() == DebugSession::State::Running;
+                   }),
+         "session should reach Running");
+  // Let the `thread` event land before pausing (a person presses F6 later still).
+  (void)PollStaysFalse(manager, []() { return false; }, std::chrono::milliseconds(300));
+  manager.ActiveSession()->Pause();
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
+         "pause should stop a program whose adapter answers no `threads` while it runs");
+  Expect(captured.output.find("cmd:pause") != std::string::npos, "the `pause` request is sent");
+  manager.ShutdownAll();
+}
+
 // Reverse execution: an adapter advertising supportsStepBack accepts `stepBack`
 // and `reverseContinue`, each optimistically resuming like a forward step.
 void TestDebugSessionReverseStepAndContinue() {
@@ -2455,6 +2490,53 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
   service.StopAllDebugging();
 }
 
+// QA dbg-breakpoint-kinds: a program that ran to its end took its debug console
+// with it -- the clean-exit prune dropped the channel the same frame, so its
+// output and every logpoint line vanished as the program finished. The console
+// stays (marked as ended) until the next session starts, as VS Code's does; the
+// next start drops it, so dead consoles still do not pile up.
+void TestDebugConsoleOutlivesItsSessionUntilTheNext() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = temp_dir.path();
+  microide::workspace::DebugService service;
+  std::vector<int> removed;
+  std::string console;
+  service.Configure(context, microide::workspace::DebugService::Operations{
+                                 .append_console_output =
+                                     [&](int, const std::string&, const codec::DapOutputEvent& output) {
+                                       console += output.output;
+                                     },
+                                 .remove_debug_console = [&](int id) { removed.push_back(id); }});
+  service.CurrentDapManager().RegisterAdapter("mock", platform::LocalProcessLauncher(),
+                                              MockAdapterCommand(server_path, "config_done"));
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  config.name = "first";
+  Expect(service.StartDebugging(config), "the first session should start");
+  const int first = service.CurrentDapManager().ActiveSessionId();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(8000);
+  while (std::chrono::steady_clock::now() < deadline && service.CurrentDapManager().SessionCount() > 0) {
+    service.ConsumeDapCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(service.CurrentDapManager().SessionCount() == 0, "the first session runs to its end");
+  Expect(console.find("hello from adapter") != std::string::npos, "its output reached the console");
+  Expect(removed.empty(), "a cleanly ended session keeps its console for reading");
+
+  config.name = "second";
+  Expect(service.StartDebugging(config), "the second session should start");
+  Expect(std::find(removed.begin(), removed.end(), first) != removed.end(),
+         "starting the next session drops the ended one's console");
+  service.StopAllDebugging();
+}
+
 // Phase A defense-in-depth: node ids stay globally monotonic across the tree
 // rebuilds a frame switch / stop triggers, so a stale async response can never
 // alias a freshly-created node that would otherwise have reused the same id.
@@ -3218,6 +3300,10 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionRejectedResumeRestoresStoppedView",
           TestDebugSessionRejectedResumeRestoresStoppedView);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
+  AddTest(tests, "DebugService/ConsoleOutlivesItsSessionUntilTheNext",
+          TestDebugConsoleOutlivesItsSessionUntilTheNext);
+  AddTest(tests, "DebugService/SessionPausesAThreadAnnouncedByEvent",
+          TestDebugSessionPausesAThreadAnnouncedByEvent);
   AddTest(tests, "DebugService/SessionReverseStepAndContinue",
           TestDebugSessionReverseStepAndContinue);
   AddTest(tests, "DebugService/SessionReverseGatedOnCapability",

@@ -51,7 +51,7 @@ void DebugSession::SendBreakpointsForFile(const editor::BreakpointStore::FileBre
       input.condition = *breakpoint.condition;
     }
     if (caps.supports_hit_conditional_breakpoints && breakpoint.hit_condition) {
-      input.hit_condition = *breakpoint.hit_condition;
+      input.hit_condition = dap_protocol::AdapterHitCondition(*breakpoint.hit_condition, is_gdb_adapter_);
     }
     if (caps.supports_log_points && breakpoint.log_message) {
       input.log_message = *breakpoint.log_message;
@@ -112,7 +112,7 @@ void DebugSession::SendFunctionBreakpoints() {
       input.condition = *bp.condition;
     }
     if (caps.supports_hit_conditional_breakpoints && bp.hit_condition) {
-      input.hit_condition = *bp.hit_condition;
+      input.hit_condition = dap_protocol::AdapterHitCondition(*bp.hit_condition, is_gdb_adapter_);
     }
     requested_names.push_back(bp.name);
     inputs.push_back(std::move(input));

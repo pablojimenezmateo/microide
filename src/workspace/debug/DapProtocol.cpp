@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <utility>
 
+#include "util/Parse.h"
 #include "workspace/ProtocolNumeric.h"
 
 namespace microide::workspace::dap_protocol {
@@ -31,6 +32,24 @@ const std::string& AsString(const JsonValue& value) { return value.AsString(); }
 constexpr std::size_t kMaxDapListEntries = 10000;
 
 }  // namespace
+
+std::string AdapterHitCondition(std::string_view hit_condition, bool ignore_count_semantics) {
+  if (!ignore_count_semantics) {
+    return std::string(hit_condition);
+  }
+  std::string_view trimmed = hit_condition;
+  while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t')) {
+    trimmed.remove_prefix(1);
+  }
+  while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t')) {
+    trimmed.remove_suffix(1);
+  }
+  const std::optional<std::int64_t> count = util::ParseInt64(trimmed);
+  if (!count.has_value() || *count < 1) {
+    return std::string(hit_condition);
+  }
+  return std::to_string(*count - 1);
+}
 
 JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
                                       const std::vector<SetBreakpointInput>& breakpoints) {

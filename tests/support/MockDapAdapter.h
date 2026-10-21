@@ -25,7 +25,7 @@ import sys
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # config_done / stop / pause / variables / evaluate / restart / threads / exception
 # all advertise configurationDone support.
-supports_config_done = mode in ("config_done", "stop", "pause", "variables", "evaluate",
+supports_config_done = mode in ("config_done", "stop", "pause", "pause_silent_threads", "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
                                 "function", "reverse", "reverse_late", "stale_stack",
                                 "relocate", "partial_continue", "stop_no_thread", "reject_resume")
@@ -64,7 +64,13 @@ stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads",
 # flush it late so the host must drop the stale stopped view (session Running).
 stale_stack = (mode == "stale_stack")
 deferred_stack_req = None
-running_no_stop = mode in ("pause", "die")  # stay running (die: then exit silently)
+running_no_stop = mode in ("pause", "pause_silent_threads", "die")  # stay running (die: then exit silently)
+# `pause_silent_threads`: gdb's shape -- the thread is announced by a `thread`
+# event once the program runs, and a `threads` request sent while it runs is never
+# answered (gdb's DAP serves requests only between stops). A `pause` must not
+# depend on that answer.
+silent_threads = (mode == "pause_silent_threads")
+running = False
 # `die`: reach Running (answer configurationDone) then exit WITHOUT a terminated event, to
 # exercise the host's dead-adapter reconciliation (no zombie session).
 die_after_launch = (mode == "die")
@@ -218,7 +224,10 @@ while True:
             sys.stdout.flush()
             sys.exit(0)
         elif running_no_stop:
-            pass  # stay running; the test will issue a pause
+            # stay running; the test will issue a pause
+            if silent_threads:
+                running = True
+                event("thread", {"reason": "started", "threadId": 1})
         else:
             finish_launch()
     elif command == "stackTrace":
@@ -303,6 +312,8 @@ while True:
         ref = 1001 if expr == "obj" else 0
         respond(msg, {"result": value, "type": "Obj" if ref else "int",
                       "variablesReference": ref})
+    elif command == "threads" and silent_threads and running:
+        pass  # never answered while the program runs, as gdb does
     elif command == "threads":
         if multi_thread:
             respond(msg, {"threads": [{"id": 1, "name": "main"}, {"id": 2, "name": "worker"}]})
@@ -334,6 +345,7 @@ while True:
             event("output", {"category": "stdout", "output": "excopt:" + rendered + "\n"})
         respond(msg, {})
     elif command == "pause":
+        running = False
         event("output", {"category": "stdout", "output": "cmd:pause\n"})
         respond(msg, {})
         emit_stop()
