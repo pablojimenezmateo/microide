@@ -759,33 +759,6 @@ void TestTheCompactLayoutReturnsWhenTheWindowGrows() {
   Expect(menus() > 0, "grown back, the menu bar shows its titles again");
 }
 
-// QA resize-overlays: a window shrunk into the compact layout never came back --
-// at 1440 px the menus stayed folded behind the chevron. The frame recorded the
-// resolved layout mode only when IT recomputed the layout memo; after a resize a
-// hit test or a ui query often recomputed it first, the frame saw a memo hit, and
-// the stale "compact" (which the resolver reads back as its previous mode, and
-// the memo keys on) held for good.
-void TestTheCompactLayoutReturnsWhenTheWindowGrows() {
-  FlowFixture fixture("main.txt", "alpha\n");
-  const auto menus = [&]() {
-    std::size_t count = 0;
-    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
-    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
-      count += entry["kind"].AsString() == "menu" ? 1 : 0;
-    }
-    return count;
-  };
-  Expect(menus() > 0, "the regular layout shows the menu bar's titles");
-  TestAccess::SetWindowSize(fixture.shell, 640, 480);
-  fixture.shell.Render(fixture.canvas.renderer(), 640, 480);
-  Expect(menus() == 0, "a 640-px window folds the menus into the chevron");
-  TestAccess::SetWindowSize(fixture.shell, FlowFixture::kWidth, FlowFixture::kHeight);
-  (void)menus();  // a ui query (or a hit test) resolves the layout before the frame does
-  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
-  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
-  Expect(menus() > 0, "grown back, the menu bar shows its titles again");
-}
-
 // QA diff-commands: pasting a line longer than the editor is wide made the
 // horizontal scrollbar appear, and the paste damaged only the edited line -- the
 // scrollbar's strip along the editor's bottom kept the old pixels. An edit that
@@ -2133,6 +2106,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",
+          TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",
           TestTheCompactLayoutReturnsWhenTheWindowGrows);
   AddTest(tests, "QaFlowRegression/EscapeReturnsFocusToWhereTheOverlayOpened",

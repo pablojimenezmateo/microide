@@ -507,6 +507,40 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   util::PerformanceTrace::Scope redraw_scope(
       "WorkspaceShell::RequestActiveEditableLastChangeRedraw::EditorPartialRedraw");
   RequestEditorLineRangeRedraw(start_line, end_line);
+  // A line edit can move the horizontal scrollbar, which is not on the edited
+  // line: past the view's width it resizes the thumb, and crossing it shows or
+  // hides the bar -- which also takes a row from the text area and shortens the
+  // vertical bar. A paste of a long line left the bar unpainted (QA diff-commands).
+  // Lines that stay inside the view, the usual edit, add nothing.
+  const std::size_t visible_columns = viewport->visible_columns();
+  if (visible_columns == 0 || start_line >= viewport->lines().size()) {
+    return;
+  }
+  const std::string_view edited = viewport->lines().LineView(start_line);
+  const std::size_t width_now =
+      editor::TextLayout::VisualColumnForTextColumn(edited, edited.size(), viewport->tab_size());
+  // Generous: the edit's removed text added back, its inserted text not taken off.
+  const std::size_t removed_columns =
+      applied_edit->range_before.end.line == applied_edit->range_before.start.line &&
+              applied_edit->range_before.end.column >= applied_edit->range_before.start.column
+          ? applied_edit->range_before.end.column - applied_edit->range_before.start.column
+          : visible_columns;
+  const std::size_t width_before_at_most = width_now + removed_columns;
+  if (width_now <= visible_columns && width_before_at_most <= visible_columns) {
+    return;
+  }
+  const std::size_t widest = MaxVisualColumns(*viewport);
+  const bool bar_now = widest > visible_columns;
+  // Another line keeps the bar up, and so it was up before: only the thumb moves.
+  const bool bar_was_and_is = bar_now && width_now < widest;
+  if (!bar_was_and_is) {
+    RequestFocusedEditorRedraw();
+    return;
+  }
+  if (const auto pane = CurrentFocusedEditorRedrawRect(); pane.has_value()) {
+    const float band = kWorkspaceScrollbarThickness + 2.0f * kWorkspaceScrollbarInset;
+    RequestRedrawRect(MakeRect(pane->x, pane->y + std::max(0.0f, pane->h - band), pane->w, std::min(band, pane->h)));
+  }
 }
 
 void WorkspaceShell::RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
