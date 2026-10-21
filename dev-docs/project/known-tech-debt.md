@@ -494,6 +494,21 @@ itself; until then the `noexcept` frame is unidentified (candidates: the
 `RemoteServerClient`/`RemoteWorkspace` teardown with the server child still
 streaming, a peer callback invoked from a destructor).
 
+**2026-10-22, it named itself:** `checks` run 39681684599 (e8827569), job `asan`,
+`microide_kernel_tests_shard_5`: `*** std::terminate in test
+RemoteTerminal/HostTerminalSurvivesADroppedConnection`, and NO exception in
+flight. That fits either an exception still unwinding when a `noexcept` frame
+stopped it (`std::current_exception` is empty until a handler catches) or a
+destroyed joinable `std::thread`, which terminates with no exception at all.
+Not an `Expect` timing out on the slow runner: forcing each of the test's waits
+to fail locally (the drop, the output before it, the reattached output) unwinds
+cleanly to an ordinary failure. Different test from the first report
+(`RemoteWorkspace/ManifestStreamsTheHostTree`), same shard family -- both tear
+down a `RemoteServerClient` whose peer is mid-stream. Next step: run the remote
+kernel tests under the ASan binary in a loop with `taskset -c 0` (one core,
+the runner's scheduling) and a `std::set_terminate` that dumps every thread
+(`gdb -batch -ex "thread apply all bt"` on the core).
+
 ### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [RESOLVED 2026-10-21 for seed 4]
 
 **Resolved (seed 4):** `QaFlowRegression/DraggingTheSidebarShutKeepsEveryFrameFresh`
