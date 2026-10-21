@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, open_file, step, write
+from flows_common import dismiss, layout_sane, open_file, resize_window, step, write
 
 
 def _order(app: q.App) -> list[str]:
@@ -109,4 +109,81 @@ def flow_groups_move(app: q.App) -> None:
     app.expect(len(panes) == len(_order(app)), f"each group has a pane on screen ({len(panes)} panes, {_order(app)})")
 
 
-FLOWS: dict[str, Callable[[q.App], None]] = {"groups-move": flow_groups_move}
+def _focus_not_stranded(app: q.App, label: str) -> None:
+    """Keyboard focus is never on an overlay that is not there."""
+    ui = app.ui()
+    if ui.get("focus") == "overlay":
+        app.expect(ui["overlay"].get("visible") or ui.get("modal") or ui["menu"].get("open")
+                   or ui["menu"].get("contextMenu"),
+                   f"{label}: focus is on an overlay but none is shown ({ui.get('focus')}, modal {ui.get('modal')})")
+
+
+# (label, open it, a key that must still reach it after the resizes, what it shows then)
+SURFACES: tuple[tuple[str, Callable[[q.App], None], Callable[[q.App], bool]], ...] = (
+    ("the command palette", lambda a: a.key("ctrl+shift+p"),
+     lambda a: (a.type("zq"), a.settle(0.3), "zq" in str(a.ui()["overlay"].get("query", "")))[-1]),
+    ("quick open", lambda a: a.key("ctrl+p"),
+     lambda a: (a.type("main"), a.settle(0.3), "main" in str(a.ui()["overlay"].get("query", "")))[-1]),
+    ("the find widget", lambda a: a.key("ctrl+f"),
+     lambda a: (a.key("ctrl+a"), a.type("total"), a.settle(0.3),
+                a.field_text("field:find/search") == "total")[-1]),
+    ("Settings", lambda a: a.key("ctrl+comma"),
+     lambda a: (a.type("tab size"), a.settle(0.4), any(e["name"] == "setting:editor.tab_size"
+                                                        for e in a.elements("setting")))[-1]),
+    ("the keyboard shortcuts", lambda a: a.send("keyboard-shortcuts"),
+     lambda a: a.ui().get("modal") in ("help", "settings")),
+    ("the Edit menu", lambda a: a.click_named("menu:Edit"),
+     lambda a: True),
+    ("the editor's context menu", lambda a: a.click(*a.text_point(2, 3), button=3),
+     lambda a: True),
+)
+
+
+def flow_resize_overlays(app: q.App) -> None:
+    """Each overlay, prompt and menu open while the window shrinks to 640x480 and
+    grows back: everything stays inside the window, focus never strands on a
+    surface that closed, and the surface still takes its keys afterwards."""
+    for name in ("src/scheduler.cpp", "src/main.cpp"):
+        open_file(app, name)
+    app.key("ctrl+grave")
+    app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the panel")
+    app.send("focus", "editor")
+    for label, open_it, still_works in SURFACES:
+        resize_window(app, 1440, 900)
+        app.send("focus", "editor")
+        open_it(app)
+        step(app, f"open {label}", 0.4)
+        for width, height in ((640, 480), (1024, 640), (1440, 900)):
+            resize_window(app, width, height)
+            layout_sane(app, f"{label} at {width}x{height}")
+            _focus_not_stranded(app, f"{label} at {width}x{height}")
+        app.expect(bool(still_works(app)), f"{label} still takes its keys after the resizes ({app.ui()['overlay']}, "
+                                           f"modal {app.ui().get('modal')})")
+        step(app, f"use {label}", 0.2)
+        dismiss(app)
+        _focus_not_stranded(app, f"after closing {label}")
+    # A prompt: rename from the tree, through a resize, then cancelled.
+    app.send("sidebar-show", "tree")
+    row = app.wait_for("row:tree/main.cpp", 5.0)
+    if row is not None:
+        app.click(*app.center(row))
+        app.key("F2")
+        step(app, "rename prompt", 0.4)
+        if app.expect(app.ui().get("modal") == "prompt", f"F2 opens the rename prompt ({app.ui().get('modal')})"):
+            for width, height in ((640, 480), (1440, 900)):
+                resize_window(app, width, height)
+                layout_sane(app, f"the rename prompt at {width}x{height}")
+            app.key("End")
+            app.type("x")
+            app.expect((app.ui().get("prompt") or {}).get("input", "").endswith("x"),
+                       f"the prompt still takes typing ({app.ui().get('prompt')})")
+            app.key("Escape")
+            step(app, "cancel the rename", 0.3)
+            app.expect((app.project / "src" / "main.cpp").exists(), "a cancelled rename renames nothing")
+    resize_window(app, 1440, 900)
+
+
+FLOWS: dict[str, Callable[[q.App], None]] = {
+    "groups-move": flow_groups_move,
+    "resize-overlays": flow_resize_overlays,
+}

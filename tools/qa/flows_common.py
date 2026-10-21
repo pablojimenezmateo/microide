@@ -137,3 +137,35 @@ def active_root(app: q.App) -> str:
 def messages(app: q.App) -> list[str]:
     """Every notification's message, oldest first."""
     return [n.get("message", "") for n in app.query("notifications")]
+
+
+# ---- window size ---------------------------------------------------------------
+
+def resize_window(app: q.App, width: int, height: int) -> None:
+    """Resizes the X window (the Wayland backend's kiosk weston owns the size)."""
+    if app.window:
+        app._xdotool("windowsize", app.window, str(width), str(height))
+    app.wait_until(lambda: app.ui()["window"]["width"] == width, 3.0, f"the window to be {width} wide")
+    step(app, f"resize to {width}x{height}", 0.4)
+
+
+def layout_sane(app: q.App, label: str) -> None:
+    """Every element on screen is inside the window, has an area, and siblings of
+    one strip (tabs, menu items, status segments) do not overlap."""
+    ui = app.ui()
+    width, height = ui["window"]["width"], ui["window"]["height"]
+    by_kind: dict[str, list[dict]] = {}
+    for element in ui["elements"]:
+        x, y, w, h = element["rect"]
+        app.expect(w > 0 and h > 0, f"{label}: {element['name']} has no area ({element['rect']})")
+        app.expect(x >= -1 and y >= -1 and x + w <= width + 1 and y + h <= height + 1,
+                   f"{label}: {element['name']} {element['rect']} leaves the {width}x{height} window")
+        by_kind.setdefault(element["kind"], []).append(element)
+    for kind in ("tab", "menu", "status", "panel-tab", "project-tab", "sidebar-view"):
+        rects = by_kind.get(kind, [])
+        for i, a in enumerate(rects):
+            for b in rects[i + 1:]:
+                ax, ay, aw, ah = a["rect"]
+                bx, by, bw, bh = b["rect"]
+                if ax < bx + bw - 1 and bx < ax + aw - 1 and ay < by + bh - 1 and by < ay + ah - 1:
+                    app.expect(False, f"{label}: {a['name']} {a['rect']} overlaps {b['name']} {b['rect']}")

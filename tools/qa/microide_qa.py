@@ -924,6 +924,10 @@ class App:
         if not self.alive():
             code = self.proc.returncode if self.proc else None
             found.append(Finding("crash", f"microide exited ({code}) after {label or 'last action'}"))
+        else:
+            stranded = self._stranded_focus()
+            if stranded:
+                found.append(Finding("focus", f"after {label or 'last action'}: {stranded}"))
         if found:
             shot = self._write_finding(label, found)
             for finding in found:
@@ -933,6 +937,26 @@ class App:
             with contextlib.suppress(Exception):
                 self.recent_shots.append((len(self.actions), self.grab()))
         return found
+
+    def _stranded_focus(self) -> str:
+        """Keyboard focus on a surface that is not there: the overlay with no
+        overlay, modal or menu up, or a hidden sidebar/panel. Every key then goes
+        nowhere -- what Escape from the palette did to the file tree. Checked after
+        every action, so every flow and the monkey hold it."""
+        try:
+            ui = self.ui()
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return ""
+        focus = ui.get("focus")
+        menu = ui.get("menu") or {}
+        if focus == "overlay" and not ((ui.get("overlay") or {}).get("visible") or ui.get("modal")
+                                       or menu.get("open") or menu.get("contextMenu")):
+            return "keyboard focus is on an overlay, and no overlay, modal or menu is shown"
+        if focus == "sidebar" and not (ui.get("sidebar") or {}).get("visible", True):
+            return "keyboard focus is on the sidebar, which is hidden"
+        if focus == "panel" and not (ui.get("panel") or {}).get("visible", True):
+            return "keyboard focus is on the panel, which is hidden"
+        return ""
 
     def _write_finding(self, label: str, found: list[Finding]) -> str | None:
         """A finding is a directory: the actions up to it, the frame lines since

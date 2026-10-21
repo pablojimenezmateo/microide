@@ -446,6 +446,6 @@ UNSUPPORTED: dict[str, dict[str, str]] = {
         name: "the clipboard needs a seat input serial, which injected input has none of"
         for name in ("edit-selection-clipboard", "compare-clipboard", "terminal-clipboard", "undo-semantics",
                      "terminal-selection")
-    } | {"wb-layouts": "kiosk weston owns the window size"},
+    } | {name: "kiosk weston owns the window size" for name in ("wb-layouts", "resize-overlays")},
 }
 

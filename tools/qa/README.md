@@ -101,7 +101,7 @@ session is touched.
 | lifecycle | `plugins-reload` | Reload Plugins twice with a plugin's every contribution counted (keybinding, menu row, status item, sidebar view, commands, completion items: each there once, none lost), the language still detected and the providers answering; then the plugin's source edited on disk and reloaded, and the edit in effect |
 | diff | `diff-commands`, `diff-review-files` | the diff's own commands with receipts: Ignore Whitespace hiding a whitespace-only change (the `changes` count), Show Whitespace, Copy Path, Copy Change / Copy File as Patch read back by pasting and proven exact by `git apply --check -R`; a three-file commit under review stepped by Next/Previous File (it opens on its first file) |
 | debugger | `dbg-breakpoint-kinds`, `dbg-pause` | a hit count (stops on that pass, read off `task.cost`), a log message (no stop, one console line per pass, kept after the program ends), a breakpoint disabled and enabled, all from the gutter menu; F6 pausing a spinning program (`debug-state.session` to wait for it to run), F5, Shift+F5 |
-| layout | `groups-move` | Move Editor Group Left/Right/Up/Down, at the edges and across a column, Focus Next Editor Group round three groups, Close Editor Group keeping the others in order and each a pane |
+| layout | `groups-move`, `resize-overlays` | Move Editor Group Left/Right/Up/Down, at the edges and across a column, Focus Next Editor Group round three groups, Close Editor Group keeping the others in order and each a pane; the window shrunk to 640x480 and grown back with each overlay, modal, prompt and menu open (the palette, quick open, the find widget, Settings, the shortcuts, a menu, a context menu, the rename prompt): everything inside the window, nothing overlapping, and the surface still taking its keys |
 | tree | `tree-collisions` | the tree's operations where they collide: a rename onto a name that exists, a new file or folder over one that exists (each refused by a toast that says why, the disk untouched), a reserved or escaping name (the prompt keeps it for correction and makes nothing), a file made inside directories that do not exist yet, a folder deleted with a file open from it (its tab closes) |
 | commands | `commands-run` | every command of the `commands` query run once for real, bare, from a source file, from a diff and with no project (the menu and key sweeps are dry runs); set `MQA_COMMANDS_LOG=1` to print each refusal |
 | languages | `lsp-typescript`, `lsp-csharp` | typescript-language-server (from `MQA_TS_NODE_MODULES`, default `~/.cache/microide-qa/ts/node_modules`) and csharp-ls (`~/.dotnet/tools`) through the bundled plugins: hover, F12 across files, a compile error reaching the problems count |
@@ -175,6 +175,9 @@ Checked after every action:
   first=x,y clips=...` when they differ. That is stale paint — a missed damage rect,
   a wrong surface skip, a frame whose renders read different state — with no
   reference image.
+- **Stranded focus.** Keyboard focus on a surface that is not shown -- the overlay
+  with no overlay, modal or menu up, a hidden sidebar or panel -- is a finding:
+  every key would go nowhere (what Escape from the palette did to the file tree).
 - **Sanitizer and allocator reports** (`ERROR: AddressSanitizer`, `runtime error:`,
   `WARNING: ThreadSanitizer`, glibc's `malloc():` / `double free`), assertions, and
   the process exiting.
