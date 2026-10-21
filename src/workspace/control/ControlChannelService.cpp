@@ -532,22 +532,38 @@ util::JsonValue ControlChannelService::BuildDebugState() const {
   }
   const DebugExecutionView& exec = context_->current_project_state.debug_execution;
   // The active session's lifecycle, so a driver can wait for "running" before it
-  // pauses: `stopped` alone cannot tell a running program from no session.
+  // pauses: `stopped` alone cannot tell a running program from no session. And
+  // every live session (id, label, state, active), so it can tell which one a
+  // Switch Debug Session landed on and that Stop All stopped them all.
+  const auto state_name = [](DebugSession::State state) -> const char* {
+    switch (state) {
+      case DebugSession::State::Inactive: return "inactive";
+      case DebugSession::State::Initializing: return "initializing";
+      case DebugSession::State::Configuring: return "configuring";
+      case DebugSession::State::Running: return "running";
+      case DebugSession::State::Stopped: return "stopped";
+      case DebugSession::State::Terminated: return "terminated";
+      case DebugSession::State::Failed: return "failed";
+    }
+    return "inactive";
+  };
   const char* session_state = "none";
+  util::JsonArray sessions;
   if (const DapManager* manager = context_->current_project_state.dap_manager.get(); manager != nullptr) {
     if (const DebugSession* session = manager->ActiveSession(); session != nullptr) {
-      switch (session->CurrentState()) {
-        case DebugSession::State::Inactive: session_state = "inactive"; break;
-        case DebugSession::State::Initializing: session_state = "initializing"; break;
-        case DebugSession::State::Configuring: session_state = "configuring"; break;
-        case DebugSession::State::Running: session_state = "running"; break;
-        case DebugSession::State::Stopped: session_state = "stopped"; break;
-        case DebugSession::State::Terminated: session_state = "terminated"; break;
-        case DebugSession::State::Failed: session_state = "failed"; break;
-      }
+      session_state = state_name(session->CurrentState());
+    }
+    for (const DapSessionInfo& info : manager->Sessions()) {
+      util::JsonObject entry;
+      entry["id"] = util::JsonValue(static_cast<std::int64_t>(info.id));
+      entry["label"] = util::JsonValue(info.name);
+      entry["state"] = util::JsonValue(std::string(state_name(info.state)));
+      entry["active"] = util::JsonValue(info.id == manager->ActiveSessionId());
+      sessions.push_back(util::JsonValue(std::move(entry)));
     }
   }
   object["session"] = util::JsonValue(std::string(session_state));
+  object["sessions"] = util::JsonValue(std::move(sessions));
   object["stopped"] = util::JsonValue(exec.stopped);
   object["reason"] = util::JsonValue(exec.stop_reason);
   object["threadId"] = util::JsonValue(static_cast<std::int64_t>(exec.thread_id));

@@ -170,7 +170,8 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `terminated`, `failed`) beside the stop it shows (`stopped`, `reason`,
 `threadId`, `frames`, and `file`/`line` of the focused frame): a driver waits for
 `running` before it pauses, which `stopped: false` alone cannot tell from no
-session at all.
+session at all. `sessions` lists every live session as `{id, label, state,
+active}`, in creation order.
 
 **Settings.** `settings` lists every registered setting, built-in and
 plugin-contributed, with its current value: `{id, label, description, type
