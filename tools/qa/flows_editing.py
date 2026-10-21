@@ -502,8 +502,74 @@ def flow_wrap_and_scroll(app: q.App) -> None:
     app.expect(app.cursors()[0][0] == 201, f"ctrl+End reaches the last line ({app.cursors()})")
 
 
+def flow_multi_caret_lines(app: q.App) -> None:
+    """Line operations over more than one caret, as VS Code does them: Insert
+    Line Above at two carets (each new line taking its own line's indent), Delete
+    Line over a selection that spans lines (every line it touches), Tab with one
+    cursor selecting a whole line and another a point (the line shifts, the point
+    gets an indent at its column) and Toggle Block Comment over two selections
+    (each wrapped, then unwrapped).
+
+    `edit-multi-cursor` types and deletes at several carets; the line operations
+    over them ran at a fraction in the coverage build (TD-364: ShapingActions at
+    60 %)."""
+    source = "int a = 1;\n    int b = 2;\nint c = 3;\nint d = 4;\nint e = 5;\n"
+    open_file(app, "notes/shape.cpp", source)
+    unit = indent_unit(app)
+
+    # Insert Line Above at two carets.
+    app.click_text(1, 1)
+    app.click_text(2, 7, modifiers=("alt",))
+    app.wait_until(lambda: len(app.cursors()) == 2, 2.0, "Alt+click to add a second caret")
+    app.key("ctrl+shift+Return")
+    step(app, "Insert Line Above at two carets", 0.2)
+    expect_text(app, "\nint a = 1;\n    \n    int b = 2;\nint c = 3;\nint d = 4;\nint e = 5;\n",
+                "Insert Line Above opens a line above each caret, with that line's indent")
+    app.expect(sorted(app.cursors()) == [(1, 1), (3, 5)],
+               f"and puts each caret on its new line ({app.cursors()})")
+    app.key("Escape")
+    app.key("ctrl+z")
+    expect_text(app, source, "one undo takes both new lines back")
+
+    # Delete Line over a selection spanning lines 2-4.
+    app.click_text(2, 7)
+    app.click_text(4, 3, modifiers=("shift",))
+    app.key("ctrl+shift+k")
+    step(app, "Delete Line over three lines", 0.2)
+    expect_text(app, "int a = 1;\nint e = 5;\n", "Delete Line removes every line the selection touches")
+    app.key("ctrl+z")
+    expect_text(app, source, "and one undo puts them back")
+
+    # Tab with one cursor on a whole line and one at a point.
+    app.click_text(3, 1)
+    app.key("shift+End")
+    app.click_text(5, 5, modifiers=("alt",))
+    app.wait_until(lambda: len(app.cursors()) == 2, 2.0, "Alt+click to add the point caret")
+    app.key("Tab")
+    step(app, "Tab with a line and a point", 0.2)
+    expect_text(app, f"int a = 1;\n    int b = 2;\n{unit}int c = 3;\nint d = 4;\nint {unit}e = 5;\n",
+                "Tab shifts the selected line and indents at the point")
+    app.key("Escape")
+    app.key("ctrl+z")
+    expect_text(app, source, "one undo takes both back")
+
+    # Toggle Block Comment over two selections.
+    app.click_text(3, 5)
+    app.key("ctrl+d")  # selects the word `c`
+    app.click_text(4, 5, modifiers=("alt",))
+    app.key("ctrl+d")
+    app.wait_until(lambda: len(app.cursors()) == 2, 2.0, "two selections")
+    app.key("shift+alt+a")
+    step(app, "Toggle Block Comment over two selections", 0.2)
+    expect_text(app, "int a = 1;\n    int b = 2;\nint /* c */ = 3;\nint /* d */ = 4;\nint e = 5;\n",
+                "each selection is wrapped in its own block comment")
+    app.key("shift+alt+a")
+    expect_text(app, source, "the second toggle unwraps them")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "edit-type-save": flow_type_and_save,
+    "edit-multi-caret-lines": flow_multi_caret_lines,
     "edit-selection-clipboard": flow_selection_and_clipboard,
     "edit-multi-cursor": flow_multi_cursor,
     "edit-line-ops": flow_line_operations,
