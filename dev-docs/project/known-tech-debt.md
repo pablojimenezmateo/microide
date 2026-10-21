@@ -541,13 +541,17 @@ slow runner's frame timing opens.
 step 210) left the active dirty tab's close glyph in its hovered tint at
 (152,50) 9x9 px (window pixels; the monkey had zoomed in once, so logical
 (118,36)) after a click on the tab, Ctrl+Shift+P and a pointer move along the
-tab under the open palette. `tools/qa/run.py replay
-tools/qa/replays/td372-dirty-tab-close-glyph.json` reproduces it every time
-(frame ~461). An in-process test of the same sequence --
+tab under the open palette. Its replay reproduced it every time (frame ~461) -- until the
+driver began to order typed input before control commands (d8d53419); since then
+it does not reproduce at all. The monkey had typed a run of `x` and sent
+`code-actions` over the control socket right after, so the stale frame needed a
+command to overtake keystrokes still in the X queue, an ordering no person at a
+keyboard produces. The earlier instances in this entry (seeds 2 and 4, never
+replayed) are worth re-reading in that light: every monkey step after a `type`
+was subject to the same race. An in-process test of the visible sequence --
 `QaFlowRegression/OpeningAModalUnderThePointerDropsTheHoverItTakes`, zoomed,
-dirty and active -- passes, so a state the 210 steps built is part of it (two
-editor groups, the sidebar hidden, a code-actions overlay open just before).
-Next: bisect the replay's prefix.
+dirty and active -- passes. Kept open until the CI monkey runs clean on the
+ordered driver.
 
 ### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
 

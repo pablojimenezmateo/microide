@@ -185,7 +185,61 @@ def flow_resize_overlays(app: q.App) -> None:
     resize_window(app, 1440, 900)
 
 
+def flow_chrome_commands(app: q.App) -> None:
+    """The chrome's own commands, each from the palette: Toggle Layout Mode folds
+    the menus into the chevron and back; Reveal in File Tree selects the active
+    file's row inside a collapsed tree; Close Sidebar and Hide Sidebar put the
+    sidebar away (and the keyboard somewhere shown -- the stranded-focus oracle);
+    Toggle Full Screen and back keeps the layout inside the window."""
+    write(app, "deep/er/still/nested.txt", "nested\n")
+    open_file(app, "deep/er/still/nested.txt")
+    menus = lambda: len(app.elements("menu"))  # noqa: E731
+    regular = menus()
+    if _palette(app, "Toggle Layout Mode"):
+        app.wait_until(lambda: menus() == 0, 3.0, "the compact layout")
+        app.expect(menus() == 0 and any(e["name"] == "button:menu-bar/more" for e in app.elements("button")),
+                   f"Toggle Layout Mode folds the menus behind the chevron ({menus()} menus)")
+    if _palette(app, "Toggle Layout Mode"):
+        app.wait_until(lambda: menus() == regular, 3.0, "the regular layout")
+        app.expect(menus() == regular, f"and back ({menus()} of {regular} menus)")
+
+    app.send("sidebar-show", "tree")
+    app.click_named("button:sidebar/Collapse")
+    app.wait_until(lambda: not any(e["name"] == "row:tree/nested.txt" for e in app.elements("row")), 3.0,
+                   "the tree collapsed")
+    step(app, "a collapsed tree", 0.3)
+    app.expect(not any(e["name"] == "row:tree/nested.txt" for e in app.elements("row")),
+               "Collapse folds the file's row away")
+    app.send("focus", "editor")
+    if _palette(app, "Reveal in File Tree"):
+        app.wait_until(lambda: any(e["name"] == "row:tree/nested.txt" for e in app.elements("row")), 3.0,
+                       "the file's row")
+        row = next((e for e in app.elements("row") if e["name"] == "row:tree/nested.txt"), None)
+        app.expect(row is not None and row.get("selected"),
+                   f"Reveal in File Tree expands to the file and selects its row ({row})")
+
+    for label in ("Close Sidebar", "Hide Sidebar"):
+        app.send("sidebar-show", "tree")
+        app.send("focus", "sidebar")
+        step(app, "the tree focused", 0.2)
+        if _palette(app, label):
+            app.wait_until(lambda: not app.ui()["sidebar"].get("visible"), 3.0, f"{label} to put the sidebar away")
+            app.expect(not app.ui()["sidebar"].get("visible"), f"{label} puts the sidebar away")
+            app.key("x")
+            step(app, f"a key after {label}", 0.2)
+            app.expect(app.ui()["focus"] in ("editor", "panel"), f"and the keyboard is on a shown surface ({app.ui()['focus']})")
+            app.key("ctrl+z")
+    app.send("sidebar-show", "tree")
+
+    if not app.wayland:
+        for state in ("full screen", "back"):
+            if _palette(app, "Toggle Full Screen"):
+                step(app, f"full screen: {state}", 0.8)
+                layout_sane(app, f"after Toggle Full Screen ({state})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "groups-move": flow_groups_move,
     "resize-overlays": flow_resize_overlays,
+    "chrome-commands": flow_chrome_commands,
 }
