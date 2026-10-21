@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_title, dismiss, expect_text, git, open_file, read, step, titles, write
+from flows_common import active_title, dismiss, expect_text, git, layout_sane, open_file, read, resize_window, step, titles, write
 
 
 def flow_quick_open(app: q.App) -> None:
@@ -515,35 +515,6 @@ def flow_terminal(app: q.App) -> None:
     app.expect(app.ui()["panel"]["visible"], "ctrl+` shows it again")
 
 
-def _resize(app: q.App, width: int, height: int) -> None:
-    if app.window:
-        app._xdotool("windowsize", app.window, str(width), str(height))
-    app.wait_until(lambda: app.ui()["window"]["width"] == width, 3.0, f"the window to be {width} wide")
-    step(app, f"resize to {width}x{height}", 0.4)
-
-
-def _layout_sane(app: q.App, label: str) -> None:
-    """Every element on screen is inside the window, has an area, and siblings of
-    one strip (tabs, menu items, status segments) do not overlap."""
-    ui = app.ui()
-    width, height = ui["window"]["width"], ui["window"]["height"]
-    by_kind: dict[str, list[dict]] = {}
-    for element in ui["elements"]:
-        x, y, w, h = element["rect"]
-        app.expect(w > 0 and h > 0, f"{label}: {element['name']} has no area ({element['rect']})")
-        app.expect(x >= -1 and y >= -1 and x + w <= width + 1 and y + h <= height + 1,
-                   f"{label}: {element['name']} {element['rect']} leaves the {width}x{height} window")
-        by_kind.setdefault(element["kind"], []).append(element)
-    for kind in ("tab", "menu", "status", "panel-tab", "project-tab", "sidebar-view"):
-        rects = by_kind.get(kind, [])
-        for i, a in enumerate(rects):
-            for b in rects[i + 1:]:
-                ax, ay, aw, ah = a["rect"]
-                bx, by, bw, bh = b["rect"]
-                if ax < bx + bw - 1 and bx < ax + aw - 1 and ay < by + bh - 1 and by < ay + ah - 1:
-                    app.expect(False, f"{label}: {a['name']} {a['rect']} overlaps {b['name']} {b['rect']}")
-
-
 def flow_layouts(app: q.App) -> None:
     """Resize the window through narrow and wide sizes, with tabs, a split and the
     panel open: nothing leaves the window or overlaps a sibling, and the menu bar
@@ -553,17 +524,21 @@ def flow_layouts(app: q.App) -> None:
     app.send("split-right")
     step(app, "split-right", 0.3)
     for width, height in ((1440, 900), (1024, 700), (800, 600), (640, 480), (1920, 1080), (1440, 900)):
-        _resize(app, width, height)
-        _layout_sane(app, f"{width}x{height}")
+        resize_window(app, width, height)
+        layout_sane(app, f"{width}x{height}")
         menus = app.elements("menu")
         more = [e for e in app.elements("button") if "more" in e["name"]]
         app.expect(menus or more, f"{width}x{height}: the menu bar is still reachable")
+        # Well above the compact breakpoint (720 px) the titles are back: "menus or
+        # the overflow" alone passed while the window stayed compact for good.
+        if width >= 800:
+            app.expect(bool(menus), f"{width}x{height}: the menu bar shows its titles, not the compact chevron")
         # A click on each menu-bar item still opens its menu at this size.
         for menu in menus[:3]:
             app.click(*app.center(menu))
             step(app, f"{width}: open {menu['name']}", 0.2)
             app.expect(app.ui()["menu"]["open"], f"{width}x{height}: {menu['name']} opens")
-            _layout_sane(app, f"{width}x{height} with {menu['name']} open")
+            layout_sane(app, f"{width}x{height} with {menu['name']} open")
             app.key("Escape")
             step(app, "close", 0.15)
 
@@ -575,7 +550,7 @@ def flow_zoom_and_chrome_toggles(app: q.App) -> None:
     for chord in ("ctrl+equal", "ctrl+equal", "ctrl+minus", "ctrl+0"):
         app.key(chord)
         step(app, chord, 0.4)
-        _layout_sane(app, chord)
+        layout_sane(app, chord)
     for chord, key in (("ctrl+b", "sidebar"), ("ctrl+j", "panel")):
         before = app.ui()[key]["visible"]
         app.key(chord)

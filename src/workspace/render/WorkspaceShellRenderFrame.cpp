@@ -473,8 +473,14 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   }
   const bool workspace_layout_recomputed = layout_memo_generation_ != layout_generation_before;
   if (workspace_layout_recomputed) {
-    layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
+  }
+  // Record the resolved mode whoever recomputed the layout: a hit test or a ui
+  // query often resolves it first after a resize, and recording it only on this
+  // frame's own recompute left a window grown back from compact folded for good
+  // (the stale mode is the resolver's `previous_mode`, which the memo keys on).
+  if (layout.layout_mode != layout_mode_service_.CurrentMode()) {
+    layout_mode_service_.SetCurrentMode(layout.layout_mode);
   }
   // `editor.autosave = on_focus_change`: the editor that had the keyboard last frame
   // lost it -- another file opened (Ctrl+P, the tree, a jump), the sidebar or the

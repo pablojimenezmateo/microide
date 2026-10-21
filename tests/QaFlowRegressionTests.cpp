@@ -732,6 +732,80 @@ void TestEscapeReturnsFocusToWhereTheOverlayOpened() {
   Expect(TestAccess::FocusIsSidebar(fixture.shell), "the palette opened from the tree gives focus back to the tree");
 }
 
+// QA resize-overlays: a window shrunk into the compact layout never came back --
+// at 1440 px the menus stayed folded behind the chevron. The frame recorded the
+// resolved layout mode only when IT recomputed the layout memo; after a resize a
+// hit test or a ui query often recomputed it first, the frame saw a memo hit, and
+// the stale "compact" (which the resolver reads back as its previous mode, and
+// the memo keys on) held for good.
+void TestTheCompactLayoutReturnsWhenTheWindowGrows() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  const auto menus = [&]() {
+    std::size_t count = 0;
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      count += entry["kind"].AsString() == "menu" ? 1 : 0;
+    }
+    return count;
+  };
+  Expect(menus() > 0, "the regular layout shows the menu bar's titles");
+  TestAccess::SetWindowSize(fixture.shell, 640, 480);
+  fixture.shell.Render(fixture.canvas.renderer(), 640, 480);
+  Expect(menus() == 0, "a 640-px window folds the menus into the chevron");
+  TestAccess::SetWindowSize(fixture.shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)menus();  // a ui query (or a hit test) resolves the layout before the frame does
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  Expect(menus() > 0, "grown back, the menu bar shows its titles again");
+}
+
+// QA resize-overlays: a window shrunk into the compact layout never came back --
+// at 1440 px the menus stayed folded behind the chevron. The frame recorded the
+// resolved layout mode only when IT recomputed the layout memo; after a resize a
+// hit test or a ui query often recomputed it first, the frame saw a memo hit, and
+// the stale "compact" (which the resolver reads back as its previous mode, and
+// the memo keys on) held for good.
+void TestTheCompactLayoutReturnsWhenTheWindowGrows() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  const auto menus = [&]() {
+    std::size_t count = 0;
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      count += entry["kind"].AsString() == "menu" ? 1 : 0;
+    }
+    return count;
+  };
+  Expect(menus() > 0, "the regular layout shows the menu bar's titles");
+  TestAccess::SetWindowSize(fixture.shell, 640, 480);
+  fixture.shell.Render(fixture.canvas.renderer(), 640, 480);
+  Expect(menus() == 0, "a 640-px window folds the menus into the chevron");
+  TestAccess::SetWindowSize(fixture.shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)menus();  // a ui query (or a hit test) resolves the layout before the frame does
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  Expect(menus() > 0, "grown back, the menu bar shows its titles again");
+}
+
+// QA diff-commands: pasting a line longer than the editor is wide made the
+// horizontal scrollbar appear, and the paste damaged only the edited line -- the
+// scrollbar's strip along the editor's bottom kept the old pixels. An edit that
+// makes the bar appear (or go) repaints it.
+void TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("long.txt", "short\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a short file, no horizontal scrollbar");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 5);
+  const std::string wide(400, 'w');
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(wide.c_str())}),
+                      "a paste wider than the editor (the horizontal scrollbar appears)");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}),
+                      "undoing it (the scrollbar goes)");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2059,6 +2133,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",
+          TestTheCompactLayoutReturnsWhenTheWindowGrows);
   AddTest(tests, "QaFlowRegression/EscapeReturnsFocusToWhereTheOverlayOpened",
           TestEscapeReturnsFocusToWhereTheOverlayOpened);
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossACloseButtonLeavesItIdle",
