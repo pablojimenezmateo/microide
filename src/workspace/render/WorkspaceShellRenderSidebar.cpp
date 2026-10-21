@@ -1,4 +1,5 @@
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
+#include "render/ScopedRenderClip.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/git/GitSidebarHeaderLayout.h"
@@ -142,6 +143,14 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   if (!sidebar_vm.visible) {
     return;
   }
+  // Nothing the sidebar paints leaves it. Narrowed by a drag, its header buttons
+  // and its rows' truncated labels ran past its right edge into the editor -- so
+  // a full frame drew them there and a partial frame of the editor painted over
+  // them, and the two disagreed (TD-2026-10-20-372, CI's ASan monkey, seed 4).
+  const SDL_FRect& sidebar_area = layout.sidebar;
+  const render::ScopedRenderClip sidebar_clip(
+      renderer, SDL_Rect{static_cast<int>(std::floor(sidebar_area.x)), static_cast<int>(std::floor(sidebar_area.y)),
+                         static_cast<int>(std::ceil(sidebar_area.w)), static_cast<int>(std::ceil(sidebar_area.h))});
 
   const auto draw_vertical_scrollbar = [&](const SDL_FRect& area,
                                            float total_units,

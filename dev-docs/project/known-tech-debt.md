@@ -494,7 +494,16 @@ itself; until then the `noexcept` frame is unidentified (candidates: the
 `RemoteServerClient`/`RemoteWorkspace` teardown with the server child still
 streaming, a peer callback invoked from a destructor).
 
-### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [OPEN]
+### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [RESOLVED 2026-10-21 for seed 4]
+
+**Resolved (seed 4):** `QaFlowRegression/DraggingTheSidebarShutKeepsEveryFrameFresh`
+reproduced it in process -- the divider dragged toward the window's edge with a
+scheduled frame after each motion: at a narrow width the sidebar's header buttons
+and its rows' truncated labels painted PAST its right edge, so a full frame drew
+them over the editor's first columns and a partial frame of the editor painted
+over them. The sidebar's painting is now clipped to its rect. The other
+instances below (seed 2's tab close glyph, seed 7's) remain unexplained.
+
 
 Found by the `qa-deep` workflow's ASan monkey (seed 4, step 112) on both of its
 first two runs on `main` (8fea1a45 and the push before it), never locally: the

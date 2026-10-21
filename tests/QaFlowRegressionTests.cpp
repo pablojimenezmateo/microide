@@ -858,6 +858,44 @@ void TestOpeningAModalUnderThePointerDropsTheHoverItTakes() {
                       "a pointer move on the tab under the open palette");
 }
 
+// TD-2026-10-20-372 (CI's ASan monkey, seed 4): the sidebar divider dragged to
+// the window's edge, and a scheduled partial frame left a strip at the editor's
+// new left edge stale. Each motion of the drag, its release, and the scheduled
+// wakes after it, against a full repaint.
+void TestDraggingTheSidebarShutKeepsEveryFrameFresh() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha beta\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the editor beside the tree");
+  const auto divider = fixture.ElementRect("divider:sidebar");
+  Expect(divider.has_value(), "the ui names the sidebar divider");
+  if (!divider) {
+    return;
+  }
+  const float y = divider->y + divider->h * 0.8f;
+  const float x0 = divider->x + divider->w / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing the sidebar divider");
+  for (int step = 1; step <= 12; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 + (1.0f - x0) * static_cast<float>(step) / 12.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}), "dragging the divider, step " + std::to_string(step));
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "a scheduled frame mid-drag, step " + std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, 1.0f, y)}),
+                      "releasing at the window's edge");
+  for (int wake = 0; wake < 20; ++wake) {
+    SDL_Delay(15);
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "a scheduled frame after the release, " + std::to_string(wake));
+  }
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2190,6 +2228,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ToastsShowWithTheStatusBarHidden", TestToastsShowWithTheStatusBarHidden);
   AddTest(tests, "QaFlowRegression/OpeningAModalUnderThePointerDropsTheHoverItTakes",
           TestOpeningAModalUnderThePointerDropsTheHoverItTakes);
+  AddTest(tests, "QaFlowRegression/DraggingTheSidebarShutKeepsEveryFrameFresh",
+          TestDraggingTheSidebarShutKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",
           TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",
