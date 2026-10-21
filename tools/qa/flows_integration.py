@@ -11,20 +11,15 @@ from __future__ import annotations
 
 import json
 import shutil
-from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import step
+from flows_common import active_root, step
 
 
 def _editor_center(app: q.App) -> tuple[float, float]:
     x, y, w, h = app.ui()["surfaces"]["editorSurface"]
     return x + w / 2, y + h / 2
-
-
-def _active_root(app: q.App) -> str:
-    return next((p["root"] for p in app.query("projects") if p.get("active")), "")
 
 
 def flow_file_drop(app: q.App) -> None:
@@ -49,7 +44,7 @@ def flow_file_drop(app: q.App) -> None:
     (folder / "src" / "lib.c").write_text("int lib(void) { return 1; }\n")
     projects_before = len(app.query("projects"))
     app.drop(x, y, folder)
-    app.wait_until(lambda: _active_root(app).endswith("dropped-project"), 8.0,
+    app.wait_until(lambda: active_root(app).endswith("dropped-project"), 8.0,
                    "a dropped folder to open as the project")
     step(app, "drop a folder", 0.5)
     app.expect(len(app.query("projects")) == projects_before + 1,

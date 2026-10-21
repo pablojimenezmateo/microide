@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import open_file, step
+from flows_common import open_file
 
 # The `keybindings` query spells keys as the menus show them; xdotool wants keysyms.
 _KEYSYMS = {
@@ -118,5 +118,5 @@ def scenario_keys(app: q.App) -> None:
         app.expect(False, f"{label}: the key reached no action")
 
 
-SCENARIOS: dict[str, Callable[[q.App], None]] = {"keys": scenario_keys}
+FLOWS: dict[str, Callable[[q.App], None]] = {"keys": scenario_keys}
 ENV: dict[str, dict[str, str]] = {"keys": {"MICROIDE_QA_ACTION_DRY_RUN": "1"}}

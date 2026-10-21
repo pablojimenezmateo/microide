@@ -102,14 +102,16 @@ session is touched.
 | languages | `lsp-typescript`, `lsp-csharp` | typescript-language-server (from `MQA_TS_NODE_MODULES`, default `~/.cache/microide-qa/ts/node_modules`) and csharp-ls (`~/.dotnet/tools`) through the bundled plugins: hover, F12 across files, a compile error reaching the problems count |
 | ux | `nav-history`, `caret-motion`, `indentation`, `find-options`, `git-discard`, `terminal-clipboard`, `notifications`, `tree-keys`, `quick-open`, `undo-semantics`, `mouse-and-wrap`, `search-options`, `groups-keyboard`, `settings-keyboard`, `completion-keys`, `debug-keys`, `terminal-keys`, `recents-and-autosave`, `plugins-ui`, `git-remote`, `compare-keys` | Go Back / Go Forward through files and far jumps (menu state, a closed file reopened, the terminal keeping Alt+Left), Home/End/word/page/document motion, Ctrl+Down scrolling, Ctrl+L and Expand/Shrink Selection, Tab/Shift+Tab over lines, Enter after a brace, Backspace in an indent, whole word/regex by chord and click, Ctrl+H from the find field, a `$1` replace, the query seeded from the word under the caret; untracked files, Stage/Unstage, Discard with Cancel and confirm (disk and open editor), Stage All; editor to shell by Ctrl+Shift+V and the context menu, a terminal row dragged and Ctrl+Shift+C'd into an editor; toasts named, clicked away, stacked, and reached by Focus Notifications; the tree following the active file, type-to-select, F2 rename, Delete with confirm, New Folder, Collapse All; Ctrl+P `file:line`, `>` and `:` prefixes, click to open; undo restoring the replaced selection, one step per multi-caret edit, paste and line move, the caret brought back, redo dropped by a new edit; Shift+wheel sideways, Alt+Z wrap with Down and a double End, a double-click on the tab strip's empty space; Find in Files seeded from the selection, its case/regex toggles, include/exclude globs, Enter on a result; editor groups by keyboard: Ctrl+\\, Ctrl+1/2, the Ctrl+K Ctrl+arrow focus and Ctrl+K Ctrl+Shift+arrow move chords, Ctrl+K Ctrl+0/J, a group closing with its last editor; Settings by keyboard: Space toggles the selected row, Reset, a category jump, Escape, reopening unfiltered; completion by keyboard: Down/Up, Tab to accept, a second Ctrl+Space, the list closing when the caret leaves the word; the debugger by keyboard: F9 on the caret's line, F5 from a plugin's launch configuration and to continue, Ctrl+Shift+F5, Delete in the Breakpoints pane, Shift+F5; the terminal by keyboard: Ctrl+Shift+`, Ctrl+PageUp/PageDown, Shift+PageUp scrollback and the snap back, Alt+Left/Right between split panes, Enter relaunching an exited shell; recent files leading an empty Quick Open, both auto-save modes; the demo plugins' status item (clicked until it updates), decorations, panel surface and colour scheme; Publish Branch, Sync pushing (its label counting what is ahead), Fetch and Pull from another clone through a local bare `origin`, the open editor reloading; a diff by keyboard: opening on its first change, Alt+] / Alt+[, an edit on the working side saved by Ctrl+S, Alt+O to the working file |
 
-The flows live in `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`,
-`flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`,
-`flows_coverage.py`, `flows_ux.py`, `flows_depth.py`, `flows_resilience.py`, `flows_matrix.py`,
-`flows_languages.py`, `flows_integration.py`, `flows_plugin_api.py`, `flows_commands.py`, `flows_settings.py`, `flows_inputs.py`, `flows_surfaces.py`, `flows_panes.py` and `flows_tree.py`; `scenarios.py` holds the chrome scenarios and the registry
-(`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`). A scenario's plugins are bundled
-ones (`plugins/<name>`) or QA-only ones under `plugins/` here, for test content no
-bundled plugin ships (`qa-snippets`; `qa-launch`, a launch configuration for the fixture's binary;
-`qa-api`, one of each provider and event).
+The flows live in `flows_*.py`, one module per group; `scenarios.py` holds the
+chrome scenarios and the registry. Each module exports `FLOWS` (`{name: f(app)}`)
+and may export `PLUGINS` (bundled ones, `plugins/<name>`, or QA-only ones under
+`plugins/` here, for test content no bundled plugin ships: `qa-snippets`;
+`qa-launch`, a launch configuration for the fixture's binary; `qa-api`, one of
+each provider and event) and `ENV`. `scenarios.FLOW_MODULES` lists the modules in
+suite order; a `flows_*.py` missing from it, or a scenario name two modules
+define, fails the import rather than dropping a flow. Readers several modules
+need (`git`, `titles`, `tree_rows`, `terminal_tabs`, `messages`, ...) live in
+`flows_common.py`: add one there, not a sixth private copy.
 
 ## What a flow reads
 
@@ -229,8 +231,8 @@ scenario name.
 
 ## Adding a scenario
 
-A scenario is a function `f(app)` registered in a `FLOWS`/`SCENARIOS` dict that
-`scenarios.py` merges. Drive by name (`app.click_named("menu:Edit")`,
+A scenario is a function `f(app)` in a module's `FLOWS` dict (a new module goes
+into `scenarios.FLOW_MODULES`). Drive by name (`app.click_named("menu:Edit")`,
 `app.hover_named(...)`, `app.click_text(line, col)`, `app.key("ctrl+shift+f")`,
 `app.send("open", "src/main.cpp")`; `flows_common.open_file` opens and waits),
 run the oracles after each action (`flows_common.step` or `app.check(label)`), and
@@ -246,9 +248,9 @@ assumptions (a column off by one, a key a focused terminal owns).
 | file | what |
 |------|------|
 | `microide_qa.py` | `App`: lifecycle, input, control channel, `ui` locators, oracles, evidence, replay |
-| `scenarios.py` | the chrome scenarios and the registry (`SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
-| `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit` |
-| `flows_editing.py`, `flows_workbench.py`, `flows_lsp_debug.py`, `flows_keys.py`, `flows_context_menus.py`, `flows_more.py`, `flows_advanced.py`, `flows_coverage.py`, `flows_ux.py` | the flows, by group |
+| `scenarios.py` | the chrome scenarios and the registry (`FLOW_MODULES` merged into `SCENARIOS`, `SCENARIO_ENV`, `SCENARIO_PLUGINS`) |
+| `flows_common.py` | open/write/read helpers, `expect_text`, `step`, `dismiss`, `indent_unit`, the shared readers (`git`, `titles`, `tree_rows`, `terminal_tabs`, `active_root`, `messages`) |
+| `flows_*.py` | the flows, one module per group (`scenarios.FLOW_MODULES`) |
 | `plugins/` | QA-only plugins a scenario seeds (`qa-snippets`) |
 | `fakebin/` | stand-in programs a scenario puts first on the app's PATH (`zenity`, for the native dialogs) |
 | `monkey.py` | the seeded monkey and the command fuzzer's generators, profiles and churn |

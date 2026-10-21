@@ -7,20 +7,14 @@ rename, and branch review.
 from __future__ import annotations
 
 import subprocess
-import time
 from typing import Callable
 
 import microide_qa as q
-from flows_common import open_file, read, step, write
-
-
-def _terminal_tabs(app: q.App) -> list[dict]:
-    terminals = app.query("terminals")
-    return terminals if isinstance(terminals, list) else terminals.get("tabs", [])
+from flows_common import git, open_file, read, step, terminal_tabs, write
 
 
 def _active_pane(app: q.App) -> dict:
-    panes = next((t.get("panes", []) for t in _terminal_tabs(app) if t.get("active")), [])
+    panes = next((t.get("panes", []) for t in terminal_tabs(app) if t.get("active")), [])
     return next((p for p in panes if p.get("active")), {})
 
 
@@ -29,9 +23,9 @@ def _screen(app: q.App, lines: int = 200) -> str:
 
 
 def _focus_terminal(app: q.App) -> None:
-    if not app.ui()["panel"]["visible"] or not _terminal_tabs(app):
+    if not app.ui()["panel"]["visible"] or not terminal_tabs(app):
         app.key("ctrl+grave")
-        app.wait_until(lambda: app.ui()["panel"]["visible"] and bool(_terminal_tabs(app)), 5.0,
+        app.wait_until(lambda: app.ui()["panel"]["visible"] and bool(terminal_tabs(app)), 5.0,
                        "a terminal")
     app.send("focus", "panel")
     step(app, "focus the terminal", 0.4)
@@ -274,11 +268,6 @@ def flow_unsaved_continuations(app: q.App) -> None:
     app.expect(app.ui().get("modal") is None, "the relaunched app asks nothing")
 
 
-def _git(app: q.App, *args: str) -> str:
-    assert app.project is not None
-    return subprocess.run(["git", "-C", str(app.project), *args], capture_output=True, text=True).stdout
-
-
 def _git_labels(app: q.App) -> dict[str, str]:
     return {e["name"]: e.get("label", "") for e in app.elements("row", prefix="row:git/")}
 
@@ -288,11 +277,11 @@ def flow_branch_review(app: q.App) -> None:
     shows the marker on its row (the ui label is the painted one), survives a
     restart, and clears; the marks are refused, not silently "ok", outside such a
     diff."""
-    _git(app, "checkout", "-q", "-b", "qa-review")
+    git(app, "checkout", "-q", "-b", "qa-review")
     write(app, "notes/r1.txt", "one\n")
     write(app, "notes/r2.txt", "two\n")
-    _git(app, "add", "-A")
-    _git(app, "commit", "-q", "-m", "qa: review fixture")
+    git(app, "add", "-A")
+    git(app, "commit", "-q", "-m", "qa: review fixture")
     reply = app.send("mark-branch-file-reviewed")
     app.expect(not reply.get("ok"), f"marking with no branch-review diff open is refused ({reply})")
     app.key("ctrl+shift+g")
@@ -323,8 +312,8 @@ def flow_selected_ranges(app: q.App) -> None:
     the other change asks first and, confirmed, reverts it in the working tree."""
     head = "".join(f"line {i}\n" for i in range(1, 41))
     write(app, "notes/ranges.txt", head)
-    _git(app, "add", "notes/ranges.txt")
-    _git(app, "commit", "-q", "-m", "qa: ranges fixture")
+    git(app, "add", "notes/ranges.txt")
+    git(app, "commit", "-q", "-m", "qa: ranges fixture")
     edited = head.replace("line 3\n", "line three\n").replace("line 35\n", "line thirty-five\n")
     write(app, "notes/ranges.txt", edited)
     app.key("ctrl+shift+g")
@@ -338,9 +327,9 @@ def flow_selected_ranges(app: q.App) -> None:
     step(app, "diff", 0.4)
     app.key("ctrl+k")
     app.key("ctrl+alt+s")
-    app.wait_until(lambda: "line three" in _git(app, "show", ":notes/ranges.txt"), 5.0,
+    app.wait_until(lambda: "line three" in git(app, "show", ":notes/ranges.txt"), 5.0,
                    "Ctrl+K Ctrl+Alt+S to stage the first change")
-    staged = _git(app, "show", ":notes/ranges.txt")
+    staged = git(app, "show", ":notes/ranges.txt")
     app.expect("line thirty-five" not in staged, "and only the first change")
     app.key("alt+bracketright")
     step(app, "next change", 0.3)
@@ -359,7 +348,7 @@ def flow_selected_ranges(app: q.App) -> None:
             # (CI's runner reverted nothing where every local run reverts).
             app.expect(False, "revert diagnostics: notifications="
                               f"{[n.get('message') for n in app.query('notifications')]} "
-                              f"git={_git(app, '--version')!r} "
+                              f"git={git(app, '--version')!r} "
                               f"log={[l for l in app.new_log_lines() if 'apply' in l or 'revert' in l or 'error' in l.lower()][-5:]}")
         app.expect("line three" in read(app, "notes/ranges.txt"), "the staged change stays in the file")
 
@@ -370,14 +359,14 @@ def flow_merge_mouse(app: q.App) -> None:
     the toolbar's Save -- the file holds those choices and no markers."""
     base = "".join(f"line {i}\n" for i in range(1, 13))
     write(app, "notes/merge.txt", base)
-    _git(app, "add", "notes/merge.txt")
-    _git(app, "commit", "-q", "-m", "qa: merge base")
-    _git(app, "checkout", "-q", "-b", "qa-incoming")
+    git(app, "add", "notes/merge.txt")
+    git(app, "commit", "-q", "-m", "qa: merge base")
+    git(app, "checkout", "-q", "-b", "qa-incoming")
     write(app, "notes/merge.txt", base.replace("line 2\n", "line 2 incoming\n").replace("line 10\n", "line 10 incoming\n"))
-    _git(app, "commit", "-q", "-am", "qa: incoming side")
-    _git(app, "checkout", "-q", "-")
+    git(app, "commit", "-q", "-am", "qa: incoming side")
+    git(app, "checkout", "-q", "-")
     write(app, "notes/merge.txt", base.replace("line 2\n", "line 2 current\n").replace("line 10\n", "line 10 current\n"))
-    _git(app, "commit", "-q", "-am", "qa: current side")
+    git(app, "commit", "-q", "-am", "qa: current side")
     assert app.project is not None
     merged = subprocess.run(["git", "-C", str(app.project), "merge", "qa-incoming"], capture_output=True, text=True)
     app.expect(merged.returncode != 0, "the merge conflicts (the fixture is built to)")
@@ -444,8 +433,8 @@ def flow_compare_mouse(app: q.App) -> None:
     the line, and a drag a range."""
     lines = [f"line {i}" for i in range(1, 121)]
     write(app, "notes/cmp.txt", "".join(f"{x}\n" for x in lines))
-    _git(app, "add", "notes/cmp.txt")
-    _git(app, "commit", "-q", "-m", "qa: compare fixture")
+    git(app, "add", "notes/cmp.txt")
+    git(app, "commit", "-q", "-m", "qa: compare fixture")
     lines[4] = "line five"
     lines[59] = "line sixty"
     lines[114] = "line one-fifteen"

@@ -16,7 +16,7 @@ import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, open_file, read, step, write
+from flows_common import dismiss, open_file, read, step, terminal_tabs, write
 
 
 def _cursor(app: q.App) -> tuple[int, int]:
@@ -254,10 +254,6 @@ def _panel_height(app: q.App) -> float:
     return surface[3] if surface else 0.0
 
 
-def _terminal_tabs(app: q.App) -> list[dict]:
-    return app.query("terminals")
-
-
 def flow_panel_mouse(app: q.App) -> None:
     """The panel's tabs clicked, closed by their button and by middle-click, the
     panel divider dragged and double-clicked back, a split's divider dragged and
@@ -268,26 +264,26 @@ def flow_panel_mouse(app: q.App) -> None:
         app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
     step(app, "the panel", 0.3)
     app.click_named("button:panel/new-terminal")
-    app.wait_until(lambda: len(_terminal_tabs(app)) == 2, 5.0, "a second terminal tab")
+    app.wait_until(lambda: len(terminal_tabs(app)) == 2, 5.0, "a second terminal tab")
     step(app, "new terminal", 0.3)
     tabs = app.elements("panel-tab")
     app.expect(len(tabs) == 2, f"two panel tabs ({[t['name'] for t in tabs]})")
     app.click(*app.center(tabs[0]))
     step(app, "click the first tab", 0.3)
-    app.expect(_terminal_tabs(app)[0].get("active"), "clicking a panel tab activates it")
+    app.expect(terminal_tabs(app)[0].get("active"), "clicking a panel tab activates it")
     app.expect(app.element(tabs[0]["name"]).get("active") is True, "and the strip shows it active")
     close = next((e for e in app.elements("button", prefix="button:close-panel-tab/")), None)
     if app.expect(close is not None, f"a panel tab has a close button ({[e['name'] for e in app.elements('button')]})"):
         app.click(*app.center(close))
-        app.wait_until(lambda: len(_terminal_tabs(app)) == 1, 5.0, "the tab to close")
+        app.wait_until(lambda: len(terminal_tabs(app)) == 1, 5.0, "the tab to close")
         step(app, "close a tab by its button", 0.3)
     app.click_named("button:panel/new-terminal")
-    app.wait_until(lambda: len(_terminal_tabs(app)) == 2, 5.0, "a second terminal tab again")
+    app.wait_until(lambda: len(terminal_tabs(app)) == 2, 5.0, "a second terminal tab again")
     tab = app.elements("panel-tab")[1]
     app.click(*app.center(tab), button=2)
-    app.wait_until(lambda: len(_terminal_tabs(app)) == 1, 5.0, "a middle-click to close the tab")
+    app.wait_until(lambda: len(terminal_tabs(app)) == 1, 5.0, "a middle-click to close the tab")
     step(app, "middle-click a tab", 0.3)
-    app.expect(len(_terminal_tabs(app)) == 1, "a middle-click closes a panel tab")
+    app.expect(len(terminal_tabs(app)) == 1, "a middle-click closes a panel tab")
 
     divider = app.element("divider:panel")
     x, y = app.center(divider)

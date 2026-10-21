@@ -62,5 +62,5 @@ def scenario_sweeps_matrix(app: q.App) -> None:
     _apply(app, "default", _layout(), (("colorscheme", "default"),))
 
 
-SCENARIOS: dict[str, Callable[[q.App], None]] = {"sweeps-matrix": scenario_sweeps_matrix}
+FLOWS: dict[str, Callable[[q.App], None]] = {"sweeps-matrix": scenario_sweeps_matrix}
 ENV: dict[str, dict[str, str]] = {"sweeps-matrix": {"MICROIDE_QA_ACTION_DRY_RUN": "1"}}

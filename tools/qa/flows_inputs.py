@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_text, open_file, read, step, write
+from flows_common import active_root, dismiss, expect_text, open_file, read, step, tree_rows, write
 
 FAKEBIN = Path(__file__).resolve().parent / "fakebin"
 
@@ -35,10 +35,6 @@ def _answer_dialog(app: q.App, verb: str, path: Path | str = "") -> None:
 def _dialog_args(app: q.App) -> list[str]:
     args = app.work / "run" / "zenity-args"
     return args.read_text().splitlines() if args.exists() else []
-
-
-def _active_root(app: q.App) -> str:
-    return next((p["root"] for p in app.query("projects") if p.get("active")), "")
 
 
 def _menu_row(app: q.App, menu: str, row: str) -> None:
@@ -63,7 +59,7 @@ def flow_native_dialogs(app: q.App) -> None:
     projects_before = len(app.query("projects"))
     _answer_dialog(app, "select", second)
     _menu_row(app, "File", "Open Folder…")
-    app.wait_until(lambda: _active_root(app).endswith("second-project"), 10.0,
+    app.wait_until(lambda: active_root(app).endswith("second-project"), 10.0,
                    "the folder picked in the dialog to open as the project")
     step(app, "Open Folder… picks a folder", 0.5)
     app.expect(len(app.query("projects")) == projects_before + 1, "the picked folder is a project beside the first")
@@ -77,7 +73,7 @@ def flow_native_dialogs(app: q.App) -> None:
     _menu_row(app, "File", "Open Folder…")
     app.wait_until(lambda: bool(_dialog_args(app)), 5.0, "the dialog to run")
     step(app, "Open Folder… cancelled", 0.5)
-    app.expect(len(app.query("projects")) == count and _active_root(app).endswith("second-project"),
+    app.expect(len(app.query("projects")) == count and active_root(app).endswith("second-project"),
                "Cancel opens nothing and keeps the project")
 
     outside = app.work / "elsewhere.txt"
@@ -544,13 +540,9 @@ def flow_tab_drag(app: q.App) -> None:
 
 # ---- files under open editors -----------------------------------------------------
 
-def _tree_rows(app: q.App) -> list[str]:
-    return [e["name"] for e in app.elements("row", prefix="row:tree/")]
-
-
 def _rename_row(app: q.App, row: str, new_name: str) -> bool:
     app.click_named("sidebar-view:tree")
-    app.wait_until(lambda: f"row:tree/{row}" in _tree_rows(app), 5.0, f"{row} in the tree")
+    app.wait_until(lambda: f"row:tree/{row}" in tree_rows(app), 5.0, f"{row} in the tree")
     app.click_named(f"row:tree/{row}")
     app.key("F2")
     if not app.wait_until(lambda: app.ui().get("modal") == "prompt", 3.0, f"the rename prompt for {row}"):
@@ -558,7 +550,7 @@ def _rename_row(app: q.App, row: str, new_name: str) -> bool:
     app.key("ctrl+a")
     app.type(new_name)
     app.key("Return")
-    return app.wait_until(lambda: f"row:tree/{new_name}" in _tree_rows(app), 5.0, f"{new_name} in the tree")
+    return app.wait_until(lambda: f"row:tree/{new_name}" in tree_rows(app), 5.0, f"{new_name} in the tree")
 
 
 def flow_tree_file_ops(app: q.App) -> None:
@@ -582,7 +574,7 @@ def flow_tree_file_ops(app: q.App) -> None:
 
     open_file(app, "ops/sub/two.txt", "two\n")
     app.click_named("sidebar-view:tree")
-    if "row:tree/sub" not in _tree_rows(app):
+    if "row:tree/sub" not in tree_rows(app):
         app.click_named("row:tree/ops")
         app.settle(0.3)
     if _rename_row(app, "sub", "folder"):
@@ -599,7 +591,7 @@ def flow_tree_file_ops(app: q.App) -> None:
 
     open_file(app, "ops/three.txt", "three\n")
     app.click_named("sidebar-view:tree")
-    app.wait_until(lambda: "row:tree/three.txt" in _tree_rows(app), 5.0, "three.txt in the tree")
+    app.wait_until(lambda: "row:tree/three.txt" in tree_rows(app), 5.0, "three.txt in the tree")
     app.click_named("row:tree/three.txt")
     app.key("Delete")
     if app.wait_until(lambda: app.ui().get("modal") == "prompt", 3.0, "the delete prompt"):
@@ -616,13 +608,13 @@ def flow_tree_file_ops(app: q.App) -> None:
     open_file(app, "ops/four.txt", "four\n")
     os.rename(app.project / "ops" / "four.txt", app.project / "ops" / "cuatro.txt")
     app.click_named("sidebar-view:tree")
-    app.wait_until(lambda: "row:tree/cuatro.txt" in _tree_rows(app) and "row:tree/four.txt" not in _tree_rows(app),
+    app.wait_until(lambda: "row:tree/cuatro.txt" in tree_rows(app) and "row:tree/four.txt" not in tree_rows(app),
                    8.0, "the tree to show the outside rename")
     step(app, "renamed outside the app", 0.4)
     app.send("focus", "editor")
     app.expect(app.alive(), "the app survives a file renamed under its editor")
     (app.project / "ops" / "cuatro.txt").unlink()
-    app.wait_until(lambda: "row:tree/cuatro.txt" not in _tree_rows(app), 8.0, "the tree to drop the deleted file")
+    app.wait_until(lambda: "row:tree/cuatro.txt" not in tree_rows(app), 8.0, "the tree to drop the deleted file")
     step(app, "deleted outside the app", 0.4)
     app.expect(app.alive(), "the app survives a file deleted under its editor")
     dismiss(app)

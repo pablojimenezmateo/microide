@@ -7,28 +7,10 @@ and the git repository on disk). VS Code's behaviour is the expectation.
 
 from __future__ import annotations
 
-import subprocess
-import time
-from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_text, open_file, read, step, write
-
-
-def _titles(app: q.App, group: int | None = None) -> list[str]:
-    groups = app.editor_state()["groups"]
-    return [tab["title"] for g in groups if group is None or g["index"] == group for tab in g["tabs"]]
-
-
-def _active_title(app: q.App) -> str | None:
-    return (app.active_tab() or {}).get("title")
-
-
-def _git(app: q.App, *args: str) -> str:
-    assert app.project is not None
-    return subprocess.run(["git", "-C", str(app.project), *args], capture_output=True,
-                          text=True).stdout
+from flows_common import active_title, dismiss, expect_text, git, open_file, read, step, titles, write
 
 
 def flow_quick_open(app: q.App) -> None:
@@ -42,7 +24,7 @@ def flow_quick_open(app: q.App) -> None:
     app.expect(app.ui()["overlay"]["query"] == "main", "the query reaches the finder")
     app.key("Return")
     step(app, "Enter", 0.3)
-    app.wait_until(lambda: _active_title(app) == "main.cpp", 3.0, "Enter to open main.cpp")
+    app.wait_until(lambda: active_title(app) == "main.cpp", 3.0, "Enter to open main.cpp")
     app.expect(not app.ui()["overlay"]["visible"], "Enter closes the finder")
     app.expect(app.ui()["focus"] == "editor", "and the editor has the keyboard")
     app.key("ctrl+p")
@@ -54,7 +36,7 @@ def flow_quick_open(app: q.App) -> None:
     if target is not None:
         app.click(*app.center(target))
         step(app, "click scheduler.hpp", 0.3)
-        app.wait_until(lambda: _active_title(app) == "scheduler.hpp", 3.0,
+        app.wait_until(lambda: active_title(app) == "scheduler.hpp", 3.0,
                        "a click on a finder row to open it")
     app.key("ctrl+p")
     app.type("zzzz-nothing")
@@ -65,7 +47,7 @@ def flow_quick_open(app: q.App) -> None:
     app.key("Escape")
     step(app, "Escape")
     app.expect(not app.ui()["overlay"]["visible"], "Escape closes the finder")
-    app.expect(_active_title(app) == "scheduler.hpp", "and leaves the editor where it was")
+    app.expect(active_title(app) == "scheduler.hpp", "and leaves the editor where it was")
 
 
 def flow_command_palette(app: q.App) -> None:
@@ -122,7 +104,7 @@ def flow_tree(app: q.App) -> None:
         step(app, "expand src", 0.3)
     app.click_named("row:tree/main.cpp")
     step(app, "click main.cpp", 0.4)
-    app.wait_until(lambda: _active_title(app) == "main.cpp", 3.0, "a click on a file to open it")
+    app.wait_until(lambda: active_title(app) == "main.cpp", 3.0, "a click on a file to open it")
     # Keyboard: Down/Up move the selection, Enter opens, Left collapses.
     # The src folder is expanded now (main.cpp was opened from it); select it with
     # the keyboard, since a click on a folder row also toggles it.
@@ -145,7 +127,7 @@ def flow_tree(app: q.App) -> None:
     app.key("Down")
     app.key("Return")
     step(app, "Down Enter", 0.4)
-    app.wait_until(lambda: _active_title(app) == "scheduler.cpp", 3.0, "Enter to open the selection")
+    app.wait_until(lambda: active_title(app) == "scheduler.cpp", 3.0, "Enter to open the selection")
 
     # New File through the src folder's context menu.
     src = app.element("row:tree/src")
@@ -168,7 +150,7 @@ def flow_tree(app: q.App) -> None:
     app.wait_until(lambda: (app.project / "src" / "added.cpp").exists(), 3.0, "the new file on disk")
     app.wait_until(lambda: app.wait_for("row:tree/added.cpp", 0.2) is not None or True, 1.0, "tree")
     app.expect(app.wait_for("row:tree/added.cpp", 3.0) is not None, "the tree shows the new file")
-    app.wait_until(lambda: _active_title(app) == "added.cpp", 3.0, "the new file to open (VS Code)")
+    app.wait_until(lambda: active_title(app) == "added.cpp", 3.0, "the new file to open (VS Code)")
 
     # Rename it.
     row = app.wait_for("row:tree/added.cpp", 2.0)
@@ -192,7 +174,7 @@ def flow_tree(app: q.App) -> None:
             app.wait_until(lambda: (app.project / "src" / "renamed.cpp").exists()
                            and not (app.project / "src" / "added.cpp").exists(), 3.0,
                            "the rename on disk")
-            app.wait_until(lambda: "renamed.cpp" in _titles(app), 3.0,
+            app.wait_until(lambda: "renamed.cpp" in titles(app), 3.0,
                            "the open tab to follow the rename")
     # Delete it.
     row = app.wait_for("row:tree/renamed.cpp", 3.0)
@@ -212,7 +194,7 @@ def flow_tree(app: q.App) -> None:
                 step(app, "confirm Delete", 0.5)
             app.wait_until(lambda: not (app.project / "src" / "renamed.cpp").exists(), 3.0,
                            "the delete on disk")
-            app.wait_until(lambda: "renamed.cpp" not in _titles(app), 3.0,
+            app.wait_until(lambda: "renamed.cpp" not in titles(app), 3.0,
                            "the deleted file's tab to close")
             app.wait_until(lambda: not any(e["name"] == "row:tree/renamed.cpp" for e in app.elements("row")),
                            3.0, "the tree to drop the deleted file")
@@ -223,43 +205,43 @@ def flow_tabs(app: q.App) -> None:
     """Activate by click and chord, reorder, close by button, middle click and Ctrl+W."""
     for name in ("README.md", "src/main.cpp", "src/scheduler.cpp", "include/scheduler.hpp"):
         open_file(app, name)
-    titles = _titles(app, 0)
-    app.expect(titles[-3:] == ["main.cpp", "scheduler.cpp", "scheduler.hpp"],
-               f"tabs open in order ({titles})")
+    opened = titles(app, 0)
+    app.expect(opened[-3:] == ["main.cpp", "scheduler.cpp", "scheduler.hpp"],
+               f"tabs open in order ({opened})")
     app.click_named("tab:0/main.cpp")
     step(app, "click the main.cpp tab", 0.2)
-    app.expect(_active_title(app) == "main.cpp", "clicking a tab activates it")
+    app.expect(active_title(app) == "main.cpp", "clicking a tab activates it")
     app.key("ctrl+Next")
     step(app, "ctrl+PageDown", 0.2)
-    app.expect(_active_title(app) == "scheduler.cpp", f"ctrl+PageDown goes right ({_active_title(app)})")
+    app.expect(active_title(app) == "scheduler.cpp", f"ctrl+PageDown goes right ({active_title(app)})")
     app.key("ctrl+Prior")
     step(app, "ctrl+PageUp", 0.2)
-    app.expect(_active_title(app) == "main.cpp", "ctrl+PageUp goes back")
+    app.expect(active_title(app) == "main.cpp", "ctrl+PageUp goes back")
     app.key("ctrl+shift+Next")
     step(app, "ctrl+shift+PageDown", 0.2)
-    titles = _titles(app, 0)
-    app.expect(titles.index("main.cpp") == titles.index("scheduler.cpp") + 1,
-               f"ctrl+shift+PageDown moves the tab right ({titles})")
+    opened = titles(app, 0)
+    app.expect(opened.index("main.cpp") == opened.index("scheduler.cpp") + 1,
+               f"ctrl+shift+PageDown moves the tab right ({opened})")
     # Drag a tab onto the first slot.
     first = app.elements("tab")[0]
     hpp = app.element("tab:0/scheduler.hpp")
     app.drag(*app.center(hpp), first["rect"][0] + 6, first["rect"][1] + first["rect"][3] / 2)
     step(app, "drag scheduler.hpp to the front", 0.3)
-    app.expect(_titles(app, 0)[0] == "scheduler.hpp", f"dragging a tab reorders it ({_titles(app, 0)})")
+    app.expect(titles(app, 0)[0] == "scheduler.hpp", f"dragging a tab reorders it ({titles(app, 0)})")
     # Close: the button, a middle click, Ctrl+W.
     app.click_named("button:close-tab/0/README.md")
     step(app, "click README's close button", 0.3)
-    app.expect("README.md" not in _titles(app), "the close button closes the tab")
+    app.expect("README.md" not in titles(app), "the close button closes the tab")
     app.click_named("tab:0/scheduler.cpp", button=2)
     step(app, "middle-click scheduler.cpp", 0.3)
-    app.expect("scheduler.cpp" not in _titles(app), "a middle click closes the tab")
+    app.expect("scheduler.cpp" not in titles(app), "a middle click closes the tab")
     app.click_named("tab:0/main.cpp")
     app.key("ctrl+w")
     step(app, "ctrl+w", 0.3)
-    app.expect(_titles(app) == ["scheduler.hpp"], f"ctrl+w closes the active tab ({_titles(app)})")
+    app.expect(titles(app) == ["scheduler.hpp"], f"ctrl+w closes the active tab ({titles(app)})")
     app.key("ctrl+w")
     step(app, "ctrl+w the last tab", 0.3)
-    app.expect(_titles(app) == [], "closing the last tab leaves none")
+    app.expect(titles(app) == [], "closing the last tab leaves none")
     app.expect(app.buffer().get("available") is False, "and no buffer")
 
 
@@ -293,8 +275,8 @@ def flow_editor_groups(app: q.App) -> None:
     x, y, w, h = right_pane["rect"]
     app.drag(*app.center(tab), x + w / 2, y + h / 2)
     step(app, "drag main.cpp into the right group", 0.4)
-    app.expect("main.cpp" in _titles(app, 1) and "main.cpp" not in _titles(app, 0),
-               f"dragging a tab into a pane moves it there ({_titles(app, 0)} | {_titles(app, 1)})")
+    app.expect("main.cpp" in titles(app, 1) and "main.cpp" not in titles(app, 0),
+               f"dragging a tab into a pane moves it there ({titles(app, 0)} | {titles(app, 1)})")
     app.send("close-group")
     step(app, "close-group", 0.4)
     app.expect(len(app.editor_state()["groups"]) == 1, "close-group leaves one group")
@@ -327,7 +309,7 @@ def flow_project_search(app: q.App) -> None:
         line = int(hit["label"].rsplit(":", 1)[1])
         app.click(*app.center(hit))
         step(app, "click a result", 0.4)
-        app.wait_until(lambda: _active_title(app) == "scheduler.cpp", 3.0, "the hit's file to open")
+        app.wait_until(lambda: active_title(app) == "scheduler.cpp", 3.0, "the hit's file to open")
         app.expect(app.cursors()[0][0] == line, f"the caret lands on the hit's line {line} ({app.cursors()})")
     app.click_named("field:search/replace")
     app.type("rank")
@@ -374,7 +356,7 @@ def flow_git(app: q.App) -> None:
     if stage:
         app.click(*app.center(stage))
         step(app, "Stage", 0.5)
-    app.wait_until(lambda: _git(app, "diff", "--cached", "--name-only").strip() == "src/main.cpp",
+    app.wait_until(lambda: git(app, "diff", "--cached", "--name-only").strip() == "src/main.cpp",
                    5.0, "the file to be staged in the index")
     app.wait_until(lambda: any(e["name"].startswith("row:git/Staged") for e in app.elements("row")),
                    5.0, "the git view to show a Staged group")
@@ -390,7 +372,7 @@ def flow_git(app: q.App) -> None:
                    "the subject lands in its field")
         app.key("ctrl+Return")
         step(app, "ctrl+Enter commits", 0.8)
-        app.wait_until(lambda: _git(app, "log", "-1", "--format=%s").strip() == "qa: commit from the git view",
+        app.wait_until(lambda: git(app, "log", "-1", "--format=%s").strip() == "qa: commit from the git view",
                        6.0, "the commit to land in the repository")
         app.wait_until(lambda: not any(e["name"] == "row:git/main.cpp" for e in app.elements("row")),
                        5.0, "the committed file to leave the git view")
@@ -620,7 +602,6 @@ def flow_help(app: q.App) -> None:
         app.click(*app.center(about))
         step(app, "click About", 0.4)
         app.expect(app.ui().get("modal") == "help", f"{about['label']} opens Help/About")
-        surface = app.ui()["surfaces"]["menuBar"]
         app.key("Escape")
         step(app, "Escape", 0.3)
         app.expect(app.ui().get("modal") is None, "Escape closes it")

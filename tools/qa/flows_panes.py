@@ -9,24 +9,18 @@ queries and the files on disk, never pixels.
 
 from __future__ import annotations
 
-import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, open_file, read, step, write
+from flows_common import dismiss, git, open_file, read, step, write
 from flows_coverage import _debug_rows, _show_debug_mode
 from flows_lsp_debug import _require, _state
-
-
-def _git(app: q.App, *args: str) -> str:
-    assert app.project is not None
-    return subprocess.run(["git", *args], cwd=app.project, capture_output=True, text=True, check=False).stdout
 
 
 def _porcelain(app: q.App) -> dict[str, str]:
     """{path: XY} from `git status --porcelain`."""
     out: dict[str, str] = {}
-    for line in _git(app, "status", "--porcelain").splitlines():
+    for line in git(app, "status", "--porcelain").splitlines():
         out[line[3:].strip()] = line[:2]
     return out
 
@@ -46,8 +40,8 @@ def flow_git_view_keys(app: q.App) -> None:
     assert app.project is not None
     for name in ("alpha", "beta", "gamma"):
         write(app, f"keys/{name}.txt", f"{name}\n")
-    _git(app, "add", "keys")
-    _git(app, "commit", "-q", "-m", "qa: git view keys fixture")
+    git(app, "add", "keys")
+    git(app, "commit", "-q", "-m", "qa: git view keys fixture")
     for name in ("alpha", "beta", "gamma"):
         write(app, f"keys/{name}.txt", f"{name} changed\n")
     open_file(app, "keys/alpha.txt")

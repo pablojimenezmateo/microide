@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, open_file, step, write
+from flows_common import dismiss, messages, open_file, step, write
 
 
 def _rows(app: q.App) -> list[str]:
@@ -27,10 +27,6 @@ def _select(app: q.App, row: str) -> bool:
     app.click_named(f"row:tree/{row}")
     app.settle(0.15)
     return True
-
-
-def _messages(app: q.App) -> list[str]:
-    return [n.get("message", "") for n in app.query("notifications")]
 
 
 def _prompt_and_type(app: q.App, text: str, label: str) -> bool:
@@ -61,31 +57,31 @@ def flow_tree_collisions(app: q.App) -> None:
     app.send("tree-refresh")
     if not _select(app, "a.txt"):
         return
-    before = len(_messages(app))
+    before = len(messages(app))
     app.key("F2")
     if _prompt_and_type(app, "b.txt", "rename a.txt onto b.txt"):
-        app.wait_until(lambda: len(_messages(app)) > before, 3.0, "a toast for the refused rename")
-        app.expect(any("already exists" in m for m in _messages(app)[before:]),
-                   f"a rename onto an existing name is refused and says why ({_messages(app)[before:]})")
+        app.wait_until(lambda: len(messages(app)) > before, 3.0, "a toast for the refused rename")
+        app.expect(any("already exists" in m for m in messages(app)[before:]),
+                   f"a rename onto an existing name is refused and says why ({messages(app)[before:]})")
         app.expect((app.project / "col" / "a.txt").exists() and (app.project / "col" / "b.txt").read_text() == "b\n",
                    "and neither file changed")
     dismiss(app)
 
-    before = len(_messages(app))
+    before = len(messages(app))
     _context(app, "col", "New File…")
     if _prompt_and_type(app, "b.txt", "new file over an existing one"):
-        app.wait_until(lambda: len(_messages(app)) > before, 3.0, "a toast for the refused file")
-        app.expect(any("already exists" in m for m in _messages(app)[before:]),
-                   f"a new file over an existing one is refused ({_messages(app)[before:]})")
+        app.wait_until(lambda: len(messages(app)) > before, 3.0, "a toast for the refused file")
+        app.expect(any("already exists" in m for m in messages(app)[before:]),
+                   f"a new file over an existing one is refused ({messages(app)[before:]})")
         app.expect((app.project / "col" / "b.txt").read_text() == "b\n", "and the existing file is untouched")
     dismiss(app)
 
-    before = len(_messages(app))
+    before = len(messages(app))
     _context(app, "col", "New Folder…")
     if _prompt_and_type(app, "sub", "new folder over an existing one"):
-        app.wait_until(lambda: len(_messages(app)) > before, 3.0, "a toast for the refused folder")
-        app.expect(any("already exists" in m for m in _messages(app)[before:]),
-                   f"a new folder over an existing one is refused ({_messages(app)[before:]})")
+        app.wait_until(lambda: len(messages(app)) > before, 3.0, "a toast for the refused folder")
+        app.expect(any("already exists" in m for m in messages(app)[before:]),
+                   f"a new folder over an existing one is refused ({messages(app)[before:]})")
         app.expect((app.project / "col" / "sub" / "inner.txt").exists(), "and the folder keeps its contents")
     dismiss(app)
 

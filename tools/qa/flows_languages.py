@@ -23,7 +23,6 @@ from typing import Callable
 
 import microide_qa as q
 from flows_common import open_file, step, write
-from flows_lsp_debug import _hover
 
 TS_MODULES = Path(os.environ.get("MQA_TS_NODE_MODULES",
                                  str(Path.home() / ".cache" / "microide-qa" / "ts" / "node_modules")))

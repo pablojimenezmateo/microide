@@ -6,21 +6,11 @@ compare / merge editors over a real git history.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_text, open_file, read, step, write
-
-
-def _git(app: q.App, *args: str) -> subprocess.CompletedProcess:
-    assert app.project is not None
-    return subprocess.run(["git", "-C", str(app.project), *args], capture_output=True, text=True)
-
-
-def _titles(app: q.App) -> list[str]:
-    return [tab["title"] for g in app.editor_state()["groups"] for tab in g["tabs"]]
+from flows_common import expect_text, git_run, open_file, read, step, titles, write
 
 
 def flow_session_restore(app: q.App) -> None:
@@ -166,14 +156,14 @@ def flow_projects(app: q.App) -> None:
         app.click(*app.center(first))
         step(app, "click the first project tab", 0.6)
         app.expect(app.element(first["name"]).get("active") is True, "clicking a project tab activates it")
-        app.expect("other.txt" not in _titles(app), "the first project shows its own tabs")
+        app.expect("other.txt" not in titles(app), "the first project shows its own tabs")
     app.send("project-next")
     step(app, "project-next", 0.5)
-    app.expect("other.txt" in _titles(app), f"project-next switches to the second ({_titles(app)})")
+    app.expect("other.txt" in titles(app), f"project-next switches to the second ({titles(app)})")
     app.send("project-close")
     step(app, "project-close", 0.6)
     app.wait_until(lambda: len(app.elements("project-tab")) <= 1, 5.0, "the project to close")
-    app.expect("other.txt" not in _titles(app), "closing it leaves the first project")
+    app.expect("other.txt" not in titles(app), "closing it leaves the first project")
 
 
 def flow_outline(app: q.App) -> None:
@@ -205,11 +195,11 @@ def flow_compare_and_merge(app: q.App) -> None:
     surface = app.ui()["surfaces"]["editorSurface"]
     app.wheel(surface[0] + surface[2] / 2, surface[1] + surface[3] / 2, 3)
     step(app, "scroll the compare", 0.2)
-    branch = _git(app, "branch", "--list", "feature/*").stdout.split()
+    branch = git_run(app, "branch", "--list", "feature/*").stdout.split()
     if not branch:
         app.expect(False, "the fixture has no feature branch to merge")
         return
-    merged = _git(app, "merge", branch[-1])
+    merged = git_run(app, "merge", branch[-1])
     app.expect(merged.returncode != 0, "merging the feature branch conflicts (the fixture is built to)")
     app.send("git-refresh")
     app.send("review-conflicts")

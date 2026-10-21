@@ -392,27 +392,25 @@ def scenario_scrolling(app: q.App) -> None:
         app.check(f"editor {chord}")
 
 
-import flows_editing  # noqa: E402
-import flows_workbench  # noqa: E402
-import flows_lsp_debug  # noqa: E402
-import flows_keys  # noqa: E402
-import flows_context_menus  # noqa: E402
-import flows_more  # noqa: E402
-import flows_advanced  # noqa: E402
-import flows_coverage  # noqa: E402
-import flows_ux  # noqa: E402
-import flows_depth  # noqa: E402
-import flows_resilience  # noqa: E402
-import flows_matrix  # noqa: E402
-import flows_languages  # noqa: E402
-import flows_integration  # noqa: E402
-import flows_plugin_api  # noqa: E402
-import flows_commands  # noqa: E402
-import flows_settings  # noqa: E402
-import flows_inputs  # noqa: E402
-import flows_surfaces  # noqa: E402
-import flows_panes  # noqa: E402
-import flows_tree  # noqa: E402
+import importlib  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+# The flow modules, in suite order. Each exports FLOWS ({name: f(app)}) and may
+# export PLUGINS ({name: plugins its instance starts with: bundled, plugins/<name>,
+# or QA-only, tools/qa/plugins/<name>}) and ENV ({name: environment beyond
+# App.launch's}). A flows_*.py missing here, or a scenario name two modules
+# define, fails the import instead of silently dropping a flow.
+FLOW_MODULES: tuple[str, ...] = (
+    "flows_editing", "flows_workbench", "flows_lsp_debug", "flows_keys", "flows_context_menus",
+    "flows_more", "flows_advanced", "flows_coverage", "flows_ux", "flows_depth", "flows_resilience",
+    "flows_matrix", "flows_languages", "flows_integration", "flows_plugin_api", "flows_commands",
+    "flows_settings", "flows_inputs", "flows_surfaces", "flows_panes", "flows_tree",
+)
+
+_on_disk = {path.stem for path in Path(__file__).resolve().parent.glob("flows_*.py")} - {"flows_common"}
+if _on_disk != set(FLOW_MODULES):
+    raise ImportError(f"scenarios.FLOW_MODULES and tools/qa/flows_*.py disagree: "
+                      f"unlisted {sorted(_on_disk - set(FLOW_MODULES))}, missing {sorted(set(FLOW_MODULES) - _on_disk)}")
 
 SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "menus": scenario_menus,
@@ -425,36 +423,18 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
     "split-and-close": scenario_split_and_close,
     "terminal": scenario_terminal,
     "scrolling": scenario_scrolling,
-    **flows_editing.FLOWS,
-    **flows_workbench.FLOWS,
-    **flows_lsp_debug.FLOWS,
-    **flows_keys.SCENARIOS,
-    **flows_context_menus.SCENARIOS,
-    **flows_more.FLOWS,
-    **flows_advanced.FLOWS,
-    **flows_coverage.FLOWS,
-    **flows_ux.FLOWS,
-    **flows_depth.FLOWS,
-    **flows_resilience.FLOWS,
-    **flows_matrix.SCENARIOS,
-    **flows_languages.FLOWS,
-    **flows_integration.FLOWS,
-    **flows_plugin_api.FLOWS,
-    **flows_commands.FLOWS,
-    **flows_settings.FLOWS,
-    **flows_inputs.FLOWS,
-    **flows_surfaces.FLOWS,
-    **flows_panes.FLOWS,
-    **flows_tree.FLOWS,
 }
+SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {}
+SCENARIO_ENV: dict[str, dict[str, str]] = {"menu-clicks": {"MICROIDE_QA_MENU_DRY_RUN": "1"}}
 
-# Plugins a scenario's instance starts with: bundled (plugins/<name>) or QA-only
-# (tools/qa/plugins/<name>).
-SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {**flows_lsp_debug.PLUGINS, **flows_more.PLUGINS,
-                                                **flows_advanced.PLUGINS, **flows_coverage.PLUGINS,
-                                                **flows_ux.PLUGINS, **flows_depth.PLUGINS,
-                                                **flows_languages.PLUGINS, **flows_integration.PLUGINS,
-                                                **flows_plugin_api.PLUGINS, **flows_panes.PLUGINS}
+for _module_name in FLOW_MODULES:
+    _module = importlib.import_module(_module_name)
+    for _name, _flow in _module.FLOWS.items():
+        if _name in SCENARIOS:
+            raise ImportError(f"scenario {_name!r} is defined twice ({_module_name})")
+        SCENARIOS[_name] = _flow
+    SCENARIO_PLUGINS.update(getattr(_module, "PLUGINS", {}))
+    SCENARIO_ENV.update(getattr(_module, "ENV", {}))
 
 # Scenarios a backend cannot drive, with why. The Wayland backend delivers input
 # through the control channel at SDL's event level, not the seat: no input serial
@@ -469,11 +449,3 @@ UNSUPPORTED: dict[str, dict[str, str]] = {
     } | {"wb-layouts": "kiosk weston owns the window size"},
 }
 
-# Environment a scenario's instance starts with, beyond App.launch's.
-SCENARIO_ENV: dict[str, dict[str, str]] = {
-    "menu-clicks": {"MICROIDE_QA_MENU_DRY_RUN": "1"},
-    **flows_keys.ENV,
-    **flows_context_menus.ENV,
-    **flows_matrix.ENV,
-    **flows_inputs.ENV,
-}

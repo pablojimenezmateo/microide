@@ -5,11 +5,10 @@ conditions and watch expressions.
 
 from __future__ import annotations
 
-import shutil
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_text, open_file, step, write
+from flows_common import dismiss, open_file, step, write
 from flows_lsp_debug import _lsp_ready, _require
 
 

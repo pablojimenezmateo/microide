@@ -95,5 +95,5 @@ def scenario_context_menus(app: q.App) -> None:
         e for e in app.elements("row") if e["name"].startswith("row:search/src/scheduler.cpp:")))))
 
 
-SCENARIOS: dict[str, Callable[[q.App], None]] = {"context-menus": scenario_context_menus}
+FLOWS: dict[str, Callable[[q.App], None]] = {"context-menus": scenario_context_menus}
 ENV: dict[str, dict[str, str]] = {"context-menus": {"MICROIDE_QA_ACTION_DRY_RUN": "1"}}

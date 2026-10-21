@@ -10,7 +10,7 @@ import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_cursors, expect_text, open_file, read, step, write
+from flows_common import dismiss, expect_cursors, expect_text, git, open_file, read, step, terminal_tabs, tree_rows, write
 
 
 def _numbered(count: int, prefix: str = "line") -> str:
@@ -807,13 +807,8 @@ def flow_debug_keys(app: q.App) -> None:
 # ---- terminal by keyboard ----------------------------------------------------------------
 
 
-def _terminal_tabs(app: q.App) -> list[dict]:
-    terminals = app.query("terminals")
-    return terminals if isinstance(terminals, list) else terminals.get("tabs", [])
-
-
 def _active_terminal(app: q.App) -> int:
-    return next((i for i, t in enumerate(_terminal_tabs(app)) if t.get("active")), -1)
+    return next((i for i, t in enumerate(terminal_tabs(app)) if t.get("active")), -1)
 
 
 def flow_terminal_keys(app: q.App) -> None:
@@ -826,9 +821,9 @@ def flow_terminal_keys(app: q.App) -> None:
         app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
     app.send("focus", "panel")
     step(app, "focus the terminal", 0.3)
-    before = len(_terminal_tabs(app))
+    before = len(terminal_tabs(app))
     app.key("ctrl+shift+grave")
-    app.wait_until(lambda: len(_terminal_tabs(app)) == before + 1, 5.0, "Ctrl+Shift+` to open a terminal")
+    app.wait_until(lambda: len(terminal_tabs(app)) == before + 1, 5.0, "Ctrl+Shift+` to open a terminal")
     step(app, "second terminal", 0.4)
     active = _active_terminal(app)
     app.key("ctrl+Prior")
@@ -856,20 +851,20 @@ def flow_terminal_keys(app: q.App) -> None:
 
     app.key("ctrl+shift+backslash")
     step(app, "split", 0.5)
-    tabs = _terminal_tabs(app)
+    tabs = terminal_tabs(app)
     panes = next((t.get("panes", []) for t in tabs if t.get("active")), [])
     app.expect(len(panes) == 2, f"Ctrl+Shift+\\ splits the terminal ({panes})")
     right = next((i for i, p in enumerate(panes) if p.get("active")), -1)
     app.key("alt+Left")
     step(app, "alt+Left", 0.3)
-    panes = next((t.get("panes", []) for t in _terminal_tabs(app) if t.get("active")), [])
+    panes = next((t.get("panes", []) for t in terminal_tabs(app) if t.get("active")), [])
     app.expect(next((i for i, p in enumerate(panes) if p.get("active")), -1) != right,
                f"Alt+Left moves to the other pane ({panes})")
     app.key("alt+Right")
     step(app, "alt+Right", 0.3)
 
     def active_pane() -> dict:
-        panes = next((t.get("panes", []) for t in _terminal_tabs(app) if t.get("active")), [])
+        panes = next((t.get("panes", []) for t in terminal_tabs(app) if t.get("active")), [])
         return next((p for p in panes if p.get("active")), {})
 
     # An exited shell stays on screen with its output (by design, TD-2026-07-17A-130)
@@ -996,12 +991,6 @@ def palette_run(app: q.App, command: str, hint: str) -> bool:
 # ---- git ---------------------------------------------------------------------
 
 
-def _git(app: q.App, *args: str) -> str:
-    assert app.project is not None
-    return subprocess.run(["git", *args], cwd=app.project, capture_output=True, text=True,
-                          check=False).stdout.strip()
-
-
 def _git_row_menu(app: q.App, name: str, label_prefix: str) -> bool:
     """Right-clicks the git view's row for `name` and clicks the context menu row
     whose label starts with `label_prefix`."""
@@ -1038,10 +1027,10 @@ def flow_git_discard(app: q.App) -> None:
                "an untracked file shows in the git view")
 
     if _git_row_menu(app, "scheduler.cpp", "Stage"):
-        app.wait_until(lambda: _git(app, "diff", "--cached", "--name-only") == "src/scheduler.cpp", 5.0,
+        app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "src/scheduler.cpp", 5.0,
                        "Stage to put scheduler.cpp in the index")
     if _git_row_menu(app, "scheduler.cpp", "Unstage"):
-        app.wait_until(lambda: _git(app, "diff", "--cached", "--name-only") == "", 5.0,
+        app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "", 5.0,
                        "Unstage to take it out of the index again")
 
     if _git_row_menu(app, "main.cpp", "Discard"):
@@ -1072,7 +1061,7 @@ def flow_git_discard(app: q.App) -> None:
     if stage_all:
         app.click(*app.center(stage_all))
         step(app, "Stage All", 0.6)
-        app.wait_until(lambda: set(_git(app, "diff", "--cached", "--name-only").splitlines())
+        app.wait_until(lambda: set(git(app, "diff", "--cached", "--name-only").splitlines())
                        == {"src/scheduler.cpp", "notes/untracked.txt"}, 5.0,
                        "Stage All to stage the change and the untracked file")
 
@@ -1085,8 +1074,8 @@ def flow_git_remote(app: q.App) -> None:
     remote = app.project.parent / "remote.git"
     other = app.project.parent / "other-clone"
     subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
-    _git(app, "remote", "add", "origin", str(remote))
-    branch = _git(app, "rev-parse", "--abbrev-ref", "HEAD")
+    git(app, "remote", "add", "origin", str(remote))
+    branch = git(app, "rev-parse", "--abbrev-ref", "HEAD")
     open_file(app, "README.md")
     app.key("ctrl+shift+g")
     step(app, "git view", 0.5)
@@ -1099,8 +1088,8 @@ def flow_git_remote(app: q.App) -> None:
                        "Publish Branch to push the branch to origin")
 
     write(app, "notes/ahead.txt", "ahead\n")
-    _git(app, "add", "notes/ahead.txt")
-    _git(app, "commit", "-q", "-m", "qa: ahead by one")
+    git(app, "add", "notes/ahead.txt")
+    git(app, "commit", "-q", "-m", "qa: ahead by one")
     app.send("git-refresh")
     app.wait_until(lambda: "1" in _sync_label(app), 10.0,
                    f"the Sync button to count the commit ahead ({_sync_label(app)!r})")
@@ -1110,7 +1099,7 @@ def flow_git_remote(app: q.App) -> None:
         step(app, "click Sync", 1.0)
         app.wait_until(lambda: subprocess.run(["git", "--git-dir", str(remote), "rev-parse", branch],
                                               capture_output=True, text=True).stdout.strip()
-                       == _git(app, "rev-parse", "HEAD"), 10.0, "Sync to push the commit")
+                       == git(app, "rev-parse", "HEAD"), 10.0, "Sync to push the commit")
 
     subprocess.run(["git", "clone", "-q", "-b", branch, str(remote), str(other)], check=True)
     (other / "README.md").write_text((other / "README.md").read_text() + "upstream line\n")
@@ -1153,8 +1142,8 @@ def flow_compare_keys(app: q.App) -> None:
     diff."""
     text = "".join(f"line {i}\n" for i in range(1, 61))
     write(app, "notes/diff.txt", text)
-    _git(app, "add", "notes/diff.txt")
-    _git(app, "commit", "-q", "-m", "qa: diff fixture")
+    git(app, "add", "notes/diff.txt")
+    git(app, "commit", "-q", "-m", "qa: diff fixture")
     changed = text.replace("line 5\n", "line five\n").replace("line 40\n", "line forty\n")
     write(app, "notes/diff.txt", changed)
     app.key("ctrl+shift+g")
@@ -1269,10 +1258,6 @@ def flow_terminal_clipboard(app: q.App) -> None:
 # ---- file tree ---------------------------------------------------------------
 
 
-def _tree_rows(app: q.App) -> list[str]:
-    return [e["name"] for e in app.elements("row", prefix="row:tree/")]
-
-
 def _tree_selected(app: q.App) -> list[str]:
     return [e["name"] for e in app.elements("row", prefix="row:tree/") if e.get("selected")]
 
@@ -1308,7 +1293,7 @@ def flow_tree_keys(app: q.App) -> None:
         assert app.project is not None
         app.wait_until(lambda: (app.project / "notes" / "gamma.txt").exists()
                        and not (app.project / "notes" / "alpha.txt").exists(), 3.0, "the rename on disk")
-        app.wait_until(lambda: "row:tree/gamma.txt" in _tree_rows(app), 3.0, "the tree to show gamma.txt")
+        app.wait_until(lambda: "row:tree/gamma.txt" in tree_rows(app), 3.0, "the tree to show gamma.txt")
 
     app.send("focus", "sidebar")
     app.type("ga")
@@ -1324,7 +1309,7 @@ def flow_tree_keys(app: q.App) -> None:
         step(app, "confirm Delete", 0.5)
         assert app.project is not None
         app.wait_until(lambda: not (app.project / "notes" / "gamma.txt").exists(), 3.0, "the delete on disk")
-        app.wait_until(lambda: "row:tree/gamma.txt" not in _tree_rows(app), 3.0, "the tree to drop it")
+        app.wait_until(lambda: "row:tree/gamma.txt" not in tree_rows(app), 3.0, "the tree to drop it")
     dismiss(app)
 
     notes = app.wait_for("row:tree/notes", 2.0)
@@ -1342,15 +1327,15 @@ def flow_tree_keys(app: q.App) -> None:
             step(app, "name drafts", 0.5)
             assert app.project is not None
             app.wait_until(lambda: (app.project / "notes" / "drafts").is_dir(), 3.0, "the folder on disk")
-            app.wait_until(lambda: "row:tree/drafts" in _tree_rows(app), 3.0, "the tree to show drafts")
+            app.wait_until(lambda: "row:tree/drafts" in tree_rows(app), 3.0, "the tree to show drafts")
         dismiss(app)
     collapse = app.wait_for("button:sidebar/Collapse", 2.0)
     app.expect(collapse is not None, "the tree header has Collapse All")
     if collapse:
         app.click(*app.center(collapse))
         step(app, "Collapse All", 0.3)
-        app.expect("row:tree/beta.txt" not in _tree_rows(app),
-                   f"Collapse All folds every folder ({_tree_rows(app)[:8]})")
+        app.expect("row:tree/beta.txt" not in tree_rows(app),
+                   f"Collapse All folds every folder ({tree_rows(app)[:8]})")
 
 
 # ---- notifications ---------------------------------------------------------------

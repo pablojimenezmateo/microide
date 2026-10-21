@@ -8,6 +8,7 @@ verifier and the crash/sanitizer oracles still run after every step (App.check).
 
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 
@@ -90,3 +91,49 @@ def dismiss(app: q.App) -> None:
             return
         app.key("Escape")
         step(app, "escape", 0.15)
+
+
+# ---- shared readers ----------------------------------------------------------
+# One copy each: these were redefined, byte for byte or nearly, in up to five
+# flow modules.
+
+def git_run(app: q.App, *args: str) -> subprocess.CompletedProcess:
+    """`git` in the project, for a caller that needs the exit status."""
+    assert app.project is not None
+    return subprocess.run(["git", "-C", str(app.project), *args], capture_output=True, text=True, check=False)
+
+
+def git(app: q.App, *args: str) -> str:
+    """`git` in the project; its stdout without the trailing newline (and only
+    that: a porcelain line's leading space is part of its status)."""
+    return git_run(app, *args).stdout.rstrip("\n")
+
+
+def titles(app: q.App, group: int | None = None) -> list[str]:
+    """Every editor tab's title, in group order (or one group's)."""
+    groups = app.editor_state()["groups"]
+    return [tab["title"] for g in groups if group is None or g["index"] == group for tab in g["tabs"]]
+
+
+def active_title(app: q.App) -> str | None:
+    return (app.active_tab() or {}).get("title")
+
+
+def tree_rows(app: q.App) -> list[str]:
+    """The file tree's visible rows by element name (`row:tree/<label>`)."""
+    return [e["name"] for e in app.elements("row", prefix="row:tree/")]
+
+
+def terminal_tabs(app: q.App) -> list[dict]:
+    terminals = app.query("terminals")
+    return terminals if isinstance(terminals, list) else terminals.get("tabs", [])
+
+
+def active_root(app: q.App) -> str:
+    """The active project's root."""
+    return next((p["root"] for p in app.query("projects") if p.get("active")), "")
+
+
+def messages(app: q.App) -> list[str]:
+    """Every notification's message, oldest first."""
+    return [n.get("message", "") for n in app.query("notifications")]

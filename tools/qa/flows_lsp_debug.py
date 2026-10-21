@@ -6,14 +6,12 @@ it records a finding unless MQA_ALLOW_MISSING_TOOLS=1.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
-import time
 from typing import Callable
 
 import microide_qa as q
-from flows_common import expect_text, open_file, read, step, write
+from flows_common import open_file, step, write
 
 
 def _require(app: q.App, tool: str) -> bool:
