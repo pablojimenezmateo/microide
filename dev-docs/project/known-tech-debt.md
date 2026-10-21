@@ -707,6 +707,25 @@ implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-22:** re-measured at **67.5 % of lines, 74.4 % of functions**
+(from 63.2 %; binary at be55d383, the suite in chunks of twelve at `-j3`/`-j4`, and
+the flows a loaded machine timed out re-run on their own -- a first pass under a
+concurrent build lost half of two chunks and read 65.2 %). Added since: the
+Problems and Tests views by keys and mouse (`problems-tests-views`, the `qa-api`
+plugin publishing the problems, so no language server), a rename under every
+kind of open tab (`rename-open-tabs`), and the in-process window-size sweep
+`QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize`. Found and fixed
+from them: one file open in two editor groups drew the old line in the pane the
+edit was not typed into (a full repaint too, so the redraw verifier never saw
+it); Settings rows reported, clicked and drawn by three different rules (a click
+on the section header selected the row scrolled away under it, a row taller than
+the pane was never drawn); pane sizes overwritten by one small window; nested
+clips at a fractional scale dropping a device row. The largest gaps left that a
+person reaches: the language-server service paths (61 %), the plugin host's
+public API and provider interop (43-62 %), the compare and merge coordinators'
+staging, patch-copy and whitespace commands (42-46 %), the sidebar actions'
+Discard All and git failure reporting (41 %), and `ShapingActions` (60 %).
+
 **Update 2026-10-21:** `editor-toggles` and `language-overrides` (`flows_effects.py`) check what a behaviour switch does rather than that it reads back. They found that none of the five language-contract overrides (`editor.brackets.user_pairs`/`user_disabled`, `editor.comments.user_line`, `editor.indents.user_open_patterns`, `editor.snippets.user_disabled`) took effect when set at runtime: the contract was rebuilt only on a plugin reload (fixed: `WorkspaceLanguageContract::SettingsFingerprint` keys `ApplyLiveSettings`' contract refresh). The harness registry is now one list (`FLOW_MODULES`). From the command catalogue, still driven by no flow beyond `commands-run`'s smoke pass: the diff toggles and copy commands, breakpoint condition/hit-count/log-message prompts, `debug-pause`, `plugins-reload`, `reveal-in-tree`, `git-create-branch`/`git-stash-pop`, the editor-group move commands, the column-select keys. A coverage re-measure was started and stopped (the box was needed); rerun it before the next pass.
 
 **Update 2026-10-20 (evening):** re-measured at **63.2 % of lines, 70.0 % of
