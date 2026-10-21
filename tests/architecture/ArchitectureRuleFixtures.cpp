@@ -1364,6 +1364,41 @@ void RunWriteGateRuleFixtures() {
          "the write-gate rule must report that the gate no longer calls the primitive");
 }
 
+void RunWorkerDeclarationOrderRuleFixtures() {
+  TemporaryDirectory worker_dir;
+  const std::filesystem::path& root = worker_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  const auto header = root / "src/workspace/ExampleService.h";
+
+  // Negative control: the shipped defect -- the executor first, so it outlives
+  // the mailbox its jobs post into.
+  WriteFile(header,
+            "class ExampleService {\n"
+            " private:\n"
+            "  util::TaskExecutor executor_{1};\n"
+            "  util::MainThreadMailbox mailbox_;\n"
+            "};\n");
+  Expect(CheckWorkersOutliveNothingTheyWrite(root).violations.size() == 1,
+         "an executor declared before its mailbox must be flagged");
+
+  // Positive control: the fix.
+  WriteFile(header,
+            "class ExampleService {\n"
+            " private:\n"
+            "  util::MainThreadMailbox mailbox_;\n"
+            "  util::TaskExecutor executor_{1};\n"
+            "};\n");
+  Expect(CheckWorkersOutliveNothingTheyWrite(root).violations.empty(),
+         "an executor declared last must pass");
+  Expect(CheckWorkersOutliveNothingTheyWrite(root).missing_targets.empty(),
+         "and a tree with the pair is not a missing target");
+
+  // Loud, not green, when nothing declares the pair.
+  WriteFile(header, "class ExampleService {};\n");
+  Expect(!CheckWorkersOutliveNothingTheyWrite(root).missing_targets.empty(),
+         "a tree with no executor/mailbox pair must report a missing target");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -1386,6 +1421,7 @@ void RunAllRuleFixtures() {
   RunHintSeparatorRuleFixtures();
   RunKernelWindowingLibraryRuleFixtures();
   RunProcessLauncherRuleFixtures();
+  RunWorkerDeclarationOrderRuleFixtures();
   RunGitMetadataRuleFixtures();
   RunGitLayerLocalityRuleFixtures();
   RunWriteGateRuleFixtures();

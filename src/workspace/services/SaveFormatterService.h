@@ -113,12 +113,17 @@ class SaveFormatterService {
   int PendingCount() const { return pending_.load(std::memory_order_acquire); }
 
  private:
-  // One worker. The workload is one formatter at a time per save, and a second
-  // thread would only let two formatters race to write the same buffer.
-  util::TaskExecutor executor_{1};
   util::MainThreadMailbox mailbox_;
   std::atomic<int> pending_{0};
   std::atomic<std::uint64_t> next_id_{0};
+  // One worker. The workload is one formatter at a time per save, and a second
+  // thread would only let two formatters race to write the same buffer.
+  //
+  // LAST, so it is destroyed first: its destructor joins the worker while the
+  // mailbox and counters the running job writes are still alive. Declared first,
+  // a shell torn down mid-format (a quit, a closed window) let the job post into
+  // the destroyed mailbox (ASan: heap-use-after-free in MainThreadMailbox::Post).
+  util::TaskExecutor executor_{1};
 };
 
 }  // namespace microide::workspace

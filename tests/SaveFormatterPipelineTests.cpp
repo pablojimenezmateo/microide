@@ -473,6 +473,46 @@ void TestCancellingTheQuitLeavesBuffersDirty() {
 
 // Closing a project waits the same way, and the project's state is not torn down
 // before its last write lands.
+// The service torn down while a run is still on its worker -- a shell destroyed
+// mid-format. The executor was declared before the mailbox, so the mailbox went
+// first and the finishing run posted into freed memory (ASan, in the teardown of a
+// test that failed while a close waited on its save). The worker is joined before
+// anything it writes is destroyed.
+void TestServiceDestroyedMidRunJoinsItsWorker() {
+  // Heap-owned, as the shell owns it, and with a completion already queued: the
+  // mailbox holds heap storage, so a post into it after its destruction is a
+  // heap-use-after-free ASan reports, not a write into a dead stack frame.
+  auto service = std::make_unique<workspace::SaveFormatterService>();
+  const auto quick = []() {
+    workspace::SaveFormatterService::Request request;
+    request.text = "x";
+    request.participants = []() { return plugin::PluginHost::SaveParticipantOutcome{}; };
+    return request;
+  };
+  (void)service->Begin("first", quick(), platform::LocalProcessLauncher(),
+                       [](workspace::SaveFormatterService::Completion) {});
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (service->PendingCount() > 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  std::atomic<bool> started{false};
+  workspace::SaveFormatterService::Request slow;
+  slow.text = "x";
+  slow.participants = [&started]() {
+    started.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return plugin::PluginHost::SaveParticipantOutcome{};
+  };
+  (void)service->Begin("second", std::move(slow), platform::LocalProcessLauncher(),
+                       [](workspace::SaveFormatterService::Completion) {});
+  while (!started.load() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  Expect(started.load(), "the second run should be on the worker before the service goes");
+  service.reset();  // the run is still sleeping on the worker
+  Expect(true, "the teardown joins the worker before its mailbox goes (ASan checks the rest)");
+}
+
 void TestCloseProjectWaitsForItsWrites() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -594,6 +634,8 @@ void RegisterSaveFormatterPipelineTests(std::vector<TestCase>& tests) {
           TestQuitWaitsForFormatterSavesBehindAProgressRow);
   AddTest(tests, "SaveFormatterPipeline/CancellingTheQuitLeavesBuffersDirty",
           TestCancellingTheQuitLeavesBuffersDirty);
+  AddTest(tests, "SaveFormatterPipeline/ServiceDestroyedMidRunJoinsItsWorker",
+          TestServiceDestroyedMidRunJoinsItsWorker);
   AddTest(tests, "SaveFormatterPipeline/CloseProjectWaitsForItsWrites",
           TestCloseProjectWaitsForItsWrites);
   AddTest(tests, "SaveFormatterPipeline/ARefusedSaveCancelsTheRename",

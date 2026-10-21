@@ -737,11 +737,78 @@ RuleResult CheckGitMetadataIsAskedOfTheHost(const std::filesystem::path& repo_ro
   return result;
 }
 
+RuleResult CheckWorkersOutliveNothingTheyWrite(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "a worker pool is declared after the mailbox it posts into";
+  result.hard_fail = true;
+  const std::filesystem::path src_dir = repo_root / "src";
+  if (!RequireRuleTarget(result, src_dir)) {
+    return result;
+  }
+  // Members are destroyed in reverse declaration order, and a util::TaskExecutor's
+  // destructor is what joins its workers. Declared BEFORE the util::MainThreadMailbox
+  // its jobs post their completions into, it outlives the mailbox: a job finishing
+  // during teardown posts into freed memory. SaveFormatterService had exactly that
+  // (ASan, a shell destroyed mid-format). A class that shuts its executor down by
+  // hand in its destructor is not this shape (the shell's executors are
+  // ProjectBackgroundExecutors and are shut down explicitly), so the rule reads
+  // only these two member types.
+  const std::regex executor(R"(^\s*util::TaskExecutor\s+\w+\s*[{;=])");
+  const std::regex mailbox(R"(^\s*util::MainThreadMailbox\s+\w+\s*[{;=])");
+  bool saw_pair = false;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file() || entry.path().extension() != ".h") {
+      continue;
+    }
+    const std::string text = ReadRuleTarget(result, entry.path());
+    if (text.find("TaskExecutor") == std::string::npos || text.find("MainThreadMailbox") == std::string::npos) {
+      continue;
+    }
+    std::size_t first_executor = 0;
+    std::size_t last_mailbox = 0;
+    std::size_t line_number = 0;
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+      const std::size_t end = std::min(text.find('\n', begin), text.size());
+      const std::string line = text.substr(begin, end - begin);
+      ++line_number;
+      if (first_executor == 0 && std::regex_search(line, executor)) {
+        first_executor = line_number;
+      }
+      if (std::regex_search(line, mailbox)) {
+        last_mailbox = line_number;
+      }
+      begin = end + 1;
+    }
+    if (first_executor != 0 && last_mailbox != 0) {
+      saw_pair = true;
+      if (first_executor < last_mailbox) {
+        result.violations.push_back(Violation{
+            .path = entry.path(),
+            .line = first_executor,
+            .message = "util::TaskExecutor declared before the util::MainThreadMailbox on line " +
+                       std::to_string(last_mailbox) +
+                       ": it is destroyed after it, so a job finishing during teardown posts into a "
+                       "destroyed mailbox. Declare the executor last."});
+      }
+    }
+  }
+  if (!saw_pair) {
+    result.missing_targets.push_back(Violation{
+        .path = src_dir,
+        .line = 0,
+        .message = "no header declares both a util::TaskExecutor and a util::MainThreadMailbox member; "
+                   "the rule scans nothing (FileReadService and SaveFormatterService both do)"});
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& KernelArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
       {"CheckKernelStaysFreeOfTheWindowingLibrary", CheckKernelStaysFreeOfTheWindowingLibrary},
       {"CheckServerIncludesOnlyTheKernel", CheckServerIncludesOnlyTheKernel},
       {"CheckEverySpawnGoesThroughAProcessLauncher", CheckEverySpawnGoesThroughAProcessLauncher},
+      {"CheckWorkersOutliveNothingTheyWrite", CheckWorkersOutliveNothingTheyWrite},
       {"CheckGitLayerDoesNotChooseLocality", CheckGitLayerDoesNotChooseLocality},
       {"CheckGitMetadataIsAskedOfTheHost", CheckGitMetadataIsAskedOfTheHost},
       {"CheckEveryUserSaveRunsTheSamePreparation", CheckEveryUserSaveRunsTheSamePreparation},

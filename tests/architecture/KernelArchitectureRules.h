@@ -15,6 +15,7 @@ RuleResult CheckKernelStaysFreeOfTheWindowingLibrary(const std::filesystem::path
 // Every spawn goes through a platform::ProcessLauncher, so a project can decide where
 // its processes run. See the rule body for the two sanctioned exceptions.
 RuleResult CheckEverySpawnGoesThroughAProcessLauncher(const std::filesystem::path& repo_root);
+RuleResult CheckWorkersOutliveNothingTheyWrite(const std::filesystem::path& repo_root);
 
 // The git layer (src/project/Git*, Commit*, PatchApply*) never chooses where git
 // runs: every entry point takes the caller's launcher (TD-2026-09-22-301).
