@@ -142,6 +142,10 @@ void DapClient::InjectTestEvent(const std::string& event, util::JsonValue body) 
       [cb = std::move(cb), event, body = std::move(body)]() mutable { cb(event, body); });
 }
 
+void DapClient::SetTerminateDebuggeeOnDisconnect(bool terminate) {
+  impl_->terminate_debuggee_on_disconnect.store(terminate, std::memory_order_release);
+}
+
 void DapClient::BeginShutdown() {
   impl_->BeginShutdown();
 }

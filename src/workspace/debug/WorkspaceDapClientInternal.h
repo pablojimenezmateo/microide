@@ -161,6 +161,10 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   std::atomic<bool> stop_init{false};
   std::thread shutdown_thread;
   std::atomic<bool> shutdown_started{false};
+  // Whether the teardown `disconnect` ends the debuggee. A launched program is the
+  // session's and ends with it; gdb's DAP takes an unnamed terminateDebuggee as
+  // false and detached, leaving the program running after the editor quit.
+  std::atomic<bool> terminate_debuggee_on_disconnect{false};
   std::atomic<bool> shutdown_complete{false};
   std::condition_variable shutdown_cv;
   bool shutdown_response_received = false;
@@ -617,6 +621,8 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     }
     JsonObject disconnect_args;
     disconnect_args["restart"] = JsonValue(false);
+    disconnect_args["terminateDebuggee"] =
+        JsonValue(terminate_debuggee_on_disconnect.load(std::memory_order_acquire));
     // Bounded lock acquisition: if the io_thread is stuck in a proc.Write to a
     // wedged-but-alive adapter (holding write_mutex), this returns false quickly
     // rather than blocking teardown forever, and we fall through to the force-kill

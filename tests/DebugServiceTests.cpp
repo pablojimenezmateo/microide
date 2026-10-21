@@ -548,6 +548,81 @@ void TestDebugSessionPausesAThreadAnnouncedByEvent() {
   manager.ShutdownAll();
 }
 
+// QA: quitting the app while a launched program ran under gdb left the program
+// running. The teardown `disconnect` named no `terminateDebuggee`, and gdb's DAP
+// defaults it to false -- it detaches, and the program outlives the editor. A
+// launched debuggee is the session's own and ends with it (VS Code's rule); an
+// attached one was there before and is left running.
+void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+  const auto record = temp_dir.path() / "disconnect.txt";
+  ScopedEnvVar record_env("MOCK_DAP_RECORD", record.string());
+  for (const std::string request : {"launch", "attach"}) {
+    std::filesystem::remove(record);
+    DapManager manager;
+    manager.RegisterAdapter("mock", platform::LocalProcessLauncher(), MockAdapterCommand(server_path, "pause"));
+    CapturedSession captured;
+    LaunchConfig config;
+    config.type = "mock";
+    config.request = request;
+    Expect(manager.StartSession(config, MakeCallbacks(captured)), request + ": the session should start");
+    Expect(PollUntil(manager,
+                     [&]() {
+                       const auto* session = manager.ActiveSession();
+                       return session != nullptr && session->CurrentState() == DebugSession::State::Running;
+                     }),
+           request + ": the session should run");
+    manager.ShutdownAll();  // what the app's teardown does
+    const std::string sent = ReadFile(record);
+    const bool terminates = sent.find("\"terminateDebuggee\": true") != std::string::npos;
+    Expect(request == "launch" ? terminates : !terminates,
+           request + ": the teardown's disconnect " +
+               (request == "launch" ? "ends the launched debuggee" : "leaves the attached process") + " (" +
+               sent + ")");
+  }
+}
+
+// QA dbg-pause: gdb under load stopped answering after the launch, and Shift+F5
+// then did nothing either -- `terminate` timed out and the session lived on, its
+// program spinning. A stop the adapter does not answer forces the adapter down and
+// ends the session, as VS Code does.
+void TestAStopTheAdapterDoesNotAnswerEndsTheSession() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "adapter.py";
+  WriteFile(server_path, std::string(MockAdapterSource()));
+  DapManager manager;
+  manager.RegisterAdapter("mock", platform::LocalProcessLauncher(),
+                          MockAdapterCommand(server_path, "silent_terminate"));
+  CapturedSession captured;
+  LaunchConfig config;
+  config.type = "mock";
+  config.request = "launch";
+  Expect(manager.StartSession(config, MakeCallbacks(captured)), "session should start");
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session != nullptr && session->CurrentState() == DebugSession::State::Running;
+                   }),
+         "session should reach Running");
+  manager.StopActiveSession();  // Shift+F5
+  Expect(PollUntil(manager,
+                   [&]() {
+                     const auto* session = manager.ActiveSession();
+                     return session == nullptr || session->CurrentState() == DebugSession::State::Terminated ||
+                            session->CurrentState() == DebugSession::State::Failed;
+                   }),
+         "a stop the adapter never answers still ends the session");
+  manager.ShutdownAll();
+}
+
 // Reverse execution: an adapter advertising supportsStepBack accepts `stepBack`
 // and `reverseContinue`, each optimistically resuming like a forward step.
 void TestDebugSessionReverseStepAndContinue() {
@@ -3300,6 +3375,10 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/SessionRejectedResumeRestoresStoppedView",
           TestDebugSessionRejectedResumeRestoresStoppedView);
   AddTest(tests, "DebugService/SessionPauseFromRunning", TestDebugSessionPauseFromRunning);
+  AddTest(tests, "DebugService/AStopTheAdapterDoesNotAnswerEndsTheSession",
+          TestAStopTheAdapterDoesNotAnswerEndsTheSession);
+  AddTest(tests, "DebugService/TeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne",
+          TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne);
   AddTest(tests, "DebugService/ConsoleOutlivesItsSessionUntilTheNext",
           TestDebugConsoleOutlivesItsSessionUntilTheNext);
   AddTest(tests, "DebugService/SessionPausesAThreadAnnouncedByEvent",

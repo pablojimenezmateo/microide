@@ -48,6 +48,11 @@ class LifecycleCoordinator {
     std::function<void()> flush_persisted_state;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> stop_control_channel;
+    // End every debug session, each with its launched debuggee. quick_exit() does
+    // not end them: the adapter only sees its pipes close, gdb then exits, and
+    // whether the program it ran goes with it is a race (2 runs in 5 left it
+    // running, QA). A disconnect that asks for the debuggee's end does it.
+    std::function<void()> stop_debug_sessions;
     // There is deliberately no clear_terminal_tabs / destroy_cursors here: see
     // the note at the end of Shutdown(). Both existed as wired-but-never-called
     // fields for long enough to read as steps the coordinator performs.

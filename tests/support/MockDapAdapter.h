@@ -25,7 +25,8 @@ import sys
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
 # config_done / stop / pause / variables / evaluate / restart / threads / exception
 # all advertise configurationDone support.
-supports_config_done = mode in ("config_done", "stop", "pause", "pause_silent_threads", "variables", "evaluate",
+supports_config_done = mode in ("config_done", "stop", "pause", "pause_silent_threads", "silent_terminate",
+                                "variables", "evaluate",
                                 "restart", "threads", "exception", "die", "thread_event",
                                 "function", "reverse", "reverse_late", "stale_stack",
                                 "relocate", "partial_continue", "stop_no_thread", "reject_resume")
@@ -64,7 +65,10 @@ stop_on_config = mode in ("stop", "variables", "evaluate", "restart", "threads",
 # flush it late so the host must drop the stale stopped view (session Running).
 stale_stack = (mode == "stale_stack")
 deferred_stack_req = None
-running_no_stop = mode in ("pause", "pause_silent_threads", "die")  # stay running (die: then exit silently)
+running_no_stop = mode in ("pause", "pause_silent_threads", "silent_terminate", "die")  # stay running (die: then exit silently)
+# `silent_terminate`: a wedged adapter -- `terminate` is never answered (gdb under
+# load stopped answering everything after launch). The host's stop must still end it.
+silent_terminate = (mode == "silent_terminate")
 # `pause_silent_threads`: gdb's shape -- the thread is announced by a `thread`
 # event once the program runs, and a `threads` request sent while it runs is never
 # answered (gdb's DAP serves requests only between stops). A `pause` must not
@@ -191,7 +195,7 @@ while True:
             event("breakpoint", {"reason": "changed", "breakpoint": {
                 "id": 1, "verified": True, "line": reqs[0].get("line", 0) + 5,
                 "source": {"path": src}}})
-    elif command == "launch":
+    elif command in ("launch", "attach"):
         respond(msg, {})
         if not supports_config_done:
             finish_launch()
@@ -349,10 +353,19 @@ while True:
         event("output", {"category": "stdout", "output": "cmd:pause\n"})
         respond(msg, {})
         emit_stop()
+    elif command == "terminate" and silent_terminate:
+        pass  # wedged: never answered
     elif command == "terminate":
         respond(msg, {})
         event("terminated")
     elif command == "disconnect":
+        # MOCK_DAP_RECORD names a file the disconnect's arguments are appended to:
+        # what the host asked for the debuggee at teardown (no event survives it).
+        import os
+        record = os.environ.get("MOCK_DAP_RECORD")
+        if record:
+            with open(record, "a") as handle:
+                handle.write("disconnect " + json.dumps(msg.get("arguments", {}), sort_keys=True) + "\n")
         respond(msg, {})
         break
     else:

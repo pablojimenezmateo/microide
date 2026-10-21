@@ -137,9 +137,11 @@ void LifecycleCoordinator::Shutdown() {
   // I/O thread wakes via its self-pipe, so the join returns immediately) and off
   // the visible path — the window is already destroyed before Shutdown() runs.
   operations_.stop_control_channel();
+  operations_.stop_debug_sessions();
   // Terminal session teardown and cursor cleanup are intentionally skipped here:
-  // the process exits via quick_exit() immediately after, so the OS reclaims
-  // all child processes and resources without per-terminal blocking waits.
+  // the process exits via quick_exit() immediately after, and a terminal's shell
+  // ends with its pty. A debug adapter does not take its debuggee with it on a
+  // closed pipe -- hence stop_debug_sessions above.
 }
 
 void LifecycleCoordinator::RequestQuit() {
@@ -366,6 +368,16 @@ LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
           .flush_persisted_state = [this]() { persistence_service_.FlushPendingWrites(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .stop_control_channel = [this]() { control_channel_service_.Stop(); },
+          .stop_debug_sessions =
+              [this]() {
+                debug_service_.StopAllDebugging();
+                // Projects switched away from keep their own sessions.
+                for (const auto& entry : context_.project_catalog.entries) {
+                  if (entry != nullptr && entry->dap_manager != nullptr) {
+                    entry->dap_manager->ShutdownAll();
+                  }
+                }
+              },
       });
   return *glue_->lifecycle_coordinator;
 }

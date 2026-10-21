@@ -449,6 +449,21 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-21-375 — gdb 15.1 sometimes stops answering after a launch under load. [OPEN]
+
+Found by the QA debugger flows (`dbg-pause`, `dbg-sessions`) on a loaded box
+(three to four instances at once): after `launch` and the program's first
+`module`/`process`/`thread` events, gdb never answers `configurationDone`, and
+every later request (`pause`, `terminate`) times out (`MICROIDE_DAP_LOG`, which
+the QA harness now keeps for every instance and attaches to a failed
+expectation). Alone it answers in ~17 ms. The app's side is fixed: a pause no
+longer depends on a `threads` answer, the thread list is not asked for while
+the program runs, and a stop the adapter does not answer forces the adapter
+down and ends the session (before, Shift+F5 left the session and its program
+alive). What wedges gdb is not known; next: the same launch from a plain
+`gdb --interpreter=dap` driven by a script under `stress`, to tell gdb's bug
+from something in how the app spawns it (the debug sandbox, the pipes).
+
 ### TD-2026-10-21-374 — a plugin cannot read a buffer's unsaved text, so its hover is skipped there. [OPEN]
 
 Found by the QA `plugins-reload` flow. A plugin provider (hover, completion,

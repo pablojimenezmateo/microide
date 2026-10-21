@@ -89,6 +89,7 @@ bool DebugSession::Start(const platform::ProcessLauncher& launcher,
   configuration_done_sent_ = false;
   last_error_.clear();
   is_gdb_adapter_ = CommandLooksLikeGdb(command, config.type);
+  client_->SetTerminateDebuggeeOnDisconnect(!config_.IsAttach());
 
   client_->SetEventCallback(
       [this](const std::string& event, const util::JsonValue& body) { HandleEvent(event, body); });
@@ -332,7 +333,13 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
       pause_pending_ = false;
       client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(known_thread_ids_.front()), {});
     }
-    RefreshThreadList();
+    // The list is only shown at a stop (its answer is dropped otherwise), and a
+    // `threads` request to gdb while its program starts left gdb answering nothing
+    // more under load -- configurationDone, the threads, a pause, a terminate, all
+    // timed out (QA dbg-pause). A stop refreshes the list itself.
+    if (state_ == State::Stopped) {
+      RefreshThreadList();
+    }
   } else if (event == "capabilities") {
     // The adapter changed its advertised capabilities after initialize. gdb does
     // exactly this when reverse execution becomes available (an rr replay target,
@@ -363,7 +370,18 @@ void DebugSession::RequestStop() {
   // the adapter then emits `terminated`, which drives the disconnect. Adapters
   // without terminate support are disconnected directly.
   if (client_->Capabilities().supports_terminate_request) {
-    client_->SendRequestAsync("terminate", util::JsonValue(nullptr), {});
+    // An adapter that does not answer (gdb under load stopped answering anything
+    // after the launch, QA dbg-pause) must not keep the session -- and its program
+    // -- alive: a failed or timed-out terminate forces the adapter down, whose
+    // disconnect asks the launched program's end.
+    client_->SendRequestAsync("terminate", util::JsonValue(nullptr),
+                              [this](const dap_protocol::DapResponse& response) {
+                                if (response.success || IsTerminalState(state_)) {
+                                  return;
+                                }
+                                client_->BeginShutdown();
+                                TransitionToTerminal(State::Terminated, {});
+                              });
   } else {
     client_->BeginShutdown();
     TransitionToTerminal(State::Terminated, {});

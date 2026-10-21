@@ -88,6 +88,9 @@ class DapClient {
 
   // Unit tests: behave as a connected adapter without spawning a subprocess.
   void EnableTestStubMode();
+  // Whether the teardown `disconnect` asks the adapter to end the debuggee: true
+  // for a launched program, false for an attached one (VS Code's rule).
+  void SetTerminateDebuggeeOnDisconnect(bool terminate);
   void DisableTestStubMode();
   // Answer requests in stub mode. The handler invokes the supplied callback with
   // a synthesized response (immediately or later) — wired through DrainCallbacks.
