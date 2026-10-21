@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, git, git_run, open_conflict, open_file, step, write
+from flows_common import dismiss, git, git_run, open_conflict, open_file, read, step, write
 
 BASE = "".join(f"line {i}\n" for i in range(1, 31))
 
@@ -344,8 +344,83 @@ def flow_git_outgoing_base(app: q.App) -> None:
         app.wait_until(lambda: _outgoing(app) == {"first.txt", "second.txt"}, 8.0, "Outgoing back on Auto")
 
 
+def flow_diff_hunk_keys(app: q.App) -> None:
+    """A diff's hunk keys, with the read-only side focused (a click on it): ]
+    reaches a change, `a` stages it alone, `c` unstages it, j / k move the
+    selection a row, and `d` asks before discarding the change -- Cancel keeps
+    it, Discard reverts just that hunk on disk.
+
+    These letters act only once the working side is not taking the typing, and
+    nothing pressed them (TD-364: the compare key path at half)."""
+    assert app.project is not None
+    text = "".join(f"line {i}\n" for i in range(1, 41))
+    write(app, "notes/hunks.txt", text)
+    git(app, "add", "notes/hunks.txt")
+    git(app, "commit", "-q", "-m", "qa: hunk fixture")
+    write(app, "notes/hunks.txt", text.replace("line 5\n", "line FIVE\n").replace("line 30\n", "line THIRTY\n"))
+    app.key("ctrl+shift+g")
+    row = app.wait_for("row:git/hunks.txt", 5.0)
+    if not app.expect(row is not None, "the git view lists hunks.txt"):
+        return
+    app.click(*app.center(row))
+    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the diff to open"):
+        return
+    divider = app.wait_for("divider:compare", 3.0)
+    surface = app.ui()["surfaces"]["editorSurface"]
+    if not app.expect(divider is not None, "the diff shows its divider"):
+        return
+    app.click(surface[0] + (divider["rect"][0] - surface[0]) * 0.5, surface[1] + surface[3] * 0.5)
+    step(app, "click the read-only side", 0.3)
+    app.key("Home")
+    app.key("bracketright")
+    step(app, "] to the first change", 0.3)
+
+    def staged() -> str:
+        return git(app, "diff", "--cached", "--unified=0", "notes/hunks.txt")
+
+    app.key("a")
+    app.wait_until(lambda: "+line FIVE" in staged(), 5.0, "a to stage the change")
+    app.expect("+line FIVE" in staged() and "THIRTY" not in staged(),
+               f"`a` stages that change alone ({staged()!r})")
+    app.key("c")
+    app.wait_until(lambda: staged() == "", 5.0, "c to unstage it")
+    app.expect(staged() == "", f"`c` unstages it ({staged()!r})")
+
+    before = app.ui()
+    app.key("j")
+    app.key("k")
+    step(app, "j / k", 0.2)
+    app.check("j / k move the selection")
+    del before
+
+    app.key("bracketright")
+    step(app, "] to the second change", 0.3)
+
+    def discard_prompt() -> bool:
+        app.key("d")
+        return app.wait_until(lambda: app.ui().get("modal") == "prompt", 3.0, "d to ask before discarding")
+
+    if discard_prompt():
+        cancel = next((e for e in app.elements("button", prefix="button:prompt/") if e.get("label") == "Cancel"), None)
+        if app.expect(cancel is not None, "the discard prompt has Cancel"):
+            app.click(*app.center(cancel))
+            step(app, "cancel the discard", 0.3)
+            app.expect("line THIRTY" in read(app, "notes/hunks.txt"), "Cancel keeps the change")
+    if discard_prompt():
+        confirm = next((e for e in app.elements("button", prefix="button:prompt/")
+                        if e.get("label", "").startswith("Discard")), None)
+        if app.expect(confirm is not None, "the discard prompt has Discard"):
+            app.click(*app.center(confirm))
+            app.wait_until(lambda: "line THIRTY" not in read(app, "notes/hunks.txt"), 5.0, "the hunk to be discarded")
+            step(app, "discard the second change", 0.4)
+            disk = read(app, "notes/hunks.txt")
+            app.expect("line 30\n" in disk and "line FIVE\n" in disk,
+                       f"Discard reverts that change alone ({[l for l in disk.splitlines() if 'FIVE' in l or ' 30' in l or 'THIRTY' in l]})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
+    "diff-hunk-keys": flow_diff_hunk_keys,
     "git-outgoing-base": flow_git_outgoing_base,
     "merge-toolbar": flow_merge_toolbar,
     "diff-commands": flow_diff_commands,
