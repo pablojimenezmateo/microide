@@ -116,9 +116,24 @@ def flow_plugin_api(app: q.App) -> None:
     before = _seen(app)
     app.key("shift+F12")
     _bumped(app, "references", before, "the references provider")
-    app.wait_until(lambda: "notes.qaapi:3" in app.query("output", {"channel": "references"}).get("text", "")
-                   or app.ui()["panel"].get("content") == "output", 5.0, "the references listed")
+    # The channel is lsp.references; asking for "references" read an empty one, and
+    # the "or the panel shows output" fallback was what passed.
+    app.wait_until(lambda: any("notes.qaapi:3" in line for line in app.output("lsp.references")), 5.0,
+                   "the references listed")
     step(app, "find references", 0.3)
+    # A click on an output entry's `path:line:col` opens it there.
+    geometry = app.ui().get("output") or {}
+    entries = app.output(geometry.get("channel", "lsp.references"))
+    index = next((i for i, line in enumerate(entries) if "notes.qaapi:3" in line), None)
+    if app.expect(bool(geometry) and index is not None,
+                  f"the references show in the output panel ({geometry}, {entries[:4]})"):
+        visible = index - geometry["firstRow"]
+        if app.expect(0 <= visible < geometry["visibleRows"], f"the entry is on screen ({index}, {geometry})"):
+            app.click(geometry["textX"] + 20, geometry["firstLineY"] + (visible + 0.5) * geometry["lineHeight"])
+            app.wait_until(lambda: app.cursors() and app.cursors()[0] == (3, 5), 3.0, "the click to the reference")
+            step(app, "click a reference in the output", 0.3)
+            app.expect(app.cursors() and app.cursors()[0] == (3, 5) and app.ui().get("focus") == "editor",
+                       f"a click on notes.qaapi:3:5 puts the caret there, in the editor ({app.cursors()})")
 
     # Signature help (explicit: nothing triggers it while typing, TD-2026-10-20-369).
     before = _seen(app)

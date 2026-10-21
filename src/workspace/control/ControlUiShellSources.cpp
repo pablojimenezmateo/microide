@@ -1069,6 +1069,26 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.visible_rows)));
               root["terminal"] = util::JsonValue(std::move(terminal));
             }
+            // The output channel on show, the same way: entry r sits at
+            // firstLineY + (r - firstRow) * lineHeight (the click's
+            // BottomPanelLineIndexAtPoint), so a driver can click a `path:line`.
+            if (BottomPanelVisible() &&
+                context_.current_project_state.panel.content == PanelContentKind::Output) {
+              const auto* entries = OutputChannelEntries(context_.current_project_state.panel.output.channel_id);
+              const std::size_t count = entries != nullptr ? entries->size() : 0;
+              const auto panel_layout = ComputeBottomPanelLogLayout(layout, count);
+              const auto num = [](float v) { return util::JsonValue(static_cast<double>(v)); };
+              util::JsonObject output;
+              output["channel"] = util::JsonValue(context_.current_project_state.panel.output.channel_id);
+              output["textX"] = num(panel_layout.text_x);
+              output["firstLineY"] = num(panel_layout.text_y);
+              output["lineHeight"] = num(panel_layout.line_height);
+              output["firstRow"] =
+                  util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.vertical_scroll)));
+              output["visibleRows"] =
+                  util::JsonValue(static_cast<std::int64_t>(std::max(0, panel_layout.scroll.visible_rows)));
+              root["output"] = util::JsonValue(std::move(output));
+            }
           },
   };
 }
