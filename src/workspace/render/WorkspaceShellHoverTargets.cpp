@@ -1,5 +1,6 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/render/CodeLensLayout.h"
 #include "workspace/render/EditorInteractionGrid.h"
 
 #include <algorithm>
@@ -153,41 +154,15 @@ std::optional<editor::CodeLensDecoration> CodeLensForViewport(
     return std::nullopt;
   }
 
-  const std::span<const editor::CodeLensDecoration> code_lenses =
-      decorations->CodeLensesForLine(static_cast<std::uint32_t>(*line_index));
-  if (code_lenses.empty()) {
-    return std::nullopt;
-  }
-  const std::span<const editor::InlineTextDecoration> inline_texts =
-      decorations->InlineTextsForLine(static_cast<std::uint32_t>(*line_index));
-
-  // Anchor at the line's last glyph and lay the segments out exactly as the
-  // renderer does (same helper), so the hit rect matches the painted lens.
-  const float line_y =
-      interaction.first_line_y +
-      static_cast<float>(*line_index - interaction.scroll_line) * interaction.line_height;
-  // Push the anchor past any mid-line inlay hints exactly as the renderer does, so
-  // the code-lens hit rect stays aligned with the painted lens. Suppressed on
-  // soft-wrapped lines to match the render path (which omits hints there in v1).
-  const std::size_t inlay_total_cells =
-      viewport.soft_wrap()
-          ? 0
-          : editor::InlayLineTotalCells(inline_texts, text_renderer, text_renderer.CharWidth());
-  const float anchor_x =
-      interaction.text_x +
-      static_cast<float>(viewport.VisibleLineLayout(*line_index).visual_columns + inlay_total_cells) *
-          text_renderer.CharWidth();
-  const float right_limit = interaction.rect.x + interaction.rect.w - 12.0f;
   std::vector<editor::EolDecorationSegment> segments;
-  editor::BuildEolDecorationSegments(text_renderer, inline_texts, code_lenses, anchor_x, line_y,
-                                     interaction.line_height, right_limit, segments);
-  for (const editor::EolDecorationSegment& segment : segments) {
-    if (segment.kind == editor::EolDecorationSegment::Kind::CodeLens &&
-        Contains(segment.rect, x, y) && code_lenses[segment.index].activatable()) {
-      return code_lenses[segment.index];
-    }
-  }
-  return std::nullopt;
+  std::optional<editor::CodeLensDecoration> hit;
+  ForEachLineCodeLens(text_renderer, viewport, interaction, *decorations, *line_index, segments,
+                      [&](const editor::CodeLensDecoration& lens, const SDL_FRect& rect) {
+                        if (!hit.has_value() && Contains(rect, x, y)) {
+                          hit = lens;
+                        }
+                      });
+  return hit;
 }
 
 }  // namespace

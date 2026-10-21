@@ -11,7 +11,7 @@ import shutil
 from typing import Callable
 
 import microide_qa as q
-from flows_common import open_file, step, write
+from flows_common import open_file, read, step, write
 
 
 def _require(app: q.App, tool: str) -> bool:
@@ -296,6 +296,80 @@ def flow_debug_session(app: q.App) -> None:
                f"a second gutter click removes the breakpoint ({files})")
 
 
+def flow_lsp_workspace_edits(app: q.App) -> None:
+    """A language server's workspace edits, through the qa-lsp plugin's scripted
+    server: F2 renames a name in the open file AND in a file that is not open
+    (written on disk), a code action creates one file and renames another (the
+    tree follows), and a code lens's server command comes back as
+    workspace/applyEdit into the open buffer.
+
+    clangd renames across files only with an index the fixture does not build,
+    so these paths ran at a fraction in the coverage build (TD-364: LspService at
+    61 %)."""
+    assert app.project is not None
+    write(app, "lsp/other.qalsp", "qa_name in other\nnot this\n")
+    write(app, "lsp/old.qalsp", "old\n")
+    open_file(app, "lsp/main.qalsp", "qa_name = 1\nuse qa_name\n")
+    if not app.wait_until(lambda: "Ready" in app.element("status:lsp").get("label", ""), 15.0,
+                          "the qa-lsp server to be ready"):
+        return
+
+    app.click_text(2, 6)
+    app.key("F2")
+    if app.wait_until(lambda: (app.ui().get("prompt") or {}).get("kind") == "input", 3.0, "F2's rename prompt"):
+        app.key("ctrl+a")
+        app.type("qa_renamed")
+        app.key("Return")
+        # A rename reaching a file that is not open asks first, and says so.
+        if app.wait_until(lambda: app.ui().get("modal") == "prompt", 5.0, "the rename across files to ask first"):
+            step(app, "Rename Across Files asks", 0.3)
+            apply = next((e for e in app.elements("button", prefix="button:prompt/")
+                          if e.get("label", "").startswith("Rename")), None)
+            if app.expect(apply is not None, "the prompt offers Rename & Save"):
+                app.click(*app.center(apply))
+        app.wait_until(lambda: app.text() == "qa_renamed = 1\nuse qa_renamed\n", 5.0, "the rename in the open file")
+        step(app, "rename across files", 0.4)
+        app.expect(app.text() == "qa_renamed = 1\nuse qa_renamed\n", f"the open file is renamed ({app.text()!r})")
+        app.wait_until(lambda: read(app, "lsp/other.qalsp").startswith("qa_renamed"), 5.0, "the closed file's rename")
+        app.expect(read(app, "lsp/other.qalsp") == "qa_renamed in other\nnot this\n",
+                   f"the file that is not open is renamed on disk ({read(app, 'lsp/other.qalsp')!r})")
+        app.expect(not any(t.get("title") == "other.qalsp" for t in app.query("tabs")),
+                   "without opening a tab for it")
+        app.key("ctrl+s")
+
+    app.click_text(1, 1)
+    app.key("ctrl+period")
+    if app.wait_until(lambda: any("create and rename" in (e.get("label") or "") for e in app.elements("overlay-row")),
+                      5.0, "the server's code action"):
+        row = next(e for e in app.elements("overlay-row") if "create and rename" in (e.get("label") or ""))
+        app.click(*app.center(row))
+        app.wait_until(lambda: (app.project / "lsp" / "renamed.qalsp").exists(), 5.0, "the code action's file operations")
+        step(app, "code action with file operations", 0.4)
+        app.expect((app.project / "lsp" / "created.qalsp").exists()
+                   and read(app, "lsp/created.qalsp") == "made by the code action\n",
+                   "the code action creates created.qalsp with its text")
+        app.expect((app.project / "lsp" / "renamed.qalsp").exists() and not (app.project / "lsp" / "old.qalsp").exists(),
+                   "and renames old.qalsp to renamed.qalsp")
+        app.click_named("sidebar-view:tree")
+        app.wait_until(lambda: "row:tree/renamed.qalsp" in [e["name"] for e in app.elements("row")], 5.0,
+                       "the tree to show the renamed file")
+
+    # The code lens: its command runs on the server, which answers with a
+    # workspace/applyEdit into the open (clean) buffer.
+    app.send("focus", "editor")
+    if app.buffer().get("dirty"):
+        app.key("ctrl+s")
+    lens = app.wait_for("button:lens/QA lens", 8.0)
+    if app.expect(lens is not None, f"the server's code lens shows at the end of line 1 "
+                                    f"({[e['name'] for e in app.elements('button', prefix='button:lens/')]})"):
+        app.click(*app.center(lens))
+        app.wait_until(lambda: app.text().startswith("lens ran\n"), 5.0, "the lens command's edit")
+        step(app, "code lens ran", 0.3)
+        app.expect(app.text() == "lens ran\nqa_renamed = 1\nuse qa_renamed\n",
+                   f"the server's workspace/applyEdit lands in the buffer ({app.text()!r})")
+
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-hover": flow_lsp_hover,
     "lsp-show-hover": flow_lsp_show_hover,
@@ -305,9 +379,11 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-rename": flow_lsp_rename,
     "lsp-format": flow_lsp_format,
     "dbg-session": flow_debug_session,
+    "lsp-workspace-edits": flow_lsp_workspace_edits,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
     **{name: ("cpp-lsp",) for name in FLOWS if name.startswith("lsp-")},
     "dbg-session": ("gdb-dap",),
+    "lsp-workspace-edits": ("qa-lsp",),
 }

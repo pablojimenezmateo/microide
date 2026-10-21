@@ -22,7 +22,9 @@
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/control/ControlUiQuery.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/render/CodeLensLayout.h"
 #include "workspace/render/CompareMergeRender.h"
+#include "workspace/render/EditorInteractionGrid.h"
 #include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/actions/WorkspaceActionServices.h"
@@ -426,6 +428,34 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
           },
       .buttons =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
+            // Each pane's clickable code lenses (`lens/<title>`), from the layout
+            // the click hit-tests. A lens shows only on a clean buffer.
+            if (const editor::PluginDecorationStore* store =
+                    RenderViewModelBuilder(context_).BuildHoverTargets().decoration_store;
+                store != nullptr && ActiveTabIsEditor()) {
+              const bool line_numbers = SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
+              std::vector<editor::EolDecorationSegment> segments;
+              for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(layout)) {
+                const editor::TextViewport* viewport = ViewportForPane(pane);
+                if (viewport == nullptr || viewport->is_placeholder() || viewport->path().empty() ||
+                    viewport->dirty()) {
+                  continue;
+                }
+                const editor::FileDecorations* decorations = store->FindByPathKey(viewport->path_key());
+                if (decorations == nullptr) {
+                  continue;
+                }
+                const TextGridInteractionLayout grid =
+                    BuildEditorInteractionGrid(editor_text_renderer_, *viewport, pane.rect, line_numbers);
+                for (std::size_t row = 0; row < grid.visible_rows; ++row) {
+                  const std::size_t line = grid.scroll_line + row;
+                  ForEachLineCodeLens(editor_text_renderer_, *viewport, grid, *decorations, line, segments,
+                                      [&](const editor::CodeLensDecoration& lens, const SDL_FRect& rect) {
+                                        AddControlUiElement(out, kButton, "lens/" + lens.text, rect, lens.text);
+                                      });
+                }
+              }
+            }
             if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
                 banner != nullptr) {
               const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
