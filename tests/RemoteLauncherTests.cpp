@@ -186,7 +186,11 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
          },
                    std::chrono::seconds(10)),
          "the host's own commit is noticed and pushed");
-  Expect(pushes.load() >= 3, "each change was a push");
+  // At least the first push and the host commit's: nothing but a push can bring
+  // the latter. The add's staged status may come from the add's own answer and
+  // its push be coalesced with the next on a slow runner (CI ASan counted 2 on
+  // 2026-10-21) -- the content checks above are what each step is held to.
+  Expect(pushes.load() >= 2, "the host's changes arrive as pushes (" + std::to_string(pushes.load()) + ")");
 }
 
 // A process's exit is sent when it happens. The server found exits by polling
