@@ -562,6 +562,18 @@ was subject to the same race. An in-process test of the visible sequence --
 dirty and active -- passes. Kept open until the CI monkey runs clean on the
 ordered driver.
 
+**2026-10-21, night -- the clips that fixed seed 4 broke the scaled qa lane:** the
+sidebar's clip (76952a79) and the editor groups' strip and pane clips (bba8fcc4)
+made CI's `qa` job fail at 1.5x (`menu-clicks`' scaled variants, `sweeps-matrix`):
+1-px rows a partial frame left stale -- the sidebar's focus ring with a gap at the
+bottom of a closing menu, the menu bar's colour left on the device row it shares
+with the tab strip. SDL maps a logical clip to device pixels as
+`[floor(y*s), floor(y*s) + ceil(h*s))`, so the LOGICAL intersection a nested
+`ScopedRenderClip` took was not the device intersection: it dropped the outer
+clip's last half-pixel row, and two logically disjoint clips that share a device
+row gave the inner surface nothing to paint there. `NarrowToCurrentClip` now
+narrows in device pixels (`ScopedRenderClip/NarrowsInDevicePixelsAtAFractionalScale`).
+
 **2026-10-21, evening:** CI's ASan monkey seed 4 failed again on the ordered
 driver (f0b8af18: frame 216, the same `bbox=96,98,29,9` as the first report)
 while the local qa-asan lane ran seeds 1-4 clean. So seed 4, at least, is not

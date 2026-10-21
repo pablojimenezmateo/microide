@@ -2,7 +2,110 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <cmath>
+
 namespace microide::render {
+
+namespace scoped_render_clip_detail {
+
+// The scale SDL maps this view's logical coordinates to device pixels with: the
+// logical presentation's (the window's, or the scene texture's own) times the
+// user scale.
+inline SDL_FPoint DeviceScale(SDL_Renderer* renderer) {
+  SDL_FPoint scale{1.0f, 1.0f};
+  int logical_w = 0;
+  int logical_h = 0;
+  SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
+  if (SDL_GetRenderLogicalPresentation(renderer, &logical_w, &logical_h, &mode) &&
+      mode != SDL_LOGICAL_PRESENTATION_DISABLED && logical_w > 0 && logical_h > 0) {
+    SDL_FRect device{};
+    if (SDL_GetRenderLogicalPresentationRect(renderer, &device) && device.w > 0.0f && device.h > 0.0f) {
+      scale = SDL_FPoint{device.w / static_cast<float>(logical_w),
+                         device.h / static_cast<float>(logical_h)};
+    }
+  }
+  float user_x = 1.0f;
+  float user_y = 1.0f;
+  if (SDL_GetRenderScale(renderer, &user_x, &user_y)) {
+    scale.x *= user_x;
+    scale.y *= user_y;
+  }
+  return scale;
+}
+
+// One axis of the narrowing. SDL maps a clip's [start, start + length) to the
+// device as [floor(start*s), floor(start*s) + ceil(length*s)) -- SDL 3.2's
+// UpdatePixelClipRect -- so at a fractional scale the logical intersection is
+// not the device intersection. This returns a logical span whose device span
+// covers the device intersection of `outer` and `requested` and stays inside
+// `requested`'s device span: rows the outer clip covers are painted (a row left
+// out keeps whatever an earlier frame drew there), and nothing lands outside the
+// surface that asked. It may reach a device row past the outer clip, inside the
+// requested rect -- the surface repainting its own pixels.
+struct Span {
+  int start = 0;
+  int length = 0;
+};
+
+inline Span NarrowAxis(int outer_start, int outer_length, int start, int length, float scale) {
+  const auto device_start = [scale](int value) {
+    return static_cast<int>(std::floor(static_cast<float>(value) * scale));
+  };
+  const auto device_end = [&](int value, int span) {
+    return device_start(value) + static_cast<int>(std::ceil(static_cast<float>(span) * scale));
+  };
+  const int target_start = std::max(device_start(outer_start), device_start(start));
+  const int target_end =
+      std::min(device_end(outer_start, outer_length), device_end(start, length));
+  if (target_end <= target_start) {
+    return Span{std::max(outer_start, start), 0};
+  }
+  const int requested_end = device_end(start, length);
+  const int logical_end = start + length;
+  // The shortest span from `from` whose device end reaches target_end.
+  const auto covering_length = [&](int from) {
+    int span = std::max(0, static_cast<int>(std::floor(static_cast<float>(target_end - device_start(from)) / scale)) - 1);
+    while (span < logical_end - from && device_end(from, span) < target_end) {
+      ++span;
+    }
+    return span;
+  };
+  const int narrowed = std::max(outer_start, start);
+  const int span = covering_length(narrowed);
+  if (device_end(narrowed, span) <= requested_end) {
+    return Span{narrowed, span};
+  }
+  // From the narrowed start the rounding overshoots the surface's own edge;
+  // from the surface's start it cannot (the whole surface ends exactly there).
+  return Span{start, covering_length(start)};
+}
+
+}  // namespace scoped_render_clip_detail
+
+// `clip` narrowed to the renderer's current clip, if one is set. A nested clip
+// must never WIDEN the outer one: a partial repaint runs the whole scene under
+// the dirty rect's clip, and a surface that simply set its own clip drew outside
+// that rect -- over pixels that were already right. Opaque fills come out the
+// same; anti-aliased text blended over itself does not, so a banner message got
+// bolder on every partial frame that ran its paint code without covering it
+// (TD-2026-10-15-341 found it). The narrowing is done in device pixels (see
+// NarrowAxis). No device pixel in common is a zero-area clip, which SDL enables
+// and which draws nothing -- what the caller should get.
+inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& clip) {
+  if (!SDL_RenderClipEnabled(renderer)) {
+    return clip;
+  }
+  SDL_Rect outer{};
+  SDL_GetRenderClipRect(renderer, &outer);
+  const SDL_FPoint scale = scoped_render_clip_detail::DeviceScale(renderer);
+  const auto x = scoped_render_clip_detail::NarrowAxis(outer.x, outer.w, clip.x, clip.w, scale.x);
+  const auto y = scoped_render_clip_detail::NarrowAxis(outer.y, outer.h, clip.y, clip.h, scale.y);
+  if (x.length == 0 || y.length == 0) {
+    return SDL_Rect{outer.x, outer.y, 0, 0};
+  }
+  return SDL_Rect{x.start, y.start, x.length, y.length};
+}
 
 // Applies `clip`, narrowed to any outer clip, to the renderer for the lifetime of
 // the scope, then restores the renderer's PREVIOUS clip state exactly — the
@@ -18,27 +121,6 @@ namespace microide::render {
 //     everything drawn afterward, and restoring to nullptr drops an outer clip
 //     (e.g. the dirty-region rect a partial repaint relies on) instead of keeping
 //     it — letting later draws escape the dirty region.
-// `clip` narrowed to the renderer's current clip, if one is set. A nested clip
-// must never WIDEN the outer one: a partial repaint runs the whole scene under
-// the dirty rect's clip, and a surface that simply set its own clip drew outside
-// that rect -- over pixels that were already right. Opaque fills come out the
-// same; anti-aliased text blended over itself does not, so a banner message got
-// bolder on every partial frame that ran its paint code without covering it
-// (TD-2026-10-15-341 found it). An empty intersection is a zero-area clip, which
-// SDL enables and which draws nothing -- what the caller should get.
-inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& clip) {
-  if (!SDL_RenderClipEnabled(renderer)) {
-    return clip;
-  }
-  SDL_Rect outer{};
-  SDL_GetRenderClipRect(renderer, &outer);
-  SDL_Rect narrowed{};
-  if (!SDL_GetRectIntersection(&outer, &clip, &narrowed)) {
-    return SDL_Rect{outer.x, outer.y, 0, 0};
-  }
-  return narrowed;
-}
-
 class ScopedRenderClip {
  public:
   ScopedRenderClip(SDL_Renderer* renderer, const SDL_Rect& clip) : renderer_(renderer) {

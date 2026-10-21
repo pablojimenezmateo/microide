@@ -61,10 +61,59 @@ void TestNarrowsToTheOuterClip() {
   Expect(!SDL_RenderClipEnabled(renderer), "and leaving it restores no clip at all");
 }
 
+// At a fractional display scale a clip is device pixels SDL rounds out of the
+// logical rect -- [floor(y*s), floor(y*s) + ceil(h*s)) -- so a nested clip that
+// is the LOGICAL intersection is not the device intersection. Two ways it went
+// wrong at 1.5x (CI's qa lane, scaled): the outer clip's bottom half-pixel row
+// was left out, so the sidebar's focus ring kept a gap the partial frame never
+// repainted; and a surface whose top edge shares a half pixel with the outer
+// clip's bottom (the tab strip under the menu bar) got an EMPTY clip though the
+// outer one covered a row it paints, so the menu bar's colour stayed there.
+void TestNarrowsInDevicePixelsAtAFractionalScale() {
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(300, 150);
+  SDL_Renderer* renderer = canvas.renderer();
+  Expect(SDL_SetRenderLogicalPresentation(renderer, 200, 100, SDL_LOGICAL_PRESENTATION_STRETCH),
+         "the canvas takes a 1.5x logical presentation");
+  const auto fill_red_under = [&](const SDL_Rect& outer, const SDL_Rect& inner) {
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_SetRenderClipRect(renderer, nullptr);
+    SDL_RenderClear(renderer);
+    SDL_SetRenderClipRect(renderer, &outer);
+    {
+      const render::ScopedRenderClip scope(renderer, inner);
+      SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+      const SDL_FRect all{0.0f, 0.0f, 200.0f, 100.0f};
+      SDL_RenderFillRect(renderer, &all);
+    }
+    SDL_SetRenderClipRect(renderer, nullptr);
+  };
+  const auto red = [&](int x, int y) { return canvas.PixelAt(x, y).r == 255; };
+
+  // Outer: logical rows 0..23 -> device rows 0..34 (34.5 rounds up). Inner from
+  // logical 11 -> device 16 (16.5 rounds down).
+  fill_red_under(SDL_Rect{0, 0, 200, 23}, SDL_Rect{0, 11, 50, 80});
+  Expect(red(10, 34), "the outer clip's last device row is painted under the nested clip");
+  Expect(!red(10, 15), "nothing above the nested clip's own first device row");
+  Expect(!red(80, 20), "nothing right of the nested clip (device column 75 on)");
+
+  // Outer: logical rows 0..11 -> device rows 0..16; inner from logical 11 ->
+  // device 16. Logically disjoint, they share device row 16.
+  fill_red_under(SDL_Rect{0, 0, 200, 11}, SDL_Rect{0, 11, 50, 80});
+  Expect(red(10, 16), "the device row the two clips share is painted");
+  Expect(!red(10, 15), "and still nothing above the nested clip");
+
+  // Really disjoint stays a zero-area clip.
+  fill_red_under(SDL_Rect{0, 0, 200, 10}, SDL_Rect{0, 40, 50, 20});
+  Expect(!red(10, 61) && !red(10, 5), "clips with no device row in common draw nothing");
+}
+
 }  // namespace
 
 void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ScopedRenderClip/NarrowsToTheOuterClip", TestNarrowsToTheOuterClip);
+  AddTest(tests, "ScopedRenderClip/NarrowsInDevicePixelsAtAFractionalScale",
+          TestNarrowsInDevicePixelsAtAFractionalScale);
 }
 
 }  // namespace microide::tests
