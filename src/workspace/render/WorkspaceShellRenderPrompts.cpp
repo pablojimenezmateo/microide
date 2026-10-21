@@ -19,15 +19,32 @@ void WorkspaceShell::RenderPromptSurface(
   const SDL_FRect header = DrawTitledCardFrame(renderer, theme_, dialog, 32.0f, CardStyle::Overlay);
   const SDL_FRect message_rect =
       MakeRect(dialog.x + 16.0f, dialog.y + 50.0f, dialog.w - 32.0f, 36.0f);
-  const SDL_FRect detail_rect =
-      MakeRect(dialog.x + 16.0f, dialog.y + 72.0f, dialog.w - 32.0f, 40.0f);
+  const auto buttons =
+      ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
   DrawVCenteredTextOn(text_renderer_, renderer, header, 16.0f, theme_.chrome_text,
                       theme_.chrome_background, PromptSurfaceTitle());
-  DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_muted,
-             theme_.overlay_background, TruncateLabelView(PromptSurfaceMessage(), message_rect.w));
-  if (const std::string_view detail = PromptSurfaceDetail(); !detail.empty()) {
-    DrawTextOn(text_renderer_, renderer, detail_rect.x, detail_rect.y, theme_.text_secondary,
-               theme_.overlay_background, TruncateLabelView(detail, detail_rect.w));
+  // The message wraps over the room down to the input field or the buttons (less
+  // a line for the detail): drawn as one truncated line, "Renaming to 'x' changes
+  // 2 files (1 not open). Apply…" lost its question over an empty card (QA
+  // lsp-workspace-edits).
+  const std::string_view detail = PromptSurfaceDetail();
+  const float line_height = text_renderer_.LineHeight();
+  const float content_bottom =
+      (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput
+           ? ComputePromptSurfaceInputRect(dialog).y
+           : buttons.front().y) -
+      6.0f;
+  const float room = std::max(line_height, content_bottom - message_rect.y -
+                                               (detail.empty() ? 0.0f : line_height + 4.0f));
+  const std::size_t message_lines = DrawWrappedPlaceholder(
+      text_renderer_, renderer, message_rect.x, message_rect.y, message_rect.w, theme_.text_muted,
+      theme_.overlay_background, PromptSurfaceMessage(),
+      std::max<std::size_t>(1, static_cast<std::size_t>(room / line_height)));
+  if (!detail.empty()) {
+    const float detail_y = message_rect.y +
+                           static_cast<float>(std::max<std::size_t>(1, message_lines)) * line_height + 4.0f;
+    DrawTextOn(text_renderer_, renderer, message_rect.x, detail_y, theme_.text_secondary,
+               theme_.overlay_background, TruncateLabelView(detail, message_rect.w));
   }
 
   if (context_.prompts.surface.kind == PromptSurfaceState::Kind::TextInput) {
@@ -44,8 +61,6 @@ void WorkspaceShell::RenderPromptSurface(
                            theme_.surface_background, prompt_text);
   }
 
-  const auto buttons =
-      ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
   const auto labels = PromptSurfaceActionLabels();
   // Bounded by BOTH: the rects come from `button_count`, which is an int on the
   // prompt state, while the labels are a fixed pair. They agree today because
@@ -78,8 +93,18 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
 
   DrawVCenteredTextOn(text_renderer_, renderer, header, 12.0f, theme_.chrome_text,
                       theme_.chrome_background, DirtyPromptTitle());
-  DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_secondary,
-             theme_.overlay_background, TruncateLabelView(DirtyPromptMessage(), message_rect.w));
+  // Wrapped like the plain prompt's, over the room above the hint line and the
+  // buttons ("Save the 2 affected dirty editors before renaming re…").
+  const auto buttons = ComputeDirtyPromptButtonRects(dialog);
+  const float line_height = text_renderer_.LineHeight();
+  const float room =
+      std::max(line_height, buttons.front().y - 6.0f - message_rect.y - (line_height + 4.0f));
+  const std::size_t message_lines = DrawWrappedPlaceholder(
+      text_renderer_, renderer, message_rect.x, message_rect.y, message_rect.w,
+      theme_.text_secondary, theme_.overlay_background, DirtyPromptMessage(),
+      std::max<std::size_t>(1, static_cast<std::size_t>(room / line_height)));
+  const float hint_y =
+      message_rect.y + static_cast<float>(std::max<std::size_t>(1, message_lines)) * line_height + 4.0f;
   // Constant hint line: spelled out rather than re-joined per frame. The joiner
   // lives in WorkspaceUiText.h for text assembled from live state, which belongs
   // in RenderViewModelBuilder, not in a render TU -- but the SEPARATOR is still
@@ -87,11 +112,10 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
   // prompt the third hint line in the app punctuated differently from every
   // other one. The lint targets a redefined joiner, so a divergent spelling
   // baked into one literal is invisible to it.
-  DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y + 22.0f, theme_.text_muted,
+  DrawTextOn(text_renderer_, renderer, message_rect.x, hint_y, theme_.text_muted,
              theme_.overlay_background,
              std::string_view("Enter confirm · Left/Right choose · Esc cancel"));
 
-  const auto buttons = ComputeDirtyPromptButtonRects(dialog);
   const auto labels = DirtyPromptActionLabels();
   const std::size_t drawn = std::min(buttons.size(), labels.size());
   for (std::size_t i = 0; i < drawn; ++i) {
