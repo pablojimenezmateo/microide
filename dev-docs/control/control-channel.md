@@ -165,6 +165,13 @@ Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
 `keybindings`, `settings`, `ui`, `buffer`, `output`.
 
+**Debug state.** `debug-state` reports the active session's lifecycle as
+`session` (`none`, `initializing`, `configuring`, `running`, `stopped`,
+`terminated`, `failed`) beside the stop it shows (`stopped`, `reason`,
+`threadId`, `frames`, and `file`/`line` of the focused frame): a driver waits for
+`running` before it pauses, which `stopped: false` alone cannot tell from no
+session at all.
+
 **Settings.** `settings` lists every registered setting, built-in and
 plugin-contributed, with its current value: `{id, label, description, type
 (bool|int|float|string|enum), scope (user|project), plugin?, group, default,
@@ -303,7 +310,10 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   `title`, `active`, `dirty` and 1-based `cursorLine`/`cursorColumn`/`scrollLine`;
   a file still loading off-thread reports `loading: true` and the position it will
   open at. The focused group's active tab also reports `visibleTop`/`visibleCount`
-  — what the user is looking at. `tabs` stays as the flat list the media scripts use.
+  — what the user is looking at. A diff tab reports `changes` (its hunk count),
+  `ignoreWhitespace`, `showWhitespace`, `leftLabel`/`rightLabel` and, inside a
+  review of several files, `reviewFiles` and the 1-based `reviewFileIndex`.
+  `tabs` stays as the flat list the media scripts use.
 - `commands` lists the runnable command registry as `{command, usage, label}`, then the plugin-contributed commands (`plugin: true`).
 - `terminals` lists the terminal strip: per tab `{tab, active, unseenOutput,
   unseenBell, panes}`, per pane `{pane, active, label, running, lineCount}`.

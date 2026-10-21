@@ -25,6 +25,7 @@
 #include "workspace/WorkspaceTerminalSelection.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "workspace/debug/WorkspaceDapManager.h"
 #include "workspace/debug/DebugViewModel.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/state/WorkspaceProjectState.h"
@@ -530,6 +531,23 @@ util::JsonValue ControlChannelService::BuildDebugState() const {
     return util::JsonValue(std::move(object));
   }
   const DebugExecutionView& exec = context_->current_project_state.debug_execution;
+  // The active session's lifecycle, so a driver can wait for "running" before it
+  // pauses: `stopped` alone cannot tell a running program from no session.
+  const char* session_state = "none";
+  if (const DapManager* manager = context_->current_project_state.dap_manager.get(); manager != nullptr) {
+    if (const DebugSession* session = manager->ActiveSession(); session != nullptr) {
+      switch (session->CurrentState()) {
+        case DebugSession::State::Inactive: session_state = "inactive"; break;
+        case DebugSession::State::Initializing: session_state = "initializing"; break;
+        case DebugSession::State::Configuring: session_state = "configuring"; break;
+        case DebugSession::State::Running: session_state = "running"; break;
+        case DebugSession::State::Stopped: session_state = "stopped"; break;
+        case DebugSession::State::Terminated: session_state = "terminated"; break;
+        case DebugSession::State::Failed: session_state = "failed"; break;
+      }
+    }
+  }
+  object["session"] = util::JsonValue(std::string(session_state));
   object["stopped"] = util::JsonValue(exec.stopped);
   object["reason"] = util::JsonValue(exec.stop_reason);
   object["threadId"] = util::JsonValue(static_cast<std::int64_t>(exec.thread_id));
@@ -700,6 +718,20 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
   object["title"] = util::JsonValue(tab.title);
   object["active"] = util::JsonValue(active);
   object["dirty"] = util::JsonValue(TabEntryIsDirty(tab));
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    // What a diff shows, so a driver can tell what its toggles changed: the
+    // change count, the two whitespace modes and its place in a review's files.
+    const CompareTabState& compare = *tab.compare;
+    object["changes"] = util::JsonValue(static_cast<std::int64_t>(compare.model.hunks.size()));
+    object["ignoreWhitespace"] = util::JsonValue(compare.build_options.ignore_whitespace);
+    object["showWhitespace"] = util::JsonValue(compare.show_whitespace);
+    object["leftLabel"] = util::JsonValue(compare.left_label);
+    object["rightLabel"] = util::JsonValue(compare.right_label);
+    if (!compare.review_files.empty()) {
+      object["reviewFiles"] = util::JsonValue(static_cast<std::int64_t>(compare.review_files.size()));
+      object["reviewFileIndex"] = util::JsonValue(static_cast<std::int64_t>(compare.review_file_index) + 1);
+    }
+  }
   if (tab.kind != TabEntry::Kind::Editor) {
     return util::JsonValue(std::move(object));
   }
