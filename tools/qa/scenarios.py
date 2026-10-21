@@ -404,7 +404,7 @@ FLOW_MODULES: tuple[str, ...] = (
     "flows_editing", "flows_workbench", "flows_lsp_debug", "flows_keys", "flows_context_menus",
     "flows_more", "flows_advanced", "flows_coverage", "flows_ux", "flows_depth", "flows_resilience",
     "flows_matrix", "flows_languages", "flows_integration", "flows_plugin_api", "flows_commands",
-    "flows_settings", "flows_inputs", "flows_surfaces", "flows_panes", "flows_tree", "flows_effects",
+    "flows_settings", "flows_inputs", "flows_surfaces", "flows_panes", "flows_tree", "flows_effects", "flows_lifecycle",
 )
 
 _on_disk = {path.stem for path in Path(__file__).resolve().parent.glob("flows_*.py")} - {"flows_common"}
