@@ -150,10 +150,13 @@ void PromptSurfaceService::ShowDirtyPathPrompt(DirtyPromptState::Kind kind,
 }
 
 FocusTarget PromptSurfaceService::FocusAfterPrompt(FocusTarget previous) const {
-  // A prompt opened over an overlay that has since gone (or over the other
-  // prompt) has nothing to go back to there.
-  const bool other_modal_up = prompts_.dirty_visible || prompts_.surface_visible || state_.overlay.visible;
-  return previous == FocusTarget::Overlay && !other_modal_up ? FocusAfterOverlay(state_) : previous;
+  // Whatever is still on top -- the other prompt, or an overlay the prompt opened
+  // over -- takes the keyboard; else the surface the prompt was opened from, while
+  // it is still shown.
+  if (prompts_.dirty_visible || prompts_.surface_visible || state_.overlay.visible) {
+    return FocusTarget::Overlay;
+  }
+  return previous == FocusTarget::Overlay ? FocusAfterOverlay(state_) : FocusBackTo(state_, previous);
 }
 
 void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {

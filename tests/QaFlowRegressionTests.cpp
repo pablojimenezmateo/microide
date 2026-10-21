@@ -779,6 +779,89 @@ void TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt() {
                       "undoing it (the scrollbar goes)");
 }
 
+// QA monkey (seed 6, the stranded-focus oracle): a prompt opened over the open
+// file finder, the sidebar hidden meanwhile, then the prompt dismissed -- focus
+// went back to the sidebar it was recorded from, which was no longer there, while
+// the finder stayed open with no keyboard. What is still on top takes it.
+void TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, SDL_KMOD_CTRL)});
+  Expect(TestAccess::OverlayVisible(fixture.shell), "Ctrl+P opens the finder");
+  TestAccess::SetFocusSidebar(fixture.shell);
+  TestAccess::OpenPromptSurfaceForTest(fixture.shell, workspace::PromptSurfaceState::Action::RenamePath,
+                                       workspace::PromptSurfaceState::Kind::TextInput, fixture.file, "",
+                                       "renamed.txt");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-hide"), "sidebar-hide should run");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  Expect(TestAccess::OverlayVisible(fixture.shell), "the finder is still open under the closed prompt");
+  Expect(!TestAccess::FocusIsSidebar(fixture.shell), "focus is not left on the hidden sidebar");
+  Expect(TestAccess::FocusIsOverlay(fixture.shell), "the finder still on screen takes the keyboard");
+}
+
+// QA diff-commands: pasting a line longer than the editor is wide made the
+// horizontal scrollbar appear, and the paste damaged only the edited line -- the
+// scrollbar's strip along the editor's bottom kept the old pixels. An edit that
+// makes the bar appear (or go) repaints it.
+void TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("long.txt", "short\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "a short file, no horizontal scrollbar");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 5);
+  const std::string wide(400, 'w');
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(wide.c_str())}),
+                      "a paste wider than the editor (the horizontal scrollbar appears)");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)}),
+                      "undoing it (the scrollbar goes)");
+}
+
+// QA monkey (seed 6, the stranded-focus oracle): a prompt opened over the open
+// file finder, the sidebar hidden meanwhile, then the prompt dismissed -- focus
+// went back to the sidebar it was recorded from, which was no longer there, while
+// the finder stayed open with no keyboard. What is still on top takes it.
+void TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, SDL_KMOD_CTRL)});
+  Expect(TestAccess::OverlayVisible(fixture.shell), "Ctrl+P opens the finder");
+  TestAccess::SetFocusSidebar(fixture.shell);
+  TestAccess::OpenPromptSurfaceForTest(fixture.shell, workspace::PromptSurfaceState::Action::RenamePath,
+                                       workspace::PromptSurfaceState::Kind::TextInput, fixture.file, "",
+                                       "renamed.txt");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-hide"), "sidebar-hide should run");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  Expect(TestAccess::OverlayVisible(fixture.shell), "the finder is still open under the closed prompt");
+  Expect(!TestAccess::FocusIsSidebar(fixture.shell), "focus is not left on the hidden sidebar");
+  Expect(TestAccess::FocusIsOverlay(fixture.shell), "the finder still on screen takes the keyboard");
+}
+
+// QA commands-run (the bounds oracle): with the status bar hidden every toast
+// was laid out above the window's top-left corner and never seen -- the stack is
+// anchored on the status bar, and a hidden bar's rect was {0,0,0,0}. A hidden bar
+// is now a zero-height strip along the window's bottom edge.
+void TestToastsShowWithTheStatusBarHidden() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "status-bar-toggle"), "status-bar-toggle should run");
+  TestAccess::ShowNotification(fixture.shell, workspace::NotificationService::Tone::Warning, "a toast");
+  bool seen = false;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["surfaces"]["statusBar"].IsNull(), "the status bar is hidden");
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() != "notification") {
+      continue;
+    }
+    seen = true;
+    const auto& r = entry["rect"].AsArray();
+    Expect(r[0].AsInt() >= 0 && r[1].AsInt() >= 0 && r[0].AsInt() + r[2].AsInt() <= FlowFixture::kWidth &&
+               r[1].AsInt() + r[3].AsInt() <= FlowFixture::kHeight,
+           "the toast is inside the window (" + std::to_string(r[0].AsInt()) + "," +
+               std::to_string(r[1].AsInt()) + ")");
+  }
+  Expect(seen, "the toast is laid out");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2106,6 +2189,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
+          TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);
   AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",
           TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",

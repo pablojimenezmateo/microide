@@ -1136,26 +1136,38 @@ inline FocusTarget PrimarySurfaceFocus(const ProjectWorkspaceState& state) {
   return state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
 }
 
-// Where focus goes when an overlay closes without a target of its own: back to
-// the surface it was opened from while that surface is still shown, else the
-// primary surface. Handing it to the primary surface unconditionally sent every
-// Escape from the palette, completion or a picker opened in the editor to the
-// file tree whenever the tree was visible (QA plugins-reload).
-inline FocusTarget FocusAfterOverlay(const ProjectWorkspaceState& state) {
-  switch (state.overlay.opened_from) {
+// Whether `target` is on screen to take the keyboard.
+inline bool FocusSurfaceShown(const ProjectWorkspaceState& state, FocusTarget target) {
+  switch (target) {
     case FocusTarget::Editor:
-      return FocusTarget::Editor;
+      return true;
     case FocusTarget::Sidebar:
-      return state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+      return state.sidebar.visible;
     case FocusTarget::Panel:
-      return state.panel.content != PanelContentKind::None ? FocusTarget::Panel
-                                                           : PrimarySurfaceFocus(state);
+      return state.panel.content != PanelContentKind::None;
     case FocusTarget::DebugPane:
-      return state.debug_pane.visible ? FocusTarget::DebugPane : PrimarySurfaceFocus(state);
+      return state.debug_pane.visible;
     case FocusTarget::Overlay:
-      break;
+      return state.overlay.visible;
   }
-  return PrimarySurfaceFocus(state);
+  return false;
+}
+
+// Where focus goes when a surface on top closes: back to `previous` while it is
+// still shown, else the primary surface. Handing it to the primary surface
+// unconditionally sent every Escape from the palette, completion or a picker
+// opened in the editor to the file tree whenever the tree was visible (QA
+// plugins-reload); handing it back to a surface since hidden stranded it there
+// (the QA monkey: a prompt over the finder, closed after the sidebar was hidden).
+inline FocusTarget FocusBackTo(const ProjectWorkspaceState& state, FocusTarget previous) {
+  return FocusSurfaceShown(state, previous) ? previous : PrimarySurfaceFocus(state);
+}
+
+// Where focus goes when an overlay closes without a target of its own: the
+// surface it was opened from, while that is still shown.
+inline FocusTarget FocusAfterOverlay(const ProjectWorkspaceState& state) {
+  return state.overlay.opened_from == FocusTarget::Overlay ? PrimarySurfaceFocus(state)
+                                                           : FocusBackTo(state, state.overlay.opened_from);
 }
 
 // Hide the overlay and ensure keyboard focus never strands on the now-hidden
