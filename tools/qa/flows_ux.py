@@ -1012,6 +1012,47 @@ def _git_row_menu(app: q.App, name: str, label_prefix: str) -> bool:
     return True
 
 
+def flow_git_commit_body(app: q.App) -> None:
+    """A commit message with a body: the subject, then the body field typed over
+    several lines with Enter, Backspace and the arrows (its own editor, not the
+    file's), Ctrl+Enter commits, and git has the subject, a blank line and the
+    body as typed. `wb-git` commits a subject only; the body's key path ran at a
+    fraction (TD-364)."""
+    write(app, "src/main.cpp", read(app, "src/main.cpp") + "// body\n")
+    git(app, "add", "src/main.cpp")
+    app.key("ctrl+shift+g")
+    if not app.wait_until(lambda: app.element("button:git/commit").get("enabled", True), 5.0, "Commit to be enabled"):
+        return
+    app.click_named("button:git/commit")
+    subject = app.wait_for("field:git/subject", 3.0)
+    if not app.expect(subject is not None, "Commit opens the message panel"):
+        return
+    app.click(*app.center(subject))
+    app.type("qa: subject")
+    body = app.wait_for("field:git/body", 3.0)
+    if not app.expect(body is not None, "the panel has a body field"):
+        return
+    app.click(*app.center(body))
+    app.type("first body line")
+    app.key("Return")
+    app.type("second linx")
+    app.key("BackSpace")
+    app.type("e")
+    app.key("Up")
+    app.key("End")
+    app.type("!")
+    step(app, "type the body", 0.3)
+    app.expect(app.field_text("field:git/body") == "first body line!\nsecond line",
+               f"the body takes Enter, Backspace and the arrows ({app.field_text('field:git/body')!r})")
+    app.expect(not app.buffer().get("dirty"), "and none of it reaches the open file")
+    app.key("ctrl+Return")
+    app.wait_until(lambda: git(app, "log", "-1", "--format=%s") == "qa: subject", 6.0, "the commit")
+    step(app, "commit with a body", 0.4)
+    message = git(app, "log", "-1", "--format=%B").strip()
+    app.expect(message == "qa: subject\n\nfirst body line!\nsecond line",
+               f"git has the subject, a blank line and the body ({message!r})")
+
+
 def flow_git_discard_all(app: q.App) -> None:
     """The git view's Discard All, over a modified file, a new untracked folder
     and a staged new file: refused while an affected tab has unsaved edits (and
@@ -1468,6 +1509,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "find-options": flow_find_options,
     "git-discard": flow_git_discard,
     "git-discard-all": flow_git_discard_all,
+    "git-commit-body": flow_git_commit_body,
     "terminal-clipboard": flow_terminal_clipboard,
     "notifications": flow_notifications,
     "tree-keys": flow_tree_keys,

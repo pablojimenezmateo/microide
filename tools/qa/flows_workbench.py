@@ -374,6 +374,9 @@ def flow_git(app: q.App) -> None:
         step(app, "ctrl+Enter commits", 0.8)
         app.wait_until(lambda: git(app, "log", "-1", "--format=%s").strip() == "qa: commit from the git view",
                        6.0, "the commit to land in the repository")
+        message = git(app, "log", "-1", "--format=%B").strip()
+        app.expect(message == "qa: commit from the git view",
+                   f"a subject-only commit has no body, not the field's hint ({message!r})")
         app.wait_until(lambda: not any(e["name"] == "row:git/main.cpp" for e in app.elements("row")),
                        5.0, "the committed file to leave the git view")
         app.wait_until(lambda: "[clean]" in app.element("status:project").get("label", ""), 5.0,
