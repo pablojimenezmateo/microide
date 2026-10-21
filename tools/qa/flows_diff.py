@@ -189,8 +189,82 @@ def flow_merge_commands(app: q.App) -> None:
                    f"and marks it resolved in the index ({status!r})")
 
 
+def _merge(app: q.App) -> dict:
+    return next((t for g in app.editor_state().get("groups", []) for t in g.get("tabs", [])
+                 if t.get("kind") == "merge" and t.get("active")), {})
+
+
+def flow_merge_toolbar(app: q.App) -> None:
+    """The merge editor's toolbar and its keys: Next / Previous step the selected
+    conflict; Toggle Base shows and hides the ancestor pane; Unresolved jumps to
+    the next conflict left; Alt+R resets a resolved conflict; Mark Resolved
+    refuses while a conflict is open, and once both are resolved and saved it
+    stages the file.
+
+    `merge-mouse` accepts sides and saves; the toolbar's other buttons, the reset
+    (reachable from nothing until this flow looked for it) and Mark Resolved's
+    refusal and staging ran at under half in the coverage build (TD-364)."""
+    assert app.project is not None
+    if not open_conflict(app):
+        return
+    merge = _merge(app)
+    app.expect(merge.get("conflicts") == 2 and merge.get("unresolved") == 2 and merge.get("selectedConflict") == 1,
+               f"the merge opens on the first of two open conflicts ({merge})")
+
+    def press(name: str, label: str) -> bool:
+        button = app.element(f"button:merge/{name}")
+        if not app.expect(bool(button), f"the toolbar shows {name} ({[e['name'] for e in app.elements('button', prefix='button:merge/')]})"):
+            return False
+        app.click(*app.center(button))
+        step(app, label, 0.3)
+        return True
+
+    if press("next", "Next"):
+        app.expect(_merge(app).get("selectedConflict") == 2, f"Next selects the second conflict ({_merge(app)})")
+    if press("prev", "Previous"):
+        app.expect(_merge(app).get("selectedConflict") == 1, f"Previous goes back to the first ({_merge(app)})")
+    if press("Toggle Base", "Toggle Base"):
+        app.expect(_merge(app).get("basePane") is True, f"Toggle Base shows the ancestor pane ({_merge(app)})")
+        app.check("the base pane out")
+        press("Toggle Base", "Toggle Base again")
+        app.expect(_merge(app).get("basePane") is False, f"and hides it again ({_merge(app)})")
+
+    # Resolve the first, reset it with Alt+R, resolve it again.
+    app.send("focus", "editor")
+    app.key("alt+i")
+    app.wait_until(lambda: _merge(app).get("unresolved") == 1, 3.0, "Alt+I to resolve the first conflict")
+    app.key("alt+r")
+    app.wait_until(lambda: _merge(app).get("unresolved") == 2, 3.0, "Alt+R to reset it")
+    step(app, "Alt+R", 0.3)
+    app.expect(_merge(app).get("unresolved") == 2, f"Alt+R puts the conflict back ({_merge(app)})")
+    app.key("alt+i")
+    app.wait_until(lambda: _merge(app).get("unresolved") == 1, 3.0, "Alt+I again")
+
+    if press("Unresolved", "Unresolved"):
+        app.expect(_merge(app).get("selectedConflict") == 2, f"Unresolved jumps to the conflict left ({_merge(app)})")
+    if press("Mark Resolved", "Mark Resolved with a conflict open"):
+        merge = _merge(app)
+        app.expect(not merge.get("markedResolved") and merge.get("status"),
+                   f"Mark Resolved refuses while a conflict is open, and says why ({merge})")
+        app.expect("UU" in git(app, "status", "--porcelain", "notes/merge.txt"),
+                   "and leaves the file conflicted in the index")
+    app.send("focus", "editor")
+    app.key("alt+c")
+    app.wait_until(lambda: _merge(app).get("unresolved") == 0, 3.0, "Alt+C to resolve the second")
+    press("save", "Save")
+    app.wait_until(lambda: not _merge(app).get("dirty"), 3.0, "the result to save")
+    if press("Mark Resolved", "Mark Resolved"):
+        app.wait_until(lambda: "UU" not in git(app, "status", "--porcelain", "notes/merge.txt"), 5.0, "the file to be staged")
+        text = (app.project / "notes" / "merge.txt").read_text()
+        app.expect("line 2 incoming\n" in text and "line 10 current\n" in text and "<<<<<<<" not in text,
+                   f"the result holds each conflict's choice ({text!r})")
+        status = git(app, "status", "--porcelain", "notes/merge.txt")
+        app.expect(status.startswith("M ") or status == "", f"Mark Resolved stages it ({status!r})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
+    "merge-toolbar": flow_merge_toolbar,
     "diff-commands": flow_diff_commands,
     "diff-review-files": flow_diff_review_files,
 }

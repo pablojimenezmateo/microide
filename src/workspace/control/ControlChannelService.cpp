@@ -748,6 +748,21 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
       object["reviewFileIndex"] = util::JsonValue(static_cast<std::int64_t>(compare.review_file_index) + 1);
     }
   }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    // What the merge editor's header shows: the conflicts, how many are left,
+    // which is selected, whether the base pane is out and the file resolved.
+    const MergeTabState& merge = *tab.merge;
+    std::int64_t unresolved = 0;
+    for (const MergeTrackedConflict& conflict : merge.conflicts) {
+      unresolved += conflict.valid && !conflict.resolved ? 1 : 0;
+    }
+    object["conflicts"] = util::JsonValue(static_cast<std::int64_t>(merge.conflicts.size()));
+    object["unresolved"] = util::JsonValue(unresolved);
+    object["selectedConflict"] = util::JsonValue(static_cast<std::int64_t>(merge.selected_hunk) + 1);
+    object["basePane"] = util::JsonValue(merge.base_pane_visible);
+    object["markedResolved"] = util::JsonValue(merge.marked_resolved);
+    object["status"] = util::JsonValue(merge.status_message);
+  }
   if (tab.kind != TabEntry::Kind::Editor) {
     return util::JsonValue(std::move(object));
   }
