@@ -1072,7 +1072,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .id = "editor.snippets.user_disabled",
           .label = "Disabled Snippets",
           .description =
-              "Comma-separated snippet IDs to suppress from the resolved contract.",
+              "Comma-separated snippet prefixes to suppress from the resolved contract.",
           .type = SettingType::String,
           .scope = SettingScope::User,
           .default_string = "",

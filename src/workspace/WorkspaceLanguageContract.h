@@ -115,6 +115,14 @@ class WorkspaceLanguageContract {
       bool surround_enabled,
       bool smart_indent_enabled) const;
 
+  // Every setting the editor-facing views depend on -- the five overrides
+  // Refresh layers on, and the three toggles ResolveEditorView bakes in --
+  // joined into one key. A settings change that leaves it equal cannot change
+  // any view; one that changes it must Refresh and re-resolve every tab. Keying
+  // only on the toggles once left a live edit of an override waiting for the
+  // next plugin reload (QA `language-overrides`).
+  static std::string SettingsFingerprint(const SettingGetter& get_setting);
+
   // Monotonically increasing on every successful Refresh; consumers cache
   // their derived state keyed on this counter.
   std::size_t revision() const { return revision_; }

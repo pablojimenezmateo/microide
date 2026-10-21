@@ -243,8 +243,10 @@ void TestArchitectureFileSizes() {
              // and the 2 s idle tick it re-armed forever; what replaced it is one
              // atomic (the "index truncated" toast the monitor used to raise) and
              // the declaration of the synchronous forced-rescan helper.
+             // 1695: -2 for folding the three contract toggles in the live-settings
+             // snapshot into one fingerprint that also covers the overrides.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1697);
+                                                     1695);
            });
 
   AssertRuleResultsPass(results);

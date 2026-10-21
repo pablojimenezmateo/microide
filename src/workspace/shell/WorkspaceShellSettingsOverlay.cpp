@@ -460,9 +460,10 @@ void WorkspaceShell::ApplyLiveSettings() {
   snapshot.font_size = context_.current_project_state.editor_preferences.font_size;
   snapshot.soft_tabs = context_.current_project_state.editor_preferences.soft_tabs;
   snapshot.soft_wrap = context_.current_project_state.editor_preferences.soft_wrap;
-  snapshot.auto_close_enabled = GetSettingValue("editor.brackets.auto_close.enabled");
-  snapshot.surround_enabled = GetSettingValue("editor.brackets.surround.enabled");
-  snapshot.smart_indent_enabled = GetSettingValue("editor.indent.smart.enabled");
+  const WorkspaceLanguageContract::SettingGetter get_setting = [this](std::string_view id) {
+    return GetSettingValue(id);
+  };
+  snapshot.language_contract_inputs = WorkspaceLanguageContract::SettingsFingerprint(get_setting);
   snapshot.save_trim_trailing_whitespace =
       GetSettingValue("editor.save.trim_trailing_whitespace");
   snapshot.save_ensure_final_newline =
@@ -475,24 +476,26 @@ void WorkspaceShell::ApplyLiveSettings() {
       last_live_settings_editor_snapshot_->font_size == snapshot.font_size &&
       last_live_settings_editor_snapshot_->soft_tabs == snapshot.soft_tabs &&
       last_live_settings_editor_snapshot_->soft_wrap == snapshot.soft_wrap &&
-      last_live_settings_editor_snapshot_->auto_close_enabled == snapshot.auto_close_enabled &&
-      last_live_settings_editor_snapshot_->surround_enabled == snapshot.surround_enabled &&
-      last_live_settings_editor_snapshot_->smart_indent_enabled == snapshot.smart_indent_enabled &&
+      last_live_settings_editor_snapshot_->language_contract_inputs ==
+          snapshot.language_contract_inputs &&
       last_live_settings_editor_snapshot_->save_trim_trailing_whitespace ==
           snapshot.save_trim_trailing_whitespace &&
       last_live_settings_editor_snapshot_->save_ensure_final_newline ==
           snapshot.save_ensure_final_newline;
   if (!snapshot_matches) {
-    // Only the bracket/indent toggles feed the per-tab language contract; the rest
-    // (font/tab size, wrap, save flags) are cheap setters. Skip the O(tabs)
-    // filetype-detect + contract rebuild unless a contract-affecting toggle actually
-    // changed, so a font-size / save-flag / wrap change on a project with thousands
-    // of restored tabs no longer rebuilds every tab's contract (TD-2026-07-17A-103).
+    // Only the bracket/indent toggles and the contract's user overrides feed the
+    // per-tab language contract; the rest (font/tab size, wrap, save flags) are
+    // cheap setters. Skip the O(tabs) filetype-detect + contract rebuild unless one
+    // of those actually changed, so a font-size / save-flag / wrap change on a
+    // project with thousands of restored tabs no longer rebuilds every tab's
+    // contract (TD-2026-07-17A-103). An override change re-layers the table first.
     const bool contract_affecting_changed =
         !last_live_settings_editor_snapshot_.has_value() ||
-        last_live_settings_editor_snapshot_->auto_close_enabled != snapshot.auto_close_enabled ||
-        last_live_settings_editor_snapshot_->surround_enabled != snapshot.surround_enabled ||
-        last_live_settings_editor_snapshot_->smart_indent_enabled != snapshot.smart_indent_enabled;
+        last_live_settings_editor_snapshot_->language_contract_inputs !=
+            snapshot.language_contract_inputs;
+    if (contract_affecting_changed) {
+      language_contract_.Refresh(plugin_runtime_.Host(), get_setting);
+    }
     // Keep per-tab editor runtime knobs (save normalization and language-pair
     // toggles) aligned with effective settings after relevant settings change.
     ApplyEditorPreferencesToAllTabs(contract_affecting_changed);

@@ -412,6 +412,23 @@ void ApplyUserOverrides(std::unordered_map<std::string, LanguageContract>& table
 
 }  // namespace
 
+std::string WorkspaceLanguageContract::SettingsFingerprint(const SettingGetter& get_setting) {
+  static constexpr std::string_view kIds[] = {
+      "editor.brackets.user_pairs",         "editor.brackets.user_disabled",
+      "editor.comments.user_line",          "editor.indents.user_open_patterns",
+      "editor.snippets.user_disabled",      "editor.brackets.auto_close.enabled",
+      "editor.brackets.surround.enabled",   "editor.indent.smart.enabled",
+  };
+  std::string fingerprint;
+  for (const std::string_view id : kIds) {
+    // An unset value and an empty one resolve alike; the separator keeps
+    // ("a", "bc") and ("ab", "c") apart.
+    if (const auto value = get_setting(id); value.has_value()) fingerprint += *value;
+    fingerprint += '\x1f';
+  }
+  return fingerprint;
+}
+
 void WorkspaceLanguageContract::Refresh(const plugin::PluginHost& plugin_host) {
   Refresh(plugin_host, SettingGetter{});
 }

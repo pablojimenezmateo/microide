@@ -2277,9 +2277,8 @@
     int font_size = 0;
     bool soft_tabs = false;
     bool soft_wrap = false;
-    std::optional<std::string> auto_close_enabled;
-    std::optional<std::string> surround_enabled;
-    std::optional<std::string> smart_indent_enabled;
+    // WorkspaceLanguageContract::SettingsFingerprint: the overrides and toggles.
+    std::string language_contract_inputs;
     std::optional<std::string> save_trim_trailing_whitespace;
     std::optional<std::string> save_ensure_final_newline;
   };

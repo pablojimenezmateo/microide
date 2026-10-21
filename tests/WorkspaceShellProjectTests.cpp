@@ -3054,6 +3054,46 @@ void TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts() {
          "background tab contract is also refreshed by the all-tabs contract rebuild");
 }
 
+// The language contract's five user overrides (extra / disabled pairs, the
+// line-comment marker, extra indent patterns, disabled snippet prefixes) took
+// effect only at the next plugin reload: a live write of one changed the stored
+// value and left every open tab on the old contract (QA `language-overrides`).
+void TestWorkspaceShellLanguageOverrideSettingAppliesLive() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path first = root / "first.cpp";
+  const std::filesystem::path second = root / "second.cpp";
+  WriteFile(first, "int a;\n");
+  WriteFile(second, "int b;\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().line_comment == "//",
+         "a C++ tab starts with the language's own comment marker");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.comments.user_line", "#"),
+         "the comment override should be writable");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().line_comment == "#",
+         "the active tab takes the comment override at once");
+  Expect(WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0).language_contract_view().line_comment ==
+             "#",
+         "and so does a background tab");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.brackets.user_pairs", "<|>"),
+         "the extra-pairs override should be writable");
+  const auto& pairs = WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().auto_close_pairs;
+  Expect(std::any_of(pairs.begin(), pairs.end(),
+                     [](const auto& pair) { return pair.open == "<" && pair.close == ">"; }),
+         "an extra pair auto-closes at once");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.comments.user_line", ""),
+         "clearing the comment override should be accepted");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).language_contract_view().line_comment == "//",
+         "clearing the override restores the language's marker");
+}
+
 // TD-2026-08-03-110: tabs of the same language share ONE contract view instead of
 // each owning a byte-identical copy of it. Address identity is the assertion —
 // forty `.cpp` tabs used to mean forty deep copies of four vectors and three
@@ -8846,6 +8886,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAutoCloseToggleUpdatesViewportContract);
   AddTest(tests, "WorkspaceShell/AutoCloseToggleUpdatesAllTabContracts",
           TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts);
+  AddTest(tests, "WorkspaceShell/LanguageOverrideSettingAppliesLive",
+          TestWorkspaceShellLanguageOverrideSettingAppliesLive);
   AddTest(tests, "WorkspaceShell/SameLanguageTabsShareOneContractView",
           TestWorkspaceShellSameLanguageTabsShareOneContractView);
   AddTest(tests, "WorkspaceShell/TabSizeChangeAppliesToAllTabsWithoutContractRebuild",
