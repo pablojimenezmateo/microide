@@ -136,6 +136,12 @@ JsonValue MakeSetFunctionBreakpointsArguments(
   return JsonValue(std::move(args));
 }
 
+JsonValue MakeThreadIdArguments(int thread_id) {
+  JsonObject args;
+  args["threadId"] = JsonValue(static_cast<std::int64_t>(thread_id));
+  return JsonValue(std::move(args));
+}
+
 JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels) {
   JsonObject args;
   args["threadId"] = JsonValue(static_cast<std::int64_t>(thread_id));

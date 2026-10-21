@@ -328,6 +328,10 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
         known_thread_ids_.push_back(thread_id);
       }
     }
+    if (pause_pending_ && state_ == State::Running && !known_thread_ids_.empty()) {
+      pause_pending_ = false;
+      client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(known_thread_ids_.front()), {});
+    }
     RefreshThreadList();
   } else if (event == "capabilities") {
     // The adapter changed its advertised capabilities after initialize. gdb does

@@ -299,6 +299,9 @@ class DebugSession {
   // first: what Pause pauses while the program runs. gdb answers no request then,
   // so a `threads` round trip at Pause time never came back (QA dbg-pause).
   std::vector<int> known_thread_ids_;
+  // A Pause asked for before any thread was announced: sent when the first one is
+  // (an F6 right after the program started did nothing, QA dbg-pause).
+  bool pause_pending_ = false;
   // True when the adapter command looks like gdb (`gdb --interpreter=dap`); gates
   // the gdb-specific value-formatting limits.
   bool is_gdb_adapter_ = false;

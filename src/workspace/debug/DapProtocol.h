@@ -217,6 +217,8 @@ util::JsonValue MakeSetFunctionBreakpointsArguments(
 // Build `stackTrace` arguments: {"threadId":N,"startFrame":S,"levels":L}. `levels`
 // 0 means "all frames" per the DAP spec.
 util::JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels);
+// `{"threadId":N}`: pause, continue, next, stepIn, stepOut and their kin.
+util::JsonValue MakeThreadIdArguments(int thread_id);
 // Build `scopes` arguments: {"frameId":N}.
 util::JsonValue MakeScopesArguments(int frame_id);
 // Build `variables` arguments: {"variablesReference":N[,"start":S][,"count":C]}.

@@ -11,17 +11,6 @@
 
 namespace microide::workspace {
 
-namespace {
-
-// Local copy of DebugSession.cpp's helper: DAP thread-scoped request arguments.
-util::JsonValue ThreadIdArgs(int thread_id) {
-  util::JsonObject args;
-  args["threadId"] = util::JsonValue(static_cast<std::int64_t>(thread_id));
-  return util::JsonValue(std::move(args));
-}
-
-}  // namespace
-
 void DebugSession::SendResumeRequest(const char* command) {
   if (state_ != State::Stopped) {
     return;
@@ -38,14 +27,14 @@ void DebugSession::SendResumeRequest(const char* command) {
     RequestStackTrace(last_stop_);  // re-project execution line + Call Stack + scopes
   };
   if (stopped_thread_id_.has_value()) {
-    client_->SendRequestAsync(command, ThreadIdArgs(*stopped_thread_id_), on_response);
+    client_->SendRequestAsync(command, dap_protocol::MakeThreadIdArguments(*stopped_thread_id_), on_response);
   } else {
     // A `stopped` with no threadId whose threads query has not landed yet: resolve
     // a thread and resume it rather than sending threadId:0 (which DAP rejects /
     // misroutes). `command` is a string literal, safe to capture by value.
     RequestThreads([this, command, on_response](std::vector<dap_protocol::DapThread> threads) {
       if (!threads.empty()) {
-        client_->SendRequestAsync(command, ThreadIdArgs(threads.front().id), on_response);
+        client_->SendRequestAsync(command, dap_protocol::MakeThreadIdArguments(threads.front().id), on_response);
       }
     });
   }
@@ -86,16 +75,18 @@ void DebugSession::Pause() {
   // fallback only -- gdb answers no request while the program runs, so the
   // request timed out and `pause` was never sent (QA dbg-pause).
   if (!known_thread_ids_.empty()) {
-    client_->SendRequestAsync("pause", ThreadIdArgs(known_thread_ids_.front()), {});
+    client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(known_thread_ids_.front()), {});
     return;
   }
+  pause_pending_ = true;
   RequestThreads([this](std::vector<dap_protocol::DapThread> threads) {
     // The target may have stopped, terminated, or another action may have run
     // before this threads response landed — only send `pause` if still Running.
-    if (state_ != State::Running || threads.empty()) {
+    if (state_ != State::Running || threads.empty() || !pause_pending_) {
       return;
     }
-    client_->SendRequestAsync("pause", ThreadIdArgs(threads.front().id), {});
+    pause_pending_ = false;
+    client_->SendRequestAsync("pause", dap_protocol::MakeThreadIdArguments(threads.front().id), {});
   });
 }
 

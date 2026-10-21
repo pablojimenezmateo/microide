@@ -539,8 +539,8 @@ void TestDebugSessionPausesAThreadAnnouncedByEvent() {
                      return session != nullptr && session->CurrentState() == DebugSession::State::Running;
                    }),
          "session should reach Running");
-  // Let the `thread` event land before pausing (a person presses F6 later still).
-  (void)PollStaysFalse(manager, []() { return false; }, std::chrono::milliseconds(300));
+  // At once: the `thread` event may not have landed yet (an F6 pressed right
+  // after the start), and the pause must wait for it rather than be lost.
   manager.ActiveSession()->Pause();
   Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "pause should stop a program whose adapter answers no `threads` while it runs");
