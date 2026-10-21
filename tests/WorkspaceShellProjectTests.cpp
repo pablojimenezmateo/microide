@@ -4993,6 +4993,37 @@ void TestWorkspaceShellSettingsOverlayWheelScrolls() {
          "scrolling up should reduce the settings scroll row");
 }
 
+// A row scrolled up past the value pane keeps its laid-out rect, which then
+// sits under the section header band. The click path hit-tested every row's
+// rect, so a click on the header selected the row scrolled away beneath it.
+void TestWorkspaceShellSettingsClickOnTheHeaderMissesTheRowScrolledBeneathIt() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+  WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
+  WorkspaceShellTestAccess::SetSettingsOverlaySelectedRow(shell, 0);
+  WorkspaceShellTestAccess::SetSettingsOverlayScrollRow(shell, 2);
+  const workspace::SettingsOverlayViewModel vm = WorkspaceShellTestAccess::BuildSettingsOverlayViewModel(shell);
+  Expect(vm.scroll_row == 2, "the Editor category scrolls two rows");
+  const SDL_FRect header = vm.section_header_rect;
+  const workspace::SettingsRowViewModel* hidden = nullptr;
+  for (const workspace::SettingsRowViewModel& row : vm.rows) {
+    const float mid_y = header.y + header.h * 0.5f;
+    if (row.row_in_category != 0 && row.row_rect.y <= mid_y && row.row_rect.y + row.row_rect.h > mid_y) {
+      hidden = &row;
+    }
+  }
+  Expect(hidden != nullptr, "a scrolled-away row lies under the section header");
+  if (hidden == nullptr) {
+    return;
+  }
+  Expect(!workspace::SettingsRowShownIn(vm.right_pane_rect, hidden->row_rect), "and it is not drawn");
+  Expect(SendMouseDown(shell, header.x + header.w * 0.5f, header.y + header.h * 0.5f, SDL_BUTTON_LEFT),
+         "a click on the header is handled");
+  Expect(WorkspaceShellTestAccess::SettingsOverlaySelectedRowIndex(shell) == 0,
+         "the click on the header selects no row");
+}
+
 // The debug pane's Variables and Watch trees were the last keyboard-navigable
 // lists that answered Up/Down only, and the only ones that moved a selection
 // without scrolling it into view: arrowing past the last visible row walked the
@@ -8950,6 +8981,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",
           TestWorkspaceShellSettingsOverlayWheelScrolls);
+  AddTest(tests, "WorkspaceShell/SettingsClickOnTheHeaderMissesTheRowScrolledBeneathIt",
+          TestWorkspaceShellSettingsClickOnTheHeaderMissesTheRowScrolledBeneathIt);
   AddTest(tests, "WorkspaceShell/DebugBreakpointsKeyboardNavigates",
           TestWorkspaceShellDebugBreakpointsKeyboardNavigates);
   AddTest(tests, "WorkspaceShell/DebugCallStackKeyboardNavigates",

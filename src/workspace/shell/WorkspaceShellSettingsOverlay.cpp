@@ -971,7 +971,8 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
 
   // Left rail: pick a category.
   for (std::size_t i = 0; i < vm.categories.size(); ++i) {
-    if (Contains(vm.categories[i].rect, mx, my)) {
+    if (SettingsRowShownIn(vm.left_pane_rect, vm.categories[i].rect) &&
+        Contains(vm.categories[i].rect, mx, my)) {
       settings_overlay_service_.SetFocusedPane(SettingsPane::Categories);
       settings_overlay_service_.SetSelectedCategory(static_cast<int>(i));
       RefreshSettingsOverlayCatalog();
@@ -982,7 +983,8 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
 
   // Value rows: controls, reset, or row selection.
   for (const SettingsRowViewModel& row : vm.rows) {
-    if (!Contains(row.row_rect, mx, my)) {
+    if (!SettingsRowShownIn(vm.right_pane_rect, row.row_rect) ||
+        !Contains(SettingsRowVisibleRect(vm.right_pane_rect, row.row_rect), mx, my)) {
       continue;
     }
     settings_overlay_service_.SetFocusedPane(SettingsPane::Values);

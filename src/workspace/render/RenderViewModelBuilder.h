@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -560,6 +561,30 @@ inline bool SettingsOverlayContains(const SettingsOverlayViewModel& vm, float x,
     return x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h;
   };
   return inside(vm.rect) || (vm.value_picker.visible && inside(vm.value_picker.rect));
+}
+
+// Whether a rail category or value row is drawn. Both lists are whole-row
+// scrolled, so a row shows when it lies wholly inside its pane -- or, when it
+// is taller than the pane and so never could, when its top is inside it; that
+// row paints clipped to the pane (filtered down to project.files_exclude in a
+// short window, the pane was blank under "1 of 95 settings"). Paint, the click
+// path and the control query all ask this: a row laid out above or below its
+// pane still has a rect, and a click on the section header landed on the row
+// scrolled away underneath it.
+inline bool SettingsRowShownIn(const SDL_FRect& pane, const SDL_FRect& rect) {
+  const float bottom = pane.y + pane.h;
+  if (rect.y < pane.y - 0.5f || rect.y >= bottom) {
+    return false;
+  }
+  return rect.y + rect.h <= bottom + 0.5f || rect.h > pane.h;
+}
+
+// The part of a shown row inside its pane: what is drawn, and what a click or a
+// driver can reach.
+inline SDL_FRect SettingsRowVisibleRect(const SDL_FRect& pane, const SDL_FRect& rect) {
+  const float top = std::max(rect.y, pane.y);
+  const float bottom = std::min(rect.y + rect.h, pane.y + pane.h);
+  return SDL_FRect{rect.x, top, rect.w, std::max(0.0f, bottom - top)};
 }
 
 class RenderViewModelBuilder {

@@ -292,6 +292,9 @@ void TestUiQueryNamesPromptButtons() {
 void TestUiQueryNamesSettingsRows() {
   UiFixture fixture;
   TestAccess::OpenSettingsOverlay(fixture.shell);
+  // Filtered to one checkbox row: unfiltered, the first checkbox is the third
+  // row, which at this size is only half inside the pane and so not drawn.
+  TestAccess::SetSettingsOverlayQueryAndRefresh(fixture.shell, "soft tabs");
   const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
   ExpectElement(ui, "field:settings/filter");
   std::optional<UiElement> checkbox;
@@ -311,6 +314,29 @@ void TestUiQueryNamesSettingsRows() {
   fixture.ClickCenter(*checkbox);
   const auto after = TestAccess::GetSettingValue(fixture.shell, id);
   Expect(before != after, "clicking " + checkbox->name + " should toggle " + id);
+}
+
+// A row taller than the value pane can never lie wholly inside it. Painted only
+// when it did, such a row was never drawn: filtered down to project.files_exclude
+// (a long description) the pane was blank under "1 of 95 settings". It shows
+// clipped to the pane, and the query reports the part that is drawn.
+void TestUiQueryNamesASettingsRowTallerThanThePane() {
+  UiFixture fixture;
+  TestAccess::OpenSettingsOverlay(fixture.shell);
+  TestAccess::SetSettingsOverlayQueryAndRefresh(fixture.shell, "project.files_exclude");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  std::optional<UiElement> row;
+  for (const UiElement& element : Elements(ui)) {
+    if (element.name == "setting:project.files_exclude") {
+      row = element;
+    }
+  }
+  Expect(row.has_value(), "the filtered Settings pane should show project.files_exclude");
+  if (!row) {
+    return;
+  }
+  Expect(row->rect.h > 0.0f && row->rect.y + row->rect.h <= static_cast<float>(UiFixture::kHeight),
+         "the row is reported as drawn, inside the window");
 }
 
 // The ui query's action receipt names what a key ran, by command name, so a
@@ -587,6 +613,8 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesOverlayRows", TestUiQueryNamesOverlayRows);
   AddTest(tests, "ControlUiQuery/NamesPromptButtons", TestUiQueryNamesPromptButtons);
   AddTest(tests, "ControlUiQuery/NamesSettingsRows", TestUiQueryNamesSettingsRows);
+  AddTest(tests, "ControlUiQuery/NamesASettingsRowTallerThanThePane",
+          TestUiQueryNamesASettingsRowTallerThanThePane);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
   AddTest(tests, "ControlUiQuery/PointerDropOpensTheFile", TestPointerDropOpensTheFile);
   AddTest(tests, "ControlUiQuery/PointerRunsATreeContextMenuRow", TestPointerRunsATreeContextMenuRow);

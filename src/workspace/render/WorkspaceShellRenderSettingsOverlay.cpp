@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string_view>
 
+#include "render/ScopedRenderClip.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
@@ -182,16 +184,10 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
                           vm.left_pane_rect.h),
                  theme_.border);
   {
-    const float pane_bottom = vm.left_pane_rect.y + vm.left_pane_rect.h;
     const bool pane_focused = vm.focused_pane == SettingsPane::Categories;
     for (const SettingsCategoryViewModel& cat : vm.categories) {
-      // The rail is whole-row scrolled: skip rows above the pane top and stop once a
-      // row falls past the bottom (categories are ordered top-to-bottom).
-      if (cat.rect.y < vm.left_pane_rect.y - 0.5f) {
+      if (!SettingsRowShownIn(vm.left_pane_rect, cat.rect)) {
         continue;
-      }
-      if (cat.rect.y + cat.rect.h > pane_bottom + 0.5f) {
-        break;
       }
       // Hover lifts the row under the pointer, as it does in every other list in
       // the shell. The keyboard selection keeps its stronger fill and focus ring.
@@ -240,7 +236,6 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
 
   // --- Right pane: value rows ---
   const bool values_focused = vm.focused_pane == SettingsPane::Values;
-  const float pane_bottom = vm.right_pane_rect.y + vm.right_pane_rect.h;
   // Scope-chip hover tooltip, captured during the row loop and drawn last so it
   // overlays following rows and the scrollbar.
   std::string_view hovered_scope_help;
@@ -248,9 +243,14 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   // Clear the whole rows area first so switching to a category with fewer rows (e.g.
   // the single-row "Plugins" pane) does not leave the previous category's text behind.
   DrawFilledRect(renderer, vm.right_pane_rect, theme_.surface_background);
+  // A row taller than the pane shows clipped to it (SettingsRowShownIn).
+  std::optional<render::ScopedRenderClip> rows_clip;
+  rows_clip.emplace(renderer, SDL_Rect{static_cast<int>(std::floor(vm.right_pane_rect.x)),
+                                       static_cast<int>(std::floor(vm.right_pane_rect.y)),
+                                       static_cast<int>(std::ceil(vm.right_pane_rect.w)),
+                                       static_cast<int>(std::ceil(vm.right_pane_rect.h))});
   for (const SettingsRowViewModel& row : vm.rows) {
-    if (row.row_rect.y + row.row_rect.h > pane_bottom + 0.5f ||
-        row.row_rect.y < vm.right_pane_rect.y - 0.5f) {
+    if (!SettingsRowShownIn(vm.right_pane_rect, row.row_rect)) {
       continue;
     }
     // Subsection sub-header in the reserved strip above the row (first row of each
@@ -390,6 +390,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
         break;
     }
   }
+  rows_clip.reset();
 
   if (vm.scrollbar.has_value()) {
     const bool dragging =

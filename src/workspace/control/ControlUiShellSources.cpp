@@ -611,20 +611,18 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 layout, settings_overlay_service_, text_renderer_);
             AddControlUiElement(out, kField, "settings/filter", vm.filter_rect, std::string(vm.query));
             for (const SettingsCategoryViewModel& category : vm.categories) {
+              if (!SettingsRowShownIn(vm.left_pane_rect, category.rect)) {
+                continue;
+              }
               const std::string label(category.label);
               AddControlUiElement(out, kSettingsCategory, label, category.rect, label);
               out.back().selected = category.selected;
             }
             const auto has_area = [](const SDL_FRect& rect) { return rect.w > 0.0f && rect.h > 0.0f; };
-            // The rows the pane shows, not the category's whole list: a row laid
-            // out below the pane has a rect, but no click can reach it, and a
-            // driver reading "the first row" after a wheel must see it move.
-            const auto in_pane = [&](const SDL_FRect& rect) {
-              return rect.y + rect.h > vm.right_pane_rect.y &&
-                     rect.y < vm.right_pane_rect.y + vm.right_pane_rect.h;
-            };
+            // The rows the pane shows, not the category's whole list: a driver
+            // reading "the first row" after a wheel must see it move.
             for (const SettingsRowViewModel& row : vm.rows) {
-              if (!in_pane(row.row_rect)) {
+              if (!SettingsRowShownIn(vm.right_pane_rect, row.row_rect)) {
                 continue;
               }
               const std::string id(row.id);
@@ -633,10 +631,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               std::string value = row.control.kind == SettingsControlKind::Checkbox
                                       ? std::string(row.control.checkbox_on ? "on" : "off")
                                       : std::string(row.control.display_value);
-              AddControlUiElement(out, kSetting, id, row.row_rect, std::move(value));
+              AddControlUiElement(out, kSetting, id,
+                                  SettingsRowVisibleRect(vm.right_pane_rect, row.row_rect),
+                                  std::move(value));
               out.back().selected = row.selected;
               const auto add_control = [&](std::string_view part, const SDL_FRect& rect) {
-                if (has_area(rect)) {
+                if (has_area(rect) && SettingsRowShownIn(vm.right_pane_rect, rect)) {
                   AddControlUiElement(out, kButton, "setting/" + id + "/" + std::string(part), rect);
                 }
               };
