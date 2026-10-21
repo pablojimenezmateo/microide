@@ -334,8 +334,10 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       Contains(RightPaneResizeHitRect(layout), event.button.x, event.button.y)) {
     if (divider_reset_click) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
+      // The sidebar as laid out: the stored width is a preference the window
+      // may not have room for.
       const float resolved_sidebar_width = context_.current_project_state.sidebar.visible
-                                               ? context_.current_project_state.sidebar.width
+                                               ? layout.sidebar.w
                                                : 0.0f;
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
           kWorkspaceDefaultRightPaneWidth, window_width, resolved_sidebar_width);

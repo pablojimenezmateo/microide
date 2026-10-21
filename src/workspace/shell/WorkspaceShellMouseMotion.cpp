@@ -179,8 +179,10 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
 
     if (context_.interaction_state.drag_target == DragTarget::RightPaneDivider) {
       const float window_width = CurrentWindowRect().has_value() ? CurrentWindowRect()->w : 0.0f;
+      // The sidebar as laid out: the stored width is a preference the window
+      // may not have room for.
       const float resolved_sidebar_width = context_.current_project_state.sidebar.visible
-                                               ? context_.current_project_state.sidebar.width
+                                               ? drag_layout.sidebar.w
                                                : 0.0f;
       // The pane hugs the right edge, so its width grows as the divider moves left.
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(

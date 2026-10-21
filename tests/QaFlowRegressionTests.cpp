@@ -956,6 +956,69 @@ void TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh() {
   }
 }
 
+// The window from 1280x720 down to 320x240 (and narrow-and-tall, wide-and-short),
+// with every surface open -- sidebar, a split, the debug pane, the panel -- and
+// then with the palette and Settings over it: at every size each element the ui
+// names stays inside the window. The QA wb-layouts / resize-overlays flows look
+// at four sizes; this looks at many, in process.
+void TestEveryElementStaysInsideTheWindowAtEverySize() {
+  FlowFixture fixture("main.txt", "alpha beta gamma delta\n");
+  WriteFile(fixture.root / "other.txt", "other\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right other.txt"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-toggle"), "the debug pane opens");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
+  std::vector<std::pair<int, int>> sizes;
+  for (int w = 1280, h = 720; w >= 320; w -= 80, h = std::max(240, h - 40)) {
+    sizes.emplace_back(w, h);
+  }
+  sizes.emplace_back(360, 900);
+  sizes.emplace_back(1400, 260);
+  const float preferred_sidebar = TestAccess::SidebarWidth(fixture.shell);
+  std::vector<std::string> violations;
+  const auto check = [&](const std::string& what, int width, int height) {
+    TestAccess::SetWindowSize(fixture.shell, width, height);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    SoftwareCanvas canvas{width, height};
+    fixture.shell.Render(canvas.renderer(), width, height);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      const auto& r = entry["rect"].AsArray();
+      const std::int64_t x = r[0].AsInt(), y = r[1].AsInt(), w = r[2].AsInt(), h = r[3].AsInt();
+      if (!(x >= -1 && y >= -1 && x + w <= width + 1 && y + h <= height + 1) && violations.size() < 40) {
+        violations.push_back(what + " at " + std::to_string(width) + "x" + std::to_string(height) + ": " +
+                             entry["name"].AsString() + " [" + std::to_string(x) + "," + std::to_string(y) +
+                             "," + std::to_string(w) + "," + std::to_string(h) + "]");
+      }
+    }
+  };
+  for (const auto& [w, h] : sizes) {
+    check("every surface open", w, h);
+  }
+  // The stored size is the preference; a small window clamps the layout, not it.
+  Expect(TestAccess::SidebarWidth(fixture.shell) == preferred_sidebar,
+         "the sidebar keeps its width through a 320-px window");
+  const SDL_Keymod ctrl_shift = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+  TestAccess::SetWindowSize(fixture.shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  TestAccess::SetFocusEditor(fixture.shell);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, ctrl_shift)});
+  for (const auto& [w, h] : sizes) {
+    check("the palette open", w, h);
+  }
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
+  TestAccess::SetWindowSize(fixture.shell, FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_COMMA, SDL_KMOD_CTRL)});
+  for (const auto& [w, h] : sizes) {
+    check("Settings open", w, h);
+  }
+  std::string all;
+  for (const std::string& v : violations) {
+    all += "\n  " + v;
+  }
+  Expect(violations.empty(), "every element stays inside the window; these leave it:" + all);
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2292,6 +2355,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestDraggingTheSidebarShutKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh",
           TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",
+          TestEveryElementStaysInsideTheWindowAtEverySize);
   AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",
           TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",

@@ -437,20 +437,12 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     }
   }
   prepare_cached_text_input_vm_.emplace(view_models.BuildTextInputSurface());
-  // `ComputeLayout` applies these same clamps to whatever it is handed, so the
-  // geometry is already correct without this block. What this does is PERSIST the
-  // corrected value back onto the project state, so the session, the divider drag
-  // and the settings surface all agree with the layout the window is showing.
-  const float clamped_sidebar_width =
-      ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
-  const float clamped_panel_height =
-      ClampBottomPanelHeight(project_state.panel.height, static_cast<float>(height));
-  const float resolved_sidebar_width = sidebar_vm.visible ? clamped_sidebar_width : 0.0f;
-  const float clamped_right_pane_width = ClampRightPaneWidth(
-      project_state.debug_pane.width, static_cast<float>(width), resolved_sidebar_width);
-  project_state.sidebar.width = clamped_sidebar_width;
-  project_state.panel.height = clamped_panel_height;
-  project_state.debug_pane.width = clamped_right_pane_width;
+  // The stored pane sizes are the user's PREFERRED sizes; `ComputeLayout` clamps
+  // them to the window it lays out, every time. Writing the clamped value back
+  // here (as frame prep did) meant a window shrunk to 320 px and grown again kept
+  // a 41-px sidebar and debug pane for good -- the preference was lost to one
+  // small frame (QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize).
+  // Everything that needs the size on screen reads the layout.
 
   // One layout, one memo: this is the same `CurrentWorkspaceLayout()` every hit
   // test reads, so a frame can never paint a geometry the input paths disagree
