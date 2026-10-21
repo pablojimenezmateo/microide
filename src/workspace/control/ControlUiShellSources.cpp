@@ -14,6 +14,7 @@
 #include <string>
 #include <variant>
 
+#include "workspace/PluginSurfacePreview.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/debug/DebugPaneRegistry.h"
@@ -428,6 +429,27 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
           },
       .buttons =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
+            // A plugin surface in the panel: its hit regions (`surface/<command>`),
+            // where a click runs the command, cut to the body that shows them.
+            if (const auto& panel = context_.current_project_state.panel;
+                BottomPanelVisible() && panel.content == PanelContentKind::PluginSurface) {
+              const auto* presentation = context_.current_project_state.plugin_presentation_if_present();
+              const editor::SurfaceContent* content =
+                  presentation != nullptr ? presentation->surfaces.Find(panel.surface_owner, panel.surface_id)
+                                          : nullptr;
+              if (content != nullptr && content->has_body()) {
+                const SDL_FRect body = BottomPanelContentRect(layout);
+                for (const editor::SurfaceHitRegion& region : content->hit_regions) {
+                  SDL_FRect rect = PluginSurfacePreviewHitRegionRect(
+                      body, static_cast<float>(panel.surface_scroll_y), region);
+                  SDL_FRect shown{};
+                  if (region.rect.w > 0.0f && region.rect.h > 0.0f &&
+                      SDL_GetRectIntersectionFloat(&rect, &body, &shown)) {
+                    AddControlUiElement(out, kButton, "surface/" + region.command, shown, region.command);
+                  }
+                }
+              }
+            }
             // Each pane's clickable code lenses (`lens/<title>`), from the layout
             // the click hit-tests. A lens shows only on a clean buffer.
             if (const editor::PluginDecorationStore* store =
@@ -971,7 +993,8 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                   MakeActionContext().LastActionReceipt();
               util::JsonObject actions;
               actions["dispatched"] = util::JsonValue(static_cast<std::int64_t>(receipt.dispatched));
-              actions["last"] = util::JsonValue(nullptr);
+              actions["last"] = receipt.plugin_command.empty() ? util::JsonValue(nullptr)
+                                                                : util::JsonValue(receipt.plugin_command);
               if (receipt.last.has_value()) {
                 for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
                   if (spec.id == *receipt.last) {

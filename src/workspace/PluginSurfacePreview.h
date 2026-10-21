@@ -36,6 +36,15 @@ inline int MaxPluginSurfacePreviewScroll(const editor::SurfaceContent& content,
 // paint on top, so the scan runs back-to-front (last match wins). Degenerate
 // (non-positive size) regions never match. The caller guarantees the point is
 // inside the preview body rect.
+// A hit region's rect in the window: the inverse of the lookup below, for the
+// control query to name the regions a click reaches.
+inline SDL_FRect PluginSurfacePreviewHitRegionRect(const SDL_FRect& body, float scroll_y,
+                                                   const editor::SurfaceHitRegion& region) {
+  return SDL_FRect{body.x + kPluginSurfacePreviewPadding + region.rect.x,
+                   body.y + kPluginSurfacePreviewPadding + region.rect.y - scroll_y, region.rect.w,
+                   region.rect.h};
+}
+
 inline const editor::SurfaceHitRegion* FindPluginSurfacePreviewHitRegion(
     const editor::SurfaceContent& content,
     const SDL_FRect& body,

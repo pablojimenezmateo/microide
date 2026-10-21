@@ -408,6 +408,7 @@ bool WorkspaceShell::ExecuteCommandName(std::string_view command_name,
   if (!plugin_runtime_.Host().HasCommand(command)) {
     return false;
   }
+  MakeActionContext().NotePluginCommandDispatched(command, source);
   plugin_runtime_.Host().ExecuteCommandAsync(
       command, args, [this, command](bool ran, std::string error, std::string feedback) {
         NotifyPluginCommandOutcome(command, ran, error, feedback);

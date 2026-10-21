@@ -378,12 +378,23 @@ class WorkspaceActionContext {
   struct ActionReceipt {
     std::uint64_t dispatched = 0;
     std::optional<ActionId> last;
+    // A plugin command (no ActionId) when that is what ran: a surface's hit
+    // region, a lens, a plugin's palette entry or key.
+    std::string plugin_command;
     ActionSource source = ActionSource::Command;
     bool rejected = false;
   };
   void NoteActionDispatched(ActionId id, ActionSource source) {
     ++receipt_.dispatched;
     receipt_.last = id;
+    receipt_.plugin_command.clear();
+    receipt_.source = source;
+    receipt_.rejected = false;
+  }
+  void NotePluginCommandDispatched(std::string_view command, ActionSource source) {
+    ++receipt_.dispatched;
+    receipt_.last.reset();
+    receipt_.plugin_command.assign(command);
     receipt_.source = source;
     receipt_.rejected = false;
   }

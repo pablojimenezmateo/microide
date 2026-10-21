@@ -957,6 +957,16 @@ def flow_plugins_ui(app: q.App) -> None:
         step(app, "surface shown", 0.4)
         tabs = [t.get("label", "") for t in app.elements("panel-tab")]
         app.expect(any(t for t in tabs), f"the surface has a panel tab ({tabs})")
+        # Its hit region (the chart's title bar) runs the plugin's refresh.
+        region = app.wait_for("button:surface/surface-preview.refresh", 3.0)
+        if app.expect(region is not None, f"the surface's hit region is named "
+                                          f"({[e['name'] for e in app.elements('button', prefix='button:surface/')]})"):
+            before = app.ui().get("actions", {}).get("dispatched", 0)
+            app.click(*app.center(region))
+            step(app, "click the surface's hit region", 0.4)
+            actions = app.ui().get("actions", {})
+            app.expect(actions.get("last") == "surface-preview.refresh" and actions.get("dispatched", 0) > before,
+                       f"a click in the surface's hit region runs its command ({actions})")
         if palette_run(app, "surface-preview.hide", "surface"):
             step(app, "surface hidden", 0.4)
 
