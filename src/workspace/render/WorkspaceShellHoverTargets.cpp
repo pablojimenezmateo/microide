@@ -344,7 +344,10 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     const TextGridInteractionLayout& interaction,
     float x,
     float y) const {
-  if (viewport.path().empty() || viewport.dirty() || !Contains(interaction.rect, x, y)) {
+  // A buffer with unsaved edits still resolves its cell: the kickoff skips the
+  // plugin providers for it (they read the disk) and asks the language server,
+  // which has every edit. Returning early here once meant no hover at all.
+  if (viewport.path().empty() || !Contains(interaction.rect, x, y)) {
     return std::nullopt;
   }
 
@@ -517,7 +520,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   if (ActiveTabIsCompare()) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr || !compare_tab->right_editable ||
-        compare_tab->right_viewport.path().empty() || compare_tab->right_viewport.dirty()) {
+        compare_tab->right_viewport.path().empty()) {
       return std::nullopt;
     }
 
@@ -544,8 +547,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 
   if (ActiveTabIsMerge()) {
     const MergeTabState* merge_tab = ActiveMergeTab();
-    if (merge_tab == nullptr || merge_tab->result_viewport.path().empty() ||
-        merge_tab->result_viewport.dirty()) {
+    if (merge_tab == nullptr || merge_tab->result_viewport.path().empty()) {
       return std::nullopt;
     }
 
@@ -574,7 +576,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
 
   for (const EditorPaneLayout& pane : panes) {
     const editor::TextViewport* viewport = ViewportForPane(pane);
-    if (viewport == nullptr || viewport->path().empty() || viewport->dirty()) {
+    if (viewport == nullptr || viewport->path().empty()) {
       continue;
     }
 

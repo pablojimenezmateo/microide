@@ -449,6 +449,21 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-21-374 — a plugin cannot read a buffer's unsaved text, so its hover is skipped there. [OPEN]
+
+Found by the QA `plugins-reload` flow. A plugin provider (hover, completion,
+definition, ...) receives a buffer table with `path`, `name` and
+`relative_path` and nothing else; the only way to the text is
+`ctx.files.read_text`, which reads the disk. In a buffer with unsaved edits the
+positions the host passes describe the live text while the plugin reads the
+saved one, so its answer would be about other lines. The host now skips plugin
+hover providers for such a buffer and asks the language server, which has every
+edit (until 2026-10-21 it asked nobody -- no hover at all once a file was
+modified). VS Code hands providers the live `TextDocument`; the equivalent here
+is a `buffer:text()` / `buffer:line(n)` on the table, snapshotted for the
+query, after which the skip can go. Completion, definition and the others have
+the same gap without the skip.
+
 ### TD-2026-10-21-373 — a kernel shard aborts in std::terminate on CI's ASan job only. [OPEN]
 
 `checks` run 39560059038 (be9f0526), job `asan`: `microide_kernel_tests_shard_7`

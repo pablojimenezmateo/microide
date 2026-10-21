@@ -3315,6 +3315,77 @@ return ide.plugin({
          "and starts it for the markdown file already active, as opening it would have");
 }
 
+// QA plugins-reload: once a buffer had an unsaved edit no hover card appeared at
+// all -- the plugin hover path returned early on a dirty viewport, and the
+// language server is only asked as that path's fallback. A plugin's provider
+// reads the file from disk (its buffer table carries a path, not the text), so
+// skipping plugins there is right; the server has every edit and must answer.
+void TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\nother = 2\n");
+  WritePluginInit(plugins_root, "pylsp",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "the project should open");
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestHoverHandler([](std::string uri, workspace::LspClient::HoverCallback cb) {
+    (void)uri;
+    cb(util::ParseJson(R"({"contents":{"kind":"markdown","value":"int value"}})"));
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "a stub python client should attach");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas{1280, 720};
+  const auto frame = [&] {
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+  };
+  frame();
+  const auto hover_text = [&]() -> std::string {
+    const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+    const util::JsonValue& hover = ui["popups"]["hover"];
+    return hover.IsObject() ? hover["text"].AsString() : std::string();
+  };
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto 2:1"), "goto should run");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "type x"), "typing should run");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the buffer has an unsaved edit");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto 1:1"), "goto should run");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "show-hover"), "show-hover should run");
+  for (int i = 0; i < 5 && hover_text().empty(); ++i) {
+    frame();
+  }
+  Expect(hover_text().find("int value") != std::string::npos,
+         "an unsaved buffer still gets the language server's hover: '" + hover_text() + "'");
+}
+
 // Show Hover (Ctrl+K Ctrl+I) is the hover card by keyboard: for the symbol at the
 // caret, with the pointer anywhere (or never in the window); Escape puts it away,
 // and so does moving the caret. The card was pointer-only (TD-2026-10-18-362).
@@ -7013,6 +7084,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverAsksAgainWhenThePointerReturns",
           TestWorkspaceShellHoverAsksAgainWhenThePointerReturns);
   AddTest(tests, "WorkspaceShell/ShowHoverAtTheCaret", TestWorkspaceShellShowHoverAtTheCaret);
+  AddTest(tests, "WorkspaceShell/HoverInAnUnsavedBufferAsksTheServer",
+          TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer);
   AddTest(tests, "WorkspaceShell/ServerRegisteredAfterOpenStartsForTheActiveFile",
           TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile);
   AddTest(tests, "WorkspaceShell/EditorPreferencesReachAllSplitGroups",
