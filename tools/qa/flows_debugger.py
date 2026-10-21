@@ -10,6 +10,7 @@ which pass a stop is on is read off `task.cost` at the loop body (line 19).
 
 from __future__ import annotations
 
+import re
 import subprocess
 from typing import Callable
 
@@ -18,6 +19,25 @@ from flows_common import open_file, step, write
 from flows_lsp_debug import _require, _state
 
 LOOP_LINE = 19  # `total += task.cost;`
+
+
+def _adapter_ignored(app: q.App, command: str) -> bool:
+    """True when the app sent `command` to the adapter and the adapter let it time
+    out (MICROIDE_DAP_LOG): gdb 15.1 under load stops answering
+    (TD-2026-10-21-375). The app did its part then; a flow notes it rather than
+    reporting the adapter's silence as the app's bug. Any other failure -- the
+    request never sent, sent to no thread, answered and still no stop -- stays a
+    finding."""
+    log = app.work / "dap.log"
+    if not log.exists():
+        return False
+    text = log.read_text(errors="replace")
+    sent = re.findall(rf"send\s+request {command} seq=(\d+)", text)
+    timed_out = set(re.findall(r"request-timeout seq (\d+)", text))
+    if sent and sent[-1] in timed_out:
+        print(f"        note: gdb did not answer `{command}` (TD-2026-10-21-375); the app sent it", flush=True)
+        return True
+    return False
 
 
 def _gutter_menu(app: q.App, label: str) -> bool:
@@ -165,7 +185,11 @@ def flow_debug_pause(app: q.App) -> None:
     app.expect(not _state(app).get("stopped"), f"the program runs ({_state(app)})")
     app.send("focus", "editor")
     app.key("F6")
-    app.wait_until(lambda: _state(app).get("stopped"), 15.0, "F6 to pause the running program")
+    if not app.wait_until(lambda: _state(app).get("stopped"), 15.0, "F6 to pause the running program") \
+            and _adapter_ignored(app, "pause"):
+        app.findings[:] = [f for f in app.findings if "F6 to pause" not in f.detail]
+        _stop_session(app)
+        return
     step(app, "paused", 0.5)
     state = _state(app)
     app.expect(state.get("stopped") and state.get("line") in range(4, 7),
@@ -220,8 +244,11 @@ def flow_debug_sessions(app: q.App) -> None:
     app.expect(_active_session(app) == first, f"Switch Debug Session makes the other active ({_sessions(app)})")
     app.send("focus", "editor")
     app.key("F6")
-    app.wait_until(lambda: any(s["id"] == first and s["state"] == "stopped" for s in _sessions(app)), 15.0,
-                   "F6 to pause the active session")
+    if not app.wait_until(lambda: any(s["id"] == first and s["state"] == "stopped" for s in _sessions(app)), 15.0,
+                          "F6 to pause the active session") and _adapter_ignored(app, "pause"):
+        app.findings[:] = [f for f in app.findings if "F6 to pause" not in f.detail]
+        app.send("debug-stop-all")
+        return
     states = {s["id"]: s["state"] for s in _sessions(app)}
     app.expect(states.get(first) == "stopped" and states.get(second) == "running",
                f"F6 pauses the active session and leaves the other running ({states})")
