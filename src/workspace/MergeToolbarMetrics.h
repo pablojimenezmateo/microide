@@ -14,5 +14,8 @@ namespace microide::workspace {
 // them, and what remains shared is just the two numbers.
 inline constexpr float kMergeToolbarButtonHeight = 22.0f;
 inline constexpr float kMergeToolbarButtonGap = 8.0f;
+// Between the toolbar's second row and what follows it: the base band when it is
+// shown, the pane headers otherwise. The render reads the band's top from it.
+inline constexpr float kMergeHeaderRowGap = 6.0f;
 
 }  // namespace microide::workspace

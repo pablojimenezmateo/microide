@@ -18,7 +18,6 @@ namespace microide::workspace {
 namespace {
 
 constexpr float kMergeToolbarRowGap = 6.0f;
-constexpr float kMergeHeaderRowGap = 6.0f;
 }  // namespace
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
@@ -119,8 +118,19 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     layout.button_y = rect.y + 6.0f;
     layout.secondary_button_y =
         layout.button_y + kMergeToolbarButtonHeight + kMergeToolbarRowGap;
-    layout.header_y =
-        layout.secondary_button_y + kMergeToolbarButtonHeight + kMergeHeaderRowGap;
+    // The base band (Toggle Base) sits between the toolbar and the pane headers:
+    // reserved here, so the headers and rows move down under it. Painted upward
+    // from the headers instead, it covered the toolbar and the status line and its
+    // title ran over the breadcrumb (QA merge-toolbar). The render reads the band
+    // back as [below the toolbar, header_y).
+    const float base_band_height =
+        merge_tab.base_pane_visible && !merge_tab.model.base_lines.empty()
+            ? layout.line_height *
+                      static_cast<float>(std::min<std::size_t>(4, merge_tab.model.base_lines.size()) + 1) +
+                  8.0f
+            : 0.0f;
+    layout.header_y = layout.secondary_button_y + kMergeToolbarButtonHeight + kMergeHeaderRowGap +
+                      base_band_height;
     layout.rows_y = layout.header_y + layout.line_height + 8.0f;
 
     const float reserved_width = reserve_vertical

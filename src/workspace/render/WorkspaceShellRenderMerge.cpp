@@ -294,13 +294,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   draw_button(toggle_base_rect, "Toggle Base", merge_tab->base_pane_visible, true);
   draw_button(mark_resolved_rect, "Mark Resolved", false, true);
 
-  const float base_band_height =
-      merge_tab->base_pane_visible && !merge_tab->model.base_lines.empty()
-          ? surface.line_height * static_cast<float>(std::min<std::size_t>(4, merge_tab->model.base_lines.size())) +
-                8.0f
-          : 0.0f;
-  if (base_band_height > 0.0f) {
-    const float base_y = surface.header_y - base_band_height;
+  // The layout reserves the base band between the toolbar and the pane headers.
+  const float base_y = surface.secondary_button_y + kMergeToolbarButtonHeight + kMergeHeaderRowGap;
+  const float base_band_height = surface.header_y - base_y;
+  if (base_band_height > 0.5f) {
     DrawFilledRect(renderer, MakeRect(surface.left_x, base_y, content_width, base_band_height),
                    theme_.surface_raised);
     editor_text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, base_y + 2.0f,

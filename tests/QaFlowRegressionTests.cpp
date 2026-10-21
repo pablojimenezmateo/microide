@@ -1049,6 +1049,38 @@ void TestAnEditInOneHalfOfASplitShowsInTheOther() {
   Expect(shown == "split edited", "the other pane draws the edited line, not '" + shown + "'");
 }
 
+// QA merge-toolbar: Toggle Base painted the ancestor band UPWARD from the pane
+// headers, into space the layout never reserved -- over the toolbar and the
+// status line, its title over the breadcrumb -- and the partial frame of the
+// editor surface clipped what a full repaint drew there. The layout reserves the
+// band below the toolbar now, and the headers move down under it.
+void TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  WriteFile(fixture.root / "base.txt", "zero\none\ntwo\n");
+  WriteFile(fixture.root / "incoming.txt", "zero\none incoming\ntwo\n");
+  WriteFile(fixture.root / "current.txt", "zero\none current\ntwo\n");
+  WriteFile(fixture.root / "result.txt", "zero\n<<<<<<< HEAD\none current\n=======\none incoming\n>>>>>>> in\ntwo\n");
+  Expect(TestAccess::OpenMergeEditor(fixture.shell, fixture.root / "base.txt", fixture.root / "incoming.txt",
+                                     fixture.root / "current.txt", fixture.root / "result.txt"),
+         "the merge editor opens");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const auto toggle = fixture.ElementRect("button:merge/Toggle Base");
+  const auto prev_before = fixture.ElementRect("button:merge/prev");
+  Expect(toggle.has_value() && prev_before.has_value(), "the toolbar shows Toggle Base and Previous");
+  if (!toggle.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*toggle), "Toggle Base (shown)");
+  Expect(TestAccess::ActiveMerge(fixture.shell).base_pane_visible, "the base pane is out");
+  const auto accept = fixture.ElementRect("button:merge/0/result-incoming");
+  const auto toggle_after = fixture.ElementRect("button:merge/Toggle Base");
+  Expect(toggle_after.has_value() && accept.has_value() &&
+             accept->y > toggle_after->y + toggle_after->h + 3.0f * 14.0f,
+         "the panes move down below the band, which sits under the toolbar");
+  fixture.ExpectFresh(fixture.Click(*toggle_after), "Toggle Base (hidden)");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2385,6 +2417,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestDraggingTheSidebarShutKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh",
           TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/TogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh",
+          TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther",
           TestAnEditInOneHalfOfASplitShowsInTheOther);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",
