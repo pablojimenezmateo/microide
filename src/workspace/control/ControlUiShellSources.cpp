@@ -322,12 +322,20 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               list = ComputeProblemsSidebarListLayout(layout.sidebar, count);
               selected = state.sidebar.problems.selected_index;
               label = [&entries](std::size_t index) { return entries[index].primary_label; };
+              // The row as painted: the message, then its location column.
+              shown = [&entries](std::size_t index) {
+                return entries[index].primary_label + "  " + entries[index].detail_label;
+              };
             } else if (mode == SidebarMode::Tests) {
               const auto& entries = state.sidebar.tests.entries;
               count = entries.size();
               list = ComputeTestsSidebarListLayout(layout.sidebar, count);
               selected = state.sidebar.tests.selected_index;
               label = [&entries](std::size_t index) { return entries[index].label; };
+              // The row as painted: the name, then its status and location column.
+              shown = [&entries](std::size_t index) {
+                return entries[index].label + "  " + entries[index].detail_label;
+              };
             } else if (UsesPluginItemSurface(mode)) {
               const auto& items = state.sidebar.plugin.items;
               count = items.size();

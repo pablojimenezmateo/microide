@@ -85,7 +85,9 @@ def flow_plugin_api(app: q.App) -> None:
     app.key("End")
     app.type(" ")
     app.key("ctrl+space")
-    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion", 5.0, "the completion list")
+    # The list opens ("Loading…") before the plugin thread answers.
+    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion"
+                   and (app.ui()["overlay"].get("count") or 0) > 0, 5.0, "the completion list's items")
     overlay = app.ui()["overlay"]
     app.expect(overlay.get("count") == 2, f"the provider's two items are listed ({overlay})")
     app.key("Return")

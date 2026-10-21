@@ -34,6 +34,22 @@ return ide.plugin({
       bump(ctx, "ping")
       return "pong:" .. table.concat(args or {}, ",")
     end)
+    -- Problems for the `problems-tests-views` flow, without a language server:
+    -- two in notes.qaapi, one in other.qaapi; `qa.api.problems.clear` drops them.
+    ctx.commands.add("qa.api.problems", function(cmd_ctx, args)
+      ctx.diagnostics.publish("notes.qaapi", {
+        { message = "qa error on two", severity = "error", line = 2, column = 1 },
+        { message = "qa warning on three", severity = "warning", line = 3, column = 2 },
+      })
+      ctx.diagnostics.publish("other.qaapi", {
+        { message = "qa info in other", severity = "info", line = 1, column = 1 },
+      })
+      return "published"
+    end)
+    ctx.commands.add("qa.api.problems.clear", function(cmd_ctx, args)
+      ctx.diagnostics.clear(nil)
+      return "cleared"
+    end)
     ctx.menus.add({ id = "ping-menu", menu = "Help", action = "qa.api.ping", label = "QA API Ping" })
     ctx.keybindings.add({ id = "ping-key", action = "qa.api.ping", key = "Ctrl+Alt+U", context = "editor" })
 

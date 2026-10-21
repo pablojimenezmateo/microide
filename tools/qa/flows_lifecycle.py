@@ -44,7 +44,9 @@ def _completion_count(app: q.App) -> int:
     app.key("End")
     app.type(" ")
     app.key("ctrl+space")
-    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion", 5.0, "the completion list")
+    # The list opens ("Loading…") before the plugin thread answers.
+    app.wait_until(lambda: app.ui()["overlay"].get("mode") == "completion"
+                   and (app.ui()["overlay"].get("count") or 0) > 0, 5.0, "the completion list's items")
     count = int(app.ui()["overlay"].get("count") or 0)
     app.key("Escape")
     app.key("BackSpace")
