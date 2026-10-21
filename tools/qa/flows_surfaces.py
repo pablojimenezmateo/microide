@@ -131,7 +131,13 @@ def flow_commands_args(app: q.App) -> None:
 
     readme = app.project / "README.md"
     readme.write_text(readme.read_text() + "\nstash me\n")
-    _run(app, "git-stash wip-args", lambda: "stash me" not in readme.read_text(), "the change stashed", 8.0)
+    def readme_text() -> str:
+        # git rewrites the file (unlink, then write): between the two it is not there.
+        try:
+            return readme.read_text()
+        except FileNotFoundError:
+            return "stash me"
+    _run(app, "git-stash wip-args", lambda: "stash me" not in readme_text(), "the change stashed", 8.0)
     stashes = subprocess.run(["git", "stash", "list"], cwd=app.project, capture_output=True, text=True).stdout
     app.expect("wip-args" in stashes, f"the stash carries the message ({stashes.strip()!r})")
     _run(app, "git-switch-branch feature/stable-sort",

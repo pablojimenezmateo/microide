@@ -553,6 +553,12 @@ was subject to the same race. An in-process test of the visible sequence --
 dirty and active -- passes. Kept open until the CI monkey runs clean on the
 ordered driver.
 
+**2026-10-21, evening:** CI's ASan monkey seed 4 failed again on the ordered
+driver (f0b8af18: frame 216, the same `bbox=96,98,29,9` as the first report)
+while the local qa-asan lane ran seeds 1-4 clean. So seed 4, at least, is not
+the input race: it stays the slow runner's frame timing during the sidebar's
+collapse.
+
 ### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
 
 Found by the QA `settings-sweep`: `editor.colorscheme` is an enum whose values
