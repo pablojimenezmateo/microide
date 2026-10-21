@@ -154,15 +154,10 @@ int main(void) {
 
 def flow_debug_pause(app: q.App) -> None:
     """F6 pauses a running program where it is; F5 resumes it; Shift+F5 ends it."""
-    if not _require(app, "gdb") or not _require(app, "gcc"):
+    if not _require(app, "gdb") or not _require(app, "gcc") or not _build_spin(app):
         return
     assert app.project is not None
     app.send("set-setting", "debug.enabled", "true")
-    write(app, "spin/spin.c", SPIN)
-    built = subprocess.run(["gcc", "-g", "-O0", "-o", str(app.project / "spin" / "spin"),
-                            str(app.project / "spin" / "spin.c")], capture_output=True, text=True)
-    if not app.expect(built.returncode == 0, f"the spinning program builds ({built.stderr})"):
-        return
     open_file(app, "spin/spin.c")
     app.send("debug-run", "--type", "gdb", str(app.project / "spin" / "spin"))
     app.wait_until(lambda: _state(app).get("session") == "running", 30.0, "the program to be running")
@@ -184,11 +179,82 @@ def flow_debug_pause(app: q.App) -> None:
     step(app, "ended", 0.5)
 
 
+def _sessions(app: q.App) -> list[dict]:
+    return _state(app).get("sessions", [])
+
+
+def _active_session(app: q.App) -> int:
+    return next((s["id"] for s in _sessions(app) if s.get("active")), 0)
+
+
+def _build_spin(app: q.App) -> bool:
+    assert app.project is not None
+    write(app, "spin/spin.c", SPIN)
+    built = subprocess.run(["gcc", "-g", "-O0", "-o", str(app.project / "spin" / "spin"),
+                            str(app.project / "spin" / "spin.c")], capture_output=True, text=True)
+    return app.expect(built.returncode == 0, f"the spinning program builds ({built.stderr})")
+
+
+def flow_debug_sessions(app: q.App) -> None:
+    """Two programs debugged at once: Switch Debug Session cycles the active one
+    (and F6 then pauses that one, not the other), Stop All Debug Sessions ends
+    both."""
+    if not _require(app, "gdb") or not _require(app, "gcc") or not _build_spin(app):
+        return
+    assert app.project is not None
+    app.send("set-setting", "debug.enabled", "true")
+    open_file(app, "spin/spin.c")
+    for n in (1, 2):
+        app.send("debug-run", "--type", "gdb", str(app.project / "spin" / "spin"))
+        app.wait_until(lambda: len(_sessions(app)) == n and all(s["state"] == "running" for s in _sessions(app)),
+                       30.0, f"session {n} to run")
+    step(app, "two sessions", 0.5)
+    sessions = _sessions(app)
+    if not app.expect(len(sessions) == 2, f"two sessions run at once ({sessions})"):
+        return
+    first, second = sessions[0]["id"], sessions[1]["id"]
+    app.expect(_active_session(app) == second, f"the newer session is the active one ({sessions})")
+    app.send("debug-switch-session")
+    app.wait_until(lambda: _active_session(app) == first, 5.0, "Switch Debug Session to the other")
+    step(app, "switch", 0.3)
+    app.expect(_active_session(app) == first, f"Switch Debug Session makes the other active ({_sessions(app)})")
+    app.send("focus", "editor")
+    app.key("F6")
+    app.wait_until(lambda: any(s["id"] == first and s["state"] == "stopped" for s in _sessions(app)), 15.0,
+                   "F6 to pause the active session")
+    states = {s["id"]: s["state"] for s in _sessions(app)}
+    app.expect(states.get(first) == "stopped" and states.get(second) == "running",
+               f"F6 pauses the active session and leaves the other running ({states})")
+    app.send("debug-switch-session")
+    app.wait_until(lambda: _active_session(app) == second, 5.0, "Switch Debug Session back")
+    app.expect(_active_session(app) == second, f"and back again ({_sessions(app)})")
+    if _palette_run(app, "Stop All Debug Sessions"):
+        app.wait_until(lambda: not _sessions(app), 20.0, "every session to end")
+        app.expect(not _sessions(app), f"Stop All Debug Sessions ends both ({_sessions(app)})")
+        app.wait_until(lambda: not _session_live(app), 10.0, "the toolbar to go")
+
+
+def _palette_run(app: q.App, label: str) -> bool:
+    app.key("ctrl+shift+p")
+    step(app, "palette", 0.3)
+    app.type(label)
+    step(app, f"type {label}", 0.3)
+    row = next((r for r in app.elements("overlay-row") if r.get("label", "").startswith(label)), None)
+    if not app.expect(row is not None, f"the palette lists {label!r}"):
+        app.key("Escape")
+        return False
+    app.click(*app.center(row))
+    step(app, label, 0.4)
+    return True
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "dbg-breakpoint-kinds": flow_breakpoint_kinds,
     "dbg-pause": flow_debug_pause,
+    "dbg-sessions": flow_debug_sessions,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {
     "dbg-breakpoint-kinds": ("gdb-dap",),
     "dbg-pause": ("gdb-dap",),
+    "dbg-sessions": ("gdb-dap",),
 }

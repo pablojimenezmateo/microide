@@ -169,3 +169,29 @@ def layout_sane(app: q.App, label: str) -> None:
                 bx, by, bw, bh = b["rect"]
                 if ax < bx + bw - 1 and bx < ax + aw - 1 and ay < by + bh - 1 and by < ay + ah - 1:
                     app.expect(False, f"{label}: {a['name']} {a['rect']} overlaps {b['name']} {b['rect']}")
+
+
+# ---- a merge conflict ------------------------------------------------------------
+
+def open_conflict(app: q.App, relative: str = "notes/merge.txt") -> bool:
+    """A file with two conflicts (lines 2 and 10: "line N incoming" against "line N
+    current") from a real `git merge`, opened in the merge editor by
+    review-conflicts. False (and a finding) when no merge tab opens."""
+    base = "".join(f"line {i}\n" for i in range(1, 13))
+    write(app, relative, base)
+    git(app, "add", relative)
+    git(app, "commit", "-q", "-m", "qa: merge base")
+    git(app, "checkout", "-q", "-b", "qa-incoming")
+    write(app, relative, base.replace("line 2\n", "line 2 incoming\n").replace("line 10\n", "line 10 incoming\n"))
+    git(app, "commit", "-q", "-am", "qa: incoming side")
+    git(app, "checkout", "-q", "-")
+    write(app, relative, base.replace("line 2\n", "line 2 current\n").replace("line 10\n", "line 10 current\n"))
+    git(app, "commit", "-q", "-am", "qa: current side")
+    merged = git_run(app, "merge", "qa-incoming")
+    app.expect(merged.returncode != 0, "the merge conflicts (the fixture is built to)")
+    app.send("git-refresh")
+    app.send("review-conflicts")
+    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "merge", 8.0, "a merge tab"):
+        return False
+    step(app, "merge tab", 0.6)
+    return True

@@ -215,6 +215,8 @@ class App:
             # One line per key and text event with the focus that took it: where a
             # keystroke that never reached the buffer went (TD-2026-10-20-368).
             "MICROIDE_TRACE_INPUT": "1",
+            # The debug adapter's traffic, for a debugger flow's evidence.
+            "MICROIDE_DAP_LOG": str(work / "dap.log"),
             "XDG_CONFIG_HOME": str(work / "config"),
             "XDG_STATE_HOME": str(work / "state"),
             "XDG_DATA_HOME": str(work / "data"),
@@ -925,9 +927,8 @@ class App:
             code = self.proc.returncode if self.proc else None
             found.append(Finding("crash", f"microide exited ({code}) after {label or 'last action'}"))
         else:
-            stranded = self._stranded_focus()
-            if stranded:
-                found.append(Finding("focus", f"after {label or 'last action'}: {stranded}"))
+            for kind, message in self._ui_oracles():
+                found.append(Finding(kind, f"after {label or 'last action'}: {message}"))
         if found:
             shot = self._write_finding(label, found)
             for finding in found:
@@ -938,25 +939,42 @@ class App:
                 self.recent_shots.append((len(self.actions), self.grab()))
         return found
 
-    def _stranded_focus(self) -> str:
-        """Keyboard focus on a surface that is not there: the overlay with no
-        overlay, modal or menu up, or a hidden sidebar/panel. Every key then goes
-        nowhere -- what Escape from the palette did to the file tree. Checked after
-        every action, so every flow and the monkey hold it."""
+    def _ui_oracles(self) -> list[tuple[str, str]]:
+        """Invariants of the `ui` answer, checked after every action, so every flow
+        and the monkey hold them:
+
+        - focus: keyboard focus on a surface that is not there (the overlay with no
+          overlay, modal or menu up; a hidden sidebar or panel) -- every key then
+          goes nowhere, which is what Escape from the palette did to the tree;
+        - bounds: an element outside the window (a card centred on a narrow
+          editor area ran off it).
+
+        Not one: "the active tab is in view". A tab strip scrolled by the wheel
+        leaves it out of view on purpose, as VS Code's does; revealing it on
+        activation is `tab-overflow`'s to check."""
         try:
             ui = self.ui()
         except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
-            return ""
+            return []
+        out: list[tuple[str, str]] = []
         focus = ui.get("focus")
         menu = ui.get("menu") or {}
         if focus == "overlay" and not ((ui.get("overlay") or {}).get("visible") or ui.get("modal")
                                        or menu.get("open") or menu.get("contextMenu")):
-            return "keyboard focus is on an overlay, and no overlay, modal or menu is shown"
+            out.append(("focus", "keyboard focus is on an overlay, and no overlay, modal or menu is shown"))
         if focus == "sidebar" and not (ui.get("sidebar") or {}).get("visible", True):
-            return "keyboard focus is on the sidebar, which is hidden"
+            out.append(("focus", "keyboard focus is on the sidebar, which is hidden"))
         if focus == "panel" and not (ui.get("panel") or {}).get("visible", True):
-            return "keyboard focus is on the panel, which is hidden"
-        return ""
+            out.append(("focus", "keyboard focus is on the panel, which is hidden"))
+        window = ui.get("window") or {}
+        width, height = window.get("width", 0), window.get("height", 0)
+        if width and height:
+            for element in ui.get("elements", []):
+                x, y, w, h = element["rect"]
+                if x < -1 or y < -1 or x + w > width + 1 or y + h > height + 1:
+                    out.append(("bounds", f"{element['name']} {element['rect']} leaves the {width}x{height} window"))
+                    break
+        return out
 
     def _write_finding(self, label: str, found: list[Finding]) -> str | None:
         """A finding is a directory: the actions up to it, the frame lines since
@@ -1009,8 +1027,11 @@ class App:
             if shot is not None:
                 with contextlib.suppress(Exception):
                     recent = json.dumps(self.actions[-40:], indent=1)
+                    dap = self.work / "dap.log"
+                    dap_tail = dap.read_bytes()[-24 * 1024:].decode("utf-8", "replace") if dap.exists() else ""
                     Path(shot).with_suffix(".txt").write_text(
-                        f"{message}\n\n--- the last actions\n{recent}\n\n--- the app log's tail\n{self.log_tail()}")
+                        f"{message}\n\n--- the last actions\n{recent}\n\n--- the app log's tail\n{self.log_tail()}"
+                        + (f"\n\n--- the debug adapter's traffic (tail)\n{dap_tail}" if dap_tail else ""))
             self.findings.append(Finding("expect", message, shot))
         return bool(condition)
 

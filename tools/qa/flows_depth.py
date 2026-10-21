@@ -6,11 +6,10 @@ rename, and branch review.
 
 from __future__ import annotations
 
-import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import git, open_file, read, step, terminal_tabs, write
+from flows_common import git, open_conflict, open_file, read, step, terminal_tabs, write
 
 
 def _active_pane(app: q.App) -> dict:
@@ -357,24 +356,8 @@ def flow_merge_mouse(app: q.App) -> None:
     """The merge editor by mouse: two conflicts, the first resolved with its
     incoming side's accept button, the second with the result pane's Both, then
     the toolbar's Save -- the file holds those choices and no markers."""
-    base = "".join(f"line {i}\n" for i in range(1, 13))
-    write(app, "notes/merge.txt", base)
-    git(app, "add", "notes/merge.txt")
-    git(app, "commit", "-q", "-m", "qa: merge base")
-    git(app, "checkout", "-q", "-b", "qa-incoming")
-    write(app, "notes/merge.txt", base.replace("line 2\n", "line 2 incoming\n").replace("line 10\n", "line 10 incoming\n"))
-    git(app, "commit", "-q", "-am", "qa: incoming side")
-    git(app, "checkout", "-q", "-")
-    write(app, "notes/merge.txt", base.replace("line 2\n", "line 2 current\n").replace("line 10\n", "line 10 current\n"))
-    git(app, "commit", "-q", "-am", "qa: current side")
-    assert app.project is not None
-    merged = subprocess.run(["git", "-C", str(app.project), "merge", "qa-incoming"], capture_output=True, text=True)
-    app.expect(merged.returncode != 0, "the merge conflicts (the fixture is built to)")
-    app.send("git-refresh")
-    app.send("review-conflicts")
-    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "merge", 8.0, "a merge tab"):
+    if not open_conflict(app):
         return
-    step(app, "merge tab", 0.6)
 
     def press(name: str) -> bool:
         target = app.wait_for(name, 3.0)

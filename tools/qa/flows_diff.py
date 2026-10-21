@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, git, git_run, open_file, step, write
+from flows_common import dismiss, git, git_run, open_conflict, open_file, step, write
 
 BASE = "".join(f"line {i}\n" for i in range(1, 31))
 
@@ -43,7 +43,7 @@ def _run(app: q.App, label: str) -> bool:
     return True
 
 
-def _paste_into_scratch(app: q.App, back_to: str) -> str:
+def _paste_into_scratch(app: q.App, back_to: str, kind: str = "compare") -> str:
     """The clipboard, read by pasting it into a scratch file (the real paste
     path), then the diff tab `back_to` activated again."""
     open_file(app, "notes/scratch.txt", "")
@@ -55,7 +55,7 @@ def _paste_into_scratch(app: q.App, back_to: str) -> str:
     app.key("Delete")
     app.key("ctrl+s")
     app.click_named(back_to)
-    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "the diff tab again")
+    app.wait_until(lambda: _diff_tab(app).get("kind") == kind, 5.0, f"the {kind} tab again")
     app.send("focus", "editor")
     step(app, "back to the diff", 0.3)
     return text
@@ -158,7 +158,34 @@ def flow_diff_review_files(app: q.App) -> None:
     app.expect(back == [2, 1, 1], f"Previous File steps back and stops at the first ({back})")
 
 
+def flow_merge_commands(app: q.App) -> None:
+    """The merge editor's commands from the palette: Copy Incoming / Copy Current
+    Side of the conflict (read back by pasting), then Git: Accept Incoming taking
+    the whole file's incoming side, staged."""
+    assert app.project is not None
+    if not open_conflict(app):
+        return
+    merge_tab = next((e["name"] for e in app.elements("tab") if e.get("active")), "")
+    for label, want, not_want in (("Merge: Copy Incoming Side", "line 2 incoming", "line 2 current"),
+                                  ("Merge: Copy Current Side", "line 2 current", "line 2 incoming")):
+        if _run(app, label):
+            pasted = _paste_into_scratch(app, merge_tab, "merge")
+            app.expect(want in pasted and not_want not in pasted,
+                       f"{label} copies that side of the conflict alone ({pasted!r})")
+    if _run(app, "Git: Accept Incoming"):
+        path = app.project / "notes" / "merge.txt"
+        app.wait_until(lambda: "<<<<<<<" not in path.read_text(), 8.0, "the file to take the incoming side")
+        text = path.read_text()
+        app.expect("line 2 incoming\n" in text and "line 10 incoming\n" in text and "current" not in text,
+                   f"Accept Incoming takes the incoming side of every conflict ({text!r})")
+        app.wait_until(lambda: "UU" not in git(app, "status", "--porcelain"), 8.0, "the file to be resolved")
+        status = git(app, "status", "--porcelain", "notes/merge.txt")
+        app.expect(status.startswith("M ") or status == "",
+                   f"and marks it resolved in the index ({status!r})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
+    "merge-commands": flow_merge_commands,
     "diff-commands": flow_diff_commands,
     "diff-review-files": flow_diff_review_files,
 }
