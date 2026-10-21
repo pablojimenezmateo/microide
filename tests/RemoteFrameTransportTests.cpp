@@ -317,9 +317,13 @@ void TestBulkWindowFillsALongLink() {
   // Both bounds below measure the machine as well: the window comes from the
   // bandwidth the acks measured, which a starved relay delivers short (355 KB
   // against a 419 KB rule at load 12.3 on 12 threads). Only over a window of time
-  // the machine kept.
+  // the machine kept -- and even then a full parallel ctest (six shards, the load
+  // under the oversubscription guard) settled it at 379 KB and 346 KB on
+  // 2026-10-21, against a 95 % bound of 398 KB, twice in one day. 80 % (335 KB)
+  // still tells "settled at the rule" from "barely left the 256 KiB start", which
+  // the assertion above already pins.
   if (timing.Trustworthy()) {
-    Expect(window >= nominal_rule * 0.95,
+    Expect(window >= nominal_rule * 0.80,
            "the window grew to the link's product: window " + std::to_string(window) +
                ", rule at the link's nominal rate " + std::to_string(nominal_rule) + ", product " +
                std::to_string(product));
