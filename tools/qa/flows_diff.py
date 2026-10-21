@@ -262,8 +262,83 @@ def flow_merge_toolbar(app: q.App) -> None:
         app.expect(status.startswith("M ") or status == "", f"Mark Resolved stages it ({status!r})")
 
 
+def _outgoing(app: q.App) -> set[str]:
+    """The git view's Outgoing files (the rows after the Outgoing header)."""
+    rows = [e for e in app.elements("row", prefix="row:git/")]
+    names, inside = set(), False
+    for row in rows:
+        label = row.get("label", "")
+        if label.startswith("Outgoing"):
+            inside = True
+            continue
+        if inside and row["name"].endswith(".txt"):
+            names.add(row["name"].split("/", 1)[1])
+    return names
+
+
+def flow_git_outgoing_base(app: q.App) -> None:
+    """The Outgoing section's base, from its dropdown: Auto lists the branch's
+    files against main; Previous commit (HEAD~1) narrows to the last commit's;
+    "Branch or commit…" opens a picker that Up/Down walk and Enter takes, and
+    picking main lists the branch's files again.
+
+    The dropdown and the base picker were reached by nothing (TD-364)."""
+    git(app, "checkout", "-q", "-b", "qa-base")
+    write(app, "notes/first.txt", "first\n")
+    git(app, "add", "-A")
+    git(app, "commit", "-q", "-m", "qa: first")
+    write(app, "notes/second.txt", "second\n")
+    git(app, "add", "-A")
+    git(app, "commit", "-q", "-m", "qa: second")
+    app.send("git-refresh")
+    app.key("ctrl+shift+g")
+    if not app.wait_until(lambda: _outgoing(app) == {"first.txt", "second.txt"}, 8.0,
+                          "the branch's two files under Outgoing"):
+        app.expect(False, f"Outgoing lists both files ({_outgoing(app)})")
+        return
+    step(app, "outgoing against main", 0.3)
+
+    def choose(label_prefix: str) -> bool:
+        button = app.element("button:git/outgoing-base")
+        if not app.expect(bool(button), "the Outgoing header has its base dropdown"):
+            return False
+        app.click(*app.center(button))
+        app.wait_until(lambda: any(e.get("label", "").startswith(label_prefix) for e in app.elements("menu-item")),
+                       3.0, "the base menu")
+        item = next((e for e in app.elements("menu-item") if e.get("label", "").startswith(label_prefix)), None)
+        if not app.expect(item is not None, f"the base menu offers {label_prefix!r} "
+                                            f"({[e.get('label') for e in app.elements('menu-item')]})"):
+            return False
+        app.click(*app.center(item))
+        step(app, f"base: {label_prefix}", 0.3)
+        return True
+
+    if choose("Previous commit"):
+        app.wait_until(lambda: _outgoing(app) == {"second.txt"}, 8.0, "Outgoing to narrow to the last commit")
+        app.expect(_outgoing(app) == {"second.txt"}, f"against HEAD~1 only the last commit's file is outgoing ({_outgoing(app)})")
+    if choose("Branch or commit"):
+        app.wait_until(lambda: app.ui()["overlay"].get("visible") and (app.ui()["overlay"].get("count") or 0) > 0, 5.0,
+                       "the base picker to list refs")
+        overlay = app.ui()["overlay"]
+        app.expect(overlay.get("visible") and (overlay.get("count") or 0) > 1, f"the picker lists branches and commits ({overlay})")
+        app.key("Down")
+        moved = app.ui()["overlay"].get("selected")
+        app.key("Up")
+        app.expect(moved == 1 and app.ui()["overlay"].get("selected") == 0,
+                   f"Down and Up walk the picker ({moved}, {app.ui()['overlay'].get('selected')})")
+        app.type("main")
+        app.wait_until(lambda: (app.ui()["overlay"].get("count") or 0) >= 1, 3.0, "main in the picker")
+        app.key("Return")
+        app.wait_until(lambda: _outgoing(app) == {"first.txt", "second.txt"}, 8.0, "Outgoing against main again")
+        step(app, "base: main from the picker", 0.3)
+        app.expect(_outgoing(app) == {"first.txt", "second.txt"}, f"picking main lists both again ({_outgoing(app)})")
+    if choose("Auto"):
+        app.wait_until(lambda: _outgoing(app) == {"first.txt", "second.txt"}, 8.0, "Outgoing back on Auto")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
+    "git-outgoing-base": flow_git_outgoing_base,
     "merge-toolbar": flow_merge_toolbar,
     "diff-commands": flow_diff_commands,
     "diff-review-files": flow_diff_review_files,

@@ -731,6 +731,10 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                 git_sidebar_header::BranchButtonRect(sidebar), git_vm.branch_button_label);
             AddControlUiElement(out, kButton, "git/sync", git_sidebar_header::SyncButtonRect(sidebar),
                                 git_vm.sync_button_label);
+            // The Outgoing section's base dropdown (Auto, the previous commit, a ref).
+            if (const auto outgoing_base = GitSidebarOutgoingBaseButtonRect(sidebar); outgoing_base.has_value()) {
+              AddControlUiElement(out, kButton, "git/outgoing-base", *outgoing_base);
+            }
             const auto& workflow = context_.current_project_state.sidebar.git.commit_workflow;
             if (!workflow.open) {
               AddControlUiElement(out, kButton, "git/commit",
