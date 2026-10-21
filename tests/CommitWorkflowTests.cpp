@@ -701,6 +701,27 @@ void TestCommitBodyTextCachesUntilContentEdit() {
          "an edit must invalidate the cache and re-serialize the new body");
 }
 
+// The body field shows "Commit body (optional)" until it is typed into, and that
+// was the BUFFER's text, not a placeholder: a commit with a subject only went in
+// with "Commit body (optional)" as its body, and typing landed inside the hint
+// ("Commit body (optfirst line…ional)", QA git-commit-body). The hint is no part
+// of the message, and the first keystroke replaces it.
+void TestCommitBodyHintIsNotTheMessage() {
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  CommitWorkflowService service(executor, git_service);
+  CommitWorkflowState state;
+  service.Open(state);
+  Expect(state.BodyText().empty(), "an untouched body is no message, not '" + state.BodyText() + "'");
+  Expect(microide::workspace::MakePersistedCommitDraft(state).body.empty(),
+         "and the saved draft has no body either");
+}
+
 // An untracked file in the repo raises the UntrackedFiles pre-check, whose severity
 // is Warning. CommitPreChecksAllowExecution refuses on ANY unacknowledged warning,
 // and the only writer of acknowledged_warning_ids (AcknowledgeWarning) had no caller
@@ -863,6 +884,7 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
           TestExecuteCommitPreservesShellSignificantAndLargeBody);
   AddTest(tests, "CommitWorkflow/BodyTextCachesUntilContentEdit",
           TestCommitBodyTextCachesUntilContentEdit);
+  AddTest(tests, "CommitWorkflow/BodyHintIsNotTheMessage", TestCommitBodyHintIsNotTheMessage);
 }
 
 }  // namespace microide::tests

@@ -81,6 +81,13 @@ enum class CommitWorkflowPendingConfirmation {
 };
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport);
+// The body's first edit replaces its hint: the hint is a placeholder document, and
+// typed into as text the keystrokes landed inside it ("Commit body (optfirst…").
+inline void ClearCommitBodyHint(editor::TextViewport& body) {
+  if (body.is_placeholder()) {
+    body.LoadContent({});
+  }
+}
 
 struct CommitWorkflowState {
   bool open = false;

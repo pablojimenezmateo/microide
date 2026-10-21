@@ -367,6 +367,7 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
       return false;
     case TextInputSurface::CommitBody: {
       editor::TextViewport& body = state_.sidebar.git.commit_workflow.body;
+      ClearCommitBodyHint(body);
       body.InsertText(input);
       operations_.reset_caret_blink();
       operations_.request_sidebar_redraw();

@@ -496,12 +496,14 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
           operations_.commit_body_write_clipboard_text(selection);
         }
         viewport.DeleteSelectedText();
+        ClearCommitBodyHint(viewport);
         return after_edit();
       }
       case SDLK_V: {
         if (operations_.commit_body_read_clipboard_text) {
           if (const auto pasted = operations_.commit_body_read_clipboard_text();
               pasted.has_value() && !pasted->empty()) {
+            ClearCommitBodyHint(viewport);
             viewport.InsertText(*pasted);
             return after_edit();
           }
@@ -519,6 +521,7 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
   const bool result = HandleEditableViewportMotionAndEdit(
       viewport, event, modifiers,
       [&](const auto& edit) {
+        ClearCommitBodyHint(viewport);
         edit();
         return after_edit();
       },

@@ -33,6 +33,11 @@ CommitOperationClaim& CommitOperationClaim::operator=(const CommitOperationClaim
 }
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport) {
+  // The "Commit body (optional)" hint is a placeholder document, shown and never
+  // sent: read as text it went into every subject-only commit as its body.
+  if (viewport.is_placeholder()) {
+    return {};
+  }
   // The piece tree already stores the body '\n'-joined; taking it directly skips
   // the Snapshot() vector-of-strings (one allocation per line) this used to
   // materialize just to re-join it.
