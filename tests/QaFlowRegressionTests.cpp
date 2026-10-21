@@ -1019,6 +1019,36 @@ void TestEveryElementStaysInsideTheWindowAtEverySize() {
   Expect(violations.empty(), "every element stays inside the window; these leave it:" + all);
 }
 
+// QA rename-open-tabs: one file open in two editor groups shares one document,
+// and an edit typed into one pane left the OTHER pane drawing the old line -- in
+// a full repaint too, so the redraw verifier (which compares partial frames with
+// full ones) never saw it. The buffer, the dirty marks and a save all had the
+// edit; the other pane's visible-line layout cache, which the painter reads the
+// row's text from, was keyed by line and spliced only by the pane that edited.
+void TestAnEditInOneHalfOfASplitShowsInTheOther() {
+  FlowFixture fixture("split.txt", "split\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  const auto render = [&]() {
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+  };
+  render();
+  Expect(TestAccess::EditorGroupCount(fixture.shell) == 2, "split-right opens a second group");
+  const std::size_t focused = TestAccess::FocusedGroupIndex(fixture.shell);
+  const std::size_t other = focused == 0 ? 1 : 0;
+  Expect(TestAccess::GroupActiveViewport(fixture.shell, other)
+             .SharesDocumentWith(TestAccess::GroupActiveViewport(fixture.shell, focused)),
+         "the two panes show one document");
+  Expect(TestAccess::GroupActiveViewport(fixture.shell, other).VisibleLineLayoutRef(0).text == "split",
+         "the other pane lays out the line as it is");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_NONE), TextInputEvent(" edited")});
+  render();
+  Expect(TestAccess::GroupActiveViewport(fixture.shell, focused).VisibleLineLayoutRef(0).text == "split edited",
+         "the edit lands in the focused pane");
+  const std::string shown = TestAccess::GroupActiveViewport(fixture.shell, other).VisibleLineLayoutRef(0).text;
+  Expect(shown == "split edited", "the other pane draws the edited line, not '" + shown + "'");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2355,6 +2385,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestDraggingTheSidebarShutKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/EveryDividerDraggedToItsExtremesKeepsEveryFrameFresh",
           TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther",
+          TestAnEditInOneHalfOfASplitShowsInTheOther);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",
           TestEveryElementStaysInsideTheWindowAtEverySize);
   AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",

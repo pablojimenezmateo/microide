@@ -130,6 +130,9 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   // Before anything reads a recency link: a cache that was just COPIED has a
   // populated map and no list (see VisibleLineLruEnds).
   RelinkVisibleLineLruIfDetached();
+  if (content_revision != visible_line_cache_content_revision_) {
+    InvalidateVisibleLineCacheFrom(0, content_revision);
+  }
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
       .horizontal_scroll = horizontal_scroll,
@@ -1264,7 +1267,9 @@ void TextLayoutCache::RelinkVisibleLineLruIfDetached() const {
   }
 }
 
-void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line) {
+void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line,
+                                                     std::uint64_t content_revision) const {
+  visible_line_cache_content_revision_ = content_revision;
   // Unlinks below; a copied cache's links point at the source's freed nodes.
   RelinkVisibleLineLruIfDetached();
   for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {

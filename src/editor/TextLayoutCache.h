@@ -239,9 +239,10 @@ class TextLayoutCache {
   // (TD-2026-08-06-138) and SetFoldingModel, which makes the same distinction.
   void DropWrappedRowLayouts();
   // Per-line partial invalidation of the visible-line LRU: removes every
-  // cache entry whose `line_index >= start_line`. Used by
-  // InvalidateDerivedCaches for content-tier edits.
-  void InvalidateVisibleLineCacheFrom(std::size_t start_line);
+  // cache entry whose `line_index >= start_line`, and records that what is left
+  // is current for `content_revision`. Used by InvalidateDerivedCaches for
+  // content-tier edits.
+  void InvalidateVisibleLineCacheFrom(std::size_t start_line, std::uint64_t content_revision) const;
 
   // ---- accessors for trivial-mode-sensitive callers ---------------------
   // True when the wrapped-row table was rebuilt with row_offsets matching
@@ -548,6 +549,13 @@ class TextLayoutCache {
   }
 
   mutable VisibleLineCacheMap visible_line_cache_;
+  // The content revision the visible-line LRU is current for. Its key has no
+  // revision in it: the viewport that runs an edit splices the LRU (above), but a
+  // viewport sharing the document from another editor group sees that edit only
+  // as a new revision, so a lookup at any other revision drops the LRU first. It
+  // kept drawing the line as it was before the edit, in full repaints too
+  // (QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther).
+  mutable std::uint64_t visible_line_cache_content_revision_ = 0;
   // Bounded by the cache limit, so this never holds more than the live cache
   // could have.
   mutable VisibleLineNodePool visible_line_node_pool_;

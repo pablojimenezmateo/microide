@@ -1624,7 +1624,7 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     // enter/backspace burst measured 121 full rebuilds (269.7 ms) at line 0
     // against 1 (3.1 ms) at line 25000. Typing at the top of a large file was the
     // slowest place to type.
-    layout_cache_.InvalidateVisibleLineCacheFrom(0);
+    layout_cache_.InvalidateVisibleLineCacheFrom(0, document_->content_revision);
     DropHighlightTokenCache();
     initial_highlight_state_.reset();
     // Drop the validity cursors, NOT the storage. Every read of these two is
@@ -1641,7 +1641,7 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     return;
   }
 
-  layout_cache_.InvalidateVisibleLineCacheFrom(safe_start);
+  layout_cache_.InvalidateVisibleLineCacheFrom(safe_start, document_->content_revision);
 
   // Stale the suffix rather than erase it: the entries at or after the edit are
   // no longer valid, but their token buffers are exactly the ones this frame's
