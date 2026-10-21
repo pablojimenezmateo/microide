@@ -35,6 +35,9 @@ class PromptSurfaceService {
                            std::size_t dirty_count,
                            const std::filesystem::path& path);
   void DismissDirtyPrompt(bool restore_focus);
+  // Where focus goes when a prompt closes: `previous`, unless that was an
+  // overlay no longer shown.
+  FocusTarget FocusAfterPrompt(FocusTarget previous) const;
   void DismissPromptSurface(bool restore_focus);
   void OpenPromptSurface(PromptSurfaceState::Action action,
                          PromptSurfaceState::Kind kind,

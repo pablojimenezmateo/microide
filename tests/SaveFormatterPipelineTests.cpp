@@ -1,13 +1,19 @@
 #include "TestSupport.h"
 
+#include "platform/ProcessLauncher.h"
 #include "workspace/CompareInput.h"
+#include "workspace/services/SaveFormatterService.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace microide::tests {
@@ -481,6 +487,11 @@ void TestCloseProjectWaitsForItsWrites() {
          "the project stays open while its formatters run");
   Expect(RowWithKey(shell, "save.wait.close-project") != nullptr,
          "behind a progress row with Cancel");
+  // QA save-wait (the stranded-focus oracle): the prompt closed, and keyboard
+  // focus stayed on it -- every key went nowhere while the close waited, and after
+  // a Cancel too. It goes back to where it was.
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
+         "focus goes back to the editor while the close waits, not to the closed prompt");
 
   WorkspaceShellTestAccess::FlushPendingSaveFormatters(shell);
   WorkspaceShellTestAccess::DrainSaveFormatterCompletions(shell);

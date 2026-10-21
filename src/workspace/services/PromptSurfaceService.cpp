@@ -149,12 +149,24 @@ void PromptSurfaceService::ShowDirtyPathPrompt(DirtyPromptState::Kind kind,
   operations_.request_prompt_redraw();
 }
 
+FocusTarget PromptSurfaceService::FocusAfterPrompt(FocusTarget previous) const {
+  // A prompt opened over an overlay that has since gone (or over the other
+  // prompt) has nothing to go back to there.
+  const bool other_modal_up = prompts_.dirty_visible || prompts_.surface_visible || state_.overlay.visible;
+  return previous == FocusTarget::Overlay && !other_modal_up ? FocusAfterOverlay(state_) : previous;
+}
+
 void PromptSurfaceService::DismissDirtyPrompt(bool restore_focus) {
   operations_.request_prompt_redraw();
   prompts_.dirty_visible = false;
   prompts_.dirty = DirtyPromptState{};
-  if (restore_focus) {
-    state_.surface.focus = prompts_.dirty_previous_focus;
+  // `restore_focus` false means "the continuation decides" -- but a continuation
+  // that waits (a close behind a slow formatter's save) decides nothing until
+  // later, and focus stayed on this closed prompt: every key went nowhere (QA
+  // save-wait, the stranded-focus oracle). Focus still on the prompt goes back
+  // now; a continuation that wants another surface sets it after this.
+  if (restore_focus || state_.surface.focus == FocusTarget::Overlay) {
+    state_.surface.focus = FocusAfterPrompt(prompts_.dirty_previous_focus);
   }
   operations_.request_prompt_redraw();
 }
@@ -163,8 +175,8 @@ void PromptSurfaceService::DismissPromptSurface(bool restore_focus) {
   operations_.request_prompt_redraw();
   prompts_.surface_visible = false;
   prompts_.surface = PromptSurfaceState{};
-  if (restore_focus) {
-    state_.surface.focus = prompts_.surface_previous_focus;
+  if (restore_focus || state_.surface.focus == FocusTarget::Overlay) {
+    state_.surface.focus = FocusAfterPrompt(prompts_.surface_previous_focus);
   }
   operations_.request_prompt_redraw();
 }
