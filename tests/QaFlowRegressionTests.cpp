@@ -632,6 +632,73 @@ void TestTabDragDropPreviewPaints() {
       "dropping the tab");
 }
 
+// QA monkey (CI qa-asan, seed 2): a tab dragged along its own strip, leftwards
+// across another tab's close button, left that button painted hovered after the
+// drop -- the full render drew it idle. Each drag step and the drop must paint
+// what a full repaint paints.
+void TestATabDraggedAcrossACloseButtonLeavesItIdle() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("first.txt", "first\n");
+  WriteFile(fixture.root / "second.txt", "second\n");
+  WriteFile(fixture.root / "third.txt", "third\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "second.txt");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "third.txt");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "three tabs");
+  const auto dragged = fixture.ElementRect("tab:0/third.txt");
+  const auto close = fixture.ElementRect("button:close-tab/0/second.txt");
+  Expect(dragged.has_value() && close.has_value(), "the strip should name third.txt and second.txt's close button");
+  if (!dragged || !close) {
+    return;
+  }
+  const float y = dragged->y + dragged->h / 2.0f;
+  const float x0 = dragged->x + dragged->w / 2.0f;
+  // Past the close button, onto the body of second.txt's tab.
+  const float x1 = close->x - 12.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing on third.txt's tab");
+  for (int step = 1; step <= 8; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 + (x1 - x0) * static_cast<float>(step) / 8.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging the tab, step " + std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y)}),
+                      "dropping the tab");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x1 - 3.0f, y)}),
+                      "the next pointer motion after the drop");
+
+  // Under load the driver's last motion and its release arrive apart: the last
+  // motion the app saw was over a close button, the release is beside it.
+  const auto again = fixture.ElementRect("tab:0/second.txt");
+  const auto over = fixture.ElementRect("button:close-tab/0/first.txt");
+  if (!again || !over) {
+    return;
+  }
+  const float ax = again->x + again->w / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(ax, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, ax, y)}),
+                      "pressing on second.txt's tab");
+  const float cx = over->x + over->w / 2.0f;
+  for (int step = 1; step <= 4; ++step) {
+    SDL_Event motion = MouseMotionEvent(ax + (cx - ax) * static_cast<float>(step) / 4.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging onto first.txt's close button, step " + std::to_string(step));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, cx - 14.0f, y)}),
+                      "a release beside the close button the last motion was over");
+  for (int wake = 0; wake < 40; ++wake) {
+    SDL_Delay(10);
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "the settle glide, wake " + std::to_string(wake));
+  }
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -1340,8 +1407,12 @@ void TestColumnSelectionNeverSplitsACharacter() {
       const std::string selected = TestAccess::ActiveEditor(fixture.shell).SelectedText();
       for (std::size_t i = 0; i < selected.size(); ++i) {
         const unsigned char c = static_cast<unsigned char>(selected[i]);
-        Expect(!(c >= 0x80 && c < 0xC0 && (i == 0 || static_cast<unsigned char>(selected[i - 1]) < 0x80)),
-               "a column selection from column " + std::to_string(start) + " split a character");
+        // Appended, not `"..." + to_string(...) + "..."`: GCC 13 reports a false
+        // -Warray-bounds on that temporary chain.
+        std::string what = "a column selection from column ";
+        what += std::to_string(start);
+        what += " split a character";
+        Expect(!(c >= 0x80 && c < 0xC0 && (i == 0 || static_cast<unsigned char>(selected[i - 1]) < 0x80)), what);
       }
       (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE, SDL_KMOD_NONE)});
     }
@@ -1955,6 +2026,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
+  AddTest(tests, "QaFlowRegression/ATabDraggedAcrossACloseButtonLeavesItIdle",
+          TestATabDraggedAcrossACloseButtonLeavesItIdle);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);

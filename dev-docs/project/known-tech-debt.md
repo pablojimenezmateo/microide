@@ -495,6 +495,18 @@ the replay does not reach); a unit test that collapses the sidebar by drag and
 diffs every scheduled frame against a full repaint is the way to pin it
 without the runner.
 
+**2026-10-21, a second instance on the same job (seed 2, step 283, be9f0526):**
+frames 609-610 `pixels=13 bbox=415,40,7,7 clips=24,118,8,20` -- the close glyph
+of an editor tab left painted hovered (dark) where the full render draws it idle,
+right after the monkey dragged a tab leftwards along its own strip across that
+button (`drag [513,43] -> [406,43]`, light theme). The close glyph's hover is
+`!tab_drag.dragging && PointerOver(close_rect + slide dx)`, so it moves with the
+post-drop glide under a still pointer. The replay is clean locally, and
+`QaFlowRegression/ATabDraggedAcrossACloseButtonLeavesItIdle` (each drag step,
+the drop, a release beside the button the last motion was over, and 40 settle
+wakes, each against a full repaint) passes -- the window is again one only the
+slow runner's frame timing opens.
+
 ### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
 
 Found by the QA `settings-sweep`: `editor.colorscheme` is an enum whose values
