@@ -320,6 +320,8 @@ def flow_save_wait(app: q.App) -> None:
         app.click_text(1, 1)
         app.key("End")
         app.type(" more")
+        app.wait_until(lambda: app.text() == f"{name} qa-todo more\n", 3.0, f"{name}'s buffer to hold the typing")
+        app.expect(app.text() == f"{name} qa-todo more\n", f"{name}'s buffer holds the typing ({app.text()!r})")
 
     def save_button() -> dict | None:
         return next((e for e in app.elements("button", prefix="button:prompt/")
@@ -346,7 +348,8 @@ def flow_save_wait(app: q.App) -> None:
     step(app, "the writes landed", 0.4)
     app.expect(not app.query("tabs"), f"every tab closed after its save ({[t.get('title') for t in app.query('tabs')]})")
     app.expect(read(app, "notes/one.qasave") == "ONE QA-DONE MORE\n" and read(app, "notes/two.qasave") == "TWO QA-DONE MORE\n",
-               f"both files carry the participant's and the formatter's work ({read(app, 'notes/one.qasave')!r})")
+               f"both files carry the participant's and the formatter's work ({read(app, 'notes/one.qasave')!r}, "
+               f"{read(app, 'notes/two.qasave')!r})")
 
     # Close Project waits behind a progress row with Cancel; Cancel keeps the project.
     dirty("three")

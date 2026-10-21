@@ -537,6 +537,18 @@ the drop, a release beside the button the last motion was over, and 40 settle
 wakes, each against a full repaint) passes -- the window is again one only the
 slow runner's frame timing opens.
 
+**2026-10-21, a third, and this one replays:** monkey seed 7 (the local qa lane,
+step 210) left the active dirty tab's close glyph in its hovered tint at
+(152,50) 9x9 px (window pixels; the monkey had zoomed in once, so logical
+(118,36)) after a click on the tab, Ctrl+Shift+P and a pointer move along the
+tab under the open palette. `tools/qa/run.py replay
+tools/qa/replays/td372-dirty-tab-close-glyph.json` reproduces it every time
+(frame ~461). An in-process test of the same sequence --
+`QaFlowRegression/OpeningAModalUnderThePointerDropsTheHoverItTakes`, zoomed,
+dirty and active -- passes, so a state the 210 steps built is part of it (two
+editor groups, the sidebar hidden, a code-actions overlay open just before).
+Next: bisect the replay's prefix.
+
 ### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
 
 Found by the QA `settings-sweep`: `editor.colorscheme` is an enum whose values
@@ -600,6 +612,18 @@ key and text event with the focus it met and left (`MICROIDE_TRACE_INPUT=1`,
 on in every QA run), and a failed expectation saves the log's tail and the last
 40 actions beside its screenshot (`<shot>.txt`), so the next CI occurrence says
 which surface took the keys.
+
+**2026-10-21, later:** the trace explained two of them, and neither was a lost
+key. The driver types through the X server and sends commands through the
+control socket, and nothing orders the two: `type(" more")` then `send("open",
+other)` put the final `e` into the other file, and a `project-close` opened its
+prompt under it (`focus=overlay->overlay`). The driver now waits, before any
+control command, until the app has logged every character typed since (in
+order, past the log offset the typing began at). One more `save-wait` failure
+had the `e` delivered to the editor and still missing from the formatted file
+(`ONE QA-DONE MOR`); with the flow now checking each buffer holds its typing
+before it moves on (and reporting both files), 6 of 6 parallel runs pass --
+if it recurs, that evidence says which side lost it.
 
 ### TD-2026-10-19-367 — a warm terminal reattach lost what the shell printed while detached, once, under TSan. [OPEN]
 

@@ -175,6 +175,8 @@ def flow_resize_overlays(app: q.App) -> None:
                 layout_sane(app, f"the rename prompt at {width}x{height}")
             app.key("End")
             app.type("x")
+            app.wait_until(lambda: (app.ui().get("prompt") or {}).get("input", "").endswith("x"), 3.0,
+                           "the typed key in the prompt")
             app.expect((app.ui().get("prompt") or {}).get("input", "").endswith("x"),
                        f"the prompt still takes typing ({app.ui().get('prompt')})")
             app.key("Escape")

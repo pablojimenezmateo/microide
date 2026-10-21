@@ -99,6 +99,10 @@ def flow_diff_commands(app: q.App) -> None:
             app.expect(_diff_tab(app).get("showWhitespace") is state,
                        f"Show Whitespace toggles to {state} ({_diff_tab(app)})")
 
+    # The copies go through the clipboard, which the Wayland backend's injected
+    # input cannot reach (TD-2026-10-19-366).
+    if app.wayland:
+        return
     if _run(app, "Diff: Copy Path"):
         pasted = _paste_into_scratch(app, tab_name)
         app.expect(pasted.strip().endswith("notes/ws.txt"), f"Copy Path copies the file's path ({pasted!r})")
@@ -166,7 +170,8 @@ def flow_merge_commands(app: q.App) -> None:
     if not open_conflict(app):
         return
     merge_tab = next((e["name"] for e in app.elements("tab") if e.get("active")), "")
-    for label, want, not_want in (("Merge: Copy Incoming Side", "line 2 incoming", "line 2 current"),
+    # The copies go through the clipboard (not on the Wayland backend: TD-2026-10-19-366).
+    for label, want, not_want in () if app.wayland else (("Merge: Copy Incoming Side", "line 2 incoming", "line 2 current"),
                                   ("Merge: Copy Current Side", "line 2 current", "line 2 incoming")):
         if _run(app, label):
             pasted = _paste_into_scratch(app, merge_tab, "merge")

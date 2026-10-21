@@ -37,6 +37,7 @@ import collections
 import contextlib
 import importlib.util
 import json
+import re
 import os
 import random
 import shutil
@@ -320,6 +321,10 @@ class App:
     def _spawn(self, project: Path | None, extra_args: list[str]) -> None:
         self.log_path = self.work / f"microide-{self._launches}.log" if self._launches else self.work / "microide.log"
         self._launches += 1
+        # Characters typed through X that the app has not been seen to take yet,
+        # and where in its log to look for them: see _await_typed_input.
+        self._typed_pending = ""
+        self._typed_log_offset = 0
         args = [str(self.binary)]
         if project is not None:
             args.append(str(project))
@@ -435,6 +440,7 @@ class App:
         waits for its reply. Records it for replay unless `record` is False."""
         if record:
             self._record({"line": line})
+        self._await_typed_input()
         if self._socket is None:
             listing = _last_json(self._control(["control-list"]).stdout) or {}
             path = listing.get("socket")
@@ -806,6 +812,29 @@ class App:
             args += ["--window", self.window]
         self._xdotool(*args, chord)
 
+    def _await_typed_input(self, timeout: float = 3.0) -> None:
+        """Waits until the app has taken every character typed through X since the
+        last wait: their `microide input: text=` lines (MICROIDE_TRACE_INPUT), in
+        order, after the log offset the typing started at. Keystrokes travel through
+        the X server and a control command through the socket, and nothing orders
+        the two: `type(" more")` then `send("open", other)` once put the last `e`
+        into the OTHER file, and a `project-close` opened its prompt under it (QA
+        save-wait) -- races no person at a keyboard can produce. Bounded."""
+        if self.wayland or not self._typed_pending or self.log_path is None:
+            return
+        deadline = time.monotonic() + timeout * SLOW_FACTOR
+        pattern = re.compile(rb'microide input: text="(.*?)" focus=')
+        while time.monotonic() < deadline:
+            with contextlib.suppress(OSError):
+                with open(self.log_path, "rb") as log:
+                    log.seek(self._typed_log_offset)
+                    taken = b"".join(pattern.findall(log.read())).decode("utf-8", "replace")
+                want = iter(taken)
+                if all(char in want for char in self._typed_pending):  # an in-order subsequence
+                    break
+            time.sleep(0.01)
+        self._typed_pending = ""
+
     def type(self, text: str) -> None:
         """Types `text`. A newline is a Return press and a tab a Tab press: xdotool
         types '\n' as the Linefeed keysym, which no keyboard sends and SDL drops,
@@ -846,6 +875,10 @@ class App:
             if chunk:
                 self._xdotool(*args, "--", chunk)
                 chunk = ""
+        if not self._typed_pending and self.log_path is not None:
+            with contextlib.suppress(OSError):
+                self._typed_log_offset = self.log_path.stat().st_size
+        self._typed_pending += "".join(c for c in text if c not in "\n\t" and ord(c) <= 0xFF and c.isprintable())
         for char in text:
             if char in "\n\t":
                 flush()

@@ -823,6 +823,41 @@ void TestToastsShowWithTheStatusBarHidden() {
   Expect(seen, "the toast is laid out");
 }
 
+// QA monkey (seed 7): the pointer on a tab, then Ctrl+Shift+P. Under an open
+// modal nothing beneath hovers (ModalsOwnThePointer), so a full render drew the
+// tab idle -- and the window kept its hovered close glyph, because opening the
+// palette repainted the palette and not the strip it took the hover from.
+void TestOpeningAModalUnderThePointerDropsTheHoverItTakes() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("first.txt", "first\n");
+  WriteFile(fixture.root / "second.txt", "second\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "second.txt");
+  // Zoomed in once (Ctrl+=), as the monkey was: hover rects in layout units.
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_EQUALS, SDL_KMOD_CTRL)});
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "two tabs");
+  const auto tab = fixture.ElementRect("tab:0/first.txt");
+  Expect(tab.has_value(), "the strip should name first.txt");
+  if (!tab) {
+    return;
+  }
+  const float x = tab->x + tab->w * 0.3f;
+  const float y = tab->y + tab->h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}), "the pointer on first.txt's tab");
+  // As the monkey had it: the tab clicked active, then edited (dirty).
+  fixture.ExpectFresh(fixture.Click(*tab), "first.txt's tab clicked");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "an edit (the tab goes dirty)");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x - 20.0f, y)}), "the pointer back on the tab");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_P, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT))}),
+      "Ctrl+Shift+P with the pointer on a tab");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x + 3.0f, y)}),
+                      "a pointer move on the tab under the open palette");
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2153,6 +2188,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
           TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);
   AddTest(tests, "QaFlowRegression/ToastsShowWithTheStatusBarHidden", TestToastsShowWithTheStatusBarHidden);
+  AddTest(tests, "QaFlowRegression/OpeningAModalUnderThePointerDropsTheHoverItTakes",
+          TestOpeningAModalUnderThePointerDropsTheHoverItTakes);
   AddTest(tests, "QaFlowRegression/AnEditThatAddsTheHorizontalScrollbarRepaintsIt",
           TestAnEditThatAddsTheHorizontalScrollbarRepaintsIt);
   AddTest(tests, "QaFlowRegression/TheCompactLayoutReturnsWhenTheWindowGrows",
