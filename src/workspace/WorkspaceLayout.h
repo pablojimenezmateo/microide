@@ -657,8 +657,11 @@ std::optional<MergeHoverState> ClassifyMergeHoverState(
     std::span<const MergeTrackedConflict> conflicts,
     float x,
     float y);
-SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area);
-SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area);
+// The centered modal cards, sized and placed on `editor_area` and kept inside
+// `bounds` (the window): a card whose minimum is wider than a narrow editor area
+// shifts, or shrinks, rather than leaving the window.
+SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds);
+SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds);
 
 // Geometry of the floating (non-modal) find / find-replace widget anchored at the
 // top-right of the editor area. These sub-rects are the single source of truth

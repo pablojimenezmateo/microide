@@ -34,6 +34,7 @@ using microide::workspace::ComputeMergeResultViewportRect;
 using microide::workspace::ComputeMergeSourceActionButtonRect;
 using microide::workspace::FindMergeTrackedConflictAtSourceLine;
 using microide::workspace::ComputeQuickOpenOverlaySurfaceRect;
+using microide::workspace::ComputeSettingsOverlaySurfaceRect;
 using microide::workspace::ComputePromptSurfaceButtonRects;
 using microide::workspace::ComputePromptSurfaceInputRect;
 using microide::workspace::ComputePromptSurfaceRect;
@@ -1238,7 +1239,8 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
 }
 
 void TestWorkspaceSharedOverlayRectHelpers() {
-  const SDL_FRect roomy = ComputeQuickOpenOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
+  const SDL_FRect roomy = ComputeQuickOpenOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f),
+                                                               MakeRect(0.0f, 0.0f, 4000.0f, 4000.0f));
   Expect(std::fabs(roomy.w - 792.0f) < 0.01f,
          "overlay rect should use the preferred width ratio when within bounds");
   Expect(std::fabs(roomy.h - 360.0f) < 0.01f,
@@ -1248,7 +1250,8 @@ void TestWorkspaceSharedOverlayRectHelpers() {
   Expect(std::fabs(roomy.y - 279.2f) < 0.01f,
          "overlay rect should bias vertically toward the top of the editor area");
 
-  const SDL_FRect compact = ComputeQuickOpenOverlaySurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f));
+  const SDL_FRect compact = ComputeQuickOpenOverlaySurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f),
+                                                                 MakeRect(-100.0f, -100.0f, 4000.0f, 4000.0f));
   Expect(std::fabs(compact.w - 260.0f) < 0.01f,
          "overlay rect should clamp width to the compact fallback width");
   Expect(std::fabs(compact.h - 160.0f) < 0.01f,
@@ -1257,6 +1260,22 @@ void TestWorkspaceSharedOverlayRectHelpers() {
          "overlay rect should remain centered after compact-width clamping");
   Expect(std::fabs(compact.y - 7.2f) < 0.01f,
          "overlay rect should preserve the vertical bias after compact-height clamping");
+
+  // QA resize-overlays: at 640x480 with the sidebar shown the editor area is 351 px
+  // wide, the Settings card's minimum is 420, and centring it on the editor area
+  // ran its right third off the window. A card wider than its anchor stays inside
+  // the window instead.
+  const SDL_FRect window = MakeRect(0.0f, 0.0f, 640.0f, 480.0f);
+  const SDL_FRect narrow_editor = MakeRect(289.0f, 58.0f, 351.0f, 240.0f);
+  const SDL_FRect settings = ComputeSettingsOverlaySurfaceRect(narrow_editor, window);
+  Expect(settings.x >= window.x && settings.x + settings.w <= window.x + window.w,
+         "the Settings card stays inside a narrow window (" + std::to_string(settings.x) + " + " +
+             std::to_string(settings.w) + ")");
+  Expect(settings.y >= window.y && settings.y + settings.h <= window.y + window.h,
+         "and inside its height");
+  const SDL_FRect tiny = ComputeSettingsOverlaySurfaceRect(narrow_editor, MakeRect(0.0f, 0.0f, 360.0f, 200.0f));
+  Expect(tiny.w <= 360.0f && tiny.x >= 0.0f && tiny.x + tiny.w <= 360.0f,
+         "a window narrower than the card's minimum shrinks the card to the window");
 }
 
 void TestWorkspaceSharedHitTargets() {

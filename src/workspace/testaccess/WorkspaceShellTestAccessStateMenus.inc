@@ -916,7 +916,7 @@
   }
   static SDL_FRect SettingsOverlayRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    return ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor);
+    return ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor, layout.full);
   }
   // Overlay rect for whatever overlay is currently open — routes through the shell's
   // ComputeOverlayRect (so a code-action overlay yields its centered-menu rect).

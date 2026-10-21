@@ -1069,7 +1069,8 @@ struct OverlaySurfaceParams {
 };
 
 SDL_FRect ComputeOverlaySurfaceRectImpl(const SDL_FRect& editor_area,
-                                        const OverlaySurfaceParams& params) {
+                                        const OverlaySurfaceParams& params,
+                                        const SDL_FRect& bounds) {
   const float overlay_width =
       std::clamp(editor_area.w * params.width_frac, kOverlayMinWidth, kOverlayMaxWidth);
   const float overlay_height =
@@ -1078,25 +1079,34 @@ SDL_FRect ComputeOverlaySurfaceRectImpl(const SDL_FRect& editor_area,
       std::min(overlay_width, std::max(params.min_width, editor_area.w - 56.0f));
   const float final_height =
       std::min(overlay_height, std::max(params.min_height, editor_area.h - 48.0f));
-  return MakeRect(editor_area.x + (editor_area.w - final_width) * 0.5f,
-                  editor_area.y + (editor_area.h - final_height) * params.vertical_frac,
-                  final_width, final_height);
+  // Inside the window, whatever the editor area: shrink to it first, then shift.
+  constexpr float kWindowMargin = 8.0f;
+  const float max_width = std::max(0.0f, bounds.w - 2.0f * kWindowMargin);
+  const float max_height = std::max(0.0f, bounds.h - 2.0f * kWindowMargin);
+  const float width = std::min(final_width, max_width);
+  const float height = std::min(final_height, max_height);
+  const float x = std::clamp(editor_area.x + (editor_area.w - width) * 0.5f, bounds.x + kWindowMargin,
+                             std::max(bounds.x + kWindowMargin, bounds.x + bounds.w - kWindowMargin - width));
+  const float y = std::clamp(editor_area.y + (editor_area.h - height) * params.vertical_frac,
+                             bounds.y + kWindowMargin,
+                             std::max(bounds.y + kWindowMargin, bounds.y + bounds.h - kWindowMargin - height));
+  return MakeRect(x, y, width, height);
 }
 }  // namespace
 
-SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area) {
+SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds) {
   // One card for every quick-open modal: file finder, project search, command
   // palette, and the commit/launch pickers. They previously split across two
   // geometries (0.58/0.44/0.22 vs 0.66/0.60/0.18), so Ctrl+P and Ctrl+Shift+P
   // painted visibly different dialogs in different places.
-  return ComputeOverlaySurfaceRectImpl(editor_area, {0.66f, 0.60f, 0.18f, 260.0f, 160.0f});
+  return ComputeOverlaySurfaceRectImpl(editor_area, {0.66f, 0.60f, 0.18f, 260.0f, 160.0f}, bounds);
 }
 
-SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area) {
+SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area, const SDL_FRect& bounds) {
   // The settings surface is a two-pane editor (category list + value pane), so it
   // is the largest modal: wide enough for a left rail plus roomy controls, tall
   // enough to show many rows without constant scrolling.
-  return ComputeOverlaySurfaceRectImpl(editor_area, {0.72f, 0.66f, 0.14f, 420.0f, 220.0f});
+  return ComputeOverlaySurfaceRectImpl(editor_area, {0.72f, 0.66f, 0.14f, 420.0f, 220.0f}, bounds);
 }
 
 namespace {

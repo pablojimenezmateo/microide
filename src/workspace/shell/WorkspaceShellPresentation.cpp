@@ -232,7 +232,8 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
   // Every quick-open modal (file finder, project search, command palette, commit
   // and launch pickers) shares one card so the surface does not resize and shift
   // as the user flips between them.
-  return ComputeQuickOpenOverlaySurfaceRect(editor_area);
+  const auto layout = CurrentWorkspaceLayout();
+  return ComputeQuickOpenOverlaySurfaceRect(editor_area, layout.has_value() ? layout->full : editor_area);
 }
 
 void WorkspaceShell::RefreshStatusBar() {

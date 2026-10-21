@@ -701,7 +701,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   // the editor or sidebar underneath. Scrolling tracks whole entries.
   if (settings_overlay_service_.Visible()) {
     if (vertical_ticks != 0) {
-      const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor);
+      const SDL_FRect overlay_rect = ComputeSettingsOverlaySurfaceRect(layout.overlay_anchor, layout.full);
       if (Contains(overlay_rect, event.wheel.mouse_x, event.wheel.mouse_y)) {
         // Both modes resolve their (variable-height) row geometry in the builder,
         // so the exact max scroll comes from the view model. Help/About used to
