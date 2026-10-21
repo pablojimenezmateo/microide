@@ -418,8 +418,95 @@ def flow_diff_hunk_keys(app: q.App) -> None:
                        f"Discard reverts that change alone ({[l for l in disk.splitlines() if 'FIVE' in l or ' 30' in l or 'THIRTY' in l]})")
 
 
+def flow_merge_panes(app: q.App) -> None:
+    """The merge editor's panes by mouse, on a file long enough to scroll: the
+    dividers drag and a double-click puts them back; the wheel brings a conflict
+    below the fold into view; the current side's accept button and the result's
+    Base take those choices.
+
+    `merge-mouse` accepts the incoming side and Both; the dividers, the wheel and
+    the other accept buttons ran at under half in the coverage build (TD-364)."""
+    assert app.project is not None
+    base = "".join(f"line {i}\n" for i in range(1, 91))
+    sides = {"incoming": base, "current": base}
+    for side in sides:
+        for n in (2, 80):
+            sides[side] = sides[side].replace(f"line {n}\n", f"line {n} {side}\n")
+    write(app, "notes/long.txt", base)
+    git(app, "add", "notes/long.txt")
+    git(app, "commit", "-q", "-m", "qa: long merge base")
+    git(app, "checkout", "-q", "-b", "qa-long-incoming")
+    write(app, "notes/long.txt", sides["incoming"])
+    git(app, "commit", "-q", "-am", "qa: incoming")
+    git(app, "checkout", "-q", "-")
+    write(app, "notes/long.txt", sides["current"])
+    git(app, "commit", "-q", "-am", "qa: current")
+    app.expect(git_run(app, "merge", "qa-long-incoming").returncode != 0, "the merge conflicts")
+    app.send("git-refresh")
+    app.send("review-conflicts")
+    if not app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "merge", 8.0, "a merge tab"):
+        return
+    step(app, "merge tab", 0.5)
+
+    # The dividers: a drag moves one, a double-click puts it back.
+    divider = app.wait_for("divider:merge/0", 3.0)
+    if app.expect(divider is not None, f"the merge shows its dividers ({[e['name'] for e in app.elements('divider')]})"):
+        x0 = divider["rect"][0]
+        cx, cy = app.center(divider)
+        app.drag(cx, cy, cx - 120, cy, steps=10)
+        step(app, "drag the left divider", 0.3)
+        moved = (app.element("divider:merge/0") or {}).get("rect", [x0])[0]
+        app.expect(moved < x0 - 60, f"the divider follows the drag ({x0} -> {moved})")
+        cx, cy = app.center(app.element("divider:merge/0") or divider)
+        app.click(cx, cy, clicks=2)
+        step(app, "double-click the divider", 0.3)
+        back = (app.element("divider:merge/0") or {}).get("rect", [0])[0]
+        app.expect(abs(back - x0) < 4, f"a double-click restores it ({x0} -> {back})")
+
+    # The wheel: the second conflict (line 80) is below the fold until scrolled to.
+    def named(name: str) -> bool:
+        return any(e["name"] == name for e in app.elements("button", prefix="button:merge/"))
+
+    def second_visible() -> bool:
+        return named("button:merge/1/accept-current")
+    app.expect(not second_visible(), "the second conflict starts below the fold")
+    surface = app.ui()["surfaces"]["editorSurface"]
+    for _ in range(12):
+        if second_visible():
+            break
+        app.wheel(surface[0] + surface[2] * 0.2, surface[1] + surface[3] * 0.6, 5)
+        app.settle(0.15)
+    step(app, "wheel down", 0.3)
+    app.expect(second_visible(), "the wheel scrolls the second conflict into view")
+    if second_visible():
+        app.hover_named("button:merge/1/accept-current")
+        step(app, "hover accept current", 0.2)
+        app.click_named("button:merge/1/accept-current")
+        step(app, "accept current", 0.3)
+
+    for _ in range(12):
+        if named("button:merge/0/result-base"):
+            break
+        app.wheel(surface[0] + surface[2] * 0.5, surface[1] + surface[3] * 0.6, -5)
+        app.settle(0.15)
+    if app.expect(named("button:merge/0/result-base"), "the wheel scrolls back to the first conflict"):
+        app.hover_named("button:merge/0/result-base")
+        step(app, "hover result Base", 0.2)
+        app.click_named("button:merge/0/result-base")
+        step(app, "result Base", 0.3)
+    app.click_named("button:merge/save")
+    path = app.project / "notes" / "long.txt"
+    app.wait_until(lambda: "<<<<<<<" not in path.read_text(), 5.0, "Save to write the resolved file")
+    text = path.read_text()
+    app.expect("line 2\n" in text and "line 2 incoming" not in text and "line 2 current" not in text,
+               f"the first conflict took the base ({[l for l in text.splitlines() if l.startswith('line 2')][:3]})")
+    app.expect("line 80 current\n" in text and "line 80 incoming" not in text,
+               f"the second took the current side ({[l for l in text.splitlines() if l.startswith('line 80')]})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
+    "merge-panes": flow_merge_panes,
     "diff-hunk-keys": flow_diff_hunk_keys,
     "git-outgoing-base": flow_git_outgoing_base,
     "merge-toolbar": flow_merge_toolbar,
