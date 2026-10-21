@@ -10,7 +10,7 @@ import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_cursors, expect_text, git, open_file, read, step, terminal_tabs, tree_rows, write
+from flows_common import dismiss, expect_cursors, expect_text, git, messages, open_file, read, step, terminal_tabs, tree_rows, write
 
 
 def _numbered(count: int, prefix: str = "line") -> str:
@@ -1012,6 +1012,82 @@ def _git_row_menu(app: q.App, name: str, label_prefix: str) -> bool:
     return True
 
 
+def flow_git_discard_all(app: q.App) -> None:
+    """The git view's Discard All, over a modified file, a new untracked folder
+    and a staged new file: refused while an affected tab has unsaved edits (and
+    says which), Cancel keeps everything, Discard All restores the tracked file
+    on disk and in its open tab and moves the untracked and the added file to the
+    trash, their emptied folder with them, leaving git clean.
+
+    Discard All was clicked by nothing (TD-364: the sidebar's actions at 41 %)."""
+    assert app.project is not None
+    original = read(app, "src/main.cpp")
+    write(app, "src/main.cpp", original + "// discard all\n")
+    write(app, "scratch/deep/untracked.txt", "untracked\n")
+    write(app, "notes/added.txt", "added\n")
+    git(app, "add", "notes/added.txt")
+    open_file(app, "src/main.cpp")
+    app.key("ctrl+shift+g")
+    app.wait_until(lambda: app.element("row:git/untracked.txt") and app.element("row:git/added.txt"), 5.0,
+                   "the git view to list the new files")
+    step(app, "git view with three changes", 0.3)
+
+    def discard_all_prompt() -> bool:
+        button = app.element("button:git/discard-all")
+        if not app.expect(bool(button), "the git view shows Discard All"):
+            return False
+        app.click(*app.center(button))
+        return app.wait_until(lambda: app.ui().get("modal") == "prompt", 3.0, "Discard All to ask first")
+
+    def prompt_button(prefix: str) -> dict | None:
+        return next((e for e in app.elements("button", prefix="button:prompt/")
+                     if e.get("label", "").startswith(prefix)), None)
+
+    # A dirty tab for an affected file blocks it, by name.
+    app.send("focus", "editor")
+    app.click_text(1, 1)
+    app.type("x")
+    app.wait_until(lambda: app.buffer().get("dirty"), 3.0, "the edit to dirty main.cpp")
+    if discard_all_prompt():
+        confirm = prompt_button("Discard")
+        if app.expect(confirm is not None, "the prompt has a Discard All button"):
+            app.click(*app.center(confirm))
+            step(app, "Discard All with main.cpp unsaved", 0.4)
+            app.expect(any("main.cpp" in m for m in messages(app)),
+                       f"it refuses and names the unsaved file ({messages(app)[-3:]})")
+            app.expect(read(app, "src/main.cpp").endswith("// discard all\n") and (app.project / "notes/added.txt").exists(),
+                       "and changes nothing")
+    app.send("focus", "editor")
+    app.key("ctrl+z")
+    app.wait_until(lambda: not app.buffer().get("dirty"), 3.0, "the undo to clean the buffer")
+
+    if discard_all_prompt():
+        cancel = prompt_button("Cancel")
+        if app.expect(cancel is not None, "the prompt has Cancel"):
+            app.click(*app.center(cancel))
+            step(app, "Cancel Discard All", 0.3)
+            app.expect(read(app, "src/main.cpp").endswith("// discard all\n") and (app.project / "scratch/deep/untracked.txt").exists(),
+                       "Cancel keeps every change")
+    if discard_all_prompt():
+        confirm = prompt_button("Discard")
+        if app.expect(confirm is not None, "the prompt has a Discard All button"):
+            app.click(*app.center(confirm))
+            app.wait_until(lambda: read(app, "src/main.cpp") == original, 5.0, "the tracked file restored")
+            app.wait_until(lambda: git(app, "status", "--porcelain") == "", 5.0, "git to be clean")
+            step(app, "Discard All", 0.5)
+            app.expect(git(app, "status", "--porcelain") == "", f"nothing is left changed ({git(app, 'status', '--porcelain')!r})")
+            app.expect(not (app.project / "notes/added.txt").exists() and not (app.project / "scratch").exists(),
+                       "the added and untracked files are gone, and the folder they emptied")
+            trash = app.work / "data" / "Trash" / "files"  # XDG_DATA_HOME
+            names = {p.name for p in trash.iterdir()} if trash.exists() else set()
+            app.expect(any(n.startswith("untracked") for n in names) and any(n.startswith("added") for n in names),
+                       f"both went to the trash, not oblivion ({sorted(names)})")
+            app.send("focus", "editor")
+            app.wait_until(lambda: app.text() == original, 3.0, "the open tab to show the restored file")
+            app.expect(app.text() == original and not app.buffer().get("dirty"),
+                       "the open tab shows the file as committed")
+
+
 def flow_git_discard(app: q.App) -> None:
     """An untracked file shows in the git view; Stage and Unstage follow the index
     both ways; Discard asks first, Cancel keeps the change, Discard restores the
@@ -1391,6 +1467,7 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "indentation": flow_indentation,
     "find-options": flow_find_options,
     "git-discard": flow_git_discard,
+    "git-discard-all": flow_git_discard_all,
     "terminal-clipboard": flow_terminal_clipboard,
     "notifications": flow_notifications,
     "tree-keys": flow_tree_keys,
