@@ -7,6 +7,7 @@
 #include "project/GitStatusService.h"
 #include "util/TextFileIO.h"
 #include "workspace/git/MergeResultValidation.h"
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -603,6 +604,7 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
   conflict.valid = true;
   conflict.resolved = true;
   merge_tab->marked_resolved = false;
+  merge_tab->unresolved_override_prompt_pending = false;
   const long long line_delta =
       static_cast<long long>(conflict.end_line) - static_cast<long long>(previous_end);
   for (std::size_t i = selected_hunk + 1; i < merge_tab->conflicts.size(); ++i) {
@@ -642,6 +644,7 @@ void CompareInteractionCoordinator::ResetMergeHunk() {
   ApplyMergeChoice(conflict.bootstrap_choice);
   conflict.resolved = false;
   merge_tab->marked_resolved = false;
+  merge_tab->unresolved_override_prompt_pending = false;
 }
 
 void CompareInteractionCoordinator::JumpNextUnresolvedMergeConflict() {
@@ -702,6 +705,27 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
     operations_.request_editor_surface_redraw();
     return;
   }
+
+  // A conflict nobody picked a side for previews a default choice, with no
+  // markers in it, so the marker check below cannot see it: Mark Resolved staged
+  // that preview -- usually the base text, both sides' changes gone -- in one
+  // click (QA merge-toolbar). Say how many are left and select one; a second
+  // Mark Resolved keeps the result as shown, as for markers.
+  const auto unresolved = static_cast<std::size_t>(
+      std::count_if(merge_tab->conflicts.begin(), merge_tab->conflicts.end(),
+                    [](const MergeTrackedConflict& conflict) { return conflict.valid && !conflict.resolved; }));
+  if (unresolved > 0 && !merge_tab->unresolved_override_prompt_pending) {
+    merge_tab->unresolved_override_prompt_pending = true;
+    merge_tab->status_message =
+        std::to_string(unresolved) + (unresolved == 1 ? " conflict is" : " conflicts are") +
+        " still unresolved. Choose Mark Resolved again to keep the result as shown.";
+    if (merge_tab->conflicts[std::min(merge_tab->selected_hunk, merge_tab->conflicts.size() - 1)].resolved) {
+      JumpNextUnresolvedMergeConflict();
+    }
+    operations_.request_editor_surface_redraw();
+    return;
+  }
+  merge_tab->unresolved_override_prompt_pending = false;
 
   const bool result_should_exist = ResolvedResultShouldExist(*merge_tab);
 

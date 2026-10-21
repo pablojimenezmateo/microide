@@ -233,6 +233,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CompareCopyFilePatch, "Copy File as Patch"),
       MenuItem(ActionId::MergeCopyIncoming, "Copy Incoming Side"),
       MenuItem(ActionId::MergeCopyCurrent, "Copy Current Side"),
+      MenuItem(ActionId::MergeResetConflict, "Reset Conflict"),
   });
   static const auto kTerminalItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::Term, {}, "Ctrl+Shift+`"),

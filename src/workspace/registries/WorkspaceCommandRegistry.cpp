@@ -179,6 +179,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Merge: Copy Incoming Side of the Conflict", ""},
       ActionSpec{ActionId::MergeCopyCurrent, "merge-copy-current", "merge-copy-current",
                  "Merge: Copy Current Side of the Conflict", ""},
+      ActionSpec{ActionId::MergeResetConflict, "merge-reset-conflict", "merge-reset-conflict",
+                 "Merge: Reset Conflict", ""},
       ActionSpec{ActionId::IndentWidth, "indent-width", "indent-width [n]", "Indent Width", ""},
       ActionSpec{ActionId::Jump, "jump", "jump <line[:col]>", "Jump Relative…", ""},
       ActionSpec{ActionId::Open, "open", "open [path]", "Open File…", ""},

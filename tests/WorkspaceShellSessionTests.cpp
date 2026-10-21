@@ -1915,6 +1915,92 @@ void TestWorkspaceShellMergeBothOrdersAndBaseToggle() {
   Expect(!merge.base_pane_visible, "base pane toggle should hide the ancestor pane again");
 }
 
+// The diff-merge spec's "reset result hunk" had no way in: the reset was
+// reachable only from tests. It is Merge: Reset Conflict in the palette and the
+// Edit menu's merge items, and Alt+R in the merge editor beside Alt+I/C/B/M.
+void TestWorkspaceShellMergeResetConflictFromTheKeyAndTheCommand() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\n");
+  WriteFile(current, "zero\none current\ntwo\n");
+  WriteFile(output, "zero\none\ntwo\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for the reset fixture");
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  merge.selected_hunk = 0;
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Incoming);
+  Expect(merge.conflicts.front().resolved, "accepting incoming resolves the conflict");
+  Expect(SendKeyDown(shell, SDLK_R, SDL_KMOD_ALT), "Alt+R is handled in the merge editor");
+  Expect(!merge.conflicts.front().resolved, "Alt+R resets the conflict to unresolved");
+
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Current);
+  Expect(merge.conflicts.front().resolved, "accepting current resolves it again");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "merge-reset-conflict"),
+         "merge-reset-conflict runs in a merge");
+  Expect(!merge.conflicts.front().resolved, "the command resets the conflict too");
+}
+
+// QA merge-toolbar: a conflict nobody picked a side for previews a default with
+// no markers in it, so Mark Resolved -- which checked for markers -- staged that
+// preview (the base text, both sides' changes gone) in one click. It now says how
+// many conflicts are left, and only a second Mark Resolved keeps the result.
+void TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  WriteFile(base, "zero\none\ntwo\nthree\nfour\n");
+  WriteFile(incoming, "zero\none incoming\ntwo\nthree incoming\nfour\n");
+  WriteFile(current, "zero\none current\ntwo\nthree current\nfour\n");
+  // As git leaves it: both conflicts still in markers.
+  WriteFile(output,
+            "zero\n<<<<<<< HEAD\none current\n=======\none incoming\n>>>>>>> incoming\ntwo\n"
+            "<<<<<<< HEAD\nthree current\n=======\nthree incoming\n>>>>>>> incoming\nfour\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for the unresolved fixture");
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).conflicts.size() == 2 &&
+             !WorkspaceShellTestAccess::ActiveMerge(shell).conflicts[0].resolved,
+         "git's markers open as unresolved conflicts");
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  Expect(merge.conflicts.size() == 2, "the fixture has two conflicts");
+  merge.selected_hunk = 0;
+  WorkspaceShellTestAccess::ApplyMergeChoice(shell, MergeChoice::Incoming);
+  Expect(merge.conflicts[0].resolved && !merge.conflicts[1].resolved, "one of two is resolved");
+
+  WorkspaceShellTestAccess::MarkMergeResolved(shell);
+  Expect(!merge.marked_resolved, "Mark Resolved with a conflict left does not mark the file");
+  Expect(merge.status_message.find("1 conflict is still unresolved") != std::string::npos,
+         "and says how many are left, not '" + merge.status_message + "'");
+  Expect(merge.selected_hunk == 1, "and selects the one left");
+
+  // A choice made since withdraws the override: the next Mark Resolved asks again
+  // about what is left now.
+  WorkspaceShellTestAccess::ResetMergeHunk(shell);
+  WorkspaceShellTestAccess::MarkMergeResolved(shell);
+  Expect(merge.status_message.find("1 conflict is still unresolved") != std::string::npos,
+         "a reset since the question withdraws the override");
+  // Asked again with nothing changed: past the question (the fixture is no git
+  // repository, so staging is what refuses now).
+  WorkspaceShellTestAccess::MarkMergeResolved(shell);
+  Expect(merge.status_message.find("unresolved") == std::string::npos,
+         "the second Mark Resolved keeps the result as shown, not '" + merge.status_message + "'");
+}
+
 void TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3265,6 +3351,10 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInsertionAtConflictStartKeepsTracking);
   AddTest(tests, "WorkspaceShell/MergeBothOrdersAndBaseToggle",
           TestWorkspaceShellMergeBothOrdersAndBaseToggle);
+  AddTest(tests, "WorkspaceShell/MergeResetConflictFromTheKeyAndTheCommand",
+          TestWorkspaceShellMergeResetConflictFromTheKeyAndTheCommand);
+  AddTest(tests, "WorkspaceShell/MarkResolvedAsksAboutUnresolvedConflicts",
+          TestWorkspaceShellMarkResolvedAsksAboutUnresolvedConflicts);
   AddTest(tests, "WorkspaceShell/MergeChoicePreservesManualEditsAroundConflicts",
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",

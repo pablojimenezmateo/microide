@@ -444,6 +444,9 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
       operations_.open_merge_result_file();
       return true;
     }
+    if (input_character == 'r' && operations_.execute_action) {
+      return operations_.execute_action(ActionId::MergeResetConflict, {}, ActionSource::Shortcut);
+    }
   }
 
   // Esc closes the merge tab, as on the compare surface.

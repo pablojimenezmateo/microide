@@ -568,7 +568,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::CompareCopyPath:
       return operations_.active_compare_tab != nullptr && operations_.active_compare_tab() != nullptr;
     case ActionId::MergeCopyIncoming:
-    case ActionId::MergeCopyCurrent: {
+    case ActionId::MergeCopyCurrent:
+    case ActionId::MergeResetConflict: {
       const MergeTabState* tab =
           operations_.active_merge_tab != nullptr ? operations_.active_merge_tab() : nullptr;
       return tab != nullptr && !tab->conflicts.empty();

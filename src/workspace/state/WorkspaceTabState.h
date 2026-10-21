@@ -308,6 +308,10 @@ struct MergeTabState {
   bool external_result_stale = false;
   bool allow_conflict_marker_override = false;
   bool marker_override_prompt_pending = false;
+  // Mark Resolved was refused once for conflicts nobody picked a side for; the
+  // next Mark Resolved keeps the result as shown. Any change to a conflict's
+  // choice withdraws it.
+  bool unresolved_override_prompt_pending = false;
   std::string status_message;
   editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
   compare::MergeModel model;
