@@ -585,6 +585,8 @@ implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-21:** `editor-toggles` and `language-overrides` (`flows_effects.py`) check what a behaviour switch does rather than that it reads back. They found that none of the five language-contract overrides (`editor.brackets.user_pairs`/`user_disabled`, `editor.comments.user_line`, `editor.indents.user_open_patterns`, `editor.snippets.user_disabled`) took effect when set at runtime: the contract was rebuilt only on a plugin reload (fixed: `WorkspaceLanguageContract::SettingsFingerprint` keys `ApplyLiveSettings`' contract refresh). The harness registry is now one list (`FLOW_MODULES`). From the command catalogue, still driven by no flow beyond `commands-run`'s smoke pass: the diff toggles and copy commands, breakpoint condition/hit-count/log-message prompts, `debug-pause`, `plugins-reload`, `reveal-in-tree`, `git-create-branch`/`git-stash-pop`, the editor-group move commands, the column-select keys. A coverage re-measure was started and stopped (the box was needed); rerun it before the next pass.
+
 **Update 2026-10-20 (evening):** re-measured at **63.2 % of lines, 70.0 % of
 functions** (from 60.4 %; 109 of 127 scenarios ran on the instrumented build,
 which timed out the harness's control client -- `MQA_SLOW_FACTOR` now stretches
