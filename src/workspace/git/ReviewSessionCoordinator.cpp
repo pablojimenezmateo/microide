@@ -124,6 +124,21 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
   }
   const std::size_t not_opened = plan.to_open.size() - attempted;
 
+  // Each open activated its own tab, so the last file reviewed would be the one
+  // on screen. A review starts at its first file (VS Code's commit changes do),
+  // whether that tab was opened now or kept from an earlier run.
+  if (!targets.empty() && operations_.activate_tab) {
+    const std::filesystem::path first = targets.front().lexically_normal();
+    const std::vector<TabEntry>& now_open = state_.focused_group().open_tabs;
+    for (std::size_t i = 0; i < now_open.size(); ++i) {
+      const std::optional<std::filesystem::path> scoped = scoped_path_of(now_open[i]);
+      if (scoped.has_value() && scoped->lexically_normal() == first) {
+        operations_.activate_tab(i);
+        break;
+      }
+    }
+  }
+
   ReviewOpenOutcome outcome;
   outcome.ok = true;
   outcome.message =

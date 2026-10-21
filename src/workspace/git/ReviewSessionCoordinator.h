@@ -26,6 +26,8 @@ class ReviewSessionCoordinator {
     std::function<void()> show_git_sidebar;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
     std::function<bool(std::size_t)> tab_is_dirty;
+    // Make the focused group's tab at `index` the active one.
+    std::function<void(std::size_t)> activate_tab;
     // Run `gather` off the shell thread, then `apply` on it -- dropped if the
     // project changed meanwhile (TD-2026-10-07-323). A review's git work (the file
     // list, then a blob prefetch for every file it opens) is one or two spawns

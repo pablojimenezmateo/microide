@@ -408,6 +408,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   RequestCloseTabs(std::move(indices));
                 },
             .tab_is_dirty = [this](std::size_t index) { return TabIsDirty(index); },
+            .activate_tab = [this](std::size_t index) { ActivateTab(index); },
             // The file reader's thread, with "read nothing": the shape a branch
             // compare's blob load and a conflict merge's stage read already use.
             .run_off_shell_thread =

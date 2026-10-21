@@ -82,6 +82,37 @@ void TestReviewCommitOpensCompareTabsPerChangedFile() {
          "rerunning review-commit reuses the existing compare tabs (no duplicates)");
 }
 
+// QA diff-review-files: a review opened one tab per file and left the LAST one
+// active, so the reviewer started at the end and Next File had nowhere to go.
+// It opens on its first file, as VS Code's commit changes do, and Next/Previous
+// File step through the rest in order.
+void TestReviewCommitOpensOnItsFirstFile() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "a.txt", "a1\n");
+  WriteFile(repo_path / "b.txt", "b1\n");
+  WriteFile(repo_path / "c.txt", "c1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "first", "first commit");
+  WriteFile(repo_path / "a.txt", "a2\n");
+  WriteFile(repo_path / "b.txt", "b2\n");
+  WriteFile(repo_path / "c.txt", "c2\n");
+  CommitAll(repo_path, "second", "second commit");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit should succeed");
+  TestAccess::FlushPendingFileReads(shell);
+  const auto* active = TestAccess::ActiveCompareOrNull(shell);
+  Expect(active != nullptr && active->path == (repo_path / "a.txt").lexically_normal(),
+         "the review opens on its first file");
+  Expect(active != nullptr && active->review_file_index == 0, "and that is file 1 of the review");
+  Expect(TestAccess::ExecuteCommandLine(shell, "diff-next-file"), "diff-next-file should run");
+  active = TestAccess::ActiveCompareOrNull(shell);
+  Expect(active != nullptr && active->path == (repo_path / "b.txt").lexically_normal(),
+         "Next File goes to the second");
+}
+
 // review-branch opens compare tabs for files differing from a ref, then closes
 // stale (clean) review tabs when a file stops differing on a rerun.
 void TestReviewBranchOpensAndCleansCompareTabs() {
@@ -348,6 +379,7 @@ void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
           TestReviewRunsItsGitOffTheShellThread);
   AddTest(tests, "ReviewSession/ConflictMergeOpensOffTheShellThread",
           TestConflictMergeOpensOffTheShellThread);
+  AddTest(tests, "ReviewSession/CommitOpensOnItsFirstFile", TestReviewCommitOpensOnItsFirstFile);
   AddTest(tests, "ReviewSession/CommitCapsOpenedTabs",
           TestReviewCommitCapsOpenedTabs);
   AddTest(tests, "ReviewSession/CommitTabsCarryTheirOwnReviewFileIndex",
