@@ -147,6 +147,24 @@ def _type_and_read(app: q.App, text: str) -> str:
 
 # (setting, value) -> (label, probe) where probe(app) returns something that must
 # differ between the default and the value. Probes read the app, never pixels.
+def _flat_buffer(field: str) -> Callable[[q.App], object]:
+    """A buffer field read from a file with no indented line: detection finds
+    nothing there, so its tab size and soft tabs are the settings' (a file whose
+    indentation was detected keeps that, as in VS Code)."""
+    def read(app: q.App) -> object:
+        if not (app.project / "notes" / "flat.txt").exists():
+            (app.project / "notes").mkdir(exist_ok=True)
+            (app.project / "notes" / "flat.txt").write_text("flat\ntext\n")
+        app.send("open", "notes/flat.txt")
+        app.wait_until(lambda: (app.active_tab() or {}).get("title") == "flat.txt", 3.0, "flat.txt")
+        value = app.buffer().get(field)
+        app.send("open", "src/main.cpp")
+        app.wait_until(lambda: (app.active_tab() or {}).get("title") == "main.cpp", 3.0, "main.cpp again")
+        app.send("focus", "editor")
+        return value
+    return read
+
+
 RECEIPTS: dict[tuple[str, str], tuple[str, Callable[[q.App], object]]] = {
     ("ui.show_status_bar", "false"): ("the status bar leaves the layout", lambda a: _surface(a, "statusBar")),
     ("ui.layout_mode", "compact"): ("compact mode folds the menu bar", _menus),
@@ -155,8 +173,8 @@ RECEIPTS: dict[tuple[str, str], tuple[str, Callable[[q.App], object]]] = {
     ("editor.font_size", "32"): ("the line height grows", _line_height),
     ("editor.font_size", "8"): ("the line height shrinks", _line_height),
     ("ui.scale", "1.5"): ("the window scale follows", lambda a: a.ui()["window"]["scale"]),
-    ("editor.tab_size", "16"): ("the buffer's tab size", lambda a: a.buffer().get("tabSize")),
-    ("editor.soft_tabs", "true"): ("the buffer's soft tabs", lambda a: a.buffer().get("softTabs")),
+    ("editor.tab_size", "16"): ("an undetected buffer's tab size", _flat_buffer("tabSize")),
+    ("editor.soft_tabs", "true"): ("an undetected buffer's soft tabs", _flat_buffer("softTabs")),
     ("editor.fold.enabled", "false"): ("no foldable ranges", _foldable),
     ("editor.brackets.auto_close.enabled", "false"): ("( no longer closes itself", lambda a: _type_and_read(a, "(")),
     ("terminal.font_size", "32"): ("the terminal cell height grows", lambda a: (a.ui().get("terminal") or {}).get("lineHeight")),

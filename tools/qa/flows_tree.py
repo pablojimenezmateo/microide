@@ -76,12 +76,14 @@ def flow_tree_collisions(app: q.App) -> None:
         app.expect((app.project / "col" / "b.txt").read_text() == "b\n", "and the existing file is untouched")
     dismiss(app)
 
-    before = len(messages(app))
     _context(app, "col", "New Folder…")
     if _prompt_and_type(app, "sub", "new folder over an existing one"):
-        app.wait_until(lambda: len(messages(app)) > before, 3.0, "a toast for the refused folder")
-        app.expect(any("already exists" in m for m in messages(app)[before:]),
-                   f"a new folder over an existing one is refused ({messages(app)[before:]})")
+        # By message, not by count: the refusal can replace the file refusal's toast
+        # while that one is still up (one toast per source), leaving the count alone.
+        app.wait_until(lambda: any("create folder" in m.lower() and "already exists" in m
+                                   for m in messages(app)), 3.0, "a toast for the refused folder")
+        app.expect(any("create folder" in m.lower() and "already exists" in m for m in messages(app)),
+                   f"a new folder over an existing one is refused ({messages(app)})")
         app.expect((app.project / "col" / "sub" / "inner.txt").exists(), "and the folder keeps its contents")
     dismiss(app)
 
