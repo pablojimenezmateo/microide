@@ -1006,6 +1006,21 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     if (wrap_row.first) {
       draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
     }
+    // A branch review's hunk marker ("[reviewed]", "*" for a note), on the hunk's
+    // first row at the right edge of the working side. The builder composes it
+    // onto the hunk's model rows (CompareTabReview), and the summary text it lives
+    // in is drawn only for collapsed-context rows -- so marking a hunk reviewed or
+    // writing a note on it was persisted and never shown anywhere.
+    if (wrap_row.first && compare_row.hunk >= 0 && !presentation_row->review_marker_label.empty() &&
+        (model_index == 0 || compare_tab->model.rows[model_index - 1].hunk != compare_row.hunk)) {
+      const std::string_view tag = presentation_row->display_summary_text;
+      const std::string_view shown = tag.substr(0, tag.find(' '));
+      const float tag_width = editor_text_renderer_.MeasureWidth(shown);
+      const float tag_x = surface.right_x + surface.gutter_width + surface.right_width - tag_width - 8.0f;
+      if (tag_x > surface.right_x + surface.gutter_width) {
+        editor_text_renderer_.DrawString(renderer, tag_x, y, theme_.accent, shown);
+      }
+    }
   }
   }
 }

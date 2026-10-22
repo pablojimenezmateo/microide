@@ -747,6 +747,18 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
     object["showWhitespace"] = util::JsonValue(compare.show_whitespace);
     object["leftLabel"] = util::JsonValue(compare.left_label);
     object["rightLabel"] = util::JsonValue(compare.right_label);
+    // A branch review's hunk marks as the diff draws them: hunks marked reviewed,
+    // and hunks carrying a note.
+    if (compare.review_markers_valid) {
+      std::int64_t reviewed = 0;
+      std::int64_t noted = 0;
+      for (const compare::BranchReviewHunkMarker& marker : compare.review_hunk_markers) {
+        reviewed += marker.status == compare::BranchReviewMarkerStatus::Reviewed ? 1 : 0;
+        noted += marker.has_note ? 1 : 0;
+      }
+      object["reviewedHunks"] = util::JsonValue(reviewed);
+      object["notedHunks"] = util::JsonValue(noted);
+    }
     if (!compare.review_files.empty()) {
       object["reviewFiles"] = util::JsonValue(static_cast<std::int64_t>(compare.review_files.size()));
       object["reviewFileIndex"] = util::JsonValue(static_cast<std::int64_t>(compare.review_file_index) + 1);

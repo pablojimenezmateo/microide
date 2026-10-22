@@ -321,8 +321,10 @@ The last four are the agent-facing ones (ported 2026-10-07 from the never-merged
   a file still loading off-thread reports `loading: true` and the position it will
   open at. The focused group's active tab also reports `visibleTop`/`visibleCount`
   — what the user is looking at. A diff tab reports `changes` (its hunk count),
-  `ignoreWhitespace`, `showWhitespace`, `leftLabel`/`rightLabel` and, inside a
-  review of several files, `reviewFiles` and the 1-based `reviewFileIndex`.
+  `ignoreWhitespace`, `showWhitespace`, `leftLabel`/`rightLabel`, in a branch
+  review `reviewedHunks`/`notedHunks` (the hunks drawn marked reviewed or with a
+  note) and, inside a review of several files, `reviewFiles` and the 1-based
+  `reviewFileIndex`.
   `tabs` stays as the flat list the media scripts use.
 - `commands` lists the runnable command registry as `{command, usage, label}`, then the plugin-contributed commands (`plugin: true`).
 - `terminals` lists the terminal strip: per tab `{tab, active, unseenOutput,
