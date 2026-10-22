@@ -86,6 +86,27 @@ return ide.plugin({
       ctx.notify("warning", "qa-api says hello")
       return "notified"
     end)
+    -- ctx.process, for `plugin-process-api`: each writes what came back to a file
+    -- in the project (qa-api-process.txt), one line per call.
+    local log_lines = {}
+    local function record(line)
+      log_lines[#log_lines + 1] = line
+      ctx.files.write_text("qa-api-process.txt", table.concat(log_lines, "\n") .. "\n")
+    end
+    ctx.commands.add("qa.api.run", function(cmd_ctx, args)
+      local r = ctx.process.run({ "printf", "%s", "hello" })
+      record("run ok=" .. tostring(r.ok) .. " exit=" .. r.exit_code .. " out=" .. r.stdout)
+      local piped = ctx.process.run({ "cat" }, { stdin = "piped" })
+      record("stdin out=" .. piped.stdout)
+      local failed = ctx.process.run({ "sh", "-c", "echo oops >&2; exit 4" })
+      record("fail ok=" .. tostring(failed.ok) .. " exit=" .. failed.exit_code .. " err=" .. failed.stderr:gsub("\n", ""))
+      local escaped, err = pcall(ctx.process.run, { "pwd" }, { cwd = "/" })
+      record("escape ok=" .. tostring(escaped) .. " err=" .. tostring(err):gsub("^.-: ", ""))
+      ctx.process.run_async({ "sh", "-c", "echo async; exit 3" }, {}, function(result)
+        record("async exit=" .. result.exit_code .. " out=" .. result.stdout:gsub("\n", ""))
+      end)
+      return "ran"
+    end)
     ctx.menus.add({ id = "ping-menu", menu = "Help", action = "qa.api.ping", label = "QA API Ping" })
     ctx.keybindings.add({ id = "ping-key", action = "qa.api.ping", key = "Ctrl+Alt+U", context = "editor" })
 

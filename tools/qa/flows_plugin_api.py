@@ -270,6 +270,34 @@ def flow_plugin_editor_api(app: q.App) -> None:
     app.check("plugin editor api")
 
 
+def flow_plugin_process_api(app: q.App) -> None:
+    """`ctx.process` from a plugin command: run returns stdout and the exit code,
+    takes stdin, reports a failing program's exit code and stderr, refuses a cwd
+    outside the project (an error the plugin can catch), and run_async calls back
+    with the result. No QA plugin ran a process (TD-364: PluginProcessInterop at
+    0 %)."""
+    assert app.project is not None
+    open_file(app, "notes.qaapi", EDIT_SOURCE)
+    log = app.project / "qa-api-process.txt"
+
+    def lines() -> list[str]:
+        return log.read_text().splitlines() if log.exists() else []
+
+    reply = app.send("qa.api.run", "control")
+    app.wait_until(lambda: any(line.startswith("async") for line in lines()), 5.0, "run_async to call back")
+    got = lines()
+    app.expect(bool(reply.get("ok")), f"the command runs ({reply})")
+    for expected in ("run ok=true exit=0 out=hello", "stdin out=piped", "fail ok=false exit=4 err=oops",
+                     "async exit=3 out=async"):
+        app.expect(expected in got, f"{expected!r} in the plugin's record ({got})")
+    escape = next((line for line in got if line.startswith("escape")), "")
+    app.expect(escape.startswith("escape ok=false") and "escapes" in escape,
+               f"a cwd outside the project is refused with an error the plugin catches ({escape!r})")
+    app.check("plugin process api")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {"plugin-api": flow_plugin_api,
-                                             "plugin-editor-api": flow_plugin_editor_api}
-PLUGINS: dict[str, tuple[str, ...]] = {"plugin-api": ("qa-api",), "plugin-editor-api": ("qa-api",)}
+                                             "plugin-editor-api": flow_plugin_editor_api,
+                                             "plugin-process-api": flow_plugin_process_api}
+PLUGINS: dict[str, tuple[str, ...]] = {"plugin-api": ("qa-api",), "plugin-editor-api": ("qa-api",),
+                                       "plugin-process-api": ("qa-api",)}
