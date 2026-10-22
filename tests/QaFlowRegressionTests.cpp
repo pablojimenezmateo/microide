@@ -1019,6 +1019,78 @@ void TestEveryElementStaysInsideTheWindowAtEverySize() {
   Expect(violations.empty(), "every element stays inside the window; these leave it:" + all);
 }
 
+// The narrow-sidebar finding (QA monkey seed 4) generalised: the sidebar, the
+// debug pane and the panel each dragged from their smallest size to a wide one,
+// and every element the ui names for a surface stays inside that surface -- a
+// control drawn past its surface's edge is clipped in one frame and hit-tested
+// in the next.
+void TestEveryElementStaysInsideItsSurfaceAtEverySize() {
+  FlowFixture fixture("main.txt", "alpha beta gamma delta\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-breakpoints"), "the debug pane opens");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "term"), "a terminal panel opens");
+  // Which surface an element belongs to, by its name.
+  const std::vector<std::pair<std::string, std::string>> owners = {
+      {"sidebar-view:", "sidebar"}, {"row:", "sidebar"},          {"button:sidebar/", "sidebar"},
+      {"button:search/", "sidebar"}, {"field:search/", "sidebar"}, {"debug-tab:", "rightPane"},
+      {"debug-row:", "rightPane"},   {"panel-tab:", "bottomPanel"}, {"button:panel/", "bottomPanel"},
+      {"close-panel-tab", "bottomPanel"},
+  };
+  std::vector<std::string> violations;
+  const auto check = [&](const std::string& what) {
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    (void)fixture.shell.ConsumePendingRenderInvalidation();
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      const std::string name = entry["name"].AsString();
+      for (const auto& [prefix, surface] : owners) {
+        if (!name.starts_with(prefix) && !name.starts_with("button:" + prefix)) {
+          continue;
+        }
+        const util::JsonValue& owner = ui["surfaces"][surface];
+        if (owner.IsNull()) {
+          break;
+        }
+        const auto& o = owner.AsArray();
+        const auto& r = entry["rect"].AsArray();
+        const std::int64_t x = r[0].AsInt(), y = r[1].AsInt(), w = r[2].AsInt(), h = r[3].AsInt();
+        const std::int64_t ox = o[0].AsInt(), oy = o[1].AsInt(), ow = o[2].AsInt(), oh = o[3].AsInt();
+        if (w > 0 && h > 0 && !(x >= ox - 1 && y >= oy - 1 && x + w <= ox + ow + 1 && y + h <= oy + oh + 1) &&
+            violations.size() < 40) {
+          violations.push_back(what + ": " + name + " [" + std::to_string(x) + "," + std::to_string(y) + "," +
+                               std::to_string(w) + "," + std::to_string(h) + "] outside " + surface + " [" +
+                               std::to_string(ox) + "," + std::to_string(oy) + "," + std::to_string(ow) + "," +
+                               std::to_string(oh) + "]");
+        }
+        break;
+      }
+    }
+  };
+  for (const char* view : {"tree", "search", "git"}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, std::string("sidebar-show ") + view), view);
+    for (float width = 20.0f; width <= 420.0f; width += 13.0f) {
+      TestAccess::SetSidebarWidth(fixture.shell, width);
+      check(std::string(view) + " sidebar " + std::to_string(static_cast<int>(width)) + " px");
+    }
+  }
+  TestAccess::SetSidebarWidth(fixture.shell, 240.0f);
+  for (float width = 20.0f; width <= 520.0f; width += 17.0f) {
+    TestAccess::SetDebugPaneWidth(fixture.shell, width);
+    check("debug pane " + std::to_string(static_cast<int>(width)) + " px");
+  }
+  TestAccess::SetDebugPaneWidth(fixture.shell, 288.0f);
+  for (float height = 20.0f; height <= 600.0f; height += 19.0f) {
+    TestAccess::SetBottomPanelHeight(fixture.shell, height);
+    check("panel " + std::to_string(static_cast<int>(height)) + " px");
+  }
+  std::string all;
+  for (const std::string& v : violations) {
+    all += "\n  " + v;
+  }
+  Expect(violations.empty(), "every element stays inside its surface; these leave it:" + all);
+}
+
 // QA rename-open-tabs: one file open in two editor groups shares one document,
 // and an edit typed into one pane left the OTHER pane drawing the old line -- in
 // a full repaint too, so the redraw verifier (which compares partial frames with
@@ -2800,6 +2872,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
   AddTest(tests, "QaFlowRegression/SidebarViewTabsStayInsideANarrowSidebar", TestSidebarViewTabsStayInsideANarrowSidebar);
+  AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",
+          TestEveryElementStaysInsideItsSurfaceAtEverySize);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);

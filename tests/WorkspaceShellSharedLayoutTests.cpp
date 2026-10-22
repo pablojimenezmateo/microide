@@ -88,8 +88,10 @@ void TestWorkspaceSharedLayoutHelpers() {
   Expect(layout.editor_surface.y == layout.editor_area.y + 27.0f,
          "editor surface should sit below the breadcrumb and divider");
 
-  Expect(ClampSidebarWidth(80.0f, 800.0f) == 80.0f,
+  Expect(ClampSidebarWidth(140.0f, 800.0f) == 140.0f,
          "sidebar width should allow any width above the viable minimum");
+  Expect(ClampSidebarWidth(80.0f, 800.0f) == 120.0f,
+         "sidebar width stops at the width its header controls need");
   Expect(ClampSidebarWidth(700.0f, 800.0f) == 519.0f,
          "sidebar width should leave room for the minimum editor width");
   Expect(ClampBottomPanelHeight(50.0f, 240.0f) == 52.0f,

@@ -347,9 +347,19 @@ std::optional<SDL_FRect> UnionOptionalRects(std::optional<SDL_FRect> lhs,
   return MakeRect(x, y, right - x, bottom - y);
 }
 
+namespace {
+// The narrowest the sidebar and the debug pane get, by drag or by a small window:
+// wide enough for their header controls -- the view tabs beside the ⋯ button,
+// Collapse and Refresh, the search view's Replace All, the debug pane's four
+// view tabs. The old floor (one row's height plus the insets, 41 px) drew those
+// past the surface's edge, where a frame clipped them and the next hit-tested
+// them (QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize). VS
+// Code's sidebar stops at 170.
+constexpr float kSideSurfaceMinWidth = 120.0f;
+}  // namespace
+
 float ClampSidebarWidth(float width, float window_width) {
-  const float viable_min_width =
-      kWorkspaceSidebarHorizontalInset * 2.0f + kWorkspaceSidebarRowHeight + 1.0f;
+  const float viable_min_width = kSideSurfaceMinWidth;
   const float max_width = std::min(
       kMaxSidebarWidth,
       std::max(viable_min_width, window_width - kMinEditorAreaWidth - kDivider));
@@ -357,8 +367,7 @@ float ClampSidebarWidth(float width, float window_width) {
 }
 
 float ClampRightPaneWidth(float width, float window_width, float sidebar_width) {
-  const float viable_min_width =
-      kWorkspaceSidebarHorizontalInset * 2.0f + kWorkspaceSidebarRowHeight + 1.0f;
+  const float viable_min_width = kSideSurfaceMinWidth;
   const float sidebar_reserve = sidebar_width > 0.0f ? sidebar_width + kDivider : 0.0f;
   const float available = window_width - sidebar_reserve - kMinEditorAreaWidth - kDivider;
   const float max_width =
