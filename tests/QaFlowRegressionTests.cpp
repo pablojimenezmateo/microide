@@ -780,6 +780,28 @@ void TestAHeldTabDragPaintsItsLastSnap() {
   }
 }
 
+// A dirty buffer whose file was deleted outside the app: Ctrl+S refused it as
+// "changed on disk -- Compare, Reload or Overwrite in the banner", for a file
+// with nothing left to compare, reload or overwrite, and nothing reached the disk.
+// VS Code writes the buffer back. A save is refused only when it would overwrite
+// content the buffer has not seen.
+void TestSavingADeletedFileWritesItBack() {
+  FlowFixture fixture("gone.txt", "gone\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_NONE)});
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "type _dirty"), "type should edit the buffer");
+  std::filesystem::remove(fixture.file);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "save"), "saving a deleted file's buffer should succeed");
+  Expect(std::filesystem::exists(fixture.file) && ReadFile(fixture.file).rfind("gone_dirty", 0) == 0,
+         "the save should write the buffer back, got: " +
+             (std::filesystem::exists(fixture.file) ? ReadFile(fixture.file) : std::string("(no file)")));
+  // A file changed underneath is still refused: that save would overwrite text the
+  // buffer never saw.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "type !"), "type should edit the buffer");
+  WriteFile(fixture.file, "someone else's edit\n");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "save"), "a save over an external change is refused");
+  Expect(ReadFile(fixture.file) == "someone else's edit\n", "the external edit stays on disk");
+}
+
 // QA plugins-reload: Escape on the completion list moved keyboard focus to the
 // file tree, so the next key (a Backspace) edited nothing -- every overlay that
 // closed "without a target" (the palette, completion, code actions, the commit
@@ -3204,6 +3226,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossACloseButtonLeavesItIdle",
           TestATabDraggedAcrossACloseButtonLeavesItIdle);
   AddTest(tests, "QaFlowRegression/AHeldTabDragPaintsItsLastSnap", TestAHeldTabDragPaintsItsLastSnap);
+  AddTest(tests, "QaFlowRegression/SavingADeletedFileWritesItBack", TestSavingADeletedFileWritesItBack);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);

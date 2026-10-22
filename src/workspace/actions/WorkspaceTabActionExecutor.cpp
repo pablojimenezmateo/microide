@@ -333,7 +333,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         // choice is, as VS Code's "the content of the file is newer" does.
         if (const editor::TextViewport* viewport = context_.ActiveEditableViewport();
             viewport != nullptr && !viewport->path().empty() &&
-            viewport->DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+            viewport->SaveWouldOverwriteUnseenDisk()) {
           return reject("Not saved: " + viewport->path().filename().string() +
                         " changed on disk since it was opened. Compare, Reload or Overwrite in "
                         "the banner above it");

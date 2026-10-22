@@ -408,6 +408,15 @@ class TextViewport {
     StatError,  // the stat itself failed; treat conservatively as a conflict
   };
   DiskConflict DetectDiskConflict() const;
+  // True when writing this buffer would overwrite content on disk it has not
+  // seen: the file changed, or its stat failed. A VANISHED file does not count --
+  // there is nothing left to overwrite, and the save is what puts the user's text
+  // back (VS Code saves a deleted file's dirty editor the same way). Refusing it
+  // pointed at a Compare / Reload banner with nothing to compare or reload.
+  bool SaveWouldOverwriteUnseenDisk() const {
+    const DiskConflict conflict = DetectDiskConflict();
+    return conflict == DiskConflict::Changed || conflict == DiskConflict::StatError;
+  }
   // True when `current` — a fresh stat of this viewport's path — describes the same
   // CONTENT as the signature this viewport recorded. A stat mismatch is confirmed
   // against the recorded content hash rather than trusted, so a touch or a

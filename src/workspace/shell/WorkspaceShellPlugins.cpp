@@ -1761,7 +1761,7 @@ void WorkspaceShell::CommitPendingRenameSave() {
       if (!viewport.dirty()) {
         continue;
       }
-      if (viewport.DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+      if (viewport.SaveWouldOverwriteUnseenDisk()) {
         any_conflict = true;
         continue;
       }

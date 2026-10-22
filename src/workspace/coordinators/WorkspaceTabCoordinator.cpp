@@ -73,8 +73,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     if (!compare_tab.right_editable || !compare_tab.right_viewport.dirty()) {
       return true;
     }
-    if (compare_tab.right_viewport.DetectDiskConflict() !=
-        editor::TextViewport::DiskConflict::None) {
+    if (compare_tab.right_viewport.SaveWouldOverwriteUnseenDisk()) {
       if (operations_.request_external_change_banner) {
         operations_.request_external_change_banner(
             compare_tab.right_viewport.path().lexically_normal());
@@ -119,8 +118,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     if (!merge_tab.result_viewport.dirty()) {
       return true;
     }
-    if (merge_tab.result_viewport.DetectDiskConflict() !=
-        editor::TextViewport::DiskConflict::None) {
+    if (merge_tab.result_viewport.SaveWouldOverwriteUnseenDisk()) {
       if (operations_.request_external_change_banner) {
         operations_.request_external_change_banner(
             merge_tab.result_viewport.path().lexically_normal());
@@ -195,7 +193,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   // it. Surface the external-change banner instead so the user can choose to
   // Reload, Overwrite, or Keep. Checked before formatters run so we don't
   // mutate the buffer for a save we're about to abort.
-  if (candidate->DetectDiskConflict() != editor::TextViewport::DiskConflict::None) {
+  if (candidate->SaveWouldOverwriteUnseenDisk()) {
     if (operations_.request_external_change_banner) {
       operations_.request_external_change_banner(normalized_path);
     }
@@ -869,7 +867,7 @@ void TabCoordinator::MaybeNotifyLspClose(const TabEntry& tab) {
 
 bool TabCoordinator::RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
                                            const std::filesystem::path& normalized_path) {
-  if (viewport.DetectDiskConflict() == editor::TextViewport::DiskConflict::None) {
+  if (!viewport.SaveWouldOverwriteUnseenDisk()) {
     return true;
   }
   if (operations_.request_external_change_banner) {
