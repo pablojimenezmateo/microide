@@ -495,11 +495,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
+      // The session drops the request for an adapter that cannot run backwards;
+      // say so instead of answering "ok" for a step that never happened (the
+      // toolbar and menus already hide it for such an adapter).
+      if (!context_.DebugSupportsReverse()) {
+        return reject("Reverse Continue needs a debug session whose adapter can run backwards "
+                      "(supportsStepBack); this one cannot");
+      }
       context_.DebugReverseContinue();
       return DispatchResult::Handled;
     case ActionId::DebugStepBack:
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      // The session drops the request for an adapter that cannot run backwards;
+      // say so instead of answering "ok" for a step that never happened (the
+      // toolbar and menus already hide it for such an adapter).
+      if (!context_.DebugSupportsReverse()) {
+        return reject("Step Back needs a debug session whose adapter can run backwards "
+                      "(supportsStepBack); this one cannot");
       }
       context_.DebugStepBack();
       return DispatchResult::Handled;

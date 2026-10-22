@@ -835,6 +835,19 @@ void TestDetectedIndentationSurvivesTabSwitchesAndSettings() {
   Expect(active().tab_size() == 3, "the buffer keeps the size it was given: " + describe());
 }
 
+// QA debug-commands: `debug-step-back` and `debug-reverse-continue` answered ok
+// on a gdb session, which cannot run backwards -- the session dropped the request
+// and nothing moved. They are refused, with the reason, unless the adapter
+// advertises supportsStepBack (the toolbar already hides them then).
+void TestReverseExecutionIsRefusedWithoutAReverseAdapter() {
+  FlowFixture fixture("main.txt", "main\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"), "debug on");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "debug-step-back"),
+         "debug-step-back should be refused without an adapter that steps back");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "debug-reverse-continue"),
+         "debug-reverse-continue should be refused without an adapter that runs backwards");
+}
+
 // QA plugins-reload: Escape on the completion list moved keyboard focus to the
 // file tree, so the next key (a Backspace) edited nothing -- every overlay that
 // closed "without a target" (the palette, completion, code actions, the commit
@@ -3260,6 +3273,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATabDraggedAcrossACloseButtonLeavesItIdle);
   AddTest(tests, "QaFlowRegression/AHeldTabDragPaintsItsLastSnap", TestAHeldTabDragPaintsItsLastSnap);
   AddTest(tests, "QaFlowRegression/SavingADeletedFileWritesItBack", TestSavingADeletedFileWritesItBack);
+  AddTest(tests, "QaFlowRegression/ReverseExecutionIsRefusedWithoutAReverseAdapter",
+          TestReverseExecutionIsRefusedWithoutAReverseAdapter);
   AddTest(tests, "QaFlowRegression/DetectedIndentationSurvivesTabSwitchesAndSettings",
           TestDetectedIndentationSurvivesTabSwitchesAndSettings);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);

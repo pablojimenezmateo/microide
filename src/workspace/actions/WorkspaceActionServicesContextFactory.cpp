@@ -126,6 +126,10 @@ void WorkspaceActionContext::DebugReverseContinue() {
   }
 }
 
+bool WorkspaceActionContext::DebugSupportsReverse() const {
+  return operations_.debug_supports_reverse && operations_.debug_supports_reverse();
+}
+
 void WorkspaceActionContext::DebugStepBack() {
   if (operations_.debug_step_back) {
     operations_.debug_step_back();
@@ -1158,6 +1162,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .debug_restart = [this]() { DebugRestart(); },
           .debug_reverse_continue = [this]() { DebugReverseContinue(); },
           .debug_step_back = [this]() { DebugStepBack(); },
+          .debug_supports_reverse = [this]() { return DebugSupportsReverse(); },
           .debug_session_count = [this]() { return CurrentDapManager().SessionCount(); },
           .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
