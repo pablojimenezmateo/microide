@@ -484,6 +484,10 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
     return context_ == nullptr ? util::JsonValue(util::JsonObject{})
                                : ControlUiQuery::Build(*context_, operations_.ui);
   }
+  if (verb == "action-counts") {
+    return operations_.ui.action_counts ? operations_.ui.action_counts()
+                                        : util::JsonValue(util::JsonObject{});
+  }
   *ok = false;
   *error = "unknown query \"" + verb + "\"";
   return util::JsonValue(nullptr);

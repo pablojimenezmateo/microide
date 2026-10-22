@@ -127,6 +127,10 @@ class ControlUiQuery {
     // the open prompt's text, and the editor popups (hover, signature help).
     // Merged into the answer's `overlay`, and added as `prompt` and `popups`.
     std::function<void(const WorkspaceLayout&, util::JsonObject&)> details;
+    // The `action-counts` query: how many times each command ran since startup
+    // (`{commands: {<command>: n}, plugins: {<plugin command>: n}}`), the
+    // commands named as `actions.last` names them.
+    std::function<util::JsonValue()> action_counts;
   };
 
   static util::JsonValue Build(const WorkspaceContext& context, const Operations& operations);

@@ -92,9 +92,10 @@ def select_scenarios(patterns: list[str]) -> list[str]:
 
 
 def run_scenario(name: str, args: argparse.Namespace,
-                 out: Path | None = None) -> tuple[str, list[str], int, set[str]]:
+                 out: Path | None = None) -> tuple[str, list[str], int, set[str], dict]:
     """One scenario on its own Xvfb, fixture and XDG tree. Returns its report
-    lines, finding count and finding kinds (threads print nothing themselves)."""
+    lines, finding count, finding kinds (threads print nothing themselves) and
+    its command-coverage record (what the catalogue holds, what the scenario ran)."""
     out = out or args.out
     project = fixture("taskflow", out / "fixtures")
     env = s.SCENARIO_ENV.get(name, {})
@@ -113,8 +114,62 @@ def run_scenario(name: str, args: argparse.Namespace,
             app.expect(False, f"{name}: the scenario raised {type(error).__name__}: "
                               f"{traceback.format_exc(limit=4)}")
         app.check(f"end of {name}")
+        coverage = command_coverage(app)
         lines = report_lines(f"{name} ({time.monotonic() - started:.0f}s)", app)
-        return name, lines, len(app.findings), {finding.kind for finding in app.findings}
+        return name, lines, len(app.findings), {finding.kind for finding in app.findings}, coverage
+
+
+def command_coverage(app: q.App) -> dict:
+    """The scenario's command-coverage record: the registry's command names
+    (`commands`, built-ins only) and the counts of what ran (`action-counts`,
+    which counts every dispatch since startup, whatever drove it). A dead app
+    answers nothing: the record is then empty rather than wrong."""
+    if not app.alive():
+        return {}
+    try:
+        catalogue = [c["command"] for c in app.query("commands") if c.get("command") and not c.get("plugin")]
+        counts = app.query("action-counts")
+    except Exception:  # noqa: BLE001 - a flaky answer here is not a finding of the scenario
+        return {}
+    return {"catalogue": catalogue, "commands": dict(counts.get("commands", {})),
+            "plugins": dict(counts.get("plugins", {}))}
+
+
+def write_command_coverage(out: Path, names: list[str], records: dict[str, dict]) -> str:
+    """Unions every scenario's record into `<out>/command-coverage.txt`: the
+    catalogue's commands no scenario dispatched (the measured gap), then each
+    command with the scenarios that drove it. Returns the one-line summary."""
+    catalogue: list[str] = []
+    drove: dict[str, set[str]] = {}
+    plugin_drove: dict[str, set[str]] = {}
+    for name in names:
+        record = records.get(name) or {}
+        for command in record.get("catalogue", []):
+            if command not in catalogue:
+                catalogue.append(command)
+        for command in record.get("commands", {}):
+            drove.setdefault(command, set()).add(name)
+        for command in record.get("plugins", {}):
+            plugin_drove.setdefault(command, set()).add(name)
+    if not catalogue:
+        return "coverage: no command catalogue was read (every scenario died before its end?)"
+    missing = [command for command in catalogue if command not in drove]
+    lines = [f"# command coverage of this run ({len(names)} scenario(s)): "
+             f"{len(catalogue) - len(missing)} of {len(catalogue)} registered commands dispatched",
+             "#", "# Commands no scenario dispatched (a key, menu row, palette entry, click or",
+             "# control command naming the command counts; a dry-run sweep does not):", ""]
+    lines += missing or ["(none)"]
+    lines += ["", "# Each command and the scenarios that drove it:", ""]
+    for command in catalogue:
+        if command in drove:
+            lines.append(f"{command}: {', '.join(sorted(drove[command]))}")
+    if plugin_drove:
+        lines += ["", "# Plugin commands driven:", ""]
+        lines += [f"{command}: {', '.join(sorted(scenarios))}" for command, scenarios in sorted(plugin_drove.items())]
+    (out / "command-coverage.txt").write_text("\n".join(lines) + "\n")
+    partial = "" if len(names) >= len(s.SCENARIOS) else " (a partial run: the gap list counts only the scenarios chosen)"
+    return (f"coverage: {len(catalogue) - len(missing)} of {len(catalogue)} registered commands dispatched; "
+            f"the {len(missing)} undriven are listed in {out / 'command-coverage.txt'}{partial}")
 
 
 def report_lines(name: str, app: q.App) -> list[str]:
@@ -143,11 +198,13 @@ def cmd_suite(args: argparse.Namespace) -> int:
     print(f"suite: {len(names)} scenario(s), {jobs} at a time -> {args.out}", flush=True)
     failures = 0
     retryable: list[str] = []
+    records: dict[str, dict] = {}
     lock = threading.Lock()
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(run_scenario, name, args) for name in names]
         for future in concurrent.futures.as_completed(futures):
-            name, lines, found, kinds = future.result()
+            name, lines, found, kinds, coverage = future.result()
+            records[name] = coverage
             with lock:
                 print("\n".join(lines), flush=True)
             failures += 1 if found else 0
@@ -159,7 +216,8 @@ def cmd_suite(args: argparse.Namespace) -> int:
     for attempt in range(args.retries):
         still: list[str] = []
         for name in retryable:
-            _, lines, found, kinds = run_scenario(name, args, args.out / f"retry-{attempt + 1}")
+            _, lines, found, kinds, coverage = run_scenario(name, args, args.out / f"retry-{attempt + 1}")
+            records[name] = coverage or records.get(name, {})
             if found:
                 print("\n".join(line.replace("  FAIL  ", "  FAIL  (retry) ", 1) for line in lines), flush=True)
                 if kinds == {"expect"}:
@@ -171,6 +229,7 @@ def cmd_suite(args: argparse.Namespace) -> int:
                 failures -= 1
         retryable = still
     note = f" ({len(flaky)} flaky: {', '.join(flaky)})" if flaky else ""
+    print(write_command_coverage(args.out, names, records))
     print(f"suite: {len(names) - failures}/{len(names)} clean{note}")
     return 1 if failures else 0
 
@@ -287,7 +346,8 @@ def main() -> int:
     remote.add_argument("names", nargs="*")
     args = parser.parse_args()
 
-    if args.mode != "remote":
+    listing = args.mode == "suite" and args.list
+    if args.mode != "remote" and not listing:
         require_tools()
         if not args.binary.exists():
             raise SystemExit(f"no microide binary at {args.binary} (build it or set MICROIDE_BIN)")
@@ -295,7 +355,7 @@ def main() -> int:
     handler = {"suite": cmd_suite, "monkey": cmd_monkey, "replay": cmd_replay,
                "invariants": cmd_invariants, "remote": cmd_remote}[args.mode]
     code = handler(args)
-    if args.mode != "remote":
+    if args.mode != "remote" and not listing:
         shutil.rmtree(args.out / "fixtures", ignore_errors=True)
         print(f"output: {args.out}")
     return code

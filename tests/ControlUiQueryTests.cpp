@@ -353,6 +353,27 @@ void TestUiQueryReportsTheLastAction() {
              " from " + actions["source"].AsString());
 }
 
+// `action-counts` counts each command every time it runs, whatever drove it: the
+// QA suite unions these per scenario into its command-coverage ledger, so a count
+// that missed a source (a key, the control channel) would list a driven command
+// as a gap.
+void TestActionCountsCountEveryRun() {
+  UiFixture fixture;
+  const auto count = [&](const char* command) {
+    const util::JsonValue counts = TestAccess::ControlQuery(fixture.shell, "action-counts");
+    return counts["commands"].HasKey(command) ? counts["commands"][command].AsInt() : 0;
+  };
+  const std::int64_t before = count("sidebar-toggle");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_B, SDL_KMOD_CTRL)});
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-toggle"), "sidebar-toggle should run");
+  Expect(count("sidebar-toggle") == before + 2,
+         "a key and a control command should each count once: " + std::to_string(count("sidebar-toggle") - before));
+  Expect(count("about") == 0, "a command that never ran is not listed");
+  const util::JsonValue counts = TestAccess::ControlQuery(fixture.shell, "action-counts");
+  Expect(counts["dispatched"].AsInt() >= 2 && counts["plugins"].IsObject(),
+         "action-counts should carry the dispatch total and the plugin commands");
+}
+
 // `key` and `pointer` are input, not actions: the receipt names what the key or
 // click ran, once, and nothing when it ran nothing. Counted as actions, the
 // Wayland run of the `keys` sweep read "the terminal owns this key, but key ran"
@@ -616,6 +637,7 @@ void RegisterControlUiQueryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlUiQuery/NamesASettingsRowTallerThanThePane",
           TestUiQueryNamesASettingsRowTallerThanThePane);
   AddTest(tests, "ControlUiQuery/ReportsTheLastAction", TestUiQueryReportsTheLastAction);
+  AddTest(tests, "ControlUiQuery/ActionCountsCountEveryRun", TestActionCountsCountEveryRun);
   AddTest(tests, "ControlUiQuery/PointerDropOpensTheFile", TestPointerDropOpensTheFile);
   AddTest(tests, "ControlUiQuery/PointerRunsATreeContextMenuRow", TestPointerRunsATreeContextMenuRow);
   AddTest(tests, "ControlUiQuery/InjectedInputLeavesTheReceiptToWhatItRan",

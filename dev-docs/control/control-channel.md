@@ -163,7 +163,7 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `settings`, `ui`, `buffer`, `output`.
+`keybindings`, `settings`, `ui`, `buffer`, `output`, `action-counts`.
 
 **Debug state.** `debug-state` reports the active session's lifecycle as
 `session` (`none`, `initializing`, `configuring`, `running`, `stopped`,
@@ -271,6 +271,14 @@ whether it was rejected. A `menu-item:` row also carries the `command` it runs.
 With `MICROIDE_QA_ACTION_DRY_RUN=1` at startup every key-, menu- and
 pointer-driven action records its receipt and runs nothing (control commands still
 run), which is how `tools/qa`'s `keys` and `context-menus` sweeps press everything.
+
+**What ran, counted (`action-counts`).** `{dispatched, commands: {<command>: n},
+plugins: {<plugin command>: n}}`: every command that ran since startup with how
+many times, named as `actions.last` names it (the command name, else the palette
+label), and the plugin commands by theirs. `tools/qa`'s suite reads it at the end
+of every scenario and unions the names into a command-coverage ledger
+(`<out>/command-coverage.txt`): a registered command no scenario drove is listed
+there, so the catalogue's gaps are measured, not remembered.
 
 A name shared by two elements gets `#2`, `#3`, ... on the later ones in visual
 order, so a name resolves to one element. Every rect comes from the geometry the

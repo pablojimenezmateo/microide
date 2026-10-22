@@ -1207,6 +1207,32 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               root["output"] = util::JsonValue(std::move(output));
             }
           },
+      // `action-counts`: every command that ran since startup with its count, by
+      // the name `actions.last` uses (the command name, else the palette label),
+      // and the plugin commands by theirs. tools/qa's suite unions these into its
+      // command-coverage ledger.
+      .action_counts =
+          [this]() {
+            const WorkspaceActionContext::ActionReceipt& receipt =
+                MakeActionContext().LastActionReceipt();
+            util::JsonObject commands;
+            for (const ActionSpec& spec : WorkspaceCommandSpecs()) {
+              const auto index = static_cast<std::size_t>(spec.id);
+              if (index < receipt.counts.size() && receipt.counts[index] > 0) {
+                commands[std::string(spec.command_name.empty() ? spec.label : spec.command_name)] =
+                    util::JsonValue(static_cast<std::int64_t>(receipt.counts[index]));
+              }
+            }
+            util::JsonObject plugins;
+            for (const auto& [command, count] : receipt.plugin_counts) {
+              plugins[command] = util::JsonValue(static_cast<std::int64_t>(count));
+            }
+            util::JsonObject root;
+            root["dispatched"] = util::JsonValue(static_cast<std::int64_t>(receipt.dispatched));
+            root["commands"] = util::JsonValue(std::move(commands));
+            root["plugins"] = util::JsonValue(std::move(plugins));
+            return util::JsonValue(std::move(root));
+          },
   };
 }
 

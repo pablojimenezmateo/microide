@@ -153,6 +153,19 @@ rows record and not run; `MICROIDE_QA_ACTION_DRY_RUN=1` makes every key-, menu-
 and pointer-driven action record and not run (control commands still run, so a
 sweep drives with them). `keys` and `context-menus` run with the latter.
 
+## The command-coverage ledger
+
+At the end of every scenario the suite reads the `action-counts` query (each
+command that ran since startup, by name, with its count, whatever drove it: a
+key, a menu row, a click, the palette or a control command) beside the
+`commands` catalogue, and writes their union to `<out>/command-coverage.txt`:
+first the registered commands NO scenario dispatched, then each command with the
+scenarios that drove it. The summary line says how many of the catalogue ran.
+A dry-run sweep (`keys`, `context-menus`, `menu-clicks`) records a receipt and
+runs nothing, so it does not count: the ledger measures what was executed. Read
+the gap list before writing a new flow, and after it to see the gap close; a
+partial run (`suite edit-*`) counts only the scenarios it ran.
+
 ## Driver notes (things the window taught the harness)
 
 - Two presses within SDL's double-click time and radius are one double click;
@@ -164,6 +177,11 @@ sweep drives with them). `keys` and `context-menus` run with the latter.
   Xvfb has no input method, so `type` inserts it through the control channel.
 - A hover card is a surface: a press on it is the card's. Move off a hover
   before clicking text it may cover.
+- The F-keys: xkeyboard-config gives F1-F12 a Ctrl+Alt level that switches
+  virtual terminals, and xdotool then sent every F-key wrapped in Alt. Each Xvfb
+  starts with `-xkbdir` on a cached copy of the XKB tree whose F-keys are plain
+  (`microide_qa.plain_fkey_xkb_dir`); a key the keys sweep says "reached no
+  action" in every context is that class again.
 - `App.restart()` quits the way a person does and starts again on the same
   display, XDG tree and project (`session-restore`).
 

@@ -34,6 +34,9 @@ bool ActionCoordinator::Execute(ActionId id,
   if (qa_dry_run && source != ActionSource::Command) {
     return true;
   }
+  if (!input) {
+    context_.NoteActionRan(id);
+  }
   // A menu row, palette row or shortcut that names a command it gives no
   // arguments to, when the command cannot run without them: ask for them (VS
   // Code's input box) instead of failing with its usage line. A context menu

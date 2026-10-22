@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -383,6 +384,13 @@ class WorkspaceActionContext {
     std::string plugin_command;
     ActionSource source = ActionSource::Command;
     bool rejected = false;
+    // How many times each action ran since startup, indexed by ActionId (grown
+    // on first use; NoteActionRan), and the same per plugin command. The `action-counts`
+    // control query reports them: tools/qa unions every scenario's counts into
+    // the suite's command-coverage ledger, so a command no flow ever drove is a
+    // listed gap rather than a guess.
+    std::vector<std::uint32_t> counts;
+    std::map<std::string, std::uint32_t, std::less<>> plugin_counts;
   };
   void NoteActionDispatched(ActionId id, ActionSource source) {
     ++receipt_.dispatched;
@@ -391,12 +399,27 @@ class WorkspaceActionContext {
     receipt_.source = source;
     receipt_.rejected = false;
   }
+  // The action went on to run (past the QA dry run, which records a receipt and
+  // runs nothing): `counts` measures what executed, not what was pressed.
+  void NoteActionRan(ActionId id) {
+    const auto index = static_cast<std::size_t>(id);
+    if (receipt_.counts.size() <= index) {
+      receipt_.counts.resize(index + 1, 0);
+    }
+    ++receipt_.counts[index];
+  }
   void NotePluginCommandDispatched(std::string_view command, ActionSource source) {
     ++receipt_.dispatched;
     receipt_.last.reset();
     receipt_.plugin_command.assign(command);
     receipt_.source = source;
     receipt_.rejected = false;
+    const auto found = receipt_.plugin_counts.find(command);
+    if (found == receipt_.plugin_counts.end()) {
+      receipt_.plugin_counts.emplace(std::string(command), 1);
+    } else {
+      ++found->second;
+    }
   }
   void NoteActionRejected() { receipt_.rejected = true; }
   const ActionReceipt& LastActionReceipt() const { return receipt_; }
