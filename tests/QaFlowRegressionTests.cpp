@@ -1186,6 +1186,61 @@ void TestMovingOntoATabsCloseButtonLightsIt() {
                       "onto the close button from outside the tab");
 }
 
+// The QA monkey (editor profile, seed 3): four editor groups side by side, the
+// last two narrower than a tab. A group's tabs were laid out with at least 120 px
+// of room whatever its strip had, so the third group's tab ran into the fourth's
+// strip and the fourth's past the window -- where the ui named it and a click
+// meant for the neighbour landed on it. A tab stays inside its own strip.
+void TestATabStaysInsideItsNarrowStrip() {
+  FlowFixture fixture("main.txt", "main\n");
+  for (int i = 0; i < 3; ++i) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  }
+  TestAccess::SetWindowSize(fixture.shell, 640, 480);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  SoftwareCanvas canvas{640, 480};
+  fixture.shell.Render(canvas.renderer(), 640, 480);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  std::vector<SDL_FRect> panes;
+  for (const util::JsonValue& editor : ui["editors"].AsArray()) {
+    const auto& r = editor["rect"].AsArray();
+    panes.push_back(SDL_FRect{static_cast<float>(r[0].AsInt()), 0.0f, static_cast<float>(r[2].AsInt()), 0.0f});
+  }
+  Expect(panes.size() == 4, "four panes are drawn");
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string name = entry["name"].AsString();
+    if (!name.starts_with("tab:")) {
+      continue;
+    }
+    const std::size_t group = static_cast<std::size_t>(name[4] - '0');
+    const auto& r = entry["rect"].AsArray();
+    const float x = static_cast<float>(r[0].AsInt());
+    const float right = x + static_cast<float>(r[2].AsInt());
+    if (group < panes.size()) {
+      Expect(x >= panes[group].x - 1.0f && right <= panes[group].x + panes[group].w + 1.0f,
+             name + " [" + std::to_string(static_cast<int>(x)) + ".." + std::to_string(static_cast<int>(right)) +
+                 "] stays inside its pane [" + std::to_string(static_cast<int>(panes[group].x)) + ".." +
+                 std::to_string(static_cast<int>(panes[group].x + panes[group].w)) + "]");
+    }
+  }
+}
+
+// The QA monkey (editor profile, seed 3): `tabmove` repainted the tab strip but
+// not the pane under it, though the pane can change with it.
+void TestMovingATabKeepsEveryFrameFresh() {
+  FlowFixture fixture("a.txt", "alpha\n");
+  for (const char* name : {"b.txt", "c.txt", "d.txt", "e.txt"}) {
+    WriteFile(fixture.root / name, std::string(name) + " body\n");
+    TestAccess::OpenFile(fixture.shell, fixture.root / name);
+  }
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  for (const char* command : {"tabmove 3", "tabmove 0", "tabmove 4", "tabswitch 1", "tabmove 2"}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, command), std::string(command) + " runs");
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), command);
+  }
+}
+
 // wb-layouts: the Edit menu's 31 rows are taller than a 700-px window (the Debug
 // menu's 21 than a 480-px one), and the rows past the bottom edge had rects no
 // pointer could reach. A popup that fits neither below nor above its anchor now
@@ -2526,6 +2581,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestTogglingTheMergeBasePaneKeepsTheToolbarAndEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AConflictOutOfSightHasNoButtons", TestAConflictOutOfSightHasNoButtons);
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);
+  AddTest(tests, "QaFlowRegression/ATabStaysInsideItsNarrowStrip", TestATabStaysInsideItsNarrowStrip);
+  AddTest(tests, "QaFlowRegression/MovingATabKeepsEveryFrameFresh", TestMovingATabKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther",
           TestAnEditInOneHalfOfASplitShowsInTheOther);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",

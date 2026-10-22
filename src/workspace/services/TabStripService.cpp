@@ -361,6 +361,25 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   if (all_tabs_visible) {
     build_tabs(tab_strip.x, 0.0f);
   }
+  // The layout gives a tab at least 120 px of room, more than a narrow group's
+  // strip has: its tab ran into the neighbour's strip and off the window, where
+  // the ui named it and a click meant for the neighbour landed on it (QA monkey,
+  // editor profile). The paint was clipped to the strip; the geometry now is too
+  // -- a tab past the strip's end is cut to it, its close button moving with its
+  // edge, and one starting past it is dropped.
+  const float strip_end = tab_strip.x + tab_strip.w;
+  std::erase_if(tabs, [strip_end](const VisibleStripTab& tab) { return tab.rect.x >= strip_end; });
+  for (VisibleStripTab& tab : tabs) {
+    const float overhang = tab.rect.x + tab.rect.w - strip_end;
+    if (overhang <= 0.0f) {
+      continue;
+    }
+    tab.rect.w -= overhang;
+    tab.close_rect.x -= overhang;
+    if (tab.close_rect.x < tab.rect.x) {
+      tab.close_rect = SDL_FRect{};
+    }
+  }
 
   visible_cache.geometry_version = geometry.version;
   visible_cache.strip = tab_strip;
