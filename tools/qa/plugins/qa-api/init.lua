@@ -50,6 +50,42 @@ return ide.plugin({
       ctx.diagnostics.clear(nil)
       return "cleared"
     end)
+    -- Host-owned buffer edits and the ghost-text seam, for `plugin-editor-api`:
+    -- each returns what the host answered, so the flow reads the refusal too.
+    local function answer(ok, err) return ok and "ok" or ("refused:" .. tostring(err)) end
+    ctx.commands.add("qa.api.edit", function(cmd_ctx, args)
+      return answer(ctx.editor.apply_edits({
+        edits = {
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 3, text = "EDIT" },
+          { start_line = 2, start_col = 1, end_line = 2, end_col = 1, text = "-- " },
+        },
+        cursor = { line = 2, col = 4 },
+      }))
+    end)
+    ctx.commands.add("qa.api.edit.closed", function(cmd_ctx, args)
+      return answer(ctx.editor.apply_edits({
+        path = "never-opened.qaapi",
+        edits = { { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = "x" } },
+      }))
+    end)
+    ctx.commands.add("qa.api.cursor", function(cmd_ctx, args)
+      return answer(ctx.editor.set_cursor({ line = 3, col = 2 }))
+    end)
+    ctx.commands.add("qa.api.select", function(cmd_ctx, args)
+      return answer(ctx.editor.set_selection({ start_line = 1, start_col = 1, end_line = 1, end_col = 5 }))
+    end)
+    ctx.commands.add("qa.api.ghost", function(cmd_ctx, args)
+      return answer(ctx.editor.set_ghost_text({ text = "GHOST" }))
+    end)
+    ctx.commands.add("qa.api.ghost.clear", function(cmd_ctx, args)
+      ctx.editor.clear_ghost_text()
+      return "cleared"
+    end)
+    ctx.commands.add("qa.api.notify", function(cmd_ctx, args)
+      ctx.log("qa-api: notify asked")
+      ctx.notify("warning", "qa-api says hello")
+      return "notified"
+    end)
     ctx.menus.add({ id = "ping-menu", menu = "Help", action = "qa.api.ping", label = "QA API Ping" })
     ctx.keybindings.add({ id = "ping-key", action = "qa.api.ping", key = "Ctrl+Alt+U", context = "editor" })
 

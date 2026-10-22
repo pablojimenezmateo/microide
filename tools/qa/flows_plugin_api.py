@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, open_file, step
+from flows_common import dismiss, messages, open_file, step
 from flows_lsp_debug import _hover
 
 SOURCE = "fn greet(name) {\n  let inner = 1\n  greet\n}\n"
@@ -199,5 +199,77 @@ def flow_plugin_api(app: q.App) -> None:
     _bumped(app, "close", before, "on_buffer_close when the tab closes")
 
 
-FLOWS: dict[str, Callable[[q.App], None]] = {"plugin-api": flow_plugin_api}
-PLUGINS: dict[str, tuple[str, ...]] = {"plugin-api": ("qa-api",)}
+EDIT_SOURCE = "abc one\nline two\nline three\n"
+
+
+def flow_plugin_editor_api(app: q.App) -> None:
+    """`ctx.editor` from a plugin command: apply_edits makes two edits and moves
+    the caret as ONE undo step, an unopened path is refused and changes nothing,
+    set_cursor / set_selection move the caret and select; set_ghost_text paints a
+    suggestion that Tab accepts (one undo step) and Escape dismisses; notify shows
+    a notification. No QA plugin called any of them (TD-364: PluginRuntimeApiInterop
+    at 12 %)."""
+    open_file(app, "notes.qaapi", EDIT_SOURCE)
+    app.send_line("set-setting plugins.ghost_text true")
+    app.click_text(3, 1)
+    step(app, "focus the buffer", 0.2)
+
+    def run(command: str) -> dict:
+        reply = app.send(command, "control")
+        step(app, command, 0.2)
+        return reply
+
+    run("qa.api.edit")
+    edited = "EDITc one\n-- line two\nline three\n"
+    app.wait_until(lambda: app.text() == edited, 3.0, "apply_edits to land")
+    app.expect(app.text() == edited, f"apply_edits makes both edits ({app.text()!r})")
+    app.expect(app.cursors()[:1] == [(2, 4)], f"and puts the caret where it asked ({app.cursors()})")
+    app.key("ctrl+z")
+    step(app, "undo the plugin edit", 0.2)
+    app.expect(app.text() == EDIT_SOURCE, f"one undo takes both edits back ({app.text()!r})")
+
+    reply = run("qa.api.edit.closed")
+    app.expect(app.text() == EDIT_SOURCE, f"an edit to an unopened path changes nothing ({app.text()!r}, {reply})")
+
+    run("qa.api.cursor")
+    app.expect(app.cursors()[:1] == [(3, 2)], f"set_cursor moves the caret ({app.cursors()})")
+    run("qa.api.select")
+    selected = app.buffer().get("selectedText")
+    app.expect(selected == "abc ", f"set_selection selects columns 1..5 of line 1 ({selected!r})")
+
+    # Ghost text at the caret: Tab accepts it, Escape dismisses it.
+    app.click_text(3, 11)
+    app.key("End")
+    run("qa.api.ghost")
+    app.key("Tab")
+    step(app, "Tab accepts the suggestion", 0.2)
+    app.expect(app.text().splitlines()[2] == "line threeGHOST",
+               f"Tab inserts the ghost text at the caret ({app.text().splitlines()[2:3]})")
+    app.key("ctrl+z")
+    step(app, "undo the accepted suggestion", 0.2)
+    app.expect(app.text() == EDIT_SOURCE, f"one undo takes the suggestion back ({app.text()!r})")
+    app.key("End")
+    run("qa.api.ghost")
+    app.key("Escape")
+    step(app, "Escape dismisses the suggestion", 0.2)
+    app.key("Tab")
+    step(app, "Tab after the dismissal", 0.2)
+    app.expect("GHOST" not in app.text(), f"after Escape, Tab does not insert it ({app.text().splitlines()[2:3]})")
+    app.key("ctrl+z")
+    run("qa.api.ghost")
+    run("qa.api.ghost.clear")
+    app.key("Tab")
+    step(app, "Tab after clear_ghost_text", 0.2)
+    app.expect("GHOST" not in app.text(), f"clear_ghost_text takes it away ({app.text().splitlines()[2:3]})")
+    app.key("ctrl+z")
+
+    run("qa.api.notify")
+    app.wait_until(lambda: any("qa-api says hello" in m for m in messages(app)), 3.0, "the notification")
+    app.expect(any("qa-api says hello" in m for m in messages(app)),
+               f"ctx.notify shows a notification ({messages(app)[-3:]})")
+    app.check("plugin editor api")
+
+
+FLOWS: dict[str, Callable[[q.App], None]] = {"plugin-api": flow_plugin_api,
+                                             "plugin-editor-api": flow_plugin_editor_api}
+PLUGINS: dict[str, tuple[str, ...]] = {"plugin-api": ("qa-api",), "plugin-editor-api": ("qa-api",)}
