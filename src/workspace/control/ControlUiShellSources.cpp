@@ -246,6 +246,25 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               AddControlUiElement(out, kDivider, "editor/" + std::to_string(i),
                                   groups.dividers[i].rect);
             }
+            // Each text pane's scrollbars, from the metrics its paint sizes them
+            // with (the band the last frame painted included).
+            const bool line_numbers = SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
+            for (const EditorPaneLayout& pane : ComputeEditorPaneLayouts(layout)) {
+              const editor::TextViewport* viewport = ViewportForPane(pane);
+              if (viewport == nullptr || viewport->is_placeholder()) {
+                continue;
+              }
+              const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+                  editor_text_renderer_, *viewport, pane.rect, viewport->sticky_band_rows(), line_numbers);
+              const ScrollSurfaceLayout scroll = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
+              const std::string group = "editor/" + std::to_string(pane.group_index);
+              if (scroll.vertical_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, group, *scroll.vertical_scrollbar);
+              }
+              if (scroll.horizontal_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, group + "/h", *scroll.horizontal_scrollbar);
+              }
+            }
           },
       .sidebar =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
@@ -366,6 +385,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                   ScrollableListRowRect(list, visible), shown ? shown(index) : text);
               out.back().selected = index == selected;
             }
+            if (const auto bar = MakeVerticalScrollbarGeometry(
+                    list.list_rect, static_cast<float>(count), list.visible_units,
+                    static_cast<float>(list.scroll_row));
+                bar.has_value()) {
+              AddControlUiScrollbar(out, "sidebar", *bar);
+            }
           },
       .panel =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
@@ -401,6 +426,46 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             }
             AddControlUiElement(out, kButton, "panel/maximize",
                                 tab_strip_service_.BottomPanelMaximizeButtonRect(mode, header));
+            // The body's scrollbars, as the panel's paint and its drag size them:
+            // each terminal pane's scrollback, the Output channel's lines, a plugin
+            // surface's pixels.
+            const ProjectWorkspaceState& ps = context_.current_project_state;
+            if (ps.panel.content == PanelContentKind::Terminal) {
+              if (const TerminalTabState* tab = ps.active_terminal_tab(); tab != nullptr) {
+                const TerminalPaneRectsLayout rects = tab->PaneRects(BottomPanelContentRect(layout));
+                for (std::size_t i = 0; i < tab->panes.size() && i < rects.panes.size(); ++i) {
+                  if (const TerminalPaneState* pane = tab->panes[i].get(); pane != nullptr) {
+                    const LogSurfaceLayout pane_layout = ComputeTerminalPaneLogLayout(
+                        rects.panes[i], layout.bottom_panel.h, *pane, pane->frame_line_count);
+                    if (pane_layout.scroll.vertical_scrollbar.has_value()) {
+                      AddControlUiScrollbar(out, "terminal/" + std::to_string(i),
+                                            *pane_layout.scroll.vertical_scrollbar);
+                    }
+                  }
+                }
+              }
+            } else if (ps.panel.content == PanelContentKind::Output) {
+              const auto* entries = OutputChannelEntries(ps.panel.output.channel_id);
+              const LogSurfaceLayout panel_layout =
+                  ComputeBottomPanelLogLayout(layout, entries != nullptr ? entries->size() : 0);
+              if (panel_layout.scroll.vertical_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, "panel", *panel_layout.scroll.vertical_scrollbar);
+              }
+            } else if (ps.panel.content == PanelContentKind::PluginSurface) {
+              const auto* pres = ps.plugin_presentation_if_present();
+              if (const editor::SurfaceContent* content =
+                      pres != nullptr ? pres->surfaces.Find(ps.panel.surface_owner, ps.panel.surface_id)
+                                      : nullptr;
+                  content != nullptr && content->has_body()) {
+                const SDL_FRect body = BottomPanelContentRect(layout);
+                if (const auto bar = MakeVerticalScrollbarGeometry(
+                        body, PluginSurfacePreviewContentHeight(*content), body.h,
+                        static_cast<float>(ps.panel.surface_scroll_y));
+                    bar.has_value()) {
+                  AddControlUiScrollbar(out, "panel", *bar);
+                }
+              }
+            }
           },
       .status_bar =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
@@ -511,6 +576,13 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               for (std::size_t i = 0; i < dividers.size(); ++i) {
                 AddControlUiElement(out, kDivider, "merge/" + std::to_string(i), dividers[i]);
               }
+              const auto merge_scroll = ComputeMergeScrollLayout(surface_rect, surface, *merge_tab);
+              if (merge_scroll.vertical_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, "merge", *merge_scroll.vertical_scrollbar);
+              }
+              if (merge_scroll.horizontal_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, "merge/h", *merge_scroll.horizontal_scrollbar);
+              }
               const MergeInteractionLayout interaction =
                   BuildMergeInteractionLayout(surface_rect, surface, *merge_tab);
               const auto visible = [&](const SDL_FRect& rect) {
@@ -567,6 +639,13 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               const SDL_FRect surface_rect = layout.editor_surface;
               const CompareSurfaceLayout surface = ComputeCompareSurfaceLayout(surface_rect, *compare_tab);
               AddControlUiElement(out, kDivider, "compare", CompareDividerHitRect(surface_rect, surface));
+              const auto compare_scroll = ComputeCompareScrollLayout(surface_rect, surface, *compare_tab);
+              if (compare_scroll.vertical_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, "compare", *compare_scroll.vertical_scrollbar);
+              }
+              if (compare_scroll.horizontal_scrollbar.has_value()) {
+                AddControlUiScrollbar(out, "compare/h", *compare_scroll.horizontal_scrollbar);
+              }
               int block = 0;
               const float bottom = surface_rect.y + surface_rect.h;
               for (float y = surface.rows_y + surface.line_height / 2.0f;
@@ -650,6 +729,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                   ScrollableListRowRect(vm.list_layout, static_cast<int>(i)), label);
               out.back().selected = static_cast<int>(index) == vm.selected_row;
             }
+            if (const auto bar = MakeVerticalScrollbarGeometry(
+                    vm.list_layout.list_rect, static_cast<float>(vm.total_rows),
+                    vm.list_layout.visible_units, static_cast<float>(vm.scroll_row));
+                bar.has_value()) {
+              AddControlUiScrollbar(out, "overlay", *bar);
+            }
           },
       .dialogs =
           [this](const WorkspaceLayout& layout, ControlUiElements& out) {
@@ -725,6 +810,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 add_control("reset", row.reset_rect);
               }
               add_control("scope", row.scope_rect);
+            }
+            if (vm.scrollbar.has_value()) {
+              AddControlUiScrollbar(out, "settings", *vm.scrollbar);
+            }
+            if (vm.category_scrollbar.has_value()) {
+              AddControlUiScrollbar(out, "settings/categories", *vm.category_scrollbar);
             }
             // The font picker's rows while a font row is being edited: the same
             // overlay-row kind as every other list a person picks from, `selected`
@@ -856,6 +947,9 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             const std::string mode_id = spec != nullptr ? std::string(spec->id) : "debug";
             const std::size_t count = DebugPaneActiveRowCount();
             const LogSurfaceLayout list = ComputeDebugPaneListLayout(layout, count);
+            if (list.scroll.vertical_scrollbar.has_value()) {
+              AddControlUiScrollbar(out, "debug", *list.scroll.vertical_scrollbar);
+            }
             for (int r = 0; r < list.scroll.visible_rows; ++r) {
               const std::size_t index =
                   static_cast<std::size_t>(list.scroll.vertical_scroll + r);

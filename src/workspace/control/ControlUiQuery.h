@@ -46,6 +46,8 @@ struct ControlUiElement {
   // A menu row's command (the name the `ui` action receipt reports when it runs);
   // empty for elements that run none, and for submenu rows.
   std::string command;
+  // A scrollbar's thumb (its `rect` is the track).
+  std::optional<SDL_FRect> thumb;
 };
 
 using ControlUiElements = std::vector<ControlUiElement>;
@@ -69,6 +71,7 @@ inline constexpr std::string_view kSettingsCategory = "settings-category";
 inline constexpr std::string_view kDebugTab = "debug-tab";
 inline constexpr std::string_view kDebugRow = "debug-row";
 inline constexpr std::string_view kNotification = "notification";
+inline constexpr std::string_view kScrollbar = "scrollbar";
 }  // namespace control_ui_kind
 
 // Appends an element named `<kind>:<locator>`.
@@ -77,6 +80,12 @@ void AddControlUiElement(ControlUiElements& out,
                          std::string_view locator,
                          const SDL_FRect& rect,
                          std::string label = {});
+
+// Appends `scrollbar:<locator>`: the track as its rect, the thumb, and the axis as
+// its label -- the geometry the surface's paint and its drag both use.
+void AddControlUiScrollbar(ControlUiElements& out,
+                           std::string_view locator,
+                           const ScrollbarGeometry& geometry);
 
 // Gives the second and later elements that share a name a `#2`, `#3`, ... suffix,
 // in the order they were collected (visual order), so a name resolves to one

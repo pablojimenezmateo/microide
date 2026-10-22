@@ -44,6 +44,14 @@ void AddControlUiElement(ControlUiElements& out,
   out.push_back(std::move(element));
 }
 
+void AddControlUiScrollbar(ControlUiElements& out,
+                           std::string_view locator,
+                           const ScrollbarGeometry& geometry) {
+  AddControlUiElement(out, control_ui_kind::kScrollbar, locator, geometry.track,
+                      geometry.vertical ? "vertical" : "horizontal");
+  out.back().thumb = geometry.thumb;
+}
+
 void MakeControlUiNamesUnique(ControlUiElements& elements) {
   std::unordered_map<std::string, int> seen;
   seen.reserve(elements.size());
@@ -217,6 +225,9 @@ util::JsonValue ControlUiQuery::Build(const WorkspaceContext& context, const Ope
     }
     if (!element.command.empty()) {
       entry["command"] = util::JsonValue(element.command);
+    }
+    if (element.thumb.has_value()) {
+      entry["thumb"] = RectJson(*element.thumb);
     }
     array.push_back(util::JsonValue(std::move(entry)));
   }
