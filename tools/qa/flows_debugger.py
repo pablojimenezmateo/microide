@@ -275,13 +275,77 @@ def _palette_run(app: q.App, label: str) -> bool:
     return True
 
 
+
+def _palette(app: q.App, label: str) -> bool:
+    """Runs a palette row by its label (typed, the row clicked)."""
+    app.key("ctrl+shift+p")
+    step(app, "palette", 0.3)
+    app.type(label)
+    step(app, f"type {label}", 0.3)
+    row = next((r for r in app.elements("overlay-row") if r.get("label", "").startswith(label)), None)
+    if not app.expect(row is not None, f"the palette lists {label!r}"):
+        app.key("Escape")
+        return False
+    app.click(*app.center(row))
+    step(app, label, 0.3)
+    return True
+
+
+def flow_function_breakpoints(app: q.App) -> None:
+    """A function breakpoint, added from the palette's prompt, stops the program
+    in that function; toggled off, the run passes it; with a condition on
+    `Scheduler::add` it stops once, for the one task that meets it. No flow
+    reached the function-breakpoint commands (TD-364)."""
+    if not _require(app, "gdb"):
+        return
+    assert app.project is not None
+    app.send("set-setting", "debug.enabled", "true")
+    open_file(app, "src/scheduler.cpp")
+
+    if _palette(app, "Add Function Breakpoint"):
+        app.expect((app.ui().get("prompt") or {}).get("kind") == "input",
+                   f"Add Function Breakpoint asks for the name ({app.ui().get('prompt')})")
+        app.type("taskflow::Scheduler::run")
+        app.key("Return")
+        step(app, "the function's name", 0.3)
+    if _run_to_stop(app):
+        state = _state(app)
+        app.expect(12 <= int(state.get("line") or 0) <= 16 and "scheduler.cpp" in str(state.get("path", state)),
+                   f"the run stops in Scheduler::run ({state})")
+    _stop_session(app)
+
+    app.send_line("breakpoint-function-toggle taskflow::Scheduler::run")
+    app.send("debug-run", "--type", "gdb", str(app.project / "taskflow"))
+    app.wait_until(lambda: _state(app).get("stopped") or not _session_live(app), 30.0, "the run to end or stop")
+    app.expect(not _state(app).get("stopped"), f"a disabled function breakpoint is passed over ({_state(app)})")
+    _stop_session(app)
+    app.send_line("breakpoint-function-remove taskflow::Scheduler::run")
+
+    # A condition: Scheduler::add runs four times, priority 9 once.
+    app.send_line("breakpoint-function-add taskflow::Scheduler::add")
+    app.send_line("breakpoint-function-condition taskflow::Scheduler::add priority == 9")
+    stops = 0
+    if _run_to_stop(app):
+        stops += 1
+        app.send("debug-continue")
+        app.wait_until(lambda: _state(app).get("stopped") or not _session_live(app), 30.0,
+                       "the run to end or stop again")
+        if _state(app).get("stopped"):
+            stops += 1
+    app.expect(stops == 1, f"a conditional function breakpoint stops once, for priority 9 ({stops} stops)")
+    _stop_session(app)
+    app.send_line("breakpoint-function-remove taskflow::Scheduler::add")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "dbg-breakpoint-kinds": flow_breakpoint_kinds,
     "dbg-pause": flow_debug_pause,
     "dbg-sessions": flow_debug_sessions,
+    "dbg-function-breakpoints": flow_function_breakpoints,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {
     "dbg-breakpoint-kinds": ("gdb-dap",),
     "dbg-pause": ("gdb-dap",),
     "dbg-sessions": ("gdb-dap",),
+    "dbg-function-breakpoints": ("gdb-dap",),
 }
