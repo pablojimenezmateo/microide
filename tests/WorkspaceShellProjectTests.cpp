@@ -7872,26 +7872,28 @@ void TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap() {
          "an aborted replace-all must not have written any file");
 }
 
-// TD-2026-07-17-021: the off-thread replace-all still refuses to overwrite a file
-// that is open with unsaved edits — the dirty set is snapshotted on the main thread
-// before dispatch, and the background job aborts (no writes) when an affected file
-// is in it, surfacing a precise "save open changes" error on the main-thread apply.
-void TestWorkspaceShellReplaceAllBlocksOnDirtyOpenFile() {
+// A file open with unsaved edits is replaced IN ITS BUFFER (VS Code applies a
+// replace-all to the editor): one undoable edit that leaves it dirty, the disk not
+// written beneath it, and the rest of the project replaced as usual. It used to
+// abort the whole operation with "save open changes first" (TD-2026-07-17-021's
+// refusal; QA journey-rename-refactor met it renaming a type across files).
+void TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "notes.txt";
+  const std::filesystem::path other = root / "other.txt";
   WriteFile(source, "needle\n");
+  WriteFile(other, "needle elsewhere\n");
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
-         "replace-all dirty-block fixture should open the project");
-  Expect(WaitForFileIndexPath(shell, std::filesystem::path("notes.txt"), true,
-                              std::chrono::milliseconds(1000)),
-         "replace-all dirty-block fixture should wait for file index initialization");
+         "replace-all dirty fixture should open the project");
+  Expect(WaitForFileIndexSize(shell, 2, std::chrono::milliseconds(1500)),
+         "replace-all dirty fixture should index both files");
 
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
-         "replace-all dirty-block fixture should complete search");
+         "replace-all dirty fixture should complete search");
 
   // Open the matched file and leave an unsaved edit in it.
   WorkspaceShellTestAccess::OpenFile(shell, source);
@@ -7901,10 +7903,14 @@ void TestWorkspaceShellReplaceAllBlocksOnDirtyOpenFile() {
 
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
 
-  Expect(!WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
-         "replace-all must surface an error when an affected file has unsaved edits");
-  Expect(ReadFile(source) == "needle\n",
-         "replace-all blocked by a dirty open file must not write that file");
+  const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.lines().LineView(0) == "x" && editor.dirty(),
+         "the dirty buffer is replaced in place and stays dirty, its edit kept: " +
+             std::string(editor.lines().LineView(0)));
+  Expect(ReadFile(source) == "needle\n", "the disk under the unsaved buffer is not written");
+  Expect(ReadFile(other) == " elsewhere\n", "the closed file is replaced on disk: " + ReadFile(other));
+  Expect(WorkspaceShellTestAccess::ProjectSearchError(shell).empty(),
+         "nothing is refused: " + WorkspaceShellTestAccess::ProjectSearchError(shell));
 }
 
 // TD-2026-07-16-21 / TD-2026-07-17-021: replace-all used to re-read and re-scan
@@ -8806,8 +8812,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",
           TestWorkspaceShellReplaceAllAbortsWithFeedbackPastAggregateCap);
-  AddTest(tests, "WorkspaceShell/ReplaceAllBlocksOnDirtyOpenFile",
-          TestWorkspaceShellReplaceAllBlocksOnDirtyOpenFile);
+  AddTest(tests, "WorkspaceShell/ReplaceAllReplacesInADirtyOpenBuffer",
+          TestWorkspaceShellReplaceAllReplacesInADirtyOpenBuffer);
   AddTest(tests, "WorkspaceShell/ReplaceAllReadsOnlyMatchedFiles",
           TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles);
   AddTest(tests, "WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated",

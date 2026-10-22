@@ -590,19 +590,6 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
     return;
   }
 
-  // Snapshot the open dirty files (absolute, normalized) so the background can refuse
-  // to overwrite unsaved edits without reading editor state off-thread. Scans EVERY
-  // editor group, not just the focused split.
-  std::unordered_set<std::string> dirty_open;
-  for (const EditorGroup& group : context_.current_project_state.editor_groups) {
-    for (const TabEntry& tab : group.open_tabs) {
-      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-          tab.editor_state->viewport.dirty()) {
-        dirty_open.insert(tab.path.lexically_normal().string());
-      }
-    }
-  }
-
   const std::string query = ps.query.text();
   const std::string replace_text = ps.replace_text.text();
   const bool case_sensitive = ProjectSearchReplaceCaseSensitive();
@@ -623,6 +610,84 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
       RequestSidebarRedraw();
       return;
     }
+  }
+
+  // A file open with unsaved edits is replaced IN ITS BUFFER, here on the shell
+  // thread, as one undoable edit that leaves it dirty (VS Code applies a
+  // replace-all to the editor, not under it): the disk is not written beneath the
+  // user's changes, and the user's changes are not a reason to refuse the whole
+  // operation -- which is what this did, aborting every file with "save open
+  // changes first". The same transform the background applies to the files on
+  // disk, over the buffer's text, so both give the same result. Every editor
+  // group's views of the file share one document, so one edit reaches them all.
+  // What is left in `dirty_open` -- open dirty files the files list does not name --
+  // the background still refuses to write, as before.
+  std::unordered_set<std::string> dirty_open;
+  std::size_t buffer_replacements = 0;
+  std::size_t buffers_replaced = 0;
+  {
+    std::unordered_set<std::string> candidates;
+    for (const std::filesystem::path& relative_path : files) {
+      candidates.insert((root / relative_path).lexically_normal().string());
+    }
+    std::unordered_set<std::string> handled;
+    for (EditorGroup& group : context_.current_project_state.editor_groups) {
+      for (TabEntry& tab : group.open_tabs) {
+        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+            !tab.editor_state->viewport.dirty()) {
+          continue;
+        }
+        const std::string key = tab.path.lexically_normal().string();
+        if (candidates.count(key) == 0) {
+          dirty_open.insert(key);
+          continue;
+        }
+        if (!handled.insert(key).second) {
+          continue;  // another view of the same document: already replaced
+        }
+        editor::TextViewport& viewport = tab.editor_state->viewport;
+        std::string content;
+        viewport.lines().AppendWholeText(content);
+        std::size_t count = 0;
+        if (regex != nullptr) {
+          const std::optional<std::size_t> replaced =
+              ReplaceRegexMatchesInText(content, *regex, replace_text);
+          if (!replaced.has_value()) {
+            ps.error = "Replace-all aborted: invalid replacement pattern.";
+            RequestSidebarRedraw();
+            return;
+          }
+          count = *replaced;
+        } else {
+          count = ReplaceLiteralMatchesInText(content, query, replace_text, case_sensitive);
+        }
+        if (count == 0) {
+          continue;
+        }
+        const std::size_t caret_line = viewport.cursor_line();
+        const std::size_t caret_column = viewport.cursor_column();
+        const std::size_t last = viewport.lines().LineCount() == 0 ? 0 : viewport.lines().LineCount() - 1;
+        viewport.ReplaceRange(editor::SelectionRange{.start = {0, 0},
+                                                     .end = {last, viewport.lines().LineLength(last)}},
+                              content);
+        const std::size_t line = std::min(caret_line, viewport.lines().LineCount() - 1);
+        viewport.MoveCursorTo(line, std::min(caret_column, viewport.lines().LineLength(line)));
+        buffer_replacements += count;
+        ++buffers_replaced;
+      }
+    }
+    std::erase_if(files, [&](const std::filesystem::path& relative_path) {
+      return handled.count((root / relative_path).lexically_normal().string()) != 0;
+    });
+  }
+  if (buffers_replaced > 0) {
+    RequestEditorSurfaceRedraw();
+    Notify(NotificationService::Tone::Info,
+           "Replaced " + std::to_string(buffer_replacements) + " in " + std::to_string(buffers_replaced) +
+               (buffers_replaced == 1 ? " unsaved editor" : " unsaved editors") + " (not yet saved)");
+  }
+  if (files.empty()) {
+    return;
   }
 
   const std::size_t aggregate_cap = replace_all_aggregate_cap_bytes_;
