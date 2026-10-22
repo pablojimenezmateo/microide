@@ -444,6 +444,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");
       }
+      // Nothing to stop: Shift+F5 between sessions closed the debug pane the user
+      // had opened and said "Debugging stopped" (QA dbg-exception-breakpoints).
+      if (!context_.DebugSessionActive()) {
+        return reject("No debug session is running");
+      }
       context_.StopDebuggingWithFeedback();
       return DispatchResult::Handled;
     case ActionId::DebugContinue:

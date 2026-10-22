@@ -1514,6 +1514,63 @@ void TestASettingsRowValueClickRepaintsTheRows() {
   }
 }
 
+// dbg-exception-breakpoints: after a session was stopped, the Breakpoints view
+// lost the adapter's exception filters ("No breakpoints") while the ones turned on
+// were still sent to every later session -- a filter that could be neither seen
+// nor turned off until a session was running again. VS Code keeps the
+// checkboxes between sessions; a new session replaces them with its own.
+void TestExceptionFiltersStayListedAfterAStop() {
+#if !(defined(__unix__) || defined(__APPLE__))
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "exception"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  const auto labels = [&]() {
+    std::vector<std::string> out;
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["kind"].AsString() == "debug-row") {
+        out.push_back(entry["label"].AsString());
+      }
+    }
+    return out;
+  };
+  const auto lists_raised = [&]() {
+    const auto rows = labels();
+    return std::any_of(rows.begin(), rows.end(),
+                       [](const std::string& row) { return row.starts_with("Raised Exceptions"); });
+  };
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-breakpoints"), "the Breakpoints view opens");
+  Expect(WaitUntil([&]() { return lists_raised(); }, std::chrono::seconds(10), std::chrono::milliseconds(5),
+                   [&]() { TestAccess::ConsumeDapCallbacks(fixture.shell); }),
+         "the session's exception filters are listed");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-stop"), "debug-stop runs");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-breakpoints"),
+         "the Breakpoints view opens again");
+  Expect(lists_raised(), "after the stop the exception filters are still listed, so they can be turned off");
+}
+
+// dbg-exception-breakpoints: Stop Debugging (Shift+F5) with nothing running closed
+// the debug pane the user had opened and announced "Debugging stopped". VS Code's
+// Stop does nothing without a session; here it says so and leaves the pane.
+void TestStopWithNoSessionLeavesTheDebugPane() {
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-pane-breakpoints"), "the Breakpoints view opens");
+  Expect(!TestAccess::ControlUi(fixture.shell)["surfaces"]["rightPane"].IsNull(), "the debug pane is open");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "debug-stop"),
+         "Stop Debugging with no session is refused");
+  Expect(!TestAccess::ControlUi(fixture.shell)["surfaces"]["rightPane"].IsNull(),
+         "and the debug pane stays open");
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -2705,6 +2762,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
+  AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
+  AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);
