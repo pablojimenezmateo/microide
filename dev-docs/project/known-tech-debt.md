@@ -464,6 +464,21 @@ alive). What wedges gdb is not known; next: the same launch from a plain
 `gdb --interpreter=dap` driven by a script under `stress`, to tell gdb's bug
 from something in how the app spawns it (the debug sandbox, the pipes).
 
+### TD-2026-10-22-377 — a stale strip on the split divider after typing in a split, on CI's ASan QA lane only. [OPEN]
+
+Found by `split-and-close` on the qa-asan job of run 39704723441 (once; the
+scenario is not retried for a redraw finding). Open `scheduler.cpp`, split
+right, type, undo, close the group, split down, type `x` into the bottom pane:
+the frame that repaints both panes' text (the bottom pane edits the document
+the top pane shows) left a 280x4 px card-like strip at x 615..895 on the
+divider between the groups (y 388..392) and a 1 px line at y 428, where a full
+render paints plain divider and tab strip. The strip looks like a horizontal
+scrollbar track with its thumb; nothing that wide is drawn there in the
+current layout, so it is likely left from the earlier split-right layout and
+never covered by a later frame's damage. It does not reproduce on the local
+GCC build with the redraw verifier; next: the replay under the ASan build
+(`tools/run-checks.sh qa-asan`, `run.py replay`), and the frame before it.
+
 ### TD-2026-10-21-374 — a plugin cannot read a buffer's unsaved text, so its hover is skipped there. [OPEN]
 
 Found by the QA `plugins-reload` flow. A plugin provider (hover, completion,
