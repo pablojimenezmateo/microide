@@ -847,10 +847,13 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   // surface from `overlay`, so the check below missed them and all ~17 of their
   // navigation/typing call sites fell through to RequestWindowRedraw — every
   // keystroke in the Settings filter repainted the sidebar, both tab strips and
-  // the terminal. `editor_area` is the region they occupy: it covers the card,
-  // the backdrop they dim, and any dropdown anchored inside them.
+  // the terminal. They occupy the overlay anchor (the backdrop they dim) and the
+  // card centred on it -- not `editor_area`, which a maximized panel leaves
+  // empty: every click and key in Settings over a maximized terminal repainted
+  // nothing (QA monkey, seed 2).
   if (settings_overlay_service_.Visible()) {
-    return layout->editor_area;
+    return UnionOptionalRects(layout->overlay_anchor,
+                              ComputeSettingsOverlaySurfaceRect(layout->overlay_anchor, layout->full));
   }
   if (!context_.current_project_state.overlay.visible) {
     return std::nullopt;

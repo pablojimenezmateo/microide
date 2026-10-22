@@ -1471,6 +1471,49 @@ void TestDebugToolbarDoesNotHoverUnderAModal() {
                       "the pointer over Restart under the prompt");
 }
 
+// The QA monkey (seed 2): with the panel maximized, Settings open and the filter
+// taking the typing, a click on the second row's stepper value selected that row
+// and moved the keyboard to the rows -- and no frame repainted it. Settings asked
+// for the editor area, which a maximized panel leaves empty, while the card and
+// its backdrop sit on the overlay anchor (the panel).
+void TestASettingsRowValueClickRepaintsTheRows() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  for (const bool maximized : {false, true}) {
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  if (maximized) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "the panel should maximize");
+  }
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "settings"), "settings should open");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the Settings overlay");
+  std::vector<std::string> rows;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() == "setting") {
+      rows.push_back(entry["name"].AsString().substr(std::string_view("setting:").size()));
+    }
+  }
+  Expect(rows.size() >= 2, "Settings lists at least two rows");
+  if (rows.size() < 2) {
+    return;
+  }
+  const auto first = fixture.ElementRect("button:setting/" + rows[0] + "/value");
+  const auto second = fixture.ElementRect("button:setting/" + rows[1] + "/value");
+  Expect(first.has_value() && second.has_value(), "the first two rows have a value control");
+  if (!first.has_value() || !second.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(first->x + first->w / 2,
+                                                                      first->y + first->h / 2)}),
+                      "the pointer over the first row's value");
+  fixture.ExpectFresh(fixture.Click(*second), "a click on the second row's value");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after it");
+  }
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -2661,6 +2704,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
   AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
+  AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);
