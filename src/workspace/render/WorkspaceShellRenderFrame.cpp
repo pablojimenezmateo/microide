@@ -685,6 +685,20 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         RequestRedrawRect(pane_rects.groups[gi].editor_surface);
       }
       frame_state_.painted_pane_content[gi] = content;
+      // Where the pane is scrolled to, focused one included: a path that moves
+      // the view without damaging the pane left it a page away from a full
+      // repaint (QA monkey, editor profile, seeds 3 and 6: a tab move scrolled the
+      // pane and repainted only the strips). A scroll that did damage it costs a
+      // rect already in the frame.
+      const std::uint64_t scroll =
+          viewport == nullptr ? 0
+                              : (content * 0x100000001B3ull) ^ (viewport->scroll_line() << 20) ^
+                                    viewport->horizontal_scroll();
+      if (scroll != frame_state_.painted_pane_scroll[gi] && gi < pane_rects.groups.size() &&
+          frame_state_.painted_pane_scroll[gi] != 0) {
+        RequestRedrawRect(pane_rects.groups[gi].editor_surface);
+      }
+      frame_state_.painted_pane_scroll[gi] = scroll;
       // The gutter's fold markers: an edit can make or unmake a fold opener on a
       // line it did not touch (lines indented under a closing brace make that
       // brace's line an indentation fold), and its damage named only the edited

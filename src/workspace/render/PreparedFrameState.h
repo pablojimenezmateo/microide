@@ -47,6 +47,8 @@ struct PreparedFrameState {
   std::optional<SDL_FRect> painted_hover_popup_rect;
   // Per editor pane, the (viewport, content revision) painted.
   std::array<std::uint64_t, kMaxEditorGroups> painted_pane_content{};
+  // Per editor pane, the (viewport, content, scroll position) painted.
+  std::array<std::uint64_t, kMaxEditorGroups> painted_pane_scroll{};
   // Per editor pane, the fold markers painted (FoldMarkerFingerprint) and the
   // (content, fold model revision) they were hashed at.
   std::array<std::uint64_t, kMaxEditorGroups> painted_fold_revision{};

@@ -347,6 +347,35 @@ void TestATabMovedAfterAReloadRepaintsTheFocusRing() {
       "a tab move that gives the editor the focus leaves the window identical to a full repaint");
 }
 
+// The QA monkey (editor profile, seeds 3 and 6) had a tab move scroll the pane in
+// a frame that damaged only the tab strips, the pane a page away from a full
+// repaint. Frame prep repaints a pane whose scroll position moved since it was
+// painted, whichever path moved it and whatever else the frame repaints.
+void TestAScrollWithNoDamageOfItsOwnRepaintsThePane() {
+  Fixture fixture(/*sidebar_visible=*/true);
+  std::string text;
+  for (int i = 1; i <= 300; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.open_file, text);
+  platform::IndexUpdateBatch first;
+  first.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(first));
+  fixture.Paint(RenderInvalidation{.full = true, .rects = {}});
+  fixture.Settle();
+  const SurfacePtr before = fixture.Snapshot();
+
+  WorkspaceShellTestAccess::ActiveEditor(fixture.shell).SetScrollLine(120);
+  const SDL_FRect strip = WorkspaceShellTestAccess::CurrentLayout(fixture.shell).tab_strip;
+  fixture.Paint(RenderInvalidation{.full = false, .rects = {strip}});
+  fixture.Settle();
+
+  fixture.ExpectRetainedMatchesFull(
+      "a scroll that damaged nothing leaves the window identical to a full repaint");
+  Expect(CountPixelDifferences(before.get(), fixture.Snapshot().get()) > 0,
+         "the scrolled rows should have changed the pane on screen");
+}
+
 void TestAHiddenSidebarRepaintsNothingForAnUnopenedFile() {
   Fixture fixture(/*sidebar_visible=*/false);
 
@@ -409,6 +438,8 @@ void RegisterProjectChangeRedrawTests(std::vector<TestCase>& tests) {
           TestALinePrependedAboveTheScrolledViewRepaintsThePane);
   AddTest(tests, "ProjectChangeRedraw/ATabMovedAfterAReloadRepaintsTheFocusRing",
           TestATabMovedAfterAReloadRepaintsTheFocusRing);
+  AddTest(tests, "ProjectChangeRedraw/AScrollWithNoDamageOfItsOwnRepaintsThePane",
+          TestAScrollWithNoDamageOfItsOwnRepaintsThePane);
   AddTest(tests, "ProjectChangeRedraw/AHiddenSidebarRepaintsNothing",
           TestAHiddenSidebarRepaintsNothingForAnUnopenedFile);
   AddTest(tests, "ProjectChangeRedraw/ATreeShapeChangeRepaintsTheEditorColumn",
