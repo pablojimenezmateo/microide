@@ -486,6 +486,9 @@ struct TabEntry {
   Kind kind = Kind::Editor;
   std::filesystem::path path;
   std::string title;
+  // An untitled buffer's number, "Untitled-<n>" (VS Code's naming, so two new
+  // buffers are told apart in the strip, a prompt and Quick Open); 0 for a file.
+  std::uint32_t untitled_number = 0;
   // Stable per-tab identity, assigned lazily (EnsureTabStableId, process-unique)
   // the first time a tab is referenced by a modal dirty prompt or waited on by a
   // save continuation.
@@ -499,6 +502,20 @@ struct TabEntry {
   std::optional<CompareTabState> compare;
   std::optional<MergeTabState> merge;
 };
+
+// An untitled buffer's title: "Untitled-<n>", or "Untitled" before it has one.
+inline std::string UntitledTitle(std::uint32_t untitled_number) {
+  return untitled_number == 0 ? std::string("Untitled")
+                              : "Untitled-" + std::to_string(untitled_number);
+}
+
+// The title of a tab that shows `path`: its file name, or the tab's own untitled
+// title. Every site that re-derives a title from a path goes through this, so a
+// rename, a restore or an activation cannot turn "Untitled-2" back into a
+// generic name the other untitled tabs share.
+inline std::string TabTitleForPath(const std::filesystem::path& path, std::uint32_t untitled_number) {
+  return path.empty() ? UntitledTitle(untitled_number) : path.filename().string();
+}
 
 // Give `tab` its stable id if it has none, and return it. Process-unique rather
 // than per project: save continuations (WorkspaceContext::save_continuations) are

@@ -102,7 +102,7 @@ bool TabCoordinator::EnsureEditorTabLoaded(TabEntry& tab) {
   }
 
   tab.path = operations_.editor_view_path(editor_state);
-  tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+  tab.title = TabTitleForPath(tab.path, tab.untitled_number);
   return true;
 }
 
@@ -156,7 +156,7 @@ bool TabCoordinator::LoadEditorTabForActivation(TabEntry& tab) {
     tab.editor_state->pending_load.Arm(read_id, tab.editor_state->viewport.content_revision());
   }
   tab.path = operations_.editor_view_path(*tab.editor_state);
-  tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+  tab.title = TabTitleForPath(tab.path, tab.untitled_number);
   return true;
 }
 

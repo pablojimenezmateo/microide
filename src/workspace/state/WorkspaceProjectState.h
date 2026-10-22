@@ -679,6 +679,40 @@ struct EditorGroup {
   const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
 };
 
+// The number a new untitled buffer takes: the smallest no open untitled tab of
+// any group uses, as VS Code numbers untitled editors.
+[[nodiscard]] inline std::uint32_t NextUntitledNumber(const std::vector<EditorGroup>& groups) {
+  std::vector<bool> used;
+  for (const EditorGroup& group : groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.untitled_number != 0) {
+        if (used.size() <= tab.untitled_number) {
+          used.resize(tab.untitled_number + 1, false);
+        }
+        used[tab.untitled_number] = true;
+      }
+    }
+  }
+  std::uint32_t next = 1;
+  while (next < used.size() && used[next]) {
+    ++next;
+  }
+  return next;
+}
+
+// Numbers every untitled editor tab that has no number yet (a restored session's
+// hot-exit buffers), in group and tab order, and titles it.
+inline void NumberUntitledTabs(std::vector<EditorGroup>& groups) {
+  for (EditorGroup& group : groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.path.empty() && tab.untitled_number == 0) {
+        tab.untitled_number = NextUntitledNumber(groups);
+        tab.title = UntitledTitle(tab.untitled_number);
+      }
+    }
+  }
+}
+
 // The live viewport that IS the file `normalized_path` in any pane, or nullptr:
 // a loaded editor tab, or a compare tab's editable working-tree side. A file is
 // one buffer however many panes show it (VS Code's model per resource), so a

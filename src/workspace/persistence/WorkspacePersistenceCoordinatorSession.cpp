@@ -456,7 +456,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     TabEntry restored_tab{
         .kind = TabEntry::Kind::Editor,
         .path = tab_path,
-        .title = tab_path.empty() ? "untitled" : tab_path.filename().string(),
+        .title = TabTitleForPath(tab_path, 0),
         .editor_state = std::nullopt,
         .deferred_handle = std::nullopt,
         .compare = std::nullopt,
@@ -519,6 +519,8 @@ bool PersistenceCoordinator::RestoreSessionState() {
     if (state.editor_groups.empty()) {
       state.editor_groups.emplace_back();
     }
+    // Restored untitled buffers (hot exit) take their numbers in tab order.
+    NumberUntitledTabs(state.editor_groups);
     // The tree's leaves ARE the groups, so a record that does not describe exactly
     // the groups that survived the restore (missing, corrupt, or written before a
     // group was dropped for an unreadable path) is replaced by an even row rather

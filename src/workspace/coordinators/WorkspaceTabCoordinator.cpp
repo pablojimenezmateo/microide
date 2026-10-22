@@ -23,11 +23,11 @@ namespace microide::workspace {
 
 namespace {
 
-std::string EditorTabLabel(const editor::TextViewport& viewport) {
-  if (!viewport.path().empty()) {
-    return viewport.path().filename().string();
+std::string EditorTabLabel(const editor::TextViewport& viewport, std::uint32_t untitled_number) {
+  if (viewport.path().empty() && viewport.is_placeholder()) {
+    return "Welcome";
   }
-  return viewport.is_placeholder() ? "Welcome" : "Untitled";
+  return TabTitleForPath(viewport.path(), untitled_number);
 }
 
 }  // namespace
@@ -42,7 +42,7 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
 
 std::string TabCoordinator::ActiveTitle() const {
   if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
-    return EditorTabLabel(state_.focused_group().welcome_surface.viewport);
+    return EditorTabLabel(state_.focused_group().welcome_surface.viewport, 0);
   }
   return state_.focused_group().open_tabs[state_.focused_group().active_tab_index].title;
 }
@@ -439,7 +439,7 @@ void TabCoordinator::SyncActiveEditorTab() {
   auto& editor_state = *tab.editor_state;
   if (editor_state.content_pending()) {
     tab.path = operations_.editor_view_path(editor_state);
-    tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+    tab.title = TabTitleForPath(tab.path, tab.untitled_number);
     return;
   }
   editor_state.restore.path = editor_state.viewport.path().lexically_normal();
@@ -510,7 +510,7 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     const editor::TextViewport& viewport = tab.editor_state->viewport;
     active_path = viewport.path().lexically_normal();
     tab.path = active_path;
-    tab.title = EditorTabLabel(viewport);
+    tab.title = EditorTabLabel(viewport, tab.untitled_number);
   } else if (tab.deferred_handle.has_value() || !tab.path.empty()) {
     // No live viewport, but the tab has a real identity: a deferred tab whose
     // file failed to open (e.g. deleted out from under the IDE between restore
@@ -521,7 +521,7 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     // deferred handle if the path was somehow lost.
     if (tab.path.empty() && tab.deferred_handle.has_value()) {
       tab.path = tab.deferred_handle->path.lexically_normal();
-      tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+      tab.title = TabTitleForPath(tab.path, tab.untitled_number);
     }
     active_path = tab.path.lexically_normal();
   } else {
@@ -530,7 +530,7 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     const editor::TextViewport& viewport = state_.focused_group().welcome_surface.viewport;
     active_path = viewport.path().lexically_normal();
     tab.path = active_path;
-    tab.title = EditorTabLabel(viewport);
+    tab.title = EditorTabLabel(viewport, tab.untitled_number);
   }
   if (!active_path.empty() && state_.directory_tree.SelectPathIfVisible(active_path)) {
     operations_.reveal_selected_tree_sidebar_line();
@@ -553,10 +553,12 @@ bool TabCoordinator::OpenUntitled() {
   untitled_view.SetUntitledBuffer();
   operations_.apply_editor_preferences(untitled_view);
 
+  const std::uint32_t untitled_number = NextUntitledNumber(state_.editor_groups);
   state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = {},
-      .title = "untitled",
+      .title = UntitledTitle(untitled_number),
+      .untitled_number = untitled_number,
       .editor_state = operations_.make_editor_tab_state(untitled_view),
       .deferred_handle = std::nullopt,
       .compare = std::nullopt,

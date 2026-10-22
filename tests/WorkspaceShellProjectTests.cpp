@@ -2180,10 +2180,22 @@ void TestWorkspaceShellCtrlNOpensUntitledTab() {
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 1,
          "Ctrl+N should open a single untitled editor tab");
   const auto& tab = WorkspaceShellTestAccess::OpenTabs(shell).front();
-  Expect(tab.path.empty() && tab.title == "untitled",
-         "Ctrl+N should create an untitled editor tab");
+  Expect(tab.path.empty() && tab.title == "Untitled-1",
+         "Ctrl+N should create an untitled editor tab, numbered: " + tab.title);
   Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
          "Ctrl+N should activate the newly opened untitled tab");
+
+  // VS Code numbers untitled editors so two are told apart (in the strip, the
+  // unsaved prompt, Quick Open), and a closed one's number is free again.
+  Expect(SendKeyDown(shell, SDLK_N, SDL_KMOD_CTRL), "a second Ctrl+N should be handled");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == 2 &&
+             WorkspaceShellTestAccess::OpenTabs(shell)[1].title == "Untitled-2",
+         "a second untitled tab should be Untitled-2");
+  WorkspaceShellTestAccess::CloseTab(shell, 0);
+  Expect(SendKeyDown(shell, SDLK_N, SDL_KMOD_CTRL), "a third Ctrl+N should be handled");
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.size() == 2 && tabs[0].title == "Untitled-2" && tabs[1].title == "Untitled-1",
+         "a new untitled tab should take the smallest free number");
 }
 
 void TestWorkspaceShellFilesShortcutEscapeRestoresSidebarFocus() {

@@ -131,7 +131,7 @@ std::string BuildWorkspaceTabDisplayTitle(const std::filesystem::path& path,
                                           std::string_view fallback_title, bool dirty) {
   std::string title = path.filename().string();
   if (title.empty()) {
-    title = fallback_title.empty() ? "untitled" : std::string(fallback_title);
+    title = fallback_title.empty() ? "Untitled" : std::string(fallback_title);
   }
   return dirty ? "*" + title : title;
 }
@@ -140,7 +140,7 @@ std::string BuildWorkspaceTabTooltipLabel(const std::filesystem::path& project_r
                                           const std::filesystem::path& path,
                                           std::string_view fallback_title) {
   if (path.empty()) {
-    return fallback_title.empty() ? "untitled" : std::string(fallback_title);
+    return fallback_title.empty() ? "Untitled" : std::string(fallback_title);
   }
   return RelativePathLabel(project_root, path);
 }

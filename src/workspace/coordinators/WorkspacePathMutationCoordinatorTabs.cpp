@@ -221,7 +221,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
           operations_.sync_active_editor_tab_metadata();
         } else {
           tab.path = operations_.editor_view_path(editor_state);
-          tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+          tab.title = TabTitleForPath(tab.path, tab.untitled_number);
         }
       }
       continue;
@@ -237,7 +237,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       if (!handle.path.empty() && util::PathEqualsOrWithinNormalized(handle.path, old_path)) {
         handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
         tab.path = handle.path;
-        tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+        tab.title = TabTitleForPath(tab.path, tab.untitled_number);
       }
       continue;
     }
@@ -276,7 +276,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         if (!handle.path.empty() && util::PathEqualsOrWithinNormalized(handle.path, old_path)) {
           handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
           tab.path = handle.path;
-          tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+          tab.title = TabTitleForPath(tab.path, tab.untitled_number);
         }
         continue;
       }
@@ -297,7 +297,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
               util::ReplacePathPrefix(editor_state.restore.path, old_path, new_path)
                   .lexically_normal();
           tab.path = editor_state.restore.path;
-          tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
+          tab.title = TabTitleForPath(tab.path, tab.untitled_number);
         }
         continue;
       }

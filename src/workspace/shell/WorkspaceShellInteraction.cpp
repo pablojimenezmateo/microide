@@ -309,7 +309,7 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
   // Shared helper: relative label inside the root, absolute path outside it.
   std::string path_label = RelativePathLabel(context_.current_project_state.root, path);
   if (path_label.empty()) {
-    path_label = path.empty() ? "untitled" : path.string();
+    path_label = path.empty() ? "Untitled" : path.string();
   }
 
   // Prepend the enclosing fold opener (function/method/block header) as a
