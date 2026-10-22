@@ -831,7 +831,10 @@ class App:
             time.sleep(DOUBLE_CLICK_SECONDS - (time.monotonic() - last_time))
 
     def drag(self, x0: float, y0: float, x1: float, y1: float, steps: int = 8,
-             modifiers: tuple[str, ...] = ()) -> None:
+             modifiers: tuple[str, ...] = (), before_release: Callable[[], object] | None = None) -> None:
+        """A press at (x0, y0), `steps` moves to (x1, y1), a release there.
+        `before_release` runs with the button still held at (x1, y1) -- a drag held
+        past an edge waiting for its autoscroll, say -- on either backend."""
         self._await_click_gap(x0, y0)
         self._record({"drag": [round(x0), round(y0), round(x1), round(y1)],
                       "modifiers": list(modifiers)})
@@ -841,6 +844,8 @@ class App:
                 self._pointer("move", x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, "left",
                               modifiers=modifiers)
                 time.sleep(0.02)
+            if before_release is not None:
+                before_release()
             self._pointer("up", x1, y1, 1, modifiers=modifiers)
             self._last_click = (time.monotonic(), x1, y1)
             return
@@ -852,6 +857,8 @@ class App:
             y = y0 + (y1 - y0) * i / steps
             self._xdotool("mousemove", *self._root(x, y))
             time.sleep(0.02)
+        if before_release is not None:
+            before_release()
         self._xdotool("mouseup", "1")
         for key in reversed(modifiers):
             self._xdotool("keyup", key)

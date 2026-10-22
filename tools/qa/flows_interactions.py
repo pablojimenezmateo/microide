@@ -81,16 +81,11 @@ def flow_selection_mouse(app: q.App) -> None:
     pane = app.pane()
     x0, y0 = app.text_point(5, 1)
     _, ry, _, rh = pane["rect"]
-    app._xdotool("mousemove", *app._root(x0, y0))
-    app._xdotool("mousedown", "1")
-    for y in (y0 + 40, ry + rh - 4, ry + rh + 30):
-        app._xdotool("mousemove", *app._root(x0 + 20, y))
-        time.sleep(0.15)
     # Held below the pane, the caret follows the last row on screen as the view
     # scrolls to the end of the file.
-    app.wait_until(lambda: app.buffer()["cursors"][0]["line"] >= 195, 8.0,
-                   "the held drag to scroll the selection to the end")
-    app._xdotool("mouseup", "1")
+    app.drag(x0, y0, x0 + 20, ry + rh + 30, steps=6,
+             before_release=lambda: app.wait_until(lambda: app.buffer()["cursors"][0]["line"] >= 195, 8.0,
+                                                   "the held drag to scroll the selection to the end"))
     step(app, "release", 0.3)
     caret = app.buffer()["cursors"][0]
     app.expect(caret["anchorLine"] == 5 and caret["line"] >= 195 and app.buffer()["scrollLine"] > 100,

@@ -36,6 +36,14 @@ def _differs(a: Image.Image, b: Image.Image) -> int:
 
 
 def _paint_toggle(app: q.App, command: str, label: str) -> None:
+    if app.wayland:
+        # No screen to read on a headless weston (App.grab): the redraw verifier
+        # still checks the paint; the toggle is run both ways all the same.
+        app.send(command)
+        step(app, f"{label} toggled", 0.3)
+        app.send(command)
+        step(app, f"{label} toggled back", 0.3)
+        return
     before = _pane_image(app)
     app.send(command)
     step(app, f"{label} toggled", 0.5)

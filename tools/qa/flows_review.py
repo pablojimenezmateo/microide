@@ -62,13 +62,14 @@ def flow_review_marks(app: q.App) -> None:
     app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "one.txt's outgoing diff")
     step(app, "outgoing diff", 0.5)
     app.expect(_diff_tab(app).get("reviewedHunks") == 0, f"nothing is reviewed yet ({_diff_tab(app)})")
-    before = _editor_image(app)
+    before = _editor_image(app) if not app.wayland else None
 
     app.expect(app.send("mark-branch-hunk-reviewed").get("ok") is True, "marking the hunk runs")
     app.wait_until(lambda: _diff_tab(app).get("reviewedHunks") == 1, 3.0, "the hunk to count as reviewed")
     step(app, "hunk marked", 0.4)
-    changed = _differs(before, _editor_image(app))
-    app.expect(changed > 0, f"the diff draws the hunk's reviewed marker ({changed} pixels changed)")
+    if not app.wayland:  # no screen to read on a headless weston (App.grab)
+        changed = _differs(before, _editor_image(app))
+        app.expect(changed > 0, f"the diff draws the hunk's reviewed marker ({changed} pixels changed)")
     app.expect(app.send("branch-review-note", "checked the loop").get("ok") is True, "a note on the hunk runs")
     app.wait_until(lambda: _diff_tab(app).get("notedHunks") == 1, 3.0, "the note to count")
     app.send("unmark-branch-hunk-reviewed")
