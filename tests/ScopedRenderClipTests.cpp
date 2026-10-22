@@ -11,6 +11,7 @@
 #include "render/ScopedRenderClip.h"
 #include "support/SoftwareCanvas.h"
 
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -118,12 +119,61 @@ void TestNarrowsInDevicePixelsAtAFractionalScale() {
   Expect(!red(10, 61) && !red(10, 5), "clips with no device row in common draw nothing");
 }
 
+// TD-2026-10-22-376, the QA monkey's seed 3 at 1.25x: a sidebar ending at
+// logical 41 (device 51.25) under a partial frame's damage clip starting at 41.
+// Whatever the narrowing chose, SDL's separate rounding of start and length left
+// the partial frame one device column off the full one at the sidebar's edge.
+// With every clip grown to whole device pixels, a surface paints the same device
+// pixels inside the damage in both frames.
+void TestPartialAndFullFramesClipASurfaceAlikeAt125() {
+  EnsureDummySdlVideoInitialized();
+  SoftwareCanvas canvas(250, 125);
+  SDL_Renderer* renderer = canvas.renderer();
+  Expect(SDL_SetRenderLogicalPresentation(renderer, 200, 100, SDL_LOGICAL_PRESENTATION_STRETCH),
+         "the canvas takes a 1.25x logical presentation");
+  const SDL_Rect sidebar{0, 10, 41, 80};
+  const auto paint = [&](const SDL_Rect* damage) {
+    SDL_SetRenderClipRect(renderer, nullptr);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    if (damage != nullptr) {
+      const SDL_Rect aligned = render::AlignClipToDevicePixels(renderer, *damage);
+      SDL_SetRenderClipRect(renderer, &aligned);
+    }
+    {
+      const render::ScopedRenderClip scope(renderer, sidebar);
+      SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+      const SDL_FRect all{0.0f, 0.0f, 200.0f, 100.0f};
+      SDL_RenderFillRect(renderer, &all);
+    }
+    SDL_SetRenderClipRect(renderer, nullptr);
+  };
+  paint(nullptr);
+  std::vector<bool> full;
+  for (int x = 40; x < 70; ++x) {
+    full.push_back(canvas.PixelAt(x, 60).r == 255);
+  }
+  const SDL_Rect damage{41, 20, 100, 50};
+  paint(&damage);
+  const SDL_Rect aligned = render::AlignClipToDevicePixels(renderer, damage);
+  for (int x = 40; x < 70; ++x) {
+    const bool in_damage = static_cast<float>(x) >= static_cast<float>(aligned.x) * 1.25f &&
+                           static_cast<float>(x) < static_cast<float>(aligned.x + aligned.w) * 1.25f;
+    if (in_damage) {
+      Expect((canvas.PixelAt(x, 60).r == 255) == full[static_cast<std::size_t>(x - 40)],
+             "device column " + std::to_string(x) + " is painted as the full frame paints it");
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterScopedRenderClipTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ScopedRenderClip/NarrowsToTheOuterClip", TestNarrowsToTheOuterClip);
   AddTest(tests, "ScopedRenderClip/NarrowsInDevicePixelsAtAFractionalScale",
           TestNarrowsInDevicePixelsAtAFractionalScale);
+  AddTest(tests, "ScopedRenderClip/PartialAndFullFramesClipASurfaceAlikeAt125",
+          TestPartialAndFullFramesClipASurfaceAlikeAt125);
 }
 
 }  // namespace microide::tests

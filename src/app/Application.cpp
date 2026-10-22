@@ -1,5 +1,7 @@
 #include "app/Application.h"
 
+#include "render/ScopedRenderClip.h"
+
 #include <SDL3/SDL.h>
 
 #include "workspace/WorkspaceStartupOptions.h"
@@ -903,7 +905,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       partial_loop_label.Field("clips", static_cast<long long>(merged_clip_count));
       partial_loop_label.Field("dirty", static_cast<long long>(dirty_rect_count));
       util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label.View());
-      for (const SDL_Rect& clip_rect : dirty_region_analysis.merged_clip_rects) {
+      for (const SDL_Rect& merged_clip : dirty_region_analysis.merged_clip_rects) {
+        // On whole device pixels, as every surface's own clip is: the two then
+        // intersect exactly at a fractional scale (TD-2026-10-22-376).
+        const SDL_Rect clip_rect = render::AlignClipToDevicePixels(renderer_, merged_clip);
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
             "Application::WorkspaceRender(partial-clip)");

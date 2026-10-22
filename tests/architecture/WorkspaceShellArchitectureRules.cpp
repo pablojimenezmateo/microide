@@ -700,7 +700,7 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
   const std::vector<bool> shell_is_code = BuildCodeMask(shell_render_text);
 
   const std::regex partial_loop_pattern(
-      R"(for\s*\(\s*const SDL_Rect& clip_rect\s*:\s*dirty_region_analysis\.merged_clip_rects\s*\)\s*\{)");
+      R"(for\s*\(\s*const SDL_Rect& merged_clip\s*:\s*dirty_region_analysis\.merged_clip_rects\s*\)\s*\{)");
   std::smatch partial_loop_match;
   if (std::regex_search(app_text, partial_loop_match, partial_loop_pattern)) {
     const std::size_t loop_start =

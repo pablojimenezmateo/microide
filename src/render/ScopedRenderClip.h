@@ -52,6 +52,31 @@ struct Span {
   int length = 0;
 };
 
+// The smallest k for which k logical pixels are a whole number of device pixels
+// at `scale` (1 at 1x and 2x, 2 at 1.5x, 4 at 1.25x and 1.75x; 1 when nothing
+// up to 8 fits). A clip whose edges are multiples of k maps to the device with
+// no rounding, so two such clips intersect exactly (TD-2026-10-22-376).
+inline int DevicePixelAlignment(float scale) {
+  for (int k = 1; k <= 8; ++k) {
+    const float device = static_cast<float>(k) * scale;
+    if (std::fabs(device - std::round(device)) < 1e-3f) {
+      return k;
+    }
+  }
+  return 1;
+}
+
+inline Span SnapOutward(int start, int length, int k) {
+  if (k <= 1 || length <= 0) {
+    return Span{start, length};
+  }
+  const auto floor_to = [k](int value) { return value >= 0 ? value / k * k : -((-value + k - 1) / k * k); };
+  const int snapped_start = floor_to(start);
+  const int end = start + length;
+  const int snapped_end = floor_to(end) == end ? end : floor_to(end) + k;
+  return Span{snapped_start, snapped_end - snapped_start};
+}
+
 inline Span NarrowAxis(int outer_start, int outer_length, int start, int length, float scale) {
   const auto device_start = [scale](int value) {
     return static_cast<int>(std::floor(static_cast<float>(value) * scale));
@@ -95,7 +120,24 @@ inline Span NarrowAxis(int outer_start, int outer_length, int start, int length,
 // (TD-2026-10-15-341 found it). The narrowing is done in device pixels (see
 // NarrowAxis). No device pixel in common is a zero-area clip, which SDL enables
 // and which draws nothing -- what the caller should get.
-inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& clip) {
+// `rect` grown outward to whole device pixels at the renderer's scale. Every
+// clip a frame sets goes through this -- the partial frame's damage clips
+// (Application) and each surface's own (ScopedRenderClip) -- so at a fractional
+// scale a full frame and a partial one clip a surface to the same device pixels;
+// with unaligned edges SDL's separate rounding of start and length made them
+// differ by a row at a surface's edge (TD-2026-10-22-376). A surface may then
+// paint up to k-1 logical pixels past its edge, the same in both frames.
+inline SDL_Rect AlignClipToDevicePixels(SDL_Renderer* renderer, const SDL_Rect& rect) {
+  const SDL_FPoint scale = scoped_render_clip_detail::DeviceScale(renderer);
+  const auto x = scoped_render_clip_detail::SnapOutward(
+      rect.x, rect.w, scoped_render_clip_detail::DevicePixelAlignment(scale.x));
+  const auto y = scoped_render_clip_detail::SnapOutward(
+      rect.y, rect.h, scoped_render_clip_detail::DevicePixelAlignment(scale.y));
+  return SDL_Rect{x.start, y.start, x.length, y.length};
+}
+
+inline SDL_Rect NarrowToCurrentClip(SDL_Renderer* renderer, const SDL_Rect& requested) {
+  const SDL_Rect clip = AlignClipToDevicePixels(renderer, requested);
   if (!SDL_RenderClipEnabled(renderer)) {
     return clip;
   }

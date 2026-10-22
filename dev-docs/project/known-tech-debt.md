@@ -479,7 +479,7 @@ is a `buffer:text()` / `buffer:line(n)` on the table, snapshotted for the
 query, after which the skip can go. Completion, definition and the others have
 the same gap without the skip.
 
-### TD-2026-10-22-376 — at a fractional scale a nested clip cannot always match the full render's device edge. [OPEN]
+### TD-2026-10-22-376 — at a fractional scale a nested clip cannot always match the full render's device edge. [RESOLVED 2026-10-22]
 
 SDL 3.2 takes a clip as a logical (start, length) and rounds each half on its
 own (`[floor(start*s), floor(start*s) + ceil(length*s))`), so at 1.25x or 1.5x
@@ -505,6 +505,16 @@ device pixels (logical multiples of 4 at 1.25x, of 2 at 1.5x) so every clip is
 exact; or draw each surface into its own device-aligned target. Without nested
 clips the seed-3 replay shows the larger stale strip they exist to prevent
 (the sidebar's labels overflowing into the editor), so removing them is not it.
+
+**Resolved:** every clip a frame sets is grown outward to whole device pixels
+(`render::AlignClipToDevicePixels`: multiples of 4 logical pixels at 1.25x, of
+2 at 1.5x) -- the partial frame's damage clips in `Application` and each
+surface's own in `ScopedRenderClip`. Aligned edges map to the device with no
+rounding, so a surface is clipped to the same device pixels in a full frame and
+a partial one, and the narrowing's leftover case is gone; a surface may paint up
+to k-1 logical pixels past its edge, alike in both frames.
+`ScopedRenderClip/PartialAndFullFramesClipASurfaceAlikeAt125` fails without it
+at device column 52, the monkey's column; seeds 1-4 run clean.
 
 ### TD-2026-10-21-373 — a kernel shard aborts in std::terminate on CI's ASan job only. [OPEN]
 
