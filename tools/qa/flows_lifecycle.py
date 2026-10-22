@@ -119,5 +119,56 @@ def flow_plugins_reload(app: q.App) -> None:
     app.move(x + w / 2, y + h - 20)
 
 
-FLOWS: dict[str, Callable[[q.App], None]] = {"plugins-reload": flow_plugins_reload}
-PLUGINS: dict[str, tuple[str, ...]] = {"plugins-reload": ("qa-api",)}
+def flow_plugin_errors(app: q.App) -> None:
+    """A plugin that gets its registrations wrong (the qa-broken plugin): each
+    malformed one is refused with a message naming what is missing, and a setup
+    that raises -- at startup, not on a reload the user asked for -- is shown to
+    the user as a warning naming the plugin and why, with a button to the Plugin
+    Errors channel. It used to be written to that channel and nowhere else."""
+    assert app.project is not None
+    path = app.project / "qa-broken-errors.txt"
+    app.wait_until(path.exists, 10.0, "the plugin to record its refusals")
+    lines = dict(line.split(": ", 1) for line in path.read_text().splitlines() if ": " in line) \
+        if path.exists() else {}
+    expected = {
+        "completion": "language_id",
+        "menu": "Toolz",
+        "keybinding": "key",
+        "setting": "type",
+        "status": "id",
+        "formatter": "empty",
+        "code_action": "language_id",
+    }
+    for name, needle in expected.items():
+        got = lines.get(name, "(not attempted)")
+        app.expect(got != "accepted" and needle in got,
+                   f"a {name} registration without what it needs is refused, saying so ({got!r})")
+
+    # A setup that raises leaves nothing of the plugin registered (its good
+    # command included) -- and says so, as a warning naming plugin and reason,
+    # with a button to the Plugin Errors channel.
+    reply = app.send("qa.broken.ok")
+    app.expect(not reply.get("ok"), f"a plugin whose setup failed registers nothing ({reply})")
+
+    def warning() -> dict | None:
+        return next((n for n in app.query("notifications")
+                     if "qa-broken" in n.get("message", "") and "Nowhere" in n.get("message", "")), None)
+    app.wait_until(lambda: warning() is not None, 10.0, "the failed setup to be reported")
+    note = warning()
+    if app.expect(note is not None, f"a warning names the plugin and the reason "
+                                    f"({[n.get('message') for n in app.query('notifications')]})"):
+        button = next((e for e in app.elements("button", prefix="button:notification/")
+                       if e["name"].endswith("/Show Errors")), None)
+        if app.expect(button is not None, "the warning offers Show Errors"):
+            app.click(*app.center(button))
+            app.wait_until(lambda: (app.ui().get("output") or {}).get("channel") == "plugins.error", 3.0,
+                           "Show Errors to open the Plugin Errors channel")
+            app.expect((app.ui().get("output") or {}).get("channel") == "plugins.error",
+                       f"Show Errors opens the Plugin Errors channel ({app.ui().get('output')})")
+
+
+FLOWS: dict[str, Callable[[q.App], None]] = {
+    "plugins-reload": flow_plugins_reload,
+    "plugin-errors": flow_plugin_errors,
+}
+PLUGINS: dict[str, tuple[str, ...]] = {"plugins-reload": ("qa-api",), "plugin-errors": ("qa-broken",)}
