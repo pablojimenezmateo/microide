@@ -114,6 +114,22 @@ void WorkspaceShell::OpenBufferSearchSurface(OverlayMode mode) {
                             (context_.current_project_state.overlay.mode == OverlayMode::BufferSearch ||
                              context_.current_project_state.overlay.mode == OverlayMode::BufferReplace);
   std::string seed = SingleLineEditorSelectionSeed();
+  // The widget selects its current match, so with the widget up that selection is
+  // the widget's own answer, not something the user chose: Ctrl+H from the find
+  // field re-seeding from it turned a regex query into the literal text of its
+  // first match (QA find-options). A selection the user made elsewhere still seeds.
+  if (already_open && !buffer_search.matches.empty() &&
+      buffer_search.selected_index < buffer_search.matches.size()) {
+    if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+      const auto selection = viewport->selection_range();
+      const editor::SelectionRange& current = buffer_search.matches[buffer_search.selected_index];
+      if (selection.has_value() && selection->start.line == current.start.line &&
+          selection->start.column == current.start.column && selection->end.line == current.end.line &&
+          selection->end.column == current.end.column) {
+        seed.clear();
+      }
+    }
+  }
   if (!already_open) {
     ResetBufferSearchFoldRevealState(false);
     // VS Code's `seedSearchStringFromSelection: always`: with nothing selected the

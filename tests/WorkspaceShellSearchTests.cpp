@@ -1419,6 +1419,28 @@ void TestWorkspaceShellContextMenuAnswersHomeAndEnd() {
 // F3 / Shift+F3 step through the current find term from the editor, whether the
 // widget is open or closed (VS Code nextMatchFindAction); with no term yet F3
 // opens the widget. Neither key did anything before.
+// The find widget selects its current match (VS Code's find), so with the widget
+// up the editor's selection is the widget's own answer. Ctrl+H from the find field
+// re-seeded the query from it, turning a regex query into the literal text of its
+// match (QA find-options: `id=(\d+)` became `id=12`, and `$1` replaced nothing).
+void TestWorkspaceShellCtrlHInTheOpenWidgetKeepsTheQuery() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "ids.txt";
+  WriteFile(source, "id=12 id=345\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F opens find");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "id=");
+  const auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(viewport.SelectedText() == "id=", "the widget selects its current match");
+  Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_CTRL), "Ctrl+H from the find field");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "the query is still the user's, matching both ids");
+}
+
 void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1438,10 +1460,13 @@ void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Esc closes the widget");
   Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "the widget is closed");
 
-  // Revealing a match parks the caret at its start (the widget's convention). The
-  // caret sits at 0:0, which is match 0, so F3 steps to the next one.
+  // Revealing a match selects it, as VS Code's find does: the selection starts on
+  // the match. Match 0 is at 0:0, so F3 steps to the next one.
   const auto caret_at = [&](std::size_t line, std::size_t column) {
-    return viewport.cursor_line() == line && viewport.cursor_column() == column;
+    const auto selection = viewport.selection_range();
+    return selection.has_value() ? selection->start.line == line && selection->start.column == column &&
+                                       selection->end.line == line && selection->end.column == column + 3
+                                 : viewport.cursor_line() == line && viewport.cursor_column() == column;
   };
   Expect(caret_at(0, 0), "the caret starts on the first match");
   Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE), "F3 with the widget closed is handled");
@@ -1630,6 +1655,7 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit);
   AddTest(tests, "WorkspaceShell/F3StepsMatchesWithTheWidgetClosed",
           TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed);
+  AddTest(tests, "WorkspaceShell/CtrlHInTheOpenWidgetKeepsTheQuery", TestWorkspaceShellCtrlHInTheOpenWidgetKeepsTheQuery);
   AddTest(tests, "WorkspaceShell/SearchSidebarEscapeCancelsEditBeforeClosing",
           TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing);
   AddTest(tests, "WorkspaceShell/ContextMenuAnswersHomeAndEnd",

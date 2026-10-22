@@ -584,14 +584,16 @@ void WorkspaceActionContext::StepBufferSearch(int delta) {
     // the caret is not sitting on that match, "next" IS that match; only a caret
     // already on it (the usual F3 run) steps past it. "Previous" from between
     // matches is the one before it, which the wrapping step below yields.
-    // Revealing a match parks the caret at its start (the widget's convention),
-    // so "on it" is a caret comparison, not a selection one -- taken BEFORE the
-    // refresh, which itself reveals (and so moves the caret onto) its pick.
+    // Revealing a match selects it (VS Code's find), so "on it" is where the
+    // selection starts -- or the caret, with nothing selected -- taken BEFORE the
+    // refresh, which itself reveals (and so selects) its pick.
     const editor::TextViewport* viewport = operations_.active_editor_viewport();
-    const std::optional<editor::TextPosition> caret_before =
-        viewport != nullptr
-            ? std::optional<editor::TextPosition>{{viewport->cursor_line(), viewport->cursor_column()}}
-            : std::nullopt;
+    std::optional<editor::TextPosition> caret_before;
+    if (viewport != nullptr) {
+      caret_before = viewport->selection_range().has_value()
+                         ? viewport->selection_range()->start
+                         : editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+    }
     operations_.refresh_buffer_search();
     if (buffer_search.matches.empty()) {
       return;

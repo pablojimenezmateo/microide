@@ -413,7 +413,11 @@ void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match
   if (viewport == nullptr) {
     return;
   }
+  // The match is SELECTED, anchor at its start and caret at its end, as VS Code's
+  // find does: closing the widget leaves it selected to type over, and Ctrl+D
+  // continues from it. Jumping the caret to the start alone selected nothing.
   viewport->JumpCursorTo(match.start.line, match.start.column);
+  viewport->JumpCursorTo(match.end.line, match.end.column, /*extend_selection=*/true);
 
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   editor::FoldingModel* model = EnsureActiveFoldingModelFresh();

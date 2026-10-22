@@ -900,8 +900,9 @@ void TestWorkspaceShellBufferSearchRevealsCollapsedMatchAndKeepsItOnClose() {
   Expect(!model->IsCollapsedAtOpener(0),
          "buffer-search should auto-expand a collapsed fold that hides the selected match");
   const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
-  Expect(editor.cursor_line() == 1 && editor.cursor_column() == 2,
-         "buffer-search should move the caret onto the revealed match");
+  Expect(editor.selection_range().has_value() && editor.selection_range()->start.line == 1 &&
+             editor.selection_range()->start.column == 2 && editor.cursor_column() == 8,
+         "buffer-search should select the revealed match (VS Code's find)");
 
   Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
          "Escape should close the non-modal find widget");
