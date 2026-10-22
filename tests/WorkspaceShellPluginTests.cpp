@@ -1084,6 +1084,50 @@ return ide.plugin({ id = "late", setup = function(ctx) end })
   Expect(fresh_toast, "the toast reports this reload's count");
 }
 
+// QA plugin-errors: a plugin whose setup raised said so in the Plugin Errors
+// output channel and nowhere else unless the user had asked for the reload --
+// opening a project with a broken plugin failed in silence. It is a warning
+// naming the plugin and the reason, with a button to the channel.
+void TestWorkspaceShellAPluginThatFailsToLoadSaysSo() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "broken plugin fixture\n");
+  WritePluginInit(
+      plugins_root, "broken",
+      R"(local ide = require("microide")
+return ide.plugin({ id = "broken", setup = function(ctx) error("broken on purpose") end })
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "the project opens with the broken plugin installed");
+  const microide::workspace::NotificationService::Notification* warning = nullptr;
+  for (int i = 0; i < 200 && warning == nullptr; ++i) {
+    WorkspaceShellTestAccess::DrainPluginThreadActions(shell);
+    for (const auto& row : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (row.message.find("broken") != std::string::npos &&
+          row.message.find("broken on purpose") != std::string::npos) {
+        warning = &row;
+      }
+    }
+    if (warning == nullptr) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  Expect(warning != nullptr, "opening the project warns that the plugin failed to load, and why");
+  if (warning != nullptr) {
+    Expect(warning->tone == microide::workspace::NotificationService::Tone::Warning, "as a warning");
+    Expect(!warning->actions.empty() && warning->actions.front().label == "Show Errors",
+           "with a button to the Plugin Errors channel");
+  }
+}
+
 void TestWorkspaceShellPluginsReloadCommandRefreshesCommands() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -7178,6 +7222,7 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellLoadsPluginsAndRunsBufferHooks);
   AddTest(tests, "WorkspaceShell/PluginsReloadReportsTheReloadItRan",
           TestWorkspaceShellPluginsReloadReportsTheReloadItRan);
+  AddTest(tests, "WorkspaceShell/APluginThatFailsToLoadSaysSo", TestWorkspaceShellAPluginThatFailsToLoadSaysSo);
   AddTest(tests, "WorkspaceShell/PluginsReloadCommandRefreshesCommands",
           TestWorkspaceShellPluginsReloadCommandRefreshesCommands);
   AddTest(tests, "WorkspaceShell/PluginsReloadRefreshesRuntimeSyntaxHighlighting",

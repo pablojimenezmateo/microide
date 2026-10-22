@@ -888,11 +888,16 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
   // worker wired the completion fires inline and the whole flow stays synchronous.
   const std::uint64_t generation = reload_plugins_invocation_count_;
   const std::filesystem::path project_root = context_.current_project_state.root;
+  const auto plugin_error_count = [this]() {
+    const std::vector<std::string>* entries = OutputChannelEntries("plugins.error");
+    return entries != nullptr ? entries->size() : std::size_t{0};
+  };
+  const std::size_t errors_before = plugin_error_count();
   plugin_runtime_.ReloadAsync(
       project_root,
       context_.current_project_state.locality,
       request.syntax_definitions,
-      [this, request, generation, project_root](bool clean_reload) {
+      [this, request, generation, project_root, errors_before, plugin_error_count](bool clean_reload) {
         // Drop a stale completion. Two independent guards:
         //  - generation: a newer reload superseded this one (its completion rebuilds).
         //  - project_root: the active project changed between dispatch and completion.
@@ -904,6 +909,26 @@ bool WorkspaceShell::ReloadPluginsForCurrentProject(PluginReloadRequest request)
           return;
         }
         ConsumeReloadResult(request, clean_reload);
+        // A plugin that failed to load said so only in the Plugin Errors channel
+        // unless the user had asked for the reload: at startup, a project switch or
+        // a plugin file changing on disk it failed in silence (QA plugin-errors).
+        // VS Code raises an error notification when an extension fails to activate.
+        if (const std::size_t errors_after = plugin_error_count();
+            !request.announce && errors_after > errors_before) {
+          const std::vector<std::string>* entries = OutputChannelEntries("plugins.error");
+          std::string message = (*entries)[errors_before];
+          if (errors_after - errors_before > 1) {
+            message += " (and " + std::to_string(errors_after - errors_before - 1) + " more)";
+          }
+          Notify(NotificationService::Request{
+              .tone = NotificationService::Tone::Warning,
+              .key = "plugins.load-errors",
+              .message = std::move(message),
+              .actions = {NotificationAction{.label = "Show Errors",
+                                             .id = ActionId::ShowOutput,
+                                             .args = {"plugins.error"}}},
+          });
+        }
       });
   // Reload dispatched. Callers ignore the return; the real result is delivered to the
   // completion above.
