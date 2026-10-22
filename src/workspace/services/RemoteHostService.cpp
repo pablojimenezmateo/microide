@@ -1057,13 +1057,16 @@ std::string RemoteHostService::SoleHost() const {
 }
 
 bool RemoteHostService::StopServer(std::string_view host) {
-  Host* entry = Find(host);
-  if (entry == nullptr) {
+  // The host's session wherever it lives: a terminal's host entry, or -- the usual
+  // case -- a remote project's own session. Looking only in the host entries
+  // answered "No remote host" for every host the user had only opened a folder on
+  // (QA remote P), while Show Log, Reconnect and the port commands found it.
+  remote::RemoteHostSession* session = SessionFor(host);
+  if (session == nullptr) {
     return false;
   }
   // An ssh round trip: never on the UI thread. Joined by the destructor before
   // the sessions it uses go.
-  remote::RemoteHostSession* session = entry->session.get();
   const std::string key(host);
   work_.Post([this, session, key]() {
     std::string error;

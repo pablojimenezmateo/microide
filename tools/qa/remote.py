@@ -28,6 +28,9 @@ What it checks, each as the user would see it, with the measured latencies:
   J  agent churn                saves land while N host agents rewrite the tree; the
                                 trees agree once they stop
   L  relaunch on the mirror     the project reconnects from its record and a save pushes
+  P  remote commands            status, the server log, the ssh command copied, a port
+                                forwarded and unforwarded, host changes listed and
+                                cleared, the server stopped and reconnected
 
 Without MQA_REMOTE_HOST the suite prints why it did not run and exits 0: it is
 on-demand against a real host. `tools/qa/local-sshd.sh` stands up a loopback-only
@@ -422,6 +425,42 @@ class Suite:
             self.record("N.delete-reaches-host", bool(gone) or state.get("heldDeletes", 0) > 0,
                         f"{dt:.1f}s held={state.get('heldDeletes')} ls={host.ssh(f'ls {host.root}/qa')!r}")
             app.check("N")
+        if self.runs("P"):
+            # The remote commands no other scenario runs, each with what it answers
+            # and, where one is cheap, a receipt: Remove Mirror stays out (L relaunches
+            # on the mirror) and Resolve needs a conflict (D/D2 make theirs by banner).
+            reply = app.send("remote-status")
+            self.record("P.status", bool(reply.get("ok")), f"reply={reply}")
+            reply = app.send("remote-show-log", host.name)
+            shown = app.query("output").get("shown", "")
+            self.record("P.show-log", bool(reply.get("ok")) and "remote" in shown.lower(),
+                        f"reply={reply} shown={shown!r}")
+            reply = app.send("remote-copy-command", host.name, "ssh")
+            app.send("tab"); app.settle(0.3); app.send("paste"); app.settle(0.3)
+            pasted = app.text()
+            app.send("undo")
+            self.record("P.copy-command", bool(reply.get("ok")) and "ssh" in pasted and host.name in pasted,
+                        f"reply={reply} pasted={pasted[:120]!r}")
+            port = "48231"
+            reply = app.send("remote-forward-port", port, host.name)
+            self.record("P.forward-port", bool(reply.get("ok")), f"reply={reply}")
+            reply = app.send("remote-unforward-port", port, host.name)
+            self.record("P.unforward-port", bool(reply.get("ok")), f"reply={reply}")
+            host.ssh(f"cd {host.root} && echo HOST-CHANGE-{tok} >> {EDIT_FILE}")
+            self.mirror_has(EDIT_FILE, f"HOST-CHANGE-{tok}")
+            reply = app.send("remote-changes")
+            self.record("P.changes", bool(reply.get("ok")), f"reply={reply}")
+            reply = app.send("remote-clear-changes")
+            self.record("P.clear-changes", bool(reply.get("ok")), f"reply={reply}")
+            reply = app.send("remote-apply-deletes")
+            self.info("P.apply-deletes", f"reply={reply}")
+            reply = app.send("remote-stop-server", host.name)
+            stopped = bool(reply.get("ok"))
+            reply2 = app.send("remote-reconnect", host.name)
+            msg, dt, ready = self.wait_ready(120)
+            self.record("P.stop-server-then-reconnect", stopped and ready,
+                        f"stop={reply} reconnect={reply2} {msg} after {dt:.1f}s")
+            app.check("P")
         self.info("notifications-at-end", str([(n["key"], n["message"]) for n in self.notifs()]))
 
 
