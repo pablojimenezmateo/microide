@@ -66,17 +66,20 @@ bool AdvanceSlideOffsets(std::vector<float>& current,
     return false;
   }
   const float alpha = 1.0f - std::exp(-std::fmax(0.0f, dt_ms) / kSlideTauMs);
-  bool moving = false;
+  bool changed = false;
   for (std::size_t i = 0; i < current.size(); ++i) {
     const float delta = target[i] - current[i];
     if (std::fabs(delta) <= kSlideSnapPx) {
+      // The snap moves the tab too (up to kSlideSnapPx, which rounds to a
+      // different device pixel): it is a change the strip must be repainted for.
+      changed = changed || current[i] != target[i];
       current[i] = target[i];
       continue;
     }
     current[i] += delta * alpha;
-    moving = true;
+    changed = true;
   }
-  return moving;
+  return changed;
 }
 
 }  // namespace microide::workspace

@@ -101,9 +101,10 @@ void TestAdvanceConvergesAndSnaps() {
 void TestAdvanceSnapWithinThreshold() {
   std::vector<float> current{99.7f};
   const std::vector<float> target{100.0f};
-  const bool moving = AdvanceSlideOffsets(current, target, 16.0f);
-  Expect(!moving && current[0] == 100.0f,
-         "an offset within the snap threshold jumps exactly to target and stops");
+  const bool changed = AdvanceSlideOffsets(current, target, 16.0f);
+  Expect(changed && current[0] == 100.0f,
+         "an offset within the snap threshold jumps exactly to target, and that is a change to paint");
+  Expect(!AdvanceSlideOffsets(current, target, 16.0f), "an offset at its target has nothing left to change");
 }
 
 void TestAdvanceIsFrameRateIndependent() {

@@ -46,8 +46,10 @@ std::vector<float> ComputeSlideTargetXs(std::span<const SlideTab> tabs,
 // Frame-rate-independent exponential smoothing of `current` toward `target`.
 // `dt_ms` is the elapsed time since the last advance. Any offset within a small
 // pixel threshold of its target snaps exactly to it. Returns true if any offset
-// is still in motion (i.e. another frame is needed). `current` and `target` must
-// be the same size; mismatched sizes are treated as "not animating".
+// changed -- the final snap included, so the strip is repainted where it lands
+// (reporting only offsets past the threshold left a still-pointer drag painted
+// half a pixel from where a full render put it). `current` and `target` must be
+// the same size; mismatched sizes are treated as "not animating".
 bool AdvanceSlideOffsets(std::vector<float>& current,
                          const std::vector<float>& target,
                          float dt_ms);

@@ -730,6 +730,56 @@ void TestATabDraggedAcrossACloseButtonLeavesItIdle() {
   }
 }
 
+// QA tab-drag / wb-tabs: a tab dragged to the front with the pointer then held
+// still. The neighbours ease toward their displaced places and the last step
+// snaps each by under half a pixel -- which reported "not moving", so no repaint,
+// while the offsets had changed: the close buttons sat a device pixel from where
+// a full render drew them, shown by the next frame that painted anything else.
+void TestAHeldTabDragPaintsItsLastSnap() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("a.txt", "a\n");
+  WriteFile(fixture.root / "b.txt", "b\n");
+  WriteFile(fixture.root / "c.txt", "c\n");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "b.txt");
+  TestAccess::OpenFileInNewTab(fixture.shell, fixture.root / "c.txt");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "three tabs");
+  const auto dragged = fixture.ElementRect("tab:0/c.txt");
+  const auto first = fixture.ElementRect("tab:0/a.txt");
+  Expect(dragged.has_value() && first.has_value(), "the strip should name c.txt and a.txt");
+  if (!dragged || !first) {
+    return;
+  }
+  const float y = dragged->y + dragged->h / 2.0f;
+  const float x0 = dragged->x + dragged->w / 2.0f;
+  const float x1 = first->x + 4.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x0, y),
+                                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x0, y)}),
+                      "pressing on c.txt's tab");
+  for (int step = 1; step <= 8; ++step) {
+    SDL_Event motion = MouseMotionEvent(x0 + (x1 - x0) * static_cast<float>(step) / 8.0f, y);
+    motion.motion.state = SDL_BUTTON_LMASK;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {motion}),
+                        "dragging the tab, step " + std::to_string(step));
+  }
+  // The pointer held still at the front: only the animation's wakes run.
+  for (int wake = 0; wake < 40; ++wake) {
+    SDL_Delay(10);
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "the held drag's ease, wake " + std::to_string(wake));
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x1, y)}),
+                      "dropping the tab");
+  for (int wake = 0; wake < 40; ++wake) {
+    SDL_Delay(10);
+    fixture.ExpectFresh(TestAccess::HandleScheduledWake(fixture.shell).redraw,
+                        "the settle glide, wake " + std::to_string(wake));
+  }
+}
+
 // QA plugins-reload: Escape on the completion list moved keyboard focus to the
 // file tree, so the next key (a Backspace) edited nothing -- every overlay that
 // closed "without a target" (the palette, completion, code actions, the commit
@@ -3153,6 +3203,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestEscapeReturnsFocusToWhereTheOverlayOpened);
   AddTest(tests, "QaFlowRegression/ATabDraggedAcrossACloseButtonLeavesItIdle",
           TestATabDraggedAcrossACloseButtonLeavesItIdle);
+  AddTest(tests, "QaFlowRegression/AHeldTabDragPaintsItsLastSnap", TestAHeldTabDragPaintsItsLastSnap);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
