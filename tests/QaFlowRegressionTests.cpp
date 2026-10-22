@@ -956,6 +956,42 @@ void TestATerminalSelectionChangeWithNoDamageRepaints() {
   fixture.ExpectFresh(elsewhere, "the selection cleared with no damage of its own");
 }
 
+// The QA monkey (commands profile, seed 8): focus-group-right moved the keyboard
+// to the other pane, and only the focused pane draws its current-line highlight
+// -- the panes kept the old one, repainted only where the strips are.
+void TestFocusingAnotherGroupByCommandRepaintsBothPanes() {
+  FlowFixture fixture("main.txt", "alpha\nbeta\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-left"), "focus-group-left runs");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the split, left group focused");
+  workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(SDL_FRect{2.0f, 2.0f, 4.0f, 4.0f});
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-right"), "focus-group-right runs");
+  fixture.ExpectFresh(elsewhere, "focus moved to the right group by a command");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "focus-group-left"), "focus-group-left runs");
+  fixture.ExpectFresh(elsewhere, "and back to the left group");
+}
+
+// The QA monkey (commands profile, seed 8, minimized to seven commands): a new
+// file edited, split, saved from the left pane -- the save's trim shortened the
+// document, leaving the right pane's caret past its end -- then focus-group-right
+// and redo. The right pane drew no current-line highlight until redo clamped its
+// caret, in a frame that repainted only the menu and status bars.
+void TestRedoAfterASaveInASplitKeepsBothPanesFresh() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the start");
+  // A path that does not exist yet: an empty buffer the save creates.
+  for (const char* command : {"open on", "copy-line-down", "split-right", "focus-group-left", "save", "focus-group-right",
+                              "redo", "redo"}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, command) || std::string(command) == "redo", command);
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), std::string("after ") + command);
+  }
+}
+
 // QA commands-run (the bounds oracle): with the status bar hidden every toast
 // was laid out above the window's top-left corner and never seen -- the stack is
 // anchored on the status bar, and a hidden bar's rect was {0,0,0,0}. A hidden bar
@@ -3079,6 +3115,10 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAClickThatClearsATerminalSelectionUnderTheFindWidgetRepaintsIt);
   AddTest(tests, "QaFlowRegression/ATerminalSelectionChangeWithNoDamageRepaints",
           TestATerminalSelectionChangeWithNoDamageRepaints);
+  AddTest(tests, "QaFlowRegression/FocusingAnotherGroupByCommandRepaintsBothPanes",
+          TestFocusingAnotherGroupByCommandRepaintsBothPanes);
+  AddTest(tests, "QaFlowRegression/RedoAfterASaveInASplitKeepsBothPanesFresh",
+          TestRedoAfterASaveInASplitKeepsBothPanesFresh);
   AddTest(tests, "QaFlowRegression/ConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard",
           TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",

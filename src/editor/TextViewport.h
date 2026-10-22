@@ -237,6 +237,13 @@ class TextViewport {
   // fold expanding above the caret -- without moving the caret itself.
   void RevealCaret();
   void SetScrollLine(std::size_t scroll_line);
+  // Brings this viewport's carets back into its document when another viewport
+  // over the same document changed it (see SyncCaretsIfDocumentChangedElsewhere).
+  // Frame prep calls it for every pane before painting: left to the next
+  // operation on this viewport, a pane whose caret a save's trim pushed past the
+  // end drew no current-line highlight until an unrelated command clamped it,
+  // in a frame that did not repaint the pane (QA monkey, commands profile, seed 8).
+  void ReconcileCaretsWithDocument() { SyncCaretsIfDocumentChangedElsewhere(); }
   void SetHorizontalScroll(std::size_t horizontal_scroll);
   // Authoritatively re-applies a previously captured view state: cursor (or
   // selection) first, then scroll LAST so the restored scroll survives even when

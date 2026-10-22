@@ -675,6 +675,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const EditorGroupRectsLayout pane_rects = ComputeEditorGroupRectsForState(layout);
     const std::size_t focused_group = project_state.clamped_focused_group_index();
     for (std::size_t gi = 0; gi < project_state.editor_groups.size() && gi < kMaxEditorGroups; ++gi) {
+      if (editor::TextViewport* shared = GroupActiveViewport(project_state.editor_groups[gi]); shared != nullptr) {
+        shared->ReconcileCaretsWithDocument();
+      }
       const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[gi]);
       const std::uint64_t content =
           viewport == nullptr ? 0
