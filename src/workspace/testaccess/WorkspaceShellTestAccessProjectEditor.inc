@@ -548,6 +548,7 @@
     shell.MakeCompareMergeService().OpenSelectedCommit();
   }
   static void StageCompareHunk(WorkspaceShell& shell) { shell.StageCompareHunk(); }
+  static void UnstageCompareHunk(WorkspaceShell& shell) { shell.UnstageCompareHunk(); }
   static void StageCompareSelectedLines(WorkspaceShell& shell) {
     shell.StageCompareSelectedLines();
   }

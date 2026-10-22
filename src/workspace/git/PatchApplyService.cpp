@@ -189,8 +189,6 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
       .operation = operation,
       .target = std::move(target),
       .launcher = launcher != nullptr ? launcher : &platform::LocalProcessLauncher(),
-      .repository_snapshot_generation = repository_state.generation,
-      .diff_model_generation = compare_tab.model_revision,
   };
 }
 
@@ -213,22 +211,18 @@ std::optional<std::string> PatchApplyService::BuildPatchForRequest(
 void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::string patch_text) {
   background_executor_.Post([this, request = std::move(request),
                              patch_text = std::move(patch_text)]() mutable {
-    // Background half: the generation check, the `git apply` itself, and the
-    // repository-service invalidation (mutex-protected). Everything that
-    // touches shell state waits for the main thread below.
-    const project::GitRepositoryState current_state = callbacks_.current_repository_state();
-    if (request.repository_snapshot_generation != current_state.generation) {
-      completion_mailbox_.Post([this, request = std::move(request)]() {
-        PublishResult(
-            PatchApplyResult{
-                .category = PatchApplyResultCategory::StaleGeneration,
-                .detail = "repository state changed before the patch could be applied",
-            },
-            request);
-      });
-      return;
-    }
-
+    // Background half: the `git apply` itself and the repository-service
+    // invalidation (mutex-protected). Everything that touches shell state waits
+    // for the main thread below.
+    //
+    // No repository-generation gate. One refused any request whose generation had
+    // moved since it was built, and every git refresh moves it -- including the
+    // one an apply asks for itself, so `c` pressed right after `a` failed with
+    // "Diff is stale" (QA suite on CI, diff-hunk-keys). What keeps a patch off
+    // content it was not built for is git's own preflight: ApplyGitPatch runs
+    // `git apply --check` first, and the hunk's three context lines must match
+    // the index or the worktree exactly, which reports StaleDiff when they do not.
+    //
     // The project's launcher, captured when the request was built: a patch
     // applied on the wrong machine is exactly the silent wrong answer the
     // launcher exists to prevent.
@@ -237,7 +231,6 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
     if (patch_applied) {
       git_repository_service_.MarkStale();
     }
-    const project::GitRepositoryState completion_state = callbacks_.current_repository_state();
 
     // Main-thread half. This used to run right here, on the executor's thread:
     // the compare tab was rebuilt and reassigned, clean editor tabs were reloaded
@@ -246,14 +239,11 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
     // drained the executor before looking. The two sibling git services already
     // marshal their completions through a mailbox; this one does now too.
     completion_mailbox_.Post([this, request = std::move(request), result = std::move(result),
-                              patch_applied, completion_state]() mutable {
+                              patch_applied]() mutable {
       // If the patch actually applied, the working tree / index changed ON DISK —
-      // so run the cache invalidations for the applied path REGARDLESS of a
-      // generation race. A refresh that completed during the apply moves the
-      // generation and we still report StaleGeneration below (so the caller
-      // re-syncs its snapshot), but skipping these invalidations left
-      // blame/compare/clean-tab caches stale until an unrelated refresh and
-      // produced a misleading "nothing applied" message.
+      // so run the cache invalidations for the applied path, whatever refresh
+      // raced it: skipping them left blame/compare/clean-tab caches stale until
+      // an unrelated refresh and produced a misleading "nothing applied" message.
       if (patch_applied) {
         if (callbacks_.request_git_refresh != nullptr) {
           callbacks_.request_git_refresh();
@@ -270,17 +260,8 @@ void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::s
           callbacks_.refresh_compare_tab_for_path(absolute_path);
         }
       }
-
-      if (patch_applied &&
-          request.repository_snapshot_generation != completion_state.generation) {
-        result = PatchApplyResult{
-            .category = PatchApplyResultCategory::StaleGeneration,
-            .detail = "repository state changed while the patch was applying",
-        };
-      } else if (patch_applied) {
-        result.completed_repository_generation = completion_state.generation;
-      }
-
+      // A patch that applied is reported as applied, whatever refresh landed
+      // while it ran: "Diff is stale; try again" sent the user to apply it twice.
       PublishResult(std::move(result), request);
     });
   });
@@ -307,7 +288,6 @@ void PatchApplyService::ReportResult(const project::PatchApplyResult& result) {
       callbacks_.set_command_feedback("Patch applied");
       break;
     case PatchApplyResultCategory::StaleDiff:
-    case PatchApplyResultCategory::StaleGeneration:
       callbacks_.set_command_feedback(
           "Diff is stale; refresh the compare tab and try again. " + result.detail);
       break;

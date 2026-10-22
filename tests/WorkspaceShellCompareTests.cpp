@@ -319,6 +319,70 @@ void TestWorkspaceShellCompareStagesHunksInSequence() {
              .c_str());
 }
 
+// The QA suite on CI (diff-hunk-keys, Wayland): `a` staged a hunk and `c`, pressed
+// before the git refresh that staging starts had landed, failed with "Diff is
+// stale" -- the apply refused any request whose repository generation had moved
+// since it was built, and every refresh moves it, including the one the stage
+// itself asked for. git's own preflight (`git apply --check`) is what keeps a
+// patch off content it was not built for.
+void TestWorkspaceShellCompareUnstagesRightAfterAStage() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "f.txt";
+  const std::string base = "one\ntwo\nthree\nfour\nfive\n";
+  WriteFile(source, base);
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(source, "one\ntwo\nTHREE\nfour\nfive\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  const auto index_content = [&]() {
+    microide::project::GitRepository repo(root, microide::platform::LocalProcessLauncher());
+    return repo.Execute({"show", ":f.txt"}).output;
+  };
+
+  {
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+    Expect(compare.model.hunks.size() == 1, "the edit is one hunk");
+    compare.selected_row = microide::compare::ComparePresentationRowForModelRow(
+        compare.presentation, static_cast<std::size_t>(compare.model.hunks.front().start_row));
+  }
+  WorkspaceShellTestAccess::StageCompareHunk(shell);
+  WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  Expect(index_content() == "one\ntwo\nTHREE\nfour\nfive\n",
+         ("the hunk is staged; feedback=[" + WorkspaceShellTestAccess::CommandFeedbackText(shell) +
+          "]")
+             .c_str());
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell) == "Patch applied",
+         ("a stage that applied says so; feedback=[" +
+          WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]")
+             .c_str());
+
+  // `c` while a git refresh is queued ahead of it -- on CI, the one the stage's
+  // completion asked for. The refresh runs first and moves the generation.
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::UnstageCompareHunk(shell);
+  for (int round = 0; round < 3; ++round) {
+    WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  }
+  Expect(index_content() == base,
+         ("an unstage right after the stage unstages it; index=[" + index_content() +
+          "] feedback=[" + WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]")
+             .c_str());
+}
+
 // A working-tree diff's right side is editable, so the review letters (`a` stage,
 // `d` discard) type text there, and nothing else staged or reverted one change:
 // partial staging was out of reach exactly where it is wanted. VS Code's Selected
@@ -3528,6 +3592,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareHorizontalScrollRepaintsTheSurface);
   AddTest(tests, "WorkspaceShell/StagesHunksInSequence",
           TestWorkspaceShellCompareStagesHunksInSequence);
+  AddTest(tests, "WorkspaceShell/UnstagesRightAfterAStage",
+          TestWorkspaceShellCompareUnstagesRightAfterAStage);
 }
 
 }  // namespace microide::tests

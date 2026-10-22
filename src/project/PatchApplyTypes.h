@@ -29,7 +29,6 @@ enum class PatchApplyResultCategory {
   // nothing can cancel it, so a "cancelled" outcome had no producer
   // (TD-2026-07-26-004). Add it with the cancel affordance, not before.
   StaleDiff,
-  StaleGeneration,
   PatchDidNotApply,
   UnsupportedTarget,
   UnknownError,
@@ -98,8 +97,6 @@ struct PatchApplyRequest {
   // request because the local launcher is a function-local static and a remote
   // one is owned by the project's connection.
   const platform::ProcessLauncher* launcher = &platform::LocalProcessLauncher();
-  std::uint64_t repository_snapshot_generation = 0;
-  std::uint64_t diff_model_generation = 0;
 };
 
 struct PatchApplyPreview {
@@ -110,7 +107,6 @@ struct PatchApplyPreview {
 struct PatchApplyResult {
   PatchApplyResultCategory category = PatchApplyResultCategory::UnknownError;
   std::string detail;
-  std::uint64_t completed_repository_generation = 0;
 };
 
 bool PatchOperationAppliesToIndex(PatchOperationKind operation);

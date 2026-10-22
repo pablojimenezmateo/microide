@@ -391,7 +391,7 @@ void TestPatchGeneratorNonTerminalHunkNoNewlineMarkerApplies() {
          "git apply should accept the non-terminal hunk without a stray no-newline marker");
 }
 
-void TestPatchStaleGenerationCategory() {
+void TestPatchFailureCategoryForAMissingRepository() {
   PatchApplyRequest request{
       .operation = PatchOperationKind::StageHunk,
       .target{
@@ -1494,7 +1494,7 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
                    TestPatchGeneratorOneSidedPhantomTrailingLineApplies});
   tests.push_back({"PatchApply/NonTerminalHunkNoNewlineMarker",
                    TestPatchGeneratorNonTerminalHunkNoNewlineMarkerApplies});
-  tests.push_back({"PatchApply/FailureCategory", TestPatchStaleGenerationCategory});
+  tests.push_back({"PatchApply/FailureCategory", TestPatchFailureCategoryForAMissingRepository});
   tests.push_back({"PatchApply/LineSelection", TestPatchLineSelectionHelpers});
   tests.push_back({"PatchApply/Utf8Paths", TestPatchGeneratorUtf8Paths});
   tests.push_back({"PatchApply/AlignmentRows", TestPatchGeneratorIgnoresSpuriousAlignmentRows});

@@ -202,7 +202,6 @@ PatchApplyResult ApplyPatchRequest(const platform::ProcessLauncher& launcher,
     return PatchApplyResult{
         .category = PatchApplyResultCategory::Success,
         .detail = {},
-        .completed_repository_generation = request.repository_snapshot_generation,
     };
   }
   return PatchApplyResult{
