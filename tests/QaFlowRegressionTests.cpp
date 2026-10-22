@@ -825,6 +825,39 @@ void TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard() {
   }
 }
 
+// The QA monkey (seed 9, minimized to four actions): a drag in the file tree's
+// empty space, a split, a click in the left group's empty strip and one in the
+// left pane -- and the strips kept the right group's tab drawn as the active one.
+void TestClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the start");
+  const float tree_x = 120.0f;
+  const float tree_y = static_cast<float>(FlowFixture::kHeight) * 0.52f;
+  SDL_Event drag = MouseMotionEvent(tree_x - 28.0f, tree_y + 10.0f);
+  drag.motion.state = SDL_BUTTON_LMASK;
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseMotionEvent(tree_x, tree_y),
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, tree_x, tree_y), drag,
+                                     MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, tree_x - 28.0f, tree_y + 10.0f)}),
+      "a drag in the tree's empty space");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "split-right should run");
+  fixture.ExpectFresh(full, "the split");
+  // The left group's strip past its one tab: empty space that focuses that group.
+  const auto left_tab = fixture.ElementRect("tab:0/main.txt");
+  Expect(left_tab.has_value(), "the left group shows main.txt's tab");
+  if (!left_tab) {
+    return;
+  }
+  const SDL_FRect strip_space{left_tab->x + left_tab->w + 60.0f, left_tab->y, 20.0f, left_tab->h};
+  fixture.ExpectFresh(fixture.Click(strip_space), "a click in the left strip's empty space");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after it");
+  const SDL_FRect left_pane{300.0f, 300.0f, 200.0f, 100.0f};
+  fixture.ExpectFresh(fixture.Click(left_pane), "a click in the left pane");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after that");
+}
+
 // QA commands-run (the bounds oracle): with the status bar hidden every toast
 // was laid out above the window's top-left corner and never seen -- the stack is
 // anchored on the status bar, and a hidden bar's rect was {0,0,0,0}. A hidden bar
@@ -2940,6 +2973,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
   AddTest(tests, "QaFlowRegression/SidebarViewTabsStayInsideANarrowSidebar", TestSidebarViewTabsStayInsideANarrowSidebar);
+  AddTest(tests, "QaFlowRegression/ClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips",
+          TestClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips);
   AddTest(tests, "QaFlowRegression/ConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard",
           TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",

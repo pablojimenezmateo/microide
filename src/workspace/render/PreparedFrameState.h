@@ -69,6 +69,10 @@ struct PreparedFrameState {
   // command line drew the editor's ring in a full frame and not in a partial one
   // (QA monkey, editor profile, seeds 3 and 6).
   std::optional<FocusTarget> painted_focus;
+  // The editor group that was focused when the strips were painted: each strip
+  // draws its group's active tab as focused or not, and a click in a group's
+  // empty strip moved the focus with no strip repainted (QA monkey, seed 9).
+  std::optional<std::size_t> painted_focused_group;
   // The editor viewport that had the keyboard last frame (null: none did), for
   // the on_focus_change auto-save.
   const void* focused_editor = nullptr;

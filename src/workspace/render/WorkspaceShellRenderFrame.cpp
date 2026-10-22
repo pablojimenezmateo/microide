@@ -923,6 +923,21 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_debug_toolbar = toolbar;
     }
   }
+  // The focused editor group: every group's strip and breadcrumb (see
+  // PreparedFrameState::painted_focused_group).
+  if (const std::size_t group = project_state.clamped_focused_group_index();
+      frame_state_.painted_focused_group != group) {
+    if (frame_state_.painted_focused_group.has_value()) {
+      for (const EditorGroupRects& rects : ComputeEditorGroupRectsForState(layout).groups) {
+        for (const SDL_FRect& rect : {rects.tab_strip, rects.breadcrumb}) {
+          if (rect.w > 0.0f && rect.h > 0.0f) {
+            RequestRedrawRect(rect);
+          }
+        }
+      }
+    }
+    frame_state_.painted_focused_group = group;
+  }
   // The focus ring: the surface that lost it and the one that took it repaint
   // (see PreparedFrameState::painted_focus).
   if (const FocusTarget focus = project_state.surface.focus; frame_state_.painted_focus != focus) {
