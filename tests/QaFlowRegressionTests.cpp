@@ -848,6 +848,25 @@ void TestReverseExecutionIsRefusedWithoutAReverseAdapter() {
          "debug-reverse-continue should be refused without an adapter that runs backwards");
 }
 
+// The palette lists the commands last run from it first, newest first (VS Code's
+// "recently used"), and breaks ties within a match rank by them.
+void TestCommandPaletteListsRecentCommandsFirst() {
+  FlowFixture fixture("main.txt", "b\na\n");
+  const auto run = [&](std::string_view query) {
+    TestAccess::OpenCommandPalette(fixture.shell);
+    TestAccess::SetCommandPaletteQueryAndRefresh(fixture.shell, query);
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+  };
+  run("word wrap");
+  run("sort lines ascending");
+  TestAccess::OpenCommandPalette(fixture.shell);
+  TestAccess::SetCommandPaletteQueryAndRefresh(fixture.shell, "");
+  const std::string first = TestAccess::CommandPaletteMatchLabelAt(fixture.shell, 0);
+  const std::string second = TestAccess::CommandPaletteMatchLabelAt(fixture.shell, 1);
+  Expect(first.starts_with("Sort Lines") && second == "Word Wrap",
+         "the last two commands run lead the empty palette, newest first: " + first + ", " + second);
+}
+
 // QA plugins-reload: Escape on the completion list moved keyboard focus to the
 // file tree, so the next key (a Backspace) edited nothing -- every overlay that
 // closed "without a target" (the palette, completion, code actions, the commit
@@ -3273,6 +3292,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATabDraggedAcrossACloseButtonLeavesItIdle);
   AddTest(tests, "QaFlowRegression/AHeldTabDragPaintsItsLastSnap", TestAHeldTabDragPaintsItsLastSnap);
   AddTest(tests, "QaFlowRegression/SavingADeletedFileWritesItBack", TestSavingADeletedFileWritesItBack);
+  AddTest(tests, "QaFlowRegression/CommandPaletteListsRecentCommandsFirst", TestCommandPaletteListsRecentCommandsFirst);
   AddTest(tests, "QaFlowRegression/ReverseExecutionIsRefusedWithoutAReverseAdapter",
           TestReverseExecutionIsRefusedWithoutAReverseAdapter);
   AddTest(tests, "QaFlowRegression/DetectedIndentationSurvivesTabSwitchesAndSettings",

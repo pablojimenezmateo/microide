@@ -449,6 +449,17 @@ void WorkspaceShell::RefreshCommandPalette() {
   // typing `open` selected "Open Merge Conflicts for Review" and `search`
   // selected "Search Workspace Symbols…" — each ahead of the command that
   // actually carries the name. stable_sort keeps registry order within a rank.
+  // Recently run commands first: on their own with an empty query, and as the
+  // tie-break within a rank with one (VS Code's "recently used").
+  const auto recency = [&palette](std::size_t index) {
+    const std::string& key = CommandPaletteRecentKey(palette.items[index]);
+    const auto found = std::find(palette.recent.begin(), palette.recent.end(), key);
+    return static_cast<std::size_t>(found - palette.recent.begin());
+  };
+  if (query.empty() && !palette.recent.empty()) {
+    std::stable_sort(palette.matches.begin(), palette.matches.end(),
+                     [&](std::size_t lhs, std::size_t rhs) { return recency(lhs) < recency(rhs); });
+  }
   if (!query.empty()) {
     const auto rank = [&](std::size_t index) {
       const CommandPaletteItem& item = palette.items[index];
@@ -464,8 +475,11 @@ void WorkspaceShell::RefreshCommandPalette() {
       // The whole query as one run beats the same words scattered over the row.
       return item.search_text.find(query) != std::string::npos ? 3 : 4;
     };
-    std::stable_sort(palette.matches.begin(), palette.matches.end(),
-                     [&](std::size_t lhs, std::size_t rhs) { return rank(lhs) < rank(rhs); });
+    std::stable_sort(palette.matches.begin(), palette.matches.end(), [&](std::size_t lhs, std::size_t rhs) {
+      const int lhs_rank = rank(lhs);
+      const int rhs_rank = rank(rhs);
+      return lhs_rank != rhs_rank ? lhs_rank < rhs_rank : recency(lhs) < recency(rhs);
+    });
   }
   palette.summary_line =
       BuildFilteredCountSummary(palette.matches.size(), palette.items.size(), "commands");
@@ -529,6 +543,14 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
     // another overlay (e.g. Find File, Settings), so the palette must be gone first and
     // we must not hold a reference into state that the action could mutate.
     const CommandPaletteItem selected = palette.items[palette.matches[palette.selected_index]];
+    {
+      const std::string key = CommandPaletteRecentKey(selected);
+      std::erase(palette.recent, key);
+      palette.recent.insert(palette.recent.begin(), key);
+      if (palette.recent.size() > kCommandPaletteRecentCap) {
+        palette.recent.resize(kCommandPaletteRecentCap);
+      }
+    }
     DismissOverlay(true);
     if (selected.is_plugin) {
       ExecuteCommandName(selected.command_token, {}, ActionSource::Menu, nullptr);

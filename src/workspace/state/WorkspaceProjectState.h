@@ -521,7 +521,22 @@ struct CommandPaletteState {
   // strings on each keystroke (TD-2026-07-17A-032); `items` stays the owner.
   std::vector<std::size_t> matches;
   std::size_t selected_index = 0;
+  // The commands last run from the palette, most recent first (CommandPaletteRecentKey,
+  // at most kCommandPaletteRecentCap): an empty query lists them first and a query
+  // breaks ties within a rank by them, as VS Code's "recently used" group does.
+  std::vector<std::string> recent;
 };
+
+inline constexpr std::size_t kCommandPaletteRecentCap = 10;
+
+// The identity a palette row is remembered by: a plugin command's token, else the
+// built-in's command name, else (a label-only action) its label.
+inline const std::string& CommandPaletteRecentKey(const CommandPaletteItem& item) {
+  if (item.is_plugin) {
+    return item.command_token;
+  }
+  return item.command_name.empty() ? item.primary_label : item.command_name;
+}
 
 struct OverlayWorkflowState {
   BufferSearchState buffer_search;
