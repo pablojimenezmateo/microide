@@ -882,6 +882,16 @@
   static bool TerminalHasSelection(const WorkspaceShell& shell) {
     return shell.TerminalHasSelection();
   }
+  // Sets (or with nullopt clears) the active pane's selection directly, with no
+  // damage of its own: what a path that forgets to repaint does.
+  static void SetActiveTerminalSelectionForTest(WorkspaceShell& shell,
+                                                std::optional<TerminalSelectionPoint> anchor,
+                                                std::optional<TerminalSelectionPoint> head) {
+    if (TerminalPaneState* pane = shell.ActiveTerminalPane(); pane != nullptr) {
+      pane->selection_anchor = anchor;
+      pane->selection_head = head;
+    }
+  }
   static std::string ActiveTerminalSelectedText(WorkspaceShell& shell) {
     return shell.SelectedTerminalText();
   }

@@ -464,6 +464,26 @@ alive). What wedges gdb is not known; next: the same launch from a plain
 `gdb --interpreter=dap` driven by a script under `stress`, to tell gdb's bug
 from something in how the app spawns it (the debug sandbox, the pipes).
 
+### TD-2026-10-22-379 — a double-clicked word in the maximized terminal stays highlighted after a click under its find bar. [OPEN]
+
+Found by the QA monkey (default profile, seed 16), minimized to eight actions
+(two of three replays reproduce it): `move-group-down README.md`, Ctrl+Shift+J
+(maximize the panel), a double-click on the panel's tab strip, a click on the
+menu bar's Terminal menu, `search` (the terminal's find bar opens, focused),
+a click at (144,188), then twice: a double-click on a transcript word (it is
+selected) and a single click lower in the terminal. The last click leaves the
+word drawn with the selection colour while a full render of the same frame draws
+it plain; that frame repainted only the find bar (`clips=968,36,460,42`). The
+same finding first showed as a stale word highlight in a diff's working-tree
+pane. Two in-process tests replay the parts in isolation and pass
+(`QaFlowRegression/AClickThatClearsATerminalSelectionUnderTheFindWidgetRepaintsIt`,
+`ATerminalSelectionChangeWithNoDamageRepaints`): a selection set or cleared with
+no damage is already repainted, so the missing piece is likely what the menu or
+the find bar's focus changes between the paint and the full render (which
+emphasis a cell gets, not the selection itself). Next: replay with
+`MICROIDE_TRACE_INPUT=1` and log `cell_emphasis` inputs (find focus, pane
+emphasis, selection) for the two renders of the stale frame.
+
 ### TD-2026-10-22-378 — `WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation` fails about one shard run in ten. [OPEN]
 
 Seen twice locally on 2026-10-22 in `ctest -R _tests_shard -j6` (1 of 11 full

@@ -858,6 +858,104 @@ void TestClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips() {
   fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after that");
 }
 
+// The QA monkey (seed 16): with the find widget up, a double-click selected a
+// word and a single click elsewhere took the selection away -- and the frame
+// repainted only the find widget, leaving the word highlighted on screen.
+void TestAClickThatClearsASelectionUnderTheFindWidgetRepaintsIt() {
+  FlowFixture fixture("main.txt", "alpha beta gamma delta\nsecond line here\n");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the start");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search"), "search opens the find widget");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the find widget");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto& editor = ui["editors"].AsArray().front();
+  const float text_x = static_cast<float>(editor["textX"].AsDouble());
+  const float first_y = static_cast<float>(editor["firstLineY"].AsDouble());
+  const float line_h = static_cast<float>(editor["lineHeight"].AsDouble());
+  const float char_w = static_cast<float>(editor["charWidth"].AsDouble());
+  const float word_x = text_x + char_w * 8.0f;
+  const float word_y = first_y + line_h * 0.5f;
+  SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, word_x, word_y);
+  SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, word_x, word_y);
+  down.button.clicks = 2;
+  up.button.clicks = 2;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(word_x, word_y), down, up}),
+                      "a double-click selecting a word");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after it");
+  const float other_y = first_y + line_h * 1.5f;
+  fixture.ExpectFresh(fixture.Click(SDL_FRect{text_x + char_w * 3.0f, other_y - 2.0f, 4.0f, 4.0f}),
+                      "a click on the next line that clears the selection");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after that");
+}
+
+// The same in the maximized terminal (seed 16 minimized to eight actions): with
+// the find widget up, a double-click selected a word of the transcript and a
+// click elsewhere took it away while the frame repainted only the find widget.
+void TestAClickThatClearsATerminalSelectionUnderTheFindWidgetRepaintsIt() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, 8, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "To run a command as administrator\r\nsecond line\r\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "panel-maximize"), "the panel maximizes");
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the maximized terminal");
+  TestAccess::SetFocusPanel(fixture.shell);
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "search"), "search opens the terminal's find bar");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the find widget");
+  const SDL_FPoint word = TestAccess::TerminalCellPoint(fixture.shell, 0, 12);
+  const SDL_FPoint other = TestAccess::TerminalCellPoint(fixture.shell, 1, 3);
+  for (int round = 0; round < 2; ++round) {
+    // As a person (and xdotool) double-clicks: two presses, the second with clicks=2.
+    workspace::RenderInvalidation damage = DispatchEvents(fixture.shell, {MouseMotionEvent(word.x, word.y)});
+    for (const Uint8 clicks : {Uint8{1}, Uint8{2}}) {
+      SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, word.x, word.y);
+      SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, word.x, word.y);
+      down.button.clicks = clicks;
+      up.button.clicks = clicks;
+      damage.Merge(DispatchEvents(fixture.shell, {down, up}));
+    }
+    fixture.ExpectFresh(damage, "a double-click selecting a word in the terminal");
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after it");
+    fixture.ExpectFresh(fixture.Click(SDL_FRect{other.x - 1.0f, other.y - 1.0f, 2.0f, 2.0f}),
+                        "a click on the next row that clears the selection");
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after that");
+  }
+}
+
+// The terminal's selection changed by a path with no damage of its own (QA
+// monkey seed 16: a click under the terminal's find bar cleared a double-clicked
+// word, and the frame repainted only the bar). Frame prep repaints the panel body
+// whenever a pane's selection differs from what was painted.
+void TestATerminalSelectionChangeWithNoDamageRepaints() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("main.txt", "alpha\n");
+  TestAccess::EnsureTerminalTab(fixture.shell);
+  auto& session = TestAccess::ActiveTerminalSession(fixture.shell);
+  TerminalSessionTestAccess::Reset(session, 8, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "To run a command as administrator\r\n");
+  TestAccess::SetFocusPanel(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the terminal");
+  workspace::RenderInvalidation elsewhere;
+  elsewhere.rects.push_back(SDL_FRect{2.0f, 2.0f, 4.0f, 4.0f});
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, workspace::TerminalSelectionPoint{0, 9},
+                                                workspace::TerminalSelectionPoint{0, 16});
+  fixture.ExpectFresh(elsewhere, "a selection made with no damage of its own");
+  TestAccess::SetActiveTerminalSelectionForTest(fixture.shell, std::nullopt, std::nullopt);
+  fixture.ExpectFresh(elsewhere, "the selection cleared with no damage of its own");
+}
+
 // QA commands-run (the bounds oracle): with the status bar hidden every toast
 // was laid out above the window's top-left corner and never seen -- the stack is
 // anchored on the status bar, and a hidden bar's rect was {0,0,0,0}. A hidden bar
@@ -2975,6 +3073,12 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/SidebarViewTabsStayInsideANarrowSidebar", TestSidebarViewTabsStayInsideANarrowSidebar);
   AddTest(tests, "QaFlowRegression/ClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips",
           TestClickingTheOtherGroupAfterATreeDragRepaintsTheTabStrips);
+  AddTest(tests, "QaFlowRegression/AClickThatClearsASelectionUnderTheFindWidgetRepaintsIt",
+          TestAClickThatClearsASelectionUnderTheFindWidgetRepaintsIt);
+  AddTest(tests, "QaFlowRegression/AClickThatClearsATerminalSelectionUnderTheFindWidgetRepaintsIt",
+          TestAClickThatClearsATerminalSelectionUnderTheFindWidgetRepaintsIt);
+  AddTest(tests, "QaFlowRegression/ATerminalSelectionChangeWithNoDamageRepaints",
+          TestATerminalSelectionChangeWithNoDamageRepaints);
   AddTest(tests, "QaFlowRegression/ConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard",
           TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",
