@@ -731,8 +731,14 @@ class App:
         return str(round(x * sx) + self.origin[0]), str(round(y * sy) + self.origin[1])
 
     def _focus(self) -> None:
+        """Gives the window the X input focus and waits until it has it. Keys then
+        go through XTEST, as a keyboard's do. Passing `--window` to xdotool instead
+        made libxdo fall back to XSendEvent whenever the focus was not (yet) on the
+        window -- synthetic core events SDL3, reading the keyboard through XInput2,
+        never sees: a loaded run once lost every key of a flow with no trace in the
+        app's input log (TD-2026-10-20-368)."""
         if self.window:
-            self._xdotool("windowfocus", self.window)
+            self._xdotool("windowfocus", "--sync", self.window)
 
     def _input(self, *words: str) -> dict[str, Any]:
         """One input command (`key`, `pointer`, `type`) over the persistent control
@@ -846,10 +852,7 @@ class App:
                 self.expect(False, f"key {chord} was refused: {answer}")
             return
         self._focus()
-        args = ["key", "--clearmodifiers"]
-        if self.window:
-            args += ["--window", self.window]
-        self._xdotool(*args, chord)
+        self._xdotool("key", "--clearmodifiers", chord)
 
     def _await_typed_input(self, timeout: float = 3.0) -> None:
         """Waits until the app has taken every character typed through X since the
@@ -898,15 +901,13 @@ class App:
             return
         self._focus()
         args = ["type", "--clearmodifiers", "--delay", "25"]
-        if self.window:
-            args += ["--window", self.window]
         # Beyond ASCII, xdotool remaps a scratch keycode per character and SDL races
         # the keymap change, so a run of them drops characters; Latin-1 goes as its
         # own keysym press instead. Past Latin-1 there is no way in: Xvfb has no
         # input method, and without one X delivers no text for such a keysym (a real
         # desktop's IME does) -- those characters are inserted through the control
         # channel's `type` (the paste path), and the action log says so.
-        key_args = ["key", "--clearmodifiers"] + (["--window", self.window] if self.window else [])
+        key_args = ["key", "--clearmodifiers"]
         chunk = ""
 
         def flush() -> None:
