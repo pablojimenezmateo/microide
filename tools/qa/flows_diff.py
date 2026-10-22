@@ -504,6 +504,72 @@ def flow_merge_panes(app: q.App) -> None:
                f"the second took the current side ({[l for l in text.splitlines() if l.startswith('line 80')]})")
 
 
+def flow_git_stash_switch(app: q.App) -> None:
+    """Git: Stash Changes puts a change away (the file and its open buffer go back
+    to HEAD, git has one stash) and Git: Pop Stash brings it back; Git: Switch
+    Branch... lists the branches and switching reloads the open buffer from the
+    other branch, then back. No flow ran either beyond `commands-run`'s smoke
+    pass (TD-364)."""
+    assert app.project is not None
+    base = "stash base\n"
+    write(app, "notes/stash.txt", base)
+    git(app, "add", "notes/stash.txt")
+    git(app, "commit", "-q", "-m", "qa: stash fixture")
+    open_file(app, "notes/stash.txt")
+    write(app, "notes/stash.txt", "stash base\nchanged\n")
+    app.wait_until(lambda: "changed" in app.text(), 5.0, "the open buffer to take the change")
+
+    def stash_count() -> int:
+        return len([line for line in git(app, "stash", "list").splitlines() if line.strip()])
+
+    def answer_prompt(text: str) -> None:
+        if app.ui().get("modal") == "prompt":
+            app.type(text)
+            app.key("Return")
+            step(app, "answer the prompt", 0.3)
+
+    if _run(app, "Git: Stash Changes"):
+        answer_prompt("qa stash")
+        app.wait_until(lambda: stash_count() == 1, 5.0, "the stash")
+        app.expect(stash_count() == 1 and read(app, "notes/stash.txt") == base,
+                   f"Stash Changes puts the change away ({stash_count()} stash, {read(app, 'notes/stash.txt')!r})")
+        app.wait_until(lambda: app.text() == base, 5.0, "the buffer to reload")
+        app.expect(app.text() == base, f"and the open buffer shows HEAD again ({app.text()!r})")
+    if _run(app, "Git: Pop Stash"):
+        app.wait_until(lambda: stash_count() == 0, 5.0, "the pop")
+        app.expect(stash_count() == 0 and "changed" in read(app, "notes/stash.txt"),
+                   f"Pop Stash brings it back ({stash_count()} stash, {read(app, 'notes/stash.txt')!r})")
+        app.wait_until(lambda: "changed" in app.text(), 5.0, "the buffer to reload")
+        app.expect("changed" in app.text(), f"and the open buffer shows it ({app.text()!r})")
+
+    # Switch to another branch and back, the open buffer following.
+    git(app, "checkout", "-q", "--", "notes/stash.txt")
+    home = git(app, "branch", "--show-current").strip()
+    git(app, "checkout", "-q", "-b", "qa-other")
+    write(app, "notes/stash.txt", "on the other branch\n")
+    git(app, "commit", "-q", "-am", "qa: other branch")
+    git(app, "checkout", "-q", home)
+    app.wait_until(lambda: app.text() == base, 5.0, "the buffer to follow the checkout")
+
+    def branch() -> str:
+        return git(app, "branch", "--show-current").strip()
+
+    if _run(app, "Git: Switch Branch"):
+        row = next((r for r in app.elements("overlay-row") if r.get("label", "").startswith("qa-other")), None)
+        if app.expect(row is not None, f"the branch picker lists qa-other ({[r.get('label') for r in app.elements('overlay-row')]})"):
+            app.click(*app.center(row))
+            app.wait_until(lambda: branch() == "qa-other", 5.0, "the switch")
+            app.expect(branch() == "qa-other", f"choosing it switches the branch ({branch()})")
+            app.wait_until(lambda: app.text() == "on the other branch\n", 5.0, "the buffer to reload")
+            app.expect(app.text() == "on the other branch\n", f"and the open buffer follows ({app.text()!r})")
+        dismiss(app)
+    app.send_line(f"git-switch-branch {home}")
+    app.wait_until(lambda: branch() == home, 5.0, "the switch back")
+    app.expect(branch() == home and app.text() == base,
+               f"git-switch-branch {home} switches back ({branch()}, {app.text()!r})")
+    app.check("git stash and switch")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-commands": flow_merge_commands,
     "merge-panes": flow_merge_panes,
@@ -512,4 +578,5 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "merge-toolbar": flow_merge_toolbar,
     "diff-commands": flow_diff_commands,
     "diff-review-files": flow_diff_review_files,
+    "git-stash-switch": flow_git_stash_switch,
 }
