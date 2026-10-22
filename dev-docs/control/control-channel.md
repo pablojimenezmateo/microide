@@ -407,7 +407,9 @@ through the normal `PersistedDebugState` path.
 an agent is told only a function name: `breakpoint-function-add <name>`,
 `breakpoint-function-remove <name>`, `breakpoint-function-toggle <name>`,
 `breakpoint-function-condition <name> [expr]`. Exception-filter conditions use
-`breakpoint-exception-condition <filterId> [expr]`. Query current state with the
+`breakpoint-exception-condition <filterId> [expr]`, refused (with the filters
+known) for an id no adapter advertised and for a condition on a filter whose
+`supportsCondition` is false. Query current state with the
 `function-breakpoints` and `exception-filters` verbs.
 
 ## Review / diff commands

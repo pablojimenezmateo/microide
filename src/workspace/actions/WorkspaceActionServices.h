@@ -357,7 +357,7 @@ class WorkspaceActionContext {
     std::function<void(const std::string&)> toggle_function_breakpoint;
     std::function<void(const std::string&, std::optional<std::string>)>
         set_function_breakpoint_condition;
-    std::function<void(const std::string&, std::optional<std::string>)>
+    std::function<std::string(const std::string&, std::optional<std::string>)>
         set_exception_filter_condition;
     // Buffer-search stepping for F3 / Shift+F3 (StepBufferSearch): move the
     // selected match by a delta (wrapping) and reveal one match in the editor.
@@ -745,8 +745,9 @@ class WorkspaceActionContext {
   void ToggleFunctionBreakpoint(const std::string& name);
   void SetFunctionBreakpointCondition(const std::string& name,
                                       std::optional<std::string> condition);
-  void SetExceptionFilterCondition(const std::string& filter_id,
-                                   std::optional<std::string> condition);
+  // "" once set, else why not (an unknown filter, one that takes no condition).
+  std::string SetExceptionFilterCondition(const std::string& filter_id,
+                                          std::optional<std::string> condition);
 
   // Editor essentials: accessors and shaping-action driver. These keep the
   // executor free of direct operations_ access while still allowing free

@@ -157,10 +157,11 @@ class DebugService {
   void ToggleExceptionFilter(const std::string& filter_id);
   // Set or clear (nullopt) a per-filter exception condition and live re-send
   // `setExceptionBreakpoints` (gated at the wire on the adapter's
-  // supportsExceptionFilterOptions + the filter's supportsCondition). No-op when the
-  // filter id is not advertised.
-  void SetExceptionFilterCondition(const std::string& filter_id,
-                                   std::optional<std::string> condition);
+  // supportsExceptionFilterOptions + the filter's supportsCondition). Returns why
+  // nothing was set -- the filter id is not one the adapter advertised, or the
+  // filter takes no condition -- or "" once it is set (or cleared).
+  std::string SetExceptionFilterCondition(const std::string& filter_id,
+                                          std::optional<std::string> condition);
 
   // Function (symbol) breakpoints. Each mutates the per-project
   // FunctionBreakpointStore, rebuilds the Breakpoints panel, and live re-sends

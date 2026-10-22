@@ -818,8 +818,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject("breakpoint-exception-condition: a filter id is required");
       }
       const std::string expr = JoinCommandArguments(args, 1);
-      context_.SetExceptionFilterCondition(
-          args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
+      // An unknown filter, or a condition on one that takes none, answered "ok"
+      // for a condition that was never set.
+      if (const std::string error = context_.SetExceptionFilterCondition(
+              args[0], expr.empty() ? std::nullopt : std::optional<std::string>(expr));
+          !error.empty()) {
+        return reject(error);
+      }
       return DispatchResult::Handled;
     }
     case ActionId::DebugLaunch: {

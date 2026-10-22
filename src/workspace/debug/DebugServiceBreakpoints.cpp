@@ -21,13 +21,27 @@ void DebugService::ToggleExceptionFilter(const std::string& filter_id) {
   ResendExceptionFiltersAndSync();
 }
 
-void DebugService::SetExceptionFilterCondition(const std::string& filter_id,
-                                               std::optional<std::string> condition) {
+std::string DebugService::SetExceptionFilterCondition(const std::string& filter_id,
+                                                      std::optional<std::string> condition) {
   DebugBreakpointsModel& panel = CurrentProjectState().debug_breakpoints_panel;
-  if (!panel.SetFilterCondition(filter_id, std::move(condition))) {
-    return;
+  const auto& advertised = panel.AdvertisedFilters();
+  const auto filter = std::find_if(advertised.begin(), advertised.end(),
+                                   [&](const dap_protocol::DapExceptionFilter& f) { return f.filter == filter_id; });
+  if (filter == advertised.end()) {
+    std::string known;
+    for (const dap_protocol::DapExceptionFilter& f : advertised) {
+      known += known.empty() ? f.filter : ", " + f.filter;
+    }
+    return "no exception filter \"" + filter_id + "\"" +
+           (known.empty() ? std::string(" (no session has advertised any yet)") : " (known: " + known + ")");
   }
-  ResendExceptionFiltersAndSync();
+  if (condition.has_value() && !condition->empty() && !filter->supports_condition) {
+    return "the exception filter \"" + filter_id + "\" takes no condition";
+  }
+  if (panel.SetFilterCondition(filter_id, std::move(condition))) {
+    ResendExceptionFiltersAndSync();
+  }
+  return {};
 }
 
 void DebugService::AddFunctionBreakpoint(std::string name) {

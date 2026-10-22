@@ -846,6 +846,10 @@ void TestReverseExecutionIsRefusedWithoutAReverseAdapter() {
          "debug-step-back should be refused without an adapter that steps back");
   Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "debug-reverse-continue"),
          "debug-reverse-continue should be refused without an adapter that runs backwards");
+  // The same class: a condition on an exception filter no adapter advertised was
+  // "ok" and set nothing.
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "breakpoint-exception-condition throw x > 1"),
+         "a condition on an exception filter no adapter advertised should be refused");
 }
 
 // The palette lists the commands last run from it first, newest first (VS Code's

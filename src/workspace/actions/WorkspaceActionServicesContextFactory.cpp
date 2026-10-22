@@ -367,11 +367,11 @@ void WorkspaceActionContext::SetFunctionBreakpointCondition(const std::string& n
   }
 }
 
-void WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filter_id,
-                                                         std::optional<std::string> condition) {
-  if (operations_.set_exception_filter_condition) {
-    operations_.set_exception_filter_condition(filter_id, std::move(condition));
-  }
+std::string WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filter_id,
+                                                                std::optional<std::string> condition) {
+  return operations_.set_exception_filter_condition
+             ? operations_.set_exception_filter_condition(filter_id, std::move(condition))
+             : std::string("debugging is unavailable");
 }
 
 WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
@@ -1211,7 +1211,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .set_exception_filter_condition =
               [this](const std::string& filter_id, std::optional<std::string> condition) {
-                debug_service_.SetExceptionFilterCondition(filter_id, std::move(condition));
+                return debug_service_.SetExceptionFilterCondition(filter_id, std::move(condition));
               },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
           .reveal_buffer_search_match =
