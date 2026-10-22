@@ -116,6 +116,42 @@ SLOW_FACTOR = float(os.environ.get("MQA_SLOW_FACTOR", "1"))
 WAYLAND_SCALE = int(os.environ.get("MQA_WAYLAND_SCALE", "1"))
 # weston: on PATH, or unpacked by tools/qa/weston.sh under this root.
 WESTON_ROOT = Path(os.environ.get("MQA_WESTON_ROOT", str(Path.home() / ".cache" / "microide-qa" / "weston" / "root")))
+# The X keymap Xvfb starts with. xkeyboard-config gives F1-F12 the CTRL+ALT key
+# type (its fifth level switches virtual terminals), and xdotool 3.20160805 then
+# resolves a plain F5 to a level it reaches by holding Alt: every F-key press
+# arrived as Alt+F<n> (keys, debug-keys, lsp-rename, menus' F10 ... all failed on
+# a machine with xkb-data 2.46). The server refuses a keymap uploaded after start
+# (BadValue), so each Xvfb starts from a copy of the XKB tree whose `pc` symbols
+# take the plain two-level F-keys (srvr_ctrl(no_srvr_keys)), built once.
+XKB_SOURCE = Path("/usr/share/X11/xkb")
+XKB_CACHE = Path.home() / ".cache" / "microide-qa" / "xkb"
+
+
+def plain_fkey_xkb_dir() -> Path | None:
+    """An XKB directory whose F-keys have no VT-switch level, or None when the
+    system's needs no change (or there is none to copy)."""
+    pc = XKB_SOURCE / "symbols" / "pc"
+    try:
+        text = pc.read_text()
+    except OSError:
+        return None
+    if 'include "srvr_ctrl(fkey2vt)"' not in text:
+        return None
+    stamp = str(int(pc.stat().st_mtime))
+    target = XKB_CACHE / stamp
+    if (target / "symbols" / "pc").exists():
+        return target
+    XKB_CACHE.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="build-", dir=XKB_CACHE))
+    shutil.copytree(XKB_SOURCE.resolve(), scratch / "xkb", symlinks=False)
+    patched = scratch / "xkb" / "symbols" / "pc"
+    patched.write_text(text.replace('include "srvr_ctrl(fkey2vt)"', 'include "srvr_ctrl(no_srvr_keys)"'))
+    try:
+        (scratch / "xkb").rename(target)  # atomic: a parallel start sees all or nothing
+    except OSError:
+        pass  # another driver got there first; its copy is the same
+    shutil.rmtree(scratch, ignore_errors=True)
+    return target
 
 # xdotool keysyms as the app's `key` command spells them.
 _KEYSYM_TO_CHORD = {
@@ -343,16 +379,19 @@ class App:
     def _start_xvfb(self, w: int, h: int) -> None:
         """Xvfb picks a free display and tells us (-displayfd); scanning lock
         files raced when two drivers started at once on one machine."""
+        xkb = plain_fkey_xkb_dir()
+        xkb_args = ["-xkbdir", str(xkb)] if xkb is not None else []
         if self.display:
             self.xvfb = subprocess.Popen(
-                ["Xvfb", self.display, "-screen", "0", f"{w}x{h}x24", "-nolisten", "tcp"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                ["Xvfb", self.display, *xkb_args, "-screen", "0", f"{w}x{h}x24", "-nolisten", "tcp"],
+                env=self.tool_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             read_fd, write_fd = os.pipe()
             self.xvfb = subprocess.Popen(
-                ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", f"{w}x{h}x24",
+                ["Xvfb", "-displayfd", str(write_fd), *xkb_args, "-screen", "0", f"{w}x{h}x24",
                  "-nolisten", "tcp"],
-                pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                env=self.tool_env, pass_fds=(write_fd,), stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL)
             os.close(write_fd)
             with os.fdopen(read_fd) as reader:
                 number = reader.readline().strip()
@@ -668,7 +707,7 @@ class App:
         if self.wayland:
             return None
         for _ in range(25):
-            result = subprocess.run(["xdotool", "search", "--name", "microide"], env=self.env,
+            result = subprocess.run(["xdotool", "search", "--name", "microide"], env=self.tool_env,
                                     capture_output=True, text=True)
             ids = result.stdout.split()
             if ids:
@@ -680,7 +719,7 @@ class App:
         if self.wayland or not self.window:
             return (0, 0)
         result = subprocess.run(["xdotool", "getwindowgeometry", "--shell", self.window],
-                                env=self.env, capture_output=True, text=True)
+                                env=self.tool_env, capture_output=True, text=True)
         fields = dict(line.split("=", 1) for line in result.stdout.split() if "=" in line)
         try:
             return (int(fields.get("X", 0)), int(fields.get("Y", 0)))
