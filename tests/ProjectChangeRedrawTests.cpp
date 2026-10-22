@@ -226,6 +226,86 @@ void TestAWriteToTheOpenFileRepaintsItsPane() {
          "the reload should have changed the editor on screen");
 }
 
+// The QA monkey (editor profile, seed 3, with files rewritten under the editor):
+// a reloaded buffer shown in a group that does not have the focus kept its old
+// text on screen -- the reload repainted the focused pane.
+void TestAWriteToAFileOpenInAnotherGroupRepaintsThatPane() {
+  Fixture fixture(/*sidebar_visible=*/true);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "split-down other.cpp"),
+         "split-down should open other.cpp in a second group");
+  fixture.Paint(RenderInvalidation{.full = true, .rects = {}});
+  fixture.Settle();
+  fixture.painted.clear();
+  fixture.painted_full = false;
+  const SurfacePtr before = fixture.Snapshot();
+
+  WriteFile(fixture.open_file, "// churn\nint open() {\n  return 1;\n}\n");
+  platform::IndexUpdateBatch batch;
+  batch.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(batch));
+
+  fixture.ExpectRetainedMatchesFull(
+      "a reload of a file open in the unfocused group leaves the window identical to a full repaint");
+  Expect(CountPixelDifferences(before.get(), fixture.Snapshot().get()) > 0,
+         "the reload should have changed that pane on screen");
+}
+
+// The same, under a modal: the monkey's reload landed while the unsaved-changes
+// prompt of a group being closed was up.
+void TestAWriteToAnOpenFileUnderAPromptRepaintsItsPane() {
+  Fixture fixture(/*sidebar_visible=*/true);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "split-down other.cpp"),
+         "split-down should open other.cpp in a second group");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(fixture.shell, "x"), "typing dirties other.cpp");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "close-group"),
+         "close-group on a dirty group runs");
+  fixture.Paint(RenderInvalidation{.full = true, .rects = {}});
+  fixture.Settle();
+  fixture.painted.clear();
+  fixture.painted_full = false;
+  const SurfacePtr before = fixture.Snapshot();
+
+  WriteFile(fixture.open_file, "// churn\nint open() {\n  return 1;\n}\n");
+  platform::IndexUpdateBatch batch;
+  batch.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(batch));
+
+  fixture.ExpectRetainedMatchesFull(
+      "a reload under the unsaved-changes prompt leaves the window identical to a full repaint");
+  Expect(CountPixelDifferences(before.get(), fixture.Snapshot().get()) > 0,
+         "the reload should have changed the pane under the prompt");
+}
+
+// The monkey's buffer was scrolled far down a long file: a line prepended on disk
+// shifts every row on screen while the reload's change is one line far above it.
+void TestALinePrependedAboveTheScrolledViewRepaintsThePane() {
+  Fixture fixture(/*sidebar_visible=*/true);
+  std::string text;
+  for (int i = 1; i <= 300; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.open_file, text);
+  platform::IndexUpdateBatch first;
+  first.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(first));
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "goto 250"), "goto 250 runs");
+  fixture.Paint(RenderInvalidation{.full = true, .rects = {}});
+  fixture.Settle();
+  fixture.painted.clear();
+  fixture.painted_full = false;
+  const SurfacePtr before = fixture.Snapshot();
+
+  WriteFile(fixture.open_file, "churn 1\n" + text);
+  platform::IndexUpdateBatch batch;
+  batch.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(batch));
+
+  fixture.ExpectRetainedMatchesFull(
+      "a line prepended above the view leaves the window identical to a full repaint");
+  Expect(CountPixelDifferences(before.get(), fixture.Snapshot().get()) > 0,
+         "the shifted rows should have changed the pane on screen");
+}
+
 void TestAHiddenSidebarRepaintsNothingForAnUnopenedFile() {
   Fixture fixture(/*sidebar_visible=*/false);
 
@@ -280,6 +360,12 @@ void RegisterProjectChangeRedrawTests(std::vector<TestCase>& tests) {
           TestAWriteToAnUnopenedFileRepaintsTheSidebarNotTheEditor);
   AddTest(tests, "ProjectChangeRedraw/AnOpenFileRepaintsItsPane",
           TestAWriteToTheOpenFileRepaintsItsPane);
+  AddTest(tests, "ProjectChangeRedraw/AWriteToAFileOpenInAnotherGroupRepaintsThatPane",
+          TestAWriteToAFileOpenInAnotherGroupRepaintsThatPane);
+  AddTest(tests, "ProjectChangeRedraw/AWriteToAnOpenFileUnderAPromptRepaintsItsPane",
+          TestAWriteToAnOpenFileUnderAPromptRepaintsItsPane);
+  AddTest(tests, "ProjectChangeRedraw/ALinePrependedAboveTheScrolledViewRepaintsThePane",
+          TestALinePrependedAboveTheScrolledViewRepaintsThePane);
   AddTest(tests, "ProjectChangeRedraw/AHiddenSidebarRepaintsNothing",
           TestAHiddenSidebarRepaintsNothingForAnUnopenedFile);
   AddTest(tests, "ProjectChangeRedraw/ATreeShapeChangeRepaintsTheEditorColumn",

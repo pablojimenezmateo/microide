@@ -1227,6 +1227,29 @@ void TestATabStaysInsideItsNarrowStrip() {
 
 // The QA monkey (editor profile, seed 3): `tabmove` repainted the tab strip but
 // not the pane under it, though the pane can change with it.
+// With the moved tab's file rewritten on disk since it was painted (the monkey's
+// churn): activating it may reload it, and the pane under the strip changes.
+void TestMovingATabWhoseFileChangedKeepsEveryFrameFresh() {
+  FlowFixture fixture("a.txt", "alpha\n");
+  std::string text;
+  for (int i = 1; i <= 300; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.root / "long.txt", text);
+  WriteFile(fixture.root / "b.txt", "b\n");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "b.txt");
+  TestAccess::OpenFile(fixture.shell, fixture.root / "long.txt");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "goto 250"), "goto 250 runs");
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  WriteFile(fixture.root / "long.txt", "churn 1\n" + text);
+  for (const char* command : {"tabmove 0", "tabmove 2"}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, command), std::string(command) + " runs");
+    fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), command);
+  }
+}
+
 void TestMovingATabKeepsEveryFrameFresh() {
   FlowFixture fixture("a.txt", "alpha\n");
   for (const char* name : {"b.txt", "c.txt", "d.txt", "e.txt"}) {
@@ -2583,6 +2606,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/MovingOntoATabsCloseButtonLightsIt", TestMovingOntoATabsCloseButtonLightsIt);
   AddTest(tests, "QaFlowRegression/ATabStaysInsideItsNarrowStrip", TestATabStaysInsideItsNarrowStrip);
   AddTest(tests, "QaFlowRegression/MovingATabKeepsEveryFrameFresh", TestMovingATabKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/MovingATabWhoseFileChangedKeepsEveryFrameFresh",
+          TestMovingATabWhoseFileChangedKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/AnEditInOneHalfOfASplitShowsInTheOther",
           TestAnEditInOneHalfOfASplitShowsInTheOther);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideTheWindowAtEverySize",
