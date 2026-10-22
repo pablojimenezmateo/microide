@@ -235,7 +235,9 @@ Beyond the elements, `ui` carries state no element does. With an overlay open,
 `overlay` adds `query` (its text field), `count` (rows in the list) and `selected`
 (the row Enter runs). With a prompt up, `prompt` is `{kind: unsaved|input|confirm,
 title, message, detail?, input?}`. `popups` is `{hover: {kind: blame|diagnostic|symbol|
-debug-value, text, rect} | null, signatureHelp: <label> | null}`. `editors` lists every
+debug-value, text, rect, action?: {label, rect}} | null, signatureHelp: <label> | null}`
+(a blame card's `text` is its author, date and summary lines; `action` is the
+card's button, Copy SHA or Quick Fix). `editors` lists every
 editor pane's text geometry -- `{group, focused, rect, textX, firstLineY, lineHeight,
 charWidth, gutterX, gutterWidth, foldHitX, stickyRows, scrollColumn, rows:[{line, y}]}`,
 `rows` naming the buffer line each visible row shows (a collapsed fold skips lines) --

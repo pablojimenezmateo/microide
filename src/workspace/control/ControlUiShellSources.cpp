@@ -1047,6 +1047,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               switch (hover->kind) {
                 case EditorHoverTarget::Kind::Blame:
                   kind = "blame";
+                  // The card's lines as drawn: author, date, the commit's summary.
+                  if (const editor::EditorBlameLine* blame =
+                          editor_blame_overlay_service_.VisibleLine(hover->blame_line_index);
+                      blame != nullptr) {
+                    text = blame->author + "\n" + blame->date + "\n" + blame->summary;
+                  }
                   break;
                 case EditorHoverTarget::Kind::Diagnostic:
                   kind = "diagnostic";
@@ -1072,6 +1078,20 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
               }
               entry["rect"] = util::JsonValue(std::move(rect));
+              // The card's button (Copy SHA on blame, Quick Fix on a diagnostic),
+              // where a click on it lands.
+              if (hover->primary_action_rect.has_value()) {
+                util::JsonObject action;
+                action["label"] = util::JsonValue(std::string(
+                    hover->kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA"));
+                util::JsonArray action_rect;
+                for (const float v : {hover->primary_action_rect->x, hover->primary_action_rect->y,
+                                      hover->primary_action_rect->w, hover->primary_action_rect->h}) {
+                  action_rect.push_back(util::JsonValue(static_cast<std::int64_t>(v)));
+                }
+                action["rect"] = util::JsonValue(std::move(action_rect));
+                entry["action"] = util::JsonValue(std::move(action));
+              }
               popups["hover"] = util::JsonValue(std::move(entry));
             }
             popups["signatureHelp"] =
