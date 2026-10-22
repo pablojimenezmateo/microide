@@ -212,7 +212,9 @@ void TestPredictionLeadsTheEchoByARoundTrip() {
   type(U'w');
   std::this_thread::sleep_for(kRtt * 3);
   Expect(session.PendingPredictions() == 1, "a stalled server leaves the prediction pending");
-  Expect(ScreenText(session).find("ready> qw") != std::string::npos, "and still drawn");
+  Expect(ScreenText(session).find("ready> qw") != std::string::npos,
+         "and still drawn (" + TerminalSessionTestAccess::PredictionState(session) + "):\n" +
+             ScreenText(session));
   relay.SetServerStalled(false);
   Expect(WaitUntil([&] { return session.PendingPredictions() == 0; }, std::chrono::seconds(10),
                    std::chrono::milliseconds(2)),

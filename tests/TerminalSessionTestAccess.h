@@ -10,6 +10,16 @@
 namespace microide::tests {
 
 struct TerminalSessionTestAccess {
+  // The prediction overlay's state, for a failure message: why a pending
+  // prediction may not be drawn (TD-2026-10-21-373).
+  static std::string PredictionState(microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    return "pending=" + std::to_string(session.prediction_.pending()) +
+           " suppressed=" + std::to_string(session.prediction_.suppressed() ? 1 : 0) +
+           " drawing=" + std::to_string(session.prediction_.drawing() ? 1 : 0) +
+           " cursor=" + std::to_string(session.cursor_row_) + ":" + std::to_string(session.cursor_column_);
+  }
+
   static void Reset(microide::terminal::TerminalSession& session,
                     std::size_t rows,
                     std::size_t columns) {
