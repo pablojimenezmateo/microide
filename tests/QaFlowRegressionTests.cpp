@@ -1067,7 +1067,7 @@ void TestEveryElementStaysInsideItsSurfaceAtEverySize() {
       }
     }
   };
-  for (const char* view : {"tree", "search", "git"}) {
+  for (const char* view : {"tree", "search", "git", "problems", "tests", "outline"}) {
     Expect(TestAccess::ExecuteCommandLine(fixture.shell, std::string("sidebar-show ") + view), view);
     for (float width = 20.0f; width <= 420.0f; width += 13.0f) {
       TestAccess::SetSidebarWidth(fixture.shell, width);
@@ -1080,9 +1080,12 @@ void TestEveryElementStaysInsideItsSurfaceAtEverySize() {
     check("debug pane " + std::to_string(static_cast<int>(width)) + " px");
   }
   TestAccess::SetDebugPaneWidth(fixture.shell, 288.0f);
-  for (float height = 20.0f; height <= 600.0f; height += 19.0f) {
-    TestAccess::SetBottomPanelHeight(fixture.shell, height);
-    check("panel " + std::to_string(static_cast<int>(height)) + " px");
+  for (const char* content : {"term"}) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, content), content);
+    for (float height = 20.0f; height <= 600.0f; height += 19.0f) {
+      TestAccess::SetBottomPanelHeight(fixture.shell, height);
+      check(std::string(content) + " panel " + std::to_string(static_cast<int>(height)) + " px");
+    }
   }
   std::string all;
   for (const std::string& v : violations) {
