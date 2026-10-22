@@ -419,6 +419,25 @@ def flow_exception_breakpoints(app: q.App) -> None:
     app.expect(not run_to_end_or_stop(), f"with no filter on, the run passes the throw ({_state(app)})")
     _stop_session(app)
 
+    # A condition per filter, through the control API: set where the filter takes
+    # one, refused with the reason where it does not, and refused for an unknown id.
+    filters = app.query("exception-filters")
+    filters = filters if isinstance(filters, list) else filters.get("filters", [])
+    for item in filters:
+        reply = app.send("breakpoint-exception-condition", item["id"], "1 == 1")
+        if item.get("supportsCondition"):
+            app.expect(bool(reply.get("ok")), f"{item['id']} takes a condition ({reply})")
+            current = next((f for f in (app.query("exception-filters") if isinstance(app.query("exception-filters"), list)
+                                        else []) if f["id"] == item["id"]), {})
+            app.expect(current.get("condition") == "1 == 1", f"and reports it ({current})")
+            app.send("breakpoint-exception-condition", item["id"])
+        else:
+            app.expect(not reply.get("ok") and "no condition" in reply.get("error", ""),
+                       f"{item['id']} takes no condition and says so ({reply})")
+    reply = app.send("breakpoint-exception-condition", "no-such-filter", "x")
+    app.expect(not reply.get("ok") and "no exception filter" in reply.get("error", ""),
+               f"an unknown filter id is refused with the known ones ({reply})")
+
 
 def _palette(app: q.App, label: str) -> None:
     """Runs a palette row by its label, as a person does."""
@@ -499,9 +518,10 @@ def flow_debug_commands(app: q.App) -> None:
     step(app, "pane back", 0.3)
     app.expect(any(e["name"].startswith("debug-tab:") for e in app.elements()), "and back")
 
-    reply = app.send("debug-step-back")
-    app.expect(not reply.get("ok") and "backwards" in reply.get("error", ""),
-               f"Step Back on gdb is refused with the reason ({reply})")
+    for verb in ("debug-step-back", "debug-reverse-continue"):
+        reply = app.send(verb)
+        app.expect(not reply.get("ok") and "backwards" in reply.get("error", ""),
+                   f"{verb} on gdb is refused with the reason ({reply})")
     app.expect(_state(app).get("line") == 12, "and nothing moved")
 
     _stop_session(app)
@@ -511,6 +531,11 @@ def flow_debug_commands(app: q.App) -> None:
         step(app, "stopped again", 0.3)
     app.key("shift+F5")
     app.wait_until(lambda: _state(app).get("session") in ("none", "terminated"), 15.0, "Shift+F5 to end it")
+    # Start Debugging with the configuration last picked.
+    reply = app.send("debug-start")
+    app.expect(bool(reply.get("ok")), f"Start Debugging runs the configuration ({reply})")
+    if app.wait_until(lambda: _state(app).get("stopped"), 40.0, "debug-start to stop at the breakpoint"):
+        _stop_session(app)
 
 
 FLOWS: dict[str, Callable[[q.App], None]] = {

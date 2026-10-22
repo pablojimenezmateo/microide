@@ -124,6 +124,11 @@ def flow_column_select(app: q.App) -> None:
     spans = sorted((c["line"], c["anchorColumn"], c["column"]) for c in app.buffer().get("cursors", []))
     app.expect(spans == [(2, 3, 5), (3, 3, 5), (4, 3, 5)],
                f"columns 3-4 selected on each of lines 2-4 ({spans})")
+    app.key("ctrl+shift+alt+Left")
+    step(app, "column left", 0.2)
+    spans = sorted((c["line"], c["anchorColumn"], c["column"]) for c in app.buffer().get("cursors", []))
+    app.expect(spans == [(2, 3, 4), (3, 3, 4), (4, 3, 4)], f"column left narrows each line's selection ({spans})")
+    app.key("ctrl+shift+alt+Right")
     app.key("ctrl+shift+alt+Up")
     step(app, "column up", 0.2)
     app.expect(sorted(line for line, _ in app.cursors()) == [2, 3],

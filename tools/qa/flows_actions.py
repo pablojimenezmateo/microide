@@ -6,10 +6,12 @@ stacked editor groups, the previous project, and relaunching a terminal."""
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_root, open_file, read, step, terminal_tabs, write
+from flows_common import active_root, dismiss, open_file, read, step, terminal_tabs, write
 
 
 def _banner(app: q.App) -> list[str]:
@@ -132,8 +134,53 @@ def flow_focus_commands(app: q.App) -> None:
                    "the relaunched shell to run a command")
 
 
+def _opened(app: q.App) -> list[str]:
+    path = app.work / "run" / "xdg-open-args"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def flow_desktop_opener(app: q.App) -> None:
+    """What the app hands the desktop opener (`tools/qa/fakebin/xdg-open` records
+    it): Open URL passes an http(s) URL through exactly and refuses a file: or
+    javascript: one without starting anything; Show in File Explorer on a tree
+    file or folder hands over the folder that contains it (VS Code's Reveal in
+    File Explorer on Linux)."""
+    url = "https://example.com/qa?x=1&y=two"
+    reply = app.send("open-url", url)
+    app.expect(bool(reply.get("ok")), f"Open URL runs for an https URL ({reply})")
+    app.wait_until(lambda: url in _opened(app), 3.0, "the opener to get the URL as given")
+    for bad in ("file:///etc/passwd", "javascript:alert(1)"):
+        before = len(_opened(app))
+        reply = app.send("open-url", bad)
+        app.expect(not reply.get("ok"), f"Open URL refuses {bad} ({reply})")
+        app.expect(len(_opened(app)) == before, f"and starts no opener for it ({_opened(app)[before:]})")
+
+    assert app.project is not None
+    app.send("sidebar-show", "tree")
+    for row, row_label, expected in (("row:tree/src", "src", app.project),
+                                     ("row:tree/README.md", "README.md", app.project)):
+        target = app.wait_for(row, 3.0)
+        if not target:
+            continue
+        app.click(*app.center(target), button=3)
+        item = app.wait_for("menu-item:context/Show in File Explorer", 3.0)
+        if not app.expect(item is not None, f"{row_label}'s menu has Show in File Explorer"):
+            dismiss(app)
+            continue
+        before = len(_opened(app))
+        app.click(*app.center(item))
+        app.wait_until(lambda: len(_opened(app)) > before, 3.0, f"Show in File Explorer for {row_label}")
+        handed = _opened(app)[before:]
+        app.expect(handed[:1] == [str(expected)], f"{row_label}: the opener gets {expected} ({handed})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "notification-banner-commands": flow_notification_banner_commands,
     "focus-commands": flow_focus_commands,
+    "desktop-opener": flow_desktop_opener,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {"notification-banner-commands": ("qa-broken",)}
+FAKEBIN = Path(__file__).resolve().parent / "fakebin"
+ENV: dict[str, dict[str, str]] = {
+    "desktop-opener": {"PATH": f"{FAKEBIN}:{os.environ.get('PATH', '/usr/bin:/bin')}"},
+}

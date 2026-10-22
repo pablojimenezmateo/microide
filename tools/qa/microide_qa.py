@@ -358,6 +358,11 @@ class App:
                 self.findings.append(Finding("log", line.strip()))
         if self.proc is not None and self.proc.returncode not in (0, None):
             self.expect(False, f"quit exited with status {self.proc.returncode}")
+        elif not self.alive():
+            # The `quit` above ran (the process left cleanly) but cannot be read back
+            # from a process that is gone: the ledger counts it here.
+            commands = self.banked_action_counts.setdefault("commands", {})
+            commands["quit"] = commands.get("quit", 0) + 1
         if self._socket is not None:
             with contextlib.suppress(OSError):
                 self._socket.close()

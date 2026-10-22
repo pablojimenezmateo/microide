@@ -236,6 +236,18 @@ def flow_untitled_numbering(app: q.App) -> None:
     step(app, "ctrl+n after the close", 0.2)
     app.expect((app.active_tab() or {}).get("title") == "Untitled-2",
                f"the next new buffer takes the free number ({(app.active_tab() or {}).get('title')!r})")
+    # Save As (Ctrl+Shift+S) names it: the file is written and the tab takes the name.
+    app.type("saved draft")
+    app.key("ctrl+shift+s")
+    field = app.wait_for("field:prompt", 3.0)
+    if field:
+        app.key("ctrl+a")
+        app.type("untitled/saved.txt")
+        app.key("Return")
+        app.wait_until(lambda: (app.project / "untitled" / "saved.txt").exists(), 3.0, "Save As to write the file")
+        app.expect(read(app, "untitled/saved.txt").startswith("saved draft")
+                   and (app.active_tab() or {}).get("title") == "saved.txt",
+                   f"the file holds the buffer and the tab takes its name ({(app.active_tab() or {}).get('title')})")
 
 
 FLOWS: dict[str, Callable[[q.App], None]] = {

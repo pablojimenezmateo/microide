@@ -1,0 +1,9 @@
+#!/bin/sh
+# A stand-in for xdg-open, the desktop opener behind Open URL and Show in File
+# Explorer, for the QA `desktop-opener` flow: the flow puts this directory first
+# on PATH, and every argument the app hands the opener is appended, one per line,
+# to $XDG_RUNTIME_DIR/xdg-open-args (the app's own runtime directory, which the
+# harness owns) -- no browser or file manager starts on the test display.
+dir="${XDG_RUNTIME_DIR:-/tmp}"
+printf '%s\n' "$@" >> "$dir/xdg-open-args"
+exit 0
