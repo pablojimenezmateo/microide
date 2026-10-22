@@ -272,12 +272,36 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
                       kSidebarModeLabelPadding;
   }
   layout.icon_only = labelled_total > avail;
+  // Icon-only cells have a floor, so a narrow enough sidebar cannot hold them
+  // all: drawn anyway they ran past its edge and under the "⋯" button, and a
+  // hover lit one control while the damage named another (QA monkey, seed 4).
+  // The ones that do not fit go into the "⋯" menu, which lists every view.
+  if (layout.icon_only) {
+    const auto fits = [&](int count, bool overflow) {
+      const float room =
+          layout.row_rect.w - (overflow ? kSidebarModeOverflowWidth + kSidebarModeTabGap : 0.0f);
+      return static_cast<float>(count) * kSidebarModeIconSlot +
+                 kSidebarModeTabGap * static_cast<float>(std::max(0, count - 1)) <=
+             room;
+    };
+    if (!fits(layout.tab_count, layout.has_overflow)) {
+      layout.has_overflow = true;
+      while (layout.tab_count > 0 && !fits(layout.tab_count, true)) {
+        --layout.tab_count;
+      }
+    }
+  }
+  const float fitted_avail = std::max(
+      0.0f, layout.row_rect.w -
+                (layout.has_overflow ? kSidebarModeOverflowWidth + kSidebarModeTabGap : 0.0f));
+  const float fitted_gaps = kSidebarModeTabGap * static_cast<float>(std::max(0, layout.tab_count - 1));
 
   float x = layout.row_rect.x;
   for (int i = 0; i < layout.tab_count; ++i) {
     float w = 0.0f;
     if (layout.icon_only) {
-      w = std::max(kSidebarModeIconSlot, (avail - gaps) / static_cast<float>(layout.tab_count));
+      w = std::max(kSidebarModeIconSlot,
+                   (fitted_avail - fitted_gaps) / static_cast<float>(layout.tab_count));
     } else {
       w = kSidebarModeIconSlot + kSidebarModeIconLabelGap +
           text_renderer_.MeasureWidth(BuiltinSidebarModeLabel(layout.tabs[i].mode)) +

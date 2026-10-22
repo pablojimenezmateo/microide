@@ -1571,6 +1571,41 @@ void TestStopWithNoSessionLeavesTheDebugPane() {
          "and the debug pane stays open");
 }
 
+// The QA monkey (seed 4, CI's ASan lane): a sidebar dragged down to 46 px drew
+// its view tabs at their 16 px minimum past the sidebar's edge and under the "⋯"
+// button, so a hover lit one control while the damage covered another. Tabs that
+// do not fit go into the "⋯" menu, which lists every view.
+void TestSidebarViewTabsStayInsideANarrowSidebar() {
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  for (const float width : {46.0f, 60.0f, 80.0f, 120.0f}) {
+    TestAccess::SetSidebarWidth(fixture.shell, width);
+    TestAccess::NoteLayoutInputsChanged(fixture.shell);
+    const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+    const auto& sidebar = ui["surfaces"]["sidebar"].AsArray();
+    if (sidebar.size() != 4) {
+      continue;
+    }
+    const float right = static_cast<float>(sidebar[0].AsInt() + sidebar[2].AsInt());
+    std::vector<SDL_FRect> header;
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      const std::string name = entry["name"].AsString();
+      if (name.starts_with("sidebar-view:") || name == "button:sidebar/more") {
+        const auto& r = entry["rect"].AsArray();
+        const SDL_FRect rect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                             static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+        Expect(rect.x + rect.w <= right, name + " ends inside a " + std::to_string(static_cast<int>(width)) +
+                                             " px sidebar");
+        for (const SDL_FRect& other : header) {
+          Expect(rect.x >= other.x + other.w || other.x >= rect.x + rect.w,
+                 name + " does not overlap another header control at " +
+                     std::to_string(static_cast<int>(width)) + " px");
+        }
+        header.push_back(rect);
+      }
+    }
+  }
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -2764,6 +2799,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ASettingsRowValueClickRepaintsTheRows", TestASettingsRowValueClickRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
+  AddTest(tests, "QaFlowRegression/SidebarViewTabsStayInsideANarrowSidebar", TestSidebarViewTabsStayInsideANarrowSidebar);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);
