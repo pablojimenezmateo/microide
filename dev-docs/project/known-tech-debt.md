@@ -449,6 +449,80 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-22-380 — saving a read-only file overwrites it without a word. [OPEN — product decision]
+
+Found by the QA files pass (2026-10-22): a file made read-only (`chmod 444`),
+opened, edited and saved with Ctrl+S is written -- the atomic save renames a
+temporary file over it, which needs only the directory's write permission -- and
+keeps its 0444 mode, so the next `ls -l` says read-only for a file the editor just
+changed. VS Code refuses ("Failed to save: Unable to write file (NoPermissions)")
+and offers Retry and Overwrite (which clears the read-only bit); vim refuses
+without `!`. Deciding: refuse with an Overwrite choice on the editor banner (the
+external-change banner already has the shape), or keep writing and say so. No QA
+flow asserts either yet; `file-vanish` is where one would go.
+
+### TD-2026-10-22-381 — branch-review marks only from the Outgoing list. [OPEN]
+
+`review-branch <ref>` ("Review Diff Against Ref") opens a diff per changed file,
+and every review mark refuses those tabs: "Not a branch review: open a file from
+the git view's Outgoing list". Reviewing a branch the way the palette offers can
+record no progress; only the git view's Outgoing section can. Also: marking every
+hunk of a file reviewed does not show the file's `[reviewed]` row marker (FileStatus
+reads only the file mark), so a fully hunk-reviewed file looks untouched in the git
+view. QA `review-marks` drives both paths; the hunk markers themselves are drawn
+since 4ce82d7f (they were persisted and never shown).
+
+### TD-2026-10-22-382 — Ctrl+B and Ctrl+1 reach a focused shell. [OPEN — verify intent]
+
+The keybindings query reports `sidebar-toggle` (Ctrl+B), `focus-group-1..8`
+(Ctrl+1..8), `close-tab` (Ctrl+W) and `next-tab`/`previous-tab` (Ctrl+PageDown/Up)
+with `skipsTerminal: false`, so with the terminal focused the shell takes them;
+VS Code's default `terminal.integrated.commandsToSkipShell` includes the sidebar
+toggle and the editor-group focus commands (not Ctrl+W). Ctrl+B is bash's
+backward-char in emacs mode, so keeping it for the shell is defensible; the
+journey-layout flow gives the editor the keyboard first. Decide per chord and
+record it in the keybinding registry's comments.
+
+### TD-2026-10-22-384 — the window title is always "microide". [OPEN]
+
+`SDL_CreateWindow("microide", …)` names the window once, and the custom title bar
+draws the same literal (`WorkspaceShellRenderChrome.cpp`). With two windows the
+taskbar and Alt+Tab show two identical "microide" entries, and nothing outside the
+tab strip says a file is unsaved. VS Code titles the window `● file — folder`.
+Wanted: a title composed off the render path (the active tab's title, the project,
+a dirty mark), drawn from the view model, with damage on the title bar when it
+changes and `SDL_SetWindowTitle` from the app loop when the string differs. A QA
+flow can read it with `xdotool getwindowname` on X11.
+
+### TD-2026-10-22-385 — over the slow link, saves stop reaching the host under agent churn. [OPEN]
+
+`tools/run-checks.sh qa-remote`'s second pass (the loopback host behind a 60 ms
+each-way link, `qa-slow`) fails scenario J: while four host agents rewrite the tree,
+the first saves land in 0.08 s and then every later one times out at 20 s
+(`J.saves-under-churn: 5/8`), the tree stays different in `LICENSE`, and the
+scenarios after it (K's git listing, L's save after relaunch) fail on the same
+stalled sync. The loopback pass is green. Not a regression of the 2026-10-22 QA
+pass: the commit it started from (2b06f439, a Release build) fails J and K the same
+way (`/tmp/claude-1000/qa/rem-slow-base`). Next: the mirror sync engine's push queue
+and the journal under a delayed link with concurrent host writes to the pushed file
+-- a push that waits on a pull that the churn keeps renewing is the first suspect.
+
+### TD-2026-10-22-383 — `lsp-csharp` cannot load the project's references in the QA sandbox. [OPEN]
+
+`lsp-csharp`: csharp-ls (0.28.0, SDK 10.0.302 registered by MSBuildLocator for a
+net8.0 project) answers the hover with the diagnostic "Predefined type
+'System.Object' is not defined or imported": the project's reference assemblies do
+not load. It passed once right after csharp-ls was installed and fails alone and in
+the suite since. The run's HOME is a throwaway with `.dotnet`/`.nuget` linked to the
+real ones (the sandbox follows the link -- without the link `dotnet` cannot even
+exec there); a null `csharp` configuration section makes csharp-ls log a
+NullReferenceException and fall back to defaults, which is not the cause. Next:
+keep the run's work directory (`MQA_KEEP_WORK=1`) and read csharp-ls's full log
+for the MSBuild load. Two others were the harness and are fixed:
+`dbg-function-breakpoints` (a duplicate `_palette` helper; the registry now refuses
+a module that defines a name twice) and `tree-collisions` (it counted toasts; a
+refusal replaces the previous refusal's toast).
+
 ### TD-2026-10-21-375 — gdb 15.1 sometimes stops answering after a launch under load. [OPEN]
 
 Found by the QA debugger flows (`dbg-pause`, `dbg-sessions`) on a loaded box
@@ -741,7 +815,16 @@ Found writing the QA `plugin-api` flow:
   "Ctrl+Alt+J", ... })` registers nothing and logs nothing (Ctrl+Alt+J is Insert
   Snippet). The plugin log should say which binding took the chord.
 
-### TD-2026-10-20-368 — on Xvfb, keystrokes after a click are sometimes lost under a loaded suite. [OPEN]
+### TD-2026-10-20-368 — on Xvfb, keystrokes after a click are sometimes lost under a loaded suite. [LIKELY RESOLVED 2026-10-22]
+
+**2026-10-22: a cause found and fixed (c0fdc8d1).** `key()` and `type()` passed
+`--window` to xdotool, and libxdo then uses XTEST only when that window already has
+the input focus -- otherwise it sends XSendEvent, synthetic core events SDL3 never
+sees (it reads the keyboard through XInput2). `windowfocus` was not synced, so a
+loaded run could press keys before the focus landed and lose every one, with nothing
+in the app's input log (seen: a parallel `undo-save-point` lost End, A and Ctrl+S).
+The driver now waits for the focus and sends keys through XTEST; 22 keyboard-heavy
+scenarios ran clean 16 at a time. Close this after a few CI qa lanes stay green.
 
 `lsp-diagnostics` failed both full X11 QA lanes of 2026-10-20 (qa and qa-asan, run
 on an otherwise idle box) the same way: `click_text(16, 19)` placed the caret, then
@@ -829,6 +912,32 @@ when it starts (a resolver callback, or `${projectRoot}` in the argv), and no
 implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
+
+**Update 2026-10-22 (evening): the command catalogue is measured on every run.**
+`run.py suite` now writes `<out>/command-coverage.txt` from a new `action-counts`
+control query (each command that RAN, whatever drove it, summed over restarts; the
+dry-run sweeps count nothing): the commands no scenario dispatched, the ones only
+`commands-run`'s smoke pass reached, and who drove the rest. The first full ledger
+read 185 of 249 commands driven by a flow that checks their effect (61 smoke-only);
+after the 2026-10-22 pass it reads 234 of 249, none undriven, and the 15 left to the
+smoke pass are all remote commands, which run against a host in the `qa-remote`
+lane (its new scenario P drives nine of them; the suite's ledger does not see that
+lane). The suite ran 180/182 clean at -j16 (TD-383 has the two).
+New flow modules: `flows_files` (formats, a vanished file, the save point, untitled
+numbering), `flows_tabs`, `flows_editor_views`, `flows_review`, `flows_actions`,
+`flows_interactions`, `flows_journeys` (whole sessions across subsystems), plus
+`dbg-commands`, `lsp-declaration-implementation`, `desktop-opener` (a fakebin
+`xdg-open`). Found and fixed from them: F-keys arriving as Alt+F-keys on xkb-data
+2.46 (the whole keyboard sweep and every debugger flow were red for it), keys lost
+to xdotool's XSendEvent fallback, a vanished dirty file that could not be saved, the
+detected indentation lost on every tab switch, unnumbered untitled buffers, hunk
+review marks never drawn, Replace All in files refusing while any matching file was
+dirty, find never selecting its match (and Ctrl+H then re-seeding a regex from it),
+Step Back / Reverse Continue / an exception-filter condition answering ok for what
+the adapter cannot do, empty navigations reported only to an output channel, a held
+tab drag's last snap never repainted, Home in the git view not reaching the list top,
+blame cards empty in the ui query, an LSP that refused to initialize reported as a
+crash, and the palette with no recently-used order. Filed: TD-380..385.
 
 **Update 2026-10-22 (later):** no flow touched a scrollbar: the `ui` query now
 reports every one (`scrollbar:<surface>`, track plus thumb) and `scrollbars`
