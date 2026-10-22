@@ -115,16 +115,28 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // (y - rows_y) divided by line_height truncates toward zero to 0, so the
   // `clicked_row < 0` guard alone would misclassify a click just above row 0 as a
   // hit on row 0.
+  // A click off the rows makes the working side inactive, and its caret,
+  // selection and inline blame are drawn only while it is active: the change is
+  // damage (frame prep then repaints the surface, see
+  // PreparedFrameState::CompareScroll), or a click below the last row left all
+  // three on screen (QA monkey, seed 18).
+  const auto deactivate_right_side = [&]() {
+    if (compare_tab->right_view_active) {
+      compare_tab->right_view_active = false;
+      operations_.request_compare_row_range_redraw(compare_tab->selected_row,
+                                                   compare_tab->selected_row + 1);
+    }
+  };
   const float row_offset_px = static_cast<float>(event.button.y) - surface_layout.rows_y;
   if (row_offset_px < 0.0f) {
-    compare_tab->right_view_active = false;
+    deactivate_right_side();
     return false;
   }
   const int clicked_row = static_cast<int>(row_offset_px / surface_layout.line_height);
   const int visual_row = compare_tab->scroll_row + clicked_row;
   if (clicked_row < 0 || visual_row < 0 ||
       static_cast<std::size_t>(visual_row) >= CompareTabVisualRowCount(*compare_tab)) {
-    compare_tab->right_view_active = false;
+    deactivate_right_side();
     return false;
   }
 

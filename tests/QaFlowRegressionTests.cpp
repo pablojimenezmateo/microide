@@ -469,6 +469,37 @@ void TestTypingThatReshapesADiffRepaintsIt() {
          "the keystroke should not scroll the diff (the test is about its shape)");
 }
 
+// The QA monkey (seed 18, minimized to nine actions): a click in a diff below its
+// last row made the working-tree side inactive -- its caret, selection and inline
+// blame are drawn only while it is active -- and returned without repainting, so
+// all three stayed on screen.
+void TestAClickBelowADiffsLastRowRepaintsTheWorkingSide() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("left.txt", "alpha\nbeta\ngamma\n");
+  const std::filesystem::path right = fixture.root / "right.txt";
+  WriteFile(right, "alpha\nBETA\ngamma\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "compare-files " + fixture.file.string() + " " + right.string()),
+         "compare-files should open a diff");
+  auto& compare = TestAccess::ActiveCompare(fixture.shell);
+  compare.right_view_active = true;
+  compare.right_viewport.MoveCursorTo(1, 0);
+  compare.right_viewport.MoveCursorTo(1, 4, true);
+  TestAccess::SetFocusEditor(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the diff with a selection on the working side");
+  const auto surface = TestAccess::ControlUi(fixture.shell)["surfaces"]["editorSurface"].AsArray();
+  const float x = static_cast<float>(surface[0].AsInt() + surface[2].AsInt() * 3 / 4);
+  const float y = static_cast<float>(surface[1].AsInt() + surface[3].AsInt() - 40);
+  fixture.ExpectFresh(fixture.Click(SDL_FRect{x, y, 2.0f, 2.0f}), "a click below the last row");
+  Expect(!TestAccess::ActiveCompare(fixture.shell).right_view_active,
+         "the click leaves the working side inactive (the case under test)");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the frame after it");
+}
+
 // edit-find-replace: Replace (and Replace All) from the find widget made a clean
 // buffer dirty without repainting the tab strip, so the tab kept its close
 // button where a dirty dot belonged until something else repainted it.
@@ -3144,6 +3175,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestRedoAfterASaveInASplitKeepsBothPanesFresh);
   AddTest(tests, "QaFlowRegression/ANarrowSearchToggleHoverKeepsEveryFrameFresh",
           TestANarrowSearchToggleHoverKeepsEveryFrameFresh);
+  AddTest(tests, "QaFlowRegression/AClickBelowADiffsLastRowRepaintsTheWorkingSide",
+          TestAClickBelowADiffsLastRowRepaintsTheWorkingSide);
   AddTest(tests, "QaFlowRegression/ConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard",
           TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",

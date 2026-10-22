@@ -99,6 +99,10 @@ struct PreparedFrameState {
     const void* tab = nullptr;
     int row = 0;
     std::size_t column = 0;
+    // Whether the working side is the active one: its caret, selection and
+    // inline blame are drawn only then, and a click below the last row cleared
+    // it with no repaint (QA monkey, seed 18).
+    bool right_active = false;
     bool operator==(const CompareScroll&) const = default;
   };
   CompareScroll painted_compare_scroll{};

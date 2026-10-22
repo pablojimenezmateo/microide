@@ -779,7 +779,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         group.has_active_tab() && group.active_tab().compare.has_value()) {
       const CompareTabState& compare = *group.active_tab().compare;
       compare_scroll = {.tab = &compare, .row = compare.scroll_row,
-                        .column = compare.horizontal_scroll};
+                        .column = compare.horizontal_scroll, .right_active = compare.right_view_active};
     }
     if (compare_scroll != frame_state_.painted_compare_scroll) {
       if (compare_scroll.tab != nullptr) {
