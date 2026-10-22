@@ -479,6 +479,33 @@ is a `buffer:text()` / `buffer:line(n)` on the table, snapshotted for the
 query, after which the skip can go. Completion, definition and the others have
 the same gap without the skip.
 
+### TD-2026-10-22-376 — at a fractional scale a nested clip cannot always match the full render's device edge. [OPEN]
+
+SDL 3.2 takes a clip as a logical (start, length) and rounds each half on its
+own (`[floor(start*s), floor(start*s) + ceil(length*s))`), so at 1.25x or 1.5x
+not every device span is expressible, and a surface's nested clip
+(`ScopedRenderClip`: the sidebar, the editor groups' strips and panes, the
+Settings rows) narrowed to a partial frame's damage clip can differ from the
+full render's by a device row or column at a surface's edge. Three policies
+were tried in `NarrowAxis` (2026-10-22) and each leaves one case:
+
+- stop a row short of the intersection: the row keeps an earlier frame's
+  pixels (CI qa, menu-clicks: the sidebar's focus ring under a closing menu);
+- start at the surface's own edge when the end is not expressible: paints
+  above the damage clip, under a submenu (CI qa, menu-clicks);
+- (current) cover the intersection's end, never leaving the damage clip,
+  starting a little earlier when that makes the end fit: the end can pass the
+  surface's edge by one device column inside the damage clip, where the
+  neighbour does not repaint it -- the QA monkey's seed 3 at step 154 (1.25x:
+  the sidebar ends at device 51.25, the editor starts at 52.5, column 52 keeps
+  the sidebar's edge), replay in that run's evidence.
+
+The fix is layout, not clipping: at a fractional scale, place surface edges on
+device pixels (logical multiples of 4 at 1.25x, of 2 at 1.5x) so every clip is
+exact; or draw each surface into its own device-aligned target. Without nested
+clips the seed-3 replay shows the larger stale strip they exist to prevent
+(the sidebar's labels overflowing into the editor), so removing them is not it.
+
 ### TD-2026-10-21-373 — a kernel shard aborts in std::terminate on CI's ASan job only. [OPEN]
 
 `checks` run 39560059038 (be9f0526), job `asan`: `microide_kernel_tests_shard_7`
@@ -508,6 +535,14 @@ down a `RemoteServerClient` whose peer is mid-stream. Next step: run the remote
 kernel tests under the ASan binary in a loop with `taskset -c 0` (one core,
 the runner's scheduling) and a `std::set_terminate` that dumps every thread
 (`gdb -batch -ex "thread apply all bt"` on the core).
+
+**2026-10-22, a second remote test on CI's ASan job:** run 39691652400 (80b0af5f),
+`RemoteTerminal/PredictionLeadsTheEchoByARoundTrip` failed "and still drawn":
+with the server stalled, the typed character's prediction was still pending
+after three round trips but no longer on the screen text -- a late screen
+update from the earlier echo landing over the prediction overlay on the slow
+runner is the likely reading. Passes locally (15 ASan loops on one core, both
+remote suites).
 
 ### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [RESOLVED 2026-10-22]
 

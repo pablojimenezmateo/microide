@@ -94,14 +94,16 @@ void TestNarrowsInDevicePixelsAtAFractionalScale() {
   // logical 11 -> device 16 (16.5 rounds down).
   fill_red_under(SDL_Rect{0, 0, 200, 23}, SDL_Rect{0, 11, 50, 80});
   Expect(red(10, 34), "the outer clip's last device row is painted under the nested clip");
-  Expect(!red(10, 15), "nothing above the nested clip's own first device row");
+  Expect(red(10, 16), "and the nested clip's first");
+  Expect(!red(10, 35), "nothing past the outer clip (device row 35 on)");
+  Expect(!red(10, 12), "nothing far above the nested clip");
   Expect(!red(80, 20), "nothing right of the nested clip (device column 75 on)");
 
   // Outer: logical rows 0..11 -> device rows 0..16; inner from logical 11 ->
   // device 16. Logically disjoint, they share device row 16.
   fill_red_under(SDL_Rect{0, 0, 200, 11}, SDL_Rect{0, 11, 50, 80});
   Expect(red(10, 16), "the device row the two clips share is painted");
-  Expect(!red(10, 15), "and still nothing above the nested clip");
+  Expect(!red(10, 17), "and nothing past the outer clip");
 
   // The outer clip starts inside the surface and runs past its end (CI's qa,
   // menu-clicks: a tab strip under an open submenu). Nothing may be painted above
