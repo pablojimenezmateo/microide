@@ -2183,13 +2183,6 @@ void TestDebugBreakpointsModelBehavior() {
   Expect(saw_filter, "an enabled filter row reflects its enabled state");
   Expect(saw_breakpoint, "a conditional breakpoint row prebuilds file:line + a condition trailer");
 
-  // Clearing advertised filters (session stop) drops the filter section.
-  model.ClearAdvertisedFilters();
-  model.Rebuild(store, function_store);
-  for (const DebugBreakpointRowView& row : model.Rows()) {
-    Expect(row.kind != DebugBreakpointRowView::Kind::ExceptionFilter,
-           "no exception-filter rows remain after the advertised set is cleared");
-  }
 }
 
 void TestDebugManagerRejectsUnknownAdapterType() {

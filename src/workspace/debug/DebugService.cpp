@@ -244,9 +244,11 @@ void DebugService::ResetAdapterBreakpointState() {
   // re-verifies from scratch and the gutter shows unverified until then.
   CurrentProjectState().breakpoint_store.ResetVerification();
   CurrentProjectState().function_breakpoint_store.ResetVerification();
-  // The advertised exception filters belong to the (now dead) adapter; drop them
-  // so the Breakpoints tab shows only line breakpoints until a new session binds.
-  CurrentProjectState().debug_breakpoints_panel.ClearAdvertisedFilters();
+  // The advertised exception filters stay: the enabled ones are sent to every
+  // later session, so the rows that turn them off must stay too. Dropping them
+  // here left a filter that could be neither seen nor turned off until a session
+  // was running again (QA dbg-exception-breakpoints). VS Code keeps the
+  // checkboxes between sessions; the next session's `initialized` replaces them.
 }
 
 void DebugService::SyncSessionsPanel() {

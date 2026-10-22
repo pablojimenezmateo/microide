@@ -57,12 +57,13 @@ class DebugBreakpointsModel {
   bool Seeded() const { return seeded_; }
   void SetEnabledFilterIds(std::vector<std::string> ids, bool seeded);
 
-  // Transient: the adapter's advertised filters for the active session. Seeds the
+  // The last adapter's advertised filters, kept after its session ends so the
+  // enabled ones can still be seen and turned off; the next session's replace
+  // them. Seeds the
   // enabled set from each filter's default the first time filters are seen for a
   // project (until then `seeded` is false). Returns true when the enabled set
   // changed (the caller re-sends setExceptionBreakpoints + persists).
   bool SetAdvertisedFilters(const std::vector<dap_protocol::DapExceptionFilter>& filters);
-  void ClearAdvertisedFilters();
   const std::vector<dap_protocol::DapExceptionFilter>& AdvertisedFilters() const {
     return advertised_;
   }

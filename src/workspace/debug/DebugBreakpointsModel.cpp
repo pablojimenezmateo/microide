@@ -61,8 +61,6 @@ bool DebugBreakpointsModel::SetAdvertisedFilters(
   return changed;
 }
 
-void DebugBreakpointsModel::ClearAdvertisedFilters() { advertised_.clear(); }
-
 bool DebugBreakpointsModel::ToggleFilter(const std::string& filter_id) {
   const bool advertised =
       std::any_of(advertised_.begin(), advertised_.end(),
