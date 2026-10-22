@@ -661,6 +661,9 @@ class WorkspaceActionContext {
   void ReportColorschemeNames();
   bool ApplyColorscheme(std::string_view name);
   std::string_view CurrentColorschemeName() const;
+  // Records an indentation command's value as the active buffer's own (see
+  // TextViewport::own_indent); the command also sets the setting.
+  void SetActiveBufferOwnIndent(std::optional<bool> soft_tabs, std::optional<std::size_t> width);
   void SetTabSize(std::size_t value);
   void SetIndentWidth(std::size_t value);
   float UiScale() const;

@@ -14,6 +14,7 @@
 #include "editor/ColumnSelection.h"
 #include "editor/EditTypes.h"
 #include "editor/HighlightPrefetch.h"
+#include "editor/IndentDetect.h"
 #include "editor/LanguageContractView.h"
 #include "editor/LineEditSpan.h"
 #include "editor/FoldingModel.h"
@@ -277,6 +278,14 @@ class TextViewport {
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);
+  // The buffer's OWN indentation: what detection read from the file on open, or
+  // what an indentation command chose for this buffer. Preferences are re-applied
+  // on every tab activation and settings change, and they used to overwrite these
+  // three fields with the settings' values -- a two-space Python file switched
+  // away from and back to then indented with tabs. workspace::ApplyOwnIndent
+  // re-applies this over the settings wherever .editorconfig did not pin a value.
+  void SetOwnIndent(const IndentDetection& own) { own_indent_ = own; }
+  const IndentDetection& own_indent() const { return own_indent_; }
   void SetSoftWrap(bool soft_wrap);
   void SetFoldingModel(const FoldingModel* folding_model);
   bool soft_wrap() const { return soft_wrap_; }
@@ -1378,6 +1387,7 @@ class TextViewport {
   std::size_t tab_size_ = 4;
   std::size_t indent_width_ = 4;
   bool soft_tabs_ = false;
+  IndentDetection own_indent_;
   bool soft_wrap_ = false;
   bool save_trim_trailing_whitespace_ = false;
   bool save_ensure_final_newline_ = false;

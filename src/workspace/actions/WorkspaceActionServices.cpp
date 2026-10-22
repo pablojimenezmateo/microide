@@ -1571,7 +1571,28 @@ std::string_view WorkspaceActionContext::CurrentColorschemeName() const {
   return state_.active_colorscheme_name;
 }
 
+void WorkspaceActionContext::SetActiveBufferOwnIndent(std::optional<bool> soft_tabs,
+                                                      std::optional<std::size_t> width) {
+  // An indentation command is about the buffer in front of the user (VS Code's
+  // "Indent Using Spaces" changes the active editor): record it as that buffer's
+  // own indentation, so it takes effect there even where detection had read
+  // something else, and survives the next preference apply.
+  editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr) {
+    return;
+  }
+  editor::IndentDetection own = viewport->own_indent();
+  if (soft_tabs.has_value()) {
+    own.soft_tabs = soft_tabs;
+  }
+  if (width.has_value()) {
+    own.indent_width = width;
+  }
+  viewport->SetOwnIndent(own);
+}
+
 void WorkspaceActionContext::SetTabSize(std::size_t value) {
+  SetActiveBufferOwnIndent(std::nullopt, value);
   // Route through the setting chokepoint so the project layer (not just the
   // materialized editor_preferences cache) records the override, keeping the
   // layered "set as default" model consistent with the Settings overlay.
@@ -1589,6 +1610,7 @@ void WorkspaceActionContext::SetTabSize(std::size_t value) {
 }
 
 void WorkspaceActionContext::SetIndentWidth(std::size_t value) {
+  SetActiveBufferOwnIndent(std::nullopt, value);
   if (operations_.set_setting_value) {
     operations_.set_setting_value("editor.indent_width", std::to_string(value));
     return;
@@ -1613,6 +1635,7 @@ bool WorkspaceActionContext::SoftTabsEnabled() const {
 }
 
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {
+  SetActiveBufferOwnIndent(enabled, std::nullopt);
   if (operations_.set_setting_value) {
     operations_.set_setting_value("editor.soft_tabs", enabled ? "true" : "false");
     return;

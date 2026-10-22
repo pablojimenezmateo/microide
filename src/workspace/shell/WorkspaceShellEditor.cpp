@@ -73,6 +73,9 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
   viewport.SetTabSize(editor_config->tab_size.value_or(preferences.tab_size));
   viewport.SetIndentWidth(editor_config->indent_width.value_or(preferences.indent_width));
   viewport.SetSoftTabs(editor_config->soft_tabs.value_or(preferences.soft_tabs));
+  // ...then the buffer's own indentation (detected on open, or chosen for it by an
+  // indentation command) over the settings, where .editorconfig said nothing.
+  ApplyOwnIndent(viewport, *editor_config);
   viewport.SetSoftWrap(preferences.soft_wrap);
   viewport.SetSaveTrimTrailingWhitespace(
       editor_config->trim_trailing_whitespace.value_or(settings.trim_trailing_whitespace));

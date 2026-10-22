@@ -22,6 +22,13 @@ namespace microide::workspace {
 // the answer, so a property EditorConfig pinned is never overwritten by detection
 // (this is VSCode's precedence too). Detection still fills in whatever
 // EditorConfig left unsaid, and is skipped entirely when it said everything.
+// Re-applies the viewport's own indentation (TextViewport::own_indent: what
+// detection read, or what an indentation command chose) over whatever the
+// preferences just set, for each property `editor_config` does not pin. Called by
+// every preference apply, so a tab activation or a settings change keeps a
+// file's detected indentation.
+void ApplyOwnIndent(editor::TextViewport& viewport, const project::EditorConfigProperties& editor_config);
+
 void ApplyDetectedIndentAfterPreferences(
     editor::TextViewport& viewport,
     const std::function<std::optional<std::string>(std::string_view)>& get_setting,

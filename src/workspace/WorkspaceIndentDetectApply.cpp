@@ -31,21 +31,27 @@ void ApplyDetectedIndentAfterPreferences(
 
   // Pass the live TextBuffer as a LineSpan so detection reads lines zero-copy via
   // LineView instead of materializing the whole document with Snapshot() on every
-  // file open (TD-2026-07-17A-003).
-  const editor::IndentDetection detected = editor::DetectIndent(viewport.lines());
-  if (!pins_style && detected.soft_tabs) {
-    viewport.SetSoftTabs(*detected.soft_tabs);
+  // file open (TD-2026-07-17A-003). The result is the buffer's own indentation from
+  // now on: kept on the viewport so later preference applies do not undo it.
+  viewport.SetOwnIndent(editor::DetectIndent(viewport.lines()));
+  ApplyOwnIndent(viewport, editor_config);
+}
+
+void ApplyOwnIndent(editor::TextViewport& viewport, const project::EditorConfigProperties& editor_config) {
+  const editor::IndentDetection& own = viewport.own_indent();
+  if (!editor_config.soft_tabs.has_value() && own.soft_tabs) {
+    viewport.SetSoftTabs(*own.soft_tabs);
   }
   // A tab-indented buffer says nothing about how wide a tab is: the width stays
   // whatever the preferences chose (VS Code keeps its default tab size too).
-  if (!detected.indent_width) {
+  if (!own.indent_width) {
     return;
   }
-  if (!pins_width) {
-    viewport.SetIndentWidth(*detected.indent_width);
+  if (!editor_config.indent_width.has_value()) {
+    viewport.SetIndentWidth(*own.indent_width);
   }
-  if (!pins_tab_size) {
-    viewport.SetTabSize(*detected.indent_width);
+  if (!editor_config.tab_size.has_value()) {
+    viewport.SetTabSize(*own.indent_width);
   }
 }
 

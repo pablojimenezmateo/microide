@@ -802,6 +802,39 @@ void TestSavingADeletedFileWritesItBack() {
   Expect(ReadFile(fixture.file) == "someone else's edit\n", "the external edit stays on disk");
 }
 
+// QA file-formats: a two-space Python file, opened, then another tab activated
+// and the first one again -- and it indented with tabs. Every tab activation (and
+// every settings change) re-applied the preferences over the indentation detected
+// on open. A file keeps what was detected from it (VS Code), an indentation
+// command changes the buffer it is run on, and .editorconfig still wins over both.
+void TestDetectedIndentationSurvivesTabSwitchesAndSettings() {
+  FlowFixture fixture("start.txt", "start\n");
+  WriteFile(fixture.root / "two.py", "def f():\n  if x:\n    return 1\n  return 2\n");
+  WriteFile(fixture.root / "tabs.c", "int f() {\n\tif (x) {\n\t\treturn 1;\n\t}\n}\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open two.py"), "open two.py");
+  const auto active = [&]() -> const editor::TextViewport& {
+    return TestAccess::GroupActiveViewport(fixture.shell, 0);
+  };
+  const auto describe = [&]() {
+    return std::string(active().soft_tabs() ? "spaces " : "tabs ") + std::to_string(active().tab_size());
+  };
+  Expect(active().soft_tabs() && active().tab_size() == 2, "two.py should open as two spaces: " + describe());
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open tabs.c"), "open tabs.c");
+  Expect(!active().soft_tabs(), "tabs.c should open as tabs: " + describe());
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open two.py"), "back to two.py");
+  Expect(active().soft_tabs() && active().tab_size() == 2,
+         "two.py should keep its two spaces after a tab switch: " + describe());
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting editor.tab_size 8"), "set tab_size");
+  Expect(active().soft_tabs() && active().tab_size() == 2,
+         "a settings change should not undo the detected indentation: " + describe());
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "tab-size 3"), "tab-size 3");
+  Expect(active().tab_size() == 3, "tab-size should change the buffer it is run on: " + describe());
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open tabs.c") &&
+             TestAccess::ExecuteCommandLine(fixture.shell, "open two.py"),
+         "away and back again");
+  Expect(active().tab_size() == 3, "the buffer keeps the size it was given: " + describe());
+}
+
 // QA plugins-reload: Escape on the completion list moved keyboard focus to the
 // file tree, so the next key (a Backspace) edited nothing -- every overlay that
 // closed "without a target" (the palette, completion, code actions, the commit
@@ -3227,6 +3260,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestATabDraggedAcrossACloseButtonLeavesItIdle);
   AddTest(tests, "QaFlowRegression/AHeldTabDragPaintsItsLastSnap", TestAHeldTabDragPaintsItsLastSnap);
   AddTest(tests, "QaFlowRegression/SavingADeletedFileWritesItBack", TestSavingADeletedFileWritesItBack);
+  AddTest(tests, "QaFlowRegression/DetectedIndentationSurvivesTabSwitchesAndSettings",
+          TestDetectedIndentationSurvivesTabSwitchesAndSettings);
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);

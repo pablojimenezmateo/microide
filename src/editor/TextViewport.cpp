@@ -51,6 +51,7 @@ TextViewport::TextViewport(const TextViewport& other)
       tab_size_(other.tab_size_),
       indent_width_(other.indent_width_),
       soft_tabs_(other.soft_tabs_),
+      own_indent_(other.own_indent_),
       soft_wrap_(other.soft_wrap_),
       save_trim_trailing_whitespace_(other.save_trim_trailing_whitespace_),
       save_ensure_final_newline_(other.save_ensure_final_newline_),
@@ -149,6 +150,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       tab_size_(other.tab_size_),
       indent_width_(other.indent_width_),
       soft_tabs_(other.soft_tabs_),
+      own_indent_(other.own_indent_),
       soft_wrap_(other.soft_wrap_),
       save_trim_trailing_whitespace_(other.save_trim_trailing_whitespace_),
       save_ensure_final_newline_(other.save_ensure_final_newline_),
@@ -226,6 +228,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   tab_size_ = other.tab_size_;
   indent_width_ = other.indent_width_;
   soft_tabs_ = other.soft_tabs_;
+  own_indent_ = other.own_indent_;
   soft_wrap_ = other.soft_wrap_;
   save_trim_trailing_whitespace_ = other.save_trim_trailing_whitespace_;
   save_ensure_final_newline_ = other.save_ensure_final_newline_;
