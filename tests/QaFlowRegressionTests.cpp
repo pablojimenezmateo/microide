@@ -992,6 +992,29 @@ void TestRedoAfterASaveInASplitKeepsBothPanesFresh() {
   }
 }
 
+// The QA monkey (seed 4, CI's ASan lane): at the sidebar's narrowest the search
+// view's "Hidden" toggle drew its label past its button, over the "…" button
+// beside it; the toggle's hover repaint covered the button and left the
+// overflowing glyph. A centered button's label is clipped to the button.
+void TestANarrowSearchToggleHoverKeepsEveryFrameFresh() {
+  FlowFixture fixture("main.txt", "alpha\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-show search"), "the search view shows");
+  TestAccess::SetSidebarWidth(fixture.shell, 120.0f);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the narrow search view");
+  const auto hidden = fixture.ElementRect("button:search/hidden");
+  Expect(hidden.has_value(), "the Hidden toggle is on screen");
+  if (!hidden) {
+    return;
+  }
+  const float x = hidden->x + hidden->w / 2.0f;
+  const float y = hidden->y + hidden->h / 2.0f;
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y)}), "the pointer onto Hidden");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(x, y + 200.0f)}), "and off it");
+}
+
 // QA commands-run (the bounds oracle): with the status bar hidden every toast
 // was laid out above the window's top-left corner and never seen -- the stack is
 // anchored on the status bar, and a hidden bar's rect was {0,0,0,0}. A hidden bar
@@ -3119,6 +3142,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestFocusingAnotherGroupByCommandRepaintsBothPanes);
   AddTest(tests, "QaFlowRegression/RedoAfterASaveInASplitKeepsBothPanesFresh",
           TestRedoAfterASaveInASplitKeepsBothPanesFresh);
+  AddTest(tests, "QaFlowRegression/ANarrowSearchToggleHoverKeepsEveryFrameFresh",
+          TestANarrowSearchToggleHoverKeepsEveryFrameFresh);
   AddTest(tests, "QaFlowRegression/ConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard",
           TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",

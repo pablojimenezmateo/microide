@@ -1,5 +1,6 @@
 #pragma once
 
+#include "render/ScopedRenderClip.h"
 #include "render/SurfacePrimitives.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/render/TabStripAnimation.h"
@@ -171,6 +172,12 @@ inline void DrawButtonCentered(const render::TextRenderer& text_renderer,
   const float text_width = text_renderer.MeasureWidth(label);
   const float x = rect.x + std::floor(std::max(0.0f, rect.w - text_width) * 0.5f);
   const float y = rect.y + std::floor(std::max(0.0f, rect.h - text_renderer.LineHeight()) * 0.5f);
+  // A label wider than its button stays inside it: drawn past its edge it lay
+  // over the next control, where the button's own repaint (a hover) left it
+  // (QA monkey seed 4: the search view's Hidden toggle at the narrowest sidebar).
+  const render::ScopedRenderClip clip(
+      renderer, SDL_Rect{static_cast<int>(std::floor(rect.x)), static_cast<int>(std::floor(rect.y)),
+                         static_cast<int>(std::ceil(rect.w)), static_cast<int>(std::ceil(rect.h))});
   text_renderer.DrawString(renderer, x, y, colors.text, label);
 }
 
