@@ -26,6 +26,12 @@
 namespace microide::workspace {
 
 namespace {
+// One answer for every `goto` it cannot take -- a word, 0, a negative line -- so
+// the same mistake is not described two ways depending on how the parser failed.
+constexpr const char* kGotoExpects = "Go to Line expects a positive 1-based line[:col], such as 12 or 12:5";
+}  // namespace
+
+namespace {
 
 bool SettingEnabled(const WorkspaceActionContext& context, std::string_view id, bool default_value) {
   return SettingFlagEnabled(context.GetSettingValue(id), default_value);
@@ -298,7 +304,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
         }
         // An argument that is not a location: say so. Answering "handled" to
         // `jump abc` left the caret where it was and the command line silent.
-        return reject(id == ActionId::Goto ? "goto expects line[:col]"
+        return reject(id == ActionId::Goto ? kGotoExpects
                                            : "jump expects a signed line[:col], such as +3 or -2:1");
       }
 
@@ -309,7 +315,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       // absolute contract and made typos navigate to EOF. `jump` keeps signed relative
       // deltas. (TD-2026-07-16-68.)
       if (id == ActionId::Goto && request->requested_line <= 0) {
-        return reject("Go to Line expects a positive 1-based line number");
+        return reject(kGotoExpects);
       }
 
       context_.ExecuteLineNavigation(*request, id == ActionId::Jump);
