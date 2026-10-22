@@ -225,7 +225,7 @@ finding-03-sidebar--click-status-indent/
   after-action-NNNN.png        the window after each of the last three actions
   now.png                      the window when the finding was recorded
   replay.json                  the actions up to here; `run.py replay` re-runs them on a
-                               fresh fixture
+                               fresh fixture, file churn included (`churn` rows)
 ```
 
 Read `findings.txt`, find the frame in `trace.txt` (its reason and clips say which

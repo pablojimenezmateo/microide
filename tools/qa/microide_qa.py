@@ -48,7 +48,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from PIL import Image
 
@@ -1074,6 +1074,11 @@ class App:
         action["t"] = round(time.monotonic(), 3)
         self.actions.append(action)
 
+    def record_external(self, action: dict[str, Any]) -> None:
+        """Records something done to the run from outside the window (the
+        monkey's file churn) so a replay does it at the same point."""
+        self._record(action)
+
     def save_actions(self, path: Path, **header: Any) -> None:
         """A replay file: the run's header (fixture, profile, seed, size) and the
         actions in order. `tools/qa/run.py replay` re-runs it on a fresh fixture."""
@@ -1081,10 +1086,18 @@ class App:
                                    indent=1))
 
 
-def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12) -> None:
-    """Re-runs a recorded action list (what the monkey saves on a finding)."""
+def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
+           churn: Callable[[dict[str, Any]], None] | None = None) -> None:
+    """Re-runs a recorded action list (what the monkey saves on a finding).
+
+    `churn` re-applies a row the monkey's ExternalChurn recorded: a file rewrite
+    that landed between two commands, with no settle or check of its own."""
     for action in actions:
         if "check" in action:
+            continue
+        if "churn" in action:
+            if churn is not None:
+                churn(action)
             continue
         if "send" in action:
             app.send(*action["send"])

@@ -177,9 +177,14 @@ class ExternalChurn:
     generates it rather than depending on the operator's background noise.
     """
 
-    def __init__(self, project: Path, rng: random.Random):
+    def __init__(self, project: Path, rng: random.Random,
+                 record: Callable[[dict[str, Any]], None] | None = None):
         self._project = project
         self._rng = rng
+        # Each rewrite goes into the run's action list as well, so a replay
+        # makes the same change between the same two commands: a finding that
+        # needs a reload under it does not reproduce from the commands alone.
+        self._record = record
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         candidates = ("README.md", "CHANGELOG.md", "AGENTS.md", "CLAUDE.md",
@@ -197,25 +202,34 @@ class ExternalChurn:
             self._thread.join(timeout=10)
 
     def _run(self) -> None:
-        churn_dir = self._project / "churn"
-        churn_dir.mkdir(exist_ok=True)
         counter = 0
         while not self._stop.wait(0.25):
             counter += 1
             target = self._rng.choice(self._targets)
-            try:
-                text = target.read_text(errors="replace")
-                # A whole-file rewrite, which is what a checkout or a formatter
-                # does; an open buffer over it reloads.
-                target.write_text(f"churn {counter}\n" + text)
-                # New and removed paths as well, so the index watcher is doing
-                # more than noticing one mtime.
-                (churn_dir / f"file{counter % 32}.txt").write_text(f"{counter}\n")
-                stale = churn_dir / f"file{(counter + 16) % 32}.txt"
-                if stale.exists():
-                    stale.unlink()
-            except OSError:
-                pass
+            relative = str(target.relative_to(self._project))
+            apply_churn(self._project, relative, counter)
+            if self._record is not None:
+                self._record({"churn": relative, "counter": counter})
+
+
+def apply_churn(project: Path, relative: str, counter: int) -> None:
+    """One step of ExternalChurn, and what a replay does for its `churn` rows."""
+    churn_dir = project / "churn"
+    churn_dir.mkdir(exist_ok=True)
+    try:
+        target = project / relative
+        text = target.read_text(errors="replace")
+        # A whole-file rewrite, which is what a checkout or a formatter does; an
+        # open buffer over it reloads.
+        target.write_text(f"churn {counter}\n" + text)
+        # New and removed paths as well, so the index watcher is doing more than
+        # noticing one mtime.
+        (churn_dir / f"file{counter % 32}.txt").write_text(f"{counter}\n")
+        stale = churn_dir / f"file{(counter + 16) % 32}.txt"
+        if stale.exists():
+            stale.unlink()
+    except OSError:
+        pass
 
 
 # xdotool key names for the characters and keys SDL names differently.

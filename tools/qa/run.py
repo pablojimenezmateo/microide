@@ -192,7 +192,7 @@ def cmd_monkey(args: argparse.Namespace) -> int:
             app.check("start")
             monkey = m.Monkey(app, seed, args.profile, project)
             if command_profile and not args.no_churn:
-                with m.ExternalChurn(project, m.random.Random(seed ^ 0x5F5F)):
+                with m.ExternalChurn(project, m.random.Random(seed ^ 0x5F5F), app.record_external):
                     monkey.run(steps, settle=args.delay)
             else:
                 monkey.run(steps, settle=args.delay if command_profile else 0.12)
@@ -218,7 +218,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
                       size=size, extra_env=env, plugins=plugins) as app:
         app.replay_header = {"fixture": kind, "replay_of": str(args.file)}
         app.check("start")
-        q.replay(app, actions)
+        q.replay(app, actions,
+                 churn=lambda row: m.apply_churn(project, row["churn"], row["counter"]))
         return report(f"replay of {args.file}", app)
 
 
