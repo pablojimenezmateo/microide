@@ -956,6 +956,38 @@ void TestEveryDividerDraggedToItsExtremesKeepsEveryFrameFresh() {
   }
 }
 
+// Two controls that partly cover each other: a hover lights one while a click
+// lands on the other (the sidebar's ⋯ button over its view tabs, QA monkey seed
+// 4). One inside the other (a tab's close button) is a nested control, not an
+// overlap. Appends one line per pair to `out` (at most 40 lines in all).
+void CollectControlOverlaps(const util::JsonValue& ui, const std::string& what,
+                            std::vector<std::string>& out) {
+  std::vector<std::pair<std::string, SDL_FRect>> controls;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    const std::string kind = entry["kind"].AsString();
+    if (kind != "button" && kind != "sidebar-view" && kind != "debug-tab" && kind != "panel-tab") {
+      continue;
+    }
+    const auto& r = entry["rect"].AsArray();
+    const SDL_FRect rect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                         static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    if (rect.w <= 0.0f || rect.h <= 0.0f) {
+      continue;
+    }
+    const auto inside = [](const SDL_FRect& a, const SDL_FRect& b) {
+      return a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+    };
+    for (const auto& [other_name, other] : controls) {
+      const float ix = std::min(rect.x + rect.w, other.x + other.w) - std::max(rect.x, other.x);
+      const float iy = std::min(rect.y + rect.h, other.y + other.h) - std::max(rect.y, other.y);
+      if (ix > 1.0f && iy > 1.0f && !inside(rect, other) && !inside(other, rect) && out.size() < 40) {
+        out.push_back(what + ": " + entry["name"].AsString() + " overlaps " + other_name);
+      }
+    }
+    controls.emplace_back(entry["name"].AsString(), rect);
+  }
+}
+
 // The window from 1280x720 down to 320x240 (and narrow-and-tall, wide-and-short),
 // with every surface open -- sidebar, a split, the debug pane, the panel -- and
 // then with the palette and Settings over it: at every size each element the ui
@@ -992,6 +1024,11 @@ void TestEveryElementStaysInsideTheWindowAtEverySize() {
                              "," + std::to_string(w) + "," + std::to_string(h) + "]");
       }
     }
+    // Under the palette or Settings the controls beneath are occluded, not overlapped.
+    if (what == "every surface open") {
+      CollectControlOverlaps(ui, what + " at " + std::to_string(width) + "x" + std::to_string(height),
+                             violations);
+    }
   };
   for (const auto& [w, h] : sizes) {
     check("every surface open", w, h);
@@ -1016,7 +1053,7 @@ void TestEveryElementStaysInsideTheWindowAtEverySize() {
   for (const std::string& v : violations) {
     all += "\n  " + v;
   }
-  Expect(violations.empty(), "every element stays inside the window; these leave it:" + all);
+  Expect(violations.empty(), "every element stays inside the window, none overlapping another:" + all);
 }
 
 // The narrow-sidebar finding (QA monkey seed 4) generalised: the sidebar, the
@@ -1066,6 +1103,7 @@ void TestEveryElementStaysInsideItsSurfaceAtEverySize() {
         break;
       }
     }
+    CollectControlOverlaps(ui, what, violations);
   };
   for (const char* view : {"tree", "search", "git", "problems", "tests", "outline"}) {
     Expect(TestAccess::ExecuteCommandLine(fixture.shell, std::string("sidebar-show ") + view), view);
