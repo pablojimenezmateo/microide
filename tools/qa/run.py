@@ -122,13 +122,13 @@ def run_scenario(name: str, args: argparse.Namespace,
 def command_coverage(app: q.App) -> dict:
     """The scenario's command-coverage record: the registry's command names
     (`commands`, built-ins only) and the counts of what ran (`action-counts`,
-    which counts every dispatch since startup, whatever drove it). A dead app
-    answers nothing: the record is then empty rather than wrong."""
+    every dispatch whatever drove it, summed over the scenario's restarts). A
+    dead app answers nothing: the record is then empty rather than wrong."""
     if not app.alive():
         return {}
     try:
         catalogue = [c["command"] for c in app.query("commands") if c.get("command") and not c.get("plugin")]
-        counts = app.query("action-counts")
+        counts = app.action_counts()  # this process's and every earlier one's (restarts)
     except Exception:  # noqa: BLE001 - a flaky answer here is not a finding of the scenario
         return {}
     return {"catalogue": catalogue, "commands": dict(counts.get("commands", {})),

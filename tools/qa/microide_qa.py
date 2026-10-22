@@ -212,6 +212,8 @@ class App:
     recent_log: list[str] = field(default_factory=list)
     # What a replay needs to rebuild the run: fixture kind, profile, seed.
     replay_header: dict[str, Any] = field(default_factory=dict)
+    # action-counts of earlier processes of this run (restart, crash_and_relaunch).
+    banked_action_counts: dict[str, dict[str, int]] = field(default_factory=dict)
     # A persistent connection for send_line (the command fuzzer's hot path).
     _socket: socket.socket | None = None
     _socket_buffer: bytes = b""
@@ -309,11 +311,37 @@ class App:
         self._extra_args = list(extra_args)
         self._spawn(project, extra_args)
 
+    def _bank_action_counts(self) -> None:
+        """Adds this process's `action-counts` to the run's running total before it
+        exits: the coverage ledger reads the counts at the end of a scenario, and a
+        restart would otherwise drop everything the first process ran."""
+        if not self.alive():
+            return
+        with contextlib.suppress(Exception):
+            counts = self.query("action-counts")
+            for kind in ("commands", "plugins"):
+                banked = self.banked_action_counts.setdefault(kind, {})
+                for name, count in (counts.get(kind) or {}).items():
+                    banked[name] = banked.get(name, 0) + int(count)
+
+    def action_counts(self) -> dict[str, dict[str, int]]:
+        """Every command run in this scenario, across restarts: the live process's
+        `action-counts` plus what earlier processes banked."""
+        total = {kind: dict(names) for kind, names in self.banked_action_counts.items()}
+        with contextlib.suppress(Exception):
+            counts = self.query("action-counts") if self.alive() else {}
+            for kind in ("commands", "plugins"):
+                bucket = total.setdefault(kind, {})
+                for name, count in (counts.get(kind) or {}).items():
+                    bucket[name] = bucket.get(name, 0) + int(count)
+        return total
+
     def restart(self, project: Path | None = None, quit_timeout: float = 15.0) -> None:
         """Quits the app the way a person does (the `quit` command, so session state
         is written as on a real exit) and starts it again on the same display, XDG
         tree and project -- the session-restore path. An unsaved buffer makes quit
         ask first; a scenario that wants that prompt drives it before calling this."""
+        self._bank_action_counts()
         if self.alive():
             self.send("quit")
             deadline = time.monotonic() + quit_timeout
@@ -340,6 +368,7 @@ class App:
     def crash_and_relaunch(self, project: Path | None = None) -> None:
         """Kills the app with SIGKILL -- no quit, no session save, the crash path --
         and starts it again on the same display, XDG tree and project."""
+        self._bank_action_counts()
         if self.alive():
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(self.proc.pid, signal.SIGKILL)
