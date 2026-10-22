@@ -892,8 +892,14 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
          "editor typing redraws should include the active editor pane");
   Expect(edited_line_rect.has_value() && AnyRectIntersects(result.redraw.rects, *edited_line_rect),
          "editor typing redraws should include the edited line band");
+  std::string rects;
+  for (const SDL_FRect& r : result.redraw.rects) {
+    rects += " [" + std::to_string(static_cast<int>(r.x)) + "," + std::to_string(static_cast<int>(r.y)) +
+             " " + std::to_string(static_cast<int>(r.w)) + "x" + std::to_string(static_cast<int>(r.h)) + "]";
+  }
+  // TD-2026-10-22-378: about one shard run in ten carries a pane-tall rect.
   Expect(MaxRectHeight(result.redraw.rects) < active_pane.h,
-         "single-line editor typing should redraw less than the full active pane");
+         "single-line editor typing should redraw less than the full active pane;" + rects);
 }
 
 void TestWorkspaceShellWrappedEditorLineRangeRectCoversContinuationRows() {

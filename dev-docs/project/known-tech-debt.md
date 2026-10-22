@@ -464,6 +464,19 @@ alive). What wedges gdb is not known; next: the same launch from a plain
 `gdb --interpreter=dap` driven by a script under `stress`, to tell gdb's bug
 from something in how the app spawns it (the debug sandbox, the pipes).
 
+### TD-2026-10-22-378 — `WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation` fails about one shard run in ten. [OPEN]
+
+Seen twice locally on 2026-10-22 in `ctest -R _tests_shard -j6` (1 of 11 full
+runs): "single-line editor typing should redraw less than the full active
+pane" -- the typed key's result carried a rect as tall as the pane. 120 runs of
+the test alone (8 in parallel) and 6 more full shard runs passed. The test
+renders nothing and consumes the pending invalidation right after OpenFile, so
+the tall rect is most likely an asynchronous completion of the open (syntax,
+file index, a watcher batch) landing between that consume and the keystroke,
+and riding out on the keystroke's result; or state left by an earlier test in
+the same shard process. Next: print the rects on failure, and drain the
+shell's mailboxes before typing so the test measures the keystroke alone.
+
 ### TD-2026-10-22-377 — a stale strip on the split divider after typing in a split, on CI's ASan QA lane only. [OPEN]
 
 Found by `split-and-close` on the qa-asan job of run 39704723441 (once; the
