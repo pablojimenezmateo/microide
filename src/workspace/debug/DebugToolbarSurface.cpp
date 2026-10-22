@@ -95,9 +95,10 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
   // Floating card only — the editor stays visible/usable underneath.
   render::DrawCardFrame(renderer, theme_, tb.widget, render::CardStyle::Overlay);
 
-  const auto is_hovered = [&](const SDL_FRect& rect) {
-    return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
-  };
+  // PointerOver, not the raw pointer: under a modal nothing outside it hovers, and
+  // the toolbar lit a button through the Add Watch prompt in full frames only
+  // (QA dbg-stepping on the CI ASan lane).
+  const auto is_hovered = [&](const SDL_FRect& rect) { return PointerOver(rect); };
 
   const auto button_enabled = [&](DebugToolbarButton button) {
     return IsStepButton(button) ? session_stopped : true;

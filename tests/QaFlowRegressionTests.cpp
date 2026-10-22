@@ -1434,6 +1434,43 @@ void TestDebugSessionRepaintsToolbarAndOutput() {
   fixture.ExpectFresh(stop_damage, "stopping again on the same line (Pause becomes Continue)");
 }
 
+// dbg-stepping on the CI ASan lane: with the Add Watch prompt up, the pointer over
+// the floating debug toolbar lit its Restart button in a full frame and not in
+// the partial one. The toolbar read the raw pointer, not PointerOver, so it was
+// the one surface that hovered through a modal.
+void TestDebugToolbarDoesNotHoverUnderAModal() {
+#if !MICROIDE_HAS_SDL3_TTF || !(defined(__unix__) || defined(__APPLE__))
+  return;
+#endif
+  FlowFixture fixture("main.c", "int main() { return 0; }\n");
+  const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
+  WriteFile(adapter, MockAdapterSource());
+  TestAccess::RegisterDebugAdapterForTest(fixture.shell, "mock", MockAdapterCommand(adapter, "stop"));
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "set-setting debug.enabled true"),
+         "debug.enabled should turn on");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "debug-run --type mock /bin/true"),
+         "debug-run should start the mock session");
+  Expect(WaitUntil([&]() { return TestAccess::DebugSessionStopped(fixture.shell); },
+                   std::chrono::seconds(10), std::chrono::milliseconds(5),
+                   [&]() { TestAccess::ConsumeDapCallbacks(fixture.shell); }),
+         "the mock adapter should stop on configurationDone");
+  workspace::RenderInvalidation full;
+  full.full = true;
+  fixture.ExpectFresh(full, "the first stop");
+  const auto restart = fixture.ElementRect("button:debug-toolbar/restart");
+  Expect(restart.has_value(), "the toolbar shows Restart");
+  if (!restart.has_value()) {
+    return;
+  }
+  TestAccess::OpenPromptSurfaceForTest(fixture.shell,
+                                       workspace::PromptSurfaceState::Action::AddWatchExpression,
+                                       workspace::PromptSurfaceState::Kind::TextInput, {}, {});
+  fixture.ExpectFresh(full, "the Add Watch prompt");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(restart->x + restart->w / 2,
+                                                                      restart->y + restart->h / 2)}),
+                      "the pointer over Restart under the prompt");
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -2623,6 +2660,7 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ModalsOwnThePointer", TestModalsOwnThePointer);
   AddTest(tests, "QaFlowRegression/HoverTextKeepsItsLines", TestHoverTextKeepsItsLines);
   AddTest(tests, "QaFlowRegression/DebugSessionRepaintsToolbarAndOutput", TestDebugSessionRepaintsToolbarAndOutput);
+  AddTest(tests, "QaFlowRegression/DebugToolbarDoesNotHoverUnderAModal", TestDebugToolbarDoesNotHoverUnderAModal);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);
   AddTest(tests, "QaFlowRegression/F1AndCtrlNumberFocusGroups", TestF1AndCtrlNumberFocusGroups);
   AddTest(tests, "QaFlowRegression/DebugPaneModeTabHoverRepaints", TestDebugPaneModeTabHoverRepaints);
