@@ -1,8 +1,9 @@
 """Ways in that are not a key or a click: a file dropped on the window from another
-application, a cold start from a `--control-spec`, a breakpoint on a function name.
+application, a cold start from a `--control-spec`. (Function breakpoints are
+`dbg-function-breakpoints` in flows_debugger.py.)
 
-A coverage build of the suite never ran the file-drop path (`WorkspaceFileDrop`),
-the spec loader (`ControlSpec`) or function breakpoints (TD-2026-10-18-364). Drops
+A coverage build of the suite never ran the file-drop path (`WorkspaceFileDrop`)
+or the spec loader (`ControlSpec`) (TD-2026-10-18-364). Drops
 go through the control channel's `pointer drop` on both backends: X has no way to
 synthesize one either.
 """
@@ -10,7 +11,6 @@ synthesize one either.
 from __future__ import annotations
 
 import json
-import shutil
 from typing import Callable
 
 import microide_qa as q
@@ -100,35 +100,9 @@ def flow_control_spec(app: q.App) -> None:
     app.expect("editor.font_size" not in written, "a spec setting is transient, never persisted")
 
 
-def flow_function_breakpoint(app: q.App) -> None:
-    """A breakpoint on a function name stops in that function; removing it, the
-    run goes through."""
-    if shutil.which("gdb") is None:
-        if not app.env.get("MQA_ALLOW_MISSING_TOOLS"):
-            app.expect(False, "gdb is not available; this flow cannot run (MQA_ALLOW_MISSING_TOOLS=1 to skip)")
-        return
-    assert app.project is not None
-    app.send("set-setting", "debug.enabled", "true")
-    reply = app.send("breakpoint-function-add", "taskflow::Scheduler::run")
-    app.expect(bool(reply.get("ok")), f"breakpoint-function-add runs ({reply})")
-    app.send("debug-run", "--type", "gdb", str(app.project / "taskflow"))
-    app.wait_until(lambda: app.query("debug-state").get("stopped"), 40.0, "a stop at the function breakpoint")
-    state = app.query("debug-state")
-    step(app, "stopped in Scheduler::run", 0.5)
-    app.expect(str(state.get("file", "")).endswith("scheduler.cpp") and 12 <= int(state.get("line") or 0) <= 14,
-               f"the stop is at Scheduler::run's first lines ({state.get('file')}:{state.get('line')})")
-    app.send("debug-stop")
-    app.wait_until(lambda: not app.query("debug-state").get("stopped"), 10.0, "the session to stop")
-    reply = app.send("breakpoint-function-remove", "taskflow::Scheduler::run")
-    app.expect(bool(reply.get("ok")), f"breakpoint-function-remove runs ({reply})")
-
-
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "file-drop": flow_file_drop,
     "control-spec": flow_control_spec,
-    "dbg-function-breakpoint": flow_function_breakpoint,
 }
 
-PLUGINS: dict[str, tuple[str, ...]] = {
-    "dbg-function-breakpoint": ("gdb-dap",),
-}
+PLUGINS: dict[str, tuple[str, ...]] = {}

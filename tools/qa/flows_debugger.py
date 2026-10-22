@@ -310,8 +310,8 @@ def flow_function_breakpoints(app: q.App) -> None:
         step(app, "the function's name", 0.3)
     if _run_to_stop(app):
         state = _state(app)
-        app.expect(12 <= int(state.get("line") or 0) <= 16 and "scheduler.cpp" in str(state.get("path", state)),
-                   f"the run stops in Scheduler::run ({state})")
+        app.expect(12 <= int(state.get("line") or 0) <= 16 and str(state.get("file", "")).endswith("scheduler.cpp"),
+                   f"the run stops in Scheduler::run ({state.get('file')}:{state.get('line')})")
     _stop_session(app)
 
     app.send_line("breakpoint-function-toggle taskflow::Scheduler::run")
@@ -334,7 +334,90 @@ def flow_function_breakpoints(app: q.App) -> None:
             stops += 1
     app.expect(stops == 1, f"a conditional function breakpoint stops once, for priority 9 ({stops} stops)")
     _stop_session(app)
-    app.send_line("breakpoint-function-remove taskflow::Scheduler::add")
+    reply = app.send("breakpoint-function-remove", "taskflow::Scheduler::add")
+    app.expect(bool(reply.get("ok")), f"breakpoint-function-remove runs ({reply})")
+
+
+
+THROWER = """#include <stdexcept>
+#include <cstdio>
+int risky(int n) { if (n == 2) throw std::runtime_error("two"); return n; }
+int main() {
+  int total = 0;
+  for (int i = 0; i < 4; ++i) {
+    try { total += risky(i); } catch (const std::exception& e) { std::printf("caught %s\\n", e.what()); }
+  }
+  return total;
+}
+"""
+
+
+def flow_exception_breakpoints(app: q.App) -> None:
+    """The adapter's exception filters, from the Breakpoints pane: after a first
+    run lists them, a click on "when thrown" makes the next run stop inside the
+    throw (risky() on the stack) and only there; a click on "when caught" in its
+    place stops at the catch; with neither, the run passes. No flow reached the
+    exception filters (TD-364)."""
+    if not _require(app, "gdb") or not _require(app, "g++"):
+        return
+    assert app.project is not None
+    write(app, "exc/exc.cpp", THROWER)
+    built = subprocess.run(["g++", "-g", "-O0", "-o", str(app.project / "exc" / "exc"),
+                            str(app.project / "exc" / "exc.cpp")], capture_output=True, text=True)
+    if not app.expect(built.returncode == 0, f"the throwing program builds ({built.stderr})"):
+        return
+    program = str(app.project / "exc" / "exc")
+    app.send("set-setting", "debug.enabled", "true")
+    open_file(app, "exc/exc.cpp")
+
+    def run_to_end_or_stop() -> bool:
+        app.send("debug-run", "--type", "gdb", program)
+        # The session first, then its end: the toolbar is not up yet right after
+        # the command, which read as "already ended".
+        app.wait_until(lambda: _session_live(app) or _state(app).get("stopped"), 15.0, "the session to start")
+        app.wait_until(lambda: _state(app).get("stopped") or not _session_live(app), 30.0, "the run to end or stop")
+        return bool(_state(app).get("stopped"))
+
+    # A first run: the adapter advertises its filters.
+    run_to_end_or_stop()
+
+    def filter_row(prefix: str) -> dict | None:
+        return next((e for e in app.elements("debug-row") if e.get("label", "").startswith(prefix)), None)
+
+    def toggle(prefix: str) -> bool:
+        # The pane goes away with each session, so each toggle opens its view.
+        app.send_line("debug-pane-breakpoints")
+        step(app, "the Breakpoints view", 0.3)
+        app.wait_until(lambda: filter_row(prefix) is not None, 5.0, f"{prefix!r} listed")
+        row = filter_row(prefix)
+        if not app.expect(row is not None, f"the Breakpoints view lists {prefix!r} "
+                                           f"({[e.get('label') for e in app.elements('debug-row')]})"):
+            return False
+        app.click(*app.center(row))
+        step(app, f"toggle {prefix}", 0.3)
+        return True
+
+    def functions() -> list[str]:
+        return [str(f.get("function")) for f in _state(app).get("frames", [])]
+
+    if toggle("C++ exceptions, when thrown"):
+        stopped = run_to_end_or_stop()
+        app.expect(stopped and "risky" in functions(), f"the run stops on the throw, in risky() ({functions()})")
+        if stopped:
+            app.send("debug-continue")
+            app.wait_until(lambda: _state(app).get("stopped") is False or not _session_live(app), 10.0, "the resume")
+            app.wait_until(lambda: not _session_live(app) or _state(app).get("stopped"), 30.0, "the run to end")
+            app.expect(not _state(app).get("stopped"), f"one throw, one stop ({_state(app)})")
+        _stop_session(app)
+        toggle("C++ exceptions, when thrown")
+    if toggle("C++ exceptions, when caught"):
+        stopped = run_to_end_or_stop()
+        app.expect(stopped and "risky" not in functions()[:2] and "main" in functions(),
+                   f"the run stops at the catch, in main ({functions()})")
+        _stop_session(app)
+        toggle("C++ exceptions, when caught")
+    app.expect(not run_to_end_or_stop(), f"with no filter on, the run passes the throw ({_state(app)})")
+    _stop_session(app)
 
 
 FLOWS: dict[str, Callable[[q.App], None]] = {
@@ -342,10 +425,12 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "dbg-pause": flow_debug_pause,
     "dbg-sessions": flow_debug_sessions,
     "dbg-function-breakpoints": flow_function_breakpoints,
+    "dbg-exception-breakpoints": flow_exception_breakpoints,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {
     "dbg-breakpoint-kinds": ("gdb-dap",),
     "dbg-pause": ("gdb-dap",),
     "dbg-sessions": ("gdb-dap",),
     "dbg-function-breakpoints": ("gdb-dap",),
+    "dbg-exception-breakpoints": ("gdb-dap",),
 }
