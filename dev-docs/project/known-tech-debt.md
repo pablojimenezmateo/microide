@@ -600,7 +600,12 @@ with the server stalled, the typed character's prediction was still pending
 after three round trips but no longer on the screen text -- a late screen
 update from the earlier echo landing over the prediction overlay on the slow
 runner is the likely reading. Passes locally (15 ASan loops on one core, both
-remote suites).
+remote suites). **Again 2026-10-22,** run 39729968534 (asan job, kernel shard 6), the
+rest of that run green. The overlay stops drawing after a contradiction until a
+later prediction is confirmed (`TerminalPredictionOverlay::suppressed_`): a frame
+judged between `q`'s confirmation and the stall would suppress drawing while `w`
+stays pending, which fits "pending but not drawn". Next: assert `!suppressed()`
+before the stall and log the judged frames when it fails.
 
 ### TD-2026-10-20-372 — a stale strip at the editor's left edge while the sidebar collapses, on CI's ASan monkey only. [RESOLVED 2026-10-22]
 
