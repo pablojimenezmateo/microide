@@ -798,6 +798,33 @@ void TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard() {
   Expect(TestAccess::FocusIsOverlay(fixture.shell), "the finder still on screen takes the keyboard");
 }
 
+// The QA monkey (seed 11, minimized to six actions): a confirmation opened from
+// the sidebar -- Discard Git Changes, Delete, Rename, New Folder -- with the
+// sidebar hidden under it gave the keyboard back to the hidden sidebar once
+// confirmed, and every key went nowhere. Each continuation set the sidebar's
+// focus without asking whether it was still shown.
+void TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard() {
+  using Action = workspace::PromptSurfaceState::Action;
+  for (const Action action : {Action::DeletePath, Action::RenamePath, Action::CreateDirectory}) {
+    FlowFixture fixture("main.txt", "alpha\n");
+    WriteFile(fixture.root / "victim.txt", "victim\n");
+    TestAccess::SetFocusSidebar(fixture.shell);
+    const std::string input = action == Action::RenamePath ? "renamed.txt" : action == Action::CreateDirectory ? "newdir" : "";
+    TestAccess::OpenPromptSurfaceForTest(fixture.shell, action,
+                                         action == Action::DeletePath ? workspace::PromptSurfaceState::Kind::Confirm
+                                                                      : workspace::PromptSurfaceState::Kind::TextInput,
+                                         action == Action::CreateDirectory ? fixture.root : fixture.root / "victim.txt",
+                                         "", input);
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "sidebar-hide"), "sidebar-hide should run");
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_NONE)});
+    Expect(!TestAccess::PromptSurfaceVisible(fixture.shell),
+           "Enter confirms the prompt (action " + std::to_string(static_cast<int>(action)) + ")");
+    Expect(!TestAccess::FocusIsSidebar(fixture.shell),
+           "after confirming, focus is not left on the hidden sidebar (action " +
+               std::to_string(static_cast<int>(action)) + ")");
+  }
+}
+
 // QA commands-run (the bounds oracle): with the status bar hidden every toast
 // was laid out above the window's top-left corner and never seen -- the stack is
 // anchored on the status bar, and a hidden bar's rect was {0,0,0,0}. A hidden bar
@@ -2913,6 +2940,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/ExceptionFiltersStayListedAfterAStop", TestExceptionFiltersStayListedAfterAStop);
   AddTest(tests, "QaFlowRegression/StopWithNoSessionLeavesTheDebugPane", TestStopWithNoSessionLeavesTheDebugPane);
   AddTest(tests, "QaFlowRegression/SidebarViewTabsStayInsideANarrowSidebar", TestSidebarViewTabsStayInsideANarrowSidebar);
+  AddTest(tests, "QaFlowRegression/ConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard",
+          TestConfirmingASidebarPromptOverAHiddenSidebarKeepsTheKeyboard);
   AddTest(tests, "QaFlowRegression/EveryElementStaysInsideItsSurfaceAtEverySize",
           TestEveryElementStaysInsideItsSurfaceAtEverySize);
   AddTest(tests, "QaFlowRegression/TallMenusStayInsideTheWindow", TestTallMenusStayInsideTheWindow);

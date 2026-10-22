@@ -482,7 +482,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
         commit_workflow_service_.CancelPendingConfirmation(
             context_.current_project_state.sidebar.git.commit_workflow);
         MakePromptSurfaceService().DismissPromptSurface(false);
-        context_.current_project_state.surface.focus = FocusTarget::Sidebar;
+        context_.current_project_state.surface.focus =
+        FocusBackTo(context_.current_project_state, FocusTarget::Sidebar);
         return;
       default:
         break;  // delegate handles its own Cancel (DiscardPatchPreview, file ops)
@@ -530,7 +531,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       commit_workflow_service_.CancelPendingConfirmation(workflow);
     }
     MakePromptSurfaceService().DismissPromptSurface(false);
-    context_.current_project_state.surface.focus = FocusTarget::Sidebar;
+    context_.current_project_state.surface.focus =
+        FocusBackTo(context_.current_project_state, FocusTarget::Sidebar);
     return;
   }
   if (context_.prompts.surface_visible &&
@@ -544,7 +546,8 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
         .kind = OutgoingBaseChoice::Kind::SpecificRef,
         .custom_ref = ref,
     });
-    context_.current_project_state.surface.focus = FocusTarget::Sidebar;
+    context_.current_project_state.surface.focus =
+        FocusBackTo(context_.current_project_state, FocusTarget::Sidebar);
     return;
   }
   if (context_.prompts.surface_visible &&

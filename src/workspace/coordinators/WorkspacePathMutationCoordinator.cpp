@@ -28,6 +28,10 @@ const ProjectWorkspaceState& PathMutationCoordinator::CurrentProjectState() cons
   return context_.current_project_state;
 }
 
+void PathMutationCoordinator::FocusSidebarIfShown() {
+  CurrentProjectState().surface.focus = FocusBackTo(CurrentProjectState(), FocusTarget::Sidebar);
+}
+
 void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolution) {
   if (!context_.prompts.surface_visible) {
     return;
@@ -105,7 +109,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     }
     if (state.action == PromptSurfaceState::Action::CreateDirectory) {
       RefreshProjectViewsAfterMutation(result.resulting_path);
-      CurrentProjectState().surface.focus = FocusTarget::Sidebar;
+      FocusSidebarIfShown();
       return;
     }
 
@@ -115,7 +119,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     RetargetPluginDecorationsForRename(state.path, result.resulting_path);
     operations_.clear_editor_blame();
     RefreshProjectViewsAfterMutation(result.resulting_path);
-    CurrentProjectState().surface.focus = FocusTarget::Sidebar;
+    FocusSidebarIfShown();
     return;
   }
 
@@ -123,7 +127,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
     const bool discarded = operations_.discard_all_git_sidebar_entries();
     prompt_surfaces_.DismissPromptSurface(discarded ? false : true);
     if (discarded) {
-      CurrentProjectState().surface.focus = FocusTarget::Sidebar;
+      FocusSidebarIfShown();
     }
     return;
   }
@@ -137,7 +141,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
         operations_.discard_git_sidebar_entry(*entry_index, state.path);
     prompt_surfaces_.DismissPromptSurface(discarded ? false : true);
     if (discarded) {
-      CurrentProjectState().surface.focus = FocusTarget::Sidebar;
+      FocusSidebarIfShown();
     }
     return;
   }
@@ -179,7 +183,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
   ClearPluginDecorationsForPath(state.path);
   operations_.clear_editor_blame();
   RefreshProjectViewsAfterMutation(parent);
-  CurrentProjectState().surface.focus = FocusTarget::Sidebar;
+  FocusSidebarIfShown();
 }
 
 PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabService& editor_tabs,

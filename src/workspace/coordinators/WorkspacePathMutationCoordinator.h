@@ -126,6 +126,11 @@ class PathMutationCoordinator {
 
   ProjectWorkspaceState& CurrentProjectState();
   const ProjectWorkspaceState& CurrentProjectState() const;
+  // The sidebar takes the keyboard after a confirmed tree or git operation --
+  // when it is still shown. The sidebar can be hidden under the prompt, and
+  // giving a hidden surface the keyboard left every key going nowhere (QA monkey,
+  // seed 11).
+  void FocusSidebarIfShown();
 
   WorkspaceContext& context_;
   EditorTabService& editor_tabs_;
