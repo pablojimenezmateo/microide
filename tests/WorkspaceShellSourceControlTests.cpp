@@ -803,6 +803,36 @@ void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
          "stage shortcut should move the row into the staged section");
 }
 
+// QA big-repo: with 300 changes the git view scrolled to its first file showed
+// no "Changes (300)" header, and Home -- the selection already on that file --
+// moved nothing and scrolled nothing, so the header could not be brought back by
+// keyboard. Home onto the first entry shows the top of the list, as VS Code's do.
+void TestWorkspaceShellGitSidebarHomeShowsTheListTop() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  for (int i = 0; i < 60; ++i) {
+    WriteFile(root / "src" / ("file" + std::to_string(100 + i) + ".cpp"), "int v = 1;\n");
+  }
+  InitializeGitRepo(root);
+  CommitAll(root, "home fixture", "home fixture");
+  for (int i = 0; i < 60; ++i) {
+    WriteFile(root / "src" / ("file" + std::to_string(100 + i) + ".cpp"), "int v = 2;\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 60), "the fixture should list sixty changed files");
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
+  // Scrolled so the first file is the top row: the header and folder above it are out.
+  WorkspaceShellTestAccess::SetSidebarScrollRow(shell, 2);
+  Expect(SendKeyDown(shell, SDLK_HOME, SDL_KMOD_NONE), "Home should be handled by the git view");
+  Expect(WorkspaceShellTestAccess::SidebarScrollRow(shell) == 0,
+         "Home on the first file should scroll the list to its top, got row " +
+             std::to_string(WorkspaceShellTestAccess::SidebarScrollRow(shell)));
+}
+
 void TestWorkspaceShellGitStageFailureSurfacesFeedback() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1532,6 +1562,7 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes);
   AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
+  AddTest(tests, "WorkspaceShell/GitSidebarHomeShowsTheListTop", TestWorkspaceShellGitSidebarHomeShowsTheListTop);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllIgnoresUnrelatedDirtyTab",
           TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllBlockedByDirtyTabNotifies",

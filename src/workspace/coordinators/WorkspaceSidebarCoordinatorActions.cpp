@@ -184,8 +184,17 @@ void SidebarCoordinator::MoveGitSelection(int delta) {
     // direction of travel.
     next_pos = delta > 0 ? 0 : visible.size() - 1;
   }
-  if (visible[next_pos] != git.selected_index) {
-    git.selected_index = visible[next_pos];
+  const bool moved = visible[next_pos] != git.selected_index;
+  git.selected_index = visible[next_pos];
+  if (delta < 0 && next_pos == 0) {
+    // Home (or Up) onto the first entry shows the top of the list -- the section
+    // header and the folder rows above that entry -- as VS Code's lists do, even
+    // when the selection was already there: revealing only the entry's own row
+    // left "Changes (300)" scrolled out with nothing that brought it back.
+    state_.sidebar.scroll_row = 0;
+    return;
+  }
+  if (moved) {
     RevealSelectedGitLine();
   }
 }
