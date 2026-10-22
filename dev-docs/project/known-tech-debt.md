@@ -805,6 +805,20 @@ implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-22 (later):** no flow touched a scrollbar: the `ui` query now
+reports every one (`scrollbar:<surface>`, track plus thumb) and `scrollbars`
+drags each to its end and back. Also new: `plugin-editor-api` (a plugin's
+`ctx.editor` edits, ghost text, `ctx.notify`), `plugin-process-api`
+(`ctx.process.run` / `run_async`), `git-stash-switch`, and
+`dbg-function-breakpoints`; the monkey's replay now carries its file churn,
+which is what let the editor-profile findings be minimized. Fixed from them and
+the monkey: the focus ring repainted only for HandleEvent's focus changes; a
+pane scrolled without damage (now tracked per pane in frame prep); the debug
+toolbar hovering through a modal; Settings over a maximized panel repainting
+nothing; `c` right after `a` in a diff refused as stale. Still driven by no
+flow from the catalogue: exception-breakpoint conditions, `git-fetch`/`pull`
+against a real remote outside `qa-remote`.
+
 **Update 2026-10-22:** re-measured at **67.5 % of lines, 74.4 % of functions**
 (from 63.2 %; binary at be55d383, the suite in chunks of twelve at `-j3`/`-j4`, and
 the flows a loaded machine timed out re-run on their own -- a first pass under a
