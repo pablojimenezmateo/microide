@@ -327,6 +327,7 @@ void LspClient::Impl::DoInitializeBlocking() {
   TraceLspLifecycle(language_id, proc.pid(), "initialize-request", "sent");
 
   bool got_init = false;
+  std::string init_error;  // the server's message when it answered initialize with an error
   {
     util::StartupTrace::Scope wait_init_scope("LspClient::DoInitializeBlocking::WaitInitializeResponse");
     // Bound the initialize wait by WALL-CLOCK, not an attempt count. The old
@@ -375,6 +376,16 @@ void LspClient::Impl::DoInitializeBlocking() {
         // DAP client's pre-initialize dispatch (WorkspaceDapClientInternal.h).
         DispatchMessage(std::move(*resp_opt));
         continue;
+      }
+      // The server answered, with an error: say what it said. Read as "missing",
+      // this reported "exited before initialize response" for a server that
+      // explained itself (typescript-language-server on a TypeScript with no
+      // tsserver.js), and the status tooltip -- the one place the reason shows --
+      // sent the user looking for a crash.
+      if (!resp.HasKey("result") && resp.HasKey("error")) {
+        const std::string message = resp["error"]["message"].AsString();
+        init_error = message.empty() ? std::string("no message") : message;
+        break;
       }
 
       if (resp.HasKey("result")) {
@@ -509,7 +520,9 @@ void LspClient::Impl::DoInitializeBlocking() {
   if (!got_init) {
     (void)proc.IsRunning();
     const std::optional<int> exit_code = proc.exit_code();
-    if (exit_code.has_value()) {
+    if (!init_error.empty()) {
+      SetLastError("language server refused to initialize: " + init_error);
+    } else if (exit_code.has_value()) {
       SetLastError("language server exited before initialize response (exit code " +
                    std::to_string(*exit_code) + ")");
     } else {

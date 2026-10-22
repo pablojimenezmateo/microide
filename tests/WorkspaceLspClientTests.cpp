@@ -1311,6 +1311,59 @@ while True:
 #endif
 }
 
+// A server that answers initialize with an error has said why it will not run
+// (typescript-language-server on a TypeScript 7 with no tsserver.js, in QA's
+// lsp-typescript). The failure must carry that message: it was reported as
+// "exited before initialize response", sending the user looking for a crash.
+void TestWorkspaceLspClientInitializeErrorKeepsTheServersMessage() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(server_path, std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    return json.loads(sys.stdin.buffer.read(content_length).decode("utf-8"))
+
+msg = read_message()
+data = json.dumps({"jsonrpc": "2.0", "id": msg["id"],
+                   "error": {"code": -32603, "message": "no tsserver.js here"}}).encode("utf-8")
+sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii") + data)
+sys.stdout.buffer.flush()
+)py"));
+
+  LspClient client;
+  (void)client.Start(platform::LocalProcessLauncher(), {"python3", server_path.string()}, "file:///tmp",
+                     "typescript");
+  std::string message;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const LspClient::ReadinessSnapshot snapshot = client.GetReadinessSnapshot();
+    if (snapshot.state == LspClient::ReadinessSnapshot::State::Failed) {
+      message = snapshot.message;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(message.find("no tsserver.js here") != std::string::npos,
+         "the failure should carry the server's own message, got: " + message);
+  client.Shutdown();
+#endif
+}
+
 // Regression: the initialize-wait budget is wall-clock (each miss does a ~500 ms
 // bounded read; 60 attempts ≈ 30 s). Dispatching a pre-initialize frame must NOT spend
 // a budget slot, or a chatty server that emits a burst of notifications before its
@@ -2551,6 +2604,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientSkipsOversizedFrameAndResyncs);
   AddTest(tests, "WorkspaceLspClient/DispatchesPreInitializeFrames",
           TestWorkspaceLspClientDispatchesPreInitializeFrames);
+  AddTest(tests, "WorkspaceLspClient/InitializeErrorKeepsTheServersMessage",
+          TestWorkspaceLspClientInitializeErrorKeepsTheServersMessage);
   AddTest(tests, "WorkspaceLspClient/PreInitializeNotificationFloodStillInitializes",
           TestWorkspaceLspClientPreInitializeNotificationFloodStillInitializes);
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsVersion",

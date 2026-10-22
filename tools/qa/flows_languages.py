@@ -8,9 +8,14 @@ the fixture: hover a symbol, F12 into the other file, and an error that becomes 
 diagnostic.
 
 typescript-language-server is taken from MQA_TS_NODE_MODULES (default
-~/.cache/microide-qa/ts/node_modules, where `npm install typescript
+~/.cache/microide-qa/ts/node_modules, where `npm install typescript@5
 typescript-language-server` put it): the plugin finds a project-local
 node_modules/.bin first, so the flow links that directory into the project.
+TypeScript 5, not the latest: TypeScript 7 is the native compiler and ships no
+tsserver.js, which typescript-language-server needs (it refuses to initialize,
+and the status tooltip says so). The server's `#!/usr/bin/env node` needs a node
+the sandbox lets it run: a system one (apt install nodejs). A node under your
+real home is outside the run's throwaway HOME, so the sandbox refuses it.
 """
 
 from __future__ import annotations

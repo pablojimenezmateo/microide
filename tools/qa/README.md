@@ -10,7 +10,9 @@ and checks it with oracles that need no expected screenshot.
 
 ```bash
 sudo apt install xvfb xdotool x11-apps x11-utils python3-pil   # Xvfb, xdotool, xwd, xdpyinfo, Pillow
-sudo apt install clangd gdb                                     # the lsp-* and dbg-* flows
+sudo apt install clangd gdb nodejs                              # the lsp-* and dbg-* flows
+(mkdir -p ~/.cache/microide-qa/ts && cd ~/.cache/microide-qa/ts && npm install typescript@5 typescript-language-server)
+dotnet tool install --global csharp-ls                          # lsp-typescript, lsp-csharp
 cmake --build build --target microide -j8
 ```
 
