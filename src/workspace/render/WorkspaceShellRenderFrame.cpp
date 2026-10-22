@@ -926,6 +926,32 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_debug_toolbar = toolbar;
     }
   }
+  // Plugin status items (see PreparedFrameState::painted_status_items).
+  {
+    std::uint64_t items_hash = 0xCBF29CE484222325ull;
+    const auto mix = [&items_hash](std::string_view text) {
+      for (const char c : text) {
+        items_hash = (items_hash ^ static_cast<unsigned char>(c)) * 0x100000001B3ull;
+      }
+      items_hash = (items_hash ^ 0xFFu) * 0x100000001B3ull;
+    };
+    for (const StatusItemView& item : ResolveStatusItems(plugin_runtime_.Host(), status_item_cache_)) {
+      mix(item.id);
+      mix(item.text);
+      mix(item.icon);
+      items_hash = (items_hash ^ (static_cast<std::uint64_t>(item.tone) << 8 |
+                                  static_cast<std::uint64_t>(item.alignment))) *
+                   0x100000001B3ull;
+      items_hash = (items_hash ^ static_cast<std::uint64_t>(std::lround(item.progress * 1000.0f) + 1000)) *
+                   0x100000001B3ull;
+    }
+    if (items_hash != frame_state_.painted_status_items) {
+      if (frame_state_.painted_status_items != 0) {
+        RequestBreadcrumbRedraw();
+      }
+      frame_state_.painted_status_items = items_hash;
+    }
+  }
   // The focused editor group: every group's strip and breadcrumb (see
   // PreparedFrameState::painted_focused_group).
   if (const std::size_t group = project_state.clamped_focused_group_index();

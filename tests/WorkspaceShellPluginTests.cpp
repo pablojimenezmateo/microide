@@ -3359,6 +3359,63 @@ return ide.plugin({
          "and starts it for the markdown file already active, as opening it would have");
 }
 
+// QA plugins-reload on the Wayland lane: Reload Plugins put a plugin's status
+// item back at its setup text ("qa-api 5" became "qa-api") and the breadcrumb row
+// it is drawn in kept the old text -- the frame repainted the editor surface.
+// Frame prep now repaints the row whenever the items differ from what it painted.
+void TestWorkspaceShellAReloadedStatusItemRepaintsTheBreadcrumb() {
+#if !MICROIDE_HAS_LUA_PLUGINS || !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path file = project / "notes.txt";
+  WriteFile(file, "notes\n");
+  std::filesystem::create_directories(plugins_root);
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  const auto plugin = [](std::string_view text) {
+    return std::string(R"(local ide = require("microide")
+return ide.plugin({
+  id = "stat",
+  setup = function(ctx)
+    ctx.status.add({ id = "seen", text = ")") +
+           std::string(text) + R"(", alignment = "right", priority = 1 })
+  end
+})
+)";
+  };
+  WritePluginInit(plugins_root, "stat", plugin("stat counted 55555"));
+
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  (void)WorkspaceShellTestAccess::ReloadPluginsIfPluginAssetsChanged(shell, true);
+  SoftwareCanvas canvas{kWidth, kHeight};
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  WritePluginInit(plugins_root, "stat", plugin("stat"));
+  Expect(WorkspaceShellTestAccess::ReloadPluginsIfPluginAssetsChanged(shell, true), "the edited plugin reloads");
+  // A frame for something else entirely: the editor surface, as the QA run's.
+  workspace::RenderInvalidation editor_only;
+  editor_only.rects.push_back(WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface);
+  // The reload's own damage dropped: what is left is a status change with none of
+  // its own, as when a reloaded plugin's setup re-adds the item later.
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, editor_only);
+  Expect(diff.identical(), "a frame after the reload paints the breadcrumb's new status text; " +
+                               DescribePixelDiff(diff));
+}
+
 // QA plugins-reload: once a buffer had an unsaved edit no hover card appeared at
 // all -- the plugin hover path returned early on a dirty viewport, and the
 // language server is only asked as that path's fallback. A plugin's provider
@@ -7130,6 +7187,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ShowHoverAtTheCaret", TestWorkspaceShellShowHoverAtTheCaret);
   AddTest(tests, "WorkspaceShell/HoverInAnUnsavedBufferAsksTheServer",
           TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer);
+  AddTest(tests, "WorkspaceShell/AReloadedStatusItemRepaintsTheBreadcrumb",
+          TestWorkspaceShellAReloadedStatusItemRepaintsTheBreadcrumb);
   AddTest(tests, "WorkspaceShell/ServerRegisteredAfterOpenStartsForTheActiveFile",
           TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile);
   AddTest(tests, "WorkspaceShell/EditorPreferencesReachAllSplitGroups",

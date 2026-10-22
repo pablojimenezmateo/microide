@@ -69,6 +69,11 @@ struct PreparedFrameState {
   // command line drew the editor's ring in a full frame and not in a partial one
   // (QA monkey, editor profile, seeds 3 and 6).
   std::optional<FocusTarget> painted_focus;
+  // The plugin status items as painted in the breadcrumb row (a hash of each
+  // item's id, text, icon, tone, progress and alignment): an item a reloaded
+  // plugin re-added, or one a plugin updated from its thread, changed the row's
+  // text in a frame that did not repaint it (QA plugins-reload, Wayland lane).
+  std::uint64_t painted_status_items = 0;
   // The editor group that was focused when the strips were painted: each strip
   // draws its group's active tab as focused or not, and a click in a group's
   // empty strip moved the focus with no strip repainted (QA monkey, seed 9).
