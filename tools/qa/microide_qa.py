@@ -980,7 +980,12 @@ class App:
           overlay, modal or menu up; a hidden sidebar or panel) -- every key then
           goes nowhere, which is what Escape from the palette did to the tree;
         - bounds: an element outside the window (a card centred on a narrow
-          editor area ran off it).
+          editor area ran off it);
+        - surface: a sidebar, debug-pane or panel control outside its surface
+          (the 41-px sidebar drew Refresh past its edge);
+        - overlap: two controls that partly cover each other, with no overlay or
+          modal up (the sidebar's ... button over its view tabs, monkey seed 4) --
+          one nested in another, a tab's close button, is not one.
 
         Not one: "the active tab is in view". A tab strip scrolled by the wheel
         leaves it out of view on purpose, as VS Code's does; revealing it on
@@ -1007,6 +1012,7 @@ class App:
                 if x < -1 or y < -1 or x + w > width + 1 or y + h > height + 1:
                     out.append(("bounds", f"{element['name']} {element['rect']} leaves the {width}x{height} window"))
                     break
+        out += _surface_and_overlap_findings(ui)
         return out
 
     def _write_finding(self, label: str, found: list[Finding]) -> str | None:
@@ -1084,6 +1090,54 @@ class App:
         actions in order. `tools/qa/run.py replay` re-runs it on a fresh fixture."""
         path.write_text(json.dumps({"size": list(self.size), **header, "actions": self.actions},
                                    indent=1))
+
+
+# Which surface a control belongs to, by its name (the `surface` oracle).
+_SURFACE_OWNERS = (
+    ("sidebar-view:", "sidebar"), ("button:sidebar/", "sidebar"), ("button:search/", "sidebar"),
+    ("debug-tab:", "rightPane"), ("debug-row:", "rightPane"),
+    ("panel-tab:", "bottomPanel"), ("button:panel/", "bottomPanel"), ("button:close-panel-tab/", "bottomPanel"),
+)
+_OVERLAP_KINDS = {"button", "sidebar-view", "debug-tab", "panel-tab"}
+
+
+def _surface_and_overlap_findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
+    """The `surface` and `overlap` oracles of App._ui_oracles (one finding each at
+    most, so a broken layout does not bury the rest)."""
+    out: list[tuple[str, str]] = []
+    surfaces = ui.get("surfaces") or {}
+    elements = ui.get("elements", [])
+
+    def inside(a: list[int], b: list[int], slack: int = 1) -> bool:
+        return (a[0] >= b[0] - slack and a[1] >= b[1] - slack
+                and a[0] + a[2] <= b[0] + b[2] + slack and a[1] + a[3] <= b[1] + b[3] + slack)
+
+    for element in elements:
+        rect = element["rect"]
+        if rect[2] <= 0 or rect[3] <= 0:
+            continue
+        owner = next((surface for prefix, surface in _SURFACE_OWNERS if element["name"].startswith(prefix)), None)
+        box = surfaces.get(owner) if owner else None
+        if box and not inside(rect, box):
+            out.append(("surface", f"{element['name']} {rect} leaves the {owner} {box}"))
+            break
+    menu = ui.get("menu") or {}
+    if (ui.get("overlay") or {}).get("visible") or ui.get("modal") or menu.get("open") or menu.get("contextMenu"):
+        return out
+    seen: list[dict[str, Any]] = []
+    for element in elements:
+        if element.get("kind") not in _OVERLAP_KINDS or element["rect"][2] <= 0 or element["rect"][3] <= 0:
+            continue
+        a = element["rect"]
+        for other in seen:
+            b = other["rect"]
+            ix = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+            iy = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+            if ix > 1 and iy > 1 and not inside(a, b, 0) and not inside(b, a, 0):
+                out.append(("overlap", f"{element['name']} {a} overlaps {other['name']} {b}"))
+                return out
+        seen.append(element)
+    return out
 
 
 def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
