@@ -20,6 +20,7 @@
 
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
 
@@ -60,6 +61,12 @@ struct PreparedFrameState {
   static constexpr std::size_t kTrackedRegions = 6;
   std::array<SDL_FRect, kTrackedRegions> painted_regions{};
   bool painted_regions_valid = false;
+  // The surface that painted the focus ring (nullopt: no frame yet). Focus moves
+  // from many places -- a key, a click, a control-channel command, a plugin --
+  // and only HandleEvent repainted the two surfaces, so moving a tab from the
+  // command line drew the editor's ring in a full frame and not in a partial one
+  // (QA monkey, editor profile, seeds 3 and 6).
+  std::optional<FocusTarget> painted_focus;
   // The editor viewport that had the keyboard last frame (null: none did), for
   // the on_focus_change auto-save.
   const void* focused_editor = nullptr;

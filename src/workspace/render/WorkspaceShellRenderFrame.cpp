@@ -909,6 +909,16 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       frame_state_.painted_debug_toolbar = toolbar;
     }
   }
+  // The focus ring: the surface that lost it and the one that took it repaint
+  // (see PreparedFrameState::painted_focus).
+  if (const FocusTarget focus = project_state.surface.focus; frame_state_.painted_focus != focus) {
+    for (const FocusTarget target : {frame_state_.painted_focus.value_or(focus), focus}) {
+      if (const auto rect = FocusSurfaceRect(layout, target); rect.has_value()) {
+        RequestRedrawRect(*rect);
+      }
+    }
+    frame_state_.painted_focus = focus;
+  }
   // The editor tabs' dirty markers: repaint the strips when the set of dirty tabs
   // moved, whatever path moved it (see PreparedFrameState).
   {

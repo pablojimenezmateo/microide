@@ -306,6 +306,47 @@ void TestALinePrependedAboveTheScrolledViewRepaintsThePane() {
          "the shifted rows should have changed the pane on screen");
 }
 
+// The QA monkey (editor profile, seeds 3 and 6): one file in both groups of a
+// split, rewritten on disk while the find widget had the keyboard, then a tab
+// moved from the command line. Moving a tab gives the editor the focus, and only
+// HandleEvent repainted the surfaces a focus change moves the ring between: the
+// editor's ring showed in a full frame and not in the partial one.
+void TestATabMovedAfterAReloadRepaintsTheFocusRing() {
+  Fixture fixture(/*sidebar_visible=*/true);
+  std::string text;
+  for (int i = 1; i <= 120; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  WriteFile(fixture.open_file, text);
+  platform::IndexUpdateBatch first;
+  first.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(first));
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "goto 115"), "goto 115 runs");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "split-down"),
+         "split-down should show open.cpp in a second group");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "focus-other-group"),
+         "focus-other-group runs");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "open other.cpp"),
+         "open other.cpp runs");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "tabswitch open.cpp"),
+         "tabswitch runs");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "search zzz"), "search runs");
+  fixture.Paint(RenderInvalidation{.full = true, .rects = {}});
+  fixture.Settle();
+
+  WriteFile(fixture.open_file, "churn 1\n" + text);
+  platform::IndexUpdateBatch batch;
+  batch.changes.push_back(fixture.Modified(fixture.open_file));
+  fixture.ApplyThroughTheWake(std::move(batch));
+  fixture.ExpectRetainedMatchesFull(
+      "a line prepended under a file shown in both groups leaves the window identical to a full "
+      "repaint");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(fixture.shell, "tabmove 1"), "tabmove runs");
+  fixture.Settle();
+  fixture.ExpectRetainedMatchesFull(
+      "a tab move that gives the editor the focus leaves the window identical to a full repaint");
+}
+
 void TestAHiddenSidebarRepaintsNothingForAnUnopenedFile() {
   Fixture fixture(/*sidebar_visible=*/false);
 
@@ -366,6 +407,8 @@ void RegisterProjectChangeRedrawTests(std::vector<TestCase>& tests) {
           TestAWriteToAnOpenFileUnderAPromptRepaintsItsPane);
   AddTest(tests, "ProjectChangeRedraw/ALinePrependedAboveTheScrolledViewRepaintsThePane",
           TestALinePrependedAboveTheScrolledViewRepaintsThePane);
+  AddTest(tests, "ProjectChangeRedraw/ATabMovedAfterAReloadRepaintsTheFocusRing",
+          TestATabMovedAfterAReloadRepaintsTheFocusRing);
   AddTest(tests, "ProjectChangeRedraw/AHiddenSidebarRepaintsNothing",
           TestAHiddenSidebarRepaintsNothingForAnUnopenedFile);
   AddTest(tests, "ProjectChangeRedraw/ATreeShapeChangeRepaintsTheEditorColumn",
