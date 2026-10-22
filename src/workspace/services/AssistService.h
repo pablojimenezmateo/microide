@@ -96,6 +96,10 @@ class AssistService {
     // this language? Gates quick suggestions, so typing prose in a file nothing
     // completes asks no one.
     std::function<bool(std::string_view)> has_completion_provider;
+    // A short message where the user is looking (an info toast): a navigation that
+    // found nothing says so, as VS Code's "No definition found" does, instead of
+    // writing only to an output channel no one has open.
+    std::function<void(std::string)> notify_info;
   };
 
   AssistService() = default;

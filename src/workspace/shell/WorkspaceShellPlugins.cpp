@@ -483,6 +483,7 @@ WorkspaceShell::WorkspaceShell() {
                        (FindProvider(completion_registry_, std::string(language_id)) != nullptr ||
                         CurrentLspManager().HasServer(std::string(language_id)));
               },
+          .notify_info = [this](std::string message) { Notify(NotificationService::Tone::Info, message); },
       });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{
       .is_command_name_available =

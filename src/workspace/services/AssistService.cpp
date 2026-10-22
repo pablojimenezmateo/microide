@@ -1204,16 +1204,20 @@ void AssistService::ResolveDefinitionNavigation(const std::shared_ptr<Navigation
   switch (choice) {
     case assist_merge::NavChoice::Pending:
       return;
-    case assist_merge::NavChoice::None:
+    case assist_merge::NavChoice::None: {
       merge->acted = true;
       // Both sources ended up empty. If the language server never actually answered
       // (timeout / gone / protocol error), don't claim "No definition found" for a
       // request it never resolved.
-      output_channels_->AppendLine(
-          "lsp.definition", "LSP Definition",
-          merge->sources.lsp_failed ? "Language server did not respond (no definition resolved)"
-                                    : "No definition found");
+      const char* message = merge->sources.lsp_failed
+                                ? "Language server did not respond (no definition resolved)"
+                                : "No definition found";
+      output_channels_->AppendLine("lsp.definition", "LSP Definition", message);
+      if (operations_.notify_info) {
+        operations_.notify_info(message);
+      }
       return;
+    }
     case assist_merge::NavChoice::UsePlugin:
       merge->acted = true;
       NavigateToPluginLocation(merge->plugin_locations.front());
@@ -1285,13 +1289,12 @@ bool AssistService::GoToLspNavigation(LspNavigationKind kind, std::string* error
         ResultIsStale(operations_.active_editable_viewport(), request_path)) {
       return;
     }
-    if (!locations.answered()) {
-      output_channels_->AppendLine("lsp.definition", "LSP Definition",
-                                   "Language server did not respond");
-      return;
-    }
-    if (!locations.has_value() || locations->empty()) {
-      output_channels_->AppendLine("lsp.definition", "LSP Definition", empty_message);
+    if (!locations.answered() || !locations.has_value() || locations->empty()) {
+      const char* message = locations.answered() ? empty_message : "Language server did not respond";
+      output_channels_->AppendLine("lsp.definition", "LSP Definition", message);
+      if (operations_.notify_info) {
+        operations_.notify_info(message);
+      }
       return;
     }
     NavigateToLspLocation(locations->front(), encoding);
