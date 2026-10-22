@@ -428,7 +428,26 @@ SCENARIOS: dict[str, Callable[[q.App], None]] = {
 SCENARIO_PLUGINS: dict[str, tuple[str, ...]] = {}
 SCENARIO_ENV: dict[str, dict[str, str]] = {"menu-clicks": {"MICROIDE_QA_MENU_DRY_RUN": "1"}}
 
+def _redefined_top_level_names(path: Path) -> list[str]:
+    """Functions or classes a module defines twice at its top level: the second
+    silently replaces the first for every caller (a `_palette` helper returning
+    None replaced one returning bool, and `if _palette(...)` in another flow
+    stopped adding its breakpoint)."""
+    import ast
+    seen: set[str] = set()
+    twice: list[str] = []
+    for node in ast.parse(path.read_text()).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name in seen:
+                twice.append(node.name)
+            seen.add(node.name)
+    return twice
+
+
 for _module_name in FLOW_MODULES:
+    _twice = _redefined_top_level_names(Path(__file__).resolve().parent / f"{_module_name}.py")
+    if _twice:
+        raise ImportError(f"{_module_name} defines {', '.join(_twice)} twice at its top level")
     _module = importlib.import_module(_module_name)
     for _name, _flow in _module.FLOWS.items():
         if _name in SCENARIOS:

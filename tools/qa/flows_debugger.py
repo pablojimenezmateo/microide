@@ -439,17 +439,6 @@ def flow_exception_breakpoints(app: q.App) -> None:
                f"an unknown filter id is refused with the known ones ({reply})")
 
 
-def _palette(app: q.App, label: str) -> None:
-    """Runs a palette row by its label, as a person does."""
-    app.key("ctrl+shift+p")
-    step(app, "palette", 0.2)
-    app.type(label)
-    app.wait_until(lambda: any(e.get("label", "").startswith(label) for e in app.elements("overlay-row")),
-                   3.0, f"the palette to list {label!r}")
-    app.key("Return")
-    step(app, label, 0.3)
-
-
 def _breakpoint(app: q.App, line: int) -> dict:
     return next((b for b in _bps(app) if b["line"] == line), {})
 
