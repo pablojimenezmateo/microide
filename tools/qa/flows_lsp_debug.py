@@ -370,10 +370,41 @@ def flow_lsp_workspace_edits(app: q.App) -> None:
 
 
 
+def flow_lsp_declaration_implementation(app: q.App) -> None:
+    """Go to Declaration lands on the header's declaration; Go to Implementation
+    (Ctrl+F12) on a method nothing overrides finds nothing and SAYS so (VS Code's
+    "No implementation found"), leaving the caret where it was; Go to Definition
+    on a blank line says it found none."""
+    if not _require(app, "clangd") or not _lsp_ready(app, "src/main.cpp"):
+        return
+    app.click_text(7, 16)  # `scheduler.add(`
+    step(app, "caret on add", 0.3)
+    app.send("goto-declaration")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "scheduler.hpp", 8.0,
+                   "Go to Declaration to open the header")
+    app.expect(app.cursors()[0][0] == 17, f"it lands on add's declaration ({app.cursors()})")
+    open_file(app, "src/main.cpp")
+    app.click_text(7, 16)
+    before = [n.get("message") for n in app.query("notifications")]
+    app.key("ctrl+F12")
+    app.wait_until(lambda: any(m == "No implementation found"
+                               for m in [n.get("message") for n in app.query("notifications")]), 8.0,
+                   "Go to Implementation to say it found none")
+    app.expect((app.active_tab() or {}).get("title") == "main.cpp" and app.cursors()[0] == (7, 16),
+               f"and stay where it was ({app.cursors()}, before {before})")
+    app.click_text(11, 1)  # a blank line: nothing to go to
+    app.key("F12")
+    app.wait_until(lambda: any(m and m.startswith("No definition")
+                               for m in [n.get("message") for n in app.query("notifications")]), 8.0,
+                   "Go to Definition on a blank line to say it found none")
+    app.expect((app.active_tab() or {}).get("title") == "main.cpp", "and stay in the file")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "lsp-hover": flow_lsp_hover,
     "lsp-show-hover": flow_lsp_show_hover,
     "lsp-navigation": flow_lsp_navigation,
+    "lsp-declaration-implementation": flow_lsp_declaration_implementation,
     "lsp-completion": flow_lsp_completion,
     "lsp-diagnostics": flow_lsp_diagnostics,
     "lsp-rename": flow_lsp_rename,

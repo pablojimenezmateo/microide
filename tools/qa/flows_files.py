@@ -76,14 +76,17 @@ def flow_file_formats(app: q.App) -> None:
     app.send("set-setting", "editor.tab_size", "8")
     app.expect(app.buffer().get("tabSize") == 2,
                f"editor.tab_size leaves a detected file alone ({app.buffer().get('tabSize')})")
-    # Detection off: the file opens with the editor's own settings, not the file's.
-    app.send("set-setting", "editor.indent.detect_on_open", "false")
+    # Detection off (Auto-Detect Indent on Open, from its toggle command): the file
+    # opens with the editor's own settings, not the file's.
+    app.send("toggle-editor-auto-detect-indent")
+    app.expect(next(s["value"] for s in app.query("settings") if s["id"] == "editor.indent.detect_on_open") == "false",
+               "the toggle turns detection off")
     app.send("set-setting", "editor.tab_size", "8")
     _reopen(app, "fmt/two.py")
     buffer = app.buffer()
     app.expect(buffer.get("tabSize") == 8,
                f"with detection off the file takes editor.tab_size, 8 ({buffer.get('tabSize')})")
-    app.send("set-setting", "editor.indent.detect_on_open", "true")
+    app.send("toggle-editor-auto-detect-indent")
     _reopen(app, "fmt/two.py")
     app.expect(app.buffer().get("tabSize") == 2, f"detection back on reads two again ({app.buffer().get('tabSize')})")
 
