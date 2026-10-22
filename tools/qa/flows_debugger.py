@@ -420,12 +420,106 @@ def flow_exception_breakpoints(app: q.App) -> None:
     _stop_session(app)
 
 
+def _palette(app: q.App, label: str) -> None:
+    """Runs a palette row by its label, as a person does."""
+    app.key("ctrl+shift+p")
+    step(app, "palette", 0.2)
+    app.type(label)
+    app.wait_until(lambda: any(e.get("label", "").startswith(label) for e in app.elements("overlay-row")),
+                   3.0, f"the palette to list {label!r}")
+    app.key("Return")
+    step(app, label, 0.3)
+
+
+def _breakpoint(app: q.App, line: int) -> dict:
+    return next((b for b in _bps(app) if b["line"] == line), {})
+
+
+def flow_debug_commands(app: q.App) -> None:
+    """The debugger's commands no flow ran: Enable Debugger from the palette; the
+    breakpoint commands of the control API (a condition, a hit count and a log
+    message set on one breakpoint, read back, disabled, each cleared); Select
+    Launch Configuration from the palette, its picker listing the plugin's
+    configuration and Enter launching it to the breakpoint; at the stop, Show Call
+    Stack, Show Debug Output and the pane toggled away and back; Step Back refused
+    on gdb, which cannot run backwards, with the reason; `debug-launch <name>`."""
+    if not _require(app, "gdb"):
+        return
+    enabled = lambda: next(s["value"] for s in app.query("settings") if s["id"] == "debug.enabled")  # noqa: E731
+    before = enabled()
+    _palette(app, "Enable Debugger")
+    app.expect(enabled() != before, f"Enable Debugger flips debug.enabled ({before} -> {enabled()})")
+    if enabled() != "true":
+        app.send("set-setting", "debug.enabled", "true")
+
+    main = "src/main.cpp"
+    app.send("breakpoint-set", main, "12")
+    app.send("breakpoint-condition", main, "12", "1 == 1")
+    app.send("breakpoint-hit-condition", main, "12", "1")
+    app.send("breakpoint-logmessage", main, "12", "at line twelve")
+    bp = _breakpoint(app, 12)
+    app.expect(bp.get("condition") == "1 == 1" and bp.get("hitCondition") == "1"
+               and bp.get("logMessage") == "at line twelve",
+               f"the condition, hit count and log message are on the breakpoint ({bp})")
+    app.send("breakpoint-disable", main, "12")
+    app.expect(_breakpoint(app, 12).get("enabled") is False, f"breakpoint-disable disables it ({_breakpoint(app, 12)})")
+    for verb in ("breakpoint-condition", "breakpoint-hit-condition", "breakpoint-logmessage"):
+        app.send(verb, main, "12")
+    app.send("breakpoint-enable", main, "12")
+    bp = _breakpoint(app, 12)
+    app.expect(bp.get("enabled") and not bp.get("condition") and not bp.get("hitCondition")
+               and not bp.get("logMessage"),
+               f"each clears with no argument, and it is a plain enabled breakpoint again ({bp})")
+
+    open_file(app, main)
+    _palette(app, "Select Launch Configuration")
+    overlay = app.ui()["overlay"]
+    rows = [e.get("label") for e in app.elements("overlay-row")]
+    app.expect(overlay.get("mode") == "launch-config-picker" and "taskflow (QA)" in rows,
+               f"the picker lists the plugin's configuration ({overlay.get('mode')}, {rows})")
+    app.key("Return")
+    if not app.wait_until(lambda: _state(app).get("stopped"), 40.0, "the picked configuration to stop at line 12"):
+        return
+    step(app, "stopped", 0.5)
+    app.expect(_state(app).get("line") == 12, f"it stops on the breakpoint ({_state(app).get('line')})")
+
+    app.send("debug-pane-callstack")
+    step(app, "show call stack", 0.3)
+    tabs = {e["name"]: e.get("active") for e in app.elements() if e["name"].startswith("debug-tab:")}
+    app.expect(tabs.get("debug-tab:callstack") is True, f"Show Call Stack selects the call stack ({tabs})")
+    app.send("debug-show-output")
+    step(app, "show debug output", 0.3)
+    shown = app.query("output").get("shown", "")
+    app.expect(app.ui()["panel"]["visible"] and shown.startswith("debug.console"),
+               f"Show Debug Output shows the session's console ({shown!r})")
+    app.send("debug-pane-toggle")
+    step(app, "pane away", 0.3)
+    app.expect(not any(e["name"].startswith("debug-tab:") for e in app.elements()), "the pane toggles away")
+    app.send("debug-pane-toggle")
+    step(app, "pane back", 0.3)
+    app.expect(any(e["name"].startswith("debug-tab:") for e in app.elements()), "and back")
+
+    reply = app.send("debug-step-back")
+    app.expect(not reply.get("ok") and "backwards" in reply.get("error", ""),
+               f"Step Back on gdb is refused with the reason ({reply})")
+    app.expect(_state(app).get("line") == 12, "and nothing moved")
+
+    _stop_session(app)
+    reply = app.send("debug-launch", "taskflow (QA)")
+    app.expect(bool(reply.get("ok")), f"debug-launch by name starts the configuration ({reply})")
+    if app.wait_until(lambda: _state(app).get("stopped"), 40.0, "debug-launch to stop at the breakpoint"):
+        step(app, "stopped again", 0.3)
+    app.key("shift+F5")
+    app.wait_until(lambda: _state(app).get("session") in ("none", "terminated"), 15.0, "Shift+F5 to end it")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "dbg-breakpoint-kinds": flow_breakpoint_kinds,
     "dbg-pause": flow_debug_pause,
     "dbg-sessions": flow_debug_sessions,
     "dbg-function-breakpoints": flow_function_breakpoints,
     "dbg-exception-breakpoints": flow_exception_breakpoints,
+    "dbg-commands": flow_debug_commands,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {
     "dbg-breakpoint-kinds": ("gdb-dap",),
@@ -433,4 +527,5 @@ PLUGINS: dict[str, tuple[str, ...]] = {
     "dbg-sessions": ("gdb-dap",),
     "dbg-function-breakpoints": ("gdb-dap",),
     "dbg-exception-breakpoints": ("gdb-dap",),
+    "dbg-commands": ("gdb-dap", "qa-launch"),
 }
