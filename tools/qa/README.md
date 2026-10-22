@@ -161,8 +161,10 @@ At the end of every scenario the suite reads the `action-counts` query (each
 command that ran since startup, by name, with its count, whatever drove it: a
 key, a menu row, a click, the palette or a control command) beside the
 `commands` catalogue, and writes their union to `<out>/command-coverage.txt`:
-first the registered commands NO scenario dispatched, then each command with the
-scenarios that drove it. The summary line says how many of the catalogue ran.
+first the registered commands NO scenario dispatched, then those only the smoke
+pass ran (`commands-run` runs each once and checks no effect: the ledger counts
+them as a gap too), then each command with the scenarios that drove it. The
+summary line gives the three counts.
 A dry-run sweep (`keys`, `context-menus`, `menu-clicks`) records a receipt and
 runs nothing, so it does not count: the ledger measures what was executed. Read
 the gap list before writing a new flow, and after it to see the gap close; a

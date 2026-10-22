@@ -135,17 +135,27 @@ def command_coverage(app: q.App) -> dict:
             "plugins": dict(counts.get("plugins", {}))}
 
 
+# Scenarios that run every command once to see it does not crash or misreport,
+# and check nothing a command DOES: a command only they drive is a gap all the
+# same, and the ledger lists those apart.
+SMOKE_SCENARIOS = frozenset({"commands-run"})
+# Input, not actions: `key` and `pointer` press what they name and leave the
+# receipt to what ran (ActionCoordinator), so they are never counted.
+UNCOUNTED_COMMANDS = frozenset({"key", "pointer"})
+
+
 def write_command_coverage(out: Path, names: list[str], records: dict[str, dict]) -> str:
     """Unions every scenario's record into `<out>/command-coverage.txt`: the
-    catalogue's commands no scenario dispatched (the measured gap), then each
-    command with the scenarios that drove it. Returns the one-line summary."""
+    catalogue's commands no scenario dispatched, those only the smoke pass ran
+    (both the measured gap), then each command with the scenarios that drove
+    it. Returns the one-line summary."""
     catalogue: list[str] = []
     drove: dict[str, set[str]] = {}
     plugin_drove: dict[str, set[str]] = {}
     for name in names:
         record = records.get(name) or {}
         for command in record.get("catalogue", []):
-            if command not in catalogue:
+            if command not in catalogue and command not in UNCOUNTED_COMMANDS:
                 catalogue.append(command)
         for command in record.get("commands", {}):
             drove.setdefault(command, set()).add(name)
@@ -154,11 +164,18 @@ def write_command_coverage(out: Path, names: list[str], records: dict[str, dict]
     if not catalogue:
         return "coverage: no command catalogue was read (every scenario died before its end?)"
     missing = [command for command in catalogue if command not in drove]
+    smoke_only = [command for command in catalogue
+                  if command in drove and drove[command] <= SMOKE_SCENARIOS]
+    flowed = len(catalogue) - len(missing) - len(smoke_only)
     lines = [f"# command coverage of this run ({len(names)} scenario(s)): "
-             f"{len(catalogue) - len(missing)} of {len(catalogue)} registered commands dispatched",
+             f"{len(catalogue) - len(missing)} of {len(catalogue)} registered commands dispatched, "
+             f"{flowed} by a flow that checks what they do",
              "#", "# Commands no scenario dispatched (a key, menu row, palette entry, click or",
              "# control command naming the command counts; a dry-run sweep does not):", ""]
     lines += missing or ["(none)"]
+    lines += ["", f"# Commands only the smoke pass ran ({', '.join(sorted(SMOKE_SCENARIOS))}: it runs",
+              "# each once and checks no effect):", ""]
+    lines += smoke_only or ["(none)"]
     lines += ["", "# Each command and the scenarios that drove it:", ""]
     for command in catalogue:
         if command in drove:
@@ -168,8 +185,9 @@ def write_command_coverage(out: Path, names: list[str], records: dict[str, dict]
         lines += [f"{command}: {', '.join(sorted(scenarios))}" for command, scenarios in sorted(plugin_drove.items())]
     (out / "command-coverage.txt").write_text("\n".join(lines) + "\n")
     partial = "" if len(names) >= len(s.SCENARIOS) else " (a partial run: the gap list counts only the scenarios chosen)"
-    return (f"coverage: {len(catalogue) - len(missing)} of {len(catalogue)} registered commands dispatched; "
-            f"the {len(missing)} undriven are listed in {out / 'command-coverage.txt'}{partial}")
+    return (f"coverage: {flowed} of {len(catalogue)} registered commands driven by a checking flow, "
+            f"{len(smoke_only)} by the smoke pass only, {len(missing)} by nothing; "
+            f"listed in {out / 'command-coverage.txt'}{partial}")
 
 
 def report_lines(name: str, app: q.App) -> list[str]:
