@@ -183,6 +183,11 @@ Checked after every action:
 - **Inside the window.** An element whose rect leaves the window is a finding
   (toasts laid out above it while the status bar was hidden; the Settings card
   centred on a narrow editor area).
+- **Inside its surface, not overlapping.** A sidebar, debug-pane or panel control
+  outside its surface, or two buttons / view tabs / panel tabs that partly cover
+  each other with no overlay or modal up, is a finding (a 46-px sidebar drew its
+  view tabs past its edge and under the ⋯ button, so a hover lit one control while
+  the damage named another).
 - **Sanitizer and allocator reports** (`ERROR: AddressSanitizer`, `runtime error:`,
   `WARNING: ThreadSanitizer`, glibc's `malloc():` / `double free`), assertions, and
   the process exiting.
