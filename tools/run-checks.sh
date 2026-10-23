@@ -88,6 +88,10 @@ check_leaked_fixtures() {
   return $leaked
 }
 
+check_ci_driver() {
+  run_logged "${LOG_DIR}/microide-ci-driver.log" python3 -m unittest discover -s scripts/ci -p "test_*.py"
+}
+
 check_tests() {
   local log="${LOG_DIR}/microide-tests.log"
   # Fast, build-free pre-check: every public doc must state the CMakeLists
@@ -97,6 +101,7 @@ check_tests() {
     echo "run-checks: doc/version drift — fix before building (tests not run)" >&2
     return 1
   }
+  check_ci_driver || return 1
   # ctest in the default build invokes exactly two binaries: the microide_tests
   # shards and `microide_perf --smoke` (see add_test in CMakeLists.txt). Build
   # both. Scoping to microide_tests alone — which this lane did until 2026-08-10
@@ -683,7 +688,7 @@ check_qa_wayland() {
 }
 
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-driver|qa-asan|qa-remote|qa-wayland|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|ci-driver|qa|qa-driver|qa-asan|qa-remote|qa-wayland|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh qa-asan       # the GUI QA suite + the monkey over seeds on the ASan build" >&2
   echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
@@ -715,6 +720,7 @@ main() {
     clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
     hardened) check_hardened ;;
+    ci-driver) check_ci_driver ;;
     qa-driver) check_qa_driver ;;
     qa) check_qa ;;
     qa-asan) check_qa_asan ;;
