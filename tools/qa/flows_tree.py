@@ -231,7 +231,57 @@ def flow_rename_open_tabs(app: q.App) -> None:
                        f"the tab shows the file as it is, the edit dropped ({active_title(app)}, {app.text()!r})")
 
 
+def flow_tree_cancel_transactions(app: q.App) -> None:
+    """Cancel rename, creation and deletion after entering a real name: neither
+    disk nor the open dirty buffer changes, and its undo history still works."""
+    assert app.project is not None
+    path = "cancel-tree/keep.txt"
+    original = "keep me\n"
+    open_file(app, path, original)
+    app.key("End")
+    app.type("CHANGED")
+    edited = "keep meCHANGED\n"
+    app.send("tree-refresh")
+    if not _select(app, "keep.txt"):
+        return
+    for operation in ("rename", "new-file", "new-folder", "delete"):
+        if operation == "rename":
+            app.key("F2")
+        elif operation == "delete":
+            app.key("Delete")
+        else:
+            _context(app, "cancel-tree", "New File…" if operation == "new-file" else "New Folder…")
+        if not app.wait_until(lambda: app.ui().get("modal") == "prompt", 3.0,
+                              f"{operation}: prompt opens"):
+            return
+        if operation != "delete":
+            app.key("ctrl+a")
+            app.type("abandoned.txt" if operation != "new-folder" else "abandoned-folder")
+        app.key("Escape")
+        step(app, f"cancel tree {operation}")
+        app.expect(not app.ui().get("modal"), f"{operation}: Escape closes the prompt")
+        app.expect(read(app, path) == original, f"{operation}: cancel leaves disk untouched")
+        app.expect(not (app.project / "cancel-tree/abandoned.txt").exists()
+                   and not (app.project / "cancel-tree/abandoned-folder").exists(),
+                   f"{operation}: the abandoned name creates nothing")
+        app.expect(app.text() == edited and app.buffer().get("dirty"),
+                   f"{operation}: the dirty buffer keeps its unsaved edit")
+        app.expect(active_title(app) == "keep.txt", f"{operation}: the open tab retains its identity")
+        if not _select(app, "keep.txt"):
+            return
+    app.send("focus", "editor")
+    app.key("ctrl+z")
+    step(app, "undo after canceled tree operations")
+    app.expect(app.text() == original and not app.buffer().get("dirty"),
+               "canceling tree operations preserves the editor's undo/save point")
+    app.key("ctrl+shift+z")
+    app.key("ctrl+s")
+    app.wait_until(lambda: read(app, path) == edited and not app.buffer().get("dirty"),
+                   3.0, "the same buffer saves normally after canceled operations")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tree-collisions": flow_tree_collisions,
+    "tree-cancel-transactions": flow_tree_cancel_transactions,
     "rename-open-tabs": flow_rename_open_tabs,
 }
