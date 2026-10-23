@@ -290,7 +290,17 @@ class App:
         app = cls(binary=binary, work=work, display=display or "", size=size, env=env, shots=shots,
                   project=project)
         try:
-            app._start(project, extra_args or [])
+            try:
+                app._start(project, extra_args or [])
+            except Exception:
+                # stop() removes the private work tree: keep startup evidence
+                # before cleanup, including compositor and sanitizer output.
+                if shots is not None:
+                    startup = shots / "startup"
+                    startup.mkdir(parents=True, exist_ok=True)
+                    for log in work.glob("*.log"):
+                        shutil.copy2(log, startup / log.name)
+                raise
             yield app
         finally:
             app.stop()

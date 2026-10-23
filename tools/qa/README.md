@@ -53,6 +53,11 @@ MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 tools/qa/run.py suite   # ... on a HiDPI
 tools/run-checks.sh qa-wayland              # the suite on weston at scale 2, as a lane
 ```
 
+Startup, fixture and driver exceptions fail their scenario without aborting the
+remaining suite or qualifying for an expectation retry. The traceback is kept in
+`<scenario>/driver-error.txt`; failed launches also keep their app/compositor logs
+under `<scenario>/startup/` before the private work tree is removed.
+
 Exit status is non-zero on any finding; the summary names each finding's
 directory. A scenario whose only findings are failed expectations (a step that
 timed out, a key that did not land on a loaded box) is run again once, alone,

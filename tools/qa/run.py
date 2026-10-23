@@ -97,26 +97,36 @@ def run_scenario(name: str, args: argparse.Namespace,
     lines, finding count, finding kinds (threads print nothing themselves) and
     its command-coverage record (what the catalogue holds, what the scenario ran)."""
     out = out or args.out
-    project = fixture("taskflow", out / "fixtures")
-    env = s.SCENARIO_ENV.get(name, {})
-    plugins = s.SCENARIO_PLUGINS.get(name, ())
     started = time.monotonic()
-    with q.App.launch(project=project, binary=args.binary, shots=out / name,
-                      extra_env=env, plugins=plugins) as app:
-        app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env,
-                             "plugins": list(plugins)}
-        app.check("start")
-        try:
-            s.SCENARIOS[name](app)
-        except q.QaFailure as failure:
-            app.expect(False, f"{name}: {failure}")
-        except Exception as error:  # a scenario bug is still a finding, not a dead suite
-            app.expect(False, f"{name}: the scenario raised {type(error).__name__}: "
-                              f"{traceback.format_exc(limit=4)}")
-        app.check(f"end of {name}")
-        coverage = command_coverage(app)
-        lines = report_lines(f"{name} ({time.monotonic() - started:.0f}s)", app)
-        return name, lines, len(app.findings), {finding.kind for finding in app.findings}, coverage
+    try:
+        project = fixture("taskflow", out / "fixtures")
+        env = s.SCENARIO_ENV.get(name, {})
+        plugins = s.SCENARIO_PLUGINS.get(name, ())
+        with q.App.launch(project=project, binary=args.binary, shots=out / name,
+                          extra_env=env, plugins=plugins) as app:
+            app.replay_header = {"fixture": "taskflow", "scenario": name, "env": env,
+                                 "plugins": list(plugins)}
+            app.check("start")
+            try:
+                s.SCENARIOS[name](app)
+            except q.QaFailure as failure:
+                app.expect(False, f"{name}: {failure}")
+            except Exception as error:  # a scenario bug is still a finding, not a dead suite
+                app.expect(False, f"{name}: the scenario raised {type(error).__name__}: "
+                                  f"{traceback.format_exc(limit=4)}")
+            app.check(f"end of {name}")
+            coverage = command_coverage(app)
+            lines = report_lines(f"{name} ({time.monotonic() - started:.0f}s)", app)
+            return name, lines, len(app.findings), {finding.kind for finding in app.findings}, coverage
+    except Exception as error:
+        # Startup/fixture/final-oracle errors are not expectation failures and
+        # must not kill the pool or become eligible for a flaky-test retry.
+        evidence = out / name / "driver-error.txt"
+        evidence.parent.mkdir(parents=True, exist_ok=True)
+        evidence.write_text(traceback.format_exc())
+        return name, [f"  FAIL  {name} ({time.monotonic() - started:.0f}s): driver error",
+                      f"        {type(error).__name__}: {error}",
+                      f"        evidence: {evidence}"], 1, {"driver"}, {}
 
 
 def command_coverage(app: q.App) -> dict:

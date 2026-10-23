@@ -1,5 +1,10 @@
 """Driver regression tests; no window, subprocess or real sleeping required."""
 import unittest
+import subprocess
+import contextlib
+import io
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -61,6 +66,56 @@ class PollingTimeoutTests(unittest.TestCase):
              patch.object(q.time, "sleep"):
             self.assertTrue(q.App.wait_until(app, predicate, 1, "ready"))
         app.expect.assert_not_called()
+
+
+class StartupFailureTests(unittest.TestCase):
+    def test_launch_preserves_logs_before_cleaning_work(self):
+        work_dirs = []
+
+        def fail_start(app, project, extra_args):
+            work_dirs.append(app.work)
+            (app.work / "microide.log").write_text("startup diagnostic")
+            raise q.QaFailure("startup failed")
+
+        with tempfile.TemporaryDirectory() as scratch:
+            shots = Path(scratch) / "evidence"
+            with patch.object(q.App, "_start", fail_start), \
+                 patch.dict(q.os.environ, {"MQA_KEEP_WORK": "0"}):
+                with self.assertRaisesRegex(q.QaFailure, "startup failed"):
+                    with q.App.launch(binary=Path(__file__), shots=shots):
+                        self.fail("a failed startup must never yield an app")
+            self.assertEqual((shots / "startup/microide.log").read_text(), "startup diagnostic")
+            self.assertFalse(work_dirs[0].exists())
+
+    def test_startup_timeout_is_a_nonretryable_scenario_failure(self):
+        import run as runner
+        with tempfile.TemporaryDirectory() as scratch:
+            args = SimpleNamespace(out=Path(scratch), binary=Path("microide"))
+            error = subprocess.TimeoutExpired(["microide", "control-list"], 9)
+            with patch.object(runner, "fixture", return_value=Path(scratch)), \
+                 patch.object(q.App, "launch", side_effect=error):
+                name, lines, count, kinds, coverage = runner.run_scenario("menus", args)
+            self.assertEqual((name, count, kinds, coverage), ("menus", 1, {"driver"}, {}))
+            self.assertIn("TimeoutExpired", "\n".join(lines))
+            self.assertIn("control-list", (Path(scratch) / "menus/driver-error.txt").read_text())
+
+    def test_suite_continues_after_driver_error_without_retrying_it(self):
+        import run as runner
+
+        def scenario(name, args, out=None):
+            if name == "menus":
+                return name, ["driver failed"], 1, {"driver"}, {}
+            return name, ["chrome passed"], 0, set(), {"catalogue": ["test"], "commands": {"test": 1}}
+
+        with tempfile.TemporaryDirectory() as scratch:
+            args = SimpleNamespace(out=Path(scratch), names=[], jobs=2, retries=1, list=False)
+            with patch.object(runner, "select_scenarios", return_value=["menus", "chrome"]), \
+                 patch.object(runner, "run_scenario", side_effect=scenario) as run, \
+                 patch.object(runner, "write_command_coverage", return_value="coverage") as ledger, \
+                 contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(runner.cmd_suite(args), 1)
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(set(ledger.call_args.args[2]), {"menus", "chrome"})
 
 
 if __name__ == "__main__":
