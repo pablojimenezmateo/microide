@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_title, dismiss, open_file, step, titles, tree_rows
+from flows_common import active_title, dismiss, expect_text, open_file, read, step, titles, tree_rows
 
 
 def _tab_menu(app: q.App, title: str, row: str) -> bool:
@@ -174,7 +174,194 @@ def flow_tab_open_twice(app: q.App) -> None:
     step(app, "undo in group 1", 0.2)
 
 
+def _focus_group(app: q.App, index: int) -> None:
+    app.key(f"ctrl+{index + 1}")
+    app.wait_until(lambda: any(g.get("index") == index and g.get("focused")
+                              for g in app.editor_state()["groups"]),
+                   3.0, f"editor group {index + 1} to receive focus")
+    step(app, f"focus group {index + 1}")
+
+
+def _shared_tabs(app: q.App, title: str) -> list[dict]:
+    return [tab for group in app.editor_state()["groups"] for tab in group["tabs"]
+            if tab.get("title") == title]
+
+
+def flow_tab_shared_history(app: q.App) -> None:
+    """A shared document has one save point and undo history across split views:
+    saving either clears both dirty markers; undo in the other dirties both but
+    never disk; redo in the first restores both, and closing a view keeps its peer."""
+    relative = "shared/history.txt"
+    original = "alpha\nbeta\ngamma\n"
+    open_file(app, relative, original)
+    app.key("ctrl+backslash")
+    app.wait_until(lambda: len(_shared_tabs(app, "history.txt")) == 2, 3.0,
+                   "the file to appear in both split views")
+    app.key("ctrl+Home")
+    app.type("X")
+    step(app, "edit shared document from group 2")
+    app.expect(all(tab.get("dirty") for tab in _shared_tabs(app, "history.txt")),
+               "both split tabs show the shared unsaved edit")
+    _focus_group(app, 0)
+    expect_text(app, "X" + original, "group 1 sees group 2's exact edit")
+    app.key("ctrl+s")
+    app.wait_until(lambda: read(app, relative) == "X" + original
+                   and all(not tab.get("dirty") for tab in _shared_tabs(app, "history.txt")),
+                   3.0, "saving group 1 to clear both dirty markers and write the shared text")
+    _focus_group(app, 1)
+    app.key("ctrl+z")
+    step(app, "undo group 1's saved edit from group 2")
+    expect_text(app, original, "undo across groups restores original text")
+    app.expect(all(tab.get("dirty") for tab in _shared_tabs(app, "history.txt")),
+               "undo across the shared save point dirties both views")
+    app.expect(read(app, relative) == "X" + original, "undo leaves the saved disk content alone")
+    _focus_group(app, 0)
+    expect_text(app, original, "the peer sees the undo immediately")
+    app.key("ctrl+shift+z")
+    step(app, "redo from the peer view")
+    expect_text(app, "X" + original, "redo through another view restores shared text")
+    app.expect(all(not tab.get("dirty") for tab in _shared_tabs(app, "history.txt")),
+               "redo reaches the shared save point in both views")
+    app.key("ctrl+w")
+    step(app, "close the first clean split view")
+    app.expect(len(_shared_tabs(app, "history.txt")) == 1, "closing one view keeps one copy of its tab")
+    _focus_group(app, 1)
+    expect_text(app, "X" + original, "the remaining view retains the document")
+    app.expect(not app.ui().get("prompt"), "closing a clean split view needs no prompt")
+
+
+def flow_tab_view_identity(app: q.App) -> None:
+    """Split views share text but retain their own caret and selection while
+    focus and tabs change; typing into a selection in one must not use the
+    other view's caret. Saving one document never alters an unrelated tab."""
+    original = "alpha beta\ngamma delta\nomega\n"
+    open_file(app, "views/shared.txt", original)
+    app.key("ctrl+backslash")
+    app.wait_until(lambda: len(_shared_tabs(app, "shared.txt")) == 2, 3.0, "the split views")
+    app.key("ctrl+Home")
+    app.key("shift+Right")
+    app.key("shift+Right")
+    second_carets = app.cursors()
+    app.expect(app.buffer().get("selectedText") == "al", "group 2 selects the first two letters")
+    _focus_group(app, 0)
+    app.key("ctrl+End")
+    first_carets = app.cursors()
+    app.expect(first_carets != second_carets, "the two views have different caret positions")
+    _focus_group(app, 1)
+    app.expect(app.cursors() == second_carets and app.buffer().get("selectedText") == "al",
+               "returning to group 2 restores its selection and caret")
+    open_file(app, "views/unrelated.txt", "unrelated\n")
+    app.key("ctrl+End")
+    app.type("kept")
+    app.click_named("tab:1/shared.txt")
+    step(app, "return to shared tab by mouse")
+    app.expect(app.cursors() == second_carets and app.buffer().get("selectedText") == "al",
+               "switching tabs preserves the shared view's selection")
+    app.type("X")
+    step(app, "replace the selection in group 2")
+    expect_text(app, "Xpha beta\ngamma delta\nomega\n", "typing replaces this view's selection")
+    app.key("ctrl+s")
+    app.wait_until(lambda: read(app, "views/shared.txt") == "Xpha beta\ngamma delta\nomega\n", 3.0,
+                   "the shared edit to save")
+    _focus_group(app, 0)
+    expect_text(app, "Xpha beta\ngamma delta\nomega\n", "the other view sees the replacement")
+    _focus_group(app, 1)
+    app.click_named("tab:1/*unrelated.txt")
+    step(app, "return to the unrelated dirty tab")
+    expect_text(app, "unrelated\nkept", "the unrelated buffer keeps its own unsaved text")
+    app.expect(app.buffer().get("dirty"), "saving shared.txt leaves unrelated.txt dirty")
+    app.expect(read(app, "views/unrelated.txt") == "unrelated\n", "saving shared.txt never writes unrelated.txt")
+
+
+def flow_tab_inactive_close(app: q.App) -> None:
+    """The close button on an inactive dirty tab prompts for THAT file; Cancel
+    preserves it, Save writes that file, and the clean active peer stays intact."""
+    open_file(app, "inactive/dirty.txt", "dirty\n")
+    app.key("ctrl+Home")
+    app.type("X")
+    open_file(app, "inactive/clean.txt", "clean\n")
+
+    def close_dirty() -> bool:
+        button = app.wait_for("button:close-tab/0/*dirty.txt", 2.0)
+        if not app.expect(button is not None, "the inactive dirty tab has a close button"):
+            return False
+        app.click(*app.center(button))
+        step(app, "close inactive dirty tab")
+        return True
+
+    if not close_dirty():
+        return
+    prompt = app.ui().get("prompt") or {}
+    app.expect(prompt.get("kind") == "unsaved" and "dirty.txt" in prompt.get("message", ""),
+               f"closing the inactive tab names dirty.txt in the prompt ({prompt})")
+    if not app.wait_for("button:prompt/Cancel", 2.0):
+        return
+    app.click_named("button:prompt/Cancel")
+    step(app, "cancel inactive close")
+    app.expect("dirty.txt" in titles(app) and "clean.txt" in titles(app), "Cancel keeps both tabs")
+    app.expect(read(app, "inactive/dirty.txt") == "dirty\n", "Cancel never saves the dirty file")
+    # Whichever tab the prompt returns focus to, activate the clean peer so the
+    # second attempt again exercises a non-active close target.
+    app.click_named("tab:0/clean.txt")
+    if not close_dirty():
+        return
+    save = app.wait_for("button:prompt/Save", 2.0)
+    if not save:
+        return
+    app.click(*app.center(save))
+    app.wait_until(lambda: "dirty.txt" not in titles(app), 4.0, "Save to close the target dirty tab")
+    step(app, "save inactive close target")
+    app.expect(read(app, "inactive/dirty.txt") == "Xdirty\n", "Save writes the inactive target's content")
+    app.expect(read(app, "inactive/clean.txt") == "clean\n", "Save leaves the clean peer's disk content intact")
+    app.expect(active_title(app) == "clean.txt", "closing the inactive target leaves the clean peer active")
+    expect_text(app, "clean\n", "the active clean buffer is untouched")
+
+
+def flow_tab_shared_close(app: q.App) -> None:
+    """Closing one dirty shared view keeps the document without prompting;
+    only closing its final view asks. Cancel keeps the last view and its edit,
+    Discard drops the edit without saving the disk file."""
+    relative = "shared/closing.txt"
+    open_file(app, relative, "original\n")
+    app.key("ctrl+backslash")
+    app.wait_until(lambda: len(_shared_tabs(app, "closing.txt")) == 2, 3.0, "two views before editing")
+    app.key("ctrl+Home")
+    app.type("X")
+    step(app, "edit before closing a shared view")
+    app.key("ctrl+w")
+    step(app, "close one shared dirty view")
+    app.expect(not app.ui().get("prompt"), "another shared view retains the dirty buffer, so no prompt is needed")
+    app.expect(len(_shared_tabs(app, "closing.txt")) == 1, "one dirty shared view remains")
+    _focus_group(app, 0)
+    app.click_named("tab:0/*closing.txt")
+    expect_text(app, "Xoriginal\n", "closing one view preserves the dirty text in its peer")
+    app.expect(read(app, relative) == "original\n", "closing one view does not save shared text")
+    app.key("ctrl+w")
+    step(app, "close the last dirty view")
+    prompt = app.ui().get("prompt") or {}
+    app.expect(prompt.get("kind") == "unsaved" and "closing.txt" in prompt.get("message", ""),
+               f"closing the final view asks for the dirty document ({prompt})")
+    if not app.wait_for("button:prompt/Cancel", 2.0):
+        return
+    app.click_named("button:prompt/Cancel")
+    step(app, "cancel last-view close")
+    expect_text(app, "Xoriginal\n", "Cancel keeps the final dirty document")
+    app.expect(len(_shared_tabs(app, "closing.txt")) == 1 and app.buffer().get("dirty"),
+               "Cancel retains one dirty view")
+    app.key("ctrl+w")
+    if not app.wait_for("button:prompt/Discard", 2.0):
+        return
+    app.click_named("button:prompt/Discard")
+    step(app, "discard final dirty view")
+    app.expect(not _shared_tabs(app, "closing.txt"), "Discard closes the final shared view")
+    app.expect(read(app, relative) == "original\n", "Discard never writes the shared edit")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tab-context-menu": flow_tab_context_menu,
     "tab-open-twice": flow_tab_open_twice,
+    "tab-shared-history": flow_tab_shared_history,
+    "tab-view-identity": flow_tab_view_identity,
+    "tab-inactive-close": flow_tab_inactive_close,
+    "tab-shared-close": flow_tab_shared_close,
 }
