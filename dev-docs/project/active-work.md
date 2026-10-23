@@ -1,10 +1,13 @@
 # MicroIDE Active Work
 
-QA coverage follow-up (2026-10-23): transaction scenarios now check selection
-replacement across line boundaries, independent tab save/undo histories, and
-path identity through hot exit. Continue closing interaction gaps using exact
-buffer/disk receipts alongside the retained-redraw oracle; command dispatch
-coverage alone does not establish correct behavior.
+QA coverage follow-up (2026-10-23): twelve added scenarios cover selection and
+replacement transactions, tab/group close and save lifecycles, path identity and
+file formats through restart, scoped project replacement, query recovery and
+canceled tree operations. Driver regression tests now run in each local QA lane;
+startup errors retain evidence without aborting the suite, polling honors the
+slow-build allowance, and duplicate scenario keys fail import. Continue closing
+interaction gaps using exact buffer/disk receipts alongside the retained-redraw
+oracle; command dispatch coverage alone does not establish correct behavior.
 
 Reviewed 2026-10-07 (remote-projects groundwork: the G11 parity harness with ten
 local/remote rows including real gdb and clangd, LSP/DAP path translation at the
