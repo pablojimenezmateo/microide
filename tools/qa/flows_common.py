@@ -195,3 +195,14 @@ def open_conflict(app: q.App, relative: str = "notes/merge.txt") -> bool:
         return False
     step(app, "merge tab", 0.6)
     return True
+
+
+def search_rows(app: q.App) -> list[dict]:
+    """All visible search rows, including file headers used by navigation."""
+    return app.elements("row", prefix="row:search/")
+
+
+def search_hit_names(app: q.App) -> list[str]:
+    """Named match rows only (`row:search/<path>:<line>`), ready to click."""
+    return [row["name"] for row in search_rows(app)
+            if row["name"].rsplit(":", 1)[-1].isdigit()]

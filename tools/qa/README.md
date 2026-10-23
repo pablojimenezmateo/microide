@@ -139,7 +139,8 @@ suite order; a `flows_*.py` missing from it, or a scenario name two modules
 define, fails the import rather than dropping a flow. The import also rejects
 duplicate literal dictionary keys before Python can silently overwrite them,
 and plugin/environment metadata naming a scenario its module never defines. Readers several modules
-need (`git`, `titles`, `tree_rows`, `terminal_tabs`, `messages`, ...) live in
+need (`git`, `titles`, `tree_rows`, `search_rows`, `search_hit_names`,
+`terminal_tabs`, `messages`, ...) live in
 `flows_common.py`: add one there, not a sixth private copy.
 
 ## What a flow reads

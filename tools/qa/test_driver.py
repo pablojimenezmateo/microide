@@ -134,5 +134,16 @@ class RegistrySourceTests(unittest.TestCase):
             self.assertEqual(scenarios._duplicate_literal_keys(source), [])
 
 
+class SearchRowReaderTests(unittest.TestCase):
+    def test_match_reader_excludes_headers_and_keeps_colons_in_paths(self):
+        from flows_common import search_hit_names, search_rows
+        rows = [{"name": name} for name in ("row:search/file.txt", "row:search/file.txt:2",
+                                           "row:search/a:b.txt:17", "row:search/123")]
+        app = SimpleNamespace(elements=Mock(return_value=rows))
+        self.assertEqual(search_rows(app), rows)
+        self.assertEqual(search_hit_names(app), ["row:search/file.txt:2", "row:search/a:b.txt:17"])
+        app.elements.assert_called_with("row", prefix="row:search/")
+
+
 if __name__ == "__main__":
     unittest.main()

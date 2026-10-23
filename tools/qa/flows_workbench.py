@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import active_title, dismiss, expect_text, git, layout_sane, open_file, read, resize_window, step, titles, write
+from flows_common import (active_title, dismiss, expect_text, git, layout_sane, open_file, read,
+                          resize_window, search_hit_names, step, titles, write)
 
 
 def flow_quick_open(app: q.App) -> None:
@@ -593,11 +594,6 @@ def flow_help(app: q.App) -> None:
     app.expect(app.ui().get("modal") is None, "a click outside closes it")
 
 
-def _search_hit_names(app: q.App) -> list[str]:
-    return [e["name"] for e in app.elements("row", prefix="row:search/")
-            if e["name"].rsplit(":", 1)[-1].isdigit()]
-
-
 def _search_field(app: q.App, field: str, text: str) -> None:
     app.click_named(f"field:search/{field}")
     app.key("ctrl+a")
@@ -619,13 +615,13 @@ def flow_search_replace_scope_transaction(app: q.App) -> None:
     open_file(app, "scope-replace/allowed.md")
     app.key("ctrl+shift+f")
     _search_field(app, "query", "MQA_SCOPE_TOKEN")
-    app.wait_until(lambda: len(_search_hit_names(app)) == 4, 5.0, "four initial search result lines")
+    app.wait_until(lambda: len(search_hit_names(app)) == 4, 5.0, "four initial search result lines")
     if not any(e["name"] == "field:search/include" for e in app.elements("field")):
         app.click_named("button:search/scope")
     _search_field(app, "include", "*.md")
     _search_field(app, "exclude", "**/skipped.md")
-    app.wait_until(lambda: len(_search_hit_names(app)) == 2
-                   and all("scope-replace/allowed.md:" in h for h in _search_hit_names(app)),
+    app.wait_until(lambda: len(search_hit_names(app)) == 2
+                   and all("scope-replace/allowed.md:" in h for h in search_hit_names(app)),
                    5.0, "include/exclude intersection to keep only allowed.md")
     _search_field(app, "replace", "REPLACED")
     app.click_named("button:search/replace-all")
@@ -666,10 +662,10 @@ def flow_search_query_recovery(app: q.App) -> None:
                          ("", 0), ("MQA_QUERY_UNIQUE_2", 1),
                          ("MQA_QUERY_COMMON", 3), ("MQA_QUERY_UNIQUE_0", 1)):
         _search_field(app, "query", query)
-        app.wait_until(lambda: len(_search_hit_names(app)) == count, 5.0,
+        app.wait_until(lambda: len(search_hit_names(app)) == count, 5.0,
                        f"{query!r} to replace previous results with {count} rows")
         step(app, f"query recovery {query!r}")
-    hits = _search_hit_names(app)
+    hits = search_hit_names(app)
     if not app.expect(len(hits) == 1 and hits[0].endswith("query-recovery/file-0.txt:2"),
                       f"only the final query's correct file/line remains ({hits})"):
         return

@@ -16,7 +16,7 @@ import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, open_file, read, step, terminal_tabs, write
+from flows_common import dismiss, open_file, read, search_rows, step, terminal_tabs, write
 
 
 def _cursor(app: q.App) -> tuple[int, int]:
@@ -155,12 +155,8 @@ def flow_commands_args(app: q.App) -> None:
 
 # ---- the search view by keyboard ----------------------------------------------
 
-def _search_rows(app: q.App) -> list[dict]:
-    return app.elements("row", prefix="row:search/")
-
-
 def _selected_search_row(app: q.App) -> str | None:
-    return next((r["name"] for r in _search_rows(app) if r.get("selected")), None)
+    return next((r["name"] for r in search_rows(app) if r.get("selected")), None)
 
 
 def _active_field(app: q.App) -> str | None:
@@ -173,7 +169,7 @@ def flow_search_view_keys(app: q.App) -> None:
     fields, `c` toggling the exact count, Escape leaving the view."""
     open_file(app, "src/scheduler.cpp")
     app.send("project-search", "queue")
-    app.wait_until(lambda: len(_search_rows(app)) >= 2, 8.0, "search results")
+    app.wait_until(lambda: len(search_rows(app)) >= 2, 8.0, "search results")
     step(app, "project-search queue", 0.3)
     app.key("Escape")  # leave the query field for the list
     app.settle(0.15)
@@ -195,7 +191,7 @@ def flow_search_view_keys(app: q.App) -> None:
     app.key("End")
     step(app, "End", 0.15)
     last = _selected_search_row(app)
-    app.expect(last == _search_rows(app)[-1]["name"], f"End selects the last visible result ({last})")
+    app.expect(last == search_rows(app)[-1]["name"], f"End selects the last visible result ({last})")
     app.key("Home")
     step(app, "Home", 0.15)
     app.expect(_selected_search_row(app) == first, "Home selects the first")
@@ -247,9 +243,9 @@ def flow_search_view_keys(app: q.App) -> None:
     app.expect(_active_field(app) is None, f"Escape leaves the field for the list ({_active_field(app)})")
     app.key("c")
     step(app, "c toggles the exact count", 0.4)
-    app.wait_until(lambda: len(_search_rows(app)) >= 2, 5.0, "the results listed again after the recount")
+    app.wait_until(lambda: len(search_rows(app)) >= 2, 5.0, "the results listed again after the recount")
     app.key("c")
-    app.wait_until(lambda: len(_search_rows(app)) >= 2, 5.0, "and after toggling back")
+    app.wait_until(lambda: len(search_rows(app)) >= 2, 5.0, "and after toggling back")
     dismiss(app)
 
 

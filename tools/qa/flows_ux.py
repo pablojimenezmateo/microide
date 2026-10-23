@@ -10,7 +10,8 @@ import subprocess
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, expect_cursors, expect_text, git, messages, open_file, read, step, terminal_tabs, tree_rows, write
+from flows_common import (dismiss, expect_cursors, expect_text, git, messages, open_file, read,
+                          search_hit_names, step, terminal_tabs, tree_rows, write)
 
 
 def _numbered(count: int, prefix: str = "line") -> str:
@@ -469,12 +470,6 @@ def flow_mouse_and_wrap(app: q.App) -> None:
 # ---- project search ----------------------------------------------------------------
 
 
-def _search_hits(app: q.App) -> list[str]:
-    """The search view's hit rows (`row:search/<path>:<line>`)."""
-    return [e["name"][len("row:search/"):] for e in app.elements("row", prefix="row:search/")
-            if e["name"].rsplit(":", 1)[-1].isdigit()]
-
-
 def flow_search_options(app: q.App) -> None:
     """The search view's options: Ctrl+Shift+F seeds the selected word, the case
     and regex toggles narrow the hits, include/exclude globs scope them, and the
@@ -493,11 +488,11 @@ def flow_search_options(app: q.App) -> None:
         app.click_named("field:search/query")
         app.key("ctrl+a")
         app.type("quokka")
-    app.wait_until(lambda: len(_search_hits(app)) >= 3, 5.0, "case-insensitive hits in both files")
-    all_hits = _search_hits(app)
+    app.wait_until(lambda: len(search_hit_names(app)) >= 3, 5.0, "case-insensitive hits in both files")
+    all_hits = search_hit_names(app)
     app.click_named("button:search/case")
     step(app, "match case on", 0.6)
-    app.wait_until(lambda: 0 < len(_search_hits(app)) < len(all_hits), 5.0,
+    app.wait_until(lambda: 0 < len(search_hit_names(app)) < len(all_hits), 5.0,
                    f"match case to drop QUOKKA and Quokka ({all_hits})")
     app.click_named("button:search/case")
     step(app, "match case off", 0.6)
@@ -508,8 +503,8 @@ def flow_search_options(app: q.App) -> None:
     app.key("ctrl+a")
     app.type("^QUOK")
     step(app, "regex ^QUOK", 0.8)
-    app.wait_until(lambda: len(_search_hits(app)) >= 1, 5.0, "the regex to match line starts")
-    hits = _search_hits(app)
+    app.wait_until(lambda: len(search_hit_names(app)) >= 1, 5.0, "the regex to match line starts")
+    hits = search_hit_names(app)
     app.expect(all(h.endswith(":1") or h.endswith(":2") for h in hits) and len(hits) <= 4,
                f"^ anchors at line starts ({hits})")
     app.click_named("button:search/mode")
@@ -529,8 +524,8 @@ def flow_search_options(app: q.App) -> None:
         app.type("*.md")
         app.key("Return")
         step(app, "include *.md", 0.8)
-        app.wait_until(lambda: _search_hits(app) and all(".md:" in h for h in _search_hits(app)), 5.0,
-                       f"include *.md to keep only q2.md ({_search_hits(app)})")
+        app.wait_until(lambda: search_hit_names(app) and all(".md:" in h for h in search_hit_names(app)), 5.0,
+                       f"include *.md to keep only q2.md ({search_hit_names(app)})")
         app.click(*app.center(app.element("field:search/include")))
         app.key("ctrl+a")
         app.key("BackSpace")
@@ -541,14 +536,14 @@ def flow_search_options(app: q.App) -> None:
         app.type("notes/**")
         app.key("Return")
         step(app, "exclude notes/**", 0.8)
-        app.wait_until(lambda: not any(h.startswith("notes/") for h in _search_hits(app)), 5.0,
-                       f"exclude notes/** to drop the notes hits ({_search_hits(app)})")
+        app.wait_until(lambda: not any(h.startswith("row:search/notes/") for h in search_hit_names(app)), 5.0,
+                       f"exclude notes/** to drop the notes hits ({search_hit_names(app)})")
         app.click(*app.center(app.element("field:search/exclude")))
         app.key("ctrl+a")
         app.key("BackSpace")
         app.key("Return")
         step(app, "clear exclude", 0.6)
-    app.wait_until(lambda: len(_search_hits(app)) >= 3, 5.0, "all hits back")
+    app.wait_until(lambda: len(search_hit_names(app)) >= 3, 5.0, "all hits back")
     app.send("focus", "sidebar")
     step(app, "focus the results", 0.2)
     app.key("Down")
