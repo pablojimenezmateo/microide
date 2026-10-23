@@ -444,11 +444,38 @@ def _redefined_top_level_names(path: Path) -> list[str]:
     return twice
 
 
+def _duplicate_literal_keys(path: Path) -> list[tuple[str, int]]:
+    """Catch entries Python silently overwrites before registry merging sees them.
+
+    Cross-module duplicates are checked below; duplicates within a FLOWS, ENV or
+    PLUGINS literal need a source check because import has already lost them.
+    """
+    import ast
+    duplicates: list[tuple[str, int]] = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if not isinstance(node, ast.Dict):
+            continue
+        seen: set[str] = set()
+        for key in node.keys:
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                if key.value in seen:
+                    duplicates.append((key.value, key.lineno))
+                seen.add(key.value)
+    return duplicates
+
+
 for _module_name in FLOW_MODULES:
     _twice = _redefined_top_level_names(Path(__file__).resolve().parent / f"{_module_name}.py")
     if _twice:
         raise ImportError(f"{_module_name} defines {', '.join(_twice)} twice at its top level")
+    _duplicate_keys = _duplicate_literal_keys(Path(__file__).resolve().parent / f"{_module_name}.py")
+    if _duplicate_keys:
+        raise ImportError(f"{_module_name} repeats literal dictionary keys: {_duplicate_keys}")
     _module = importlib.import_module(_module_name)
+    for _metadata in ("PLUGINS", "ENV"):
+        _orphans = set(getattr(_module, _metadata, {})) - set(_module.FLOWS)
+        if _orphans:
+            raise ImportError(f"{_module_name}.{_metadata} names unknown scenarios: {sorted(_orphans)}")
     for _name, _flow in _module.FLOWS.items():
         if _name in SCENARIOS:
             raise ImportError(f"scenario {_name!r} is defined twice ({_module_name})")

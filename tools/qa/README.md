@@ -136,7 +136,9 @@ and may export `PLUGINS` (bundled ones, `plugins/<name>`, or QA-only ones under
 `qa-launch`, a launch configuration for the fixture's binary; `qa-api`, one of
 each provider and event) and `ENV`. `scenarios.FLOW_MODULES` lists the modules in
 suite order; a `flows_*.py` missing from it, or a scenario name two modules
-define, fails the import rather than dropping a flow. Readers several modules
+define, fails the import rather than dropping a flow. The import also rejects
+duplicate literal dictionary keys before Python can silently overwrite them,
+and plugin/environment metadata naming a scenario its module never defines. Readers several modules
 need (`git`, `titles`, `tree_rows`, `terminal_tabs`, `messages`, ...) live in
 `flows_common.py`: add one there, not a sixth private copy.
 

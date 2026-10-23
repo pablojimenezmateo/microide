@@ -118,5 +118,21 @@ class StartupFailureTests(unittest.TestCase):
             self.assertEqual(set(ledger.call_args.args[2]), {"menus", "chrome"})
 
 
+class RegistrySourceTests(unittest.TestCase):
+    def test_duplicate_flow_keys_are_detected_before_import_loses_them(self):
+        import scenarios
+        with tempfile.TemporaryDirectory() as scratch:
+            source = Path(scratch) / "flows_example.py"
+            source.write_text('FLOWS = {"one": first, "one": second}\n')
+            self.assertEqual(scenarios._duplicate_literal_keys(source), [("one", 1)])
+
+    def test_equal_keys_in_separate_dictionaries_are_valid(self):
+        import scenarios
+        with tempfile.TemporaryDirectory() as scratch:
+            source = Path(scratch) / "flows_example.py"
+            source.write_text('FLOWS = {"one": first}\nENV = {"one": {"KEY": "value"}}\n')
+            self.assertEqual(scenarios._duplicate_literal_keys(source), [])
+
+
 if __name__ == "__main__":
     unittest.main()
