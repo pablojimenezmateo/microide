@@ -1,5 +1,11 @@
 # MicroIDE Active Work
 
+QA coverage follow-up (2026-10-23): transaction scenarios now check selection
+replacement across line boundaries, independent tab save/undo histories, and
+path identity through hot exit. Continue closing interaction gaps using exact
+buffer/disk receipts alongside the retained-redraw oracle; command dispatch
+coverage alone does not establish correct behavior.
+
 Reviewed 2026-10-07 (remote-projects groundwork: the G11 parity harness with ten
 local/remote rows including real gdb and clangd, LSP/DAP path translation at the
 transport, `${workspaceFolder}` in host commands, the project's locality fixed at
