@@ -102,7 +102,8 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
 
   // Callbacks marshalled to the main thread and drained once per frame. Carries
   // its own mutex + SDL wake event, so it is the innermost lock: producers may
-  // post while holding `mutex`, and DrainCallbacks() never takes `mutex`.
+  // post while holding `mutex`. Drain releases its mailbox lock before invoking
+  // callbacks, which may acquire `mutex` to revalidate document state.
   util::MainThreadMailbox main_mailbox;
 
   // Grouped so teardown is a single Reset() and setters/clearers cannot drift out of

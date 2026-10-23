@@ -488,6 +488,11 @@ void LspClient::SimulateServerRequestForTesting(const std::string& method, util:
   impl_->HandleServerRequest(id, method, params);
 }
 
+void LspClient::SimulateServerNotificationForTesting(const std::string& method,
+                                                     util::JsonValue params) {
+  impl_->DispatchMessage(impl_->MakeNotification(method, params));
+}
+
 bool LspClient::HasApplyEditHandler() const {
   std::lock_guard lock(impl_->mutex);
   return static_cast<bool>(impl_->apply_edit_handler);

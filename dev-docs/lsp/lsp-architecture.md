@@ -242,8 +242,8 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
   moves the message into the outbound builder (`QueuedMessage::build_serialized`),
   so `SerializeMessage` (JSON + Content-Length production) runs in `DrainOutbound`
   on the I/O thread, not on the calling (usually UI) thread. `DidChange`/
-  `DidChangeIncremental` likewise capture the buffer into the builder (version bumped
-  eagerly under `mutex` to keep ordering monotonic), so the whole-document copy of a
+  `DidChangeIncremental` likewise capture the buffer into the builder (the tracked
+  version commits under `mutex` only after enqueue succeeds), so the whole-document copy of a
   full-sync edit also lands off the UI thread. Order is fixed at enqueue time under
   `send_mutex`, so lazy serialization never reorders. The shutdown/initialize path
   (`SendMessageImmediate`) stays eager — it runs before the I/O thread exists or as
@@ -252,6 +252,15 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
   full-sync `didChange` serialization is ≈245µs at 5k lines / ≈1.04ms at 20k lines —
   that per-keystroke cost is now off the UI thread for utf-16 servers (utf-8 servers
   use ranged incremental sync, so the payload is tiny either way).
+
+### Versioned diagnostics are checked again at UI delivery
+
+The I/O thread rejects diagnostics older than the tracked document version before
+posting them. The mailbox callback repeats that check immediately before invoking
+the UI provider: a later edit or close/reopen can supersede a notification while it
+waits in the mailbox, and a fast server can answer before a successful enqueue's
+version commit. Both integer and float-encoded versions follow this gate.
+Unversioned workspace diagnostics keep their existing delivery behavior.
 
 ### Stub-mode responses go through the main-thread mailbox
 

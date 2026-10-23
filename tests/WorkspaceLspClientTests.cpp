@@ -1664,6 +1664,67 @@ while True:
 #endif
 }
 
+// Ingestion and UI delivery are separate: a diagnostic can be current when
+// queued, then become stale before the UI drains its callback. This also covers
+// a fast server replying before DidChange commits its post-enqueue version.
+void TestWorkspaceLspClientDropsDiagnosticsSupersededBeforeDelivery() {
+  for (const bool float_version : {false, true}) {
+    LspClient client;
+    client.EnableTestStubMode();
+    std::vector<std::string> received;
+    client.SetDiagnosticsCallback(
+        [&](std::string, std::vector<LspClient::Diagnostic> diags) {
+          for (const auto& diagnostic : diags) {
+            received.push_back(diagnostic.message);
+          }
+        });
+    const std::string uri = "file:///tmp/queued-diagnostics.py";
+    Expect(client.DidOpen(uri, "python", "first"), "open must establish version one");
+    const auto publish = [&](int version, const std::string& message, bool versioned = true) {
+      const auto parsed = util::ParseJson(
+          R"({"uri":"file:///tmp/queued-diagnostics.py","diagnostics":[{"range":{)"
+          R"("start":{"line":0,"character":0},"end":{"line":0,"character":1}},)"
+          R"("message":"fixture","severity":1}]})");
+      Expect(parsed.has_value(), "queued diagnostic fixture must parse");
+      util::JsonObject params = parsed->AsObject();
+      auto& diagnostic = params["diagnostics"].MutableArray()->front();
+      (*diagnostic.MutableObject())["message"] = util::JsonValue(message);
+      if (versioned) {
+        params["version"] = float_version ? util::JsonValue(static_cast<double>(version))
+                                          : util::JsonValue(static_cast<std::int64_t>(version));
+      }
+      client.SimulateServerNotificationForTesting("textDocument/publishDiagnostics",
+                                                  util::JsonValue(std::move(params)));
+    };
+    publish(1, "queued-v1");
+    Expect(client.DidChange(uri, "second"), "change must advance to version two");
+    client.DrainCallbacks();
+    Expect(received.empty(), "diagnostics superseded between ingestion and delivery must be dropped");
+    publish(2, "current-v2");
+    client.DrainCallbacks();
+    Expect(received == std::vector<std::string>{"current-v2"},
+           "the current version must still be delivered");
+    received.clear();
+    publish(2, "previous-open");
+    Expect(client.DidClose(uri), "close must retire version two");
+    Expect(client.DidOpen(uri, "python", "reopened"), "reopen must advance past the retired version");
+    client.DrainCallbacks();
+    Expect(received.empty(), "queued diagnostics from a previous open must be dropped at delivery");
+    publish(0, "unversioned", false);
+    Expect(client.DidChange(uri, "another edit"), "change after reopen must enqueue");
+    client.DrainCallbacks();
+    Expect(received == std::vector<std::string>{"unversioned"},
+           "unversioned workspace diagnostics retain their delivery behavior");
+    received.clear();
+    publish(4, "before-rejected-change");
+    client.SetMaxQueuedBytesForTesting(0);
+    Expect(!client.DidChange(uri, "rejected edit"), "a full outbound budget must reject the edit");
+    client.DrainCallbacks();
+    Expect(received == std::vector<std::string>{"before-rejected-change"},
+           "a refused enqueue must not supersede diagnostics for the server's current version");
+  }
+}
+
 // TD-2026-07-10: the staleness gate above did not survive a close -> reopen.
 // didClose erased the URI's tracked version and didOpen reset it to 1, so a
 // publishDiagnostics still in flight from the previous open (version 3) compared
@@ -2612,6 +2673,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientDropsStaleDiagnosticsVersion);
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsFloatVersion",
           TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion);
+  AddTest(tests, "WorkspaceLspClient/DropsDiagnosticsSupersededBeforeDelivery",
+          TestWorkspaceLspClientDropsDiagnosticsSupersededBeforeDelivery);
   AddTest(tests, "WorkspaceLspClient/DropsDiagnosticsFromAPreviousOpen",
           TestWorkspaceLspClientDropsDiagnosticsFromAPreviousOpen);
   AddTest(tests, "WorkspaceLspClient/FramerSplitFrameAcrossChunks",

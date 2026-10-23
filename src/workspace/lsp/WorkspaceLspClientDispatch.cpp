@@ -254,6 +254,9 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
       const auto& params = msg["params"];
       std::string uri = params["uri"].AsString();
       const util::JsonValue& version_val = params["version"];
+      const std::optional<std::int64_t> version =
+          (version_val.IsInt() || version_val.IsDouble())
+              ? std::optional<std::int64_t>(version_val.AsInt()) : std::nullopt;
       std::vector<Diagnostic> diags = lsp_protocol::ParseDiagnostics(params["diagnostics"]);
       TraceLspLifecycle(language_id, proc.pid(), "publishDiagnostics", uri);
       OnPublishDiagnostics cb;
@@ -268,9 +271,9 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
         // float-echoed version ("version": 3.0) as well as an integer, mirroring
         // the response-id gate above — a server that round-trips our integer ids
         // through a float does the same to the didChange version we sent.
-        if (version_val.IsInt() || version_val.IsDouble()) {
+        if (version.has_value()) {
           const auto it = document_versions.find(uri);
-          if (it != document_versions.end() && version_val.AsInt() < it->second) {
+          if (it != document_versions.end() && *version < it->second) {
             return;
           }
         }
@@ -285,7 +288,17 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
         std::string coalesce_key = "diag:" + uri;
         main_mailbox.PostLatest(
             std::move(coalesce_key),
-            [cb = std::move(cb), u = std::move(uri), ds = std::move(diags)]() mutable {
+            [this, version, cb = std::move(cb), u = std::move(uri), ds = std::move(diags)]() mutable {
+              // The document can advance while this callback waits for the UI,
+              // including between a successful enqueue and its version commit.
+              // Recheck at delivery, after Drain released the mailbox lock.
+              if (version.has_value()) {
+                std::lock_guard lock(mutex);
+                const auto it = document_versions.find(u);
+                if (it != document_versions.end() && *version < it->second) {
+                  return;
+                }
+              }
               cb(std::move(u), std::move(ds));
             });
       }

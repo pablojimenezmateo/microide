@@ -699,6 +699,8 @@ class LspClient {
   // The reply is enqueued to the outbound queue (swallowed in stub mode).
   void SimulateServerRequestForTesting(const std::string& method, util::JsonValue params,
                                        util::JsonValue id);
+  // Unit tests: enqueue an inbound notification through the real dispatch path.
+  void SimulateServerNotificationForTesting(const std::string& method, util::JsonValue params);
   // Unit tests: feed a canned semantic-tokens response + legend.
   void SetTestSemanticTokensHandler(
       std::function<void(std::string uri, SemanticTokensCallback cb)> handler);
