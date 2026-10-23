@@ -713,7 +713,7 @@ class App:
         """Polls `predicate` (a callable over nothing) until true; records an
         expectation finding and returns False on timeout -- never sleeps a fixed
         time for a state the app reports."""
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + timeout * SLOW_FACTOR
         while time.monotonic() < deadline:
             try:
                 if predicate():
@@ -1264,7 +1264,7 @@ def make_fixture(dest: Path) -> Path:
 
 
 def _wait(predicate, timeout: float, message: str) -> None:
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + timeout * SLOW_FACTOR
     while time.monotonic() < deadline:
         if predicate():
             return

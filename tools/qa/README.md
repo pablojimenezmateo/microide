@@ -23,7 +23,9 @@ config, `SCENARIO_PLUGINS`). A missing tool is a finding, not a skip, unless
 
 Any build works, including the sanitizer builds (`--binary build/microide-asan/microide/microide`);
 set `MQA_SLOW_FACTOR=3` for an instrumented build (coverage, the sanitizers) so every
-control timeout stretches with it.
+control timeout and polling expectation stretches with it. The `qa`, `qa-asan`
+and `qa-wayland` lanes first run the driver regression tests (`qa-driver`),
+including simulated slow responses and bounded timeout failures.
 
 ## Running
 
@@ -44,6 +46,7 @@ MQA_REMOTE_HOST=worky MQA_REMOTE_ROOT=/home/me/repo tools/qa/run.py remote
 eval "$(tools/qa/local-sshd.sh start)" && tools/qa/remote.py   # the same against a loopback sshd
 tools/run-checks.sh qa-remote               # that, as a lane (builds the app and the static server)
 tools/run-checks.sh qa-asan                 # the scenario suite on the ASan build
+tools/run-checks.sh qa-driver               # driver regression tests without launching a window
 tools/run-checks.sh qa                      # the lane: build, suite, 300-step monkey (seed 1)
 MQA_BACKEND=wayland tools/qa/run.py suite -j 4   # the same scenarios on a headless weston
 MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 tools/qa/run.py suite   # ... on a HiDPI output

@@ -48,7 +48,7 @@ def open_file(app: q.App, relative: str, content: str | None = None) -> None:
 def expect_text(app: q.App, expected: str, label: str, timeout: float = 2.0) -> bool:
     """Waits for the buffer to hold `expected`; records a finding naming the
     first difference otherwise."""
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + timeout * q.SLOW_FACTOR
     actual = ""
     while time.monotonic() < deadline:
         actual = app.text()

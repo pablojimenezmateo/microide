@@ -567,6 +567,10 @@ check_perf_gate() {
 # screenshots, replay.json) is named in the log. A missing Xvfb/xdotool/xwd fails
 # it too -- not running is not a pass. The remote suite needs a host and runs on
 # demand only (tools/qa/run.py remote).
+check_qa_driver() {
+  run_logged "${LOG_DIR}/microide-qa-driver.log" python3 -m unittest discover -s tools/qa -p "test_*.py"
+}
+
 check_qa() {
   local log="${LOG_DIR}/microide-qa.log"
   local out="${MICROIDE_QA_OUT:-${LOG_DIR}/microide-qa-out}"
@@ -586,6 +590,7 @@ check_qa() {
     cmake -S . -B build >/dev/null
     cmake --build build --target microide -j'"$JOBS"'
     status=0
+    python3 -m unittest discover -s tools/qa -p "test_*.py"
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' || status=1
     python3 tools/qa/run.py --out '"$out"'/monkey monkey --seed 1 --steps '"$steps"' || status=1
     exit $status
@@ -615,6 +620,7 @@ check_qa_asan() {
     cmake --build build/microide-asan --target microide -j'"$JOBS"'
     export MQA_SLOW_FACTOR="${MQA_SLOW_FACTOR:-3}"
     status=0
+    python3 -m unittest discover -s tools/qa -p "test_*.py"
     python3 tools/qa/run.py --out '"$out"'/suite suite --jobs '"$qa_jobs"' \
       --binary build/microide-asan/microide/microide || status=1
     python3 tools/qa/run.py --out '"$out"'/monkey monkey --seeds '"$seeds"' --steps '"$steps"' \
@@ -667,6 +673,7 @@ check_qa_wayland() {
     command -v weston >/dev/null || tools/qa/weston.sh >/dev/null
     cmake -S . -B build >/dev/null
     cmake --build build --target microide -j'"$JOBS"'
+    python3 -m unittest discover -s tools/qa -p "test_*.py"
     MQA_BACKEND=wayland MQA_WAYLAND_SCALE=2 \
       python3 tools/qa/run.py --out '"$out"' suite --jobs '"$qa_jobs"'
   '
@@ -676,7 +683,7 @@ check_qa_wayland() {
 }
 
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-asan|qa-remote|qa-wayland|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|qa|qa-driver|qa-asan|qa-remote|qa-wayland|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh qa-asan       # the GUI QA suite + the monkey over seeds on the ASan build" >&2
   echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
@@ -708,6 +715,7 @@ main() {
     clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
     hardened) check_hardened ;;
+    qa-driver) check_qa_driver ;;
     qa) check_qa ;;
     qa-asan) check_qa_asan ;;
     qa-remote) check_qa_remote ;;
