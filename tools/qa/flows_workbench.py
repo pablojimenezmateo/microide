@@ -593,6 +593,94 @@ def flow_help(app: q.App) -> None:
     app.expect(app.ui().get("modal") is None, "a click outside closes it")
 
 
+def _search_hit_names(app: q.App) -> list[str]:
+    return [e["name"] for e in app.elements("row", prefix="row:search/")
+            if e["name"].rsplit(":", 1)[-1].isdigit()]
+
+
+def _search_field(app: q.App, field: str, text: str) -> None:
+    app.click_named(f"field:search/{field}")
+    app.key("ctrl+a")
+    app.key("BackSpace")
+    if text:
+        app.type(text)
+    app.key("Return")
+
+
+def flow_search_replace_scope_transaction(app: q.App) -> None:
+    """Cancel Replace All, then confirm with include and exclude globs: only
+    the allowed file changes, its clean editor reloads, and excluded files keep
+    their exact contents. The pending replacement and filters survive cancel."""
+    fixture = {"scope-replace/allowed.md": "MQA_SCOPE_TOKEN one\nMQA_SCOPE_TOKEN two\n",
+               "scope-replace/skipped.md": "MQA_SCOPE_TOKEN excluded\n",
+               "scope-replace/allowed.txt": "MQA_SCOPE_TOKEN wrong extension\n"}
+    for path, text in fixture.items():
+        write(app, path, text)
+    open_file(app, "scope-replace/allowed.md")
+    app.key("ctrl+shift+f")
+    _search_field(app, "query", "MQA_SCOPE_TOKEN")
+    app.wait_until(lambda: len(_search_hit_names(app)) == 4, 5.0, "four initial search result lines")
+    if not any(e["name"] == "field:search/include" for e in app.elements("field")):
+        app.click_named("button:search/scope")
+    _search_field(app, "include", "*.md")
+    _search_field(app, "exclude", "**/skipped.md")
+    app.wait_until(lambda: len(_search_hit_names(app)) == 2
+                   and all("scope-replace/allowed.md:" in h for h in _search_hit_names(app)),
+                   5.0, "include/exclude intersection to keep only allowed.md")
+    _search_field(app, "replace", "REPLACED")
+    app.click_named("button:search/replace-all")
+    if not app.wait_for("button:prompt/Replace All", 3.0):
+        return
+    app.key("Escape")
+    step(app, "cancel scoped Replace All")
+    app.expect(not app.ui().get("modal"), "Escape cancels the replacement confirmation")
+    for path, text in fixture.items():
+        app.expect(read(app, path) == text, f"cancel leaves {path} unchanged")
+    expect_text(app, fixture["scope-replace/allowed.md"], "cancel keeps the clean editor unchanged")
+    app.expect(not app.buffer().get("dirty"), "cancel does not dirty the open file")
+    for field, expected in (("query", "MQA_SCOPE_TOKEN"), ("replace", "REPLACED"),
+                            ("include", "*.md"), ("exclude", "**/skipped.md")):
+        app.expect(app.field_text(f"field:search/{field}") == expected,
+                   f"cancel preserves the {field} field")
+    app.click_named("button:search/replace-all")
+    if not app.wait_for("button:prompt/Replace All", 3.0):
+        return
+    app.click_named("button:prompt/Replace All")
+    expected = fixture["scope-replace/allowed.md"].replace("MQA_SCOPE_TOKEN", "REPLACED")
+    app.wait_until(lambda: read(app, "scope-replace/allowed.md") == expected, 5.0,
+                   "confirmed replacement to change the included file")
+    expect_text(app, expected, "the clean open file reloads after project replacement", 5.0)
+    app.expect(not app.buffer().get("dirty"), "the reloaded editor remains clean")
+    for path in ("scope-replace/skipped.md", "scope-replace/allowed.txt"):
+        app.expect(read(app, path) == fixture[path], f"confirmed replacement leaves {path} untouched")
+    step(app, "scoped replacement completed")
+
+
+def flow_search_query_recovery(app: q.App) -> None:
+    """A broad query, an absent one, an empty one and a new query replace their
+    predecessor's rows; clicking the final hit opens the correct file and line."""
+    for index in range(3):
+        write(app, f"query-recovery/file-{index}.txt", f"MQA_QUERY_COMMON {index}\nMQA_QUERY_UNIQUE_{index}\n")
+    app.key("ctrl+shift+f")
+    for query, count in (("MQA_QUERY_COMMON", 3), ("MQA_QUERY_ABSENT", 0),
+                         ("", 0), ("MQA_QUERY_UNIQUE_2", 1),
+                         ("MQA_QUERY_COMMON", 3), ("MQA_QUERY_UNIQUE_0", 1)):
+        _search_field(app, "query", query)
+        app.wait_until(lambda: len(_search_hit_names(app)) == count, 5.0,
+                       f"{query!r} to replace previous results with {count} rows")
+        step(app, f"query recovery {query!r}")
+    hits = _search_hit_names(app)
+    if not app.expect(len(hits) == 1 and hits[0].endswith("query-recovery/file-0.txt:2"),
+                      f"only the final query's correct file/line remains ({hits})"):
+        return
+    app.click_named(hits[0])
+    app.wait_until(lambda: active_title(app) == "file-0.txt" and app.cursors()[0][0] == 2,
+                   3.0, "the final result to open file-0.txt at line 2")
+    app.expect(app.buffer().get("selectedText") == "MQA_QUERY_UNIQUE_0",
+               "opening the final result selects the searched text")
+    step(app, "open the recovered result")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "wb-quick-open": flow_quick_open,
     "wb-command-palette": flow_command_palette,
@@ -600,6 +688,8 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "wb-tabs": flow_tabs,
     "wb-editor-groups": flow_editor_groups,
     "wb-project-search": flow_project_search,
+    "search-replace-scope-transaction": flow_search_replace_scope_transaction,
+    "search-query-recovery": flow_search_query_recovery,
     "wb-git": flow_git,
     "wb-settings": flow_settings,
     "wb-status-bar": flow_status_bar,
