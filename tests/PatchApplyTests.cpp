@@ -11,6 +11,7 @@
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/state/WorkspaceTabState.h"
+#include "util/Parse.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -18,8 +19,9 @@
 #include <cstdio>
 #include <filesystem>
 #include <iterator>
-#include <regex>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::tests {
@@ -474,17 +476,69 @@ CompareModel MakePatchModel(std::initializer_list<CompareRow> rows, int hunk_sta
   return model;
 }
 
+struct ParsedPatchHunkHeader {
+  int old_count{1};
+  int new_count{1};
+  std::size_t body_offset{0};
+  bool explicit_counts{false};
+};
+
+// Independent test oracle for the generator's unified ranges. Using std::regex
+// here instantiated libstdc++'s NFA at -O2 and produced GCC 15 ASan
+// -Wmaybe-uninitialized warnings in the library's state moves. These ranges
+// have a fixed grammar; reading it directly also rejects overflowing counts.
+std::optional<ParsedPatchHunkHeader> ParsePatchHunkHeader(std::string_view patch) {
+  const std::size_t start = patch.find("@@ -");
+  if (start == std::string_view::npos) {
+    return std::nullopt;
+  }
+  std::string_view rest = patch.substr(start + 3);
+  const auto consume = [&rest](std::string_view token) {
+    if (!rest.starts_with(token)) {
+      return false;
+    }
+    rest.remove_prefix(token.size());
+    return true;
+  };
+  const auto number = [&rest]() -> std::optional<int> {
+    const std::size_t end = rest.find_first_not_of("0123456789");
+    const std::size_t length = end == std::string_view::npos ? rest.size() : end;
+    const auto value = util::ParseInt(rest.substr(0, length));
+    rest.remove_prefix(length);
+    return value;
+  };
+  ParsedPatchHunkHeader header;
+  bool old_explicit = false;
+  bool new_explicit = false;
+  const auto range = [&](std::string_view sign, int& count, bool& explicit_count) {
+    if (!consume(sign) || !number().has_value()) {
+      return false;
+    }
+    if (consume(",")) {
+      const auto parsed_count = number();
+      if (!parsed_count.has_value()) {
+        return false;
+      }
+      count = *parsed_count;
+      explicit_count = true;
+    }
+    return true;
+  };
+  if (!range("-", header.old_count, old_explicit) || !consume(" ") ||
+      !range("+", header.new_count, new_explicit) || !consume(" @@")) {
+    return std::nullopt;
+  }
+  header.body_offset = patch.size() - rest.size();
+  header.explicit_counts = old_explicit && new_explicit;
+  return header;
+}
+
 bool PatchHunkCountsMatchBody(const std::string& patch) {
-  static const std::regex header_pattern(
-      R"(@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@)");
-  std::smatch match;
-  if (!std::regex_search(patch, match, header_pattern)) {
+  const auto header = ParsePatchHunkHeader(patch);
+  if (!header.has_value()) {
     return false;
   }
-  const int old_count = match[2].matched ? std::stoi(match[2].str()) : 1;
-  const int new_count = match[4].matched ? std::stoi(match[4].str()) : 1;
-  const auto header_pos = patch.find(match[0]);
-  const auto body = patch.substr(header_pos + match[0].length());
+  const auto body = std::string_view(patch).substr(header->body_offset);
   int counted_old = 0;
   int counted_new = 0;
   for (std::size_t i = 0; i < body.size(); ++i) {
@@ -497,7 +551,28 @@ bool PatchHunkCountsMatchBody(const std::string& patch) {
       }
     }
   }
-  return counted_old == old_count && counted_new == new_count;
+  return counted_old == header->old_count && counted_new == header->new_count;
+}
+
+void TestPatchHunkHeaderOracle() {
+  Expect(PatchHunkCountsMatchBody("@@ -1 +1 @@\n-old\n+new\n"),
+         "an omitted count means one line on each side");
+  Expect(PatchHunkCountsMatchBody("@@ -0,0 +1,2 @@\n+one\n+two\n"),
+         "an insertion can have an explicit zero old count");
+  Expect(PatchHunkCountsMatchBody("@@ -1,2 +1,2 @@\n \n-old\n+new\n"),
+         "a blank context line counts on both sides");
+  Expect(!PatchHunkCountsMatchBody("@@ -1,2 +1,1 @@\n-old\n+new\n"),
+         "the oracle must reject a header whose old count differs from its body");
+  Expect(!ParsePatchHunkHeader("@@ -1, +1,1 @@\n").has_value(),
+         "a comma needs a count");
+  Expect(!ParsePatchHunkHeader("@@ -1,999999999999999999999 +1,1 @@\n").has_value(),
+         "an overflowing count must be rejected without throwing");
+  Expect(!ParsePatchHunkHeader("@@ -x,1 +1,1 @@\n").has_value(),
+         "a range needs a numeric starting line");
+  Expect(!ParsePatchHunkHeader("@@ -1,1 +1,1 @\n").has_value(),
+         "a header needs its closing delimiter");
+  Expect(!ParsePatchHunkHeader("not a patch").has_value(),
+         "a patch without a hunk header must be rejected");
 }
 
 void TestPatchGeneratorPreservesBlankContextLines() {
@@ -1061,7 +1136,8 @@ void TestCopyFilePatchWholeFileIsRealUnifiedDiffAndApplies() {
          "copied patch must carry a real --- header");
   Expect(patch->find("+++ b/tracked.txt") != std::string::npos,
          "copied patch must carry a real +++ header");
-  Expect(std::regex_search(*patch, std::regex(R"(@@ -\d+,\d+ \+\d+,\d+ @@)")),
+  const auto header = ParsePatchHunkHeader(*patch);
+  Expect(header.has_value() && header->explicit_counts,
          "copied patch must carry a real unified @@ range header");
 
   PatchApplyRequest request{
@@ -1480,6 +1556,7 @@ void TestPatchGeneratorRandomEditsStageThroughGit() {
 }
 
 void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
+  tests.push_back({"PatchApply/HeaderOracle", TestPatchHunkHeaderOracle});
   tests.push_back({"PatchApply/AppendAfterMissingFinalNewline",
                    TestPatchStageAppendAfterMissingFinalNewline});
   tests.push_back({"PatchApply/DeleteTrailingLeavesMissingFinalNewline",

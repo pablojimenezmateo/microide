@@ -1446,7 +1446,6 @@ target_precompile_headers(microide_tests PRIVATE ${MICROIDE_PCH_HEADERS})
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   set(MICROIDE_REGEX_HEAVY_TEST_SOURCES
     tests/ArchitectureInvariantsTests.cpp
-    tests/PatchApplyTests.cpp
     tests/architecture/ArchitectureFileScanner.cpp
     tests/architecture/ArchitectureRuleFixtures.cpp
     tests/architecture/ArchitectureRuleHelpers.cpp
