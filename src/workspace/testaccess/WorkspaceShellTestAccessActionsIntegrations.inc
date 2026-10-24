@@ -103,7 +103,7 @@
     shell.context_.current_project_state.overlay.workflow.quick_pick.query.SetText(query);
     shell.quick_pick_service_.Refilter();
   }
-  static std::vector<std::string> LaunchConfigPickerMatchLabels(const WorkspaceShell& shell) {
+  static std::vector<std::string> QuickPickMatchLabels(const WorkspaceShell& shell) {
     std::vector<std::string> labels;
     for (const auto& match :
          shell.context_.current_project_state.overlay.workflow.quick_pick.matches) {

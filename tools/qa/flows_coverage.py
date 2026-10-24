@@ -342,18 +342,20 @@ def flow_lsp_more(app: q.App) -> None:
                        "Go to Type Definition to open the header")
         app.expect(app.cursors() and app.cursors()[0][0] == 8,
                    f"it lands on struct Task ({app.cursors()})")
-    if palette(app, "search workspace symbols"):
-        app.expect((app.ui().get("prompt") or {}).get("kind") == "input",
-                   f"Search Workspace Symbols asks for a query ({app.ui().get('prompt')})")
-        app.type("Scheduler")
-        app.key("Return")
-        # The results list in the panel's Workspace Symbols output, each a name
-        # line then its file:line entry (TD: VS Code's Ctrl+T live picker).
-        app.wait_until(lambda: any(line.startswith("Scheduler") for line in app.output("lsp.workspaceSymbols")),
-                       10.0, "the workspace symbols to list Scheduler")
-        step(app, "workspace symbols", 0.3)
-        app.expect(any("scheduler.hpp" in line for line in app.output("lsp.workspaceSymbols")),
-                   f"the Scheduler entry names its header ({app.output('lsp.workspaceSymbols')[:6]})")
+    # Search Workspace Symbols (TD-2026-10-18-356): Ctrl+T is a pick clangd filters
+    # as the query is typed; Enter opens the symbol's file there.
+    app.send("focus", "editor")
+    app.key("ctrl+t")
+    app.wait_until(lambda: app.ui()["overlay"].get("kind") == "workspace-symbol", 3.0, "Ctrl+T's pick")
+    app.type("Scheduler")
+    app.wait_until(lambda: any(e.get("label", "").startswith("Scheduler") for e in app.elements("overlay-row")),
+                   10.0, "clangd to answer with Scheduler")
+    step(app, "workspace symbols", 0.3)
+    app.key("Return")
+    app.expect(app.wait_until(lambda: (app.active_tab() or {}).get("title") in ("scheduler.hpp", "scheduler.cpp"),
+                              8.0, "Enter to open the symbol's file"),
+               f"Enter opens Scheduler's file ({(app.active_tab() or {}).get('title')})")
+    app.expect(not app.ui()["overlay"].get("visible"), "the pick closes on Enter")
 
     open_file(app, "src/broken.cpp", "int ok = 1;\nint bad = missing_name;\nint fine = 2;\n")
     app.wait_until(lambda: app.element("status:problems").get("label", "") not in ("", "0"), 15.0,

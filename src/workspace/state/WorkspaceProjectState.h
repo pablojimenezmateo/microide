@@ -380,6 +380,7 @@ enum class QuickPickKind : std::uint8_t {
   LaunchConfig,  // start debugging with ProjectWorkspaceState.launch_configs[index]
   ColorTheme,    // apply the colour scheme `value`, previewed as the selection moves
   DocumentSymbol,  // reveal (`line`, `column`) in the active editor, previewed likewise
+  WorkspaceSymbol,  // open `value` (a path) at `line`, `column` = the server's character
 };
 
 struct QuickPickItem {
@@ -415,6 +416,9 @@ struct QuickPickState {
   // The items are still on their way (a language server answering): the summary
   // says so instead of "0 of 0".
   bool loading = false;
+  // The query is the server's to answer (workspace/symbol): each change asks again
+  // and the answer replaces the items, instead of filtering them here.
+  bool server_filtered = false;
 };
 
 // One extra edit a completion item carries (LSP `additionalTextEdits`), applied

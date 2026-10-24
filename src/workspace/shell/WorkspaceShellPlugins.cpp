@@ -190,6 +190,45 @@ WorkspaceShell::WorkspaceShell() {
                 viewport->ApplyRestoredViewState(view.line, view.column, view.scroll, viewport->horizontal_scroll());
                 RequestFocusedEditorRedraw();
               },
+          .requery =
+              [this](QuickPickKind kind, const std::string& query) {
+                if (kind != QuickPickKind::WorkspaceSymbol) {
+                  return;
+                }
+                const std::filesystem::path root = context_.current_project_state.root;
+                std::string error;
+                const bool asked = assist_service_.QueryWorkspaceSymbols(
+                    query,
+                    [this, root](std::vector<AssistService::WorkspaceSymbolHit> hits) {
+                      std::vector<QuickPickItem> items;
+                      items.reserve(hits.size());
+                      for (AssistService::WorkspaceSymbolHit& hit : hits) {
+                        const std::filesystem::path relative = hit.path.lexically_relative(root);
+                        std::string where = relative.empty() || relative.native().starts_with("..")
+                                                ? hit.path.generic_string()
+                                                : relative.generic_string();
+                        items.push_back(QuickPickItem{
+                            .index = items.size(),
+                            .value = hit.path.string(),
+                            .line = hit.line,
+                            .column = static_cast<std::size_t>(std::max(hit.character, 0)),
+                            .primary_label = std::move(hit.name),
+                            .secondary_label = hit.container.empty() ? where : hit.container + " · " + where,
+                            .search_text = {},
+                        });
+                      }
+                      (void)quick_pick_service_.DeliverItems(QuickPickKind::WorkspaceSymbol, std::move(items));
+                    },
+                    &error);
+                if (!asked) {
+                  quick_pick_service_.Fail(QuickPickKind::WorkspaceSymbol,
+                                           error.empty() ? "No language server to ask" : error);
+                }
+              },
+          .open_workspace_symbol =
+              [this](const std::filesystem::path& path, std::size_t line, std::size_t character) {
+                assist_service_.OpenWorkspaceSymbol(path, line, static_cast<int>(character));
+              },
       });
   tab_strip_chrome_.Configure(
       context_, tab_strip_service_, layout_mode_service_, output_channels_,

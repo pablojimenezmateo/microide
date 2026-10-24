@@ -1024,6 +1024,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 const QuickPickKind kind = state.overlay.workflow.quick_pick.kind;
                 overlay["kind"] = util::JsonValue(std::string(kind == QuickPickKind::ColorTheme       ? "color-theme"
                                                               : kind == QuickPickKind::DocumentSymbol ? "document-symbol"
+                                                              : kind == QuickPickKind::WorkspaceSymbol ? "workspace-symbol"
                                                                                                       : "launch-config"));
               }
               overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));

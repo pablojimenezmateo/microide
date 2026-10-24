@@ -184,9 +184,23 @@ class AssistService {
   // textDocument/rename, applying the returned workspace edit across open buffers.
   bool RenameSymbol(const std::string& new_name, std::string* error_message = nullptr);
   bool ShowSignatureHelp(std::string* error_message = nullptr);
-  // Project-wide symbol search via workspace/symbol; renders navigable results into
-  // the "lsp.workspaceSymbols" output channel.
-  bool ShowWorkspaceSymbols(const std::string& query, std::string* error_message = nullptr);
+  // Search Workspace Symbols (Ctrl+T): workspace/symbol for `query` from the active
+  // buffer's server, the hits delivered on a later drain -- unless a newer query has
+  // been asked since, whose answer is the only one delivered. False, with why, when
+  // there is no server to ask.
+  struct WorkspaceSymbolHit {
+    std::string name;
+    std::string container;
+    std::filesystem::path path;
+    std::size_t line = 0;  // 0-based
+    int character = 0;     // the server's, in its position encoding
+  };
+  using WorkspaceSymbolsReady = std::function<void(std::vector<WorkspaceSymbolHit>)>;
+  bool QueryWorkspaceSymbols(const std::string& query, WorkspaceSymbolsReady deliver,
+                             std::string* error_message = nullptr);
+  // Open a hit's file and put the caret on it (its character converted from the
+  // encoding of the server that answered).
+  void OpenWorkspaceSymbol(const std::filesystem::path& path, std::size_t line, int character);
 
   // Render the call hierarchy of the symbol under the caret into the
   // `lsp.callHierarchy` output channel: who calls it (`incoming`) or what it calls.
@@ -397,6 +411,7 @@ class AssistService {
   // channel and render its results over the newer query's. Gate it on a generation
   // token like completions/code actions do (TD-2026-07-17A-034).
   std::uint64_t workspace_symbol_request_generation_ = 0;
+  lsp_encoding::PositionEncoding workspace_symbol_encoding_ = lsp_encoding::PositionEncoding::Utf16;
   // Call hierarchy spans two chained round-trips, so a second invocation while the
   // first is mid-chain would otherwise let the older chain finish last and render
   // over the newer one. Both hops carry this token.

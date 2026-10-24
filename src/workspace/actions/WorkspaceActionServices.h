@@ -151,7 +151,7 @@ class WorkspaceActionContext {
     std::function<bool(std::string*)> find_lsp_references;
     // `incoming` selects callers-of vs called-by; both render into the same channel.
     std::function<bool(bool, std::string*)> show_call_hierarchy;
-    std::function<bool(const std::string&, std::string*)> show_workspace_symbols;
+    std::function<void(std::string query)> open_workspace_symbol_picker;
     std::function<bool(std::string*)> format_active_document;
     std::function<std::string()> symbol_at_cursor;
     std::function<bool(const std::string&, std::string*)> rename_symbol;
@@ -533,7 +533,9 @@ class WorkspaceActionContext {
   bool GoToLspDeclaration(std::string* error_message);
   bool ShowSignatureHelp(std::string* error_message);
   bool FindLspReferences(std::string* error_message);
-  bool ShowWorkspaceSymbols(const std::string& query, std::string* error_message);
+  // Search Workspace Symbols: a quick pick the language server filters as the
+  // query is typed, seeded with `query`.
+  void OpenWorkspaceSymbolPicker(std::string query);
   bool ShowCallHierarchy(bool incoming, std::string* error_message);
   bool FormatActiveDocument(std::string* error_message);
   bool RenameSymbol(const std::string& new_name, std::string* error_message);

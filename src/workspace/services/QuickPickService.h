@@ -38,6 +38,12 @@ class QuickPickService {
     // and bring it into view; and put a view back as it was.
     std::function<void(const std::filesystem::path&, std::size_t, std::size_t)> reveal;
     std::function<void(const QuickPickState::View&)> restore_view;
+    // A server-filtered kind's query changed: ask again (the answer comes back
+    // through DeliverItems or Fail).
+    std::function<void(QuickPickKind, const std::string& query)> requery;
+    // QuickPickKind::WorkspaceSymbol: open `path` at (line, server character).
+    std::function<void(const std::filesystem::path&, std::size_t line, std::size_t character)>
+        open_workspace_symbol;
   };
 
   void Configure(QuickPickState& state, Operations operations);
@@ -56,6 +62,8 @@ class QuickPickService {
   // The items of a pick that opened loading (`kind` still showing), filtered by
   // whatever was typed meanwhile. False when that pick is no longer up.
   bool DeliverItems(QuickPickKind kind, std::vector<QuickPickItem> items);
+  // The pick's items could not be had (no language server): the summary says why.
+  void Fail(QuickPickKind kind, std::string reason);
 
   // A pick of the project's launch configurations.
   static QuickPickState LaunchConfigs(std::span<const LaunchConfig> configs);
@@ -68,9 +76,13 @@ class QuickPickService {
   // One row per symbol, depth first, nested ones indented under their parent.
   static std::vector<QuickPickItem> DocumentSymbolItems(
       std::span<const plugin::PluginHost::DocumentSymbolNode> symbols);
+  // Search Workspace Symbols: server-filtered, so a query typed asks the server.
+  static QuickPickState WorkspaceSymbols(std::string query);
 
  private:
   void Preview();
+  // A server-filtered pick's items, in the server's order.
+  void ShowItemsAsTheyAre();
 
   QuickPickState* state_ = nullptr;
   Operations operations_;

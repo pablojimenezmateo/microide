@@ -658,7 +658,7 @@ void TestWorkspaceShellRestoreClampsOutOfRangeSelectedLaunchConfig() {
   Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
          "session restore should succeed with a stale debug file present");
   WorkspaceShellTestAccess::OpenLaunchConfigPicker(restored);
-  Expect(WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(restored).size() == 1,
+  Expect(WorkspaceShellTestAccess::QuickPickMatchLabels(restored).size() == 1,
          "the single persisted launch config should restore");
   Expect(WorkspaceShellTestAccess::SelectedLaunchConfigIndex(restored) == 0,
          "an out-of-range persisted selected launch index should clamp to 0 on restore");

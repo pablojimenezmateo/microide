@@ -271,22 +271,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
-    case ActionId::WorkspaceSymbol: {
-      // The query is the joined command arguments: `workspace-symbol <query>`.
-      std::string query;
-      for (const std::string& arg : args) {
-        if (!query.empty()) query += ' ';
-        query += arg;
-      }
-      if (query.empty()) {
-        return reject("Usage: workspace-symbol <query>");
-      }
-      std::string error_message;
-      if (!context_.ShowWorkspaceSymbols(query, &error_message)) {
-        return reject(error_message.empty() ? "Workspace symbols unavailable" : error_message);
-      }
+    case ActionId::WorkspaceSymbol:
+      // A pick the server filters as the query is typed; the arguments seed it.
+      context_.OpenWorkspaceSymbolPicker(JoinCommandArguments(args, 0));
       return DispatchResult::Handled;
-    }
     case ActionId::SignatureHelp: {
       std::string error_message;
       if (!context_.ShowSignatureHelp(&error_message)) {

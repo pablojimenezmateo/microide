@@ -686,13 +686,9 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
                 return ok;
               },
-          .show_workspace_symbols =
-              [this, show_results_channel](const std::string& query, std::string* error_message) {
-                const bool ok = assist_service_.ShowWorkspaceSymbols(query, error_message);
-                if (ok) {
-                  show_results_channel("lsp.workspaceSymbols", "Workspace Symbols");
-                }
-                return ok;
+          .open_workspace_symbol_picker =
+              [this](std::string query) {
+                quick_pick_service_.Open(QuickPickService::WorkspaceSymbols(std::move(query)));
               },
           .format_active_document =
               [this](std::string* error_message) {

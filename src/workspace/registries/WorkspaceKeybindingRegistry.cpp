@@ -172,6 +172,17 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          // VS Code's Go to Symbol in Workspace: workspace/symbol as you type.
+          .id = "workspace-symbol",
+          .action = ActionId::WorkspaceSymbol,
+          .key = SDLK_T,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           // VS Code's Go to Symbol in Editor: a pick of the active file's symbols.
           .id = "goto-symbol",
           .action = ActionId::GoToSymbolInEditor,

@@ -514,17 +514,15 @@ return ide.plugin({
   expect_nav_to("goto-implementation", 1, 0);
   expect_nav_to("goto-declaration", 0, 3);
 
-  // workspace/symbol renders navigable results into the workspace-symbols channel.
+  // workspace/symbol answers Search Workspace Symbols' pick (TD-2026-10-18-356).
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "workspace-symbol Wid"),
          "workspace-symbol should execute with a query");
   Expect(WaitForLspCondition(shell, [&] {
-           const auto* channel =
-               WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.workspaceSymbols");
-           if (channel == nullptr) return false;
+           const std::vector<std::string> labels = WorkspaceShellTestAccess::QuickPickMatchLabels(shell);
            // The server echoes the query into the name: "WidgetWid".
-           return std::find(channel->begin(), channel->end(), "WidgetWid  ·  ui") != channel->end();
+           return std::find(labels.begin(), labels.end(), "WidgetWid") != labels.end();
          }),
-         "workspace-symbol should list the returned symbol with its container");
+         "workspace-symbol should list the returned symbol in its pick");
 }
 
 // workspace/symbol is project-wide, so there is no active-file cursor to anchor a
@@ -563,22 +561,24 @@ void TestPhase5WorkspaceSymbolDropsSupersededResponse() {
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
   Expect(captured.size() == 2, "both workspace-symbol requests should capture a callback");
 
-  const auto channel_has = [&](std::string_view line) {
-    const auto* channel =
-        WorkspaceShellTestAccess::OutputChannelEntries(shell, "lsp.workspaceSymbols");
-    return channel != nullptr &&
-           std::find(channel->begin(), channel->end(), std::string(line)) != channel->end();
+  const auto symbol = [](std::string name) {
+    workspace::LspClient::WorkspaceSymbol found;
+    found.name = std::move(name);
+    found.location.uri = "file:///tmp/x.py";
+    return std::vector<workspace::LspClient::WorkspaceSymbol>{found};
+  };
+  const auto listed = [&](std::string_view name) {
+    const std::vector<std::string> labels = WorkspaceShellTestAccess::QuickPickMatchLabels(shell);
+    return std::find(labels.begin(), labels.end(), std::string(name)) != labels.end();
   };
 
   // Deliver the OLDER (AAA) response: it is superseded and must be dropped.
-  captured[0](std::nullopt);
-  Expect(!channel_has("No symbols matching \"AAA\""),
-         "a superseded workspace-symbol response must not clear/render over the newer query");
+  captured[0](symbol("Older"));
+  Expect(!listed("Older"), "a superseded workspace-symbol response must not replace the newer query's");
 
-  // Deliver the NEWER (BBB) response: it is current and renders.
-  captured[1](std::nullopt);
-  Expect(channel_has("No symbols matching \"BBB\""),
-         "the current workspace-symbol response should render its result");
+  // Deliver the NEWER (BBB) response: it is current and lists.
+  captured[1](symbol("Newer"));
+  Expect(listed("Newer"), "the current workspace-symbol response should list its result");
 }
 
 // TD-2026-07-17A-030: a same-file assist request invoked twice before the first

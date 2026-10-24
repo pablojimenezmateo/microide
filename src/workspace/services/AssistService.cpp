@@ -1584,7 +1584,8 @@ bool AssistService::ShowCallHierarchy(bool incoming, std::string* error_message)
   return true;
 }
 
-bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* error_message) {
+bool AssistService::QueryWorkspaceSymbols(const std::string& query, WorkspaceSymbolsReady deliver,
+                                          std::string* error_message) {
   if (error_message != nullptr) {
     error_message->clear();
   }
@@ -1592,62 +1593,52 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
   if (viewport == nullptr) {
     return false;
   }
-  // workspace/symbol is project-wide; query the active buffer's server (the project
+  // workspace/symbol is project-wide; ask the active buffer's server (the project
   // it belongs to). PrepareLspRequest resolves the client + begins the tracked req.
   LspClient* client = PrepareLspRequest(*viewport, error_message);
   if (client == nullptr) {
     return false;
   }
-  // Ensure the channel exists and show progress synchronously so the host can
-  // surface it immediately; the response rebuilds it.
   const std::uint64_t request_generation = ++workspace_symbol_request_generation_;
-  output_channels_->Clear("lsp.workspaceSymbols");
-  output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
-                               "Searching for \"" + query + "\"…");
-  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  workspace_symbol_encoding_ = LspEncodingForClient(*client);
   client->RequestWorkspaceSymbolAsync(
-      query,
-      [this, query, request_generation, encoding](
-          LspResult<std::vector<LspClient::WorkspaceSymbol>> symbols) {
+      query, [this, request_generation, deliver = std::move(deliver)](
+                 LspResult<std::vector<LspClient::WorkspaceSymbol>> symbols) {
         operations_.finish_tracked_lsp_request();
-        // Drop a superseded query's response so it can't clear the channel and render
-        // stale results over the newer query (TD-2026-07-17A-034).
+        // A superseded query's answer must not replace the newer one's
+        // (TD-2026-07-17A-034): the pick re-asks on every keystroke.
         if (request_generation != workspace_symbol_request_generation_) {
           return;
         }
-        output_channels_->Clear("lsp.workspaceSymbols");
-        if (!symbols.answered()) {
-          output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
-                                       "Language server did not respond");
-          return;
-        }
-        if (!symbols.has_value() || symbols->empty()) {
-          output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
-                                       "No symbols matching \"" + query + "\"");
-          return;
-        }
-        // Render each symbol as a name/container header plus a navigable
-        // file:line:col entry with context (reusing the references formatter).
-        std::map<std::filesystem::path, std::vector<std::string>> file_line_cache;
-        for (std::size_t i = 0; i < symbols->size(); ++i) {
-          const LspClient::WorkspaceSymbol& symbol = (*symbols)[i];
-          const std::optional<std::filesystem::path> path = PathFromFileUri(symbol.location.uri);
-          if (!path.has_value()) {
-            continue;
+        std::vector<WorkspaceSymbolHit> hits;
+        if (symbols.has_value()) {
+          hits.reserve(symbols->size());
+          for (const LspClient::WorkspaceSymbol& symbol : *symbols) {
+            std::optional<std::filesystem::path> path = PathFromFileUri(symbol.location.uri);
+            if (!path.has_value()) {
+              continue;
+            }
+            hits.push_back(WorkspaceSymbolHit{
+                .name = symbol.name,
+                .container = symbol.container_name,
+                .path = std::move(*path),
+                .line = static_cast<std::size_t>(std::max(symbol.location.range.start.line, 0)),
+                .character = symbol.location.range.start.character,
+            });
           }
-          std::string header = symbol.name;
-          if (!symbol.container_name.empty()) {
-            header += "  ·  " + symbol.container_name;
-          }
-          output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols", header);
-          EmitReferenceEntry(
-              "lsp.workspaceSymbols", "Workspace Symbols", *path,
-              static_cast<std::size_t>(std::max(symbol.location.range.start.line, 0)) + 1,
-              ReferenceColumn::LspCharacter(symbol.location.range.start.character, encoding),
-              i + 1 < symbols->size(), file_line_cache);
         }
+        deliver(std::move(hits));
       });
   return true;
+}
+
+void AssistService::OpenWorkspaceSymbol(const std::filesystem::path& path, std::size_t line, int character) {
+  LspClient::Location location;
+  location.uri = FileUriForPath(path);
+  location.range.start.line = static_cast<int>(line);
+  location.range.start.character = character;
+  location.range.end = location.range.start;
+  NavigateToLspLocation(location, workspace_symbol_encoding_);
 }
 
 std::string AssistService::SymbolAtCursor() const {

@@ -234,7 +234,7 @@ and closes the menu without running its action, so a sweep can click every row
 Beyond the elements, `ui` carries state no element does. `windowTitle` is the
 title the last prepared frame gave the window (`● file — project — microide`). With an overlay open,
 `overlay` adds `query` (its text field), `count` (rows in the list), `kind` for a
-quick pick (`launch-config`, `color-theme`, `document-symbol`) and `selected`
+quick pick (`launch-config`, `color-theme`, `document-symbol`, `workspace-symbol`) and `selected`
 (the row Enter runs). With a prompt up, `prompt` is `{kind: unsaved|input|confirm,
 title, message, detail?, input?}`. `popups` is `{hover: {kind: blame|diagnostic|symbol|
 debug-value, text, rect, action?: {label, rect}} | null, signatureHelp: <label> | null}`

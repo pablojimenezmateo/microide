@@ -427,9 +427,10 @@ bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
 }
 
-bool WorkspaceActionContext::ShowWorkspaceSymbols(const std::string& query,
-                                                  std::string* error_message) {
-  return operations_.show_workspace_symbols(query, error_message);
+void WorkspaceActionContext::OpenWorkspaceSymbolPicker(std::string query) {
+  if (operations_.open_workspace_symbol_picker) {
+    operations_.open_workspace_symbol_picker(std::move(query));
+  }
 }
 
 bool WorkspaceActionContext::ShowCallHierarchy(bool incoming, std::string* error_message) {

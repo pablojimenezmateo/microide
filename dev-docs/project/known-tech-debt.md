@@ -1378,7 +1378,7 @@ Worth doing per command where it is a real UI entry point (Compare Files…, Add
 Function Breakpoint, Show Output Channel…); the breakpoint and remote plumbing
 commands may rather leave the palette.
 
-### TD-2026-10-18-356 — Search Workspace Symbols lists into an output channel, not a live picker. [OPEN]
+### TD-2026-10-18-356 — Search Workspace Symbols lists into an output channel, not a live picker. [RESOLVED 2026-10-25]
 
 Found by the QA `lsp-more` flow. `workspace-symbol <query>` asks once for a query
 and prints the matches into the panel's Workspace Symbols output, where an entry
@@ -1387,6 +1387,15 @@ you type and opens the selection on Enter. The overlay machinery (the file
 finder, the palette) and the request generation guard already exist; what is
 missing is an overlay mode fed by async `workspace/symbol` responses, and a
 binding (Ctrl+T).
+
+**Resolved:** a server-filtered quick-pick kind (`QuickPickKind::WorkspaceSymbol`,
+`QuickPickState::server_filtered`): Ctrl+T and `workspace-symbol [query]` open
+it, every query change re-asks `workspace/symbol` (the generation guard keeps a
+superseded answer from replacing a newer one), each answer replaces the rows
+(name; container and the project-relative path beside it), and Enter opens the
+file at the symbol through the definition navigation, the server's encoding
+converted. The output-channel listing is gone. Phase5 workspace-symbol tests
+read the pick; QA `lsp-more` drives Ctrl+T against clangd.
 
 ### TD-2026-10-18-355 — the recently closed editors do not survive a restart. [RESOLVED 2026-10-24]
 

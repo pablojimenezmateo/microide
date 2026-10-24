@@ -38,6 +38,16 @@ void QuickPickService::Refilter() {
   QuickPickState& picker = *state_;
   picker.matches.clear();
   picker.selected_index = 0;
+  if (picker.server_filtered) {
+    // The server filters: the items shown are its last answer while it is asked
+    // again.
+    picker.loading = true;
+    if (operations_.requery) {
+      operations_.requery(picker.kind, picker.query.text());
+    }
+    ShowItemsAsTheyAre();
+    return;
+  }
   const std::string query = util::ToLowerAscii(picker.query.text());
   // An exact match first, then the items the query starts, then the rest that
   // hold it, each in item order: `light` must not sit under `dukelight-tc`. The
@@ -91,6 +101,7 @@ void QuickPickService::Preview() {
       }
       break;
     case QuickPickKind::LaunchConfig:
+    case QuickPickKind::WorkspaceSymbol:  // VS Code opens nothing until Enter
       break;
   }
 }
@@ -116,6 +127,11 @@ void QuickPickService::Accept() {
     case QuickPickKind::DocumentSymbol:
       if (operations_.reveal && view.has_value()) {
         operations_.reveal(view->path, item.line, item.column);
+      }
+      break;
+    case QuickPickKind::WorkspaceSymbol:
+      if (operations_.open_workspace_symbol) {
+        operations_.open_workspace_symbol(item.value, item.line, item.column);
       }
       break;
   }
@@ -145,8 +161,37 @@ bool QuickPickService::DeliverItems(QuickPickKind kind, std::vector<QuickPickIte
   }
   state_->loading = false;
   state_->items = std::move(items);
-  Refilter();
+  if (state_->server_filtered) {
+    ShowItemsAsTheyAre();
+  } else {
+    Refilter();
+  }
   return true;
+}
+
+void QuickPickService::Fail(QuickPickKind kind, std::string reason) {
+  if (state_ == nullptr || state_->kind != kind) {
+    return;
+  }
+  state_->loading = false;
+  state_->items.clear();
+  state_->matches.clear();
+  state_->summary_line = std::move(reason);
+  if (operations_.list_changed) {
+    operations_.list_changed();
+  }
+}
+
+void QuickPickService::ShowItemsAsTheyAre() {
+  QuickPickState& picker = *state_;
+  picker.matches = picker.items;
+  picker.selected_index = 0;
+  picker.summary_line = picker.loading ? "Loading " + picker.noun + "…"
+                                       : BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
+                                                                   picker.noun);
+  if (operations_.list_changed) {
+    operations_.list_changed();
+  }
 }
 
 QuickPickState QuickPickService::LaunchConfigs(std::span<const LaunchConfig> configs) {
@@ -204,6 +249,16 @@ QuickPickState QuickPickService::DocumentSymbolsLoading(QuickPickState::View vie
   picker.noun = "symbols";
   picker.loading = true;
   picker.revert_view = std::move(view);
+  return picker;
+}
+
+QuickPickState QuickPickService::WorkspaceSymbols(std::string query) {
+  QuickPickState picker;
+  picker.kind = QuickPickKind::WorkspaceSymbol;
+  picker.title = "Search Workspace Symbols";
+  picker.noun = "symbols";
+  picker.server_filtered = true;
+  picker.query.SetText(std::move(query));
   return picker;
 }
 

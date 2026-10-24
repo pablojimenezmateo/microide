@@ -1051,17 +1051,17 @@ void TestWorkspaceShellLaunchConfigPicker() {
   WorkspaceShellTestAccess::SeedLaunchConfigs(shell, configs);
 
   WorkspaceShellTestAccess::OpenLaunchConfigPicker(shell);
-  Expect(WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(shell).size() == 3,
+  Expect(WorkspaceShellTestAccess::QuickPickMatchLabels(shell).size() == 3,
          "opening the picker should list every launch config");
 
   // Filter by adapter type (secondary column) — matches both debugpy configs.
   WorkspaceShellTestAccess::SetLaunchConfigPickerQuery(shell, "debugpy");
-  Expect(WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(shell).size() == 2,
+  Expect(WorkspaceShellTestAccess::QuickPickMatchLabels(shell).size() == 2,
          "the query should filter across the type column");
 
   // Filter by name (primary column, case-insensitive) down to one match.
   WorkspaceShellTestAccess::SetLaunchConfigPickerQuery(shell, "ATTACH");
-  const auto labels = WorkspaceShellTestAccess::LaunchConfigPickerMatchLabels(shell);
+  const auto labels = WorkspaceShellTestAccess::QuickPickMatchLabels(shell);
   Expect(labels.size() == 1 && labels[0] == "Attach to server",
          "the query should match the name column case-insensitively");
 
