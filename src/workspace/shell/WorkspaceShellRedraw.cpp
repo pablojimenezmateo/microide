@@ -499,6 +499,13 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   util::PerformanceTrace::Scope redraw_scope(
       "WorkspaceShell::RequestActiveEditableLastChangeRedraw::EditorPartialRedraw");
   RequestEditorLineRangeRedraw(start_line, end_line);
+  // An editor pane's horizontal scrollbar is diffed at frame prep against the bar
+  // as painted (PreparedFrameState::painted_horizontal_bars), whatever moved it.
+  // The edits below are a diff's working side and a merge result, whose surfaces
+  // prep does not diff.
+  if (!ActiveTabIsCompare() && !ActiveTabIsMerge()) {
+    return;
+  }
   // A line edit can move the horizontal scrollbar, which is not on the edited
   // line: past the view's width it resizes the thumb, and crossing it shows or
   // hides the bar -- which also takes a row from the text area and shortens the

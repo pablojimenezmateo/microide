@@ -132,6 +132,17 @@ struct PreparedFrameState {
   // else damages -- and repainting the whole pane for it made every keystroke a
   // full-pane paint (editor_typing_paint, 4.6x). Prep repaints the lines whose
   // highlight changed, no more. `occurrence_lines` is the frame's scratch.
+  // Per editor pane, its horizontal scrollbar as painted (no track: hidden). An
+  // edit, a paste, a resize or a font change moves it, and it is not on the rows
+  // they damage; one that appears or goes also moves the text area. Diffed here
+  // rather than guessed at each edit, which repainted the pane on every keystroke
+  // into an already-wide line (editor_typing_paint).
+  struct HorizontalBar {
+    const void* viewport = nullptr;
+    std::optional<SDL_FRect> track;
+    SDL_FRect thumb{};
+  };
+  std::array<HorizontalBar, kMaxEditorGroups> painted_horizontal_bars{};
   const void* painted_occurrence_viewport = nullptr;
   std::vector<std::pair<std::size_t, std::uint64_t>> painted_occurrence_lines;
   std::vector<std::pair<std::size_t, std::uint64_t>> occurrence_lines;

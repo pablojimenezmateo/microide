@@ -767,6 +767,43 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
   }
+  // Each editor pane's horizontal scrollbar: shown or hidden repaints the pane (the
+  // text area changes height), a moved thumb repaints the bar's strip.
+  {
+    const EditorPaneLayouts panes = EditorPaneLayoutsFromGroupRects(ComputeEditorGroupRectsForState(layout));
+    for (const EditorPaneLayout& pane : panes) {
+      if (pane.group_index >= project_state.editor_groups.size() || pane.group_index >= kMaxEditorGroups) {
+        continue;
+      }
+      const editor::TextViewport* viewport = GroupActiveViewport(project_state.editor_groups[pane.group_index]);
+      PreparedFrameState::HorizontalBar bar{.viewport = viewport};
+      if (viewport != nullptr && !viewport->is_placeholder()) {
+        editor::EditorViewMetrics metrics;
+        metrics.visible_rows = viewport->visible_lines();
+        metrics.visible_columns = viewport->visible_columns();
+        if (const ScrollSurfaceLayout scroll = ComputeEditorScrollLayout(pane.rect, *viewport, metrics);
+            scroll.horizontal_scrollbar.has_value()) {
+          bar.track = scroll.horizontal_scrollbar->track;
+          bar.thumb = scroll.horizontal_scrollbar->thumb;
+        }
+      }
+      PreparedFrameState::HorizontalBar& painted = frame_state_.painted_horizontal_bars[pane.group_index];
+      const auto same_rect = [](const SDL_FRect& a, const SDL_FRect& b) {
+        return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+      };
+      // Another viewport in front repaints the pane on its own (a tab switch).
+      if (painted.viewport == viewport) {
+        if (painted.track.has_value() != bar.track.has_value()) {
+          RequestRedrawRect(pane.rect);
+        } else if (bar.track.has_value() &&
+                   (!same_rect(*painted.track, *bar.track) || !same_rect(painted.thumb, bar.thumb))) {
+          RequestRedrawRect(*bar.track);
+          RequestRedrawRect(*painted.track);
+        }
+      }
+      painted = bar;
+    }
+  }
   // The focused pane's occurrence highlights: the lines whose highlight changed
   // since the last frame, whatever changed it (an edit, a caret move, a semantic
   // answer). Asked here first; the view-model build reads the same caches.
