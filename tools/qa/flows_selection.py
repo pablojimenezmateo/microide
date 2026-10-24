@@ -217,10 +217,59 @@ def flow_find_select_all(app: q.App) -> None:
     app.key("alt+r")
 
 
+def flow_multi_caret_pairs(app: q.App) -> None:
+    """The language's pair rules at three carets at once, in a C file: ( closes
+    at each and Backspace deletes each pair; Enter after a brace indents each new
+    line; Home goes to each line's text then its start; Ctrl+Backspace takes each
+    word; Tab indents each; a quote after a word does not pair; and a pair key
+    over each caret's selection surrounds it -- also on a line after a lone quote
+    and inside a string literal, where it once replaced the selection."""
+    counter = iter(range(100))
+
+    def three(text: str) -> None:
+        open_file(app, f"pairs/case{next(counter)}.c", text)
+        app.send("goto", "1:1")
+        app.key("End")
+        app.key("ctrl+alt+Down")
+        app.key("ctrl+alt+Down")
+        step(app, "three carets at the line ends", 0.2)
+
+    three("a\nb\nc\n")
+    app.type("(")
+    expect_text(app, "a()\nb()\nc()\n", "( closes at every caret")
+    app.key("BackSpace")
+    expect_text(app, "a\nb\nc\n", "Backspace between a pair deletes both, at every caret")
+    three("  f() {\n  g() {\n  h() {\n")
+    app.key("Return")
+    expect_text(app, "  f() {\n    \n  g() {\n    \n  h() {\n    \n", "Enter after a brace indents each new line")
+    three("    x\n    y\n    z\n")
+    app.key("Home")
+    step(app, "home", 0.1)
+    app.expect(sorted(app.cursors()) == [(1, 5), (2, 5), (3, 5)], f"Home goes to each line's text ({app.cursors()})")
+    app.key("Home")
+    step(app, "home again", 0.1)
+    app.expect(sorted(app.cursors()) == [(1, 1), (2, 1), (3, 1)], f"and then to each start ({app.cursors()})")
+    three("foo bar\nfoo baz\nfoo qux\n")
+    app.key("ctrl+BackSpace")
+    expect_text(app, "foo \nfoo \nfoo \n", "Ctrl+Backspace takes each caret's word")
+    three("x\ny\nz\n")
+    app.type('"')
+    expect_text(app, 'x"\ny"\nz"\n', "a quote after a word does not pair")
+    app.key("shift+Home")
+    app.type("(")
+    expect_text(app, '(x")\n(y")\n(z")\n', "( surrounds every selection, the line after a lone quote too")
+    open_file(app, "pairs/string.c", 'char* s = "hello world";\n')
+    app.click_text(1, 13, clicks=2)
+    step(app, "select hello in the string", 0.2)
+    app.type("[")
+    expect_text(app, 'char* s = "[hello] world";\n', "[ surrounds a word selected inside a string")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "line-number-selection": flow_line_number_selection,
     "word-and-line-drags": flow_word_and_line_drags,
     "context-menu-clipboard": flow_context_menu_clipboard,
     "expand-line-selection": flow_expand_line_selection,
     "find-select-all": flow_find_select_all,
+    "multi-caret-pairs": flow_multi_caret_pairs,
 }
