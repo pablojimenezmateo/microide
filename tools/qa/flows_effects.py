@@ -162,9 +162,45 @@ def flow_language_overrides(app: q.App) -> None:
     expect_text(app, "x()", "user_disabled cleared: ( closes itself again")
 
 
+def flow_doc_comment_enter(app: q.App) -> None:
+    """Enter in a C-family doc comment continues it (VS Code's onEnter rules):
+    after `/**` the next line starts ` * `, after a ` * text` line it starts with
+    `* ` under the star (at three carets too), and a plain `/*` comment or a
+    pointer dereference is left alone. With smart indent off nothing continues."""
+    open_file(app, "doc/doc.c", "/**\n * doc\n */\n/* plain\nint *p;\n")
+    app.send("goto", "2:7")
+    app.key("Return")
+    app.type("more")
+    app.send("goto", "1:4")
+    app.key("Return")
+    app.type("first")
+    app.send("goto", "6:9")
+    app.key("Return")
+    app.type("x")
+    app.send("goto", "8:8")
+    app.key("Return")
+    app.type("y")
+    expect_text(app, "/**\n * first\n * doc\n * more\n */\n/* plain\nx\nint *p;\ny\n",
+                "Enter continues the doc comment only")
+    open_file(app, "doc/three.ts", "/**\n * a\n * b\n * c\n */\n")
+    app.send("goto", "2:5")
+    app.key("ctrl+alt+Down")
+    app.key("ctrl+alt+Down")
+    app.key("Return")
+    expect_text(app, "/**\n * a\n * \n * b\n * \n * c\n * \n */\n", "at every caret")
+    app.send("toggle-editor-smart-indent")
+    step(app, "smart indent off", 0.2)
+    open_file(app, "doc/off.c", "/**\n * doc\n */\n")
+    app.send("goto", "2:7")
+    app.key("Return")
+    expect_text(app, "/**\n * doc\n \n */\n", "with smart indent off only the indentation carries")
+    app.send("toggle-editor-smart-indent")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "editor-toggles": flow_editor_toggles,
     "language-overrides": flow_language_overrides,
+    "doc-comment-enter": flow_doc_comment_enter,
 }
 
 PLUGINS: dict[str, tuple[str, ...]] = {
