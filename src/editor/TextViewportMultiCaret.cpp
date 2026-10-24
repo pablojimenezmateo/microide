@@ -789,13 +789,13 @@ bool TextViewport::ExpandSelectionToWholeLines() {
     if (!selection.has_value()) {
       return whole_lines(caret.line, caret.line);
     }
+    // Every line the selection touches, whole, through the newline of the line it
+    // ends on (VS Code: the end goes to column 1 of the line below its end line).
+    // A selection already ending at a line start therefore takes that line too,
+    // which is what makes a second press grow by one line; one ending mid-line
+    // takes only the lines it touches.
     const SelectionRange range = NormalizeRange(*selection);
-    // A selection already ending at a line start covers up to the line ABOVE it,
-    // so one more press must take the line it ends on rather than standing still.
-    const std::size_t last = range.end.column == 0 && range.end.line > range.start.line
-                                 ? range.end.line
-                                 : range.end.line + 1;
-    return whole_lines(range.start.line, last);
+    return whole_lines(range.start.line, range.end.line);
   };
 
   std::vector<SelectionRange> ranges;

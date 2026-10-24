@@ -1473,6 +1473,30 @@ void TestExpandLineSelectionGrowsAndMerges() {
          "and it grows by one more line rather than standing still");
 }
 
+// QA flow selection-keys: a selection that ends mid-line takes only the lines it
+// touches. This took one line more -- a word selected on line 0 became lines 0-1,
+// and a selection from line 1 into line 2 became lines 1-3 -- because only a
+// selection ending at a line start was treated as "already whole lines". VS Code
+// ends every expansion at column 1 of the line below the selection's end line.
+void TestExpandLineSelectionOfAPartialSelectionTakesOnlyItsLines() {
+  TextViewport viewport;
+  viewport.LoadContent("foo bar\nbaz\nqux\nlast\n", "/tmp/mc-expand-partial.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 3, /*extend_selection=*/true);
+  Expect(viewport.ExpandSelectionToWholeLines(), "the expansion applies");
+  auto range = viewport.selection_range();
+  Expect(range.has_value() && range->start == TextPosition{0, 0} && range->end == TextPosition{1, 0},
+         "a word on line 0 expands to line 0 alone");
+
+  viewport.MoveCursorTo(2, 1);
+  viewport.MoveCursorTo(1, 1, /*extend_selection=*/true);
+  Expect(viewport.ExpandSelectionToWholeLines(), "the upward expansion applies");
+  range = viewport.selection_range();
+  Expect(range.has_value() && range->start == TextPosition{1, 0} && range->end == TextPosition{3, 0},
+         "an upward selection over lines 1-2 expands to lines 1-2 whole");
+}
+
 // QA flow edit-multi-cursor: typing a word at several carets is one typing run,
 // as at one caret -- a single undo took back only the last letter of "bar" typed
 // over three Ctrl+D selections (VS Code takes back the whole word).
@@ -1508,6 +1532,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestExpandLineSelectionCoversEveryCaret);
   AddTest(tests, "EditorMultiCaret/ExpandLineSelectionGrowsAndMerges",
           TestExpandLineSelectionGrowsAndMerges);
+  AddTest(tests, "EditorMultiCaret/ExpandLineSelectionOfAPartialSelectionTakesOnlyItsLines",
+          TestExpandLineSelectionOfAPartialSelectionTakesOnlyItsLines);
   AddTest(tests, "EditorMultiCaret/AddCaretBelowGrowsOnePerPress", TestAddCaretBelowGrowsOnePerPress);
   AddTest(tests, "EditorMultiCaret/AddCaretBelowAtTheLastLineAddsNothing",
           TestAddCaretBelowAtTheLastLineAddsNothing);
