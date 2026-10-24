@@ -841,15 +841,20 @@ class App:
             time.sleep(DOUBLE_CLICK_SECONDS - (time.monotonic() - last_time))
 
     def drag(self, x0: float, y0: float, x1: float, y1: float, steps: int = 8,
-             modifiers: tuple[str, ...] = (), before_release: Callable[[], object] | None = None) -> None:
+             modifiers: tuple[str, ...] = (), before_release: Callable[[], object] | None = None,
+             clicks: int = 1) -> None:
         """A press at (x0, y0), `steps` moves to (x1, y1), a release there.
         `before_release` runs with the button still held at (x1, y1) -- a drag held
-        past an edge waiting for its autoscroll, say -- on either backend."""
+        past an edge waiting for its autoscroll, say -- on either backend. With
+        `clicks` > 1 the held press is the last of that many (a double-click drag
+        extends by words, a triple-click drag by lines)."""
         self._await_click_gap(x0, y0)
         self._record({"drag": [round(x0), round(y0), round(x1), round(y1)],
-                      "modifiers": list(modifiers)})
+                      "modifiers": list(modifiers), "clicks": clicks})
         if self.wayland:
-            self._pointer("down", x0, y0, 1, modifiers=modifiers)
+            if clicks > 1:
+                self._pointer("click", x0, y0, 1, clicks - 1, modifiers=modifiers)
+            self._pointer("down", x0, y0, 1, clicks, modifiers=modifiers)
             for i in range(1, steps + 1):
                 self._pointer("move", x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps, "left",
                               modifiers=modifiers)
@@ -861,6 +866,9 @@ class App:
             return
         for key in modifiers:
             self._xdotool("keydown", key)
+        if clicks > 1:
+            self._xdotool("mousemove", *self._root(x0, y0), "click", "--repeat", str(clicks - 1),
+                          "--delay", "60", "1")
         self._xdotool("mousemove", *self._root(x0, y0), "mousedown", "1")
         for i in range(1, steps + 1):
             x = x0 + (x1 - x0) * i / steps
@@ -1255,7 +1263,7 @@ def replay(app: App, actions: list[dict[str, Any]], pause: float = 0.12,
                       clicks=action.get("clicks", 1),
                       modifiers=tuple(action.get("modifiers", ())))
         elif "drag" in action:
-            app.drag(*action["drag"], modifiers=tuple(action.get("modifiers", ())))
+            app.drag(*action["drag"], modifiers=tuple(action.get("modifiers", ())), clicks=action.get("clicks", 1))
         elif "wheel" in action:
             app.wheel(*action["wheel"], action["notches"], tuple(action.get("modifiers", ())))
         elif "key" in action:
