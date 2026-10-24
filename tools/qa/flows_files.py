@@ -315,10 +315,66 @@ def flow_save_all(app: q.App) -> None:
                f"{read(app, 'all/one.txt')!r})")
 
 
+def flow_revert_file(app: q.App) -> None:
+    """File > Revert File throws the unsaved changes away and takes the file as
+    it is on disk, as one undoable edit (VS Code): Ctrl+Z brings the changes back
+    dirty, Ctrl+Y returns to the reverted text clean. Both panes of a split show
+    it. The row is greyed out on a clean file. Reverting a dirty buffer whose file
+    changed outside answers the changed-on-disk banner with the disk's text."""
+    open_file(app, "revert/notes.txt", "one\ntwo\n")
+    app.key("ctrl+End")
+    app.type("three")
+    app.key("ctrl+backslash")
+    step(app, "split", 0.4)
+    app.click_named("menu:File")
+    step(app, "File menu", 0.2)
+    row = app.element("menu-item:File/Revert File")
+    if not app.expect(bool(row) and row.get("enabled") is not False, f"Revert File is offered ({row})"):
+        return
+    app.click(*app.center(row))
+    step(app, "Revert File", 0.4)
+    app.expect(app.text() == "one\ntwo\n" and not app.buffer()["dirty"],
+               f"the buffer is the file again, clean ({app.text()!r})")
+    app.send("focus-group", "1")
+    step(app, "the other pane", 0.3)
+    app.expect(app.text() == "one\ntwo\n" and not app.buffer()["dirty"],
+               f"the other pane shows the reverted text ({app.text()!r})")
+    app.key("ctrl+z")
+    step(app, "undo the revert", 0.3)
+    app.expect(app.text() == "one\ntwo\nthree" and app.buffer()["dirty"],
+               f"Ctrl+Z brings the discarded change back ({app.text()!r})")
+    app.key("ctrl+y")
+    step(app, "redo the revert", 0.3)
+    app.expect(app.text() == "one\ntwo\n" and not app.buffer()["dirty"],
+               f"Ctrl+Y returns to the reverted text, clean ({app.text()!r})")
+    app.click_named("menu:File")
+    step(app, "File menu, clean", 0.2)
+    app.expect(app.element("menu-item:File/Revert File").get("enabled") is False,
+               "on a clean file the row is greyed out")
+    dismiss(app)
+    reply = app.send("revert-file")
+    app.expect(not reply.get("ok") and "no unsaved changes" in str(reply.get("error", "")),
+               f"revert-file on a clean file says why ({reply})")
+    # A dirty buffer whose file changed outside: the banner asks; Revert answers it.
+    app.key("ctrl+End")
+    app.type("mine")
+    step(app, "edit again", 0.2)
+    write(app, "revert/notes.txt", "theirs\n")
+    app.wait_for("button:banner/Overwrite", 6.0)
+    app.send("revert-file")
+    step(app, "revert under the banner", 0.5)
+    app.expect(app.text() == "theirs\n" and not app.buffer()["dirty"],
+               f"Revert takes the changed file ({app.text()!r})")
+    app.expect(not any(e["name"].startswith("button:banner/") for e in app.elements("button")),
+               "and the banner is gone")
+    app.expect(read(app, "revert/notes.txt") == "theirs\n", "the disk is untouched")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "file-formats": flow_file_formats,
     "file-vanish": flow_file_vanish,
     "undo-save-point": flow_undo_save_point,
     "untitled-numbering": flow_untitled_numbering,
     "save-all": flow_save_all,
+    "revert-file": flow_revert_file,
 }
