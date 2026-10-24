@@ -449,6 +449,20 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-24-390 — folds do not survive a restart; Reopen Closed Editor moves the view. [OPEN]
+
+Found probing session state in the QA 2026-10-24 pass. A function folded in an
+editor is unfolded after a quit and relaunch (the caret and scroll come back,
+the folds do not); VS Code persists each editor's collapsed regions with its view
+state. Wanted: the collapsed openers saved per tab beside `cursor_line` /
+`scroll_line` in the session record (a format change: bump the record, extend
+`PersistedRecordReaderFuzz`'s corpus), and re-collapsed once the restored tab's
+folding model resolves them -- an opener that no longer starts a fold is dropped.
+Separately, Reopen Closed Editor (Ctrl+Shift+T) restores the caret exactly but
+not the scroll (a caret on line 200 came back with the view at 183, not 170):
+the reopen reveals the caret rather than applying the closed editor's scroll
+line. `session-restore` and `tab-reopen` are where flows asserting both go.
+
 ### TD-2026-10-24-389 — the inline-blame overlay is built while the pane paints. [OPEN]
 
 `RenderActiveWorkspaceSurface` computes the active pane's blame overlay and
