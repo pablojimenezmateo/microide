@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
@@ -124,6 +126,15 @@ struct PreparedFrameState {
   // to have to remember to repaint the tab strip; the ones that forgot left the
   // tab's close button where its dirty dot belonged.
   std::uint64_t painted_editor_tab_dirty = 0;
+  // The focused pane's occurrence highlights as painted: its viewport and, per
+  // highlighted line, a hash of that line's ranges, by line. The highlight follows
+  // the word at the caret, so a keystroke or a click changes it on lines nothing
+  // else damages -- and repainting the whole pane for it made every keystroke a
+  // full-pane paint (editor_typing_paint, 4.6x). Prep repaints the lines whose
+  // highlight changed, no more. `occurrence_lines` is the frame's scratch.
+  const void* painted_occurrence_viewport = nullptr;
+  std::vector<std::pair<std::size_t, std::uint64_t>> painted_occurrence_lines;
+  std::vector<std::pair<std::size_t, std::uint64_t>> occurrence_lines;
   // The window title (WorkspaceUiText ComposeWindowTitle) and a hash of what it
   // was composed from. It names the focused group's active tab, its dirty mark and
   // the project, so the taskbar and Alt+Tab tell two windows apart; the custom

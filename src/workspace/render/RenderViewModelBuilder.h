@@ -612,11 +612,14 @@ class RenderViewModelBuilder {
   /// The returned span aliases the same builder-owned cache
   /// `BuildEditorViewModelInto` fills, so it stays valid until the next call on
   /// this thread.
-  /// Whether the word the occurrence highlight follows differs from the one the last
-  /// frame painted for `viewport`: an edit that moves the caret off a word (or onto
-  /// one) changes the highlight on every line holding it, not only the edited one.
-  /// False when the last frame painted another viewport (nothing to compare).
-  static bool OccurrenceSeedChanged(const editor::TextViewport& viewport);
+  /// The occurrence highlights `viewport` paints over its `visible_rows` (the
+  /// language server's, else the word at the caret's; none while the caret is
+  /// typing). Frame prep asks first, to damage the rows whose highlight changed;
+  /// the view-model build then reads the same caches. The span stays valid until
+  /// the next call on this thread or the next semantic-highlight update.
+  std::span<const editor::OccurrenceRange> OccurrenceRanges(const editor::TextViewport& viewport,
+                                                             std::size_t visible_rows,
+                                                             bool occurrences_case_sensitive) const;
 
   static std::span<const std::size_t> StickyScrollLines(const editor::TextViewport& viewport,
                                                         const editor::FoldingModel* folding_model,

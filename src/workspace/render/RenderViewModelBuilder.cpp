@@ -1555,6 +1555,11 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   if (!occurrences_highlight_enabled || viewport.is_placeholder()) {
     return;
   }
+  out.occurrence_ranges = OccurrenceRanges(viewport, visible_rows, occurrences_case_sensitive);
+}
+
+std::span<const editor::OccurrenceRange> RenderViewModelBuilder::OccurrenceRanges(
+    const editor::TextViewport& viewport, std::size_t visible_rows, bool occurrences_case_sensitive) const {
   util::PerformanceTrace::Scope occurrences_scope(
       "RenderViewModelBuilder::Editor::Occurrences");
 
@@ -1566,7 +1571,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   // navigation re-syncs the anchor and restores it. A selection-seeded highlight
   // stays (the seed is the selection, not the typed prefix).
   if (viewport.CaretIsFromActiveTextEdit() && !viewport.selection_range().has_value()) {
-    return;
+    return {};
   }
 
   // Prefer the language server's answer whenever it is still valid for this caret.
@@ -1580,8 +1585,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   if (semantic.CoversCaret(viewport.path(), viewport.document_identity(), viewport.content_revision(),
                            viewport.cursor_line(),
                            viewport.cursor_column())) {
-    out.occurrence_ranges = std::span<const editor::OccurrenceRange>(semantic.ranges);
-    return;
+    return std::span<const editor::OccurrenceRange>(semantic.ranges);
   }
 
   const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
@@ -1596,7 +1600,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   }
 
   if (!g_occurrence_seed_cache.has_seed) {
-    return;
+    return {};
   }
 
   const auto& seed_cache = g_occurrence_seed_cache;
@@ -1618,7 +1622,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     ++g_occurrence_scan_hits;
   }
 
-  out.occurrence_ranges = std::span<const editor::OccurrenceRange>(g_occurrence_scan_cache.ranges);
+  return std::span<const editor::OccurrenceRange>(g_occurrence_scan_cache.ranges);
 }
 
 editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
@@ -2651,22 +2655,6 @@ std::uint64_t RenderViewModelBuilder::OccurrenceScanCacheHitsForTesting() {
 
 std::uint64_t RenderViewModelBuilder::OccurrenceScanCacheMissesForTesting() {
   return g_occurrence_scan_misses;
-}
-
-bool RenderViewModelBuilder::OccurrenceSeedChanged(const editor::TextViewport& viewport) {
-  const auto& cache = g_occurrence_seed_cache;
-  if (cache.viewport != reinterpret_cast<std::uintptr_t>(&viewport)) {
-    return false;
-  }
-  const auto seed = viewport.OccurrenceSeedSpanForHighlight();
-  const bool has_seed = seed.has_value() && seed->start.line == seed->end.line &&
-                        seed->start.column < seed->end.column && seed->start.line < viewport.lines().size() &&
-                        seed->end.column <= viewport.lines().LineLength(seed->start.line);
-  if (has_seed != cache.has_seed) {
-    return true;
-  }
-  return has_seed && viewport.lines().LineView(seed->start.line).substr(
-                         seed->start.column, seed->end.column - seed->start.column) != cache.needle;
 }
 
 }  // namespace microide::workspace

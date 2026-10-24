@@ -3184,6 +3184,54 @@ void TestTypingOffAWordRepaintsItsOccurrences() {
   fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent(" ")}), "typing a space after the word");
 }
 
+// editor_typing_paint (4.6x slower than v2.12.0): the fix above repainted the
+// whole pane whenever the word under the caret changed -- which is EVERY keystroke
+// that extends a word, though while typing no occurrence is highlighted at all.
+// Frame prep now repaints the lines whose highlight changed: typing off a word
+// repaints its occurrences' lines, typing on with nothing highlighted repaints the
+// edited line only.
+void TestTypingRepaintsOnlyTheLinesWhoseOccurrencesChanged() {
+  std::string text = "greet one\n";
+  for (int i = 0; i < 30; ++i) {
+    text += i == 20 ? "greet\n" : "filler\n";
+  }
+  FlowFixture fixture("words.txt", text);
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 5);  // the end of the first `greet`
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);
+  const auto prepared_damage_height = [&](const workspace::RenderInvalidation& redraw) {
+    (void)fixture.shell.PrepareFrameOnce(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+    workspace::RenderInvalidation all = redraw;
+    all.Merge(fixture.shell.ConsumePendingRenderInvalidation());
+    float top = 1e9f;
+    float bottom = -1e9f;
+    // Inside the pane only: an edit also repaints the status bar (Ln, Col) and the
+    // title bar (the dirty mark).
+    for (const SDL_FRect& rect : all.rects) {
+      const float y0 = std::max(rect.y, pane.y);
+      const float y1 = std::min(rect.y + rect.h, pane.y + pane.h);
+      if (y1 <= y0 || rect.x + rect.w <= pane.x || rect.x >= pane.x + pane.w) {
+        continue;
+      }
+      top = std::min(top, y0);
+      bottom = std::max(bottom, y1);
+    }
+    return std::pair<bool, float>{all.full, bottom - top};
+  };
+  // Off the word: line 22's highlight goes too, and only lines 1 and 22 repaint.
+  const auto [full_off, span_off] = prepared_damage_height(DispatchEvents(fixture.shell, {TextInputEvent(" ")}));
+  Expect(!full_off && span_off < pane.h * 0.9f && span_off > pane.h * 0.3f,
+         "typing off the word repaints its occurrence lines, not the pane: span " + std::to_string(span_off) +
+             " of " + std::to_string(pane.h));
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  // Typing on, nothing highlighted: the edited line alone.
+  const auto [full_on, span_on] = prepared_damage_height(DispatchEvents(fixture.shell, {TextInputEvent("x")}));
+  Expect(!full_on && span_on < pane.h * 0.2f,
+         "typing with nothing highlighted repaints the edited line, span " + std::to_string(span_on));
+}
+
 // A hover over a function body scrolled under its sticky header asks about the
 // line under the pointer. Hover resolved points against a grid with no sticky band,
 // so it asked about the line the band's height further down -- and showed that
@@ -3255,6 +3303,8 @@ void TestMergeToolbarHoverRepaintsTheButton() {
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/OutputTabRepaintsWhenItsChannelGetsALabel",
           TestOutputTabRepaintsWhenItsChannelGetsALabel);
+  AddTest(tests, "QaFlowRegression/TypingRepaintsOnlyTheLinesWhoseOccurrencesChanged",
+          TestTypingRepaintsOnlyTheLinesWhoseOccurrencesChanged);
   AddTest(tests, "QaFlowRegression/TypingOffAWordRepaintsItsOccurrences",
           TestTypingOffAWordRepaintsItsOccurrences);
   AddTest(tests, "QaFlowRegression/HoverUnderAStickyBandResolvesThePointersLine",

@@ -719,10 +719,17 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       // repaint (QA monkey, editor profile, seeds 3 and 6: a tab move scrolled the
       // pane and repainted only the strips). A scroll that did damage it costs a
       // rect already in the frame.
+      // Keyed on the viewport and its document, not the content revision: an edit
+      // is not a scroll, and with the revision in the key every keystroke repainted
+      // the whole pane (editor_typing_paint). An edit that does shift the view's
+      // lines damages the pane itself (RequestActiveEditableLastChangeRedraw).
       const std::uint64_t scroll =
-          viewport == nullptr ? 0
-                              : (content * 0x100000001B3ull) ^ (viewport->scroll_line() << 20) ^
-                                    viewport->horizontal_scroll();
+          viewport == nullptr
+              ? 0
+              : ((reinterpret_cast<std::uintptr_t>(viewport) * 0x9E3779B97F4A7C15ull) ^
+                 reinterpret_cast<std::uintptr_t>(viewport->document_identity())) *
+                        0x100000001B3ull ^
+                    (viewport->scroll_line() << 20) ^ viewport->horizontal_scroll();
       if (scroll != frame_state_.painted_pane_scroll[gi] && gi < pane_rects.groups.size() &&
           frame_state_.painted_pane_scroll[gi] != 0) {
         RequestRedrawRect(pane_rects.groups[gi].editor_surface);
@@ -759,6 +766,70 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         frame_state_.painted_fold_markers[gi] = markers;
       }
     }
+  }
+  // The focused pane's occurrence highlights: the lines whose highlight changed
+  // since the last frame, whatever changed it (an edit, a caret move, a semantic
+  // answer). Asked here first; the view-model build reads the same caches.
+  {
+    const editor::TextViewport* viewport =
+        GroupActiveViewport(project_state.editor_groups[project_state.clamped_focused_group_index()]);
+    auto& lines = frame_state_.occurrence_lines;
+    lines.clear();
+    if (viewport != nullptr && !viewport->is_placeholder() &&
+        SettingFlagEnabled(GetSettingValue("editor.occurrences.enabled"), true)) {
+      const std::span<const editor::OccurrenceRange> ranges =
+          RenderViewModelBuilder(context_).OccurrenceRanges(
+              *viewport, viewport->visible_lines(),
+              SettingFlagEnabled(GetSettingValue("editor.search.case_sensitive"), false));
+      for (const editor::OccurrenceRange& range : ranges) {
+        std::uint64_t hash = util::Fnv1aByte(util::kFnv1aOffsetBasis, range.is_primary_seed ? 1u : 0u);
+        hash = util::Fnv1aByte(hash, static_cast<unsigned char>(range.kind));
+        hash = (hash ^ range.start_column) * util::kFnv1aPrime;
+        hash = (hash ^ range.end_column) * util::kFnv1aPrime;
+        lines.emplace_back(range.line_index, hash);
+      }
+      std::sort(lines.begin(), lines.end());
+      // One entry per line: its ranges' hashes folded together.
+      std::size_t kept = 0;
+      for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (kept > 0 && lines[kept - 1].first == lines[i].first) {
+          lines[kept - 1].second = (lines[kept - 1].second ^ lines[i].second) * util::kFnv1aPrime;
+        } else {
+          lines[kept++] = lines[i];
+        }
+      }
+      lines.resize(kept);
+    }
+    const auto& painted = frame_state_.painted_occurrence_lines;
+    // Another viewport in front repaints the pane on its own (a tab switch).
+    if (viewport == frame_state_.painted_occurrence_viewport && painted != lines) {
+      constexpr std::size_t kMaxLineRepaints = 32;
+      std::size_t repaints = 0;
+      const auto repaint = [&](std::size_t line) {
+        if (++repaints <= kMaxLineRepaints) {
+          RequestEditorLineRangeRedraw(line, line + 1);
+        } else if (repaints == kMaxLineRepaints + 1) {
+          RequestFocusedEditorRedraw();
+        }
+      };
+      std::size_t a = 0;
+      std::size_t b = 0;
+      while (a < painted.size() || b < lines.size()) {
+        if (b == lines.size() || (a < painted.size() && painted[a].first < lines[b].first)) {
+          repaint(painted[a++].first);
+        } else if (a == painted.size() || lines[b].first < painted[a].first) {
+          repaint(lines[b++].first);
+        } else {
+          if (painted[a].second != lines[b].second) {
+            repaint(lines[b].first);
+          }
+          ++a;
+          ++b;
+        }
+      }
+    }
+    frame_state_.painted_occurrence_viewport = viewport;
+    std::swap(frame_state_.painted_occurrence_lines, lines);
   }
   // Breakpoints: the gutter dots in every pane and the Breakpoints pane's rows.
   // They change through the gutter, F9, the pane's own keys and menus, the control
