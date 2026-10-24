@@ -397,6 +397,17 @@ void TestASelectionInsideAStringIsSurrounded() {
   (void)DispatchEvents(fixture.shell, {TextInputEvent("[")});
   Expect(viewport.lines()[2] == "[y\"]", "the line after a lone quote is surrounded, got " +
                                             std::string(viewport.lines()[2]));
+  // The multi-caret path had its own copy of the rule: three carets selecting
+  // three lines, the middle one after the lone quote.
+  UxFixture three("three.c", "x\"\ny\"\nz\"\n");
+  editor::TextViewport& view = TestAccess::ActiveEditor(three.shell);
+  view.MoveCursorTo(0, 0);
+  view.MoveCursorTo(0, 2, /*extend_selection=*/true);
+  view.AddSecondaryCaretWithRange(editor::SelectionRange{{1, 0}, {1, 2}});
+  view.AddSecondaryCaretWithRange(editor::SelectionRange{{2, 0}, {2, 2}});
+  (void)DispatchEvents(three.shell, {TextInputEvent("(")});
+  Expect(ViewportText(view) == "(x\")\n(y\")\n(z\")\n",
+         "every caret's selection is surrounded, got " + ViewportText(view));
 }
 
 }  // namespace

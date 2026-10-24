@@ -93,6 +93,18 @@ const LanguagePair* FindSurroundOpener(const LanguageContractView& view, char ch
   return nullptr;
 }
 
+// The pair a key surrounds a selection with, when surround is on and the pair
+// can wrap anything. One rule for the single- and multi-caret paths, which had
+// each grown their own -- and with it the auto-close scope rule (see
+// TrySurroundInsert for why surround has none).
+const LanguagePair* UsableSurroundPair(const LanguageContractView& view, char ch) {
+  if (!view.surround_enabled) {
+    return nullptr;
+  }
+  const LanguagePair* pair = FindSurroundOpener(view, ch);
+  return pair != nullptr && !pair->open.empty() && !pair->close.empty() ? pair : nullptr;
+}
+
 bool ShouldAutoCloseAtNext(bool at_end, char next, const LanguageContractView& view) {
   if (at_end) {
     return true;
@@ -226,15 +238,12 @@ bool TextViewport::TryAutoCloseInsert(char ch) {
 }
 
 bool TextViewport::TrySurroundInsert(char ch) {
-  if (!language_contract_view().surround_enabled) {
-    return false;
-  }
   const auto sel = selection_range();
   if (!sel.has_value()) {
     return false;
   }
-  const auto* pair = FindSurroundOpener(language_contract_view(), ch);
-  if (pair == nullptr || pair->open.empty() || pair->close.empty()) {
+  const LanguagePair* pair = UsableSurroundPair(language_contract_view(), ch);
+  if (pair == nullptr) {
     return false;
   }
   const SelectionRange norm = NormalizeRange(*sel);
@@ -597,10 +606,8 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
         continue;
       }
 
-      const auto* sur_pair =
-          language_contract_view().surround_enabled ? FindSurroundOpener(language_contract_view(), ch) : nullptr;
-      if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() &&
-          !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
+      if (const LanguagePair* sur_pair = UsableSurroundPair(language_contract_view(), ch);
+          sur_pair != nullptr) {
         const std::string inner = detail::TextBetweenLines(document_->lines, norm);
         const std::string replacement = sur_pair->open + inner + sur_pair->close;
         TextPosition inner_anchor{};
