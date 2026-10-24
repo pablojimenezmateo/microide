@@ -432,7 +432,7 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   // an open widget leaves it describing text that has moved -- wrong highlights,
   // a wrong n-of-m, and a Replace that rewrites the line the old range landed on.
   // Nothing but a bool test while the widget is closed.
-  RefreshBufferSearchAfterBufferEdit();
+  RefreshBufferSearchIfStale();
 
   // A snippet session's placeholders are LINE:COLUMN ranges that only the snippet
   // engine's own ops keep in step with the text. Any other edit -- move-line,

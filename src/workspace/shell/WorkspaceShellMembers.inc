@@ -1375,7 +1375,7 @@
   // `reveal=false` recomputes the match set without moving the caret onto the
   // pick -- what an edit under an open widget needs.
   void RefreshBufferSearch(bool reveal);
-  void RefreshBufferSearchAfterBufferEdit();
+  void RefreshBufferSearchIfStale();
   bool BufferSearchMatchesAreFresh() const;
   // Flips one of the in-file find widget's three toggles (Aa / ab / .*) and
   // recomputes the match set. One entry point for the button, the Alt chord and

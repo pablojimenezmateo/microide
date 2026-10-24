@@ -166,6 +166,23 @@ void TestARightClickInsideASelectionKeepsIt() {
          "a right-click outside it moves the caret there, got " + fixture.Selection());
 }
 
+// find-across-tabs: the find widget stays open across a tab switch, but its
+// matches stayed the previous tab's: the n-of-m kept the old count, and F3 in the
+// new tab jumped to the old file's coordinates and selected nothing there.
+void TestTheFindWidgetFollowsATabSwitch() {
+  UxFixture fixture("one.txt", "xx foo\nyy foo\nzz foo\n");
+  WriteFile(fixture.root / "two.txt", "a\nb\nc\nd\nfoo here\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL), TextInputEvent("foo")});
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open " + (fixture.root / "two.txt").string()),
+         "two.txt opens");
+  fixture.shell.Render(fixture.canvas.renderer(), UxFixture::kWidth, UxFixture::kHeight);
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["overlay"]["visible"].AsBool() && ui["overlay"]["count"].AsInt() == 1,
+         "the widget counts two.txt's one match, got " + std::to_string(ui["overlay"]["count"].AsInt()));
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F3)});
+  Expect(fixture.Selection() == "4:0 -> 4:3", "F3 selects foo in two.txt, got " + fixture.Selection());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -173,6 +190,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/AltEnterInTheFindWidgetSelectsEveryMatch",
           TestAltEnterInTheFindWidgetSelectsEveryMatch);
   AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);
+  AddTest(tests, "QaFlowRegressionUx/TheFindWidgetFollowsATabSwitch", TestTheFindWidgetFollowsATabSwitch);
 }
 
 }  // namespace microide::tests

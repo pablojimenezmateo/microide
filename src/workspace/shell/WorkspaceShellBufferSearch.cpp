@@ -112,11 +112,14 @@ bool WorkspaceShell::BufferSearchMatchesAreFresh() const {
           buffer_search.matches_content_revision == viewport->content_revision());
 }
 
-// An edit moved the buffer the find widget is describing. Recompute the match set
-// WITHOUT revealing: the caret belongs to whatever the user is typing, and
-// yanking it onto a match after every keystroke is not a find, it is a fight.
-// Costs nothing while the widget is closed, which is nearly always.
-void WorkspaceShell::RefreshBufferSearchAfterBufferEdit() {
+// The find widget is describing a buffer that is no longer the one in front of
+// the user as it is now: an edit moved its text, or another tab (another group,
+// a closed tab's neighbour) came to the front. Recompute the match set WITHOUT
+// revealing: the caret belongs to whatever the user is doing, and yanking it onto
+// a match after every keystroke is not a find, it is a fight. Called after every
+// edit and at frame prep; costs nothing while the widget is closed, which is
+// nearly always, and a pointer and a counter while it is open and fresh.
+void WorkspaceShell::RefreshBufferSearchIfStale() {
   const OverlayMode mode = context_.current_project_state.overlay.mode;
   if (mode != OverlayMode::BufferSearch && mode != OverlayMode::BufferReplace) {
     return;
@@ -125,7 +128,7 @@ void WorkspaceShell::RefreshBufferSearchAfterBufferEdit() {
       BufferSearchMatchesAreFresh()) {
     return;
   }
-  util::PerformanceTrace::Scope scope("WorkspaceShell::RefreshBufferSearchAfterBufferEdit");
+  util::PerformanceTrace::Scope scope("WorkspaceShell::RefreshBufferSearchIfStale");
   util::AddPerformanceCounter(util::PerfCounterId::SearchBufferRefreshesAfterEdit);
   RefreshBufferSearch(/*reveal=*/false);
 }
@@ -281,6 +284,21 @@ void WorkspaceShell::OpenBufferSearchFromProjectSearchResult() {
 
 void WorkspaceShell::MoveBufferSearchSelection(int delta) {
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  // A set taken over another tab's buffer (the widget stays open across a tab
+  // switch) names that buffer's coordinates: F3 selected nothing at them. Rescan
+  // this one first; the rescan already makes the match at or after the caret
+  // current, which is where a forward step from a fresh buffer belongs.
+  if (!BufferSearchMatchesAreFresh() && !buffer_search.query.text().empty()) {
+    RefreshBufferSearch(/*reveal=*/false);
+    if (delta > 0) {
+      --delta;
+    }
+    if (delta == 0 && !buffer_search.matches.empty()) {
+      RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
+      RequestEditorSurfaceRedraw();
+      return;
+    }
+  }
   if (buffer_search.matches.empty() || delta == 0) {
     return;
   }
@@ -304,7 +322,7 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
   // The match set is a set of LINE:COLUMN ranges, so replacing through a stale one
   // rewrites whatever text has since inherited those coordinates -- silently, and
   // leaving the real match untouched. The announced edit paths keep it fresh
-  // (RefreshBufferSearchAfterBufferEdit); this covers the ones that do not, such
+  // (RefreshBufferSearchIfStale); this covers the ones that do not, such
   // as a reload from disk under an open widget.
   if (!BufferSearchMatchesAreFresh()) {
     RefreshBufferSearch(/*reveal=*/false);

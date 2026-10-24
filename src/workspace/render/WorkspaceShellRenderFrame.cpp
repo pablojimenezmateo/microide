@@ -631,6 +631,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   // 2) Overlay scroll clamp: the stored scroll row is normalized here so the
   //    overlay view model (and render) consume an already-clamped value.
   if (project_state.overlay.visible) {
+    // The find widget stays open across a tab switch; its matches and n-of-m
+    // must describe the buffer now in front, not the one it was opened over.
+    RefreshBufferSearchIfStale();
     ClampOverlayScrollRow(ComputeOverlayRect(layout.overlay_anchor));
   }
   // 3) Commit-draft body viewport sizing + caret-keep-visible scroll clamp (the
