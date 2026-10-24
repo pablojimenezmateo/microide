@@ -241,9 +241,12 @@ bool TextViewport::TrySurroundInsert(char ch) {
   if (!detail::ValidateRangeColumns(document_->lines, norm)) {
     return false;
   }
-  if (InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
-    return false;
-  }
+  // No string/comment exception, unlike auto-close: with text selected the
+  // only alternative to surrounding it is REPLACING it with the opener, which
+  // is never what a pair key over a selection means (VS Code's autoSurround has
+  // no scope rule either). Inside a string -- or where a highlighter thinks a
+  // lone quote opened one -- typing `(` over a selected word deleted the word
+  // (QA multi-caret probe: the one caret of three on a line after `x"`).
 
   // Surround only prepends `open` to the selection's first line and appends
   // `close` to its last line; the middle lines are untouched. Wrap the boundary

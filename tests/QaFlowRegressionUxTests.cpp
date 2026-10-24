@@ -379,6 +379,26 @@ void TestAClickOnAGitEntryKeepsTheKeyboardOnTheList() {
          "the click keeps the keyboard on the git view, got " + ui["focus"].AsString());
 }
 
+// surround: a pair key over a selection that starts inside a string -- or on a
+// line a lone quote above made the highlighter call a string -- replaced the
+// selection with the opener instead of surrounding it. The auto-close rule (no
+// pairs inside strings) had been applied to surround, where the alternative to
+// surrounding is deleting what was selected.
+void TestASelectionInsideAStringIsSurrounded() {
+  UxFixture fixture("strings.c", "char* s = \"hello world\";\nx\"\ny\"\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(0, 11);
+  viewport.MoveCursorTo(0, 16, /*extend_selection=*/true);  // "hello" inside the literal
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("(")});
+  Expect(viewport.lines()[0] == "char* s = \"(hello) world\";",
+         "the word inside the string is surrounded, got " + std::string(viewport.lines()[0]));
+  viewport.MoveCursorTo(2, 0);
+  viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);  // y" on the line after x"
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("[")});
+  Expect(viewport.lines()[2] == "[y\"]", "the line after a lone quote is surrounded, got " +
+                                            std::string(viewport.lines()[2]));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -395,6 +415,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/SaveAsRetitlesTheTab", TestSaveAsRetitlesTheTab);
   AddTest(tests, "QaFlowRegressionUx/AClickOnAGitEntryKeepsTheKeyboardOnTheList",
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
+  AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
 }
 
 }  // namespace microide::tests
