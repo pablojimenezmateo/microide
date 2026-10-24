@@ -1096,6 +1096,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       }
     }
   }
+  // Before any hover is resolved against the blame overlay or its card's damage is
+  // decided: an overlay the active buffer has moved away from is this frame's
+  // paint's to rebuild, not prep's to lay a card out of.
+  editor_blame_overlay_service_.ForgetVisibleOverlayIfStale(ActiveEditorViewport());
   // A queued editor-hover refresh (the content under a still pointer changed)
   // runs here, not in paint: RenderClip ran it only when it painted the editor, so
   // a partial frame that skipped the editor kept the old hover card while a full
@@ -1572,7 +1576,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       if (pane.active) {
         // When blame is disabled this clears any previously-visible overlay so
         // hover/click targets never resolve against stale blame geometry.
-        editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay);
+        editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay, *viewport);
       }
       // In-file find highlights: regex/whole-buffer mode drives the highlight from the
       // precomputed (possibly multi-line) match set — a literal query scan cannot

@@ -304,10 +304,37 @@ const std::optional<editor::EditorBlameOverlay>& EditorBlameOverlayService::Edit
 
 void EditorBlameOverlayService::SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay) {
   visible_overlay_ = std::move(overlay);
+  visible_source_.reset();
+}
+
+EditorBlameOverlayService::OverlaySource EditorBlameOverlayService::SourceOf(
+    const editor::TextViewport& viewport) {
+  return OverlaySource{.viewport = &viewport,
+                       .caret_line = viewport.cursor_line(),
+                       .scroll_line = viewport.scroll_line(),
+                       .horizontal_scroll = viewport.horizontal_scroll(),
+                       .content_revision = viewport.content_revision()};
+}
+
+void EditorBlameOverlayService::SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay,
+                                                  const editor::TextViewport& source) {
+  visible_overlay_ = std::move(overlay);
+  visible_source_ = SourceOf(source);
+}
+
+void EditorBlameOverlayService::ForgetVisibleOverlayIfStale(const editor::TextViewport* active) {
+  if (!visible_source_.has_value()) {
+    return;
+  }
+  if (active == nullptr || !(SourceOf(*active) == *visible_source_)) {
+    visible_overlay_.reset();
+    visible_source_.reset();
+  }
 }
 
 void EditorBlameOverlayService::ClearVisibleOverlay() {
   visible_overlay_.reset();
+  visible_source_.reset();
 }
 
 const editor::EditorBlameLine* EditorBlameOverlayService::VisibleLine(std::size_t line_index) const {

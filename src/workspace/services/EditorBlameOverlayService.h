@@ -91,6 +91,18 @@ class EditorBlameOverlayService {
           compare_blame_anchor) const;
 
   void SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay);
+  // The editor's overlay, remembering the buffer state it was built over: the
+  // viewport, its caret line, its scroll and its content revision. The overlay is
+  // rebuilt while the active pane PAINTS, but the hover card it anchors is laid
+  // out -- and its damage decided -- at frame prep, before that paint: a card
+  // whose line went away (the caret moved, another pane took focus) was still
+  // there for prep, gone for paint, and its rect never repainted (QA monkey,
+  // editor profile, seed 309). ForgetVisibleOverlayIfStale, called at frame prep,
+  // drops an overlay that no longer describes the active buffer, so prep sees the
+  // card go in the same frame paint does.
+  void SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay,
+                         const editor::TextViewport& source);
+  void ForgetVisibleOverlayIfStale(const editor::TextViewport* active);
   void ClearVisibleOverlay();
 
   const editor::EditorBlameLine* VisibleLine(std::size_t line_index) const;
@@ -101,6 +113,18 @@ class EditorBlameOverlayService {
 
   std::function<const platform::ProcessLauncher*()> project_launcher_;
   std::optional<editor::EditorBlameOverlay> visible_overlay_;
+  struct OverlaySource {
+    const editor::TextViewport* viewport = nullptr;
+    std::size_t caret_line = 0;
+    std::size_t scroll_line = 0;
+    std::size_t horizontal_scroll = 0;
+    std::uint64_t content_revision = 0;
+    bool operator==(const OverlaySource&) const = default;
+  };
+  // Set only for the editor's overlay; the compare and merge overlays are not
+  // checked (their cards are not laid out from it at frame prep).
+  std::optional<OverlaySource> visible_source_;
+  static OverlaySource SourceOf(const editor::TextViewport& viewport);
   // The query descriptors, kept alive between frames rather than rebuilt inside
   // each Build* call. `GitBlameRequest` owns two `std::filesystem::path`s, and a
   // libstdc++ path copy is ~3.5 allocations (the pathname string, the component

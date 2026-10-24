@@ -3,6 +3,7 @@
 
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
+#include "util/JsonValue.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -176,6 +177,73 @@ void TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves() {
   const auto seeded = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, elsewhere, pin_caret);
   Expect(seeded.identical(), "a re-seeded pointer should take the blame card off screen; " +
                                  DescribePixelDiff(seeded));
+}
+
+// The card goes when its line does, with the pointer still. The overlay the card
+// is laid out from is rebuilt while the active pane PAINTS, after frame prep
+// decided the card's damage from the previous frame's overlay: prep still saw the
+// card, paint dropped it, and a frame that repainted somewhere else left its
+// pixels on screen (QA monkey, editor profile, seed 309: a focus change between
+// stacked panes repainted the other pane). Here the caret leaves the blamed line
+// with no editor damage, and a partial frame elsewhere follows.
+void TestWorkspaceShellEditorBlameCardGoesWithItsLine() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  const auto overlay = WaitForActiveEditorBlameOverlay(shell, 1);
+  Expect(overlay.has_value() && overlay->lines.size() == 1, "the fixture should have inline blame");
+  if (!overlay.has_value() || overlay->lines.empty()) {
+    return;
+  }
+  const auto pin_caret = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+
+  SoftwareCanvas canvas(kWidth, kHeight);
+  pin_caret();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto& blame_line = overlay->lines[0];
+  const float bx = blame_line.rect.x + 4.0f;
+  const float by = blame_line.rect.y + blame_line.rect.h * 0.5f;
+  const auto shown = PaintAndDiffWithFullRepaint(
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {MouseMotionEvent(bx, by)}), pin_caret);
+  Expect(WorkspaceShellTestAccess::ActiveEditorBlamePopupRect(shell).has_value(),
+         "hovering blame text should open the blame card");
+  Expect(shown.identical(), "showing the card should paint what a full repaint paints; " +
+                                DescribePixelDiff(shown));
+  // The caret moves two lines down: a caret move repaints the rows it leaves and
+  // lands on, which is all the editor damage there is.
+  const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+  const util::JsonValue& pane = ui["editors"].AsArray()[0];
+  microide::workspace::RenderInvalidation elsewhere;
+  for (const util::JsonValue& row : pane["rows"].AsArray()) {
+    if (row["line"].AsInt() == 2 || row["line"].AsInt() == 4) {
+      const auto& r = pane["rect"].AsArray();
+      elsewhere.rects.push_back(SDL_FRect{static_cast<float>(r[0].AsDouble()),
+                                          static_cast<float>(row["y"].AsDouble()),
+                                          static_cast<float>(r[2].AsDouble()),
+                                          static_cast<float>(pane["lineHeight"].AsDouble())});
+    }
+  }
+  Expect(elsewhere.rects.size() == 2, "both caret rows are on screen");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(3, 0);
+  const auto moved = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, elsewhere, pin_caret);
+  Expect(moved.identical(), "the caret leaving the blamed line should take the card off screen; " +
+                                DescribePixelDiff(moved));
 }
 
 // Invalidating the blame of the file on screen (the tree's Refresh, a change on
@@ -541,6 +609,8 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInvalidatedBlameRepaintsTheEditor);
   AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWhenThePointerLeaves",
           TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves);
+  AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWithItsLine",
+          TestWorkspaceShellEditorBlameCardGoesWithItsLine);
   AddTest(tests, "WorkspaceShell/EditorBlameIsFixedForAPreparedFrame",
           TestWorkspaceShellEditorBlameIsFixedForAPreparedFrame);
   AddTest(tests, "WorkspaceShell/EditorBlameLoadsForCleanTrackedFile",

@@ -147,7 +147,11 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
   if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::Blame) {
     const editor::EditorBlameLine* blame_line =
         editor_blame_overlay_service_.VisibleLine(active_editor_hover_target_->blame_line_index);
-    if (blame_line == nullptr || !blame_line->interactive) {
+    // The card stays only while its annotation is where the pointer found it: an
+    // overlay rebuilt during paint with the line moved (a scroll, an edit above)
+    // must not paint a card frame prep laid out -- and damaged -- nowhere.
+    if (blame_line == nullptr || !blame_line->interactive ||
+        !RectsEqual(blame_line->rect, active_editor_hover_target_->anchor_rect)) {
       return std::nullopt;
     }
 
