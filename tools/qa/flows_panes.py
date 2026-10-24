@@ -381,9 +381,47 @@ def flow_save_wait(app: q.App) -> None:
     dismiss(app)
 
 
+def flow_git_view_click_keys(app: q.App) -> None:
+    """A click on a git view entry opens its diff and keeps the keyboard on the
+    list (VS Code's source control view): `s` then stages the clicked entry and
+    `u` unstages it, and neither letter reaches the file. A click used to hand the
+    keyboard to the diff, and the `s` was typed into the working copy."""
+    for name in ("one", "two"):
+        write(app, f"click/{name}.txt", f"{name}\n")
+    git(app, "add", "click")
+    git(app, "commit", "-q", "-m", "qa: git click fixture")
+    for name in ("one", "two"):
+        write(app, f"click/{name}.txt", f"{name} changed\n")
+    app.send("git-refresh")
+    app.key("ctrl+shift+g")
+    if not app.wait_for("row:git/two.txt", 6.0):
+        app.expect(False, "the git view lists two.txt")
+        return
+    app.click_named("row:git/two.txt")
+    step(app, "click two.txt", 0.6)
+    app.expect(app.ui()["focus"] == "sidebar", f"the click keeps the keyboard on the list ({app.ui()['focus']})")
+    app.key("s")
+    app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "click/two.txt", 5.0,
+                   "s to stage the clicked entry")
+    app.expect(git(app, "diff", "--cached", "--name-only") == "click/two.txt",
+               f"s staged two.txt ({git(app, 'diff', '--cached', '--name-only')!r})")
+    # Staged, the entry moved to the Staged section and the selection stayed in
+    # Changes (VS Code moves on the same way): click it where it is now.
+    app.wait_until(lambda: bool(app.elements("row", prefix="row:git/two.txt")), 3.0, "the staged entry")
+    app.click_named("row:git/two.txt")
+    step(app, "click the staged two.txt", 0.6)
+    app.key("u")
+    app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "", 5.0, "u to unstage it")
+    app.expect(read(app, "click/two.txt") == "two changed\n" and read(app, "click/one.txt") == "one changed\n",
+               "neither letter reached a file on disk")
+    dirty = [t["title"] for g in app.editor_state()["groups"] for t in g["tabs"] if t.get("dirty")]
+    app.expect(not dirty, f"and no buffer took them ({dirty})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "save-wait": flow_save_wait,
     "git-view-keys": flow_git_view_keys,
+    "git-view-click-keys": flow_git_view_click_keys,
     "plugin-sidebar-keys": flow_plugin_sidebar_keys,
     "debug-pane-mouse": flow_debug_pane_mouse,
     "dirty-close-group": flow_dirty_close_group,
