@@ -66,6 +66,30 @@ struct UxFixture {
     return SDL_FPoint{x, 0.0f};
   }
 
+  // The window point of 1-based (line, column) in the text, a fifth into the cell.
+  SDL_FPoint TextPoint(int line, int column) {
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    const util::JsonValue& pane = ui["editors"].AsArray()[0];
+    const double char_width = pane["charWidth"].AsDouble();
+    const float x = static_cast<float>(pane["textX"].AsDouble() + (column - 1 + 0.2) * char_width);
+    for (const util::JsonValue& row : pane["rows"].AsArray()) {
+      if (row["line"].AsInt() == line) {
+        return SDL_FPoint{x, static_cast<float>(row["y"].AsDouble() + pane["lineHeight"].AsDouble() / 2.0)};
+      }
+    }
+    Expect(false, "line " + std::to_string(line) + " should be on screen");
+    return SDL_FPoint{x, 0.0f};
+  }
+
+  // A press and release of `button` at `point`, `clicks` deep.
+  void Click(SDL_FPoint point, Uint8 button = SDL_BUTTON_LEFT, Uint8 clicks = 1) {
+    SDL_Event down = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, point.x, point.y);
+    SDL_Event up = MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, point.x, point.y);
+    down.button.button = up.button.button = button;
+    down.button.clicks = up.button.clicks = clicks;
+    (void)DispatchEvents(shell, {MouseMotionEvent(point.x, point.y), down, up});
+  }
+
   // The primary selection as 0-based (anchor line, anchor column, caret line, caret column).
   std::string Selection() {
     const editor::TextViewport& viewport = TestAccess::ActiveEditor(shell);
@@ -126,12 +150,29 @@ void TestAltEnterInTheFindWidgetSelectsEveryMatch() {
          "typing goes to the editor and replaces every match, got " + ViewportText(viewport));
 }
 
+// editor-context-menu: a right-click inside a selection collapsed it to the
+// pointer, so the menu's Cut then took the whole LINE (an empty-selection cut)
+// instead of the word that had been selected. VS Code keeps the selection.
+void TestARightClickInsideASelectionKeepsIt() {
+  UxFixture fixture("words.txt", "alpha beta gamma\nsecond line\n");
+  fixture.Click(fixture.TextPoint(1, 8), SDL_BUTTON_LEFT, 2);
+  Expect(fixture.Selection() == "0:6 -> 0:10", "the double-click selects beta, got " + fixture.Selection());
+  fixture.Click(fixture.TextPoint(1, 9), SDL_BUTTON_RIGHT);
+  Expect(fixture.Selection() == "0:6 -> 0:10",
+         "a right-click inside the selection keeps it, got " + fixture.Selection());
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+  fixture.Click(fixture.TextPoint(2, 4), SDL_BUTTON_RIGHT);
+  Expect(fixture.Selection() == "none -> 1:3",
+         "a right-click outside it moves the caret there, got " + fixture.Selection());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
   AddTest(tests, "QaFlowRegressionUx/AltEnterInTheFindWidgetSelectsEveryMatch",
           TestAltEnterInTheFindWidgetSelectsEveryMatch);
+  AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);
 }
 
 }  // namespace microide::tests

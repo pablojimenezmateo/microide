@@ -764,6 +764,24 @@ bool TextViewport::AddCaretsAtSelectedLineEnds() {
 }
 
 
+bool TextViewport::AnySelectionContains(const TextPosition& position) const {
+  const auto within = [&](const SelectionRange& range) {
+    const SelectionRange normalized = NormalizeRange(range);
+    return !detail::PositionLess(position, normalized.start) &&
+           !detail::PositionLess(normalized.end, position);
+  };
+  if (const auto primary = selection_range(); primary.has_value() && within(*primary)) {
+    return true;
+  }
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    if (const auto range = detail::SelectionRangeForSecondaryCaret(caret.position, caret.selection_anchor);
+        range.has_value() && within(*range)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool TextViewport::ExpandSelectionToWholeLines() {
   if (document_->lines.empty()) {
     return false;

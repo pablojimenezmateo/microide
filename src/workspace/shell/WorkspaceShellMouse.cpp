@@ -520,6 +520,13 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       const int hit_column =
           std::max(0, static_cast<int>(visual_column) -
                           static_cast<int>(viewport->horizontal_scroll()));
+      // A right-click inside a selection keeps it (and every other caret's), so
+      // the menu's Cut and Copy act on what was selected; collapsing it here made
+      // Cut take the whole line instead (empty-selection cut). Outside, the caret
+      // moves to the pointer as before.
+      if (viewport->AnySelectionContains(viewport->LogicalPositionForVisualHit(visual_row, hit_column))) {
+        return false;
+      }
       viewport->MoveCursorToVisualHit(visual_row, hit_column, false);
       return true;
     }();

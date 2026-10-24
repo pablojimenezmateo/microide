@@ -740,6 +740,10 @@ class TextViewport {
   // lines, one more line per press. Expansions that meet are merged, because two
   // line selections covering the same line would edit it twice.
   bool ExpandSelectionToWholeLines();
+  // Whether `position` lies inside (endpoints included) the primary selection or
+  // any secondary caret's selection. A right-click there keeps every selection,
+  // so the context menu's Cut and Copy act on them (VS Code).
+  [[nodiscard]] bool AnySelectionContains(const TextPosition& position) const;
   // Ranged sibling of SetSecondaryCarets: rebuilds the secondary caret set where
   // each entry carries an active selection (anchor -> cursor). Used by the
   // "add cursor at next/all match" (Ctrl+D) flow so multi-caret typing replaces
