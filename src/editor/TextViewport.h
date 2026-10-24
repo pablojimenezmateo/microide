@@ -1194,6 +1194,9 @@ class TextViewport {
                      bool record_undo);
   std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
   std::string IndentUnit() const;
+  // The prefix Enter continues a doc comment with (` * `), or nullopt.
+  std::optional<std::string> DocCommentContinuation(std::string_view line, std::size_t column,
+                                                    const std::string& base_indent) const;
   // Caret-local bytes for the pair/indent heuristics, read without materializing
   // the line. See editor/CaretNeighborhood.h for why that matters.
   CaretNeighborhood ReadCaretNeighborhood(std::size_t line, std::size_t column) const {

@@ -170,7 +170,15 @@ std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t col
     base_indent.assign(current_line, 0, indent_columns);
   }
 
-  if (!language_contract_view().smart_indent_enabled || language_contract_view().indent_after_open_patterns.empty()) {
+  if (!language_contract_view().smart_indent_enabled) {
+    return base_indent;
+  }
+  if (const std::optional<std::string> continued =
+          DocCommentContinuation(current_line, clamped_column, base_indent);
+      continued.has_value()) {
+    return *continued;
+  }
+  if (language_contract_view().indent_after_open_patterns.empty()) {
     return base_indent;
   }
 
@@ -188,6 +196,35 @@ std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t col
     }
   }
   return base_indent;
+}
+
+std::optional<std::string> TextViewport::DocCommentContinuation(std::string_view line,
+                                                                std::size_t column,
+                                                                const std::string& base_indent) const {
+  // VS Code's C-family onEnter rules, for a language whose block comment is
+  // `/* */`: Enter in a `/**` doc comment starts the next line with ` * `, and
+  // Enter on a ` * ...` line of one continues it with `* ` under the same star.
+  // A plain `/*` comment is left alone, as there. Only the text before the
+  // caret decides; what follows it moves down after the prefix.
+  if (language_contract_view().block_comment_open != "/*") {
+    return std::nullopt;
+  }
+  const std::string_view before = line.substr(0, std::min(column, line.size()));
+  const std::size_t text = before.find_first_not_of(" \t");
+  if (text == std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::string_view body = before.substr(text);
+  if (body.starts_with("/**") && !body.starts_with("/**/") &&
+      body.find("*/", 3) == std::string_view::npos) {
+    return base_indent + " * ";
+  }
+  // ` * text`: a star then a space or the end, and not the comment's closer.
+  if (body.starts_with("*") && !body.starts_with("*/") && (body.size() == 1 || body[1] == ' ') &&
+      body.find("*/") == std::string_view::npos && text > 0 && before[text - 1] == ' ') {
+    return base_indent + "* ";
+  }
+  return std::nullopt;
 }
 
 std::string TextViewport::IndentUnit() const {

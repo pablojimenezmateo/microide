@@ -410,6 +410,21 @@ void TestASelectionInsideAStringIsSurrounded() {
          "every caret's selection is surrounded, got " + ViewportText(view));
 }
 
+// doc comments: Enter inside a `/** */` comment started the next line with the
+// indentation only. VS Code's C-family rules continue it with ` * `.
+void TestEnterContinuesADocComment() {
+  UxFixture fixture("doc.c", "/**\n * doc\n */\n/* plain\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(1, 6);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN), TextInputEvent("more")});
+  viewport.MoveCursorTo(0, 3);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN), TextInputEvent("first")});
+  viewport.MoveCursorTo(5, 8);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN), TextInputEvent("x")});
+  Expect(ViewportText(viewport) == "/**\n * first\n * doc\n * more\n */\n/* plain\nx\n",
+         "Enter continues a doc comment and leaves a plain one, got " + ViewportText(viewport));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -427,6 +442,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/AClickOnAGitEntryKeepsTheKeyboardOnTheList",
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
+  AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
 }
 
 }  // namespace microide::tests
