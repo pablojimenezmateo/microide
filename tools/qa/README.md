@@ -245,8 +245,9 @@ Checked after every action:
   count across a tab switch, every frame correct). After every action the status
   bar's `Ln, Col` must name the focused editor's primary caret (Col visible: a tab
   counts as its width), the find widget's count of a plain query must be its
-  occurrences in the buffer, and the focused group's active tab must carry the
-  dirty mark exactly when its buffer is unsaved. A disagreement is read again over
+  occurrences in the buffer, the focused group's active tab must carry the dirty
+  mark exactly when its buffer is unsaved and be named after its file, and the
+  indent and language segments must name the buffer's own. A disagreement is read again over
   the next frames before it is reported (the labels are derived at frame prep).
 - **Scenario expectations**, stated against the `ui` query (`--query ui`: every
   on-screen element by name with its rect, plus focus, modal, sidebar, overlay, menu

@@ -1126,7 +1126,9 @@ class App:
         - find: the widget's count of a plain query (letters and digits, no regex,
           no whole word) is the number of its occurrences in the buffer;
         - tab: the focused group's active tab shows the dirty mark exactly when
-          its buffer is unsaved.
+          its buffer is unsaved, and is named after its buffer's file;
+        - indent / language: the status bar's `Spaces: N` / `Tabs: N` and language
+          segments name the buffer's own.
 
         Only an editor tab, and only what can be computed here without guessing:
         a line with a character past ASCII before the caret is skipped (wide
@@ -1192,6 +1194,24 @@ class App:
             if active is not None and active.get("label", "").startswith("*") != bool(buffer.get("dirty")):
                 out.append(("state", f"the active tab {active['label']!r} and its buffer disagree about unsaved "
                                      f"changes (dirty: {buffer.get('dirty')})"))
+            # A file's tab is named after it (an untitled buffer has no path). A
+            # duplicate basename may carry a disambiguating suffix, so the label
+            # starts with the name rather than equalling it.
+            path = buffer.get("path") or ""
+            if active is not None and path:
+                name = path.rsplit("/", 1)[-1]
+                if not active.get("label", "").lstrip("*").startswith(name):
+                    out.append(("state", f"the active tab is labelled {active['label']!r}; its buffer is {name!r}"))
+        indent = (elements.get("status:indent") or {}).get("label")
+        if indent and "tabSize" in buffer:
+            want = f"{'Spaces' if buffer.get('softTabs') else 'Tabs'}: {buffer['tabSize']}"
+            if indent != want:
+                out.append(("state", f"the status bar says {indent!r}; the buffer indents with {want!r}"))
+        language = (elements.get("status:language") or {}).get("label")
+        # No detected language is shown as "Plain Text" (the id is "unknown").
+        if language and buffer.get("language") not in (None, "", "unknown") and language != buffer["language"]:
+            out.append(("state", f"the status bar names the language {language!r}; the buffer's is "
+                                 f"{buffer['language']!r}"))
         return out
 
     def _write_finding(self, label: str, found: list[Finding]) -> str | None:
