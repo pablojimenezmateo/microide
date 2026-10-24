@@ -750,12 +750,19 @@ class App:
     def _find_window(self) -> str | None:
         if self.wayland:
             return None
+        # By the app's pid (its _NET_WM_PID), else its WM_CLASS -- never by title:
+        # the title names the active file ("● main.cpp — taskflow — microide"), and
+        # xdotool, in the C locale, cannot even match a UTF-8 one.
+        searches = [["--class", "microide"]]
+        if self.proc is not None:
+            searches.insert(0, ["--pid", str(self.proc.pid)])
         for _ in range(25):
-            result = subprocess.run(["xdotool", "search", "--name", "microide"], env=self.tool_env,
-                                    capture_output=True, text=True)
-            ids = result.stdout.split()
-            if ids:
-                return ids[-1]
+            for search in searches:
+                result = subprocess.run(["xdotool", "search", *search], env=self.tool_env,
+                                        capture_output=True, text=True)
+                ids = result.stdout.split()
+                if ids:
+                    return ids[-1]
             time.sleep(0.2)
         return None
 

@@ -160,8 +160,10 @@ cm_window() {
   if [[ -z "$CM_WIN" ]]; then
     local id i
     for i in $(seq 1 20); do
-      id="$(xdotool search --onlyvisible --name microide 2>/dev/null | tail -1)"
-      [[ -z "$id" ]] && id="$(xdotool search --name microide 2>/dev/null | tail -1)"
+      # By WM_CLASS: the title names the active file, and xdotool in the C locale
+      # cannot match a UTF-8 one.
+      id="$(xdotool search --onlyvisible --class microide 2>/dev/null | tail -1)"
+      [[ -z "$id" ]] && id="$(xdotool search --class microide 2>/dev/null | tail -1)"
       [[ -n "$id" ]] && { CM_WIN="$id"; break; }
       sleep 0.2
     done
