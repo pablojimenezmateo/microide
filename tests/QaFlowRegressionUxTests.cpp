@@ -21,6 +21,18 @@ namespace {
 using microide::workspace::WorkspaceShell;
 using TestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
+// The buffer as one string, lines joined by newlines.
+std::string ViewportText(const editor::TextViewport& viewport) {
+  std::string text;
+  for (std::size_t i = 0; i < viewport.lines().LineCount(); ++i) {
+    if (i > 0) {
+      text += '\n';
+    }
+    text += viewport.lines().LineView(i);
+  }
+  return text;
+}
+
 struct UxFixture {
   static constexpr int kWidth = 1280;
   static constexpr int kHeight = 720;
@@ -96,10 +108,30 @@ void TestALineNumberPressSelectsWholeLines() {
 }
 
 
+// find-select-all: Alt+Enter in the find widget did nothing. VS Code selects every
+// match the widget counts (its regex and case options included) and gives the
+// editor the keyboard, so the next keystroke replaces them all.
+void TestAltEnterInTheFindWidgetSelectsEveryMatch() {
+  UxFixture fixture("find.txt", "foo bar Foo\nbaz foo\nfoo\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL), TextInputEvent("foo")});
+  // Match case on: "Foo" on line 0 is not one of them.
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_C, SDL_KMOD_ALT)});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_RETURN, SDL_KMOD_ALT)});
+  const editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  Expect(viewport.secondary_caret_range_view().size() + 1 == 3,
+         "Alt+Enter puts a caret on each of the three case-matching matches, got " +
+             std::to_string(viewport.secondary_caret_range_view().size() + 1));
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("X")});
+  Expect(ViewportText(viewport) == "X bar Foo\nbaz X\nX\n",
+         "typing goes to the editor and replaces every match, got " + ViewportText(viewport));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ALineNumberPressSelectsWholeLines", TestALineNumberPressSelectsWholeLines);
+  AddTest(tests, "QaFlowRegressionUx/AltEnterInTheFindWidgetSelectsEveryMatch",
+          TestAltEnterInTheFindWidgetSelectsEveryMatch);
 }
 
 }  // namespace microide::tests

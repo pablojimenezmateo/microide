@@ -4,6 +4,7 @@
 #include <array>
 #include <limits>
 #include <optional>
+#include <vector>
 
 #include "workspace/ListSelection.h"
 
@@ -70,6 +71,39 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     state_.overlay.buffer_search_field = BufferSearchField::Replace;
     return true;
   }
+  // Alt+Enter selects every match the widget counts -- with its case, whole-word
+  // and regex options, which is what sets it apart from Ctrl+Shift+L's word
+  // scan -- and gives the editor the keyboard so the next keystroke edits them
+  // all (VS Code's editor.action.selectAllMatches). The current match stays the
+  // primary, so the view does not jump.
+  if ((event.key == SDLK_RETURN || event.key == SDLK_KP_ENTER) &&
+      NormalizedKeyModifiers(modifiers) == SDL_KMOD_ALT) {
+    const auto& buffer_search = state_.overlay.workflow.buffer_search;
+    editor::TextViewport* viewport = operations_.active_editable_viewport
+                                         ? operations_.active_editable_viewport()
+                                         : nullptr;
+    if (viewport == nullptr || buffer_search.matches.empty()) {
+      return true;
+    }
+    const std::size_t primary = std::min(buffer_search.selected_index, buffer_search.matches.size() - 1);
+    const editor::SelectionRange& current = buffer_search.matches[primary];
+    viewport->MoveCursorTo(current.start.line, current.start.column);
+    viewport->MoveCursorTo(current.end.line, current.end.column, /*extend_selection=*/true);
+    std::vector<editor::SelectionRange> others;
+    others.reserve(buffer_search.matches.size() - 1);
+    for (std::size_t i = 0; i < buffer_search.matches.size(); ++i) {
+      if (i != primary) {
+        others.push_back(buffer_search.matches[i]);
+      }
+    }
+    viewport->SetSecondaryCaretsWithRanges(others);
+    state_.surface.focus = FocusTarget::Editor;
+    if (operations_.reset_caret_blink) {
+      operations_.reset_caret_blink();
+    }
+    operations_.request_focused_editor_redraw();
+    return true;
+  }
   // Alt+C / Alt+W / Alt+R toggle match case, whole word and regex — VSCode's
   // find-widget chords, one per button, in button order. A plain letter still
   // types into the focused field via the default text-input path.
@@ -118,6 +152,9 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
+        if ((modifiers & SDL_KMOD_ALT) != 0) {
+          return HandleSharedBufferSearchKey(event, modifiers);
+        }
         // Enter cycles to the next match (Shift+Enter to the previous) and keeps
         // the widget open, VSCode-style, instead of jumping + dismissing.
         operations_.move_buffer_search_selection((modifiers & SDL_KMOD_SHIFT) ? -1 : 1);
@@ -143,6 +180,9 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
         return true;
       case SDLK_RETURN:
       case SDLK_KP_ENTER:
+        if ((modifiers & SDL_KMOD_ALT) != 0) {
+          return HandleSharedBufferSearchKey(event, modifiers);
+        }
         if (modifiers & SDL_KMOD_CTRL) {
           operations_.replace_all_buffer_search_matches();
         } else if (state_.overlay.buffer_search_field == BufferSearchField::Search) {
