@@ -487,6 +487,7 @@ void TestBuilderOccurrencesFollowAReloadedDocument() {
   Expect(before.occurrence_ranges.size() == 3, "three `value`s are highlighted");
   const std::uint64_t revision = viewport.content_revision();
   // A language server's highlight set for the old text, covering the caret.
+  // (Documents no longer share revisions; the set is also keyed on the document.)
   auto& semantic = ctx.current_project_state.semantic_occurrences;
   semantic.path = viewport.path();
   semantic.document = viewport.document_identity();
@@ -497,8 +498,6 @@ void TestBuilderOccurrencesFollowAReloadedDocument() {
   viewport = reloaded;
   viewport.SetViewportSize(8, 80);
   viewport.MoveCursorTo(0, 2);
-  Expect(viewport.content_revision() == revision,
-         "the reloaded document's revision recurs (the case under test)");
   microide::editor::EditorViewModel after;
   build(after);
   Expect(after.occurrence_ranges.size() == 2,

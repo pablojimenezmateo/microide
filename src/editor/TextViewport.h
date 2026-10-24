@@ -931,6 +931,8 @@ class TextViewport {
     last_applied_edit_line_span_.reset();
   }
 
+  // A revision no other document has used: the high half counts documents.
+  static std::uint64_t NextDocumentRevisionBase();
   struct DocumentState {
     std::filesystem::path path;
     // Cached NormalizedPathKey(path), recomputed only when `path` changes.
@@ -950,7 +952,14 @@ class TextViewport {
     // invalidate wrapped-row layouts, a scroll does not invalidate the
     // highlight cache, and so on. See
     // openspec/changes/split-layout-revision-tiers/ for the full contract.
-    std::uint64_t content_revision = 0;
+    //
+    // Seeded from a process-wide base, not 0: every cache in the app keys on
+    // (viewport or path, content revision), and a reload hands the SAME viewport
+    // a new document. Counting from 0 again let the old revision recur over new
+    // text -- the find widget's count, the occurrence highlights and a language
+    // server's highlight set all outlived a reload (QA 2026-10-24). Distinct
+    // documents now never share a revision; edits still count up by one.
+    std::uint64_t content_revision = NextDocumentRevisionBase();
     // Bumped by the subset of content edits that touch the document's HEAD --
     // the first `runtime_syntax::kFiletypeDetectHeadLines` lines, which is all a
     // content-sensitive filetype detection ever reads. A memo over such a

@@ -1,5 +1,7 @@
 #include "editor/TextViewport.h"
 
+#include <atomic>
+
 #include "editor/SmartSelect.h"
 #include "editor/PathKey.h"
 #include "editor/RuntimeSyntaxRegistry.h"
@@ -15,6 +17,11 @@
 #include "util/TextFileIO.h"
 
 namespace microide::editor {
+
+std::uint64_t TextViewport::NextDocumentRevisionBase() {
+  static std::atomic<std::uint64_t> documents{0};
+  return (documents.fetch_add(1, std::memory_order_relaxed) + 1) << 32;
+}
 
 // `kHighlightCheckpointInterval` is declared in editor/TextViewportInternal.h
 // (detail namespace) so the highlight-cache sibling TU sees the same value.
