@@ -7,6 +7,10 @@ namespace microide::editor {
 WelcomeLayout ComputeWelcomeLayout(const SDL_FRect& rect, const WelcomeViewModel& model,
                                    float line_height) {
   WelcomeLayout layout;
+  // Every region at once: the buttons (Retry, the two open-folder ones, the
+  // project home's three) and a row per recent. Growing on demand reallocated as
+  // the welcome page gained buttons -- this runs on every painted frame of it.
+  layout.hit_regions.reserve(6 + model.recent_projects.size() + model.recent_files.size());
 
   const float row_step = line_height + 8.0f;
 
