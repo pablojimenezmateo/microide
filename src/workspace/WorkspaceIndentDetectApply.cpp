@@ -38,21 +38,29 @@ void ApplyDetectedIndentAfterPreferences(
 }
 
 void ApplyOwnIndent(editor::TextViewport& viewport, const project::EditorConfigProperties& editor_config) {
-  const editor::IndentDetection& own = viewport.own_indent();
-  if (!editor_config.soft_tabs.has_value() && own.soft_tabs) {
-    viewport.SetSoftTabs(*own.soft_tabs);
-  }
+  ApplyResolvedIndent(viewport, ResolveIndent(viewport.own_indent(), editor_config,
+                                              ResolvedIndent{.tab_size = viewport.tab_size(),
+                                                             .indent_width = viewport.indent_width(),
+                                                             .soft_tabs = viewport.soft_tabs()}));
+}
+
+ResolvedIndent ResolveIndent(const editor::IndentDetection& own,
+                             const project::EditorConfigProperties& editor_config,
+                             const ResolvedIndent& preferences) {
   // A tab-indented buffer says nothing about how wide a tab is: the width stays
   // whatever the preferences chose (VS Code keeps its default tab size too).
-  if (!own.indent_width) {
-    return;
-  }
-  if (!editor_config.indent_width.has_value()) {
-    viewport.SetIndentWidth(*own.indent_width);
-  }
-  if (!editor_config.tab_size.has_value()) {
-    viewport.SetTabSize(*own.indent_width);
-  }
+  return ResolvedIndent{
+      .tab_size = editor_config.tab_size.value_or(own.indent_width.value_or(preferences.tab_size)),
+      .indent_width =
+          editor_config.indent_width.value_or(own.indent_width.value_or(preferences.indent_width)),
+      .soft_tabs = editor_config.soft_tabs.value_or(own.soft_tabs.value_or(preferences.soft_tabs)),
+  };
+}
+
+void ApplyResolvedIndent(editor::TextViewport& viewport, const ResolvedIndent& indent) {
+  viewport.SetTabSize(indent.tab_size);
+  viewport.SetIndentWidth(indent.indent_width);
+  viewport.SetSoftTabs(indent.soft_tabs);
 }
 
 }  // namespace microide::workspace

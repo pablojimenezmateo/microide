@@ -447,6 +447,30 @@ void TestTheWindowTitleNamesTheActiveFileAndItsState() {
   Expect(title() == project + " \u2014 microide", "with no editor the title is the project's, got " + title());
 }
 
+// Found by the fold-restore test (TD-2026-10-24-390): every activation set the
+// tab size from the settings and then back to a 2-space file's own, each change
+// revealing the caret, so switching back to a tab whose caret was scrolled off
+// screen jumped the view to it. VS Code keeps a tab's scroll across switches.
+void TestSwitchingBackToATabKeepsItsScroll() {
+  std::string text;
+  for (int i = 0; i < 300; ++i) {
+    text += "  line " + std::to_string(i) + "\n";
+  }
+  UxFixture fixture("two-space.txt", text);
+  WriteFile(fixture.root / "other.txt", "other\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(250, 2);
+  viewport.SetScrollLine(40);
+  fixture.Frame();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open " + (fixture.root / "other.txt").string()),
+         "other.txt opens");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_PAGEUP, SDL_KMOD_CTRL)});
+  fixture.Frame();
+  const editor::TextViewport& back = TestAccess::ActiveEditor(fixture.shell);
+  Expect(back.path().filename() == "two-space.txt" && back.scroll_line() == 40,
+         "the view is where it was left, got scroll " + std::to_string(back.scroll_line()));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -465,6 +489,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/SwitchingBackToATabKeepsItsScroll", TestSwitchingBackToATabKeepsItsScroll);
   AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",
           TestTheWindowTitleNamesTheActiveFileAndItsState);
 }
