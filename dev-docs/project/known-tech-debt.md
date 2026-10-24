@@ -449,6 +449,55 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-24-389 — the inline-blame overlay is built while the pane paints. [OPEN]
+
+`RenderActiveWorkspaceSurface` computes the active pane's blame overlay and
+stores it with `EditorBlameOverlayService::SetVisibleOverlay` during paint, and
+everything that resolves against it between frames -- the hover target under
+the pointer, the blame card's layout, its damage at frame prep, a click on Copy
+SHA -- reads the previous paint's overlay. 45e2c450 closed the stale card it
+caused (QA monkey, editor profile, seed 309): the service remembers the buffer
+state an overlay was built over and frame prep forgets one the active buffer has
+moved away from, and the card is drawn only while its annotation is still where
+the pointer found it. The shape is still a paint-time state mutation, which
+`CLAUDE.md` § Render view models says moves to frame prep: the overlay wants the
+pane's metrics and its sticky-row count, both derived in the paint loop today,
+so moving it means preparing those per pane first. Until then, anything new that
+reads `VisibleLine`/`LineAtPosition` outside paint inherits a one-frame lag.
+
+### TD-2026-10-24-388 — no Change Language Mode. [OPEN]
+
+The status bar's language segment (`status:language`) is inert, and nothing sets
+a buffer's language by hand: `TextViewport::language_id()` is detection only
+(path, shebang, content). VS Code's segment opens a picker of languages, and the
+choice sticks to that buffer (and offers "Configure File Association for
+'.ext'"). Wanted: a picker over the syntax registry's languages, a per-document
+override that the language memo keys on (so the LSP, the contract view and the
+highlighter all follow), and a status-segment command. Found by the QA
+2026-10-24 pass probing the status bar; TD-361 records the other inert segments.
+
+### TD-2026-10-24-387 — search view results do not follow edits. [OPEN]
+
+After a project search, an edit that moves a hit (lines inserted above it) leaves
+the result row naming the old line (`row:search/<path>:3` for a hit now on line
+5). Activating the row still lands on the moved match -- the open re-targets --
+so it is the label and the row identity that are stale, not the navigation. VS
+Code updates the open file's results live as it is edited. Wanted: the results
+of an open, edited file re-derived from its buffer (the find widget's match set
+already does this for one file), or the row marked stale until the next search.
+Found probing the search view in the QA 2026-10-24 pass.
+
+### TD-2026-10-24-386 — the file tree has no drag and drop at all. [OPEN]
+
+Extends TD-359. A press on a tree row opens it; a drag from a row does nothing
+anywhere it is released. VS Code's explorer drags in four ways: onto an editor
+group (opens it there), onto a group's edge (splits and opens it), onto a folder
+(moves it -- TD-359), and onto the terminal (types the quoted path). The tab
+strip already has the drop-zone geometry for the first two (`tab-drag`: a tab
+dropped on the editor's edge splits), so the tree drag should hand the same
+`TabDrag` machinery a path rather than grow a second implementation. Found by the
+QA 2026-10-24 pass, which had no tree drag to drive.
+
 ### TD-2026-10-22-380 — saving a read-only file overwrites it without a word. [OPEN — product decision]
 
 Found by the QA files pass (2026-10-22): a file made read-only (`chmod 444`),
