@@ -61,6 +61,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
     case ActionId::Colorscheme: {
       const std::optional<ColorschemeRequest> request = BuildColorschemeRequest(args);
       if (!request.has_value()) {
+        // Bare (the palette's Color Theme…, Ctrl+K Ctrl+T): pick one, as VS Code does.
+        context_.OpenColorThemePicker();
         return DispatchResult::Handled;
       }
       if (request->list) {

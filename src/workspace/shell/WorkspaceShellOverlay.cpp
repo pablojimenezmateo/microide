@@ -32,6 +32,12 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
   if (context_.current_project_state.surface.focus != FocusTarget::Overlay) {
     context_.current_project_state.overlay.opened_from = context_.current_project_state.surface.focus;
   }
+  // A quick pick another overlay replaces is cancelled: its preview (a theme)
+  // goes back, as Escape would have done.
+  if (context_.current_project_state.overlay.visible &&
+      context_.current_project_state.overlay.mode == OverlayMode::QuickPick && mode != OverlayMode::QuickPick) {
+    quick_pick_service_.Cancel();
+  }
   context_.current_project_state.overlay.visible = true;
   context_.current_project_state.overlay.mode = mode;
   if (mode == OverlayMode::Completion) {
@@ -75,6 +81,11 @@ void WorkspaceShell::ShowOverlay(OverlayMode mode) {
 void WorkspaceShell::DismissOverlay(bool focus_editor) {
   RequestOverlayRedraw();
   InvalidateCursorKindFingerprint();
+  // Escape or a click outside: what the pick previewed goes back. After Enter
+  // there is nothing to restore (Accept ends the preview).
+  if (context_.current_project_state.overlay.mode == OverlayMode::QuickPick) {
+    quick_pick_service_.Cancel();
+  }
   const bool preserve_buffer_search_expansions =
       context_.current_project_state.overlay.mode == OverlayMode::BufferSearch &&
       focus_editor;
@@ -178,8 +189,8 @@ std::size_t WorkspaceShell::OverlayItemCount() const {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       return context_.current_project_state.overlay.workflow.compare_picker.matches.size();
-    case OverlayMode::LaunchConfigPicker:
-      return context_.current_project_state.overlay.workflow.launch_config_picker.matches.size();
+    case OverlayMode::QuickPick:
+      return context_.current_project_state.overlay.workflow.quick_pick.matches.size();
     case OverlayMode::CommandPalette:
       return context_.current_project_state.overlay.workflow.command_palette.matches.size();
     case OverlayMode::BufferSearch:
@@ -201,8 +212,8 @@ std::size_t WorkspaceShell::OverlaySelectedIndex() const {
   switch (context_.current_project_state.overlay.mode) {
     case OverlayMode::CommitPicker:
       return context_.current_project_state.overlay.workflow.compare_picker.selected_index;
-    case OverlayMode::LaunchConfigPicker:
-      return context_.current_project_state.overlay.workflow.launch_config_picker.selected_index;
+    case OverlayMode::QuickPick:
+      return context_.current_project_state.overlay.workflow.quick_pick.selected_index;
     case OverlayMode::CommandPalette:
       return context_.current_project_state.overlay.workflow.command_palette.selected_index;
     case OverlayMode::BufferSearch:
@@ -230,9 +241,10 @@ void WorkspaceShell::SetOverlaySelectedIndex(std::size_t index) {
     case OverlayMode::CommitPicker:
       context_.current_project_state.overlay.workflow.compare_picker.selected_index = clamped_index;
       break;
-    case OverlayMode::LaunchConfigPicker:
-      context_.current_project_state.overlay.workflow.launch_config_picker.selected_index =
+    case OverlayMode::QuickPick:
+      context_.current_project_state.overlay.workflow.quick_pick.selected_index =
           clamped_index;
+      quick_pick_service_.SelectionChanged();
       break;
     case OverlayMode::CommandPalette:
       context_.current_project_state.overlay.workflow.command_palette.selected_index =
@@ -295,8 +307,8 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       // just opened (matches the FileFinder / BufferSearch activation paths below).
       DismissOverlay(true);
       return true;
-    case OverlayMode::LaunchConfigPicker:
-      ConfirmLaunchConfigSelection();
+    case OverlayMode::QuickPick:
+      quick_pick_service_.Accept();
       DismissOverlay(true);
       return true;
     case OverlayMode::CommandPalette:

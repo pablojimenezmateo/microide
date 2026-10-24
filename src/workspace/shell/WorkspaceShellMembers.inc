@@ -1007,9 +1007,6 @@
   void OpenSelectedCompareCommit();
   // Launch-config picker (Phase 9): open the fuzzy picker over the project's launch
   // configs, re-filter on query change, and start a session for the chosen config.
-  void OpenLaunchConfigPicker();
-  void RefreshLaunchConfigPicker();
-  void ConfirmLaunchConfigSelection();
   // Open the command palette, optionally pre-filling the query (e.g. "project-open ") so the
   // user only types the argument. The palette is also the command-line surface: typing a
   // verb + arguments and pressing Enter runs it via the shared command executor.
@@ -2256,6 +2253,7 @@
   SaveFormatterService save_formatter_service_;
   project::FileReadService file_read_service_;
   SettingsOverlayService settings_overlay_service_;
+  QuickPickService quick_pick_service_;
   // Terminal find bar. All of its state, scanning, and match navigation live in
   // the service; what stays here are the two input entry points, which have to
   // run ahead of the terminal's own key/mouse handling because the bar floats

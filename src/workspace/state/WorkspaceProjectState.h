@@ -63,7 +63,7 @@ enum class OverlayMode {
   BufferReplace,
   ProjectSearch,
   CommitPicker,
-  LaunchConfigPicker,
+  QuickPick,
   CommandPalette,
   Completion,
   CodeActions,
@@ -79,7 +79,7 @@ inline bool OverlayIsQuickOpen(OverlayMode mode) {
     case OverlayMode::FileFinder:
     case OverlayMode::ProjectSearch:
     case OverlayMode::CommitPicker:
-    case OverlayMode::LaunchConfigPicker:
+    case OverlayMode::QuickPick:
     case OverlayMode::CommandPalette:
       return true;
     default:
@@ -371,23 +371,37 @@ struct ComparePickerState {
   std::uint64_t active_request_generation = 0;
 };
 
-// One selectable row in the launch-config picker (Phase 9). `config_index` points
-// back into ProjectWorkspaceState.launch_configs; display strings are precomputed
-// when the list is built so the render TU only draws them.
-struct LaunchConfigPickerItem {
-  std::size_t config_index = 0;
-  std::string primary_label;    // launch config name (left column)
-  std::string secondary_label;  // "type · request" (muted, right column)
+// The quick pick: a titled list with a filter field over items one kind of
+// command acts on (VS Code's QuickPick). The kind decides what Enter does, what
+// moving the selection previews, and what Escape puts back; QuickPickService
+// builds, filters and dispatches. Display strings are precomputed when the list
+// is built so the render TU only draws them.
+enum class QuickPickKind : std::uint8_t {
+  LaunchConfig,  // start debugging with ProjectWorkspaceState.launch_configs[index]
+  ColorTheme,    // apply the colour scheme `value`, previewed as the selection moves
+};
+
+struct QuickPickItem {
+  std::size_t index = 0;        // what the kind indexes (a launch config)
+  std::string value;            // what the kind names (a colour scheme)
+  std::string primary_label;    // left column
+  std::string secondary_label;  // muted, right column
   std::string search_text;      // lowercased "primary secondary", built once for filtering
 };
 
-struct LaunchConfigPickerState {
-  std::string title = "Select Launch Configuration";
-  std::string summary_line;  // "<matches> of <total>" precomputed on refresh
+struct QuickPickState {
+  QuickPickKind kind = QuickPickKind::LaunchConfig;
+  std::string title;
+  std::string noun = "items";  // the summary's "<matches> of <total> <noun>"
+  std::string summary_line;    // precomputed on refresh
   editor::SingleLineEditor query;
-  std::vector<LaunchConfigPickerItem> items;
-  std::vector<LaunchConfigPickerItem> matches;
+  std::vector<QuickPickItem> items;
+  std::vector<QuickPickItem> matches;
   std::size_t selected_index = 0;
+  // What Escape restores after the kind previewed a selection (the colour scheme
+  // in use when the pick opened); empty once accepted or for a kind with no
+  // preview.
+  std::string revert_value;
 };
 
 // One extra edit a completion item carries (LSP `additionalTextEdits`), applied
@@ -547,7 +561,7 @@ struct OverlayWorkflowState {
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
-  LaunchConfigPickerState launch_config_picker;
+  QuickPickState quick_pick;
   CommandPaletteState command_palette;
   CompletionSessionState completion;
   CodeActionSessionState code_actions;

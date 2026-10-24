@@ -483,7 +483,7 @@ def flow_debug_commands(app: q.App) -> None:
     _palette(app, "Select Launch Configuration")
     overlay = app.ui()["overlay"]
     rows = [e.get("label") for e in app.elements("overlay-row")]
-    app.expect(overlay.get("mode") == "launch-config-picker" and "taskflow (QA)" in rows,
+    app.expect(overlay.get("mode") == "quick-pick" and "taskflow (QA)" in rows,
                f"the picker lists the plugin's configuration ({overlay.get('mode')}, {rows})")
     app.key("Return")
     if not app.wait_until(lambda: _state(app).get("stopped"), 40.0, "the picked configuration to stop at line 12"):

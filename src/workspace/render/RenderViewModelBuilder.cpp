@@ -899,8 +899,8 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     switch (overlay.mode) {
       case OverlayMode::CommitPicker:
         return overlay.workflow.compare_picker.matches.size();
-      case OverlayMode::LaunchConfigPicker:
-        return overlay.workflow.launch_config_picker.matches.size();
+      case OverlayMode::QuickPick:
+        return overlay.workflow.quick_pick.matches.size();
       case OverlayMode::CommandPalette:
         return overlay.workflow.command_palette.matches.size();
       case OverlayMode::ProjectSearch:
@@ -918,8 +918,8 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     switch (overlay.mode) {
       case OverlayMode::CommitPicker:
         return overlay.workflow.compare_picker.selected_index;
-      case OverlayMode::LaunchConfigPicker:
-        return overlay.workflow.launch_config_picker.selected_index;
+      case OverlayMode::QuickPick:
+        return overlay.workflow.quick_pick.selected_index;
       case OverlayMode::CommandPalette:
         return overlay.workflow.command_palette.selected_index;
       case OverlayMode::ProjectSearch:
@@ -1078,12 +1078,12 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       });
       break;
     }
-    case OverlayMode::LaunchConfigPicker: {
-      const LaunchConfigPickerState& picker = overlay.workflow.launch_config_picker;
+    case OverlayMode::QuickPick: {
+      const QuickPickState& picker = overlay.workflow.quick_pick;
       compose_scratch = FormatEmptyState("matching launch configurations");
       fill_picker_chrome(
           picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
-          std::string_view{}, picker.query, TextInputSurface::LaunchConfigPicker,
+          std::string_view{}, picker.query, TextInputSurface::QuickPick,
           picker.summary_line, /*summary_stable=*/true, compose_scratch,
           /*empty_label_stable=*/false);
       emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
@@ -1210,8 +1210,8 @@ TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const 
       .project_search_edit_buffer =
           &context_.current_project_state.overlay.workflow.project_search.edit_buffer,
       .commit_picker_query = &context_.current_project_state.overlay.workflow.compare_picker.query,
-      .launch_config_picker_query =
-          &context_.current_project_state.overlay.workflow.launch_config_picker.query,
+      .quick_pick_query =
+          &context_.current_project_state.overlay.workflow.quick_pick.query,
       .command_palette_query =
           &context_.current_project_state.overlay.workflow.command_palette.query,
       .file_finder_query = &context_.current_project_state.file_finder.query_state(),
@@ -1712,7 +1712,7 @@ HoverPopupViewModel RenderViewModelBuilder::BuildHoverPopup(bool has_active_targ
       case OverlayMode::FileFinder:
       case OverlayMode::ProjectSearch:
       case OverlayMode::CommitPicker:
-      case OverlayMode::LaunchConfigPicker:
+      case OverlayMode::QuickPick:
       case OverlayMode::CommandPalette:
         list_overlay = true;
         break;

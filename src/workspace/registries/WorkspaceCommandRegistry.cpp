@@ -60,7 +60,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::CancelSaveWait, "cancel-save-wait", "cancel-save-wait <id>",
                  "Cancel Saving Before Quit/Close", ""},
       ActionSpec{ActionId::Colorscheme, "colorscheme", "colorscheme [name|list]",
-                 "Colorscheme", ""},
+                 "Color Theme…", "Ctrl+K Ctrl+T"},
       ActionSpec{ActionId::ToggleColorTheme, "toggle-theme", "toggle-theme",
                  "Toggle Light/Dark Theme", ""},
       // No default chord: VS Code binds this to F11, but F11 is already

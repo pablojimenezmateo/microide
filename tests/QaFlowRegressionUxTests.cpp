@@ -582,6 +582,28 @@ void TestTheColourSchemeSettingOffersEveryScheme() {
          "stepping the row walks the schemes, saw " + std::to_string(seen.size()));
 }
 
+// TD-2026-10-18-363: no colour-theme picker; a scheme could be applied only by
+// name. Ctrl+K Ctrl+T (a bare `colorscheme`, the palette's Color Theme…) opens a
+// quick pick of the schemes that previews each as the selection moves (VS Code),
+// puts the one in use back on Escape and keeps the chosen one on Enter.
+void TestTheColorThemePickPreviewsRevertsAndApplies() {
+  UxFixture fixture("theme.txt", "x\n");
+  auto active = [&] { return TestAccess::GetSettingValue(fixture.shell, "editor.colorscheme").value_or(""); };
+  auto overlay = [&] { return TestAccess::ControlUi(fixture.shell)["overlay"]; };
+  Expect(active() == "default", "the default scheme is in use");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_K, SDL_KMOD_CTRL), KeyDownEvent(SDLK_T, SDL_KMOD_CTRL)});
+  Expect(overlay()["visible"].AsBool() && overlay()["mode"].AsString() == "quick-pick" &&
+             overlay()["kind"].AsString() == "color-theme",
+         "Ctrl+K Ctrl+T opens the theme pick");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("light")});
+  Expect(active() == "light", "typing a filter previews its top match, got " + active());
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_ESCAPE)});
+  Expect(!overlay()["visible"].AsBool() && active() == "default", "Escape puts the scheme back, got " + active());
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "colorscheme"), "a bare colorscheme opens the pick too");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("light"), KeyDownEvent(SDLK_RETURN)});
+  Expect(!overlay()["visible"].AsBool() && active() == "light", "Enter keeps the chosen scheme, got " + active());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -600,6 +622,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/TheColorThemePickPreviewsRevertsAndApplies",
+          TestTheColorThemePickPreviewsRevertsAndApplies);
   AddTest(tests, "QaFlowRegressionUx/TheColourSchemeSettingOffersEveryScheme",
           TestTheColourSchemeSettingOffersEveryScheme);
   AddTest(tests, "QaFlowRegressionUx/TheFinderCommandsArgumentIsAQuery", TestTheFinderCommandsArgumentIsAQuery);

@@ -326,7 +326,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .refresh_compare_picker = [this]() { RefreshComparePicker(); },
-          .refresh_launch_config_picker = [this]() { RefreshLaunchConfigPicker(); },
+          .refresh_quick_pick = [this]() { quick_pick_service_.Refilter(); },
           .refresh_command_palette = [this]() { RefreshCommandPalette(); },
           .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },

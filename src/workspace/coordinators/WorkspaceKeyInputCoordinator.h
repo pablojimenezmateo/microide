@@ -110,6 +110,8 @@ class KeyInputCoordinator {
     std::function<void()> close_sidebar;
     std::function<SidebarMode()> active_sidebar_mode;
     std::function<void()> activate_overlay_selection;
+    // The quick pick's selection moved: the kind previews it (a colour theme).
+    std::function<void()> quick_pick_selection_changed;
     std::function<void()> complete_command_palette_query;
     std::function<void(int)> move_compare_picker_selection;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;

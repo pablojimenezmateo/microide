@@ -449,7 +449,45 @@ def flow_settings_persist(app: q.App) -> None:
     step(app, "defaults again", 0.3)
 
 
+def flow_color_theme_pick(app: q.App) -> None:
+    """Ctrl+K Ctrl+T opens a pick of the colour themes (TD-2026-10-18-363): moving
+    the selection previews each, Escape puts the one in use back, Enter keeps the
+    chosen one, and View > Color Theme… opens the same pick."""
+    def current() -> str:
+        return str(_value(app, "editor.colorscheme"))
+
+    before = current()
+    # From the editor: a focused terminal gives Ctrl+K to the shell (kill-line).
+    app.send("focus", "editor")
+    app.key("ctrl+k")
+    app.key("ctrl+t")
+    step(app, "ctrl+k ctrl+t", 0.3)
+    overlay = app.ui()["overlay"]
+    app.expect(overlay.get("visible") and overlay.get("mode") == "quick-pick" and overlay.get("kind") == "color-theme"
+               and overlay.get("count", 0) >= 2, f"the theme pick opens with the schemes ({overlay})")
+    app.key("Down")
+    step(app, "down: preview the next theme", 0.3)
+    previewed = current()
+    app.expect(previewed != before, f"moving the selection previews another theme ({before} -> {previewed})")
+    app.key("Escape")
+    step(app, "escape", 0.3)
+    app.expect(current() == before, f"Escape puts {before} back ({current()})")
+    app.click_named("menu:View")
+    step(app, "View menu", 0.3)
+    app.click_named("menu-item:View/Color Theme…")
+    step(app, "View > Color Theme…", 0.3)
+    app.expect(app.ui()["overlay"].get("kind") == "color-theme", "the View menu opens the same pick")
+    app.type("light")
+    app.key("Return")
+    step(app, "pick light", 0.4)
+    app.expect(current() == "light" and not app.ui()["overlay"].get("visible"),
+               f"Enter keeps the chosen theme ({current()})")
+    app.send("colorscheme", before or "default")
+    step(app, "restore the theme", 0.3)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
+    "color-theme-pick": flow_color_theme_pick,
     "settings-sweep": flow_settings_sweep,
     "settings-controls": flow_settings_controls,
     "settings-persist": flow_settings_persist,

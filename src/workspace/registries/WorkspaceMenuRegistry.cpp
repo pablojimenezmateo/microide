@@ -174,6 +174,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::UiScale, "Reset Zoom", "Ctrl+0",
                std::array<std::string_view, 2>{"reset", {}}, 1),
       MenuSeparator(),
+      MenuItem(ActionId::Colorscheme),
       MenuItem(ActionId::ToggleColorTheme),
       MenuItem(ActionId::ToggleFullscreen),
   });

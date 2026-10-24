@@ -642,6 +642,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+L` | Select the current line (each press adds the next line) |
 | `Ctrl+]` / `Ctrl+[` | Indent / outdent the caret's line or the selected lines |
 | `Alt+z` | Toggle word wrap |
+| `Ctrl+K Ctrl+T` | Pick a colour theme (View > Color Theme…): each previews as the selection moves, Escape puts the old one back |
 | `Ctrl+\` | Split the editor right |
 | `F9` | Toggle a breakpoint on the caret's line (debugger enabled) |
 | `F8` / `Shift+F8` | Next / previous problem across files (opens the file; wraps; the message shows as a toast) |

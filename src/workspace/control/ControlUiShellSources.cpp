@@ -48,7 +48,7 @@ const editor::SingleLineEditor* OverlayQueryEditor(const ProjectWorkspaceState& 
     case OverlayMode::FileFinder: return &state.file_finder.query_state();
     case OverlayMode::ProjectSearch: return &workflow.project_search.query;
     case OverlayMode::CommitPicker: return &workflow.compare_picker.query;
-    case OverlayMode::LaunchConfigPicker: return &workflow.launch_config_picker.query;
+    case OverlayMode::QuickPick: return &workflow.quick_pick.query;
     case OverlayMode::CommandPalette: return &workflow.command_palette.query;
     case OverlayMode::BufferSearch:
     case OverlayMode::BufferReplace: return &workflow.buffer_search.query;
@@ -1020,6 +1020,11 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
             if (state.overlay.visible) {
               util::JsonObject& overlay = std::get<util::JsonObject>(root["overlay"].v);
               overlay["count"] = util::JsonValue(static_cast<std::int64_t>(OverlayItemCount()));
+              if (state.overlay.mode == OverlayMode::QuickPick) {
+                overlay["kind"] = util::JsonValue(std::string(
+                    state.overlay.workflow.quick_pick.kind == QuickPickKind::ColorTheme ? "color-theme"
+                                                                                       : "launch-config"));
+              }
               overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));
               if (const editor::SingleLineEditor* query = OverlayQueryEditor(state); query != nullptr) {
                 overlay["query"] = util::JsonValue(query->text());

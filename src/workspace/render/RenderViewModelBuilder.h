@@ -204,7 +204,7 @@ struct TextInputSurfaceViewModel {
   const editor::SingleLineEditor* project_search_query = nullptr;
   const editor::SingleLineEditor* project_search_edit_buffer = nullptr;
   const editor::SingleLineEditor* commit_picker_query = nullptr;
-  const editor::SingleLineEditor* launch_config_picker_query = nullptr;
+  const editor::SingleLineEditor* quick_pick_query = nullptr;
   const editor::SingleLineEditor* command_palette_query = nullptr;
   const editor::SingleLineEditor* file_finder_query = nullptr;
 };

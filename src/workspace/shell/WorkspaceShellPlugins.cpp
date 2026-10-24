@@ -142,6 +142,31 @@ WorkspaceShell::WorkspaceShell() {
   InitializeGitOperationService();
   virtual_document_registry_.SetOnChange(
       [this](const std::string& uri) { ReloadVirtualDocumentTabs(uri); });
+  quick_pick_service_.Configure(
+      context_.current_project_state.overlay.workflow.quick_pick,
+      QuickPickService::Operations{
+          .show_overlay = [this]() { ShowOverlay(OverlayMode::QuickPick); },
+          .list_changed =
+              [this]() {
+                ResetOverlayScroll();
+                RequestOverlayRedraw();
+              },
+          .start_launch_config =
+              [this](std::size_t index) {
+                ProjectWorkspaceState& state = context_.current_project_state;
+                if (index >= state.launch_configs.size()) {
+                  return;
+                }
+                // Remembered, so Start Debugging and a restart reuse it.
+                state.selected_launch_config_index = index;
+                StartDebugging(state.launch_configs[index], state.root.generic_string());
+              },
+          .apply_colorscheme =
+              [this](std::string_view name, bool persist) {
+                (void)MakePersistenceCoordinator().ApplyColorscheme(name, persist, false);
+                RequestWindowRedraw();
+              },
+      });
   tab_strip_chrome_.Configure(
       context_, tab_strip_service_, layout_mode_service_, output_channels_,
       WorkspaceTabStripChrome::Operations{

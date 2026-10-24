@@ -886,7 +886,7 @@ void TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField() {
       Surface::PromptInput,         Surface::FileFinder,
       Surface::BufferSearch,        Surface::BufferReplaceSearch,
       Surface::BufferReplaceReplace, Surface::ProjectSearchOverlay,
-      Surface::CommitPicker,        Surface::LaunchConfigPicker,
+      Surface::CommitPicker,        Surface::QuickPick,
       Surface::CommandPalette,      Surface::SidebarSearchQuery,
       Surface::SidebarSearchReplace, Surface::SidebarSearchInclude,
       Surface::SidebarSearchExclude, Surface::CommitSubject,

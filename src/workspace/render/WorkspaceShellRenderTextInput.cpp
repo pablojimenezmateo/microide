@@ -33,7 +33,7 @@ bool UsesSharedSingleLineCaret(TextInputSurface surface) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -240,7 +240,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
     case TextInputSurface::FileFinder:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette: {
       if (!overlay_vm.visible) {
         return std::nullopt;
@@ -269,9 +269,9 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildActiveTextIn
           vm = ComputeSingleLineViewMetrics(*text_input_vm.commit_picker_query, "> ",
                                             available_width);
           break;
-        case TextInputSurface::LaunchConfigPicker:
+        case TextInputSurface::QuickPick:
           text_y = overlay_field_text_y(overlay.y + 52.0f);
-          vm = ComputeSingleLineViewMetrics(*text_input_vm.launch_config_picker_query, "> ",
+          vm = ComputeSingleLineViewMetrics(*text_input_vm.quick_pick_query, "> ",
                                             available_width);
           break;
         case TextInputSurface::CommandPalette:

@@ -15,7 +15,7 @@ enum class TextInputSurface {
   ProjectSearchOverlay,
   CommitPicker,
   // Launch-config picker query field (Phase 9).
-  LaunchConfigPicker,
+  QuickPick,
   // Command palette query field (fuzzy command search).
   CommandPalette,
   SidebarSearchQuery,
@@ -90,7 +90,7 @@ inline bool IsSingleLineTextInputSurface(TextInputSurface surface) {
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:

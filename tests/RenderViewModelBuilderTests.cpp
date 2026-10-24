@@ -1044,7 +1044,7 @@ void TestEmptyPickerStatesAreNotStatedTwice() {
       OverlayMode::FileFinder,
       OverlayMode::CommandPalette,
       OverlayMode::CommitPicker,
-      OverlayMode::LaunchConfigPicker,
+      OverlayMode::QuickPick,
   });
   TextRenderer text_renderer;
   const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,

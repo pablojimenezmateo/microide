@@ -529,66 +529,6 @@ std::string WorkspaceShell::StartAdHocDebug(const std::string& program,
   return {};
 }
 
-void WorkspaceShell::OpenLaunchConfigPicker() {
-  LaunchConfigPickerState& picker =
-      context_.current_project_state.overlay.workflow.launch_config_picker;
-  picker.query.SetText("");
-  picker.items.clear();
-  const std::vector<LaunchConfig>& configs = context_.current_project_state.launch_configs;
-  picker.items.reserve(configs.size());
-  for (std::size_t i = 0; i < configs.size(); ++i) {
-    const LaunchConfig& config = configs[i];
-    std::string secondary = config.type;
-    if (!config.request.empty()) {
-      secondary += " · " + config.request;
-    }
-    std::string primary = config.name.empty() ? config.type : config.name;
-    std::string search_text = util::ToLowerAscii(primary + " " + secondary);
-    picker.items.push_back(LaunchConfigPickerItem{
-        .config_index = i,
-        .primary_label = std::move(primary),
-        .secondary_label = std::move(secondary),
-        .search_text = std::move(search_text),
-    });
-  }
-  RefreshLaunchConfigPicker();
-  ShowOverlay(OverlayMode::LaunchConfigPicker);
-}
-
-void WorkspaceShell::RefreshLaunchConfigPicker() {
-  LaunchConfigPickerState& picker =
-      context_.current_project_state.overlay.workflow.launch_config_picker;
-  picker.matches.clear();
-  picker.selected_index = 0;
-  const std::string query = util::ToLowerAscii(picker.query.text());
-  for (const LaunchConfigPickerItem& item : picker.items) {
-    if (!query.empty() && item.search_text.find(query) == std::string::npos) {
-      continue;
-    }
-    picker.matches.push_back(item);
-  }
-  picker.summary_line = BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
-                                                  "configurations");
-  ResetOverlayScroll();
-  RequestOverlayRedraw();
-}
-
-void WorkspaceShell::ConfirmLaunchConfigSelection() {
-  LaunchConfigPickerState& picker =
-      context_.current_project_state.overlay.workflow.launch_config_picker;
-  if (picker.matches.empty() || picker.selected_index >= picker.matches.size()) {
-    return;
-  }
-  const std::size_t config_index = picker.matches[picker.selected_index].config_index;
-  const std::vector<LaunchConfig>& configs = context_.current_project_state.launch_configs;
-  if (config_index >= configs.size()) {
-    return;
-  }
-  // Persist the selection (so Start Debugging / restart reuse it) and launch.
-  context_.current_project_state.selected_launch_config_index = config_index;
-  StartDebugging(configs[config_index], context_.current_project_state.root.generic_string());
-}
-
 void WorkspaceShell::StopDebugging() {
   // Stops the active session. Only close the debug pane when this was the last
   // live session; with others remaining, the pane stays (re-projected by the

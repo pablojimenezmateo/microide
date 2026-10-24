@@ -119,8 +119,8 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
         return TextInputSurface::ProjectSearchOverlay;
       case OverlayMode::CommitPicker:
         return TextInputSurface::CommitPicker;
-      case OverlayMode::LaunchConfigPicker:
-        return TextInputSurface::LaunchConfigPicker;
+      case OverlayMode::QuickPick:
+        return TextInputSurface::QuickPick;
       case OverlayMode::CommandPalette:
         return TextInputSurface::CommandPalette;
       case OverlayMode::Completion:

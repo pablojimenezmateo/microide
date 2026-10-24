@@ -81,7 +81,7 @@ std::string_view ControlUiOverlayModeName(OverlayMode mode) {
     case OverlayMode::BufferReplace: return "buffer-replace";
     case OverlayMode::ProjectSearch: return "project-search";
     case OverlayMode::CommitPicker: return "commit-picker";
-    case OverlayMode::LaunchConfigPicker: return "launch-config-picker";
+    case OverlayMode::QuickPick: return "quick-pick";
     case OverlayMode::CommandPalette: return "command-palette";
     case OverlayMode::Completion: return "completion";
     case OverlayMode::CodeActions: return "code-actions";

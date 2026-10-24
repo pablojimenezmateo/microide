@@ -217,11 +217,11 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         }
         break;
       }
-      case OverlayMode::LaunchConfigPicker: {
+      case OverlayMode::QuickPick: {
         const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
-          return FilledHit(TextInputSurface::LaunchConfigPicker, r, "> ",
-                           &state.overlay.workflow.launch_config_picker.query);
+          return FilledHit(TextInputSurface::QuickPick, r, "> ",
+                           &state.overlay.workflow.quick_pick.query);
         }
         break;
       }
@@ -375,7 +375,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     case TextInputSurface::BufferSearch:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:
       context_.current_project_state.surface.focus = FocusTarget::Overlay;
       break;
@@ -438,7 +438,7 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
     case TextInputSurface::BufferReplaceReplace:
     case TextInputSurface::ProjectSearchOverlay:
     case TextInputSurface::CommitPicker:
-    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::QuickPick:
     case TextInputSurface::CommandPalette:
     case TextInputSurface::SidebarSearchQuery:
     case TextInputSurface::SidebarSearchReplace:
@@ -493,10 +493,10 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
                             &proj.overlay.workflow.compare_picker.query);
           }
           break;
-        case TextInputSurface::LaunchConfigPicker:
+        case TextInputSurface::QuickPick:
           if (proj.overlay.visible) {
             hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
-                            &proj.overlay.workflow.launch_config_picker.query);
+                            &proj.overlay.workflow.quick_pick.query);
           }
           break;
         case TextInputSurface::CommandPalette:

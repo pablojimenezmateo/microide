@@ -1256,7 +1256,7 @@ which the fast build hid, and an Alt+click that added no caret in
 `edit-multi-cursor`, not yet explained). Running the suite once per change on a
 slow build (coverage or ASan) is a cheap race detector worth keeping.
 
-### TD-2026-10-18-363 — no colour-theme picker. [OPEN]
+### TD-2026-10-18-363 — no colour-theme picker. [RESOLVED 2026-10-25]
 
 Found writing the QA `plugins-ui` flow: VS Code's Ctrl+K Ctrl+T opens a picker of
 every colour theme (built-in and extension-contributed) that previews each as the
@@ -1264,6 +1264,17 @@ selection moves. Here a scheme is applied by name (`colorscheme <name>`; `list`
 names them since 2026-10-18), Toggle Light/Dark flips between two, and a plugin's
 scheme cannot be found without its name. The palette-as-picker idea in
 TD-2026-10-18-360 (rows that run an action with arguments) would serve this too.
+
+**Resolved:** the launch-configuration picker became the generic quick pick
+(`OverlayMode::QuickPick`, `QuickPickState` with a `QuickPickKind`, and
+`QuickPickService`: building, filtering with exact and prefix matches first, and
+each kind's preview / accept / cancel). The colour-theme pick is its second kind:
+Ctrl+K Ctrl+T, a bare `colorscheme`, View > Color Theme… and the palette's Color
+Theme… open it over every scheme (bundled and plugin), moving the selection or
+typing a filter previews, Escape -- or another overlay taking over -- puts the
+scheme in use back, Enter keeps and persists the choice. `ui` names the pick's
+`kind`. `QaFlowRegressionUx/TheColorThemePickPreviewsRevertsAndApplies`; QA
+`color-theme-pick`. TD-2026-10-18-360/356/357 are the next kinds.
 
 ### TD-2026-10-18-362 — two monkey stale frames that do not replay; no Show Hover by keyboard. [OPEN]
 

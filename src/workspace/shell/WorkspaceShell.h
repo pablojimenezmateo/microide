@@ -84,6 +84,7 @@
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/persistence/PersistenceService.h"
 #include "workspace/persistence/RecentsService.h"
+#include "workspace/services/QuickPickService.h"
 #include "workspace/services/SettingsOverlayService.h"
 #include "workspace/persistence/SettingsStore.h"
 #include "workspace/services/StatusBarModelService.h"

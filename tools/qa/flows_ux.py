@@ -758,7 +758,7 @@ def flow_debug_keys(app: q.App) -> None:
 
     app.key("F5")
     step(app, "F5", 0.6)
-    if app.ui()["overlay"].get("mode") == "launch-config-picker" or app.elements("overlay-row"):
+    if app.ui()["overlay"].get("mode") == "quick-pick" or app.elements("overlay-row"):
         app.key("Return")
         step(app, "pick the launch configuration", 0.5)
     app.wait_until(lambda: _state(app).get("stopped") and _state(app).get("line") == 19, 40.0,

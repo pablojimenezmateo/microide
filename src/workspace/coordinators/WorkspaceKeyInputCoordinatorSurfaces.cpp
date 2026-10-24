@@ -238,8 +238,8 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     return operations_.text_input_handle_single_line_key_down(event, modifiers);
   }
 
-  if (state_.overlay.mode == OverlayMode::LaunchConfigPicker) {
-    auto& picker = state_.overlay.workflow.launch_config_picker;
+  if (state_.overlay.mode == OverlayMode::QuickPick) {
+    auto& picker = state_.overlay.workflow.quick_pick;
     if (event.key == SDLK_ESCAPE) {
       operations_.dismiss_overlay(false);
       return true;
@@ -250,6 +250,9 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
     }
     if (nav_delta.has_value()) {
       MoveOverlayListSelection(picker.selected_index, picker.matches.size(), *nav_delta);
+      if (operations_.quick_pick_selection_changed) {
+        operations_.quick_pick_selection_changed();
+      }
       return true;
     }
     return operations_.text_input_handle_single_line_key_down(event, modifiers);

@@ -26,7 +26,7 @@ class TextInputCoordinator {
     std::function<void()> request_focused_editor_redraw;
     std::function<void()> request_window_redraw;
     std::function<void()> refresh_compare_picker;
-    std::function<void()> refresh_launch_config_picker;
+    std::function<void()> refresh_quick_pick;
     std::function<void()> refresh_command_palette;
     std::function<void()> refresh_buffer_search;
     std::function<void()> refresh_project_search;

@@ -15,7 +15,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
         (state_.overlay.visible &&
          (state_.overlay.mode == OverlayMode::FileFinder ||
           state_.overlay.mode == OverlayMode::CommitPicker ||
-          state_.overlay.mode == OverlayMode::LaunchConfigPicker ||
+          state_.overlay.mode == OverlayMode::QuickPick ||
           state_.overlay.mode == OverlayMode::CommandPalette ||
           state_.overlay.mode == OverlayMode::BufferSearch ||
           state_.overlay.mode == OverlayMode::BufferReplace ||
@@ -189,6 +189,10 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
                                           {}, ActionSource::Shortcut);
       }
       if (chord_mod == SDL_KMOD_CTRL) {
+        if (event.key == SDLK_T) {
+          // VS Code's Color Theme pick (a bare `colorscheme`).
+          return operations_.execute_action(ActionId::Colorscheme, {}, ActionSource::Shortcut);
+        }
         if (event.key == SDLK_O) {
           // File > Open Folder / Project Tab… advertises Ctrl+K Ctrl+O (VS Code's
           // chord for the same command); the leader handler used to implement only

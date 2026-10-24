@@ -228,6 +228,12 @@ void WorkspaceActionContext::OpenLaunchConfigPicker() {
   }
 }
 
+void WorkspaceActionContext::OpenColorThemePicker() {
+  if (operations_.open_color_theme_picker) {
+    operations_.open_color_theme_picker();
+  }
+}
+
 void WorkspaceActionContext::OpenCommandPalette(std::string seed) {
   if (operations_.open_command_palette) {
     operations_.open_command_palette(std::move(seed));
@@ -1229,7 +1235,17 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .debug_switch_session = [this](int index) { DebugSwitchSession(index); },
           .stop_all_debug_sessions = [this]() { StopAllDebugSessions(); },
           .open_debug_repl_prompt = [this]() { OpenDebugReplPrompt(); },
-          .open_launch_config_picker = [this]() { OpenLaunchConfigPicker(); },
+          .open_launch_config_picker =
+              [this]() {
+                quick_pick_service_.Open(
+                    QuickPickService::LaunchConfigs(context_.current_project_state.launch_configs));
+              },
+          .open_color_theme_picker =
+              [this]() {
+                MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
+                quick_pick_service_.Open(QuickPickService::ColorThemes(
+                    available_colorscheme_names_, context_.current_project_state.active_colorscheme_name));
+              },
           .open_command_palette = [this](std::string seed) { OpenCommandPalette(std::move(seed)); },
           .edit_breakpoint_modifier_from_menu =
               [this](ActionId id) { EditBreakpointModifierFromMenu(id); },

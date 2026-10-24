@@ -724,6 +724,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               [this]() {
                 ActivateOverlaySelection();
               },
+          .quick_pick_selection_changed = [this]() { quick_pick_service_.SelectionChanged(); },
           .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
           .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },

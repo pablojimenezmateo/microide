@@ -699,6 +699,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceOutputChannels.cpp
   src/workspace/services/RemoteHostService.cpp
   src/workspace/services/TerminalPanelService.cpp
+  src/workspace/services/QuickPickService.cpp
   src/workspace/services/TerminalFindService.cpp
   src/workspace/persistence/WorkspacePersistenceBinaryFormat.cpp
   src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp

@@ -95,23 +95,26 @@
                                 std::vector<microide::workspace::LaunchConfig> configs) {
     shell.context_.current_project_state.launch_configs = std::move(configs);
   }
-  static void OpenLaunchConfigPicker(WorkspaceShell& shell) { shell.OpenLaunchConfigPicker(); }
+  static void OpenLaunchConfigPicker(WorkspaceShell& shell) {
+    shell.quick_pick_service_.Open(
+        QuickPickService::LaunchConfigs(shell.context_.current_project_state.launch_configs));
+  }
   static void SetLaunchConfigPickerQuery(WorkspaceShell& shell, const std::string& query) {
-    shell.context_.current_project_state.overlay.workflow.launch_config_picker.query.SetText(query);
-    shell.RefreshLaunchConfigPicker();
+    shell.context_.current_project_state.overlay.workflow.quick_pick.query.SetText(query);
+    shell.quick_pick_service_.Refilter();
   }
   static std::vector<std::string> LaunchConfigPickerMatchLabels(const WorkspaceShell& shell) {
     std::vector<std::string> labels;
     for (const auto& match :
-         shell.context_.current_project_state.overlay.workflow.launch_config_picker.matches) {
+         shell.context_.current_project_state.overlay.workflow.quick_pick.matches) {
       labels.push_back(match.primary_label);
     }
     return labels;
   }
   static void SelectAndConfirmLaunchConfig(WorkspaceShell& shell, std::size_t match_index) {
-    shell.context_.current_project_state.overlay.workflow.launch_config_picker.selected_index =
+    shell.context_.current_project_state.overlay.workflow.quick_pick.selected_index =
         match_index;
-    shell.ConfirmLaunchConfigSelection();
+    shell.quick_pick_service_.Accept();
   }
   static std::size_t SelectedLaunchConfigIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.selected_launch_config_index;

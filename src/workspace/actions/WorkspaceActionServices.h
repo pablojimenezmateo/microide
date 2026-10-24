@@ -336,6 +336,7 @@ class WorkspaceActionContext {
     // Launch-config picker (Phase 9): open the fuzzy picker over the project's
     // launch configs.
     std::function<void()> open_launch_config_picker;
+    std::function<void()> open_color_theme_picker;
     // Open the command palette over all built-in + plugin commands, optionally pre-filling
     // the query (e.g. "project-open ") so the user only types the argument.
     std::function<void(std::string)> open_command_palette;
@@ -723,6 +724,8 @@ class WorkspaceActionContext {
   // Debug-console REPL + launch-config picker (Phase 9).
   void OpenDebugReplPrompt();
   void OpenLaunchConfigPicker();
+  // Color Theme…: a quick pick of the schemes, previewing each as it is selected.
+  void OpenColorThemePicker();
   void OpenCommandPalette(std::string seed = {});
   // Open the single-line "Go to Line" modal prompt (VSCode-style Ctrl+G).
   void OpenGoToLinePrompt();
