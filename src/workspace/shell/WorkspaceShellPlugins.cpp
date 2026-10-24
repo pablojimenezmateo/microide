@@ -380,7 +380,8 @@ WorkspaceShell::WorkspaceShell() {
           },
           .output_channels = &output_channels_,
           .plugin_command_names = [this]() { return plugin_runtime_.Host().CommandNames(); },
-          .settings = [this]() { return AllSettingInfos(plugin_runtime_.Host()); },
+          .settings =
+              [this]() { return AllSettingInfos(plugin_runtime_.Host(), available_colorscheme_names_); },
           .setting_value = [this](std::string_view id) { return GetSettingValue(id); },
       });
   assist_service_.Configure(

@@ -128,6 +128,7 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .default_float = 0.0f,
           .default_string = "default",
           .enum_values = kColorschemeValues,
+          .enum_source = SettingEnumSource::Colorschemes,
           .group = "Appearance",
       },
       SettingSpec{
@@ -1313,6 +1314,9 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
       return std::string(text);
 
     case SettingType::Enum:
+      if (spec.enum_source != SettingEnumSource::Static) {
+        return text.empty() ? std::nullopt : std::optional<SettingValue>(std::string(text));
+      }
       for (const SettingEnumValue& ev : spec.enum_values) {
         if (ev.value == text) {
           return std::string(text);
@@ -1398,7 +1402,7 @@ bool ApplyCanonicalEditorPreference(EditorPreferences& prefs, std::string_view i
 
 namespace {
 
-SettingInfo SettingInfoForBuiltin(const SettingSpec& spec) {
+SettingInfo SettingInfoForBuiltin(const SettingSpec& spec, std::span<const std::string> colorschemes) {
   SettingInfo info;
   info.id = std::string(spec.id);
   info.label = std::string(spec.label);
@@ -1408,6 +1412,10 @@ SettingInfo SettingInfoForBuiltin(const SettingSpec& spec) {
   info.default_value = DefaultSettingValue(spec);
   info.group = std::string(spec.group);
   info.suggests_fonts = spec.suggests_fonts;
+  if (spec.enum_source == SettingEnumSource::Colorschemes && !colorschemes.empty()) {
+    info.enum_values.assign(colorschemes.begin(), colorschemes.end());
+    return info;
+  }
   info.enum_values.reserve(spec.enum_values.size());
   for (const SettingEnumValue& ev : spec.enum_values) {
     info.enum_values.emplace_back(ev.value);
@@ -1459,13 +1467,14 @@ const plugin::PluginHost::ContributedSettingSpec* FindContributedSettingSpec(
 
 }  // namespace
 
-std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) {
+std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host,
+                                         std::span<const std::string> colorschemes) {
   const std::span<const SettingSpec> builtins = BuiltinSettingSpecs();
   const auto& contributions = plugin_host.ContributedSettings();
   std::vector<SettingInfo> infos;
   infos.reserve(builtins.size() + contributions.size());
   for (const SettingSpec& spec : builtins) {
-    infos.push_back(SettingInfoForBuiltin(spec));
+    infos.push_back(SettingInfoForBuiltin(spec, colorschemes));
   }
   for (const auto& contrib : contributions) {
     infos.push_back(SettingInfoForContribution(contrib));
@@ -1474,14 +1483,15 @@ std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) 
 }
 
 std::optional<SettingInfo> FindSettingInfo(std::string_view id,
-                                            const plugin::PluginHost& plugin_host) {
+                                            const plugin::PluginHost& plugin_host,
+                                            std::span<const std::string> colorschemes) {
   // Build the ONE matching info, not the whole catalogue. This used to
   // materialize every built-in and plugin setting — four strings plus an
   // enum-value vector each, ~200 settings — and then throw all but one away, on a
   // path that runs per settings write (TD-2026-08-06-159). It was 42 % of
   // `settings.apply_contract_family_all_tabs`.
   if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
-    return SettingInfoForBuiltin(*spec);
+    return SettingInfoForBuiltin(*spec, colorschemes);
   }
   if (const auto* contrib = FindContributedSettingSpec(id, plugin_host); contrib != nullptr) {
     return SettingInfoForContribution(*contrib);

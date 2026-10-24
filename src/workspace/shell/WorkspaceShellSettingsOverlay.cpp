@@ -192,7 +192,8 @@ int ClampSteppedInt(int value, int min_value, int max_value, int step, SettingSt
 
 std::string NextSettingValue(const SettingSpec& spec,
                              std::string_view current,
-                             SettingStepDirection direction) {
+                             SettingStepDirection direction,
+                             std::span<const std::string> colorschemes) {
   switch (spec.type) {
     case SettingType::Bool:
       // Use the single truthiness predicate (SettingFlagEnabled) so a value stored
@@ -201,21 +202,25 @@ std::string NextSettingValue(const SettingSpec& spec,
       return SettingFlagEnabled(std::optional<std::string>(std::string(current))) ? "false"
                                                                                   : "true";
     case SettingType::Enum: {
-      if (spec.enum_values.empty()) {
-        return std::string(current);
-      }
-      for (std::size_t i = 0; i < spec.enum_values.size(); ++i) {
-        if (spec.enum_values[i].value == current) {
-          if (direction == SettingStepDirection::Forward) {
-            return std::string(spec.enum_values[(i + 1) % spec.enum_values.size()].value);
-          }
-          return std::string(
-              spec.enum_values[(i + spec.enum_values.size() - 1) % spec.enum_values.size()].value);
+      std::vector<std::string_view> values;
+      if (spec.enum_source == SettingEnumSource::Colorschemes && !colorschemes.empty()) {
+        values.assign(colorschemes.begin(), colorschemes.end());
+      } else {
+        for (const SettingEnumValue& value : spec.enum_values) {
+          values.push_back(value.value);
         }
       }
-      return direction == SettingStepDirection::Forward
-                 ? std::string(spec.enum_values.front().value)
-                 : std::string(spec.enum_values.back().value);
+      if (values.empty()) {
+        return std::string(current);
+      }
+      const auto at = std::find(values.begin(), values.end(), current);
+      if (at == values.end()) {
+        return std::string(direction == SettingStepDirection::Forward ? values.front() : values.back());
+      }
+      const std::size_t i = static_cast<std::size_t>(at - values.begin());
+      return std::string(direction == SettingStepDirection::Forward
+                             ? values[(i + 1) % values.size()]
+                             : values[(i + values.size() - 1) % values.size()]);
     }
     case SettingType::Int: {
       const auto parsed = util::ParseInt(current);
@@ -273,6 +278,15 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
     parsed_builtin_value = ParseSettingValue(*builtin, value);
     if (!parsed_builtin_value.has_value()) {
       return false;
+    }
+    // A dynamic enum parses any name (a stored scheme may belong to a plugin not
+    // loaded yet), but a WRITE names a scheme that exists now, or is refused.
+    if (builtin->enum_source == SettingEnumSource::Colorschemes) {
+      MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
+      if (std::find(available_colorscheme_names_.begin(), available_colorscheme_names_.end(), value) ==
+          available_colorscheme_names_.end()) {
+        return false;
+      }
     }
   }
 
@@ -336,7 +350,9 @@ void WorkspaceShell::RefreshSettingsOverlayCatalog() {
   if (!settings_overlay_service_.Visible()) {
     return;
   }
-  settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host()),
+  // A theme file added since, or a plugin's, is a value the colour-scheme row offers.
+  MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
+  settings_overlay_service_.RebuildSettingsRows(AllSettingInfos(plugin_runtime_.Host(), available_colorscheme_names_),
                                                 context_.user_settings,
                                                 context_.current_project_state.settings,
                                                 BuildPluginToggleRows(plugin_runtime_.Host()));
@@ -563,8 +579,13 @@ void WorkspaceShell::ApplyCanonicalPreferenceSideEffects(std::string_view id) {
   // Colorscheme is materialized into the theme, not editor_preferences, so a
   // write/reset must apply it explicitly to update the live theme (this happens
   // before persistence so SaveConfigState records the newly-active name).
+  // The value just written, from the store: GetSettingValue answers this id from
+  // the active scheme, so it re-applied the OLD one and a Settings write of
+  // `editor.colorscheme` changed nothing (TD-2026-10-20-371). Unset (a reset) is
+  // the default scheme.
   if (id == "editor.colorscheme") {
-    coordinator.ApplyColorscheme(GetSettingValue(id).value_or("default"),
+    const std::string* stored = settings_store_.Resolve(id);
+    coordinator.ApplyColorscheme(stored != nullptr ? *stored : std::string("default"),
                                  /*persist=*/false, /*log_feedback=*/false);
   }
 }
@@ -716,7 +737,7 @@ void WorkspaceShell::StepSetting(std::string_view id, bool forward) {
   if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
     const std::string current =
         GetSettingValue(id).value_or(SerializeSettingValue(DefaultSettingValue(*spec)));
-    WriteSettingRespectingScope(id, NextSettingValue(*spec, current, direction));
+    WriteSettingRespectingScope(id, NextSettingValue(*spec, current, direction, available_colorscheme_names_));
     return;
   }
   // Plugin-contributed setting without a built-in spec: support generic Bool /

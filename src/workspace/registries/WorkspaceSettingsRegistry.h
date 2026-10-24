@@ -22,6 +22,14 @@ struct SettingEnumValue {
   std::string_view label;
 };
 
+// Where an Enum setting's values come from. Most are a static table; the colour
+// scheme's are the themes there are -- the bundled theme files and every plugin's --
+// which the registry cannot know, so its callers pass them in
+// (TD-2026-10-20-371). A dynamic enum parses any non-empty value: a scheme a
+// plugin contributes is not loaded yet when the config is read, and the apply
+// path (ApplyColorscheme) is what decides whether a name resolves.
+enum class SettingEnumSource { Static, Colorschemes };
+
 // Static descriptor for built-in settings; string_view members point into literals.
 struct SettingSpec {
   std::string_view id;
@@ -46,6 +54,7 @@ struct SettingSpec {
   float max_float = std::numeric_limits<float>::max();
   std::string_view default_string;
   std::span<const SettingEnumValue> enum_values;
+  SettingEnumSource enum_source = SettingEnumSource::Static;
   // Optional grouping path used by the Settings overlay to organize related
   // toggles into subsections. Format: "Group → Subsection" (Unicode arrow).
   // Empty when the setting belongs to no specific group (top-level list).
@@ -98,9 +107,13 @@ struct SettingInfo {
   bool suggests_fonts = false;  // see SettingSpec::suggests_fonts
 };
 
-std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host);
+// `colorschemes` fills the values of a SettingEnumSource::Colorschemes setting;
+// empty leaves its static table.
+std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host,
+                                         std::span<const std::string> colorschemes = {});
 std::optional<SettingInfo> FindSettingInfo(std::string_view id,
-                                            const plugin::PluginHost& plugin_host);
+                                            const plugin::PluginHost& plugin_host,
+                                            std::span<const std::string> colorschemes = {});
 
 // Just the scope of one setting: existence plus the one field a write path needs
 // to decide which layer it lands in. `FindSettingInfo` copies four strings and an

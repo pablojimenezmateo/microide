@@ -87,11 +87,11 @@ void PersistenceCoordinator::MaterializeCanonicalPreferences() {
                               "editor.soft_tabs", "editor.wrap"}) {
     ApplyCanonicalEditorPreference(state.editor_preferences, id, resolve(id));
   }
-  // Colorscheme is deliberately NOT materialized here: its enum spec only
-  // validates "default", real theme names (light, plugin/filesystem themes) never
-  // pass ParseSettingValue, so the theme-change command sets active_colorscheme_name
-  // directly and persists via the dedicated colorscheme_name field, not the layered
-  // store. RestoreConfigState applies that field explicitly.
+  // Colorscheme is not materialized here: it is a theme to load, not a number to
+  // copy. A write of the setting applies it (ApplyCanonicalPreferenceSideEffects),
+  // the colorscheme command applies it directly, and either way the active name is
+  // persisted in the project config's colorscheme_name field, which
+  // RestoreConfigState applies.
 }
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {

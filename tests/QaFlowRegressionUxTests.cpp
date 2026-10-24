@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 
@@ -557,6 +558,30 @@ void TestTheFinderCommandsArgumentIsAQuery() {
   Expect(TestAccess::ProjectRoot(fixture.shell) == fixture.root, "and the project is still the same one");
 }
 
+// TD-2026-10-20-371: the colour-scheme setting was an enum of one value,
+// `default`: the Settings row cycled through nothing and `set-setting
+// editor.colorscheme <name>` refused every other scheme. Its values are now the
+// themes there are.
+void TestTheColourSchemeSettingOffersEveryScheme() {
+  UxFixture fixture("scheme.txt", "x\n");
+  // `default` and `light` are the schemes on every machine (CI's whole list).
+  Expect(TestAccess::SetSettingValue(fixture.shell, "editor.colorscheme", "light"),
+         "a bundled scheme is a valid value");
+  Expect(TestAccess::GetSettingValue(fixture.shell, "editor.colorscheme") == "light",
+         "and it is the active one");
+  Expect(!TestAccess::SetSettingValue(fixture.shell, "editor.colorscheme", "no-such-scheme"),
+         "a scheme that does not exist is refused");
+  Expect(TestAccess::GetSettingValue(fixture.shell, "editor.colorscheme") == "light", "and changes nothing");
+  TestAccess::OpenSettingsOverlay(fixture.shell);
+  std::set<std::string> seen;
+  for (int i = 0; i < 64; ++i) {
+    TestAccess::StepSetting(fixture.shell, "editor.colorscheme", true);
+    seen.insert(TestAccess::GetSettingValue(fixture.shell, "editor.colorscheme").value_or(""));
+  }
+  Expect(seen.contains("default") && seen.contains("light"),
+         "stepping the row walks the schemes, saw " + std::to_string(seen.size()));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -575,6 +600,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/TheColourSchemeSettingOffersEveryScheme",
+          TestTheColourSchemeSettingOffersEveryScheme);
   AddTest(tests, "QaFlowRegressionUx/TheFinderCommandsArgumentIsAQuery", TestTheFinderCommandsArgumentIsAQuery);
   AddTest(tests, "QaFlowRegressionUx/SwitchingBackToATabKeepsItsScroll", TestSwitchingBackToATabKeepsItsScroll);
   AddTest(tests, "QaFlowRegressionUx/AnEditorsViewSurvivesCloseReopenAndRestart",

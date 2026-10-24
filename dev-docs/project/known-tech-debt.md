@@ -873,7 +873,7 @@ while the local qa-asan lane ran seeds 1-4 clean. So seed 4, at least, is not
 the input race: it stays the slow runner's frame timing during the sidebar's
 collapse.
 
-### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [OPEN]
+### TD-2026-10-20-371 — the Settings row for the colour scheme offers only `default`. [RESOLVED 2026-10-24]
 
 Found by the QA `settings-sweep`: `editor.colorscheme` is an enum whose values
 come from a static table (`kColorschemeValues` in `WorkspaceSettingsRegistry.cpp`)
@@ -883,6 +883,16 @@ value and cannot pick a scheme at all; the only ways are the `colorscheme`
 command and Toggle Light/Dark. The row's values should come from the theme
 registry (bundled files plus plugin contributions), rebuilt when a plugin loads;
 TD-2026-10-18-363 (a theme picker) would sit on the same list.
+
+**Resolved:** `SettingSpec::enum_source` (`SettingEnumSource::Colorschemes`): the
+row's values are the theme catalog plus the plugins' themes (refreshed when the
+Settings overlay rebuilds its rows, and on plugin reload), the stepper cycles them,
+and a dynamic enum parses any non-empty name so a plugin's scheme stored before
+the plugin loads is not dropped -- ApplyColorscheme decides whether it resolves.
+Writing the test found the write path was broken too: a Settings write of
+`editor.colorscheme` re-applied `GetSettingValue`, which answers that id from the
+ACTIVE scheme, so it put the old scheme back; it now applies the stored value.
+`QaFlowRegressionUx/TheColourSchemeSettingOffersEveryScheme`.
 
 ### TD-2026-10-20-370 — `files <root>` opens a project as the side effect of a finder command. [RESOLVED 2026-10-24]
 
