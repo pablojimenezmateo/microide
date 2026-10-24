@@ -314,6 +314,27 @@ void TestTheFindWidgetRecountsAfterAReload() {
          "the widget counts no foo in the reloaded text, got " + std::to_string(ui["overlay"]["count"].AsInt()));
 }
 
+// state oracle: a renamed or Saved As file's tab kept its old name until the next
+// edit. The tab strip's geometry cache was keyed on the tabs' dirty marks, not
+// their titles, so a retitle with nothing else changing reused the old labels.
+void TestSaveAsRetitlesTheTab() {
+  UxFixture fixture("tosave.txt", "x\n");
+  fixture.Frame();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "save " + (fixture.root / "copy-of.txt").string()),
+         "save under a new name runs");
+  fixture.Frame();
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  std::string labels;
+  bool renamed = false;
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() == "tab") {
+      labels += entry["label"].AsString() + " ";
+      renamed = renamed || entry["label"].AsString() == "copy-of.txt";
+    }
+  }
+  Expect(renamed, "the tab is titled copy-of.txt, got " + labels);
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -327,6 +348,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/RevertFileDiscardsChangesUndoably", TestRevertFileDiscardsChangesUndoably);
   AddTest(tests, "QaFlowRegressionUx/TheStatusColumnFollowsTheTabSize", TestTheStatusColumnFollowsTheTabSize);
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetRecountsAfterAReload", TestTheFindWidgetRecountsAfterAReload);
+  AddTest(tests, "QaFlowRegressionUx/SaveAsRetitlesTheTab", TestSaveAsRetitlesTheTab);
 }
 
 }  // namespace microide::tests
