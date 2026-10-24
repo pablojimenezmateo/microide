@@ -200,15 +200,29 @@ plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
 
 }  // namespace
 
-void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewport& viewport,
-                                                       std::filesystem::path request_path,
-                                                       std::string plugin_error) {
-  const auto apply = [this](const std::filesystem::path& path, const std::string& error,
-                            std::vector<plugin::PluginHost::DocumentSymbolNode> nodes) {
-    // Re-create the coordinator from the (long-lived) shell so the apply never runs
-    // on the transient coordinator that issued the request.
-    MakeSidebarCoordinator().ApplyLspOutlineResult(path, error, nodes);
-  };
+void WorkspaceShell::QueryDocumentSymbols(const editor::TextViewport& viewport,
+                                          DocumentSymbolsReady deliver) {
+  std::filesystem::path path = viewport.path();
+  // The plugin provider first, off the shell thread; an empty answer falls back to
+  // the language server. Both land on a later drain: the buffer in front may be
+  // another one by then, which gets an empty answer.
+  plugin_runtime_.Host().QueryDocumentSymbolsAsync(
+      viewport.language_id(), path,
+      [this, path, deliver = std::move(deliver)](
+          std::vector<plugin::PluginHost::DocumentSymbolNode> symbols, std::string plugin_error) mutable {
+        const editor::TextViewport* current = ActiveEditorViewport();
+        if (!symbols.empty() || current == nullptr || current->path() != path) {
+          deliver(path, plugin_error, std::move(symbols));
+          return;
+        }
+        QueryLspDocumentSymbolsInto(*current, std::move(path), std::move(plugin_error), std::move(deliver));
+      });
+}
+
+void WorkspaceShell::QueryLspDocumentSymbolsInto(const editor::TextViewport& viewport,
+                                                 std::filesystem::path request_path,
+                                                 std::string plugin_error,
+                                                 DocumentSymbolsReady apply) {
   const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
   if (!LspFeatureEnabled(get_setting, "lsp.document_symbols.enabled")) {
     apply(request_path, plugin_error, {});
@@ -235,8 +249,8 @@ void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewpor
        encoding, apply](LspResult<std::vector<LspClient::DocumentSymbol>> symbols) {
         FinishTrackedLspRequest();
         editor::TextViewport* current = ActiveEditorViewport();
-        // Superseded (buffer/file switched): apply empty; ApplyLspOutlineResult
-        // re-checks the path and leaves the newer view untouched.
+        // Superseded (buffer/file switched): deliver empty; the receiver re-checks
+        // the path and leaves the newer view untouched.
         if (current == nullptr || current->path() != request_path) {
           apply(request_path, plugin_error, {});
           return;

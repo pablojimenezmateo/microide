@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/services/TerminalPanelService.h"
@@ -334,8 +335,10 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
           .switch_quick_open_mode =
               [this](std::string_view query) {
                 const bool to_commands = query.starts_with('>');
-                const bool to_line = query.starts_with(':') && ActiveEditorViewport() != nullptr;
-                if (!to_commands && !to_line) {
+                const editor::TextViewport* viewport = ActiveEditorViewport();
+                const bool to_line = query.starts_with(':') && viewport != nullptr;
+                const bool to_symbol = query.starts_with('@') && viewport != nullptr && !viewport->path().empty();
+                if (!to_commands && !to_line && !to_symbol) {
                   return false;
                 }
                 std::string rest(query.substr(1));
@@ -343,6 +346,10 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
                 context_.current_project_state.file_finder.SetQuery("");
                 if (to_commands) {
                   OpenCommandPalette(std::move(rest));
+                } else if (to_symbol) {
+                  // VS Code's `@`: Go to Symbol in Editor, the rest of the query its filter.
+                  (void)ActionCoordinator(MakeActionContext())
+                      .Execute(ActionId::GoToSymbolInEditor, {std::move(rest)}, ActionSource::Shortcut);
                 } else {
                   DismissOverlay(false);
                   OpenPromptSurface(PromptSurfaceState::Action::GoToLine, PromptSurfaceState::Kind::TextInput,

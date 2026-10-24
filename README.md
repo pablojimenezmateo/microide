@@ -642,6 +642,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+L` | Select the current line (each press adds the next line) |
 | `Ctrl+]` / `Ctrl+[` | Indent / outdent the caret's line or the selected lines |
 | `Alt+z` | Toggle word wrap |
+| `Ctrl+Shift+O` (or `@` in Quick Open) | Go to Symbol in Editor: the file's symbols (plugin provider, else the language server), filtered as you type; each previews as it is selected, Escape puts the caret back |
 | `Ctrl+K Ctrl+T` | Pick a colour theme (View > Color Theme…): each previews as the selection moves, Escape puts the old one back |
 | `Ctrl+\` | Split the editor right |
 | `F9` | Toggle a breakpoint on the caret's line (debugger enabled) |
@@ -731,6 +732,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `call-hierarchy [incoming|outgoing]`
 - `focus <editor|sidebar|panel>`
 - `goto-definition`
+- `goto-symbol [query]`
 - `next-problem`
 - `previous-problem`
 - `next-diagnostic`

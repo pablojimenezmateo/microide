@@ -105,6 +105,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Focus, "focus", "focus <editor|sidebar|panel>", "Focus", ""},
       ActionSpec{ActionId::GoToDefinition, "goto-definition", "goto-definition",
                  "Go to Definition", "F12"},
+      ActionSpec{ActionId::GoToSymbolInEditor, "goto-symbol", "goto-symbol [query]",
+                 "Go to Symbol in Editor…", "Ctrl+Shift+O"},
       ActionSpec{ActionId::GoToNextProblemInFiles, "next-problem", "next-problem", "Next Problem",
                  "F8"},
       ActionSpec{ActionId::GoToPreviousProblemInFiles, "previous-problem", "previous-problem",

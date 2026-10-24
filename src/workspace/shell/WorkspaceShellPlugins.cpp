@@ -146,6 +146,11 @@ WorkspaceShell::WorkspaceShell() {
       context_.current_project_state.overlay.workflow.quick_pick,
       QuickPickService::Operations{
           .show_overlay = [this]() { ShowOverlay(OverlayMode::QuickPick); },
+          .showing =
+              [this]() {
+                return context_.current_project_state.overlay.visible &&
+                       context_.current_project_state.overlay.mode == OverlayMode::QuickPick;
+              },
           .list_changed =
               [this]() {
                 ResetOverlayScroll();
@@ -165,6 +170,25 @@ WorkspaceShell::WorkspaceShell() {
               [this](std::string_view name, bool persist) {
                 (void)MakePersistenceCoordinator().ApplyColorscheme(name, persist, false);
                 RequestWindowRedraw();
+              },
+          .reveal =
+              [this](const std::filesystem::path& path, std::size_t line, std::size_t column) {
+                editor::TextViewport* viewport = ActiveEditorViewport();
+                if (viewport == nullptr || viewport->path() != path || line >= viewport->lines().size()) {
+                  return;
+                }
+                viewport->JumpCursorTo(line, std::min(column, viewport->lines().LineLength(line)));
+                viewport->CenterLine(line);
+                RequestFocusedEditorRedraw();
+              },
+          .restore_view =
+              [this](const QuickPickState::View& view) {
+                editor::TextViewport* viewport = ActiveEditorViewport();
+                if (viewport == nullptr || viewport->path() != view.path) {
+                  return;
+                }
+                viewport->ApplyRestoredViewState(view.line, view.column, view.scroll, viewport->horizontal_scroll());
+                RequestFocusedEditorRedraw();
               },
       });
   tab_strip_chrome_.Configure(

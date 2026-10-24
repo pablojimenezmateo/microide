@@ -192,6 +192,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSeparator(),
       MenuItem(ActionId::Goto),
       MenuItem(ActionId::Jump),
+      MenuItem(ActionId::GoToSymbolInEditor),
       MenuSeparator(),
       MenuItem(ActionId::GoToDefinition),
       MenuItem(ActionId::GoToTypeDefinition),

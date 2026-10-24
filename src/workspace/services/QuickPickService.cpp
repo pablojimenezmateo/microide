@@ -40,21 +40,28 @@ void QuickPickService::Refilter() {
   picker.selected_index = 0;
   const std::string query = util::ToLowerAscii(picker.query.text());
   // An exact match first, then the items the query starts, then the rest that
-  // hold it, each in item order: `light` must not sit under `dukelight-tc`.
+  // hold it, each in item order: `light` must not sit under `dukelight-tc`. The
+  // search text leads with the item's name (a symbol's kind follows a space).
+  const auto rank_of = [&](const std::string& text) {
+    const std::size_t at = text.find(query);
+    if (at == std::string::npos) {
+      return 3;
+    }
+    if (query.empty() || (at == 0 && (text.size() == query.size() || text[query.size()] == ' '))) {
+      return 0;
+    }
+    return at == 0 ? 1 : 2;
+  };
   for (int rank = 0; rank < 3; ++rank) {
     for (const QuickPickItem& item : picker.items) {
-      const std::size_t at = query.empty() ? 0 : item.search_text.find(query);
-      if (at == std::string::npos) {
-        continue;
-      }
-      const std::string_view primary = std::string_view(item.search_text).substr(0, item.primary_label.size());
-      const int item_rank = query.empty() || primary == query ? 0 : at == 0 ? 1 : 2;
-      if (item_rank == rank) {
+      if (rank_of(item.search_text) == rank) {
         picker.matches.push_back(item);
       }
     }
   }
-  picker.summary_line = BuildFilteredCountSummary(picker.matches.size(), picker.items.size(), picker.noun);
+  picker.summary_line = picker.loading ? "Loading " + picker.noun + "…"
+                                       : BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
+                                                                   picker.noun);
   if (operations_.list_changed) {
     operations_.list_changed();
   }
@@ -78,6 +85,11 @@ void QuickPickService::Preview() {
         operations_.apply_colorscheme(item.value, /*persist=*/false);
       }
       break;
+    case QuickPickKind::DocumentSymbol:
+      if (operations_.reveal && state_->revert_view.has_value()) {
+        operations_.reveal(state_->revert_view->path, item.line, item.column);
+      }
+      break;
     case QuickPickKind::LaunchConfig:
       break;
   }
@@ -89,6 +101,7 @@ void QuickPickService::Accept() {
   }
   const QuickPickItem item = state_->matches[state_->selected_index];
   state_->revert_value.clear();
+  const std::optional<QuickPickState::View> view = std::exchange(state_->revert_view, std::nullopt);
   switch (state_->kind) {
     case QuickPickKind::LaunchConfig:
       if (operations_.start_launch_config) {
@@ -100,23 +113,40 @@ void QuickPickService::Accept() {
         operations_.apply_colorscheme(item.value, /*persist=*/true);
       }
       break;
+    case QuickPickKind::DocumentSymbol:
+      if (operations_.reveal && view.has_value()) {
+        operations_.reveal(view->path, item.line, item.column);
+      }
+      break;
   }
 }
 
 void QuickPickService::Cancel() {
-  if (state_ == nullptr || state_->revert_value.empty()) {
+  if (state_ == nullptr) {
+    return;
+  }
+  if (std::optional<QuickPickState::View> view = std::exchange(state_->revert_view, std::nullopt);
+      view.has_value() && operations_.restore_view) {
+    operations_.restore_view(*view);
+  }
+  if (state_->revert_value.empty()) {
     return;
   }
   const std::string revert = std::exchange(state_->revert_value, {});
-  switch (state_->kind) {
-    case QuickPickKind::ColorTheme:
-      if (operations_.apply_colorscheme) {
-        operations_.apply_colorscheme(revert, /*persist=*/false);
-      }
-      break;
-    case QuickPickKind::LaunchConfig:
-      break;
+  if (state_->kind == QuickPickKind::ColorTheme && operations_.apply_colorscheme) {
+    operations_.apply_colorscheme(revert, /*persist=*/false);
   }
+}
+
+bool QuickPickService::DeliverItems(QuickPickKind kind, std::vector<QuickPickItem> items) {
+  if (state_ == nullptr || state_->kind != kind || !state_->loading ||
+      (operations_.showing && !operations_.showing())) {
+    return false;
+  }
+  state_->loading = false;
+  state_->items = std::move(items);
+  Refilter();
+  return true;
 }
 
 QuickPickState QuickPickService::LaunchConfigs(std::span<const LaunchConfig> configs) {
@@ -165,6 +195,54 @@ QuickPickState QuickPickService::ColorThemes(std::span<const std::string> names,
     });
   }
   return picker;
+}
+
+QuickPickState QuickPickService::DocumentSymbolsLoading(QuickPickState::View view) {
+  QuickPickState picker;
+  picker.kind = QuickPickKind::DocumentSymbol;
+  picker.title = "Go to Symbol in Editor";
+  picker.noun = "symbols";
+  picker.loading = true;
+  picker.revert_view = std::move(view);
+  return picker;
+}
+
+namespace {
+
+void AppendSymbolItems(std::span<const plugin::PluginHost::DocumentSymbolNode> symbols, std::size_t depth,
+                       std::vector<QuickPickItem>& out) {
+  // A language server's tree is semi-trusted input; nothing real nests this deep.
+  constexpr std::size_t kMaxDepth = 64;
+  if (depth > kMaxDepth) {
+    return;
+  }
+  for (const plugin::PluginHost::DocumentSymbolNode& symbol : symbols) {
+    // Symbol nodes are 1-based; line 0 is a row with no place (the outline's
+    // "truncated" marker), which a pick that goes somewhere leaves out.
+    if (symbol.line == 0) {
+      AppendSymbolItems(symbol.children, depth + 1, out);
+      continue;
+    }
+    out.push_back(QuickPickItem{
+        .index = out.size(),
+        .value = {},
+        .line = symbol.line - 1,
+        .column = symbol.column > 0 ? symbol.column - 1 : 0,
+        .primary_label = std::string(2 * depth, ' ') + symbol.name,
+        .secondary_label = symbol.detail.empty() ? symbol.kind : symbol.detail,
+        .search_text = util::ToLowerAscii(symbol.name + " " + symbol.kind),
+    });
+    AppendSymbolItems(symbol.children, depth + 1, out);
+  }
+}
+
+}  // namespace
+
+std::vector<QuickPickItem> QuickPickService::DocumentSymbolItems(
+    std::span<const plugin::PluginHost::DocumentSymbolNode> symbols) {
+  std::vector<QuickPickItem> items;
+  AppendSymbolItems(symbols, 0, items);
+  return items;
 }
 
 }  // namespace microide::workspace

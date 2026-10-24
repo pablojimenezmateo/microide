@@ -1794,6 +1794,85 @@ return ide.plugin({
          "LSP outline row should carry 1-based line/column from the selection range");
 }
 
+// TD-2026-10-18-360: Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open) is a
+// quick pick of the file's symbols -- the same plugin-then-language-server query
+// the outline makes. Moving the selection previews (the caret goes to the symbol),
+// Escape puts the caret back, Enter keeps the symbol's position.
+void TestWorkspaceShellGoToSymbolInEditorPicksFromTheOutlineSymbols() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "class Widget:\n    def draw(self):\n        pass\n\n\ndef main():\n    pass\n");
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "the fixture opens");
+  auto stub = std::make_unique<workspace::LspClient>();
+  stub->EnableTestStubMode();
+  stub->SetTestDocumentSymbolHandler([](std::string, workspace::LspClient::DocumentSymbolCallback cb) {
+    workspace::LspClient::DocumentSymbol widget;
+    widget.name = "Widget";
+    widget.kind = 5;
+    widget.selection_range.start = {0, 6};
+    workspace::LspClient::DocumentSymbol draw;
+    draw.name = "draw";
+    draw.kind = 6;
+    draw.selection_range.start = {1, 8};
+    widget.children.push_back(draw);
+    workspace::LspClient::DocumentSymbol main_fn;
+    main_fn.name = "main";
+    main_fn.kind = 12;
+    main_fn.selection_range.start = {5, 4};
+    cb(std::vector<workspace::LspClient::DocumentSymbol>{widget, main_fn});
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell).InstallTestClientIntoExistingForTesting(
+             "python", std::move(stub)),
+         "the stub server attaches");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(6, 2);
+  const auto overlay = [&] { return WorkspaceShellTestAccess::ControlUi(shell)["overlay"]; };
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_O, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)));
+  Expect(overlay()["visible"].AsBool() && overlay()["kind"].AsString() == "document-symbol",
+         "Ctrl+Shift+O opens the symbol pick");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(overlay()["count"].AsInt() == 3, "the pick lists the three symbols, got " +
+                                               std::to_string(overlay()["count"].AsInt()));
+  (void)shell.HandleEvent(TextInputEvent("draw"));
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 8,
+         "typing previews the top match: the caret is on draw");
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_ESCAPE));
+  Expect(!overlay()["visible"].AsBool() && viewport.cursor_line() == 6 && viewport.cursor_column() == 2,
+         "Escape puts the caret back");
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_P, SDL_KMOD_CTRL));
+  (void)shell.HandleEvent(TextInputEvent("@main"));
+  Expect(overlay()["kind"].AsString() == "document-symbol", "@ typed into Quick Open opens the pick");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_RETURN));
+  Expect(!overlay()["visible"].AsBool() && viewport.cursor_line() == 5 && viewport.cursor_column() == 4,
+         "Enter keeps the symbol's position");
+}
+
 // Regression (TD-2026-07-17A-072): a large-but-valid documentSymbol response must
 // not adapt+flatten unboundedly on the main-thread callback. The outline is capped
 // at a presentation budget (5000 nodes) with a non-navigable truncation marker,
@@ -7300,6 +7379,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSignatureHelpPopupFromPluginProvider);
   AddTest(tests, "WorkspaceShell/OutlineSidebarFromDocumentSymbols",
           TestWorkspaceShellOutlineSidebarFromDocumentSymbols);
+  AddTest(tests, "WorkspaceShell/GoToSymbolInEditorPicksFromTheOutlineSymbols",
+          TestWorkspaceShellGoToSymbolInEditorPicksFromTheOutlineSymbols);
   AddTest(tests, "WorkspaceShell/OutlineSidebarFromLspFallback",
           TestWorkspaceShellOutlineSidebarFromLspFallback);
   AddTest(tests, "WorkspaceShell/OutlineCapsLargeLspResult",

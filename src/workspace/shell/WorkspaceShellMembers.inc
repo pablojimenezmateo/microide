@@ -1579,14 +1579,15 @@
   void EnsureLspDocumentOpen(const editor::TextViewport& viewport,
                              LspClient& client,
                              std::string_view language_id);
-  // Outline LSP fallback: resolve the server for `viewport`, open its document, and
-  // request textDocument/documentSymbol. The async response is applied through a
-  // FRESH SidebarCoordinator (the transient one that issued it is long gone by
-  // then), adapting the tree to the plugin DocumentSymbolNode shape the outline
-  // consumes. No-ops when no server is available.
-  void QueryLspDocumentSymbolsForOutline(const editor::TextViewport& viewport,
-                                         std::filesystem::path request_path,
-                                         std::string plugin_error);
+  // A buffer's document symbols: a plugin provider's, else the language server's
+  // textDocument/documentSymbol (adapted to the plugin node shape), delivered on a
+  // later main-thread drain -- to the outline, or the Go to Symbol pick. An empty
+  // answer when neither has any, with the plugin's error if it gave one.
+  using DocumentSymbolsReady = std::function<void(
+      const std::filesystem::path&, const std::string& error, std::vector<plugin::PluginHost::DocumentSymbolNode>)>;
+  void QueryDocumentSymbols(const editor::TextViewport& viewport, DocumentSymbolsReady deliver);
+  void QueryLspDocumentSymbolsInto(const editor::TextViewport& viewport, std::filesystem::path request_path,
+                                   std::string plugin_error, DocumentSymbolsReady apply);
   void PublishLspDiagnostics(ProjectWorkspaceState& state, std::string uri,
                              lsp_encoding::PositionEncoding encoding,
                              std::vector<LspClient::Diagnostic> diagnostics);

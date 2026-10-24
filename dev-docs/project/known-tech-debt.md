@@ -1321,7 +1321,7 @@ Found probing the chrome for the QA `mouse-and-wrap` pass:
 - The indentation segment opens Settings rather than VS Code's Indent Using
   Spaces / Tabs and tab-size picker (it works, it is just a longer way round).
 
-### TD-2026-10-18-360 — no Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open). [OPEN]
+### TD-2026-10-18-360 — no Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open). [RESOLVED 2026-10-25]
 
 Found by the QA quick-open probe: VS Code's Ctrl+Shift+O and an `@` typed into
 Ctrl+P list the active file's symbols (documentSymbol) and filter them as you
@@ -1330,6 +1330,15 @@ already fetched for the Outline view (`flows_more.py` `outline`), so this is a
 picker over that list -- a new OverlayMode whose rows are the outline's, Enter
 revealing the symbol -- plus the `@` prefix in `switch_quick_open_mode` next to
 `>` and `:` (added 2026-10-18).
+
+**Resolved:** a third quick-pick kind (`QuickPickKind::DocumentSymbol`):
+`goto-symbol [query]`, Ctrl+Shift+O, Go > Go to Symbol in Editor… and `@` typed
+into Quick Open open it loading, and the symbols land through
+`WorkspaceShell::QueryDocumentSymbols` -- now the ONE plugin-then-language-server
+symbol query, which the outline uses too (its plugin step, LSP fallback and two
+apply paths were sidebar-only). Rows are indented under their parent; selecting
+one previews by putting the caret on it, Escape restores the caret and scroll,
+Enter keeps the place. `WorkspaceShell/GoToSymbolInEditorPicksFromTheOutlineSymbols`.
 
 ### TD-2026-10-18-359 — the file tree cannot move or copy files. [OPEN]
 

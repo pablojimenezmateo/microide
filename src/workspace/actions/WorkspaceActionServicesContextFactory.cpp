@@ -234,6 +234,12 @@ void WorkspaceActionContext::OpenColorThemePicker() {
   }
 }
 
+void WorkspaceActionContext::OpenDocumentSymbolPicker(std::string query) {
+  if (operations_.open_document_symbol_picker) {
+    operations_.open_document_symbol_picker(std::move(query));
+  }
+}
+
 void WorkspaceActionContext::OpenCommandPalette(std::string seed) {
   if (operations_.open_command_palette) {
     operations_.open_command_palette(std::move(seed));
@@ -1245,6 +1251,30 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 MakePersistenceCoordinator().RefreshAvailableColorschemeNames();
                 quick_pick_service_.Open(QuickPickService::ColorThemes(
                     available_colorscheme_names_, context_.current_project_state.active_colorscheme_name));
+              },
+          .open_document_symbol_picker =
+              [this](std::string query) {
+                const editor::TextViewport* viewport = ActiveEditorViewport();
+                if (viewport == nullptr || viewport->path().empty()) {
+                  return;
+                }
+                QuickPickState picker = QuickPickService::DocumentSymbolsLoading(QuickPickState::View{
+                    .path = viewport->path(),
+                    .line = viewport->cursor_line(),
+                    .column = viewport->cursor_column(),
+                    .scroll = viewport->scroll_line(),
+                });
+                picker.query.SetText(std::move(query));
+                quick_pick_service_.Open(std::move(picker));
+                QueryDocumentSymbols(*viewport, [this](const std::filesystem::path& path, const std::string&,
+                                                       std::vector<plugin::PluginHost::DocumentSymbolNode> symbols) {
+                  const QuickPickState& pick = context_.current_project_state.overlay.workflow.quick_pick;
+                  if (!pick.revert_view.has_value() || pick.revert_view->path != path) {
+                    return;  // another file's pick is up by now
+                  }
+                  (void)quick_pick_service_.DeliverItems(QuickPickKind::DocumentSymbol,
+                                                         QuickPickService::DocumentSymbolItems(symbols));
+                });
               },
           .open_command_palette = [this](std::string seed) { OpenCommandPalette(std::move(seed)); },
           .edit_breakpoint_modifier_from_menu =

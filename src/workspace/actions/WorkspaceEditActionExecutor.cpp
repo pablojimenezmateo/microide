@@ -212,6 +212,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       context_.NotifyDiagnostic(*target);
       return DispatchResult::Handled;
     }
+    case ActionId::GoToSymbolInEditor:
+      if (const editor::TextViewport* viewport = context_.ActiveNavigableViewport();
+          viewport == nullptr || viewport->path().empty()) {
+        return reject("Go to Symbol needs an open file");
+      }
+      context_.OpenDocumentSymbolPicker(JoinCommandArguments(args, 0));
+      return DispatchResult::Handled;
     case ActionId::GoToDefinition: {
       std::string error_message;
       if (!context_.GoToLspDefinition(&error_message)) {

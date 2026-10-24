@@ -1021,9 +1021,10 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               util::JsonObject& overlay = std::get<util::JsonObject>(root["overlay"].v);
               overlay["count"] = util::JsonValue(static_cast<std::int64_t>(OverlayItemCount()));
               if (state.overlay.mode == OverlayMode::QuickPick) {
-                overlay["kind"] = util::JsonValue(std::string(
-                    state.overlay.workflow.quick_pick.kind == QuickPickKind::ColorTheme ? "color-theme"
-                                                                                       : "launch-config"));
+                const QuickPickKind kind = state.overlay.workflow.quick_pick.kind;
+                overlay["kind"] = util::JsonValue(std::string(kind == QuickPickKind::ColorTheme       ? "color-theme"
+                                                              : kind == QuickPickKind::DocumentSymbol ? "document-symbol"
+                                                                                                      : "launch-config"));
               }
               overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));
               if (const editor::SingleLineEditor* query = OverlayQueryEditor(state); query != nullptr) {

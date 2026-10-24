@@ -337,6 +337,7 @@ class WorkspaceActionContext {
     // launch configs.
     std::function<void()> open_launch_config_picker;
     std::function<void()> open_color_theme_picker;
+    std::function<void(std::string query)> open_document_symbol_picker;
     // Open the command palette over all built-in + plugin commands, optionally pre-filling
     // the query (e.g. "project-open ") so the user only types the argument.
     std::function<void(std::string)> open_command_palette;
@@ -726,6 +727,9 @@ class WorkspaceActionContext {
   void OpenLaunchConfigPicker();
   // Color Theme…: a quick pick of the schemes, previewing each as it is selected.
   void OpenColorThemePicker();
+  // Go to Symbol in Editor: a quick pick of the active file's symbols, seeded with
+  // `query`, previewing each as it is selected.
+  void OpenDocumentSymbolPicker(std::string query);
   void OpenCommandPalette(std::string seed = {});
   // Open the single-line "Go to Line" modal prompt (VSCode-style Ctrl+G).
   void OpenGoToLinePrompt();

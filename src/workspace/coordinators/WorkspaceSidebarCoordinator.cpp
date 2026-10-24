@@ -297,19 +297,14 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .request_file_index_refresh = [this]() { RequestFileIndexRefresh(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
-          .query_lsp_document_symbols =
-              [this](const editor::TextViewport& viewport, std::filesystem::path request_path,
-                     std::string plugin_error) {
-                QueryLspDocumentSymbolsForOutline(viewport, std::move(request_path),
-                                                  std::move(plugin_error));
-              },
-          .apply_plugin_outline_result =
-              [this](std::filesystem::path request_path,
-                     std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
-                     std::string plugin_error) {
-                // Fresh coordinator: the transient one that issued the query is gone.
-                MakeSidebarCoordinator().ApplyPluginOutlineResult(
-                    std::move(request_path), std::move(symbols), std::move(plugin_error));
+          .query_outline_symbols =
+              [this](const editor::TextViewport& viewport) {
+                QueryDocumentSymbols(
+                    viewport, [this](const std::filesystem::path& path, const std::string& error,
+                                     std::vector<plugin::PluginHost::DocumentSymbolNode> symbols) {
+                      // Fresh coordinator: the transient one that issued the query is gone.
+                      MakeSidebarCoordinator().ApplyOutlineResult(path, error, symbols);
+                    });
               },
           .apply_plugin_sidebar_result =
               [this](std::string request_view_id, bool ok,

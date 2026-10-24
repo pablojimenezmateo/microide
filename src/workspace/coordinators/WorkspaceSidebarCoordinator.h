@@ -38,21 +38,10 @@ class SidebarCoordinator {
     std::function<void()> request_file_index_refresh;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
-    // LSP documentSymbol fallback for the outline: when the plugin provider yields no
-    // symbols, this resolves the language server for the viewport, opens its document,
-    // and requests documentSymbol. The async result is applied back through a FRESH
-    // SidebarCoordinator (the shell owns it) rather than this transient one, so the
-    // deferred callback never touches a destroyed coordinator. Null when LSP is off.
-    std::function<void(const editor::TextViewport&, std::filesystem::path request_path,
-                       std::string plugin_error)>
-        query_lsp_document_symbols;
-    // Applies a plugin document-symbol result to the outline through a FRESH
-    // coordinator (the shell owns it). The async plugin callback routes here instead
-    // of touching the transient coordinator that issued the query.
-    std::function<void(std::filesystem::path request_path,
-                       std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
-                       std::string plugin_error)>
-        apply_plugin_outline_result;
+    // The outline's symbols for the viewport (a plugin provider's, else the language
+    // server's), applied when they land through a FRESH coordinator the shell makes
+    // (ApplyOutlineResult) -- never this transient one, destroyed by then.
+    std::function<void(const editor::TextViewport&)> query_outline_symbols;
     // Applies a plugin sidebar snapshot to the active plugin view through a FRESH
     // coordinator (the shell owns it). The async snapshot callback routes here instead
     // of touching the transient coordinator that issued the query, which is destroyed
@@ -139,19 +128,11 @@ class SidebarCoordinator {
   // Rebuilds the Changed on Host rows (same item surface), keeping the selection on
   // the row it was on when that row is still listed.
   void RefreshHostChanges();
-  // Applies an LSP documentSymbol fallback result (adapted node tree) to the outline
-  // rows, dropping it if the outline/buffer changed since the request. Called on a
-  // FRESH coordinator by the shell when the async LSP response lands, so it never
-  // runs on the transient coordinator that issued the request.
-  void ApplyLspOutlineResult(const std::filesystem::path& request_path,
-                             const std::string& plugin_error,
-                             const std::vector<plugin::PluginHost::DocumentSymbolNode>& lsp_symbols);
-  // Applies a plugin document-symbol result to the outline (or hands off to the LSP
-  // fallback when empty). Runs on a fresh coordinator, so the deferred plugin
-  // callback never touches the transient one that issued the query.
-  void ApplyPluginOutlineResult(const std::filesystem::path& request_path,
-                                std::vector<plugin::PluginHost::DocumentSymbolNode> symbols,
-                                std::string plugin_error);
+  // Applies a document-symbol result (WorkspaceShell::QueryDocumentSymbols) to the
+  // outline rows, dropping it if the outline/buffer changed since the request.
+  // Called on a FRESH coordinator by the shell when the async answer lands.
+  void ApplyOutlineResult(const std::filesystem::path& request_path, const std::string& error,
+                          const std::vector<plugin::PluginHost::DocumentSymbolNode>& symbols);
   // Applies a plugin sidebar snapshot to the active plugin view, dropping it if the
   // view changed since the request. Runs on a fresh coordinator, so the deferred
   // worker callback never touches the transient one that issued the query.

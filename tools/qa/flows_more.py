@@ -203,6 +203,37 @@ def flow_outline(app: q.App) -> None:
         app.expect(app.cursors()[0][0] == 12, f"a click goes to the symbol ({app.cursors()})")
 
 
+def flow_goto_symbol(app: q.App) -> None:
+    """Go to Symbol in Editor (TD-2026-10-18-360): Ctrl+Shift+O lists the file's
+    symbols (clangd's documentSymbol, the outline's query), a filter previews its
+    top match, Escape puts the caret back, and `@run` in Quick Open + Enter goes
+    there."""
+    write(app, "compile_flags.txt", "-Iinclude\n-std=c++17\n")
+    open_file(app, "src/scheduler.cpp")
+    app.wait_until(lambda: "Ready" in app.element("status:lsp").get("label", ""), 30.0, "clangd")
+    app.send("focus", "editor")
+    app.send("goto", "1:1")
+    start = app.cursors()
+    app.key("ctrl+shift+o")
+    app.wait_until(lambda: app.ui()["overlay"].get("kind") == "document-symbol"
+                   and app.ui()["overlay"].get("count", 0) > 0, 10.0, "the symbol pick to list symbols")
+    step(app, "ctrl+shift+o", 0.3)
+    app.type("run")
+    step(app, "filter run", 0.4)
+    app.expect(app.cursors()[0][0] == 12, f"typing a filter previews Scheduler::run ({app.cursors()})")
+    app.key("Escape")
+    step(app, "escape", 0.3)
+    app.expect(app.cursors() == start, f"Escape puts the caret back ({app.cursors()} vs {start})")
+    app.key("ctrl+p")
+    app.type("@add")
+    app.wait_until(lambda: app.ui()["overlay"].get("kind") == "document-symbol"
+                   and app.ui()["overlay"].get("count", 0) > 0, 10.0, "@ to open the symbol pick")
+    app.key("Return")
+    step(app, "enter on add", 0.4)
+    app.expect(app.cursors()[0][0] == 8 and not app.ui()["overlay"].get("visible"),
+               f"Enter goes to Scheduler::add ({app.cursors()})")
+
+
 def flow_compare_and_merge(app: q.App) -> None:
     """Review the last commit as a compare tab; merge the conflicting branch and
     resolve the conflict in the merge editor; the file ends without markers."""
@@ -234,7 +265,7 @@ def flow_compare_and_merge(app: q.App) -> None:
                    "accepting current leaves no conflict markers in the file")
 
 
-PLUGINS: dict[str, tuple[str, ...]] = {"outline": ("cpp-lsp",)}
+PLUGINS: dict[str, tuple[str, ...]] = {"outline": ("cpp-lsp",), "goto-symbol": ("cpp-lsp",)}
 
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "session-restore": flow_session_restore,
@@ -244,5 +275,6 @@ FLOWS: dict[str, Callable[[q.App], None]] = {
     "terminal-find": flow_terminal_find,
     "projects": flow_projects,
     "outline": flow_outline,
+    "goto-symbol": flow_goto_symbol,
     "compare-merge": flow_compare_and_merge,
 }

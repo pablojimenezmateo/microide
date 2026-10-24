@@ -379,11 +379,14 @@ struct ComparePickerState {
 enum class QuickPickKind : std::uint8_t {
   LaunchConfig,  // start debugging with ProjectWorkspaceState.launch_configs[index]
   ColorTheme,    // apply the colour scheme `value`, previewed as the selection moves
+  DocumentSymbol,  // reveal (`line`, `column`) in the active editor, previewed likewise
 };
 
 struct QuickPickItem {
   std::size_t index = 0;        // what the kind indexes (a launch config)
   std::string value;            // what the kind names (a colour scheme)
+  std::size_t line = 0;         // where the kind goes (a symbol), 0-based
+  std::size_t column = 0;
   std::string primary_label;    // left column
   std::string secondary_label;  // muted, right column
   std::string search_text;      // lowercased "primary secondary", built once for filtering
@@ -398,10 +401,20 @@ struct QuickPickState {
   std::vector<QuickPickItem> items;
   std::vector<QuickPickItem> matches;
   std::size_t selected_index = 0;
-  // What Escape restores after the kind previewed a selection (the colour scheme
-  // in use when the pick opened); empty once accepted or for a kind with no
-  // preview.
+  // What Escape restores after the kind previewed a selection: the colour scheme
+  // in use when the pick opened, or the editor's view a symbol preview moved.
+  // Cleared once accepted; unset for a kind with no preview.
   std::string revert_value;
+  struct View {
+    std::filesystem::path path;
+    std::size_t line = 0;
+    std::size_t column = 0;
+    std::size_t scroll = 0;
+  };
+  std::optional<View> revert_view;
+  // The items are still on their way (a language server answering): the summary
+  // says so instead of "0 of 0".
+  bool loading = false;
 };
 
 // One extra edit a completion item carries (LSP `additionalTextEdits`), applied
