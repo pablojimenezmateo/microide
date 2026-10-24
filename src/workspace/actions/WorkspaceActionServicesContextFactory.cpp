@@ -783,6 +783,24 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
           .save_tab_deferred =
               [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
+          .revert_active_file =
+              [this]() {
+                const editor::TextViewport* viewport = ActiveEditableViewport();
+                if (viewport == nullptr || viewport->path().empty()) {
+                  return false;
+                }
+                const std::filesystem::path path = viewport->path();
+                if (!MakeEditorTabService().RevertEditorTabsForPath(path)) {
+                  return false;
+                }
+                // A changed-on-disk banner over this file is answered: the buffer
+                // now holds what the disk holds.
+                RefreshOpenCompareTabsForPath(path);
+                DismissEditorBannerForPath(context_.current_project_state, path);
+                RequestEditorSurfaceRedraw();
+                RequestTabStripRedraw();
+                return true;
+              },
           .save_all_dirty_tabs =
               [this]() {
                 SaveAllOutcome outcome;

@@ -428,6 +428,40 @@ void TextViewport::AdoptDiskBaselineOf(const TextViewport& other) {
   document_->dirty = false;
 }
 
+bool TextViewport::RevertToDiskContent(const TextViewport& disk) {
+  EnsureDocument();
+  if (disk.document_ == nullptr || line_ending() != disk.line_ending() ||
+      has_mixed_line_endings() != disk.has_mixed_line_endings() ||
+      encoding() != disk.encoding() || has_utf8_bom() != disk.has_utf8_bom()) {
+    return false;
+  }
+  if (!HoldsSameFileContentAs(disk)) {
+    std::string text;
+    const TextBuffer& source = disk.lines();
+    for (std::size_t i = 0; i < source.LineCount(); ++i) {
+      if (i > 0) {
+        text += '\n';
+      }
+      text += source.LineView(i);
+    }
+    const TextPosition caret{cursor_line_, cursor_column_};
+    ClearSecondaryCarets();
+    const std::size_t last = document_->lines.size() - 1;
+    if (!ReplaceRange(SelectionRange{TextPosition{0, 0},
+                                     TextPosition{last, document_->lines.LineLength(last)}},
+                      text)) {
+      return false;
+    }
+    // The caret stays where it was as far as the reverted text allows, rather
+    // than at the end of a whole-document replacement.
+    const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
+    MoveCursorTo(line, std::min(caret.column, document_->lines.LineLength(line)));
+  }
+  AdoptDiskBaselineOf(disk);
+  document_->undo_history.MarkSaved();
+  return true;
+}
+
 void TextViewport::LoadContent(std::string_view content,
                                const std::filesystem::path& path,
                                std::optional<LineEnding> line_ending) {

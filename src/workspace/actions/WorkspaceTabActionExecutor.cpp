@@ -282,6 +282,25 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.OpenSaveAsPrompt(std::move(initial));
       return DispatchResult::Handled;
     }
+    case ActionId::RevertFile: {
+      // VS Code's File: Revert File -- throw the unsaved changes away and take
+      // the file as it is on disk. One undoable edit, so Ctrl+Z brings them back;
+      // Reload from Disk, which swaps the buffer, refuses a dirty one for that
+      // reason.
+      const editor::TextViewport* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr || viewport->path().empty()) {
+        return reject("Revert File needs a file on disk");
+      }
+      const std::string name = viewport->path().filename().string();
+      if (!viewport->dirty()) {
+        return reject("Revert File: " + name + " has no unsaved changes");
+      }
+      if (!context_.RevertActiveFile()) {
+        return reject("Revert File: could not read " + name);
+      }
+      context_.NotifyEditorViewportChanged(/*last_change=*/true);
+      return DispatchResult::Handled;
+    }
     case ActionId::SaveAll: {
       // VS Code's File > Save All (Ctrl+K S): every unsaved file in every group,
       // each through the same deferred save as its own Ctrl+S (formatter, save

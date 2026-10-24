@@ -94,6 +94,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CloseAllTabs),
       MenuItem(ActionId::ReopenClosedEditor, {}, "Ctrl+Shift+T"),
       MenuItem(ActionId::Reopen),
+      MenuItem(ActionId::RevertFile),
       MenuSeparator(),
       MenuItem(ActionId::ProjectClose),
       MenuSeparator(),

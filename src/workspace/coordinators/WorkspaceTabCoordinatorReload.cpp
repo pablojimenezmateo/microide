@@ -23,6 +23,32 @@ void TabCoordinator::ReloadEditorTabsForPathFromDisk(const std::filesystem::path
   (void)ReloadEditorTabsForPath(path, /*clean_only=*/false);
 }
 
+bool TabCoordinator::RevertEditorTabsForPath(const std::filesystem::path& path) {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  editor::TextViewport on_disk;
+  if (!on_disk.OpenFile(normalized_path)) {
+    return false;
+  }
+  operations_.apply_editor_preferences(on_disk);
+  for (EditorGroup& group : state_.editor_groups) {
+    for (TabEntry& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+          tab.editor_state->content != EditorTabState::Content::Ready ||
+          !util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
+        continue;
+      }
+      // Every view of the path shares this one document: one edit reverts them all.
+      if (tab.editor_state->viewport.RevertToDiskContent(on_disk)) {
+        operations_.invalidate_editor_blame_path(normalized_path);
+        return true;
+      }
+      ReloadEditorTabsForPathFromDisk(normalized_path);
+      return true;
+    }
+  }
+  return false;
+}
+
 bool TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, bool clean_only,
                                              EchoGuard echo_guard) {
   const std::filesystem::path normalized_path = path.lexically_normal();

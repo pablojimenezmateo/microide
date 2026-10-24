@@ -233,6 +233,7 @@ enum class ActionId {
   CloseActiveTab,
   CloseAllTabs,
   SaveAll,
+  RevertFile,
   CloseOtherTabs,
   CloseTabsToRight,
   CloseTabsToLeft,

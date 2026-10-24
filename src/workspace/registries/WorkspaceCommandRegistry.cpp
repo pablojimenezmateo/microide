@@ -279,6 +279,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::Quit, "quit", "quit", "Quit", "Ctrl+Q"},
       ActionSpec{ActionId::RenamePath, "", "", "Rename…", ""},
       ActionSpec{ActionId::Reopen, "reopen", "reopen", "Reload from Disk", ""},
+      ActionSpec{ActionId::RevertFile, "revert-file", "revert-file", "Revert File", ""},
       ActionSpec{ActionId::ReopenClosedEditor, "reopen-closed-editor", "reopen-closed-editor",
                  "Reopen Closed Editor", "Ctrl+Shift+T"},
       ActionSpec{ActionId::NavigateBack, "navigate-back", "navigate-back", "Go Back", "Alt+Left"},

@@ -101,6 +101,10 @@ void EditorTabService::ReloadEditorTabsForPathFromDisk(const std::filesystem::pa
   coordinator_.ReloadEditorTabsForPathFromDisk(path);
 }
 
+bool EditorTabService::RevertEditorTabsForPath(const std::filesystem::path& path) {
+  return coordinator_.RevertEditorTabsForPath(path);
+}
+
 bool EditorTabService::OverwriteEditorTabsForPath(const std::filesystem::path& path) {
   return coordinator_.OverwriteEditorTabsForPath(path);
 }

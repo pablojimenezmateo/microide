@@ -195,6 +195,8 @@ class WorkspaceActionContext {
     // The interactive save. Same tab, same contract, except the formatter runs off
     // the shell thread and the write lands when it returns.
     std::function<bool(std::size_t)> save_tab_deferred;
+    // Revert File on the active editor's file: false when it cannot be read.
+    std::function<bool()> revert_active_file;
     // Save All: every dirty editor in every group, deferred as one Ctrl+S is.
     std::function<SaveAllOutcome()> save_all_dirty_tabs;
     std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
@@ -613,6 +615,7 @@ class WorkspaceActionContext {
   bool SaveTab(std::size_t index);
   bool SaveTabDeferred(std::size_t index);
   SaveAllOutcome SaveAllDirtyTabs();
+  bool RevertActiveFile();
   // Save As / naming an untitled buffer. `error` says why on failure.
   bool SaveTabAs(std::size_t index, const std::filesystem::path& path, std::string* error);
   // A path that does not exist yet opens as an empty buffer bound to it.

@@ -997,6 +997,10 @@ SaveAllOutcome WorkspaceActionContext::SaveAllDirtyTabs() {
   return operations_.save_all_dirty_tabs ? operations_.save_all_dirty_tabs() : SaveAllOutcome{};
 }
 
+bool WorkspaceActionContext::RevertActiveFile() {
+  return operations_.revert_active_file && operations_.revert_active_file();
+}
+
 bool WorkspaceActionContext::SaveTabAs(std::size_t index, const std::filesystem::path& path,
                                        std::string* error) {
   if (!operations_.save_tab_as) {

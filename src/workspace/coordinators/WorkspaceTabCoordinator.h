@@ -169,6 +169,10 @@ class TabCoordinator {
   bool ReloadCleanEditorTabsForPath(const std::filesystem::path& path,
                                     EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
+  // Revert File: every view of `path` takes the file's content as one undoable
+  // edit (one shared document, so one edit), clean afterwards; a reload when the
+  // file's line ending or encoding changed. False when the file cannot be read.
+  bool RevertEditorTabsForPath(const std::filesystem::path& path);
   // Shared reload core for both of the above. Reloads every editor view on `path`
   // across ALL editor groups (not just the focused one) so a split view of the same
   // file in the non-focused group is refreshed too. `clean_only` skips dirty views

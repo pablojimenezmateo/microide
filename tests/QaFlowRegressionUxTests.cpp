@@ -241,6 +241,28 @@ void TestTheUnsavedPromptsLettersDoNotType() {
          "the following key types as usual, got " + ViewportText(TestAccess::ActiveEditor(fixture.shell)));
 }
 
+// revert-file: there was no way to throw unsaved changes away but undoing them
+// one by one -- Reload from Disk refuses a dirty buffer, rightly, because it
+// swaps the buffer and its history. VS Code's Revert File takes the disk's text
+// as one undoable edit, so Ctrl+Z brings the discarded changes back.
+void TestRevertFileDiscardsChangesUndoably() {
+  UxFixture fixture("notes.txt", "one\ntwo\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_CTRL), TextInputEvent("three")});
+  WriteFile(fixture.root / "notes.txt", "one\ntwo changed elsewhere\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "revert-file"), "revert-file runs on a dirty file");
+  const editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  Expect(ViewportText(viewport) == "one\ntwo changed elsewhere\n" && !viewport.dirty(),
+         "the buffer holds the disk's text, clean, got " + ViewportText(viewport));
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)});
+  Expect(ViewportText(viewport) == "one\ntwo\nthree" && viewport.dirty(),
+         "Ctrl+Z brings the discarded edit back, dirty, got " + ViewportText(viewport));
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Y, SDL_KMOD_CTRL)});
+  Expect(ViewportText(viewport) == "one\ntwo changed elsewhere\n" && !viewport.dirty(),
+         "redo returns to the reverted, clean text, got " + ViewportText(viewport));
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "revert-file"),
+         "with nothing unsaved revert-file refuses");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -251,6 +273,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetFollowsATabSwitch", TestTheFindWidgetFollowsATabSwitch);
   AddTest(tests, "QaFlowRegressionUx/CtrlKSSavesEveryDirtyFile", TestCtrlKSSavesEveryDirtyFile);
   AddTest(tests, "QaFlowRegressionUx/TheUnsavedPromptsLettersDoNotType", TestTheUnsavedPromptsLettersDoNotType);
+  AddTest(tests, "QaFlowRegressionUx/RevertFileDiscardsChangesUndoably", TestRevertFileDiscardsChangesUndoably);
 }
 
 }  // namespace microide::tests

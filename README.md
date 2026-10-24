@@ -828,6 +828,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `set-setting <id> <value>`
 - `quit`
 - `reopen`
+- `revert-file`
 - `reopen-closed-editor`
 - `navigate-back`
 - `navigate-forward`

@@ -462,6 +462,12 @@ class TextViewport {
   // Take `other`'s disk signature as this buffer's baseline, and mark it clean:
   // it now holds what the file holds.
   void AdoptDiskBaselineOf(const TextViewport& other);
+  // Revert File: make this buffer hold what `disk` (the file just read) holds, as
+  // ONE undoable edit, and make that the clean point -- Ctrl+Z gets the discarded
+  // changes back, as in VS Code (whose revert pushes edit operations). False,
+  // changing nothing, when the two differ in line ending, encoding or BOM: an
+  // edit cannot carry that, and the caller reloads instead.
+  bool RevertToDiskContent(const TextViewport& disk);
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;

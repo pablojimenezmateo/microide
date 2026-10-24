@@ -305,6 +305,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseAllTabs:
       return !context_.current_project_state.focused_group().open_tabs.empty();
+    case ActionId::RevertFile:
+      // A file on disk with unsaved changes: there is something to revert TO and
+      // something to revert.
+      return !context_.current_project_state.root.empty() && active_editable_viewport != nullptr &&
+             !active_editable_viewport->path().empty() && active_editable_viewport->dirty();
     case ActionId::SaveAll:
       // Offered while something in the project is unsaved (VS Code greys it out
       // otherwise too).
