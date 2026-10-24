@@ -250,9 +250,75 @@ def flow_untitled_numbering(app: q.App) -> None:
                    f"the file holds the buffer and the tab takes its name ({(app.active_tab() or {}).get('title')})")
 
 
+def flow_save_all(app: q.App) -> None:
+    """File > Save All (Ctrl+K S, VS Code's chord) writes every unsaved file in
+    every group -- one file open in two groups once -- leaves an untitled buffer
+    for its Save As and says so, and does not type the chord's S. The menu row is
+    greyed out while nothing is unsaved. A file changed on disk since it was
+    opened is refused by name, the others still written."""
+    open_file(app, "all/one.txt", "one\n")
+    app.key("ctrl+End")
+    app.type("ONE")
+    app.key("ctrl+backslash")
+    step(app, "split", 0.4)
+    app.key("ctrl+End")
+    app.type("!")
+    open_file(app, "all/two.txt", "two\n")
+    app.key("ctrl+End")
+    app.type("TWO")
+    app.key("ctrl+n")
+    app.type("scratch")
+    step(app, "three unsaved buffers", 0.3)
+    app.click_named("menu:File")
+    step(app, "File menu", 0.2)
+    row = app.element("menu-item:File/Save All")
+    app.expect(bool(row) and row.get("enabled") is not False, f"Save All is offered ({row})")
+    dismiss(app)
+    app.key("ctrl+k")
+    app.key("s")
+    step(app, "ctrl+k s", 0.6)
+    app.wait_until(lambda: read(app, "all/one.txt") == "one\nONE!\n" and read(app, "all/two.txt") == "two\nTWO\n",
+                   4.0, "both files written")
+    app.expect(read(app, "all/one.txt") == "one\nONE!\n" and read(app, "all/two.txt") == "two\nTWO\n",
+               f"Save All writes both files ({read(app, 'all/one.txt')!r}, {read(app, 'all/two.txt')!r})")
+    app.expect(app.text() == "scratch" and app.buffer()["dirty"],
+               f"the untitled buffer keeps its text, unsaved, and no S was typed ({app.text()!r})")
+    notes = [n.get("message", "") for n in app.query("notifications")]
+    app.expect(any("untitled buffer needs a name" in m for m in notes),
+               f"the notice says the untitled buffer needs a Save As ({notes})")
+    app.key("ctrl+w")
+    step(app, "close the untitled buffer", 0.3)
+    if app.ui().get("modal"):
+        app.key("d")
+        step(app, "discard it", 0.3)
+    app.click_named("menu:File")
+    step(app, "File menu, nothing unsaved", 0.2)
+    row = app.element("menu-item:File/Save All")
+    app.expect(row.get("enabled") is False, f"with nothing unsaved the row is greyed out ({row})")
+    dismiss(app)
+    # A changed-on-disk file is refused by name; the other is still written.
+    app.send("open", "all/one.txt")
+    step(app, "one.txt", 0.3)
+    app.key("ctrl+End")
+    app.type("+")
+    app.send("open", "all/two.txt")
+    step(app, "two.txt", 0.3)
+    app.key("ctrl+End")
+    app.type("+")
+    write(app, "all/one.txt", "changed elsewhere\n")
+    step(app, "one.txt changed on disk", 1.2)
+    reply = app.send("save-all")
+    app.expect(not reply.get("ok") and "one.txt" in str(reply.get("error", "")),
+               f"Save All names the file it could not write ({reply})")
+    app.expect(read(app, "all/two.txt") == "two\nTWO\n+\n" and read(app, "all/one.txt") == "changed elsewhere\n",
+               f"two.txt is written and one.txt's disk change kept ({read(app, 'all/two.txt')!r}, "
+               f"{read(app, 'all/one.txt')!r})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "file-formats": flow_file_formats,
     "file-vanish": flow_file_vanish,
     "undo-save-point": flow_undo_save_point,
     "untitled-numbering": flow_untitled_numbering,
+    "save-all": flow_save_all,
 }
