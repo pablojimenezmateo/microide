@@ -245,6 +245,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       // VS Code calls the same state "Plain Text".
       language.text = filetype == "unknown" ? std::string_view("Plain Text") : std::string_view(filetype);
       language.tooltip = editor_segments_cache_.language_tooltip;
+      language.command = "language-mode";
       language.visible = true;
     }
     status_bar_service.SetSegment(StatusBarSegmentId::Language, language);

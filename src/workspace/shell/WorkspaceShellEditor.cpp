@@ -100,6 +100,29 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
       viewport.language_id(), settings.auto_close, settings.surround, settings.smart_indent));
 }
 
+void WorkspaceShell::ApplyLanguageModeToActiveEditor(const std::string& language) {
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr || viewport->language_override() == language) {
+    return;
+  }
+  const std::filesystem::path path = viewport->path();
+  // VS Code closes the document and reopens it in its new language: the servers
+  // and plugins that held it under the old one let it go (diagnostics, semantic
+  // colours), and the new language's take it up.
+  if (!path.empty()) {
+    NotifyLspBufferClose(path);
+  }
+  viewport->SetLanguageOverride(language);
+  // Every view of the document: its language contract (auto-close pairs,
+  // comments, indentation rules) is the new language's.
+  ApplyEditorPreferencesToAllTabs();
+  if (!path.empty()) {
+    NotifyPluginBufferOpen(path);
+    NotifyLspBufferOpen(path);
+  }
+  RequestWindowRedraw();
+}
+
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
   util::AddPerformanceCounter(util::PerfCounterId::FrameApplyEditorPreferencesAllTabsCalls);
   // Font size is a project preference but the text renderer is shared across all

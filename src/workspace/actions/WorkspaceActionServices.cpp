@@ -427,6 +427,10 @@ bool WorkspaceActionContext::FindLspReferences(std::string* error_message) {
   return operations_.find_lsp_references(error_message);
 }
 
+bool WorkspaceActionContext::ChangeLanguageMode(const std::string& language, std::string* error) {
+  return operations_.change_language_mode && operations_.change_language_mode(language, error);
+}
+
 void WorkspaceActionContext::OpenWorkspaceSymbolPicker(std::string query) {
   if (operations_.open_workspace_symbol_picker) {
     operations_.open_workspace_symbol_picker(std::move(query));

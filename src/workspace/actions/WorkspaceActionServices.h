@@ -152,6 +152,9 @@ class WorkspaceActionContext {
     // `incoming` selects callers-of vs called-by; both render into the same channel.
     std::function<bool(bool, std::string*)> show_call_hierarchy;
     std::function<void(std::string query)> open_workspace_symbol_picker;
+    // Change Language Mode: the pick (empty) or a language to set ("auto" detects
+    // again); false, with why, for a language no definition has.
+    std::function<bool(const std::string& language, std::string* error)> change_language_mode;
     std::function<bool(std::string*)> format_active_document;
     std::function<std::string()> symbol_at_cursor;
     std::function<bool(const std::string&, std::string*)> rename_symbol;
@@ -536,6 +539,7 @@ class WorkspaceActionContext {
   // Search Workspace Symbols: a quick pick the language server filters as the
   // query is typed, seeded with `query`.
   void OpenWorkspaceSymbolPicker(std::string query);
+  bool ChangeLanguageMode(const std::string& language, std::string* error);
   bool ShowCallHierarchy(bool incoming, std::string* error_message);
   bool FormatActiveDocument(std::string* error_message);
   bool RenameSymbol(const std::string& new_name, std::string* error_message);

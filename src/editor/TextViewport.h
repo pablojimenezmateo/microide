@@ -212,6 +212,11 @@ class TextViewport {
   // resolve *on this viewport*. Callers that hold it across an edit, a path
   // change, or an unrelated call that might re-resolve should copy it.
   const std::string& language_id() const;
+  // Change Language Mode: the buffer's language set by hand, for every view of it
+  // (runtime_syntax::kPlainTextFiletype for none), or "" to detect it again. The
+  // highlighting restarts in that language; language_id() answers it.
+  void SetLanguageOverride(std::string language);
+  const std::string& language_override() const;
   void LoadContent(std::string_view content,
                    const std::filesystem::path& path = {},
                    std::optional<LineEnding> line_ending = std::nullopt);
@@ -935,6 +940,8 @@ class TextViewport {
   static std::uint64_t NextDocumentRevisionBase();
   struct DocumentState {
     std::filesystem::path path;
+    // A language set by hand (Change Language Mode), or empty to detect one.
+    std::string language_override;
     // Cached NormalizedPathKey(path), recomputed only when `path` changes.
     // Lets per-frame presentation-store lookups pass a precomputed key instead
     // of re-normalizing (and re-allocating) every frame. See SetDocumentPath.

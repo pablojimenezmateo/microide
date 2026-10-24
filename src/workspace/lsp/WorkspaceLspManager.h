@@ -46,6 +46,11 @@ class LspManager {
   // Get or start server for language; returns nullptr if not registered or failed to start.
   LspClient* GetServer(const std::string& language_id);
   LspClient* FindStartedServer(const std::string& language_id);
+  // Send textDocument/didClose for `uri` to every started server that has it
+  // open, and answer how many did. By what the servers hold, not by the buffer's
+  // language: a language set by hand -- or changed since the open -- would name
+  // a server that never saw the document.
+  std::size_t CloseDocumentEverywhere(const std::string& uri);
 
   // True if a server is registered for language, regardless of running state.
   bool HasServer(const std::string& language_id) const;

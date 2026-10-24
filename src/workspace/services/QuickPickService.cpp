@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/debug/LaunchConfig.h"
@@ -102,6 +103,7 @@ void QuickPickService::Preview() {
       break;
     case QuickPickKind::LaunchConfig:
     case QuickPickKind::WorkspaceSymbol:  // VS Code opens nothing until Enter
+    case QuickPickKind::LanguageMode:
       break;
   }
 }
@@ -132,6 +134,11 @@ void QuickPickService::Accept() {
     case QuickPickKind::WorkspaceSymbol:
       if (operations_.open_workspace_symbol) {
         operations_.open_workspace_symbol(item.value, item.line, item.column);
+      }
+      break;
+    case QuickPickKind::LanguageMode:
+      if (operations_.set_language) {
+        operations_.set_language(item.value);
       }
       break;
   }
@@ -259,6 +266,37 @@ QuickPickState QuickPickService::WorkspaceSymbols(std::string query) {
   picker.noun = "symbols";
   picker.server_filtered = true;
   picker.query.SetText(std::move(query));
+  return picker;
+}
+
+QuickPickState QuickPickService::LanguageModes(std::span<const std::string> languages, std::string_view chosen,
+                                              std::string_view detected) {
+  QuickPickState picker;
+  picker.kind = QuickPickKind::LanguageMode;
+  picker.title = "Select Language Mode";
+  picker.noun = "languages";
+  const auto add = [&](std::string value, std::string label, std::string detail) {
+    if (value == chosen) {
+      picker.selected_index = picker.items.size();
+    }
+    std::string search_text = util::ToLowerAscii(label);
+    picker.items.push_back(QuickPickItem{
+        .index = picker.items.size(),
+        .value = std::move(value),
+        .line = 0,
+        .column = 0,
+        .primary_label = std::move(label),
+        .secondary_label = std::move(detail),
+        .search_text = std::move(search_text),
+    });
+  };
+  add("", "Auto Detect", detected.empty() || detected == "unknown" ? "Plain Text" : std::string(detected));
+  add(std::string(editor::runtime_syntax::kPlainTextFiletype), "Plain Text", "");
+  for (const std::string& language : languages) {
+    if (language != "unknown") {
+      add(language, language, "");
+    }
+  }
   return picker;
 }
 

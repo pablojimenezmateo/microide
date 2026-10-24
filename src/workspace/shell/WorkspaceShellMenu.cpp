@@ -4,6 +4,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
@@ -496,7 +497,7 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
     }
     return item.command_name;
   }
-  if (const ActionSpec* action = FindActionSpec(item.action); action != nullptr) {
+  if (const ActionSpec* action = FindWorkspaceActionSpec(item.action); action != nullptr) {
     if (!action->label.empty()) {
       return IsLspDrivenMenuAction(effective_action) ? lsp_label(action->label) : action->label;
     }
@@ -520,7 +521,7 @@ std::string_view WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) c
       return action->accelerator;
     }
   }
-  if (const ActionSpec* action = FindActionSpec(item.action);
+  if (const ActionSpec* action = FindWorkspaceActionSpec(item.action);
       action != nullptr && !action->accelerator.empty()) {
     return action->accelerator;
   }

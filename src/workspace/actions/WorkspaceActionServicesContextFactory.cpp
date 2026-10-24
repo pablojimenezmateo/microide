@@ -690,6 +690,28 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::string query) {
                 quick_pick_service_.Open(QuickPickService::WorkspaceSymbols(std::move(query)));
               },
+          .change_language_mode =
+              [this](const std::string& language, std::string* error) {
+                editor::TextViewport* viewport = ActiveEditorViewport();
+                if (viewport == nullptr) {
+                  return false;
+                }
+                std::vector<std::string> languages = editor::runtime_syntax::FiletypeNames();
+                if (language.empty()) {
+                  quick_pick_service_.Open(QuickPickService::LanguageModes(
+                      languages, viewport->language_override(),
+                      editor::runtime_syntax::DetectFiletype(viewport->path())));
+                  return true;
+                }
+                const std::string value = language == "auto" ? std::string() : language;
+                if (!value.empty() && value != editor::runtime_syntax::kPlainTextFiletype &&
+                    std::find(languages.begin(), languages.end(), value) == languages.end()) {
+                  *error = "No such language: " + language;
+                  return false;
+                }
+                ApplyLanguageModeToActiveEditor(value);
+                return true;
+              },
           .format_active_document =
               [this](std::string* error_message) {
                 return assist_service_.FormatActiveDocument(error_message);

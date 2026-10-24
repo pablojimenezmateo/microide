@@ -1509,6 +1509,32 @@ std::string DetectFiletype(const std::filesystem::path& path) {
   return definition == nullptr ? std::string{} : definition->filetype;
 }
 
+std::vector<std::string> FiletypeNames() {
+  const Registry& registry = GetRegistry();
+  std::vector<std::string> names;
+  names.reserve(registry.definitions.size());
+  for (const Definition& definition : registry.definitions) {
+    if (!definition.filetype.empty()) {
+      names.push_back(definition.filetype);
+    }
+  }
+  std::sort(names.begin(), names.end());
+  names.erase(std::unique(names.begin(), names.end()), names.end());
+  return names;
+}
+
+SyntaxState StateForFiletype(std::string_view filetype) {
+  const Registry& registry = GetRegistry();
+  if (filetype != kPlainTextFiletype) {
+    for (std::size_t i = 0; i < registry.definitions.size(); ++i) {
+      if (registry.definitions[i].filetype == filetype) {
+        return SyntaxState{.definition_id = static_cast<std::uint32_t>(i + 1)};
+      }
+    }
+  }
+  return SyntaxState{.definition_id = kPlainTextDefinitionId};
+}
+
 void CompileDefinition(std::uint32_t definition_id) {
   // Idempotent (std::call_once) and bounds-checked inside EnsureDefinitionCompiled;
   // a no-op for id 0, an out-of-range id, or an eager/already-compiled definition.
@@ -1538,6 +1564,11 @@ SyntaxState HighlightLineInto(std::string_view line,
 
   SyntaxState end_state{};
   end_state.definition_id = definition_id;
+  // A buffer set to Plain Text by hand: nothing to tokenize.
+  if (definition_id == kPlainTextDefinitionId) {
+    tokens->clear();
+    return end_state;
+  }
   if (line.empty() || line.size() > kMaxHighlightLineBytes) {
     tokens->clear();
     // Leave `tokens` EMPTY rather than filling `line.size()` Plain entries. Every
@@ -1597,6 +1628,9 @@ SyntaxState AdvanceState(std::string_view line,
                                : DetectDefinitionId(registry, path, nullptr, first_line);
   SyntaxState end_state{};
   end_state.definition_id = definition_id;
+  if (definition_id == kPlainTextDefinitionId) {
+    return end_state;
+  }
   if (line.empty() || line.size() > kMaxHighlightLineBytes) {
     // Carry the incoming open-region stack forward (see HighlightLine): a blank or
     // over-long line must not reset a multi-line region to top level, which would

@@ -178,6 +178,14 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
         (void)operations_.execute_action(ActionId::SaveAll, {}, ActionSource::Shortcut);
         return true;
       }
+      // VS Code's Change Language Mode: Ctrl+K, then M on its own (its text swallowed).
+      if (chord_mod == SDL_KMOD_NONE && event.key == SDLK_M) {
+        if (operations_.set_swallow_next_text_input) {
+          operations_.set_swallow_next_text_input(true);
+        }
+        (void)operations_.execute_action(ActionId::LanguageMode, {}, ActionSource::Shortcut);
+        return true;
+      }
       // VS Code's git chords for a diff: Ctrl+K Ctrl+Alt+S stages the selected
       // ranges, Ctrl+K Ctrl+N unstages them, Ctrl+K Ctrl+R reverts them.
       if (chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_ALT) && event.key == SDLK_S) {

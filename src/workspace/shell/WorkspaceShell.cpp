@@ -116,10 +116,6 @@ WorkspaceShell::SidebarMode WorkspaceShell::ActiveSidebarMode() const {
                               plugin_runtime_.Host());
 }
 
-const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionSpec(ActionId id) {
-  return FindWorkspaceActionSpec(id);
-}
-
 const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionByCommand(std::string_view command_name) {
   return FindWorkspaceActionByCommand(command_name);
 }

@@ -604,6 +604,41 @@ void TestTheColorThemePickPreviewsRevertsAndApplies() {
   Expect(!overlay()["visible"].AsBool() && active() == "light", "Enter keeps the chosen scheme, got " + active());
 }
 
+// TD-2026-10-24-388: nothing set a buffer's language by hand. Change Language Mode
+// (Ctrl+K M, the status bar's language, `language-mode`) sets it for the document:
+// highlighting, the status bar and the language id follow; Plain Text highlights
+// nothing; Auto Detect goes back to what the file says.
+void TestChangeLanguageModeSetsTheDocumentsLanguage() {
+  UxFixture fixture("code.txt", "int main() { return 0; }\n");
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  const auto tokens_kinds = [&] {
+    std::set<int> kinds;
+    for (const editor::SyntaxTokenKind kind : viewport.HighlightedLineTokens(0)) {
+      kinds.insert(static_cast<int>(kind));
+    }
+    return kinds;
+  };
+  const std::string detected = viewport.language_id();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "language-mode c++"), "language-mode c++ runs");
+  fixture.Frame();
+  Expect(viewport.language_id() == "c++", "the buffer is C++ now, got " + viewport.language_id());
+  Expect(fixture.ElementLabel("status:language") == "c++", "the status bar says so");
+  Expect(tokens_kinds().size() > 1, "and the line is highlighted as C++");
+  Expect(!TestAccess::ExecuteCommandLine(fixture.shell, "language-mode klingon"), "an unknown language is refused");
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_K, SDL_KMOD_CTRL), KeyDownEvent(SDLK_M), TextInputEvent("m")});
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["overlay"]["visible"].AsBool() && ui["overlay"]["kind"].AsString() == "language-mode",
+         "Ctrl+K M opens the language pick");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("plain text"), KeyDownEvent(SDLK_RETURN)});
+  fixture.Frame();
+  Expect(viewport.language_id() == "unknown" && fixture.ElementLabel("status:language") == "Plain Text",
+         "Plain Text is chosen, got " + viewport.language_id());
+  Expect(tokens_kinds().size() <= 1, "and nothing is highlighted");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "language-mode auto"), "auto runs");
+  Expect(viewport.language_id() == detected, "Auto Detect goes back to " + detected + ", got " + viewport.language_id());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -622,6 +657,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/ChangeLanguageModeSetsTheDocumentsLanguage",
+          TestChangeLanguageModeSetsTheDocumentsLanguage);
   AddTest(tests, "QaFlowRegressionUx/TheColorThemePickPreviewsRevertsAndApplies",
           TestTheColorThemePickPreviewsRevertsAndApplies);
   AddTest(tests, "QaFlowRegressionUx/TheColourSchemeSettingOffersEveryScheme",

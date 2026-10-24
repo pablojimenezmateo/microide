@@ -106,6 +106,7 @@ enum class ActionId {
   Focus,
   GoToDefinition,
   GoToSymbolInEditor,
+  LanguageMode,
   // Alt+F8 / Shift+Alt+F8: jump to the next / previous diagnostic in the active
   // file, wrapping (VS Code editor.action.marker.next / .prev).
   GoToNextDiagnostic,

@@ -44,6 +44,8 @@ class QuickPickService {
     // QuickPickKind::WorkspaceSymbol: open `path` at (line, server character).
     std::function<void(const std::filesystem::path&, std::size_t line, std::size_t character)>
         open_workspace_symbol;
+    // QuickPickKind::LanguageMode: set the active buffer's language.
+    std::function<void(const std::string& language)> set_language;
   };
 
   void Configure(QuickPickState& state, Operations operations);
@@ -78,6 +80,11 @@ class QuickPickService {
       std::span<const plugin::PluginHost::DocumentSymbolNode> symbols);
   // Search Workspace Symbols: server-filtered, so a query typed asks the server.
   static QuickPickState WorkspaceSymbols(std::string query);
+  // Change Language Mode: Auto Detect (naming what detection says), Plain Text,
+  // then every language the registry highlights; `chosen` (the buffer's language
+  // set by hand, "" when detected) selected.
+  static QuickPickState LanguageModes(std::span<const std::string> languages, std::string_view chosen,
+                                      std::string_view detected);
 
  private:
   void Preview();

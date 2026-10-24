@@ -229,6 +229,7 @@ WorkspaceShell::WorkspaceShell() {
               [this](const std::filesystem::path& path, std::size_t line, std::size_t character) {
                 assist_service_.OpenWorkspaceSymbol(path, line, static_cast<int>(character));
               },
+          .set_language = [this](const std::string& language) { ApplyLanguageModeToActiveEditor(language); },
       });
   tab_strip_chrome_.Configure(
       context_, tab_strip_service_, layout_mode_service_, output_channels_,
@@ -1352,20 +1353,11 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
       RequestEditorSurfaceRedraw();
     }
   }
-  const std::string language_id = editor::runtime_syntax::DetectFiletype(normalized_path);
-  if (language_id.empty()) {
-    return;
-  }
-  LspClient* client = CurrentLspManager().FindStartedServer(language_id);
-  if (client == nullptr) {
-    return;
-  }
   // Percent-encoded to match the open URI (FileUriForPath); a raw "file://" +
   // path never matches HasOpenDocument for special-char paths, so didClose would
   // be skipped and the server would leak the document (and its diagnostics).
-  const std::string uri = FileUriForPath(normalized_path);
-  if (client->HasOpenDocument(uri)) {
-    client->DidClose(uri);
+  if (CurrentLspManager().CloseDocumentEverywhere(FileUriForPath(normalized_path)) == 0) {
+    return;
   }
   state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
   RefreshProblemsSidebar();

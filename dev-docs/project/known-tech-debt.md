@@ -498,7 +498,7 @@ pane's metrics and its sticky-row count, both derived in the paint loop today,
 so moving it means preparing those per pane first. Until then, anything new that
 reads `VisibleLine`/`LineAtPosition` outside paint inherits a one-frame lag.
 
-### TD-2026-10-24-388 — no Change Language Mode. [OPEN]
+### TD-2026-10-24-388 — no Change Language Mode. [RESOLVED 2026-10-25]
 
 The status bar's language segment (`status:language`) is inert, and nothing sets
 a buffer's language by hand: `TextViewport::language_id()` is detection only
@@ -508,6 +508,20 @@ choice sticks to that buffer (and offers "Configure File Association for
 override that the language memo keys on (so the LSP, the contract view and the
 highlighter all follow), and a status-segment command. Found by the QA
 2026-10-24 pass probing the status bar; TD-361 records the other inert segments.
+
+**Resolved:** `TextViewport::SetLanguageOverride` sets a language on the DOCUMENT
+(every view follows): `language_id()` answers it, the initial highlight state is
+that definition's (keyed on `syntax_revision`, which the override bumps), and
+Plain Text is a definition id no definition has (`kPlainTextDefinitionId`:
+nothing tokenized) reported as the fallback `unknown`. Changing it closes the
+document on its servers and plugins and reopens it in the new language, as VS
+Code does, and re-applies every view's language contract. The quick pick
+(`QuickPickKind::LanguageMode`: Auto Detect naming what detection says, Plain
+Text, every registry language) opens from Ctrl+K M, the status bar's language
+segment and a bare `language-mode`; `language-mode <language|auto|plaintext>`
+sets it directly. Found on the way: a closing buffer's didClose went to the
+server its PATH detects (`LspManager::CloseDocumentEverywhere` now closes it on
+every server holding it). `QaFlowRegressionUx/ChangeLanguageModeSetsTheDocumentsLanguage`.
 
 ### TD-2026-10-24-387 — search view results do not follow edits. [OPEN]
 

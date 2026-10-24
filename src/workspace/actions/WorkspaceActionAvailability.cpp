@@ -100,6 +100,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::GoToPreviousProblemInFiles:
       return !context_.current_project_state.root.empty();
     case ActionId::GoToSymbolInEditor:  // the executor says when there are none
+    case ActionId::LanguageMode:
     case ActionId::GoToNextDiagnostic:
     case ActionId::GoToPreviousDiagnostic:
       // Diagnostics come from servers and plugins alike; the executor reports an

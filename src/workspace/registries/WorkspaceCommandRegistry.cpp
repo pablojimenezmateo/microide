@@ -107,6 +107,8 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Go to Definition", "F12"},
       ActionSpec{ActionId::GoToSymbolInEditor, "goto-symbol", "goto-symbol [query]",
                  "Go to Symbol in Editor…", "Ctrl+Shift+O"},
+      ActionSpec{ActionId::LanguageMode, "language-mode", "language-mode [language|auto|plaintext]",
+                 "Change Language Mode…", "Ctrl+K M"},
       ActionSpec{ActionId::GoToNextProblemInFiles, "next-problem", "next-problem", "Next Problem",
                  "F8"},
       ActionSpec{ActionId::GoToPreviousProblemInFiles, "previous-problem", "previous-problem",

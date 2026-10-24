@@ -543,7 +543,6 @@
     Unavailable,
   };
 
-  static const ActionSpec* FindActionSpec(ActionId id);
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
   static const std::vector<std::string>& CommandNames();
   static std::span<const MenuSpec> MenuSpecs();
@@ -1445,6 +1444,9 @@
   // rebuild, applying only the cheap runtime setters. Full callers (project
   // activation, session restore, init) keep the default true.
   void ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts = true);
+  // Change Language Mode on the active editor's document ("" detects it again):
+  // its language servers swap, every view's contract and highlighting follow.
+  void ApplyLanguageModeToActiveEditor(const std::string& language);
   // Refresh the active editor tab's `editor::FoldingModel` from the active
   // viewport, the resolved language contract, and the current `editor.fold.enabled`
   // setting. Returns the (now-fresh) model pointer or nullptr when no editor

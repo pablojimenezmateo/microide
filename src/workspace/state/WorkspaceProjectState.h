@@ -381,6 +381,7 @@ enum class QuickPickKind : std::uint8_t {
   ColorTheme,    // apply the colour scheme `value`, previewed as the selection moves
   DocumentSymbol,  // reveal (`line`, `column`) in the active editor, previewed likewise
   WorkspaceSymbol,  // open `value` (a path) at `line`, `column` = the server's character
+  LanguageMode,     // set the active buffer's language to `value` ("" detects it again)
 };
 
 struct QuickPickItem {

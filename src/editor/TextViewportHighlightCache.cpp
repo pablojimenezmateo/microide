@@ -208,7 +208,9 @@ void TextViewport::EnsureInitialHighlightState() const {
     initial_highlight_state_.reset();
     return;
   }
-  if (initial_highlight_state_.has_value()) {
+  // Keyed on the syntax revision: a language set by hand (or a syntax reload)
+  // changes the definition the whole buffer starts in.
+  if (initial_highlight_state_.has_value() && highlight_state_syntax_revision_ == document_->syntax_revision) {
     return;
   }
   // Build the trace label only when tracing is on and only past the early-outs
@@ -224,7 +226,10 @@ void TextViewport::EnsureInitialHighlightState() const {
   // this never materializes the whole document (the previous Snapshot() copied
   // the entire file -- megabytes, one alloc per line -- just to read 64 lines,
   // and left that copy resident in the buffer's snapshot cache).
-  initial_highlight_state_ = SyntaxHighlighter::InitialState(document_->path, document_->lines);
+  initial_highlight_state_ =
+      document_->language_override.empty()
+          ? SyntaxHighlighter::InitialState(document_->path, document_->lines)
+          : runtime_syntax::StateForFiletype(document_->language_override);
 }
 
 void TextViewport::StoreLineHighlightState(std::size_t line, const SyntaxState& state) const {

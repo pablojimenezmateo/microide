@@ -192,6 +192,20 @@ LspClient* LspManager::FindStartedServer(const std::string& language_id) {
   return entry->client->IsRunning() ? entry->client.get() : nullptr;
 }
 
+std::size_t LspManager::CloseDocumentEverywhere(const std::string& uri) {
+  std::size_t closed = 0;
+  for (auto& [key, entry] : servers_) {
+    (void)key;
+    LspClient* client = entry.client.get();
+    if (client == nullptr || (!entry.test_install && !client->IsRunning()) || !client->HasOpenDocument(uri)) {
+      continue;
+    }
+    client->DidClose(uri);
+    ++closed;
+  }
+  return closed;
+}
+
 bool LspManager::HasServer(const std::string& language_id) const {
   return ResolveEntry(language_id) != nullptr;
 }

@@ -212,6 +212,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       context_.NotifyDiagnostic(*target);
       return DispatchResult::Handled;
     }
+    case ActionId::LanguageMode: {
+      if (const editor::TextViewport* viewport = context_.ActiveNavigableViewport(); viewport == nullptr) {
+        return reject("Change Language Mode needs an open editor");
+      }
+      std::string error;
+      if (!context_.ChangeLanguageMode(JoinCommandArguments(args, 0), &error)) {
+        return reject(error.empty() ? "Cannot change the language" : error);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::GoToSymbolInEditor:
       if (const editor::TextViewport* viewport = context_.ActiveNavigableViewport();
           viewport == nullptr || viewport->path().empty()) {

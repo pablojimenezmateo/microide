@@ -92,6 +92,18 @@ std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines,
 // Path-only detection for callers with no content available.
 std::string DetectFiletype(const std::filesystem::path& path);
 
+// Change Language Mode. A buffer's language set by hand names a filetype; Plain
+// Text is its own name and a definition id no definition has, which highlights
+// nothing (an id of 0 would mean "detect from the path" again).
+inline constexpr std::string_view kPlainTextFiletype = "plaintext";
+inline constexpr std::uint32_t kPlainTextDefinitionId = 0xFFFFFFFFu;
+// Every filetype the registry highlights, sorted, without duplicates.
+std::vector<std::string> FiletypeNames();
+// The initial highlight state of a buffer whose language was set to `filetype`:
+// that definition's, or Plain Text's for kPlainTextFiletype or a name no
+// definition carries.
+SyntaxState StateForFiletype(std::string_view filetype);
+
 // Eagerly compile a definition's lazily-built rule regexes. Safe to call from a
 // background worker: it is idempotent (std::call_once) and a no-op for an
 // unknown id or an already-compiled/eager definition. Used to prewarm a

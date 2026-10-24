@@ -290,8 +290,32 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   return *this;
 }
 
+void TextViewport::SetLanguageOverride(std::string language) {
+  EnsureDocument();
+  if (document_->language_override == language) {
+    return;
+  }
+  document_->language_override = std::move(language);
+  // Every view's highlight caches and initial state key on this.
+  ++document_->syntax_revision;
+  language_id_valid_ = false;
+}
+
+const std::string& TextViewport::language_override() const {
+  static const std::string kNone;
+  return document_ != nullptr ? document_->language_override : kNone;
+}
+
 const std::string& TextViewport::language_id() const {
   util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeMemoQueries);
+  // A language set by hand wins over detection. Plain Text reads as the registry's
+  // fallback id, which is what an unrecognized file is (the status bar's "Plain
+  // Text"; no language server, the default contract).
+  if (document_ != nullptr && !document_->language_override.empty()) {
+    static const std::string kFallbackLanguage = "unknown";
+    return document_->language_override == runtime_syntax::kPlainTextFiletype ? kFallbackLanguage
+                                                                              : document_->language_override;
+  }
   const void* document = document_.get();
   const std::size_t registry_revision = runtime_syntax::RegistryRevision();
   // Which revision this memo keys on depends on whether the last detection read
