@@ -1412,8 +1412,9 @@ void WorkspaceActionContext::PasteClipboard() {
   // VS Code's emptySelectionClipboard rule: the clipboard still holds exactly
   // the whole line an empty-selection copy or cut put there, and the paste
   // target is a single caret with nothing selected, so the line goes in ABOVE
-  // the caret's line -- not into the middle of it -- and the caret lands at the
-  // start of the line it was on, one line further down. Anything typed, another
+  // the caret's line -- not into the middle of it -- and the caret stays where it
+  // was in its own line, now one line further down (VS Code's
+  // ReplaceCommandThatPreservesSelection). Anything typed, another
   // copy, or a paste into a terminal / single-line field takes the ordinary
   // path; the marker only ever matches its own text, so a clipboard written by
   // another application never triggers it.
@@ -1424,13 +1425,21 @@ void WorkspaceActionContext::PasteClipboard() {
       !(state_.surface.focus == FocusTarget::Panel &&
         operations_.active_terminal_pane() != nullptr) &&
       !operations_.has_active_single_line_text_surface();
+  editor::TextViewport* line_target = nullptr;
+  std::size_t line_target_column = 0;
   if (line_paste) {
     if (auto* viewport = operations_.active_editable_viewport();
         viewport != nullptr && !viewport->has_selection() && !viewport->has_multiple_carets()) {
+      line_target = viewport;
+      line_target_column = viewport->cursor_column();
       viewport->MoveCursorTo(viewport->cursor_line(), 0);
     }
   }
   InsertTextIntoActiveSurface(std::move(*clipboard_text), /*distribute_across_carets=*/true);
+  if (line_target != nullptr && line_target == operations_.active_editable_viewport() &&
+      !line_target->has_multiple_carets()) {
+    line_target->MoveCursorTo(line_target->cursor_line(), line_target_column);
+  }
 }
 
 void WorkspaceActionContext::PressKey(SDL_Keycode key, SDL_Keymod modifiers) {

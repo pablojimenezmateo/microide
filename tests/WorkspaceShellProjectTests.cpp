@@ -4421,8 +4421,9 @@ void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
   Expect(RunCommandLine(shell, "paste"), "paste dispatches");
   Expect(viewport.lines().Snapshot() == std::vector<std::string>{"one", "one", "two", ""},
          "the line lands above the caret's line, not inside it");
-  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
-         "the caret is at the start of the line it was on, one line down");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
+         "the caret stays where it was in its line, one line down (VS Code), at " +
+             std::to_string(viewport.cursor_line()) + ":" + std::to_string(viewport.cursor_column()));
 
   // A selection copy clears the rule: the same text pastes inline.
   viewport.MoveCursorTo(0, 0);
