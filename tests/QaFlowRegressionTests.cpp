@@ -3232,6 +3232,31 @@ void TestTypingRepaintsOnlyTheLinesWhoseOccurrencesChanged() {
          "typing with nothing highlighted repaints the edited line, span " + std::to_string(span_on));
 }
 
+// editor_typing_paint's other cause (4d747851): typing into a line already wider
+// than the view repainted the whole pane each keystroke when that line was the
+// widest, as if the horizontal scrollbar might have just appeared. It was up
+// before the keystroke; only its thumb moves, and only its strip repaints.
+void TestTypingPastTheViewsEdgeRepaintsTheBarNotThePane() {
+  std::string text = std::string(400, 'w') + "\nshort\nshort\n";
+  FlowFixture fixture("wide.txt", text);
+  editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  viewport.MoveCursorTo(0, 400);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  const SDL_FRect pane = TestAccess::GroupEditorSurfaceRect(fixture.shell, 0);
+  const workspace::RenderInvalidation redraw = DispatchEvents(fixture.shell, {TextInputEvent("x")});
+  float covered = 0.0f;
+  for (const SDL_FRect& rect : redraw.rects) {
+    const float y0 = std::max(rect.y, pane.y);
+    const float y1 = std::min(rect.y + rect.h, pane.y + pane.h);
+    covered += std::max(0.0f, y1 - y0);
+  }
+  Expect(!redraw.full && covered < pane.h * 0.5f,
+         "a keystroke past the edge repaints its row and the bar, " + std::to_string(covered) + " of " +
+             std::to_string(pane.h));
+  fixture.ExpectFresh(redraw, "typing past the view's edge");
+}
+
 // A hover over a function body scrolled under its sticky header asks about the
 // line under the pointer. Hover resolved points against a grid with no sticky band,
 // so it asked about the line the band's height further down -- and showed that
@@ -3305,6 +3330,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestOutputTabRepaintsWhenItsChannelGetsALabel);
   AddTest(tests, "QaFlowRegression/TypingRepaintsOnlyTheLinesWhoseOccurrencesChanged",
           TestTypingRepaintsOnlyTheLinesWhoseOccurrencesChanged);
+  AddTest(tests, "QaFlowRegression/TypingPastTheViewsEdgeRepaintsTheBarNotThePane",
+          TestTypingPastTheViewsEdgeRepaintsTheBarNotThePane);
   AddTest(tests, "QaFlowRegression/TypingOffAWordRepaintsItsOccurrences",
           TestTypingOffAWordRepaintsItsOccurrences);
   AddTest(tests, "QaFlowRegression/HoverUnderAStickyBandResolvesThePointersLine",

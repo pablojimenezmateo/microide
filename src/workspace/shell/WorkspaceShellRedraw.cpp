@@ -523,8 +523,25 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   }
   const std::size_t widest = MaxVisualColumns(*viewport);
   const bool bar_now = widest > visible_columns;
-  // Another line keeps the bar up, and so it was up before: only the thumb moves.
-  const bool bar_was_and_is = bar_now && width_now < widest;
+  // How wide the edited line was at least before a one-line edit: its width now
+  // less the inserted text's, with a tab stop of slack for tabs after it.
+  std::size_t width_before_at_least = 0;
+  const std::size_t insert_column = applied_edit->range_before.start.column;
+  const std::size_t inserted_bytes = applied_edit->replacement_text.size();
+  if (removed_lines == 0 && inserted_lines == 0 && insert_column + inserted_bytes <= edited.size()) {
+    const std::size_t inserted_columns =
+        editor::TextLayout::VisualColumnForTextColumn(edited, insert_column + inserted_bytes,
+                                                      viewport->tab_size()) -
+        editor::TextLayout::VisualColumnForTextColumn(edited, insert_column, viewport->tab_size()) +
+        viewport->tab_size();
+    width_before_at_least = width_now > inserted_columns ? width_now - inserted_columns : 0;
+  }
+  // The bar was up before (another line keeps it up, or the edited line was
+  // already past the view) and still is: only the thumb moves. Typing at the end
+  // of the widest line repainted the whole pane every keystroke without the
+  // second half (editor_typing_paint).
+  const bool bar_was_and_is =
+      bar_now && (width_now < widest || width_before_at_least > visible_columns);
   if (!bar_was_and_is) {
     RequestFocusedEditorRedraw();
     return;
