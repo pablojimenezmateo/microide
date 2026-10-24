@@ -407,6 +407,12 @@ class TextViewport {
   bool SharesDocumentWith(const TextViewport& other) const {
     return document_ == other.document_;
   }
+  // The document this view shows, as an identity to key caches on. A reload from
+  // disk gives the SAME viewport a new document whose content revisions start
+  // over, so (viewport, content revision) can name two different texts; the
+  // language memo keys on this for that reason, and so must any cache of
+  // coordinates into the text.
+  const void* document_identity() const { return document_.get(); }
 
   // Result of comparing the file on disk *now* against the signature we recorded
   // at load/last-save. Used by coordinators to avoid clobbering external edits.

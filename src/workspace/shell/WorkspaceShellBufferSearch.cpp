@@ -109,7 +109,8 @@ bool WorkspaceShell::BufferSearchMatchesAreFresh() const {
   const editor::TextViewport* viewport = ActiveEditorViewport();
   return buffer_search.matches_viewport == static_cast<const void*>(viewport) &&
          (viewport == nullptr ||
-          buffer_search.matches_content_revision == viewport->content_revision());
+          (buffer_search.matches_document == viewport->document_identity() &&
+           buffer_search.matches_content_revision == viewport->content_revision()));
 }
 
 // The find widget is describing a buffer that is no longer the one in front of
@@ -142,6 +143,7 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
     buffer_search.matches.clear();
     ++buffer_search.matches_revision;
     buffer_search.matches_viewport = nullptr;
+    buffer_search.matches_document = nullptr;
     buffer_search.matches_content_revision = 0;
     buffer_search.selected_index = 0;
     buffer_search.incremental = {};
@@ -182,6 +184,7 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
             : QueryExtendsCaseInsensitive(incremental.query, query);
     const bool can_refine = incremental.valid && options_unchanged &&
                             incremental.viewport == static_cast<const void*>(viewport) &&
+                            incremental.document == viewport->document_identity() &&
                             incremental.content_revision == content_revision &&
                             !incremental.query.empty() && query_extends;
     buffer_search.matches =
@@ -190,6 +193,7 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
                    : FindLiteralSearchMatches(buffer, query, OptionsOf(buffer_search));
     incremental.valid = true;
     incremental.viewport = viewport;
+    incremental.document = viewport->document_identity();
     incremental.content_revision = content_revision;
     incremental.query = query;
     incremental.match_case = buffer_search.match_case;
@@ -197,6 +201,7 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
   }
   ++buffer_search.matches_revision;
   buffer_search.matches_viewport = viewport;
+  buffer_search.matches_document = viewport->document_identity();
   buffer_search.matches_content_revision = content_revision;
   // What the scan actually walked. The refine fast path answers from the previous
   // match set and touches no lines, so a large number here IS the cold scan.

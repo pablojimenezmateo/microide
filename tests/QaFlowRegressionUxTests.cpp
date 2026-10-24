@@ -295,6 +295,25 @@ void TestTheStatusColumnFollowsTheTabSize() {
                                       ", column " + std::to_string(viewport.cursor_column()));
 }
 
+// state oracle (wb-project-search): a project Replace All rewrote the file under
+// an open find widget and the clean editor reloaded it -- and the widget kept
+// counting the five matches that were gone. The match set's freshness was keyed
+// on (viewport, content revision), and a reload gives the same viewport a new
+// document whose revisions start over, so the old revision recurred over new text.
+void TestTheFindWidgetRecountsAfterAReload() {
+  UxFixture fixture("reload.txt", "foo foo foo\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_F, SDL_KMOD_CTRL), TextInputEvent("foo")});
+  fixture.Frame();
+  Expect(TestAccess::ControlUi(fixture.shell)["overlay"]["count"].AsInt() == 3, "three matches at first");
+  WriteFile(fixture.file, "bar bar\n");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "reopen"), "the clean buffer reloads");
+  fixture.Frame();
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "bar bar\n", "the buffer is the new file");
+  Expect(ui["overlay"]["count"].AsInt() == 0,
+         "the widget counts no foo in the reloaded text, got " + std::to_string(ui["overlay"]["count"].AsInt()));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -307,6 +326,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/TheUnsavedPromptsLettersDoNotType", TestTheUnsavedPromptsLettersDoNotType);
   AddTest(tests, "QaFlowRegressionUx/RevertFileDiscardsChangesUndoably", TestRevertFileDiscardsChangesUndoably);
   AddTest(tests, "QaFlowRegressionUx/TheStatusColumnFollowsTheTabSize", TestTheStatusColumnFollowsTheTabSize);
+  AddTest(tests, "QaFlowRegressionUx/TheFindWidgetRecountsAfterAReload", TestTheFindWidgetRecountsAfterAReload);
 }
 
 }  // namespace microide::tests

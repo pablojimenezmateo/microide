@@ -199,6 +199,10 @@ struct BufferSearchState {
   // Deliberately not folded into `incremental` below, which is the literal
   // find-as-you-type refine cache and is invalidated outright in regex mode.
   const void* matches_viewport = nullptr;
+  // The document as well as the viewport: a reload swaps the viewport's document
+  // and restarts its revisions, so the old revision can recur over new text (the
+  // widget kept counting 5 matches a project Replace All had just reloaded away).
+  const void* matches_document = nullptr;
   std::uint64_t matches_content_revision = 0;
   std::size_t selected_index = 0;
   // Folds the reveal path expanded to show a match, recorded as whole ranges
@@ -217,6 +221,7 @@ struct BufferSearchState {
   struct IncrementalSearchCache {
     bool valid = false;
     const void* viewport = nullptr;
+    const void* document = nullptr;  // see matches_document
     std::uint64_t content_revision = 0;
     std::string query;
     // The options the cached matches were taken under. Refining a set found with
