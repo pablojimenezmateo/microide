@@ -897,8 +897,11 @@ void TestWorkspaceShellEditorTypingReturnsPartialEditorInvalidation() {
     rects += " [" + std::to_string(static_cast<int>(r.x)) + "," + std::to_string(static_cast<int>(r.y)) +
              " " + std::to_string(static_cast<int>(r.w)) + "x" + std::to_string(static_cast<int>(r.h)) + "]";
   }
-  // TD-2026-10-22-378: about one shard run in ten carries a pane-tall rect.
-  Expect(MaxRectHeight(result.redraw.rects) < active_pane.h,
+  // Measured inside the pane: the project's background index and git refresh can
+  // land during the keystroke and repaint the sidebar, which is window-tall -- the
+  // one-in-ten failure of TD-2026-10-22-378 was that damage counted against the
+  // editor.
+  Expect(InPaneDamageHeight(result.redraw.rects, active_pane) < active_pane.h,
          "single-line editor typing should redraw less than the full active pane;" + rects);
 }
 

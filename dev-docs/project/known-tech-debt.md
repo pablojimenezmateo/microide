@@ -678,7 +678,7 @@ emphasis a cell gets, not the selection itself). Next: replay with
 `MICROIDE_TRACE_INPUT=1` and log `cell_emphasis` inputs (find focus, pane
 emphasis, selection) for the two renders of the stale frame.
 
-### TD-2026-10-22-378 — `WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation` fails about one shard run in ten. [OPEN]
+### TD-2026-10-22-378 — `WorkspaceShell/EditorTypingReturnsPartialEditorInvalidation` fails about one shard run in ten. [RESOLVED 2026-10-25]
 
 Seen twice locally on 2026-10-22 in `ctest -R _tests_shard -j6` (1 of 11 full
 runs): "single-line editor typing should redraw less than the full active
@@ -690,6 +690,16 @@ file index, a watcher batch) landing between that consume and the keystroke,
 and riding out on the keystroke's result; or state left by an earlier test in
 the same shard process. Next: print the rects on failure, and drain the
 shell's mailboxes before typing so the test measures the keystroke alone.
+
+**Resolved (by reading the assertion, not by a captured failure):** the test held
+EVERY rect of the keystroke's result against the pane's height, and the result
+also carries whatever background completion lands during that event -- the
+project's file index or git refresh repaint the sidebar, which is as tall as the
+window. The assertion now measures the damage INSIDE the pane
+(`InPaneDamageHeight`), which is what "typing redraws less than the pane" means;
+the rects are printed on failure. 12 full shard runs and 30 runs of the test
+alone passed; if a pane-tall rect inside the pane ever shows, the message names
+it.
 
 ### TD-2026-10-22-377 — a stale strip on the split divider after typing in a split, on CI's ASan QA lane only. [OPEN]
 

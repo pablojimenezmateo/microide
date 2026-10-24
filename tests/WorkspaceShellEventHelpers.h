@@ -51,6 +51,23 @@ inline float MaxRectHeight(std::span<const SDL_FRect> rects) {
   return max_height;
 }
 
+// The tallest damage INSIDE `pane`: each rect clipped to it first. Damage from
+// elsewhere in the same event -- a background index or git refresh landing on the
+// sidebar, as tall as the window -- says nothing about what the editor repaints.
+inline float InPaneDamageHeight(std::span<const SDL_FRect> rects, const SDL_FRect& pane) {
+  float tallest = 0.0f;
+  for (const SDL_FRect& rect : rects) {
+    const float x0 = std::max(rect.x, pane.x);
+    const float x1 = std::min(rect.x + rect.w, pane.x + pane.w);
+    const float y0 = std::max(rect.y, pane.y);
+    const float y1 = std::min(rect.y + rect.h, pane.y + pane.h);
+    if (x1 > x0 && y1 > y0) {
+      tallest = std::max(tallest, y1 - y0);
+    }
+  }
+  return tallest;
+}
+
 // Event constructors for tests that dispatch a run of events and fold their
 // redraws (support/RetainedRedraw.h DispatchEvents).
 inline SDL_Event KeyDownEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
