@@ -1015,6 +1015,10 @@ struct ProjectWorkspaceState {
   // next response, so nothing has to clear it.
   struct SemanticOccurrenceHighlights {
     std::filesystem::path path;
+    // The document as well as the revision: a reload restarts revisions on a new
+    // document (TextViewport::document_identity), so path + revision alone could
+    // keep a set the reloaded text no longer has.
+    const void* document = nullptr;
     std::uint64_t content_revision = 0;
     // Sorted by (line_index, start_column) so the renderer resolves a row's slice
     // with a binary search, exactly like the textual scan's output.
@@ -1023,15 +1027,17 @@ struct ProjectWorkspaceState {
     bool empty() const { return ranges.empty(); }
     void Clear() {
       path.clear();
+      document = nullptr;
       content_revision = 0;
       ranges.clear();
     }
     // True when this set was computed for `viewport_path` at `revision` AND the
     // caret still sits inside one of its ranges (inclusive of both edges, so a
     // caret parked just past the last character of the symbol keeps it lit).
-    bool CoversCaret(const std::filesystem::path& viewport_path, std::uint64_t revision,
-                     std::size_t caret_line, std::size_t caret_column) const {
-      if (ranges.empty() || content_revision != revision || path != viewport_path) {
+    bool CoversCaret(const std::filesystem::path& viewport_path, const void* viewport_document,
+                     std::uint64_t revision, std::size_t caret_line, std::size_t caret_column) const {
+      if (ranges.empty() || content_revision != revision || document != viewport_document ||
+          path != viewport_path) {
         return false;
       }
       for (const editor::OccurrenceRange& range : ranges) {

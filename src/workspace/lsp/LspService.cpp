@@ -1082,6 +1082,7 @@ void LspService::MaybeRequestDocumentHighlights() {
   const std::size_t caret_line = viewport->cursor_line();
   const std::size_t caret_column = viewport->cursor_column();
   if (document_highlight_request_valid_ && document_highlight_request_revision_ == revision &&
+      document_highlight_request_document_ == viewport->document_identity() &&
       document_highlight_request_line_ == caret_line &&
       document_highlight_request_column_ == caret_column &&
       document_highlight_request_path_ == viewport->path()) {
@@ -1092,7 +1093,8 @@ void LspService::MaybeRequestDocumentHighlights() {
   // Arrowing through a word therefore costs nothing instead of one round-trip per
   // character. (The render path applies the same rule to decide the set is still
   // valid, so the two can never disagree about what is painted.)
-  if (CurrentProjectState().semantic_occurrences.CoversCaret(viewport->path(), revision,
+  if (CurrentProjectState().semantic_occurrences.CoversCaret(viewport->path(), viewport->document_identity(),
+                                                             revision,
                                                              caret_line, caret_column)) {
     return;
   }
@@ -1107,6 +1109,7 @@ void LspService::MaybeRequestDocumentHighlights() {
   document_highlight_request_valid_ = true;
   document_highlight_request_path_ = viewport->path();
   document_highlight_request_revision_ = revision;
+  document_highlight_request_document_ = viewport->document_identity();
   document_highlight_request_line_ = caret_line;
   document_highlight_request_column_ = caret_column;
 
@@ -1116,20 +1119,20 @@ void LspService::MaybeRequestDocumentHighlights() {
   client->RequestDocumentHighlightAsync(
       FileUriForPath(viewport->path()),
       ByteColumnToLspPosition(*viewport, caret_line, caret_column, encoding),
-      [this, project, path = viewport->path(), generation, revision, encoding, caret_line,
-       caret_column](LspResult<std::vector<LspClient::DocumentHighlight>> highlights) {
+      [this, project, path = viewport->path(), document = viewport->document_identity(), generation,
+       revision, encoding, caret_line, caret_column](LspResult<std::vector<LspClient::DocumentHighlight>> highlights) {
         // A transport failure leaves the previous set (and the textual fallback)
         // alone; only an authoritative answer replaces what is painted.
         if (!highlights.has_value()) {
           return;
         }
-        PublishLspDocumentHighlights(*project, path, generation, revision, encoding, caret_line,
-                                     caret_column, std::move(*highlights));
+        PublishLspDocumentHighlights(*project, path, document, generation, revision, encoding,
+                                     caret_line, caret_column, std::move(*highlights));
       });
 }
 
 void LspService::PublishLspDocumentHighlights(
-    ProjectWorkspaceState& state, const std::filesystem::path& path,
+    ProjectWorkspaceState& state, const std::filesystem::path& path, const void* document,
     std::uint64_t request_generation, std::uint64_t content_revision,
     lsp_encoding::PositionEncoding encoding, std::size_t caret_line, std::size_t caret_column,
     std::vector<LspClient::DocumentHighlight> highlights) {
@@ -1137,12 +1140,14 @@ void LspService::PublishLspDocumentHighlights(
     return;  // a newer caret position already went out
   }
   const editor::TextViewport* const file_viewport = FindOpenEditorViewport(state, path);
-  if (file_viewport == nullptr || file_viewport->content_revision() != content_revision) {
+  if (file_viewport == nullptr || file_viewport->content_revision() != content_revision ||
+      file_viewport->document_identity() != document) {
     return;  // the buffer moved on; these absolute positions no longer describe it
   }
 
   auto& store = state.semantic_occurrences;
   store.path = path;
+  store.document = document;
   store.content_revision = content_revision;
   store.ranges.clear();
   store.ranges.reserve(highlights.size());

@@ -464,6 +464,49 @@ void TestBuilderMarksExecutionLineOnlyForMatchingFile() {
          "execution line should not be marked when the focused frame is in another file");
 }
 
+// QA 2026-10-24 (the find widget's reload bug, audited across caches): the
+// word-under-caret highlight caches were keyed on the viewport and its content
+// revision, and a reload gives the SAME viewport a new document whose revisions
+// start over -- so the old word's highlights stayed on the reloaded text.
+void TestBuilderOccurrencesFollowAReloadedDocument() {
+  WorkspaceContext ctx;
+  RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("value value value\n", "/proj/reload.txt");
+  viewport.SetViewportSize(8, 80);
+  viewport.MoveCursorTo(0, 2);
+  const auto build = [&](microide::editor::EditorViewModel& vm) {
+    builder.BuildEditorViewModelInto(vm, viewport, 8, nullptr,
+                                     /*occurrences_highlight_enabled=*/true,
+                                     /*occurrences_case_sensitive=*/true,
+                                     /*sticky_scroll_enabled=*/false, /*sticky_max_depth=*/3,
+                                     /*render_whitespace_enabled=*/false);
+  };
+  microide::editor::EditorViewModel before;
+  build(before);
+  Expect(before.occurrence_ranges.size() == 3, "three `value`s are highlighted");
+  const std::uint64_t revision = viewport.content_revision();
+  // A language server's highlight set for the old text, covering the caret.
+  auto& semantic = ctx.current_project_state.semantic_occurrences;
+  semantic.path = viewport.path();
+  semantic.document = viewport.document_identity();
+  semantic.content_revision = revision;
+  semantic.ranges = {microide::editor::OccurrenceRange{.line_index = 0, .start_column = 0, .end_column = 5}};
+  microide::editor::TextViewport reloaded;
+  reloaded.LoadContent("other other value\n", "/proj/reload.txt");
+  viewport = reloaded;
+  viewport.SetViewportSize(8, 80);
+  viewport.MoveCursorTo(0, 2);
+  Expect(viewport.content_revision() == revision,
+         "the reloaded document's revision recurs (the case under test)");
+  microide::editor::EditorViewModel after;
+  build(after);
+  Expect(after.occurrence_ranges.size() == 2,
+         "the reloaded text's two `other`s are highlighted -- not the old text's server set, nor its "
+         "word scan -- got " +
+             std::to_string(after.occurrence_ranges.size()));
+}
+
 // The language server's documentHighlight answer replaces the built-in word scan
 // while it is valid for the caret. The point of the feature is that it is NOT a
 // spelling match: `value` in an unrelated scope must stay unpainted, which no
@@ -496,6 +539,7 @@ void TestBuilderPrefersSemanticOccurrencesOverWordScan() {
   auto& semantic = ctx.current_project_state.semantic_occurrences;
   semantic.path = viewport.path();
   semantic.content_revision = viewport.content_revision();
+  semantic.document = viewport.document_identity();
   semantic.ranges = {
       microide::editor::OccurrenceRange{.line_index = 0,
                                         .start_column = 0,
@@ -1508,6 +1552,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayWrapsLongDescriptions);
   AddTest(tests, "RenderViewModelBuilder/PrefersSemanticOccurrencesOverWordScan",
           TestBuilderPrefersSemanticOccurrencesOverWordScan);
+  AddTest(tests, "RenderViewModelBuilder/OccurrencesFollowAReloadedDocument",
+          TestBuilderOccurrencesFollowAReloadedDocument);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsRegistrySourcedWithRecents",
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",

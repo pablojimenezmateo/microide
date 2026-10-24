@@ -39,6 +39,10 @@ namespace {
 
 thread_local struct OccurrenceSeedDetectCache {
   std::uintptr_t viewport = 0;
+  // The document too: a reload gives the viewport a new document whose content
+  // revisions start over, so (viewport, revision, caret) can name other text --
+  // the old word's highlights stayed on the reloaded file.
+  const void* document = nullptr;
   // Occurrence seed text comes from the buffer at the caret; only content
   // mutations can change what the seed string is.
   std::uint64_t content_revision = 0;
@@ -55,6 +59,7 @@ thread_local struct OccurrenceSeedDetectCache {
 
 thread_local struct OccurrenceViewportScanCache {
   std::uintptr_t viewport = 0;
+  const void* document = nullptr;  // see OccurrenceSeedDetectCache::document
   // Scan results enumerate occurrences of the needle inside buffer bytes.
   std::uint64_t content_revision = 0;
   std::size_t scroll_line = 0;
@@ -247,6 +252,7 @@ bool OccurrenceSeedCacheMatches(const editor::TextViewport& viewport,
                                 std::uintptr_t viewport_key,
                                 bool case_sensitive_flag) {
   return g_occurrence_seed_cache.viewport == viewport_key &&
+         g_occurrence_seed_cache.document == viewport.document_identity() &&
          g_occurrence_seed_cache.content_revision == viewport.content_revision() &&
          g_occurrence_seed_cache.caret_line == viewport.cursor_line() &&
          g_occurrence_seed_cache.caret_column == viewport.cursor_column() &&
@@ -258,6 +264,7 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
                                bool occurrences_case_sensitive) {
   auto& seed_cache = g_occurrence_seed_cache;
   seed_cache.viewport = viewport_key;
+  seed_cache.document = viewport.document_identity();
   seed_cache.content_revision = viewport.content_revision();
   seed_cache.caret_line = viewport.cursor_line();
   seed_cache.caret_column = viewport.cursor_column();
@@ -314,6 +321,7 @@ bool OccurrenceScanCacheMatches(const editor::TextViewport& viewport,
   }
   const std::size_t scroll_line = viewport.scroll_line();
   return g_occurrence_scan_cache.viewport == viewport_key &&
+         g_occurrence_scan_cache.document == viewport.document_identity() &&
          g_occurrence_scan_cache.content_revision == viewport.content_revision() &&
          g_occurrence_scan_cache.scroll_line == scroll_line &&
          g_occurrence_scan_cache.visible_rows == visible_rows &&
@@ -335,6 +343,7 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
                                bool occurrences_case_sensitive) {
   auto& scan_cache = g_occurrence_scan_cache;
   scan_cache.viewport = viewport_key;
+  scan_cache.document = viewport.document_identity();
   scan_cache.content_revision = viewport.content_revision();
   scan_cache.scroll_line = viewport.scroll_line();
   scan_cache.visible_rows = visible_rows;
@@ -1568,7 +1577,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   // response (where showing the last good set would be worse than a word match).
   const ProjectWorkspaceState::SemanticOccurrenceHighlights& semantic =
       context_.current_project_state.semantic_occurrences;
-  if (semantic.CoversCaret(viewport.path(), viewport.content_revision(), viewport.cursor_line(),
+  if (semantic.CoversCaret(viewport.path(), viewport.document_identity(), viewport.content_revision(),
+                           viewport.cursor_line(),
                            viewport.cursor_column())) {
     out.occurrence_ranges = std::span<const editor::OccurrenceRange>(semantic.ranges);
     return;

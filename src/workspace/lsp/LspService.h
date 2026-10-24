@@ -258,9 +258,10 @@ class LspService {
   void MaybeRequestDocumentHighlights();
   // Store a documentHighlight response as the active buffer's semantic occurrence
   // set (converting server positions to byte columns) and repaint. Drops a
-  // response superseded by a newer request or by a content edit.
+  // response superseded by a newer request, a content edit or a reload.
   void PublishLspDocumentHighlights(ProjectWorkspaceState& state,
                                     const std::filesystem::path& path,
+                                    const void* document,
                                     std::uint64_t request_generation,
                                     std::uint64_t content_revision,
                                     lsp_encoding::PositionEncoding encoding,
@@ -485,6 +486,7 @@ class LspService {
   std::uint64_t document_highlight_generation_ = 0;
   std::filesystem::path document_highlight_request_path_;
   std::uint64_t document_highlight_request_revision_ = 0;
+  const void* document_highlight_request_document_ = nullptr;
   std::size_t document_highlight_request_line_ = 0;
   std::size_t document_highlight_request_column_ = 0;
   bool document_highlight_request_valid_ = false;
