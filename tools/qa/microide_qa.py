@@ -1136,16 +1136,62 @@ class App:
         The labels are derived at frame prep, so a disagreement is read again
         after the next frames before it is reported: a lag of one frame is not
         stale state."""
-        found = self._state_findings(ui)
+        found = self._state_findings(ui) + self._tab_strip_findings(ui)
         for _ in range(3):
             if not found:
                 return []
             time.sleep(0.2 * SLOW_FACTOR)
             try:
-                found = self._state_findings(self.ui())
+                ui = self.ui()
+                found = self._state_findings(ui) + self._tab_strip_findings(ui)
             except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
                 return []
         return found
+
+    def _tab_strip_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
+        """Every group's strip, not only the focused one: each visible tab is one of
+        that group's tabs as the `editor` query has it -- its title, its dirty mark
+        -- and the group's highlighted tab is its active one. A background group's
+        strip is repainted by nothing the focused group does, so a stale label
+        there has nothing to correct it."""
+        try:
+            groups = self.editor_state().get("groups", [])
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return []
+        out: list[tuple[str, str]] = []
+        for group in groups:
+            prefix = f"tab:{group.get('index')}/"
+            shown = [e for e in ui.get("elements", []) if e.get("kind") == "tab" and e["name"].startswith(prefix)]
+            if not shown:
+                continue
+            tabs = group.get("tabs", [])
+
+            def matches(label: str, tab: dict) -> bool:
+                # The query names a diff or merge tab "compare: x" / "merge: x"; its
+                # strip label is the file's name.
+                # A comparison of two inputs is "compare: left  ↔  right" there, and
+                # its strip label is the right side's file name.
+                title = tab.get("title", "\0")
+                for kind_prefix in ("compare: ", "merge: "):
+                    title = title.removeprefix(kind_prefix)
+                shown = label.lstrip("*")
+                if "↔" in title:
+                    right = title.rsplit("↔", 1)[-1].strip()
+                    named = right.startswith(shown) or shown.startswith(right)
+                else:
+                    named = shown.startswith(title)
+                return label.startswith("*") == bool(tab.get("dirty")) and named
+            for element in shown:
+                label = element.get("label", "")
+                if not any(matches(label, tab) for tab in tabs):
+                    out.append(("state", f"group {group.get('index')} shows a tab {label!r} it does not hold "
+                                         f"({[('*' if t.get('dirty') else '') + t.get('title', '') for t in tabs]})"))
+            active = next((t for t in tabs if t.get("active")), None)
+            lit = next((e for e in shown if e.get("active")), None)
+            if active is not None and lit is not None and not matches(lit.get("label", ""), active):
+                out.append(("state", f"group {group.get('index')} highlights {lit.get('label')!r}; its active tab is "
+                                     f"{('*' if active.get('dirty') else '') + active.get('title', '')!r}"))
+        return out
 
     def _state_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
         try:
