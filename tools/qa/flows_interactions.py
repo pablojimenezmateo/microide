@@ -190,8 +190,45 @@ def flow_find_goto_edges(app: q.App) -> None:
                    f"Go to {bad} is refused with a reason and moves nothing ({reply})")
 
 
+def flow_blame_card_follows_its_line(app: q.App) -> None:
+    """The blame card goes when its line stops being the blamed one, with the
+    pointer still: focus moving to the other pane of a split (inline blame is the
+    active pane's), and the caret leaving the line by a key. Each time the card is
+    gone from the ui and the frame that removed it is checked by the redraw
+    verifier (the card's pixels once stayed: QA monkey, editor profile)."""
+    write(app, "blame2/lines.txt", "".join(f"line {i}\n" for i in range(1, 40)))
+    git(app, "add", "-A")
+    git(app, "commit", "-q", "-m", "qa: blame two")
+    open_file(app, "blame2/lines.txt")
+    app.send("split-down")
+    step(app, "split down", 0.4)
+    app.send("focus-group", "1")
+    step(app, "top pane", 0.3)
+    app.click_text(3, 2)
+    step(app, "caret on line 3", 1.2)
+
+    def card_up() -> bool:
+        app.move(*app.text_point(3, 18))
+        return _card(app).get("kind") == "blame"
+    if not app.wait_until(card_up, 6.0, "the blame card on line 3"):
+        return
+    app.send("focus-other-group")
+    step(app, "focus the other pane", 0.6)
+    app.expect(_card(app).get("kind") != "blame", f"the card goes with its pane's focus ({_card(app)})")
+    app.send("focus-group", "1")
+    step(app, "back to the top pane", 0.3)
+    app.click_text(3, 2)
+    step(app, "caret on line 3 again", 1.2)
+    if not app.wait_until(card_up, 6.0, "the blame card again"):
+        return
+    app.key("Down")
+    step(app, "the caret leaves the line", 0.6)
+    app.expect(_card(app).get("kind") != "blame", f"the card goes when the caret leaves its line ({_card(app)})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "blame-inline": flow_blame_inline,
+    "blame-card-follows-its-line": flow_blame_card_follows_its_line,
     "selection-mouse": flow_selection_mouse,
     "terminal-activity": flow_terminal_activity,
     "find-goto-edges": flow_find_goto_edges,
