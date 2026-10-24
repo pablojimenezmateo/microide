@@ -7,7 +7,8 @@
 #include <vector>
 
 // Fuzz the per-project session decoder (editor groups, split tree, sidebar and
-// tree state, the terminal layout to revive). DecodeProjectSessionRecord must
+// tree state, the terminal layout to revive, the closed editors and each
+// editor's collapsed folds). DecodeProjectSessionRecord must
 // never crash on arbitrary bytes, and what it accepts must stay inside the caps
 // a revive trusts (tabs, panes per tab).
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size) {
@@ -23,6 +24,21 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
           std::span<const std::byte>(bytes.data(), bytes.size()), &state)) {
     if (state.terminal_layout.tabs.size() > microide::workspace::kMaxRevivedTerminalTabs) {
       __builtin_trap();
+    }
+    if (state.closed_editors.size() > microide::workspace::kMaxPersistedClosedEditors) {
+      __builtin_trap();
+    }
+    for (const auto& closed : state.closed_editors) {
+      if (closed.collapsed_fold_openers.size() > microide::workspace::kMaxPersistedCollapsedFolds) {
+        __builtin_trap();
+      }
+    }
+    for (const auto& group : state.groups) {
+      for (const auto& tab : group.tabs) {
+        if (tab.collapsed_fold_openers.size() > microide::workspace::kMaxPersistedCollapsedFolds) {
+          __builtin_trap();
+        }
+      }
     }
     for (const auto& tab : state.terminal_layout.tabs) {
       if (tab.panes.empty() || tab.panes.size() > microide::workspace::kMaxTerminalPanes ||

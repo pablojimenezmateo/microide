@@ -74,6 +74,9 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              std::size_t visible_rows) {
   auto& model = *tab.folding_model;
   if (!fold_enabled) {
+    // Folds a restore was holding for this tab would collapse whenever folding
+    // came back on, long after the user stopped expecting them.
+    tab.restore.collapsed_fold_openers.clear();
     if (model.HasFolds()) {
       // Auto-expand any persisted user collapses so disabling the toggle never
       // leaves rows hidden, then drop the resolved ranges.
@@ -91,6 +94,7 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   // scrolling to lines outside it must resolve again even though the content has
   // not changed.
   if (model.IsFresh(fingerprint) && model.IsWindowResolved(first_line, last_line)) {
+    CollapseRestoredFolds(tab, viewport);
     return;
   }
 
@@ -99,6 +103,35 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   model.Refresh(viewport.lines(), options, first_line, last_line, kFoldingModelComputeBudget,
                 fold_edit_span, &viewport);
   model.SetFingerprint(fingerprint);
+  CollapseRestoredFolds(tab, viewport);
+}
+
+void CollapseRestoredFolds(TabEntry::EditorTabState& tab, editor::TextViewport& viewport) {
+  std::vector<std::size_t>& openers = tab.restore.collapsed_fold_openers;
+  if (openers.empty() || tab.content_pending()) {
+    return;
+  }
+  editor::FoldingModel& model = *tab.folding_model;
+  // The openers can be anywhere in the file, outside the window the refresh
+  // resolved; Fold All widens the same way.
+  model.ResolveAllFolds(viewport.lines(), &viewport);
+  // The restored scroll is a row of the FOLDED layout, applied before the folds
+  // existed. Unless the view has moved since, it is placed again over them.
+  const bool scroll_untouched = viewport.scroll_line() == tab.restore.scroll_line;
+  for (const std::size_t opener : openers) {
+    if (model.FoldStartingAt(opener).has_value()) {
+      (void)model.Collapse(opener);
+    }
+  }
+  openers.clear();
+  // The view is where the user left it: a caret inside one of these folds stood
+  // still while it collapsed, and the reveal must not take the restore for a move.
+  tab.fold_reveal_last_caret = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()};
+  tab.fold_reveal_last_secondary_count = viewport.secondary_caret_positions().size();
+  viewport.SetFoldingModel(model.HasFolds() ? &model : nullptr);
+  if (scroll_untouched) {
+    viewport.SetScrollLine(tab.restore.scroll_line);
+  }
 }
 
 bool RevealCaretsInsideCollapsedFolds(TabEntry::EditorTabState& tab,

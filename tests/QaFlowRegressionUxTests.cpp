@@ -447,6 +447,79 @@ void TestTheWindowTitleNamesTheActiveFileAndItsState() {
   Expect(title() == project + " \u2014 microide", "with no editor the title is the project's, got " + title());
 }
 
+// TD-2026-10-24-390 / TD-2026-10-18-355: Reopen Closed Editor restored the caret
+// but revealed it rather than the scroll the editor had, and dropped its folds; a
+// restart dropped every fold and forgot the closed editors. VS Code restores an
+// editor's whole view state either way.
+void TestAnEditorsViewSurvivesCloseReopenAndRestart() {
+  std::string text = "void folded() {\n";
+  for (int i = 0; i < 20; ++i) {
+    text += "  body();\n";
+  }
+  text += "}\n";
+  for (int i = 0; i < 300; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  UxFixture fixture("view.c", text);
+  WriteFile(fixture.root / "other.txt", "other\n");
+  auto view = [](WorkspaceShell& shell) -> editor::TextViewport& { return TestAccess::ActiveEditor(shell); };
+  auto folded_at_zero = [](WorkspaceShell& shell) {
+    const auto& tab = TestAccess::OpenTabs(shell)[TestAccess::ActiveTabIndex(shell)];
+    return tab.editor_state.has_value() && tab.editor_state->folding_model->IsCollapsedAtOpener(0);
+  };
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "fold"), "the function folds");
+  fixture.Frame();
+  Expect(folded_at_zero(fixture.shell), "the caret's function is collapsed");
+  view(fixture.shell).MoveCursorTo(200, 3);
+  view(fixture.shell).SetScrollLine(150);
+  fixture.Frame();
+  const std::size_t scroll = view(fixture.shell).scroll_line();
+
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_T, SDL_KMOD_CTRL | SDL_KMOD_SHIFT)});
+  fixture.Frame();
+  Expect(view(fixture.shell).cursor_line() == 200 && view(fixture.shell).cursor_column() == 3,
+         "Reopen Closed Editor puts the caret back");
+  Expect(folded_at_zero(fixture.shell), "and the fold");
+  Expect(view(fixture.shell).scroll_line() == scroll,
+         "and the scroll it had, got " + std::to_string(view(fixture.shell).scroll_line()) + " for " +
+             std::to_string(scroll));
+
+  // Close another file so the closed list has something to carry over.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open " + (fixture.root / "other.txt").string()),
+         "other.txt opens");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  TestAccess::SaveSessionState(fixture.shell);
+
+  WorkspaceShell restored;
+  Expect(TestAccess::OpenProjectTab(restored, fixture.root, true), "the project reopens with its session");
+  TestAccess::SetWindowSize(restored, UxFixture::kWidth, UxFixture::kHeight);
+  restored.Render(fixture.canvas.renderer(), UxFixture::kWidth, UxFixture::kHeight);
+  restored.Render(fixture.canvas.renderer(), UxFixture::kWidth, UxFixture::kHeight);
+  Expect(view(restored).path().filename() == "view.c", "the restart reopens view.c");
+  Expect(view(restored).cursor_line() == 200, "with its caret");
+  Expect(folded_at_zero(restored), "its fold");
+  Expect(view(restored).scroll_line() == scroll,
+         "and its scroll, got " + std::to_string(view(restored).scroll_line()) + " for " + std::to_string(scroll));
+  (void)DispatchEvents(restored, {KeyDownEvent(SDLK_T, SDL_KMOD_CTRL | SDL_KMOD_SHIFT)});
+  Expect(view(restored).path().filename() == "other.txt",
+         "Reopen Closed Editor reaches the editor closed before the restart");
+
+  // A fold collapsed around a caret standing still stays collapsed (VS Code's
+  // revealCursor reveals only a caret that MOVED in); restoring that view is not
+  // a move.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "goto 6:3"), "the caret goes into the body");
+  fixture.Frame();
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "fold"), "the function folds around it");
+  fixture.Frame();
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_T, SDL_KMOD_CTRL | SDL_KMOD_SHIFT)});
+  fixture.Frame();
+  fixture.Frame();
+  Expect(view(fixture.shell).cursor_line() == 5 && folded_at_zero(fixture.shell),
+         "the fold around the caret comes back collapsed");
+}
+
 // Found by the fold-restore test (TD-2026-10-24-390): every activation set the
 // tab size from the settings and then back to a 2-space file's own, each change
 // revealing the caret, so switching back to a tab whose caret was scrolled off
@@ -490,6 +563,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
   AddTest(tests, "QaFlowRegressionUx/SwitchingBackToATabKeepsItsScroll", TestSwitchingBackToATabKeepsItsScroll);
+  AddTest(tests, "QaFlowRegressionUx/AnEditorsViewSurvivesCloseReopenAndRestart",
+          TestAnEditorsViewSurvivesCloseReopenAndRestart);
   AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",
           TestTheWindowTitleNamesTheActiveFileAndItsState);
 }

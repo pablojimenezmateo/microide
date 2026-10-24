@@ -105,6 +105,10 @@ bool EditorTabService::RevertEditorTabsForPath(const std::filesystem::path& path
   return coordinator_.RevertEditorTabsForPath(path);
 }
 
+bool EditorTabService::ReopenEditor(DeferredTabHandle view) {
+  return coordinator_.ReopenEditor(std::move(view));
+}
+
 bool EditorTabService::OverwriteEditorTabsForPath(const std::filesystem::path& path) {
   return coordinator_.OverwriteEditorTabsForPath(path);
 }

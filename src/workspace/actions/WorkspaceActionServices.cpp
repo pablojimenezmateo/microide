@@ -967,10 +967,10 @@ void WorkspaceActionContext::MoveActiveTabTo(std::size_t index) {
   operations_.move_active_tab_to(index);
 }
 
-std::optional<ProjectWorkspaceState::ClosedEditor> WorkspaceActionContext::TakeRecentlyClosedEditor() {
+std::optional<DeferredTabHandle> WorkspaceActionContext::TakeRecentlyClosedEditor() {
   auto& closed = state_.recently_closed_editors;
   while (!closed.empty()) {
-    ProjectWorkspaceState::ClosedEditor entry = std::move(closed.back());
+    DeferredTabHandle entry = std::move(closed.back());
     closed.pop_back();
     std::error_code error;
     if (std::filesystem::is_regular_file(entry.path, error) && !error) {
@@ -978,6 +978,10 @@ std::optional<ProjectWorkspaceState::ClosedEditor> WorkspaceActionContext::TakeR
     }
   }
   return std::nullopt;
+}
+
+bool WorkspaceActionContext::ReopenEditor(DeferredTabHandle view) {
+  return operations_.reopen_editor && operations_.reopen_editor(std::move(view));
 }
 
 bool WorkspaceActionContext::ReopenActiveTab() {

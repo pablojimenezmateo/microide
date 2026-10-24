@@ -785,25 +785,26 @@ util::JsonValue BuildEditorTabJson(std::size_t index, const TabEntry& tab, bool 
   const auto one_based = [](std::size_t value) {
     return util::JsonValue(static_cast<std::int64_t>(value) + 1);
   };
-  if (tab.editor_state.has_value() && !tab.editor_state->content_pending()) {
-    const editor::TextViewport& viewport = tab.editor_state->viewport;
-    object["cursorLine"] = one_based(viewport.cursor_line());
-    object["cursorColumn"] = one_based(viewport.cursor_column());
-    object["scrollLine"] = one_based(viewport.scroll_line());
-    if (is_active_in_focus) {
-      object["visibleTop"] = one_based(viewport.scroll_line());
-      object["visibleCount"] =
-          util::JsonValue(static_cast<std::int64_t>(viewport.visible_lines()));
-    }
-  } else if (tab.editor_state.has_value()) {
+  const std::optional<DeferredTabHandle> view = EditorTabViewState(tab);
+  if (!view.has_value()) {
+    return util::JsonValue(std::move(object));
+  }
+  const bool loaded = tab.editor_state.has_value() && !tab.editor_state->content_pending();
+  if (tab.editor_state.has_value() && !loaded) {
     object["loading"] = util::JsonValue(true);
-    object["cursorLine"] = one_based(tab.editor_state->restore.cursor_line);
-    object["cursorColumn"] = one_based(tab.editor_state->restore.cursor_column);
-    object["scrollLine"] = one_based(tab.editor_state->restore.scroll_line);
-  } else if (tab.deferred_handle.has_value()) {
-    object["cursorLine"] = one_based(tab.deferred_handle->cursor_line);
-    object["cursorColumn"] = one_based(tab.deferred_handle->cursor_column);
-    object["scrollLine"] = one_based(tab.deferred_handle->scroll_line);
+  }
+  object["cursorLine"] = one_based(view->cursor_line);
+  object["cursorColumn"] = one_based(view->cursor_column);
+  object["scrollLine"] = one_based(view->scroll_line);
+  util::JsonArray folded;
+  for (const std::size_t opener : view->collapsed_fold_openers) {
+    folded.push_back(one_based(opener));
+  }
+  object["foldedLines"] = util::JsonValue(std::move(folded));
+  if (loaded && is_active_in_focus) {
+    const editor::TextViewport& viewport = tab.editor_state->viewport;
+    object["visibleTop"] = one_based(viewport.scroll_line());
+    object["visibleCount"] = util::JsonValue(static_cast<std::int64_t>(viewport.visible_lines()));
   }
   return util::JsonValue(std::move(object));
 }

@@ -191,6 +191,7 @@ class WorkspaceActionContext {
     std::function<void(std::size_t)> activate_tab;
     std::function<bool(std::size_t)> move_active_tab_to;
     std::function<bool()> reopen_active_tab;
+    std::function<bool(DeferredTabHandle)> reopen_editor;
     std::function<bool(std::size_t)> save_tab;
     // The interactive save. Same tab, same contract, except the formatter runs off
     // the shell thread and the write lands when it returns.
@@ -611,7 +612,10 @@ class WorkspaceActionContext {
   bool ReopenActiveTab();
   // The newest recently closed editor whose file still exists, removed from the
   // list (entries for files gone since are dropped on the way); nullopt for none.
-  std::optional<ProjectWorkspaceState::ClosedEditor> TakeRecentlyClosedEditor();
+  std::optional<DeferredTabHandle> TakeRecentlyClosedEditor();
+  // Open `view`'s file in the focused group as it was (caret, scroll, folds), or
+  // activate the tab already showing it. False when it cannot be opened.
+  bool ReopenEditor(DeferredTabHandle view);
   bool SaveTab(std::size_t index);
   bool SaveTabDeferred(std::size_t index);
   SaveAllOutcome SaveAllDirtyTabs();

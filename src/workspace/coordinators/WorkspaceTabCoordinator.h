@@ -173,6 +173,10 @@ class TabCoordinator {
   // edit (one shared document, so one edit), clean afterwards; a reload when the
   // file's line ending or encoding changed. False when the file cannot be read.
   bool RevertEditorTabsForPath(const std::filesystem::path& path);
+  // Reopen Closed Editor: `view`'s file in the focused group as it was -- a
+  // deferred tab hydrated by activation, as a restored session's is -- or the tab
+  // already showing it there, activated with its own view.
+  bool ReopenEditor(DeferredTabHandle view);
   // Shared reload core for both of the above. Reloads every editor view on `path`
   // across ALL editor groups (not just the focused one) so a split view of the same
   // file in the non-focused group is refreshed too. `clean_only` skips dirty views

@@ -449,7 +449,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-24-390 — folds do not survive a restart; Reopen Closed Editor moves the view. [OPEN]
+### TD-2026-10-24-390 — folds do not survive a restart; Reopen Closed Editor moves the view. [RESOLVED 2026-10-24]
 
 Found probing session state in the QA 2026-10-24 pass. A function folded in an
 editor is unfolded after a quit and relaunch (the caret and scroll come back,
@@ -462,6 +462,25 @@ Separately, Reopen Closed Editor (Ctrl+Shift+T) restores the caret exactly but
 not the scroll (a caret on line 200 came back with the view at 183, not 170):
 the reopen reveals the caret rather than applying the closed editor's scroll
 line. `session-restore` and `tab-reopen` are where flows asserting both go.
+
+**Resolved:** `DeferredTabHandle` is now the one value for "where an editor's view
+was" -- path, caret, selection, scroll and the collapsed folds' openers -- and
+`EditorTabViewState(tab)` reads it off any editor tab (live, loading or deferred).
+The session, a closed editor, a split clone and the `editor` query (`foldedLines`)
+all go through it, replacing four field-by-field copies. The session's tab record
+carries the openers (`EditorTabTag::CollapsedFold`, additive), and the fold refresh
+re-collapses them once the content is here (`CollapseRestoredFolds`: an opener that
+no longer starts a fold is dropped, the scroll -- a row of the folded layout -- is
+placed again, and the restored caret seeds the reveal tracker so a fold closed
+around it stays closed). Reopen Closed Editor opens a deferred tab from the closed
+editor's handle through the same hydration a restored session uses, instead of
+`reveal`, so the scroll and folds come back. Writing the test found a separate
+bug: every tab activation set the tab size from the settings and then back to a
+2-space file's own, each change revealing the caret, so a tab whose caret was
+scrolled off screen jumped on every switch back (bd432788). Tests:
+`QaFlowRegressionUx/AnEditorsViewSurvivesCloseReopenAndRestart`,
+`PersistedStateRecord/ProjectSessionRoundTripsFoldsAndClosedEditors`, a fuzz seed;
+QA `tab-reopen` and `session-restore` assert the caret, scroll and folds.
 
 ### TD-2026-10-24-389 — the inline-blame overlay is built while the pane paints. [OPEN]
 
@@ -1334,12 +1353,17 @@ finder, the palette) and the request generation guard already exist; what is
 missing is an overlay mode fed by async `workspace/symbol` responses, and a
 binding (Ctrl+T).
 
-### TD-2026-10-18-355 — the recently closed editors do not survive a restart. [OPEN]
+### TD-2026-10-18-355 — the recently closed editors do not survive a restart. [RESOLVED 2026-10-24]
 
 Reopen Closed Editor (c559c40f) keeps its list on the project's in-memory state:
 quitting forgets it, and VS Code's Ctrl+Shift+T reopens editors closed in an
 earlier session. The list is small (32 entries of path + caret) and would ride
 in the session record through PersistenceService like the open tabs do.
+
+**Resolved** with TD-2026-10-24-390: the list holds each editor's whole view
+(`DeferredTabHandle`) and rides in the project session as `ProjectSessionTag::
+ClosedEditor` records (an editor-tab record each, capped at 64 on decode); QA
+`session-restore` reopens an editor closed before the quit.
 
 ### TD-2026-10-16-354 — two defaults diverge from VS Code: hard tabs and trim-on-save. [OPEN — product decision]
 

@@ -370,15 +370,21 @@ struct MergeTabState {
   bool persistable = true;
 };
 
-// What to read and where to put the caret once it is read: a tab that exists
-// before its content does.
+// What to read and where to put the view once it is read: a tab that exists
+// before its content does, a tab of a saved session, a recently closed editor.
+// One value for "where this editor's view was", so each of those restores the
+// same things (TD-2026-10-24-390).
 struct DeferredTabHandle {
   std::filesystem::path path;
   std::size_t cursor_line = 0;
   std::size_t cursor_column = 0;
-  std::size_t scroll_line = 0;
+  std::size_t scroll_line = 0;  // a visual row, counted with the folds below collapsed
   std::size_t horizontal_scroll = 0;
   std::optional<editor::SelectionRange> selection;
+  // The opener lines of the collapsed folds, ascending. Re-collapsed by the fold
+  // refresh once the content is here (CollapseRestoredFolds); an opener the file
+  // no longer folds at is dropped.
+  std::vector<std::size_t> collapsed_fold_openers;
 
   // Last, after preferences and indent detection: those re-run
   // EnsureCursorVisible, which would snap scroll back onto the caret.
@@ -502,6 +508,41 @@ struct TabEntry {
   std::optional<CompareTabState> compare;
   std::optional<MergeTabState> merge;
 };
+
+// Where an editor tab's view is now: as the live viewport and fold model have it,
+// or -- for a tab whose content has not landed -- as it will be placed. What a
+// session saves, a closed editor remembers and a split starts from. Null for a
+// tab that is not an editor or has no file and no content.
+inline std::optional<DeferredTabHandle> EditorTabViewState(const TabEntry& tab) {
+  if (tab.kind != TabEntry::Kind::Editor) {
+    return std::nullopt;
+  }
+  if (!tab.editor_state.has_value()) {
+    return tab.deferred_handle;
+  }
+  const EditorTabState& editor = *tab.editor_state;
+  if (editor.content_pending()) {
+    return editor.restore;
+  }
+  const editor::TextViewport& view = editor.viewport;
+  DeferredTabHandle handle{
+      .path = view.path(),
+      .cursor_line = view.cursor_line(),
+      .cursor_column = view.cursor_column(),
+      .scroll_line = view.scroll_line(),
+      .horizontal_scroll = view.horizontal_scroll(),
+      .selection = view.selection_range(),
+  };
+  // Folds still waiting for the first refresh since the load are the tab's folds.
+  if (!editor.restore.collapsed_fold_openers.empty()) {
+    handle.collapsed_fold_openers = editor.restore.collapsed_fold_openers;
+  } else if (editor.folding_model != nullptr) {
+    for (const editor::FoldRange& range : editor.folding_model->collapsed_ranges()) {
+      handle.collapsed_fold_openers.push_back(range.opener_line);
+    }
+  }
+  return handle;
+}
 
 // An untitled buffer's title: "Untitled-<n>", or "Untitled" before it has one.
 inline std::string UntitledTitle(std::uint32_t untitled_number) {

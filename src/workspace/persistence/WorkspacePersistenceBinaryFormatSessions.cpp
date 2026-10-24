@@ -228,6 +228,14 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
     }
   }
 
+  for (const PersistedEditorTabState& closed : state.closed_editors) {
+    std::vector<std::byte> payload;
+    if (!EncodeEditorTab(closed, &payload) ||
+        !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectSessionTag::ClosedEditor), payload, out)) {
+      return false;
+    }
+  }
+
   for (const auto& group : state.groups) {
     std::vector<std::byte> payload;
     if (!EncodeEditorGroup(group, &payload) ||
@@ -358,6 +366,18 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                      return false;
                    }
                    state->groups.push_back(std::move(group));
+                   return true;
+                 }
+                 case ProjectSessionTag::ClosedEditor: {
+                   // Checked before decoding, like Group.
+                   if (state->closed_editors.size() >= kMaxSessionClosedEditors) {
+                     return true;
+                   }
+                   PersistedEditorTabState closed;
+                   if (!DecodeEditorTab(payload, &closed)) {
+                     return false;
+                   }
+                   state->closed_editors.push_back(std::move(closed));
                    return true;
                  }
                 case ProjectSessionTag::ChatRegistry:

@@ -704,6 +704,40 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   operations_.request_active_tab_redraw(true);
   return true;
 }
+bool TabCoordinator::ReopenEditor(DeferredTabHandle view) {
+  if (state_.root.empty() || view.path.empty()) {
+    return false;
+  }
+  view.path = view.path.lexically_normal();
+  EditorGroup& group = state_.focused_group();
+  const auto existing = std::find_if(group.open_tabs.begin(), group.open_tabs.end(),
+                                     [&](const TabEntry& tab) {
+                                       return tab.kind == TabEntry::Kind::Editor &&
+                                              tab.path == view.path;
+                                     });
+  if (existing != group.open_tabs.end()) {
+    Activate(static_cast<std::size_t>(std::distance(group.open_tabs.begin(), existing)));
+    return true;
+  }
+  if (group.open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;
+  }
+  const std::filesystem::path path = view.path;
+  group.open_tabs.push_back(TabEntry{
+      .kind = TabEntry::Kind::Editor,
+      .path = path,
+      .title = TabTitleForPath(path, 0),
+      .editor_state = std::nullopt,
+      .deferred_handle = std::move(view),
+      .compare = std::nullopt,
+      .merge = std::nullopt,
+  });
+  // A read that fails here keeps the tab naming its file, as a restored
+  // session's does, so the next activation tries again.
+  Activate(group.open_tabs.size() - 1);
+  return true;
+}
+
 bool TabCoordinator::OpenNewBufferInNewTab(const std::filesystem::path& path) {
   if (state_.root.empty() || path.empty() || path.filename().empty()) {
     return false;
@@ -901,13 +935,9 @@ void TabCoordinator::RememberClosedEditor(const TabEntry& tab) {
   if (tab.kind != TabEntry::Kind::Editor || tab.path.empty() || !tab.path.is_absolute()) {
     return;  // an untitled buffer has nothing to reopen
   }
-  ProjectWorkspaceState::ClosedEditor entry{.path = tab.path.lexically_normal()};
-  if (tab.editor_state.has_value()) {
-    const EditorTabState& editor = *tab.editor_state;
-    entry.line = editor.content_pending() ? editor.restore.cursor_line : editor.viewport.cursor_line();
-    entry.column =
-        editor.content_pending() ? editor.restore.cursor_column : editor.viewport.cursor_column();
-  }
+  std::optional<DeferredTabHandle> view = EditorTabViewState(tab);
+  DeferredTabHandle entry = view.has_value() ? std::move(*view) : DeferredTabHandle{};
+  entry.path = tab.path.lexically_normal();
   auto& closed = state_.recently_closed_editors;
   std::erase_if(closed, [&](const auto& old) { return old.path == entry.path; });
   if (closed.size() >= ProjectWorkspaceState::kMaxRecentlyClosedEditors) {

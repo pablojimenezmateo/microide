@@ -45,6 +45,7 @@ class EditorTabService {
                                     EchoGuard echo_guard = EchoGuard::Check);
   void ReloadEditorTabsForPathFromDisk(const std::filesystem::path& path);
   bool RevertEditorTabsForPath(const std::filesystem::path& path);
+  bool ReopenEditor(DeferredTabHandle view);
   bool OverwriteEditorTabsForPath(const std::filesystem::path& path);
   bool DiskSignatureMatchesOpenView(const std::filesystem::path& path) const;
   using ExternalChangeVerdict = TabCoordinator::ExternalChangeVerdict;

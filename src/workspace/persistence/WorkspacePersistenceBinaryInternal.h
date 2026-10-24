@@ -126,6 +126,7 @@ enum class ProjectSessionTag : std::uint16_t {
   PanelMaximized = 21,
   TerminalTab = 22,         // repeated; one nested TerminalTabTag record per tab
   ActiveTerminalTab = 23,
+  ClosedEditor = 24,        // repeated; one nested EditorTabTag record per editor
 };
 
 enum class TerminalTabTag : std::uint16_t {
@@ -181,6 +182,7 @@ enum class EditorTabTag : std::uint16_t {
   CompareReviewMode = 31,
   CompareStagingView = 32,
   Utf8Bom = 33,
+  CollapsedFold = 34,  // repeated; one opener line per record
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -382,6 +384,12 @@ bool ReadStringRecord(EnumTag expected_tag,
     return false;
   }
 
+  for (const std::size_t opener : tab.collapsed_fold_openers) {
+    if (!AppendRecord(EditorTabTag::CollapsedFold,
+                      [&](PrimitiveWriter& w) { return WriteSize(w, opener); }, out)) {
+      return false;
+    }
+  }
   for (const std::string& line : tab.buffer_lines) {
     if (!AppendRecord(EditorTabTag::BufferLine,
                       [&](PrimitiveWriter& w) { return w.WriteString(line); }, out)) {
@@ -406,6 +414,8 @@ inline constexpr std::size_t kMaxSessionBufferLines = 4'000'000;
 inline constexpr std::size_t kMaxSessionBufferBytes = 64u * 1024 * 1024;  // 64 MiB snapshot
 inline constexpr std::size_t kMaxSessionMergeHunkChoices = 200'000;
 inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
+inline constexpr std::size_t kMaxSessionCollapsedFolds = kMaxPersistedCollapsedFolds;
+inline constexpr std::size_t kMaxSessionClosedEditors = kMaxPersistedClosedEditors;
 
 [[maybe_unused]] bool DecodeEditorTab(std::span<const std::byte> input, PersistedEditorTabState* tab) {
   if (tab == nullptr) {
@@ -431,6 +441,17 @@ inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
             return reader.ReadBool(&tab->dirty_snapshot) && reader.remaining() == 0;
           case EditorTabTag::Utf8Bom:
             return reader.ReadBool(&tab->utf8_bom) && reader.remaining() == 0;
+          case EditorTabTag::CollapsedFold: {
+            std::size_t opener = 0;
+            if (!ReadSize(reader, &opener) || reader.remaining() != 0) {
+              return false;
+            }
+            // Past the cap the rest are dropped: the tab still restores.
+            if (tab->collapsed_fold_openers.size() < kMaxSessionCollapsedFolds) {
+              tab->collapsed_fold_openers.push_back(opener);
+            }
+            return true;
+          }
           case EditorTabTag::LineEnding: {
             std::uint8_t line_ending = 0;
             if (!reader.ReadU8(&line_ending) || reader.remaining() != 0 || line_ending > 2) {

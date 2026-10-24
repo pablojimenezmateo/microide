@@ -30,6 +30,28 @@ std::size_t& MaxDirtySnapshotBytesStorage() {
 
 std::size_t MaxDirtySnapshotBytes() { return MaxDirtySnapshotBytesStorage(); }
 
+// A view (an editor tab's or a closed editor's) in its persisted form, and back.
+// One pair, so a tab and a closed editor save and restore the same things.
+void WriteViewState(const DeferredTabHandle& view, PersistedEditorTabState& out) {
+  out.cursor_line = view.cursor_line;
+  out.cursor_column = view.cursor_column;
+  out.scroll_line = view.scroll_line;
+  out.horizontal_scroll = view.horizontal_scroll;
+  out.collapsed_fold_openers = view.collapsed_fold_openers;
+}
+
+DeferredTabHandle ReadViewState(const PersistedEditorTabState& tab, std::filesystem::path path) {
+  return DeferredTabHandle{
+      .path = std::move(path),
+      .cursor_line = tab.cursor_line,
+      .cursor_column = tab.cursor_column,
+      .scroll_line = tab.scroll_line,
+      .horizontal_scroll = tab.horizontal_scroll,
+      .selection = std::nullopt,
+      .collapsed_fold_openers = tab.collapsed_fold_openers,
+  };
+}
+
 }  // namespace
 
 void PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(std::size_t bytes) {
@@ -411,11 +433,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     view_path = view_path.lexically_normal();
 
     TabEntry::EditorTabState editor_state;
-    editor_state.restore.path = view_path;
-    editor_state.restore.cursor_line = persisted_tab.cursor_line;
-    editor_state.restore.cursor_column = persisted_tab.cursor_column;
-    editor_state.restore.scroll_line = persisted_tab.scroll_line;
-    editor_state.restore.horizontal_scroll = persisted_tab.horizontal_scroll;
+    editor_state.restore = ReadViewState(persisted_tab, view_path);
 
     if (persisted_tab.dirty_snapshot) {
       editor::TextViewport restored_view;
@@ -437,10 +455,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
           restored_dirty_views.emplace(view_key, restored_view);
         }
       }
-      restored_view.ApplyRestoredViewState(persisted_tab.cursor_line,
-                                           persisted_tab.cursor_column,
-                                           persisted_tab.scroll_line,
-                                           persisted_tab.horizontal_scroll);
+      editor_state.restore.ApplyViewStateTo(restored_view);
       editor_state.viewport = std::move(restored_view);
       editor_state.content = EditorTabState::Content::Ready;
     } else if (std::error_code exists_ec;
@@ -465,18 +480,11 @@ bool PersistenceCoordinator::RestoreSessionState() {
     if (should_eager_hydrate) {
       restored_tab.editor_state = std::move(editor_state);
     } else {
-      std::optional<editor::SelectionRange> selection;
+      restored_tab.deferred_handle = std::move(editor_state.restore);
+      restored_tab.deferred_handle->path = tab_path;
       if (!editor_state.content_pending()) {
-        selection = editor_state.viewport.selection_range();
+        restored_tab.deferred_handle->selection = editor_state.viewport.selection_range();
       }
-      restored_tab.deferred_handle = TabEntry::DeferredTabHandle{
-          .path = tab_path,
-          .cursor_line = editor_state.restore.cursor_line,
-          .cursor_column = editor_state.restore.cursor_column,
-          .scroll_line = editor_state.restore.scroll_line,
-          .horizontal_scroll = editor_state.restore.horizontal_scroll,
-          .selection = selection,
-      };
     }
     return restored_tab;
     };  // rebuild_tab
@@ -582,6 +590,14 @@ bool PersistenceCoordinator::RestoreSessionState() {
     // terminals into it (TerminalPanelService::OpenTerminalsForProjectInit).
     state.panel.maximized = persisted_session.panel_maximized;
     state.terminal_layout_to_revive = std::move(persisted_session.terminal_layout);
+    state.recently_closed_editors.clear();
+    for (const PersistedEditorTabState& closed : persisted_session.closed_editors) {
+      if (!closed.path.is_absolute() ||
+          state.recently_closed_editors.size() >= ProjectWorkspaceState::kMaxRecentlyClosedEditors) {
+        continue;
+      }
+      state.recently_closed_editors.push_back(ReadViewState(closed, closed.path.lexically_normal()));
+    }
   }
 
   {
@@ -672,6 +688,13 @@ void PersistenceCoordinator::SaveSessionState() {
     persisted_session.focused_group_index =
         persisted_session.groups.empty() ? 0 : persisted_session.groups.size() - 1;
   }
+  // Reopen Closed Editor reaches into an earlier session, as VS Code's does.
+  for (const DeferredTabHandle& closed : state.recently_closed_editors) {
+    PersistedEditorTabState persisted_closed;
+    persisted_closed.path = closed.path;
+    WriteViewState(closed, persisted_closed);
+    persisted_session.closed_editors.push_back(std::move(persisted_closed));
+  }
 
   operations_.persistence_service->SaveProjectSession(session_path, persisted_session);
   SaveDebugState();
@@ -754,10 +777,7 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
     PersistedEditorTabState persisted_tab;
     persisted_tab.kind = "editor";
     persisted_tab.path = tab.deferred_handle->path.lexically_normal();
-    persisted_tab.cursor_line = tab.deferred_handle->cursor_line;
-    persisted_tab.cursor_column = tab.deferred_handle->cursor_column;
-    persisted_tab.scroll_line = tab.deferred_handle->scroll_line;
-    persisted_tab.horizontal_scroll = tab.deferred_handle->horizontal_scroll;
+    WriteViewState(*tab.deferred_handle, persisted_tab);
     persisted_tab.dirty_snapshot = false;
     persisted_tab.line_ending = editor::TextViewport::LineEnding::LF;
     return persisted_tab;
@@ -804,26 +824,12 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   if (normalized_path.empty() && !persist_dirty) {
     return std::nullopt;
   }
-  const std::size_t cursor_line =
-      editor_state.content_pending() ? editor_state.restore.cursor_line
-                                     : persisted_viewport->cursor_line();
-  const std::size_t cursor_column =
-      editor_state.content_pending() ? editor_state.restore.cursor_column
-                                     : persisted_viewport->cursor_column();
-  const std::size_t scroll_line =
-      editor_state.content_pending() ? editor_state.restore.scroll_line
-                                     : persisted_viewport->scroll_line();
-  const std::size_t horizontal_scroll =
-      editor_state.content_pending() ? editor_state.restore.horizontal_scroll
-                                     : persisted_viewport->horizontal_scroll();
-
   PersistedEditorTabState persisted_tab;
   persisted_tab.kind = "editor";
   persisted_tab.path = normalized_path;
-  persisted_tab.cursor_line = cursor_line;
-  persisted_tab.cursor_column = cursor_column;
-  persisted_tab.scroll_line = scroll_line;
-  persisted_tab.horizontal_scroll = horizontal_scroll;
+  if (const std::optional<DeferredTabHandle> view = EditorTabViewState(tab); view.has_value()) {
+    WriteViewState(*view, persisted_tab);
+  }
   persisted_tab.dirty_snapshot = persist_dirty;
   persisted_tab.line_ending = persisted_viewport->line_ending();
   persisted_tab.utf8_bom = persist_dirty && persisted_viewport->has_utf8_bom();

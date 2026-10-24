@@ -780,6 +780,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
+          .reopen_editor =
+              [this](DeferredTabHandle view) {
+                return MakeEditorTabService().ReopenEditor(std::move(view));
+              },
           .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
           .save_tab_deferred =
               [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },

@@ -35,6 +35,13 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              bool fold_enabled,
                              std::size_t visible_rows);
 
+// A restored view's collapsed folds (`restore.collapsed_fold_openers`), once its
+// content is here: each opener that still starts a fold collapses again, one the
+// file no longer folds at is dropped, and the restored scroll -- a row of the
+// folded layout -- is placed again over them unless the view moved meanwhile.
+// Runs from EnsureFoldingModelFresh; a no-op with nothing pending.
+void CollapseRestoredFolds(TabEntry::EditorTabState& tab, editor::TextViewport& viewport);
+
 // A caret that has moved into the hidden body of a collapsed fold since the last
 // prepared frame expands every collapsed fold hiding it (VS Code's
 // FoldingController.revealCursor): a goto-line, a definition jump, a diagnostic

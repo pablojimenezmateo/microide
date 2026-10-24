@@ -406,7 +406,29 @@ def flow_compare_clipboard(app: q.App) -> None:
 def flow_reopen_closed_editor(app: q.App) -> None:
     """Close two tabs (by Ctrl+W and by the tab's close button); Ctrl+Shift+T
     reopens the newest first with its caret where it was, then the other; the File
-    menu offers it while there is something to reopen."""
+    menu offers it while there is something to reopen. A long file closed folded
+    and scrolled away from its caret comes back with both (TD-2026-10-24-390)."""
+    body = "void folded() {\n" + "".join(f"  body({i});\n" for i in range(20)) + "}\n"
+    open_file(app, "notes/long.c", body + "".join(f"line {i}\n" for i in range(300)))
+    app.send("goto", "2:1")
+    app.send("fold")
+    app.send("goto", "200:3")
+    step(app, "fold, caret on line 200", 0.3)
+    pane = next((e["rect"] for e in app.ui().get("editors", []) if e.get("focused")), None)
+    if app.expect(pane is not None, "the editor pane is on screen") and pane:
+        app.wheel(pane[0] + pane[2] / 2, pane[1] + pane[3] / 2, 4)
+    step(app, "scroll away from the caret", 0.3)
+    left = app.active_tab() or {}
+    app.key("ctrl+w")
+    step(app, "ctrl+w long.c", 0.3)
+    app.key("ctrl+shift+t")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "long.c", 3.0, "long.c to reopen")
+    step(app, "reopened long.c", 0.4)
+    back = app.active_tab() or {}
+    for key in ("cursorLine", "cursorColumn", "scrollLine", "foldedLines"):
+        app.expect(back.get(key) == left.get(key),
+                   f"long.c reopens with its {key} ({back.get(key)} vs {left.get(key)})")
+    app.expect(left.get("foldedLines") == [1], f"the function was folded ({left.get('foldedLines')})")
     open_file(app, "notes/one.txt", "one\ntwo\nthree\n")
     open_file(app, "notes/two.txt", "alpha\nbeta\ngamma\n")
     app.click_text(2, 3)

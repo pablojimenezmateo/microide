@@ -20,6 +20,11 @@
 
 namespace microide::workspace {
 
+// Decode caps for a session's view state: a corrupt or hostile record keeps at
+// most this many closed editors and collapsed folds per editor.
+inline constexpr std::size_t kMaxPersistedClosedEditors = 64;
+inline constexpr std::size_t kMaxPersistedCollapsedFolds = 100'000;
+
 struct PersistedEditorTabState {
   std::string kind = "editor";
   // Single editor view (the in-tab split model was removed: each tab owns exactly
@@ -29,6 +34,8 @@ struct PersistedEditorTabState {
   std::size_t cursor_column = 0;
   std::size_t scroll_line = 0;
   std::size_t horizontal_scroll = 0;
+  // The opener lines of the editor's collapsed folds (DeferredTabHandle's).
+  std::vector<std::size_t> collapsed_fold_openers;
   bool dirty_snapshot = false;
   editor::TextViewport::LineEnding line_ending = editor::TextViewport::LineEnding::LF;
   // A dirty snapshot of a file that opened with a UTF-8 BOM: the buffer lines
@@ -118,6 +125,9 @@ struct PersistedProjectSessionState {
   // The bottom panel (additive): maximized, and the terminal layout to revive.
   bool panel_maximized = false;
   TerminalLayoutRecord terminal_layout;
+  // Recently closed editors, oldest first (additive): an editor record each, of
+  // which only `path` (absolute) and the view fields are written.
+  std::vector<PersistedEditorTabState> closed_editors;
 };
 
 struct PersistedWorkspaceSessionState {

@@ -15,10 +15,18 @@ from flows_common import expect_text, git_run, open_file, read, step, titles, wr
 
 def flow_session_restore(app: q.App) -> None:
     """Open tabs in two groups, place the caret, fold, quit, start again: the
-    tabs, the split, the active tab and the caret come back."""
+    tabs, the split, the active tab, the caret, the scroll and the fold come
+    back, and Reopen Closed Editor reaches a tab closed before the quit."""
     open_file(app, "src/main.cpp")
+    app.key("ctrl+w")
+    step(app, "close main.cpp", 0.3)
     open_file(app, "src/scheduler.cpp")
     app.click_text(19, 9)
+    app.send("fold-all")
+    # Go to Line reveals the caret's own fold (VS Code's revealCursor); the rest
+    # stay collapsed.
+    app.send("goto", "19:9")
+    step(app, "fold all but the caret's", 0.3)
     app.send("split-right", "include/scheduler.hpp")
     step(app, "split-right", 0.5)
     before = app.editor_state()
@@ -31,8 +39,18 @@ def flow_session_restore(app: q.App) -> None:
     restored = [[t["title"] for t in g["tabs"]] for g in after["groups"]]
     app.expect(restored == groups, f"the tabs come back in their groups ({restored} vs {groups})")
     left = next((t for t in after["groups"][0]["tabs"] if t["title"] == "scheduler.cpp"), {})
+    was = next((t for t in before["groups"][0]["tabs"] if t["title"] == "scheduler.cpp"), {})
     app.expect(left.get("cursorLine") == 19 and left.get("cursorColumn") == 9,
                f"the caret comes back where it was ({left.get('cursorLine')}:{left.get('cursorColumn')})")
+    app.expect(bool(was.get("foldedLines")) and left.get("foldedLines") == was.get("foldedLines")
+               and left.get("scrollLine") == was.get("scrollLine"),
+               f"its folds and scroll come back ({left.get('foldedLines')} @ {left.get('scrollLine')} vs "
+               f"{was.get('foldedLines')} @ {was.get('scrollLine')})")
+    app.send("focus-group", "1")
+    app.key("ctrl+shift+t")
+    app.expect(app.wait_until(lambda: (app.active_tab() or {}).get("title") == "main.cpp", 3.0,
+                              "Reopen Closed Editor to reach main.cpp"),
+               "the editor closed before the quit can be reopened after it")
 
 
 def flow_untitled_save_as(app: q.App) -> None:

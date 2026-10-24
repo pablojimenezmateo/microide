@@ -472,6 +472,35 @@ void TestPersistedStateProjectSessionTerminalLayoutRoundTrips() {
          "but only up to the tab and pane caps");
 }
 
+// An editor's collapsed folds ride with its tab, and the recently closed editors
+// with the session (TD-2026-10-24-390, TD-2026-10-18-355).
+void TestPersistedStateProjectSessionRoundTripsFoldsAndClosedEditors() {
+  PersistedProjectSessionState session;
+  PersistedEditorGroupState group;
+  PersistedEditorTabState tab;
+  tab.path = "/work/a.c";
+  tab.collapsed_fold_openers = {3, 40, 41};
+  group.tabs.push_back(tab);
+  session.groups.push_back(group);
+  PersistedEditorTabState closed;
+  closed.path = "/work/b.c";
+  closed.cursor_line = 7;
+  closed.scroll_line = 5;
+  closed.collapsed_fold_openers = {1};
+  session.closed_editors.push_back(closed);
+  std::vector<std::byte> record;
+  Expect(EncodeProjectSessionRecord(session, &record), "encode");
+  PersistedProjectSessionState decoded;
+  Expect(DecodeProjectSessionRecord(record, &decoded), "decode");
+  Expect(decoded.groups.size() == 1 && decoded.groups[0].tabs.size() == 1 &&
+             decoded.groups[0].tabs[0].collapsed_fold_openers == std::vector<std::size_t>{3, 40, 41},
+         "a tab's folds round-trip");
+  Expect(decoded.closed_editors.size() == 1 && decoded.closed_editors[0].path == "/work/b.c" &&
+             decoded.closed_editors[0].cursor_line == 7 && decoded.closed_editors[0].scroll_line == 5 &&
+             decoded.closed_editors[0].collapsed_fold_openers == std::vector<std::size_t>{1},
+         "a closed editor round-trips with its view");
+}
+
 void TestPersistedStateProjectSessionDecodeHonorsTabCap() {
   PersistedProjectSessionState session;
   PersistedEditorGroupState group;
@@ -1538,6 +1567,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateCommitDraftBodyBudget);
   AddTest(tests, "PersistedStateRecord/ProjectSessionTerminalLayoutRoundTrips",
           TestPersistedStateProjectSessionTerminalLayoutRoundTrips);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripsFoldsAndClosedEditors",
+          TestPersistedStateProjectSessionRoundTripsFoldsAndClosedEditors);
   AddTest(tests, "PersistedStateRecord/ProjectSessionDecodeHonorsTabCap",
           TestPersistedStateProjectSessionDecodeHonorsTabCap);
   AddTest(tests, "PersistedStateRecord/ProjectSessionSkipsOverCapGroupsBeforeDecoding",

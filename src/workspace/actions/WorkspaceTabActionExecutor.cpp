@@ -226,19 +226,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      const std::optional<ProjectWorkspaceState::ClosedEditor> closed =
-          context_.TakeRecentlyClosedEditor();
+      std::optional<DeferredTabHandle> closed = context_.TakeRecentlyClosedEditor();
       if (!closed.has_value()) {
         return reject("No recently closed editor");
       }
-      // `reveal` opens or activates the file and places the caret, also when the
-      // read lands later (a large file loads off the shell thread).
-      return Execute(ActionId::Reveal,
-                     {closed->path.string(),
-                      std::to_string(closed->line + 1) + ":" + std::to_string(closed->column + 1)},
-                     source)
-                 ? DispatchResult::Handled
-                 : DispatchResult::Rejected;
+      // The editor comes back as it was closed -- caret, selection, scroll and
+      // folds -- through the deferred-tab hydration a restored session uses, also
+      // when the read lands later (a large file loads off the shell thread).
+      return context_.ReopenEditor(std::move(*closed)) ? DispatchResult::Handled
+                                                       : DispatchResult::Rejected;
     }
     case ActionId::NavigateBack:
     case ActionId::NavigateForward: {
