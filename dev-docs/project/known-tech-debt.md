@@ -976,6 +976,42 @@ implicit network fallback (say what to install instead).
 
 ### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
 
+**Update 2026-10-24: state oracles, and the interaction semantics the ledger cannot see.**
+The command ledger reads 236 of 251 driven by a checking flow (the 15 left are the
+remote commands, `qa-remote`'s), so this pass looked at what a command count cannot:
+what a gesture or a label DOES. Two levers. First, `App.check` gained state oracles
+(`_state_oracles`): the status bar's Ln/Col, indent and language segments, the find
+widget's count of a plain query, every group's visible tabs (title, dirty mark,
+highlighted one) and the panel's terminal tabs, each cross-checked against the
+`buffer` / `editor` / `terminals` queries after every action of every flow and the
+monkey. The redraw verifier compares a partial frame with a full render of the SAME
+state, so a label derived from stale state passes it; the oracles found four bugs on
+their first runs (a tab-size change moving the caret and the Col memo ignoring the
+tab size, a renamed or Saved As tab keeping its old name in 16 scenarios, the find
+widget counting a reloaded buffer's old matches). Second, probes of VS Code
+semantics the flows had never driven. Fixed, each with a QaFlowRegressionUx (or
+nearby) test and a flow: a click on a line number selecting the line and a drag over
+the numbers whole lines; Ctrl+L on a partial selection taking one line too many; a
+whole-line paste losing the caret's column; a right-click inside a selection
+collapsing it, so the menu's Cut took the whole line; the find widget keeping the
+previous tab's matches across a tab switch (F3 jumped to their coordinates); the
+unsaved prompt's D/C typing a "d"/"c" into the buffer (now a general rule in
+HandleKeyDown: a consumed printable key that moves the keyboard swallows its
+TEXT_INPUT); a pair key over a selection inside a string replacing it instead of
+surrounding it (both caret paths); the blame card's pixels left behind when its line
+changed with the pointer still (QA monkey, editor profile, seed 309); a click on a
+git view entry handing the keyboard to the diff, so `s` typed into the file; and, at
+the root of the reload class, two documents sharing a content revision (now seeded
+from a process-wide base). Added: Alt+Enter in the find widget, Save All (File menu,
+Ctrl+K S), Revert File (undoable), Enter continuing a C-family doc comment. New
+modules `flows_selection`, `flows_find_state`, `flows_caret_state`; `App.drag` takes
+`clicks=N`. The suite ran 204/205 clean at -j16 and on the ASan build (TD-383 the
+one), 32 monkey seeds clean under the new oracles. The Wayland backend was not run:
+weston is not installable on this box (no `libweston-13-0` in its distribution).
+Filed: TD-386 (no tree drag and drop), 387 (search results do not follow edits), 388
+(no Change Language Mode), 389 (the blame overlay is built during paint), 390 (folds
+lost across a restart).
+
 **Update 2026-10-22 (evening): the command catalogue is measured on every run.**
 `run.py suite` now writes `<out>/command-coverage.txt` from a new `action-counts`
 control query (each command that RAN, whatever drove it, summed over restarts; the
