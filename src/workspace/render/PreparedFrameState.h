@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
@@ -123,6 +124,12 @@ struct PreparedFrameState {
   // to have to remember to repaint the tab strip; the ones that forgot left the
   // tab's close button where its dirty dot belonged.
   std::uint64_t painted_editor_tab_dirty = 0;
+  // The window title (WorkspaceUiText ComposeWindowTitle) and a hash of what it
+  // was composed from. It names the focused group's active tab, its dirty mark and
+  // the project, so the taskbar and Alt+Tab tell two windows apart; the custom
+  // title bar draws it, and the platform window is retitled when it changes.
+  std::uint64_t window_title_inputs = 0;
+  std::string window_title = "microide";
   // Where the overlay card was painted. An overlay that shrinks or moves while it
   // is up -- the completion list narrowing as the user types, a picker whose
   // result count changed -- repainted only its new rect, leaving the strip it no

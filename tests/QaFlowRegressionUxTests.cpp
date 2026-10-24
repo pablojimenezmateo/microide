@@ -425,6 +425,28 @@ void TestEnterContinuesADocComment() {
          "Enter continues a doc comment and leaves a plain one, got " + ViewportText(viewport));
 }
 
+// TD-2026-10-22-384: the window was always titled "microide", so two windows
+// were two identical taskbar entries and nothing outside the tab strip showed an
+// unsaved file. VS Code's `● file — folder — app`.
+void TestTheWindowTitleNamesTheActiveFileAndItsState() {
+  UxFixture fixture("title.txt", "abc\n");
+  const std::string project = fixture.root.filename().string();
+  auto title = [&] {
+    fixture.Frame();
+    return TestAccess::ControlUi(fixture.shell)["windowTitle"].AsString();
+  };
+  Expect(title() == "title.txt \u2014 " + project + " \u2014 microide",
+         "the title names the file and the project, got " + title());
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("x")});
+  Expect(title() == "\u25CF title.txt \u2014 " + project + " \u2014 microide",
+         "an edit marks it dirty, got " + title());
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_Z, SDL_KMOD_CTRL)});
+  Expect(title() == "title.txt \u2014 " + project + " \u2014 microide",
+         "undo back to the saved text clears the mark, got " + title());
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  Expect(title() == project + " \u2014 microide", "with no editor the title is the project's, got " + title());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -443,6 +465,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState",
+          TestTheWindowTitleNamesTheActiveFileAndItsState);
 }
 
 }  // namespace microide::tests

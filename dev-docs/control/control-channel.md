@@ -231,7 +231,8 @@ another row's. With `MICROIDE_QA_MENU_DRY_RUN=1` at startup a row records its ru
 and closes the menu without running its action, so a sweep can click every row
 (Quit and Close Project included); `tools/qa`'s `menu-clicks` scenario does.
 
-Beyond the elements, `ui` carries state no element does. With an overlay open,
+Beyond the elements, `ui` carries state no element does. `windowTitle` is the
+title the last prepared frame gave the window (`● file — project — microide`). With an overlay open,
 `overlay` adds `query` (its text field), `count` (rows in the list) and `selected`
 (the row Enter runs). With a prompt up, `prompt` is `{kind: unsaved|input|confirm,
 title, message, detail?, input?}`. `popups` is `{hover: {kind: blame|diagnostic|symbol|

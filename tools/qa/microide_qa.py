@@ -1128,7 +1128,9 @@ class App:
         - tab: the focused group's active tab shows the dirty mark exactly when
           its buffer is unsaved, and is named after its buffer's file;
         - indent / language: the status bar's `Spaces: N` / `Tabs: N` and language
-          segments name the buffer's own.
+          segments name the buffer's own;
+        - window title: names the focused group's active tab, dirty-marked when it
+          is, and on X11 is what the platform window is called.
 
         Only an editor tab, and only what can be computed here without guessing:
         a line with a character past ASCII before the caret is skipped (wide
@@ -1136,14 +1138,17 @@ class App:
         The labels are derived at frame prep, so a disagreement is read again
         after the next frames before it is reported: a lag of one frame is not
         stale state."""
-        found = self._state_findings(ui) + self._tab_strip_findings(ui) + self._terminal_tab_findings(ui)
+        def findings(ui: dict[str, Any]) -> list[tuple[str, str]]:
+            return (self._state_findings(ui) + self._tab_strip_findings(ui) + self._terminal_tab_findings(ui)
+                    + self._window_title_findings(ui))
+        found = findings(ui)
         for _ in range(3):
             if not found:
                 return []
             time.sleep(0.2 * SLOW_FACTOR)
             try:
                 ui = self.ui()
-                found = self._state_findings(ui) + self._tab_strip_findings(ui) + self._terminal_tab_findings(ui)
+                found = findings(ui)
             except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
                 return []
         return found
@@ -1182,6 +1187,32 @@ class App:
                 and not names(lit[0], label_of(active)):
             out.append(("state", f"the panel highlights {lit[0].get('label')!r}; the active terminal is "
                                  f"{label_of(active)!r}"))
+        return out
+
+    def _window_title_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
+        """The window title (`● file — project — microide`) starts with the focused
+        group's active tab, dirty-marked exactly when that tab is; on X11 the
+        platform window carries the same string (what the taskbar and Alt+Tab show)."""
+        title = ui.get("windowTitle")
+        if title is None:
+            return []
+        try:
+            groups = self.editor_state().get("groups", [])
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return []
+        out: list[tuple[str, str]] = []
+        group = next((g for g in groups if g.get("focused")), None)
+        active = next((t for t in (group or {}).get("tabs", []) if t.get("active")), None)
+        if active is not None:
+            want = ("\u25cf " if active.get("dirty") else "") + active.get("title", "") + " \u2014 "
+            if not title.startswith(want):
+                out.append(("state", f"the window is titled {title!r}; the active tab is {want[:-3]!r}"))
+        if not self.wayland and self.window:
+            result = subprocess.run(["xdotool", "getwindowname", self.window], env=self.tool_env,
+                                    capture_output=True, text=True)
+            name = result.stdout.rstrip("\n")
+            if result.returncode == 0 and name != title:
+                out.append(("state", f"the platform window is named {name!r}; the title bar says {title!r}"))
         return out
 
     def _tab_strip_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:

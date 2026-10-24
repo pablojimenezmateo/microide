@@ -1015,6 +1015,8 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
       .details =
           [this](const WorkspaceLayout& layout, util::JsonObject& root) {
             const ProjectWorkspaceState& state = context_.current_project_state;
+            // As the last prepared frame composed it (the platform window's too).
+            root["windowTitle"] = util::JsonValue(frame_state_.window_title);
             if (state.overlay.visible) {
               util::JsonObject& overlay = std::get<util::JsonObject>(root["overlay"].v);
               overlay["count"] = util::JsonValue(static_cast<std::int64_t>(OverlayItemCount()));

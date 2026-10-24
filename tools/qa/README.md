@@ -250,7 +250,10 @@ Checked after every action:
   group's visible tabs must be that group's tabs (title and dirty mark, from the
   `editor` query) with its active one highlighted, each terminal must have a panel
   tab naming it (its shell or the title its program set) with the active one
-  highlighted, and the indent and language segments must name the buffer's own. A disagreement is read again over
+  highlighted, the indent and language segments must name the buffer's own, and the
+  window title (`● file — project — microide`) must start with the focused group's
+  active tab, dirty-marked exactly when it is -- on X11 `xdotool getwindowname` must
+  read the same string, so the taskbar's name is checked too. A disagreement is read again over
   the next frames before it is reported (the labels are derived at frame prep).
 - **Scenario expectations**, stated against the `ui` query (`--query ui`: every
   on-screen element by name with its rect, plus focus, modal, sidebar, overlay, menu

@@ -102,7 +102,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   if (CurrentWindowChromeState().custom_enabled) {
-    const std::string title = "microide";
+    const std::string_view title = frame_state_.window_title;
     const float title_width = text_renderer_.MeasureWidth(title);
     const float left_limit =
         visible_menu_items.empty()

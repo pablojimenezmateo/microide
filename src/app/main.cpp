@@ -28,6 +28,8 @@ int main(int argc, char** argv) {
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.
   microide::platform::IgnoreBrokenPipeSignal();
+  // Before any thread: Xlib's text conversions (the window title) follow it.
+  (void)microide::platform::UseUtf8CharacterLocale();
 
   if (argc >= 2) {
     const std::string_view command =

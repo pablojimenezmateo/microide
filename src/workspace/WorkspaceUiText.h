@@ -47,6 +47,24 @@ inline std::string ProjectLabelForRoot(const std::filesystem::path& root) {
   return filename.empty() ? root.lexically_normal().string() : filename;
 }
 
+// The window's title: VS Code's `${dirty}${activeEditorShort} — ${rootName} —
+// ${appName}`, each part dropped when there is none. Written into `out` so a
+// caller that keeps the string composes into its capacity.
+inline void ComposeWindowTitle(std::string& out, std::string_view editor_title, bool dirty,
+                               std::string_view project_label) {
+  out.clear();
+  if (!editor_title.empty()) {
+    if (dirty) {
+      out.append("\u25CF ");
+    }
+    out.append(editor_title).append(" \u2014 ");
+  }
+  if (!project_label.empty()) {
+    out.append(project_label).append(" \u2014 ");
+  }
+  out.append("microide");
+}
+
 // A path for a message, with the home directory spelled "~" (as a shell prompt
 // does): the mirror and cache paths under ~/.local live there, and a toast that
 // spends 20 columns on "/home/<user>" loses the part that differs. Only a whole

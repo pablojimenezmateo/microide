@@ -1,6 +1,12 @@
 #include "TestSupport.h"
 
+#include "platform/HostPlatform.h"
 #include "platform/RuntimePaths.h"
+
+#if !defined(_WIN32)
+#include <clocale>
+#include <langinfo.h>
+#endif
 
 namespace microide::tests {
 namespace {
@@ -124,6 +130,20 @@ void TestBundledServerBinaryIsChosenByArchitecture() {
          "and nothing serves an architecture that is not shipped");
 }
 
+// TD-2026-10-22-384: in the default "C" locale SDL's X11 title setter could not
+// convert a title with an em dash and left the window's _NET_WM_NAME at
+// "microide". From a bare POSIX environment the app still takes a UTF-8 LC_CTYPE.
+void TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment() {
+#if !defined(_WIN32)
+  ScopedEnvVar lc_all("LC_ALL", "C");
+  ScopedEnvVar lang("LANG", "C");
+  const std::string locale = platform::UseUtf8CharacterLocale();
+  const std::string codeset = nl_langinfo(CODESET);
+  (void)std::setlocale(LC_CTYPE, "C");
+  Expect(codeset == "UTF-8", "LC_CTYPE " + locale + " should be UTF-8, its codeset is " + codeset);
+#endif
+}
+
 }  // namespace
 
 void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
@@ -135,6 +155,8 @@ void RegisterRuntimePathsTests(std::vector<TestCase>& tests) {
           TestRuntimePathsResolveInstalledShareLayout);
   AddTest(tests, "RuntimePaths/EnsureSecurePrivateDirectory",
           TestEnsureSecurePrivateDirectory);
+  AddTest(tests, "HostPlatform/CharacterLocaleIsUtf8EvenFromAPosixEnvironment",
+          TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment);
 }
 
 }  // namespace microide::tests

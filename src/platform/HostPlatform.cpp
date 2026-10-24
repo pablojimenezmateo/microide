@@ -3,7 +3,9 @@
 #include <string>
 
 #if !defined(_WIN32)
+#include <clocale>
 #include <csignal>
+#include <langinfo.h>
 #endif
 
 namespace microide::platform {
@@ -53,6 +55,24 @@ void SetHostPlatformOverrideForTesting(std::optional<HostPlatform> platform) {
 void IgnoreBrokenPipeSignal() {
 #if !defined(_WIN32)
   std::signal(SIGPIPE, SIG_IGN);
+#endif
+}
+
+std::string UseUtf8CharacterLocale() {
+#if defined(_WIN32)
+  return {};
+#else
+  auto is_utf8 = [] {
+    const std::string_view codeset = nl_langinfo(CODESET);
+    return codeset == "UTF-8" || codeset == "utf8";
+  };
+  if (std::setlocale(LC_CTYPE, "") == nullptr || !is_utf8()) {
+    if (std::setlocale(LC_CTYPE, "C.UTF-8") == nullptr) {
+      (void)std::setlocale(LC_CTYPE, "C");
+    }
+  }
+  const char* now = std::setlocale(LC_CTYPE, nullptr);
+  return now != nullptr ? now : "";
 #endif
 }
 

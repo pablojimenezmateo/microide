@@ -546,7 +546,7 @@ backward-char in emacs mode, so keeping it for the shell is defensible; the
 journey-layout flow gives the editor the keyboard first. Decide per chord and
 record it in the keybinding registry's comments.
 
-### TD-2026-10-22-384 — the window title is always "microide". [OPEN]
+### TD-2026-10-22-384 — the window title is always "microide". [RESOLVED 2026-10-24]
 
 `SDL_CreateWindow("microide", …)` names the window once, and the custom title bar
 draws the same literal (`WorkspaceShellRenderChrome.cpp`). With two windows the
@@ -556,6 +556,20 @@ Wanted: a title composed off the render path (the active tab's title, the projec
 a dirty mark), drawn from the view model, with damage on the title bar when it
 changes and `SDL_SetWindowTitle` from the app loop when the string differs. A QA
 flow can read it with `xdotool getwindowname` on X11.
+
+**Resolved:** frame prep composes `● file — project — microide` (WorkspaceUiText
+`ComposeWindowTitle`) from the focused group's active tab, its dirty mark and the
+project, hashing those inputs every frame and composing only when they move; the
+custom title bar draws it, the menu bar is damaged, and `SDL_SetWindowTitle`
+retitles the platform window. `ui` reports it as `windowTitle`, and the QA state
+oracle checks it after every action against the `editor` query and, on X11,
+against `xdotool getwindowname`. That check found a second bug at once: the
+platform window kept `_NET_WM_NAME` "microide" for any non-ASCII title, because
+the process ran in the "C" locale and SDL 3.4's X11 title setter gives up when
+Xlib cannot convert the text. `platform::UseUtf8CharacterLocale` now sets a UTF-8
+LC_CTYPE (the user's, or C.UTF-8) at startup; numbers stay locale-free.
+(`QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState`,
+`HostPlatform/CharacterLocaleIsUtf8EvenFromAPosixEnvironment`.)
 
 ### TD-2026-10-22-385 — over the slow link, saves stop reaching the host under agent churn. [OPEN]
 

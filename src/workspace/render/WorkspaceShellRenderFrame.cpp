@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "editor/TextLayout.h"
+#include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/render/OverviewRuler.h"
@@ -20,6 +21,8 @@
 #include "workspace/git/MergeResultValidation.h"
 #include "render/ScopedRenderClip.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/WorkspaceUiText.h"
+#include "workspace/coordinators/WorkspaceTabCoordinator.h"
 #include "workspace/coordinators/WorkspaceDiffTabCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
@@ -640,6 +643,26 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   //    083 residual): moved out of RenderCommitBodyField so paint stays pure.
   if (sidebar_vm.visible && sidebar_vm.mode == SidebarMode::Git) {
     PrepareCommitBodyViewportForFrame(layout.sidebar);
+  }
+  // 4) The window title follows the focused group's active tab, its dirty mark
+  //    and the project. Hashed every frame, composed only when an input moved.
+  {
+    const EditorGroup& group = project_state.focused_group();
+    const TabEntry* tab = group.has_active_tab() ? &group.active_tab() : nullptr;
+    const bool dirty = tab != nullptr && TabCoordinator::TabStateIsDirty(*tab);
+    std::uint64_t inputs = util::Fnv1aByte(util::kFnv1aOffsetBasis, dirty ? 1u : 0u);
+    inputs = util::Fnv1aBytes(inputs, tab != nullptr ? std::string_view(tab->title) : "");
+    inputs = util::Fnv1aByte(inputs, 0u);
+    inputs = util::Fnv1aBytes(inputs, project_state.root.native());
+    if (inputs != frame_state_.window_title_inputs) {
+      frame_state_.window_title_inputs = inputs;
+      ComposeWindowTitle(frame_state_.window_title, tab != nullptr ? tab->title : "", dirty,
+                         project_state.root.empty() ? "" : ProjectLabelForRoot(project_state.root));
+      if (dialog_window_ != nullptr) {
+        SDL_SetWindowTitle(dialog_window_, frame_state_.window_title.c_str());
+      }
+      RequestRedrawRect(layout.menu_bar);
+    }
   }
   frame_state_.caret_visible = CaretVisibleNow();
   frame_state_.terminal_owns_caret = project_state.surface.focus == FocusTarget::Panel &&
