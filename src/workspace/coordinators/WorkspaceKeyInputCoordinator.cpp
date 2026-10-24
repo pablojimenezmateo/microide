@@ -33,6 +33,24 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   }
 
   const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
+  const TextInputSurface surface_before = operations_.current_text_input_surface
+                                              ? operations_.current_text_input_surface()
+                                              : TextInputSurface::None;
+  const bool handled = DispatchKeyDown(event, modifiers);
+  // Only a key that produces text has a TEXT_INPUT behind it: a chord with Ctrl,
+  // Alt or Super does not, and arming for one would eat a later IME commit.
+  const bool printable = (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+                         operations_.keycode_to_ascii &&
+                         operations_.keycode_to_ascii(event.key, modifiers) != '\0';
+  if (handled && printable && operations_.set_swallow_next_text_input &&
+      operations_.current_text_input_surface &&
+      operations_.current_text_input_surface() != surface_before) {
+    operations_.set_swallow_next_text_input(true);
+  }
+  return handled;
+}
+
+bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
 
   // The Ctrl+K leader is a workbench prefix, not an editor one (see
   // HandleGlobalKeyDown): only a surface that takes the keyboard for itself -- a

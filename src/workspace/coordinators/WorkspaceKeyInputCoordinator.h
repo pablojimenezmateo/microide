@@ -227,6 +227,11 @@ class KeyInputCoordinator {
                       NotificationService& notifications,
                       Operations operations);
 
+  // Dispatches one key press. A printable key that a surface consumed AND that
+  // moved the keyboard to another text surface (the unsaved prompt's D landing
+  // back in an editor, the search view's `/` opening its query field) arms
+  // TextInputState::swallow_next_text_input: SDL's TEXT_INPUT for the same press
+  // follows, and would type the accelerator into wherever the keyboard went.
   bool HandleKeyDown(const SDL_KeyboardEvent& event);
 
   // Test seam for the keybinding reachability matrix: the binding the last key
@@ -258,6 +263,7 @@ class KeyInputCoordinator {
   // Match navigation + Alt+R regex toggle, shared by the find and
   // find-and-replace widgets (see the definition for why it is factored out).
   bool HandleSharedBufferSearchKey(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
+  bool DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   // Clamped selection move + reveal for the overlay lists whose selection is a plain
   // index into a match vector (command palette, launch picker, completion, code
   // actions). The pickers with extra reveal side effects keep their own helpers.

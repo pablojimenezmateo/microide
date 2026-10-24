@@ -214,6 +214,33 @@ void TestCtrlKSSavesEveryDirtyFile() {
   Expect(named, "the notice says the untitled buffer was left for Save As");
 }
 
+// save-all: the unsaved prompt's letter keys typed themselves. D (Don't Save)
+// closed the untitled buffer and its "d" landed in the file that came to the
+// front; C (Cancel) put a "c" into the very buffer the prompt was protecting.
+// SDL follows a printable key press with its TEXT_INPUT, and the prompt took
+// the press but not the text.
+void TestTheUnsavedPromptsLettersDoNotType() {
+  UxFixture fixture("clean.txt", "clean\n");
+  const auto prompt_close_untitled = [&](SDL_Keycode key, const char* text) {
+    Expect(TestAccess::ExecuteCommandLine(fixture.shell, "tab"), "an untitled buffer opens");
+    (void)DispatchEvents(fixture.shell, {TextInputEvent("scratch")});
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(key), TextInputEvent(text)});
+  };
+  prompt_close_untitled(SDLK_C, "c");
+  Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "scratch",
+         "Cancel keeps the buffer as it was, got " + ViewportText(TestAccess::ActiveEditor(fixture.shell)));
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_D), TextInputEvent("d")});
+  Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "clean\n",
+         "Don't Save leaves the file that comes to the front untouched, got " +
+             ViewportText(TestAccess::ActiveEditor(fixture.shell)));
+  // The next press is a fresh one: its text is typed.
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_X), TextInputEvent("x")});
+  Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "xclean\n",
+         "the following key types as usual, got " + ViewportText(TestAccess::ActiveEditor(fixture.shell)));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -223,6 +250,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetFollowsATabSwitch", TestTheFindWidgetFollowsATabSwitch);
   AddTest(tests, "QaFlowRegressionUx/CtrlKSSavesEveryDirtyFile", TestCtrlKSSavesEveryDirtyFile);
+  AddTest(tests, "QaFlowRegressionUx/TheUnsavedPromptsLettersDoNotType", TestTheUnsavedPromptsLettersDoNotType);
 }
 
 }  // namespace microide::tests
