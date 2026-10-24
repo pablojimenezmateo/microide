@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 
+#include "workspace/coordinators/WorkspaceTabCoordinator.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/SettingFlags.h"
@@ -304,6 +305,17 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::CloseAllTabs:
       return !context_.current_project_state.focused_group().open_tabs.empty();
+    case ActionId::SaveAll:
+      // Offered while something in the project is unsaved (VS Code greys it out
+      // otherwise too).
+      for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+        for (const TabEntry& tab : group.open_tabs) {
+          if (TabCoordinator::TabStateIsDirty(tab)) {
+            return true;
+          }
+        }
+      }
+      return false;
     case ActionId::CloseOtherTabs:
       return context_.current_project_state.focused_group().open_tabs.size() > 1;
     case ActionId::CloseTabsToRight:

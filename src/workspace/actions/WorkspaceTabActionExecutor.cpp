@@ -282,6 +282,34 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       context_.OpenSaveAsPrompt(std::move(initial));
       return DispatchResult::Handled;
     }
+    case ActionId::SaveAll: {
+      // VS Code's File > Save All (Ctrl+K S): every unsaved file in every group,
+      // each through the same deferred save as its own Ctrl+S (formatter, save
+      // participants, the changed-on-disk refusal). An untitled buffer has no
+      // name to save under and is left for its Save As, said in the notice.
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      const SaveAllOutcome outcome = context_.SaveAllDirtyTabs();
+      if (!outcome.failed.empty()) {
+        std::string names;
+        for (const std::string& name : outcome.failed) {
+          names += (names.empty() ? "" : ", ") + name;
+        }
+        return reject("Save All: not saved: " + names);
+      }
+      if (outcome.saved == 0 && outcome.untitled == 0) {
+        return reject("Save All: nothing to save");
+      }
+      if (outcome.untitled > 0) {
+        context_.Notify(NotificationService::Tone::Info,
+                        "Saved " + std::to_string(outcome.saved) + (outcome.saved == 1 ? " file" : " files") +
+                            "; " + std::to_string(outcome.untitled) +
+                            (outcome.untitled == 1 ? " untitled buffer needs" : " untitled buffers need") +
+                            " a name (Save As)");
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::Reopen:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

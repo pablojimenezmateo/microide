@@ -183,6 +183,37 @@ void TestTheFindWidgetFollowsATabSwitch() {
   Expect(fixture.Selection() == "4:0 -> 4:3", "F3 selects foo in two.txt, got " + fixture.Selection());
 }
 
+// save-all: there was no Save All. VS Code's File > Save All (Ctrl+K S) writes
+// every unsaved file in every group; an untitled buffer has no name, so it is
+// left and the notice says so. The chord's second key is a printable S, whose
+// text must not land in the buffer.
+void TestCtrlKSSavesEveryDirtyFile() {
+  UxFixture fixture("one.txt", "one\n");
+  WriteFile(fixture.root / "two.txt", "two\n");
+  auto type_into_active = [&](const char* text) {
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END, SDL_KMOD_CTRL), TextInputEvent(text)});
+  };
+  type_into_active("ONE");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "split-right"), "the editor splits");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "open " + (fixture.root / "two.txt").string()),
+         "two.txt opens in the new group");
+  type_into_active("TWO");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "tab"), "an untitled buffer opens");
+  type_into_active("scratch");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_K, SDL_KMOD_CTRL), KeyDownEvent(SDLK_S),
+                                       TextInputEvent("s")});
+  Expect(ReadFile(fixture.root / "one.txt") == "one\nONE\n" && ReadFile(fixture.root / "two.txt") == "two\nTWO\n",
+         "Ctrl+K S writes both files, got " + ReadFile(fixture.root / "one.txt") + " / " +
+             ReadFile(fixture.root / "two.txt"));
+  Expect(ViewportText(TestAccess::ActiveEditor(fixture.shell)) == "scratch",
+         "the chord's S is not typed, got " + ViewportText(TestAccess::ActiveEditor(fixture.shell)));
+  bool named = false;
+  for (const auto& notification : TestAccess::ActiveNotifications(fixture.shell)) {
+    named = named || notification.message.find("1 untitled buffer needs a name") != std::string::npos;
+  }
+  Expect(named, "the notice says the untitled buffer was left for Save As");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -191,6 +222,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAltEnterInTheFindWidgetSelectsEveryMatch);
   AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetFollowsATabSwitch", TestTheFindWidgetFollowsATabSwitch);
+  AddTest(tests, "QaFlowRegressionUx/CtrlKSSavesEveryDirtyFile", TestCtrlKSSavesEveryDirtyFile);
 }
 
 }  // namespace microide::tests

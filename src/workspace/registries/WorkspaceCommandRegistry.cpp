@@ -286,6 +286,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Alt+Right"},
       ActionSpec{ActionId::Save, "save", "save [path]", "Save", "Ctrl+S"},
       ActionSpec{ActionId::SaveAs, "save-as", "save-as [path]", "Save As…", "Ctrl+Shift+S"},
+      ActionSpec{ActionId::SaveAll, "save-all", "save-all", "Save All", "Ctrl+K S"},
       ActionSpec{ActionId::Search, "search", "search [query]", "Find in Buffer", "Ctrl+F"},
       ActionSpec{ActionId::FindNext, "find-next", "find-next", "Find Next", "F3"},
       ActionSpec{ActionId::FindPrevious, "find-previous", "find-previous", "Find Previous",

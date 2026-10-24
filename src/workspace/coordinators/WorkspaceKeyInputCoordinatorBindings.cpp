@@ -168,6 +168,16 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
           return operations_.execute_action(ActionId::ShowHover, {}, ActionSource::Shortcut);
         }
       }
+      // VS Code's Save All: Ctrl+K, then S on its own. The S is printable, so its
+      // TEXT_INPUT follows and would land in the buffer: swallow it. Taken whether
+      // or not anything was saved -- the refusal says why.
+      if (chord_mod == SDL_KMOD_NONE && event.key == SDLK_S) {
+        if (operations_.set_swallow_next_text_input) {
+          operations_.set_swallow_next_text_input(true);
+        }
+        (void)operations_.execute_action(ActionId::SaveAll, {}, ActionSource::Shortcut);
+        return true;
+      }
       // VS Code's git chords for a diff: Ctrl+K Ctrl+Alt+S stages the selected
       // ranges, Ctrl+K Ctrl+N unstages them, Ctrl+K Ctrl+R reverts them.
       if (chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_ALT) && event.key == SDLK_S) {

@@ -45,6 +45,15 @@ enum class ProjectOpenPickerResult {
 // that could not be captured).
 inline constexpr std::size_t kMaxClipboardExportBytes = 64u * 1024 * 1024;  // 64 MiB
 
+// What Save All did. An untitled buffer has no name to save under, so it is
+// counted and left for its own Save As (VS Code asks for each; one prompt per
+// buffer behind a single chord is what that turns into here, so it says how many).
+struct SaveAllOutcome {
+  std::size_t saved = 0;
+  std::size_t untitled = 0;
+  std::vector<std::string> failed;
+};
+
 struct ClipboardExportResult {
   std::string text;
   bool truncated = false;
@@ -186,6 +195,8 @@ class WorkspaceActionContext {
     // The interactive save. Same tab, same contract, except the formatter runs off
     // the shell thread and the write lands when it returns.
     std::function<bool(std::size_t)> save_tab_deferred;
+    // Save All: every dirty editor in every group, deferred as one Ctrl+S is.
+    std::function<SaveAllOutcome()> save_all_dirty_tabs;
     std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
     std::function<bool(const std::filesystem::path&)> open_new_buffer_in_new_tab;
     std::function<void()> reset_caret_blink;
@@ -601,6 +612,7 @@ class WorkspaceActionContext {
   std::optional<ProjectWorkspaceState::ClosedEditor> TakeRecentlyClosedEditor();
   bool SaveTab(std::size_t index);
   bool SaveTabDeferred(std::size_t index);
+  SaveAllOutcome SaveAllDirtyTabs();
   // Save As / naming an untitled buffer. `error` says why on failure.
   bool SaveTabAs(std::size_t index, const std::filesystem::path& path, std::string* error);
   // A path that does not exist yet opens as an empty buffer bound to it.

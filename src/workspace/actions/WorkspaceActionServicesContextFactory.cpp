@@ -783,6 +783,46 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
           .save_tab = [this](std::size_t index) { return SaveTab(index, SaveMode::Blocking); },
           .save_tab_deferred =
               [this](std::size_t index) { return SaveTab(index, SaveMode::Deferred); },
+          .save_all_dirty_tabs =
+              [this]() {
+                SaveAllOutcome outcome;
+                std::lock_guard<std::mutex> lock(save_tab_mutex_);
+                auto& tabs = MakeEditorTabService();
+                // One file open in two groups is one document: its second tab is
+                // saved by the first one's write, and saving it again would run
+                // the formatter twice.
+                std::vector<const editor::TextViewport*> saved_views;
+                for (const GroupTabRef& ref : tabs.DirtyGroupTabs()) {
+                  const TabEntry& tab =
+                      context_.current_project_state.editor_groups[ref.group_index].open_tabs[ref.tab_index];
+                  const editor::TextViewport* view =
+                      tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+                              !tab.editor_state->content_pending()
+                          ? &tab.editor_state->viewport
+                          : nullptr;
+                  if (view != nullptr && view->path().empty()) {
+                    ++outcome.untitled;
+                    continue;
+                  }
+                  if (view != nullptr &&
+                      std::any_of(saved_views.begin(), saved_views.end(),
+                                  [view](const editor::TextViewport* saved) {
+                                    return saved->SharesDocumentWith(*view);
+                                  })) {
+                    continue;
+                  }
+                  const std::string title = tab.title;
+                  if (tabs.SaveGroupTab(ref.group_index, ref.tab_index, SaveMode::Deferred)) {
+                    ++outcome.saved;
+                    if (view != nullptr) {
+                      saved_views.push_back(view);
+                    }
+                  } else {
+                    outcome.failed.push_back(title);
+                  }
+                }
+                return outcome;
+              },
           .save_tab_as =
               [this](std::size_t index, const std::filesystem::path& path, std::string* error) {
                 std::lock_guard<std::mutex> lock(save_tab_mutex_);

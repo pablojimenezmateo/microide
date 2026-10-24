@@ -833,6 +833,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `navigate-forward`
 - `save [path]`
 - `save-as [path]`
+- `save-all`
 - `search [query]`
 - `find-next`
 - `find-previous`
