@@ -492,6 +492,11 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       event.button.button == SDL_BUTTON_LEFT && event.button.clicks == 1 &&
       (modifiers & SDL_KMOD_CTRL) != 0 &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI)) == 0;
+  // A plain press on the line numbers selects that whole line, and a drag from it
+  // extends by whole lines (VS Code). The fold and breakpoint zones of the gutter
+  // took their presses above; what reaches here is the number column.
+  const bool line_number_press =
+      plain_left_click && event.button.x < editor_rect.x + metrics.gutter_width;
   interaction_state_.editor_box_selecting = false;
   interaction_state_.text_drag = InteractionState::TextDragState::None;
   interaction_state_.text_drag_has_drop = false;
@@ -502,8 +507,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // or the start of a drag that MOVES the selected text (VS Code's
   // editor.dragAndDrop). Which one it is only becomes knowable once the pointer
   // moves — see HandleSelectionMotion's threshold (TD-2026-08-13-204).
-  if (plain_left_click && event.button.clicks == 1 && !viewport->has_multiple_carets() &&
-      SettingOnByDefault(operations_.get_setting_value, "editor.drag_and_drop")) {
+  if (plain_left_click && !line_number_press && event.button.clicks == 1 &&
+      !viewport->has_multiple_carets() && SettingOnByDefault(operations_.get_setting_value, "editor.drag_and_drop")) {
     if (const auto selection = viewport->selection_range();
         selection.has_value() &&
         editor::text_drag_drop::PositionWithin(*selection,
@@ -566,7 +571,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // rectangular selection back to a single row).
   interaction_state_.selection_granularity = InteractionState::SelectionGranularity::Character;
   if (!shift_alt_box) {
-    selection_granularity::ApplyClick(interaction_state_, *viewport, event.button.clicks);
+    selection_granularity::ApplyClick(interaction_state_, *viewport,
+                                      line_number_press ? 3 : event.button.clicks);
   }
   operations_.reset_caret_blink();
   state_.surface.focus = FocusTarget::Editor;
