@@ -1136,17 +1136,53 @@ class App:
         The labels are derived at frame prep, so a disagreement is read again
         after the next frames before it is reported: a lag of one frame is not
         stale state."""
-        found = self._state_findings(ui) + self._tab_strip_findings(ui)
+        found = self._state_findings(ui) + self._tab_strip_findings(ui) + self._terminal_tab_findings(ui)
         for _ in range(3):
             if not found:
                 return []
             time.sleep(0.2 * SLOW_FACTOR)
             try:
                 ui = self.ui()
-                found = self._state_findings(ui) + self._tab_strip_findings(ui)
+                found = self._state_findings(ui) + self._tab_strip_findings(ui) + self._terminal_tab_findings(ui)
             except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
                 return []
         return found
+
+    def _terminal_tab_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
+        """The panel's terminal tabs name their terminals: each terminal's active
+        pane label (the shell, or the title its program set) is a panel tab, and the
+        active terminal's tab is the highlighted one while a terminal is shown."""
+        if not (ui.get("panel") or {}).get("visible"):
+            return []
+        shown = [e for e in ui.get("elements", []) if e.get("kind") == "panel-tab"]
+        if not shown:
+            return []
+        try:
+            tabs = self.query("terminals")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return []
+        tabs = tabs if isinstance(tabs, list) else tabs.get("tabs", [])
+
+        def label_of(tab: dict) -> str:
+            pane = next((p for p in tab.get("panes", []) if p.get("active")), (tab.get("panes") or [{}])[0])
+            return pane.get("label", "")
+
+        def names(element: dict, label: str) -> bool:
+            shown_label = element.get("label", "")
+            return shown_label == label or (shown_label.endswith("…") and label.startswith(shown_label[:-1]))
+        out: list[tuple[str, str]] = []
+        for tab in tabs:
+            label = label_of(tab)
+            if label and not any(names(e, label) for e in shown):
+                out.append(("state", f"terminal {tab.get('tab')} is {label!r}, and no panel tab names it "
+                                     f"({[e.get('label') for e in shown]})"))
+        lit = [e for e in shown if e.get("active")]
+        active = next((t for t in tabs if t.get("active")), None)
+        if active is not None and len(lit) == 1 and any(names(lit[0], label_of(t)) for t in tabs) \
+                and not names(lit[0], label_of(active)):
+            out.append(("state", f"the panel highlights {lit[0].get('label')!r}; the active terminal is "
+                                 f"{label_of(active)!r}"))
+        return out
 
     def _tab_strip_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
         """Every group's strip, not only the focused one: each visible tab is one of
