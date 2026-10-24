@@ -578,7 +578,7 @@ reads only the file mark), so a fully hunk-reviewed file looks untouched in the 
 view. QA `review-marks` drives both paths; the hunk markers themselves are drawn
 since 4ce82d7f (they were persisted and never shown).
 
-### TD-2026-10-22-382 — Ctrl+B and Ctrl+1 reach a focused shell. [OPEN — verify intent]
+### TD-2026-10-22-382 — Ctrl+B and Ctrl+1 reach a focused shell. [RESOLVED 2026-10-25 — decided]
 
 The keybindings query reports `sidebar-toggle` (Ctrl+B), `focus-group-1..8`
 (Ctrl+1..8), `close-tab` (Ctrl+W) and `next-tab`/`previous-tab` (Ctrl+PageDown/Up)
@@ -588,6 +588,14 @@ toggle and the editor-group focus commands (not Ctrl+W). Ctrl+B is bash's
 backward-char in emacs mode, so keeping it for the shell is defensible; the
 journey-layout flow gives the editor the keyboard first. Decide per chord and
 record it in the keybinding registry's comments.
+
+**Decided, and recorded at each binding:** all three stay with a focused shell.
+Ctrl+1..8 already were, with the reason (Ctrl+2 is the shell's NUL, and the
+terminal has its own focus keys). Ctrl+B stays too, deliberately unlike VS
+Code's default: it is readline's backward-char, which a person in a shell types
+constantly, while the sidebar is a click or a menu row away. Ctrl+W stays as in
+VS Code (unix-word-rubout), and Ctrl+PageUp/PageDown in a terminal are the
+terminal's tab switch.
 
 ### TD-2026-10-22-384 — the window title is always "microide". [RESOLVED 2026-10-24]
 

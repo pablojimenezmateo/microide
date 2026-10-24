@@ -149,6 +149,10 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
+      // Ctrl+B stays with a focused terminal, unlike VS Code (whose default
+      // commandsToSkipShell takes it): it is readline's backward-char in every
+      // emacs-mode shell, and the sidebar is a click or a menu row away from there
+      // (TD-2026-10-22-382).
       KeybindingSpec{
           .id = "sidebar-toggle",
           .action = ActionId::SidebarToggle,
@@ -677,6 +681,9 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 1,
           .command_name = {},
       },
+      // Ctrl+W stays with a focused terminal, as in VS Code: readline's
+      // unix-word-rubout. Ctrl+PageUp/PageDown there are the terminal's own tab
+      // switch (a Terminal-context binding), not the editor's.
       KeybindingSpec{
           .id = "close-tab",
           .action = ActionId::CloseActiveTab,
