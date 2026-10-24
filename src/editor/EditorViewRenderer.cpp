@@ -3,6 +3,7 @@
 #include "editor/WrappedCaretRow.h"
 
 #include <algorithm>
+#include <optional>
 #include <array>
 #include <cctype>
 #include <charconv>
@@ -666,6 +667,18 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   // path carries its own. Rows of one wrapped line arrive in ascending order, so
   // each resumes where the last stopped (TD-2026-08-14-218).
   WhitespaceWalkCursor whitespace_cursor;
+  // A partial frame paints through a clip that is often a row or a strip: the
+  // edited line, a scrollbar's thumb. Building and drawing every visible row for
+  // it costs a whole pane per clip (two clips a keystroke made typing 40% slower),
+  // so a row the clip cannot reach is skipped -- with a row of slack on each side
+  // for what overhangs its own band (a caret, a squiggle, a bracket box).
+  std::optional<SDL_Rect> row_clip;
+  if (SDL_RenderClipEnabled(renderer)) {
+    SDL_Rect clip{};
+    if (SDL_GetRenderClipRect(renderer, &clip)) {
+      row_clip = clip;
+    }
+  }
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -694,6 +707,23 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
 
     const float y = row_y_layout.RowTop(row);
+    if (row_clip.has_value() &&
+        (y + 2.0f * metrics.line_height <= static_cast<float>(row_clip->y) ||
+         y - metrics.line_height >= static_cast<float>(row_clip->y + row_clip->h))) {
+      // The cursors that advance only on their own row step past this one; the
+      // whitespace walk starts the next row afresh.
+      while (breakpoint_gutter_marks != nullptr &&
+             breakpoint_gutter_mark_index < breakpoint_gutter_marks->size() &&
+             (*breakpoint_gutter_marks)[breakpoint_gutter_mark_index].visual_row_index <= visual_row_index) {
+        ++breakpoint_gutter_mark_index;
+      }
+      while (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&
+             (*fold_gutter_marks)[fold_gutter_mark_index].visual_row_index <= visual_row_index) {
+        ++fold_gutter_mark_index;
+      }
+      whitespace_cursor = WhitespaceWalkCursor{};
+      continue;
+    }
     const std::size_t row_visual_origin =
         soft_wrap ? row_meta.visual_start : viewport.horizontal_scroll();
     // Hanging indent: continuation rows shift their whole content (text, carets,
