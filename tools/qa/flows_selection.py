@@ -252,6 +252,11 @@ def flow_multi_caret_pairs(app: q.App) -> None:
     three("foo bar\nfoo baz\nfoo qux\n")
     app.key("ctrl+BackSpace")
     expect_text(app, "foo \nfoo \nfoo \n", "Ctrl+Backspace takes each caret's word")
+    three("ab\ncd\nef\n")
+    app.key("Home")
+    app.key("Tab")
+    unit = " " * app.buffer().get("tabSize", 4) if app.buffer().get("softTabs") else "\t"
+    expect_text(app, f"{unit}ab\n{unit}cd\n{unit}ef\n", "Tab at each line start indents each line")
     three("x\ny\nz\n")
     app.type('"')
     expect_text(app, 'x"\ny"\nz"\n', "a quote after a word does not pair")
