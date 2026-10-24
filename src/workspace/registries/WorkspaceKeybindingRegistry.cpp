@@ -1387,24 +1387,28 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key)) << 16) |
            static_cast<std::uint16_t>(normalized_mods);
   };
-  struct TakenContext {
-    KeybindingContext context;
-    bool skips_terminal;
+  // One flat vector sorted by chord, not a map of vectors: a node and a vector
+  // per chord was two allocations per built-in binding on every resolve, which
+  // grew with every binding added (plugin_keybindings_resolve_at_cap).
+  struct TakenChord {
+    std::uint64_t chord = 0;
+    KeybindingContext context = KeybindingContext::Global;
+    bool skips_terminal = false;
   };
-  std::unordered_map<std::uint64_t, std::vector<TakenContext>> resolved_contexts;
-  resolved_contexts.reserve(result.size());
+  std::vector<TakenChord> taken;
+  taken.reserve(result.size() + contributed.size());
   for (const ResolvedKeybinding& existing : result) {
-    resolved_contexts[chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers))]
-        .push_back(TakenContext{existing.context, existing.skips_terminal});
+    taken.push_back(TakenChord{chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers)),
+                               existing.context, existing.skips_terminal});
   }
+  const auto by_chord = [](const TakenChord& a, const TakenChord& b) { return a.chord < b.chord; };
+  std::stable_sort(taken.begin(), taken.end(), by_chord);
   const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
                                            KeybindingContext context, bool skips) {
-    const auto it = resolved_contexts.find(chord_key(key, NormalizedKeyModifiers(mods)));
-    if (it == resolved_contexts.end()) {
-      return false;
-    }
-    return std::any_of(it->second.begin(), it->second.end(), [&](const TakenContext& taken) {
-      return KeybindingContextsOverlap(taken.context, taken.skips_terminal, context, skips);
+    const TakenChord probe{chord_key(key, NormalizedKeyModifiers(mods))};
+    const auto [first, last] = std::equal_range(taken.begin(), taken.end(), probe, by_chord);
+    return std::any_of(first, last, [&](const TakenChord& entry) {
+      return KeybindingContextsOverlap(entry.context, entry.skips_terminal, context, skips);
     });
   };
 
@@ -1449,8 +1453,8 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.skips_terminal = skips;
     // Keep the conflict index in sync so a later plugin binding that collides
     // with this accepted one is skipped, matching the old rescan-of-result.
-    resolved_contexts[chord_key(key, NormalizedKeyModifiers(mods))].push_back(
-        TakenContext{context, skips});
+    const TakenChord accepted{chord_key(key, NormalizedKeyModifiers(mods)), context, skips};
+    taken.insert(std::upper_bound(taken.begin(), taken.end(), accepted, by_chord), accepted);
     result.push_back(std::move(rb));
   }
 
