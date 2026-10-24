@@ -243,8 +243,15 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
         PointerAnchor(event));
     return true;
   }
-  return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
-                                                 state_.sidebar.git.selected_index);
+  // A click opens the entry's diff and keeps the keyboard on the list, as the
+  // file tree's click does and VS Code's source control view does: the view's
+  // own keys (s, u, d) then act on the entry just clicked. It used to hand the
+  // keyboard to the opened editor, so an `s` meant to stage typed an "s" into
+  // the file. Enter is the open that moves the keyboard to what it opened.
+  const bool opened = operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
+                                                              state_.sidebar.git.selected_index);
+  state_.surface.focus = FocusTarget::Sidebar;
+  return opened;
 }
 
 bool SidebarMouseCoordinator::HandleProblemsButtonDown(const SDL_Event& event,

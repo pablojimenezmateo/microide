@@ -6,10 +6,12 @@
 #include "TestSupportSdl.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "WorkspaceShellEventHelpers.h"
+#include "support/GitSidebarWait.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "util/JsonValue.h"
@@ -335,6 +337,48 @@ void TestSaveAsRetitlesTheTab() {
   Expect(renamed, "the tab is titled copy-of.txt, got " + labels);
 }
 
+// git-view click: a click on a git view entry opened its diff and handed the
+// keyboard to the editor, so the view's own `s` (stage) typed an "s" into the
+// file. The tree keeps the keyboard on a click, as VS Code's source control view
+// does; Enter is the open that moves it.
+void TestAClickOnAGitEntryKeepsTheKeyboardOnTheList() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "keys" / "alpha.txt", "alpha\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "keys" / "alpha.txt", "alpha changed\n");
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open its project");
+  TestAccess::SetWindowSize(shell, 1280, 720);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the git view should list the change");
+  std::optional<SDL_FRect> row;
+  const util::JsonValue before = TestAccess::ControlUi(shell);
+  for (const util::JsonValue& entry : before["elements"].AsArray()) {
+    if (entry["name"].AsString() == "row:git/alpha.txt") {
+      const auto& r = entry["rect"].AsArray();
+      row = SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                      static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+    }
+  }
+  Expect(row.has_value(), "the git view shows alpha.txt");
+  if (!row) {
+    return;
+  }
+  const float x = row->x + row->w / 2.0f;
+  const float y = row->y + row->h / 2.0f;
+  (void)DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                               MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
+  const util::JsonValue ui = TestAccess::ControlUi(shell);
+  Expect(ui["focus"].AsString() == "sidebar",
+         "the click keeps the keyboard on the git view, got " + ui["focus"].AsString());
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -349,6 +393,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/TheStatusColumnFollowsTheTabSize", TestTheStatusColumnFollowsTheTabSize);
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetRecountsAfterAReload", TestTheFindWidgetRecountsAfterAReload);
   AddTest(tests, "QaFlowRegressionUx/SaveAsRetitlesTheTab", TestSaveAsRetitlesTheTab);
+  AddTest(tests, "QaFlowRegressionUx/AClickOnAGitEntryKeepsTheKeyboardOnTheList",
+          TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
 }
 
 }  // namespace microide::tests
