@@ -544,6 +544,19 @@ void TestSwitchingBackToATabKeepsItsScroll() {
          "the view is where it was left, got scroll " + std::to_string(back.scroll_line()));
 }
 
+// TD-2026-10-20-370: `files src` opened `src` as a second project and showed
+// the finder there; its argument is now Go to File's query.
+void TestTheFinderCommandsArgumentIsAQuery() {
+  UxFixture fixture("finder.txt", "x\n");
+  std::filesystem::create_directories(fixture.root / "src");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "files src"), "files runs");
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  Expect(ui["overlay"]["visible"].AsBool() && ui["overlay"]["mode"].AsString() == "file-finder" &&
+             ui["overlay"]["query"].AsString() == "src",
+         "the finder opens with the query typed in");
+  Expect(TestAccess::ProjectRoot(fixture.shell) == fixture.root, "and the project is still the same one");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -562,6 +575,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/TheFinderCommandsArgumentIsAQuery", TestTheFinderCommandsArgumentIsAQuery);
   AddTest(tests, "QaFlowRegressionUx/SwitchingBackToATabKeepsItsScroll", TestSwitchingBackToATabKeepsItsScroll);
   AddTest(tests, "QaFlowRegressionUx/AnEditorsViewSurvivesCloseReopenAndRestart",
           TestAnEditorsViewSurvivesCloseReopenAndRestart);

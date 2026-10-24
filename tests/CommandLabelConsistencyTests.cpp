@@ -205,7 +205,7 @@ void TestUsageRequiresArgumentOnlyOutsideBrackets() {
   Expect(CommandUsageRequiresArgument("debug-run [--type <adapter>] <program> [args...]"),
          "<program> after a bracket group is required");
   Expect(!CommandUsageRequiresArgument("goto [line[:col]]"), "nested brackets stay optional");
-  for (const std::string_view bare : {"goto", "open", "find", "search"}) {
+  for (const std::string_view bare : {"goto", "open", "files", "search"}) {
     const auto* spec = microide::workspace::FindWorkspaceActionByCommand(bare);
     Expect(spec != nullptr && !CommandUsageRequiresArgument(spec->command_usage),
            std::string(bare) + " runs bare, so its usage should not require an argument");

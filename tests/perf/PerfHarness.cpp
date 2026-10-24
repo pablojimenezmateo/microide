@@ -724,8 +724,12 @@ bool ScenarioContext::WaitForGitSidebarEntries(std::size_t min_entries,
 }
 
 void ScenarioContext::JumpCompareHunk(int delta) {
+  // Alt+[ / Alt+], the chord that jumps from either side. A working-tree diff
+  // opens with its editable side active, where a bare bracket is text (c764a29a);
+  // the bare key this pressed stopped navigating there, and the next-hunk
+  // scenario's destination guard failed instead of measuring.
   const SDL_Keycode key = delta < 0 ? SDLK_LEFTBRACKET : SDLK_RIGHTBRACKET;
-  KeyDown(key, SDL_KMOD_NONE);
+  KeyDown(key, SDL_KMOD_ALT);
   PumpFrames(1);
 }
 

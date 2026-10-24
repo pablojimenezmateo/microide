@@ -117,12 +117,6 @@ TreeRootRequest BuildTreeRootRequest(const std::vector<std::string>& args) {
   };
 }
 
-FilesRequest BuildFilesRequest(const std::vector<std::string>& args) {
-  return FilesRequest{
-      .project_root = args.empty() ? std::filesystem::path{} : std::filesystem::path(args[0]),
-  };
-}
-
 CompareRequest BuildCompareRequest(const std::vector<std::string>& args,
                                    const std::filesystem::path& project_root) {
   return CompareRequest{

@@ -369,7 +369,6 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              target == TreeContextTargetKind::Directory;
     }
     case ActionId::Compare:
-    case ActionId::Find:
     case ActionId::GitRefresh:
     // Git write actions gate on "a project is open", exactly as GitRefresh does;
     // the executor reports "not a git repository" precisely on invocation rather

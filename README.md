@@ -725,8 +725,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `review-branch [ref]`
 - `review-commit [commit]`
 - `reveal-in-tree`
-- `files [root]`
-- `find [query]`
+- `files [query]`
 - `find-references`
 - `call-hierarchy [incoming|outgoing]`
 - `focus <editor|sidebar|panel>`

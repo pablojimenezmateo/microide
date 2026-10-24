@@ -884,7 +884,7 @@ command and Toggle Light/Dark. The row's values should come from the theme
 registry (bundled files plus plugin contributions), rebuilt when a plugin loads;
 TD-2026-10-18-363 (a theme picker) would sit on the same list.
 
-### TD-2026-10-20-370 — `files <root>` opens a project as the side effect of a finder command. [OPEN]
+### TD-2026-10-20-370 — `files <root>` opens a project as the side effect of a finder command. [RESOLVED 2026-10-24]
 
 Found by the QA `commands-args` flow: `files [root]` is documented as the file
 finder, but with a root argument it OPENS THAT ROOT AS A PROJECT (`OpenProject`)
@@ -893,6 +893,11 @@ project tab for `src` and every later relative path resolving under it. The
 legacy verb predates project tabs. Either the argument should scope the finder
 to a subtree of the current project without opening one, or the verb should say
 what it does (`project-open` already exists for the other reading).
+
+**Resolved:** `files [query]` is Go to File with its field seeded (Ctrl+P and
+typing); it opens no project. `find [query]`, which already did that under
+another name, is gone. `QaFlowRegressionUx/TheFinderCommandsArgumentIsAQuery`;
+QA `commands-args` checks the project count stays put.
 
 ### TD-2026-10-20-369 — parameter hints only on request; a shadowed plugin keybinding is dropped without a word. [OPEN]
 

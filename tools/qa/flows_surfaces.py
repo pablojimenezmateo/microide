@@ -94,13 +94,15 @@ def flow_commands_args(app: q.App) -> None:
     before = app.ui()["surfaces"]["sidebar"][2]
     _run(app, "sidebar-width 340", lambda: abs(app.ui()["surfaces"]["sidebar"][2] - 340) <= 2, "a 340 wide sidebar")
     _run(app, f"sidebar-width {int(before)}", None, "")
-    _run(app, "find sched", lambda: app.ui()["overlay"]["visible"] and app.ui()["overlay"].get("mode") == "file-finder"
-         and app.ui()["overlay"].get("query") == "sched", "the file finder seeded")
+    projects = len(app.elements("project-tab"))
+    _run(app, "files src", lambda: app.ui()["overlay"]["visible"] and app.ui()["overlay"].get("mode") == "file-finder"
+         and app.ui()["overlay"].get("query") == "src", "the file finder seeded")
+    app.expect(len(app.elements("project-tab")) == projects,
+               "a finder argument is a query, not a project to open (TD-2026-10-20-370)")
     app.key("Escape")
     _run(app, "project-search queue", lambda: app.ui()["sidebar"]["view"] == "search"
          and app.field_text("field:search/query") == "queue", "the search view seeded")
     app.key("Escape")
-    # (`files <root>` opens that root as a project: the project flows own it.)
 
     if not app.ui()["panel"]["visible"]:
         app.key("ctrl+grave")

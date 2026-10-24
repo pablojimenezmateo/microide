@@ -89,17 +89,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
         return reject("No terminal to search");
       }
       return DispatchResult::Handled;
-    case ActionId::Find:
-      if (!context_.HasProjectRoot()) {
-        return reject("No active project");
-      }
-      context_.ShowFileFinderWithQuery(JoinCommandArguments(args, 0));
-      return DispatchResult::Handled;
     case ActionId::Files: {
-      const FilesRequest request = BuildFilesRequest(args);
-      if (!request.project_root.empty() && !context_.OpenProject(request.project_root, true, true)) {
-        return reject("Failed to open project: " + request.project_root.string());
-      }
+      // Go to File, its field seeded with the arguments (Ctrl+P and typing). It
+      // used to read its argument as a project root and OPEN it, a second project
+      // tab as the side effect of a finder (TD-2026-10-20-370); `project-open` is
+      // that verb, and `find [query]`, which did this, is folded in here.
       if (source == ActionSource::Shortcut && context_.OverlayVisible()) {
         context_.DismissOverlay();
         return DispatchResult::Handled;
@@ -107,7 +101,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
       if (source != ActionSource::Shortcut && !context_.HasProjectRoot()) {
         return reject("No active project");
       }
-      context_.ShowFileFinder();
+      std::string query = JoinCommandArguments(args, 0);
+      if (query.empty()) {
+        context_.ShowFileFinder();
+      } else {
+        context_.ShowFileFinderWithQuery(std::move(query));
+      }
       return DispatchResult::Handled;
     }
     case ActionId::ProjectSearch: {

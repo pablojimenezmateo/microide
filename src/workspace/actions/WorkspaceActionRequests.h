@@ -34,12 +34,6 @@ struct TreeRootRequest {
 
 TreeRootRequest BuildTreeRootRequest(const std::vector<std::string>& args);
 
-struct FilesRequest {
-  std::filesystem::path project_root;
-};
-
-FilesRequest BuildFilesRequest(const std::vector<std::string>& args);
-
 struct CompareRequest {
   std::filesystem::path path;
   std::string commit_spec;

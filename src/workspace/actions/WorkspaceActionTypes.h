@@ -100,7 +100,6 @@ enum class ActionId {
   CreateFile,
   DeletePath,
   Files,
-  Find,
   FindReferences,
   CallHierarchy,
   WorkspaceSymbol,
