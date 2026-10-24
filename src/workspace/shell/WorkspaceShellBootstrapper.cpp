@@ -87,7 +87,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
       for (const DragTarget target : {drag_before, drag_after}) {
         if (const auto rect = DragTargetHighlightRect(*layout, target); rect.has_value()) {
-          result.redraw.rects.push_back(*rect);
+          result.redraw.Add(*rect);
         }
       }
     }

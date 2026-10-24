@@ -639,6 +639,27 @@ void TestChangeLanguageModeSetsTheDocumentsLanguage() {
   Expect(viewport.language_id() == detected, "Auto Detect goes back to " + detected + ", got " + viewport.language_id());
 }
 
+// menu_hover_paint allocated 60% more than v2.12.0: one File/Edit switch queued
+// the same popup rect four times, and the duplicates overflowed the invalidation's
+// inline storage on every hover. A rect a queued one covers adds nothing; one that
+// covers queued rects replaces them.
+void TestARenderInvalidationKeepsNoCoveredRect() {
+  workspace::RenderInvalidation redraw;
+  const SDL_FRect big{0.0f, 0.0f, 100.0f, 100.0f};
+  for (int i = 0; i < 4; ++i) {
+    redraw.Add(big);
+  }
+  redraw.Add(SDL_FRect{10.0f, 10.0f, 5.0f, 5.0f});
+  Expect(redraw.rects.size() == 1, "a repeated or covered rect is queued once, got " +
+                                       std::to_string(redraw.rects.size()));
+  workspace::RenderInvalidation small;
+  small.Add(SDL_FRect{1.0f, 1.0f, 2.0f, 2.0f});
+  small.Add(SDL_FRect{200.0f, 0.0f, 10.0f, 10.0f});
+  small.Merge(redraw);
+  Expect(small.rects.size() == 2, "a merged rect replaces the queued ones it covers, got " +
+                                      std::to_string(small.rects.size()));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -657,6 +678,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
           TestAClickOnAGitEntryKeepsTheKeyboardOnTheList);
   AddTest(tests, "QaFlowRegressionUx/ASelectionInsideAStringIsSurrounded", TestASelectionInsideAStringIsSurrounded);
   AddTest(tests, "QaFlowRegressionUx/EnterContinuesADocComment", TestEnterContinuesADocComment);
+  AddTest(tests, "QaFlowRegressionUx/ARenderInvalidationKeepsNoCoveredRect", TestARenderInvalidationKeepsNoCoveredRect);
   AddTest(tests, "QaFlowRegressionUx/ChangeLanguageModeSetsTheDocumentsLanguage",
           TestChangeLanguageModeSetsTheDocumentsLanguage);
   AddTest(tests, "QaFlowRegressionUx/TheColorThemePickPreviewsRevertsAndApplies",

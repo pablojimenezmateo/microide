@@ -223,7 +223,7 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
     return;
   }
   InvalidateCursorKindFingerprint();
-  pending_render_invalidation_.rects.push_back(rect);
+  pending_render_invalidation_.Add(rect);
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectsQueued);
   // Area, not count: a strip repaint and a window repaint queue one rect each.
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectPixels,
@@ -1519,7 +1519,7 @@ WorkspaceShell::ConsumePostRenderRedrawRequest() {
   // repaint when the panel is not laid out or not visible.
   RenderInvalidation invalidation;
   if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
-    invalidation.rects.push_back(layout->bottom_panel);
+    invalidation.Add(layout->bottom_panel);
   } else {
     invalidation.full = true;
   }

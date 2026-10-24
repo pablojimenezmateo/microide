@@ -40,6 +40,30 @@ struct RenderInvalidation {
   // A render pass or a bare re-present is owed.
   [[nodiscard]] bool HasAnyRedraw() const { return HasDamage() || present; }
 
+  // Queue `rect`, unless a queued rect already covers it; queued rects it covers
+  // go. Several handlers damage the same surface for one event (a menu switch
+  // queued the same popup rect four times), and the duplicates spilled the inline
+  // storage to the heap on every hover.
+  void Add(const SDL_FRect& rect) {
+    const auto covers = [](const SDL_FRect& outer, const SDL_FRect& inner) {
+      return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w &&
+             inner.y + inner.h <= outer.y + outer.h;
+    };
+    for (const SDL_FRect& queued : rects) {
+      if (covers(queued, rect)) {
+        return;
+      }
+    }
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < rects.size(); ++i) {
+      if (!covers(rect, rects[i])) {
+        rects[kept++] = rects[i];
+      }
+    }
+    rects.resize_uninitialized(kept);  // shrinks: every kept slot is written
+    rects.push_back(rect);
+  }
+
   // Fold `other` in: full absorbs every rect, and a present is owed if either owes one.
   void Merge(const RenderInvalidation& other) {
     present = present || other.present;
@@ -51,7 +75,9 @@ struct RenderInvalidation {
       rects.clear();
       return;
     }
-    rects.append(other.rects.begin(), other.rects.end());
+    for (const SDL_FRect& rect : other.rects) {
+      Add(rect);
+    }
   }
 
   [[nodiscard]] std::optional<SDL_FRect> SingleRectIfOnlyOne() const {
