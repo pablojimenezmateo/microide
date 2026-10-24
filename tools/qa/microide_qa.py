@@ -1112,6 +1112,86 @@ class App:
                     out.append(("bounds", f"{element['name']} {element['rect']} leaves the {width}x{height} window"))
                     break
         out += _surface_and_overlap_findings(ui)
+        out += self._state_oracles(ui)
+        return out
+
+    def _state_oracles(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
+        """What the chrome SAYS, checked against the buffer it describes. The
+        redraw verifier compares a partial frame with a full render of the same
+        state, so a label derived from stale state passes it: the find widget kept
+        the previous tab's match count across a tab switch, every frame correct.
+
+        - status: `Ln N, Col M` names the focused editor's primary caret (Col is
+          the visible column: a tab counts as its width);
+        - find: the widget's count of a plain query (letters and digits, no regex,
+          no whole word) is the number of its occurrences in the buffer;
+        - tab: the focused group's active tab shows the dirty mark exactly when
+          its buffer is unsaved.
+
+        Only an editor tab, and only what can be computed here without guessing:
+        a line with a character past ASCII before the caret is skipped (wide
+        characters), as is a buffer too large for the query to carry its text.
+        The labels are derived at frame prep, so a disagreement is read again
+        after the next frames before it is reported: a lag of one frame is not
+        stale state."""
+        found = self._state_findings(ui)
+        for _ in range(3):
+            if not found:
+                return []
+            time.sleep(0.2 * SLOW_FACTOR)
+            try:
+                found = self._state_findings(self.ui())
+            except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+                return []
+        return found
+
+    def _state_findings(self, ui: dict[str, Any]) -> list[tuple[str, str]]:
+        try:
+            buffer = self.query("buffer")
+        except Exception:  # noqa: BLE001 - a dead or busy app is another oracle's
+            return []
+        if not buffer.get("available") or buffer.get("kind") != "editor":
+            return []
+        out: list[tuple[str, str]] = []
+        elements = {e["name"]: e for e in ui.get("elements", [])}
+        text = buffer.get("text")
+        cursors = buffer.get("cursors") or []
+        status = elements.get("status:line-column")
+        match = re.match(r"Ln (\d+), Col (\d+)", (status or {}).get("label", ""))
+        if match and cursors and text is not None:
+            caret = cursors[0]
+            lines = text.split("\n")
+            if 1 <= caret["line"] <= len(lines):
+                prefix_bytes = lines[caret["line"] - 1].encode()[:caret["column"] - 1]
+                if prefix_bytes.isascii():
+                    tab = max(1, buffer.get("tabSize", 4))
+                    visual = 0
+                    for ch in prefix_bytes.decode():
+                        visual += tab - visual % tab if ch == "\t" else 1
+                    want = (caret["line"], visual + 1)
+                    got = (int(match.group(1)), int(match.group(2)))
+                    if got != want:
+                        out.append(("state", f"the status bar says Ln {got[0]}, Col {got[1]}; the caret is at "
+                                             f"Ln {want[0]}, Col {want[1]}"))
+        overlay = ui.get("overlay") or {}
+        query = overlay.get("query") or ""
+        if (overlay.get("visible") and overlay.get("mode") in ("buffer-search", "buffer-replace")
+                and text is not None and len(query) >= 2 and query.isascii() and query.isalnum()
+                and not (elements.get("button:find/regex") or {}).get("active")
+                and not (elements.get("button:find/whole-word") or {}).get("active")
+                and isinstance(overlay.get("count"), int) and overlay["count"] < 1000):
+            haystack, needle = (text, query) if (elements.get("button:find/match-case") or {}).get("active") \
+                else (text.lower(), query.lower())
+            want = haystack.count(needle)
+            if overlay["count"] != want:
+                out.append(("state", f"the find widget counts {overlay['count']} of {query!r}; the buffer holds {want}"))
+        focused = next((pane.get("group") for pane in ui.get("editors", []) if pane.get("focused")), None)
+        if focused is not None:
+            active = next((e for e in ui.get("elements", []) if e.get("kind") == "tab" and e.get("active")
+                           and e["name"].startswith(f"tab:{focused}/")), None)
+            if active is not None and active.get("label", "").startswith("*") != bool(buffer.get("dirty")):
+                out.append(("state", f"the active tab {active['label']!r} and its buffer disagree about unsaved "
+                                     f"changes (dirty: {buffer.get('dirty')})"))
         return out
 
     def _write_finding(self, label: str, found: list[Finding]) -> str | None:
