@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "editor/EditorViewRenderer.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceInteractionState.h"
 #include "workspace/state/WorkspaceProjectState.h"
@@ -39,6 +40,15 @@ struct PreparedFrameState {
   // up only rects inside it (an empty rect: the pointer is outside a modal, and
   // nothing hovers).
   std::optional<SDL_FRect> pointer_occluder;
+
+  // Per editor group, its pane's metrics (rows, columns, gutter, the sticky band)
+  // as this frame lays them out. Sized at frame prep -- the viewport's size and
+  // sticky band set there too -- so paint, and everything resolved between frames
+  // against the pane (hover targets, the blame overlay, a click), read ONE
+  // geometry. Paint used to derive them, so the blame overlay was built there and
+  // prep worked from the previous frame's (TD-2026-10-24-389).
+  std::array<editor::EditorViewMetrics, kMaxEditorGroups> pane_metrics{};
+  std::array<bool, kMaxEditorGroups> pane_metrics_valid{};
 
   // ---- what the last prepared frame painted ----------------------------
   std::optional<SDL_FRect> painted_caret_rect;

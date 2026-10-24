@@ -92,17 +92,16 @@ class EditorBlameOverlayService {
 
   void SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay);
   // The editor's overlay, remembering the buffer state it was built over: the
-  // viewport, its caret line, its scroll and its content revision. The overlay is
-  // rebuilt while the active pane PAINTS, but the hover card it anchors is laid
-  // out -- and its damage decided -- at frame prep, before that paint: a card
-  // whose line went away (the caret moved, another pane took focus) was still
-  // there for prep, gone for paint, and its rect never repainted (QA monkey,
-  // editor profile, seed 309). ForgetVisibleOverlayIfStale, called at frame prep,
-  // drops an overlay that no longer describes the active buffer, so prep sees the
-  // card go in the same frame paint does.
+  // viewport, its caret line, its scroll and its content revision. Frame prep
+  // builds it for an active editor pane (TD-2026-10-24-389); when the active tab
+  // is a diff or a merge instead, prep builds none and that surface sets its own
+  // as it paints -- ForgetVisibleOverlayIfStale, called at frame prep, drops an
+  // editor overlay that no longer describes the active buffer in between, so no
+  // hover card or click resolves against the editor a tab switch left.
   void SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay,
                          const editor::TextViewport& source);
   void ForgetVisibleOverlayIfStale(const editor::TextViewport* active);
+  const std::optional<editor::EditorBlameOverlay>& VisibleOverlay() const { return visible_overlay_; }
   void ClearVisibleOverlay();
 
   const editor::EditorBlameLine* VisibleLine(std::size_t line_index) const;

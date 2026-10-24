@@ -246,6 +246,40 @@ void TestWorkspaceShellEditorBlameCardGoesWithItsLine() {
                                 DescribePixelDiff(moved));
 }
 
+// TD-2026-10-24-389: the inline-blame overlay was built while the active pane
+// painted, so everything that resolved against it between frames -- the hover card,
+// a click on Copy SHA, prep's damage for the card -- read the previous paint's. It
+// is built at frame prep now: a prepared frame, painted or not, carries the
+// overlay for the caret's current line.
+void TestWorkspaceShellEditorBlameOverlayIsBuiltAtFramePrep() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "line 1\nline 2\nline 3\nline 4\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add editor blame fixture", "editor blame fixture");
+  static constexpr int kWidth = 1280;
+  static constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  Expect(WaitForActiveEditorBlameOverlay(shell, 1).has_value(), "the fixture should have inline blame");
+  SoftwareCanvas canvas(kWidth, kHeight);
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(3, 0);
+  (void)shell.PrepareFrameOnce(canvas.renderer(), kWidth, kHeight);  // prepared, not painted
+  const auto& overlay = WorkspaceShellTestAccess::VisibleBlameOverlay(shell);
+  Expect(overlay.has_value() && overlay->lines.size() == 1 && overlay->lines[0].line_index == 3,
+         "a prepared frame's overlay annotates the caret's new line");
+}
+
 // Invalidating the blame of the file on screen (the tree's Refresh, a change on
 // disk) repaints the editor: the inline blame drops until the re-fetch lands, and
 // it used to stay painted. Found by the QA monkey (seed 4).
@@ -609,6 +643,8 @@ void RegisterWorkspaceShellEditorBlameTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellInvalidatedBlameRepaintsTheEditor);
   AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWhenThePointerLeaves",
           TestWorkspaceShellEditorBlameCardGoesWhenThePointerLeaves);
+  AddTest(tests, "WorkspaceShell/EditorBlameOverlayIsBuiltAtFramePrep",
+          TestWorkspaceShellEditorBlameOverlayIsBuiltAtFramePrep);
   AddTest(tests, "WorkspaceShell/EditorBlameCardGoesWithItsLine",
           TestWorkspaceShellEditorBlameCardGoesWithItsLine);
   AddTest(tests, "WorkspaceShell/EditorBlameIsFixedForAPreparedFrame",

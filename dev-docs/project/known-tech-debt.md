@@ -482,7 +482,7 @@ scrolled off screen jumped on every switch back (bd432788). Tests:
 `PersistedStateRecord/ProjectSessionRoundTripsFoldsAndClosedEditors`, a fuzz seed;
 QA `tab-reopen` and `session-restore` assert the caret, scroll and folds.
 
-### TD-2026-10-24-389 — the inline-blame overlay is built while the pane paints. [OPEN]
+### TD-2026-10-24-389 — the inline-blame overlay is built while the pane paints. [RESOLVED 2026-10-25]
 
 `RenderActiveWorkspaceSurface` computes the active pane's blame overlay and
 stores it with `EditorBlameOverlayService::SetVisibleOverlay` during paint, and
@@ -497,6 +497,16 @@ the pointer found it. The shape is still a paint-time state mutation, which
 pane's metrics and its sticky-row count, both derived in the paint loop today,
 so moving it means preparing those per pane first. Until then, anything new that
 reads `VisibleLine`/`LineAtPosition` outside paint inherits a one-frame lag.
+
+**Resolved:** frame prep lays out every editor pane -- `ComputeMetrics`, the
+viewport's size, the sticky band (`PreparedFrameState::pane_metrics`) -- and
+builds the active pane's overlay there; paint reads both. The frame id now
+increments at the START of prep, so what prep builds once per frame is keyed on
+the frame it belongs to, and RenderClip no longer clears the overlay at each
+clip (a partial frame left it empty for the hover until the next full paint).
+`WorkspaceShell/EditorBlameOverlayIsBuiltAtFramePrep`. The guard against a
+stale editor overlay stays for the one remaining case, a diff or merge tab in
+front (those surfaces set their overlays as they paint).
 
 ### TD-2026-10-24-388 — no Change Language Mode. [RESOLVED 2026-10-25]
 

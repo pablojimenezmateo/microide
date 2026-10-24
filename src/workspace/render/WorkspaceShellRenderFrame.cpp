@@ -330,6 +330,9 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   if (renderer == nullptr || width <= 0 || height <= 0) {
     return FrameToken{};
   }
+  // The frame being prepared has its id from the start: what prep builds once per
+  // frame (the blame overlay, the menu's LSP readiness) is keyed on it.
+  ++prepared_frame_id_;
 
   clip_frame_overlay_view_models_valid_ = false;
   prepare_cached_sidebar_vm_.reset();
@@ -691,6 +694,61 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
       RequestRedrawRect(*caret_rect);
     }
     frame_state_.painted_caret_rect = caret_rect;
+  }
+  // Each editor pane's metrics and viewport size, and the active pane's inline
+  // blame overlay -- here, before anything below (or between frames) resolves a
+  // point against the pane. A size change can clamp a pane's scroll, which the
+  // scroll fingerprints below then see.
+  {
+    const bool fold_enabled = SettingFlagEnabled(GetSettingValue("editor.fold.enabled"), true);
+    const bool sticky_enabled =
+        fold_enabled && SettingFlagEnabled(GetSettingValue("editor.fold.sticky_scroll.enabled"), true);
+    const int sticky_depth =
+        ParseStickyScrollMaxDepthSetting(GetSettingValue("editor.fold.sticky_scroll.max_depth"));
+    const bool line_numbers = SettingFlagEnabled(GetSettingValue("editor.line_numbers"), true);
+    const bool blame_inline = SettingFlagEnabled(GetSettingValue("editor.blame.inline.enabled"), true);
+    frame_state_.pane_metrics_valid.fill(false);
+    const EditorPaneLayouts panes = EditorPaneLayoutsFromGroupRects(ComputeEditorGroupRectsForState(layout));
+    for (const EditorPaneLayout& pane : panes) {
+      if (pane.group_index >= project_state.editor_groups.size() || pane.group_index >= kMaxEditorGroups) {
+        continue;
+      }
+      EditorGroup& group = project_state.editor_groups[pane.group_index];
+      editor::TextViewport* viewport = GroupActiveViewport(group);
+      if (viewport == nullptr) {
+        continue;
+      }
+      editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+          editor_text_renderer_, *viewport, pane.rect, 0, line_numbers);
+      viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      const editor::FoldingModel* folds = fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
+      // The band's height is resolvable on its own (StickyScrollLines), so the
+      // metrics are sized against it once.
+      const std::size_t sticky_rows =
+          RenderViewModelBuilder::StickyScrollLines(*viewport, folds, sticky_enabled && folds != nullptr,
+                                                    sticky_depth)
+              .size();
+      if (sticky_rows != 0) {
+        metrics = editor::EditorViewRenderer::ComputeMetrics(editor_text_renderer_, *viewport, pane.rect,
+                                                             sticky_rows, line_numbers);
+        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      }
+      viewport->SetStickyBandRows(metrics.sticky_scroll_rows);
+      frame_state_.pane_metrics[pane.group_index] = metrics;
+      frame_state_.pane_metrics_valid[pane.group_index] = true;
+      // The overlay the active pane paints, its hover card resolves against and a
+      // click on Copy SHA hits: built once, here (a compare or merge surface sets
+      // its own while it paints).
+      if (pane.active && GroupActiveEditorTab(group) != nullptr) {
+        editor_blame_overlay_service_.SetVisibleOverlay(
+            blame_inline && !viewport->is_placeholder()
+                ? editor_blame_overlay_service_.EditorOverlayForFrame(
+                      prepared_frame_id_, project_state.root, editor_text_renderer_, git_blame_service_, *viewport,
+                      pane.rect, 520.0f, sticky_rows, line_numbers)
+                : std::nullopt,
+            *viewport);
+      }
+    }
   }
   // A document shown in more than one pane is edited through one of them, and the
   // edit's damage names lines of the FOCUSED pane. Any other pane whose document
@@ -1319,7 +1377,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     visible_line_range.end_line =
         std::min(viewport->lines().size(), viewport->VisualRowLineIndex(last_visible_row) + 1);
   }
-  ++prepared_frame_id_;
   // PrepareFrameOnce stays a pure function of stored, event-sourced state so the
   // retained and full redraws of one frame paint identically. Never poll the live OS
   // pointer here: SDL_GetMouseState returns the real cursor position, which varies
@@ -1546,7 +1603,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         setting_enabled("editor.view.indent_guides.enabled", true);
     const bool render_whitespace_enabled =
         setting_enabled("editor.view.render_whitespace", false);
-    const bool blame_inline_enabled = setting_enabled("editor.blame.inline.enabled", true);
     const bool line_numbers_enabled = setting_enabled("editor.line_numbers", true);
     const bool overview_ruler_enabled = setting_enabled("editor.view.overview_ruler.enabled", true);
     // Phase E1: inline plugin-surface insets. Experimental and off by default, so
@@ -1612,27 +1668,17 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                              static_cast<int>(std::ceil(pane.rect.w)), static_cast<int>(std::ceil(pane.rect.h))});
 
       // An empty group renders the welcome home surface (recents + shortcuts).
+      // Sized at frame prep (pane_metrics): paint reads the geometry everything
+      // between frames resolved against.
+      if (pane.group_index >= kMaxEditorGroups || !frame_state_.pane_metrics_valid[pane.group_index]) {
+        continue;
+      }
+      const editor::EditorViewMetrics& metrics = frame_state_.pane_metrics[pane.group_index];
       if (viewport->is_placeholder()) {
-        editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-            editor_text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
-        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
         editor::FoldingModel* welcome_fold =
             fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
         const bool sticky_active =
             fold_enabled && sticky_scroll_setting_enabled && welcome_fold != nullptr;
-        // Size the metrics against the sticky band before building, not after:
-        // the band's height is resolvable on its own (see StickyScrollLines) and
-        // the view model is the expensive part.
-        const std::size_t welcome_sticky_rows =
-            RenderViewModelBuilder::StickyScrollLines(*viewport, welcome_fold, sticky_active,
-                                                      sticky_scroll_max_depth)
-                .size();
-        if (welcome_sticky_rows != 0) {
-          metrics = editor::EditorViewRenderer::ComputeMetrics(
-              editor_text_renderer_, *viewport, pane.rect, welcome_sticky_rows, line_numbers_enabled);
-          viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-        }
-        viewport->SetStickyBandRows(metrics.sticky_scroll_rows);
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
@@ -1650,9 +1696,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         continue;
       }
 
-      editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-          editor_text_renderer_, *viewport, pane.rect, 0, line_numbers_enabled);
-      viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       editor::FoldingModel* group_folding_model =
           fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
       const editor::FoldingModel* folding_for_vm = fold_enabled ? group_folding_model : nullptr;
@@ -1660,21 +1703,6 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           fold_enabled && sticky_scroll_setting_enabled && folding_for_vm != nullptr;
       const bool occurrences_for_pane =
           occurrences_highlight_enabled_global && pane.active;
-      // Resolve the sticky band first so the metrics are sized once. Building the
-      // view model to discover the band's height meant building it twice per
-      // frame -- fold gutter marks, breakpoints, whitespace runs, occurrence
-      // scan and inset gaps all recomputed -- for every pane with sticky scroll
-      // on, which is the default.
-      const std::size_t sticky_rows =
-          RenderViewModelBuilder::StickyScrollLines(*viewport, folding_for_vm, sticky_active,
-                                                    sticky_scroll_max_depth)
-              .size();
-      if (sticky_rows != 0) {
-        metrics = editor::EditorViewRenderer::ComputeMetrics(
-            editor_text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
-        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-      }
-      viewport->SetStickyBandRows(metrics.sticky_scroll_rows);
       // Named for the whole pane, because that is what it covers: the view-model
       // build, the blame overlay, the find-highlight fragments, the row render and
       // the insets. It used to be called `BuildEditorViewModel`, which is only the
@@ -1693,22 +1721,11 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       }
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;
-      const auto blame_overlay = [&] {
-        util::PerformanceTrace::Scope blame_scope(
-            "WorkspaceShell::Render::EditorPane::BlameOverlay");
-        return (pane.active && blame_inline_enabled)
-                   ? editor_blame_overlay_service_.EditorOverlayForFrame(
-                         prepared_frame_id_, project_state.root, editor_text_renderer_,
-                         git_blame_service_, *viewport,
-                         pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size(),
-                         line_numbers_enabled)
-                   : std::nullopt;
-      }();
-      if (pane.active) {
-        // When blame is disabled this clears any previously-visible overlay so
-        // hover/click targets never resolve against stale blame geometry.
-        editor_blame_overlay_service_.SetVisibleOverlay(blame_overlay, *viewport);
-      }
+      // Built at frame prep for the active pane; the hover card and Copy SHA
+      // resolve against the same overlay.
+      const std::optional<editor::EditorBlameOverlay> no_blame;
+      const std::optional<editor::EditorBlameOverlay>& blame_overlay =
+          pane.active ? editor_blame_overlay_service_.VisibleOverlay() : no_blame;
       // In-file find highlights: regex/whole-buffer mode drives the highlight from the
       // precomputed (possibly multi-line) match set — a literal query scan cannot
       // reproduce a regex or `\n`-spanning match — while literal mode keeps the fast

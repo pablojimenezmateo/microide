@@ -412,6 +412,11 @@
         shell.context_.current_project_state.root, shell.editor_text_renderer_, shell.git_blame_service_,
         merge.result_viewport, ActiveMergeResultRect(shell), 280.0f, 0, shell.LineNumbersEnabled());
   }
+  // The overlay hover and clicks resolve against, as the last prepared frame left it.
+  static const std::optional<microide::editor::EditorBlameOverlay>& VisibleBlameOverlay(
+      const WorkspaceShell& shell) {
+    return shell.editor_blame_overlay_service_.VisibleOverlay();
+  }
   static void SetVisibleEditorBlameOverlay(
       WorkspaceShell& shell,
       std::optional<microide::editor::EditorBlameOverlay> overlay) {
