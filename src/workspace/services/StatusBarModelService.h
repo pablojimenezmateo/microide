@@ -100,6 +100,10 @@ class StatusBarModelService {
     // The visual column depends on the bytes before the caret, so an edit that
     // leaves the caret where it is (undo, a multi-caret edit) still re-composes.
     std::uint64_t content_revision = 0;
+    // ...and on what a tab is worth: a tab size changed under a still caret moves
+    // its visible column. Its own field, not `tab_size` below, which keys the
+    // indent text and would read as already seen once this block had stored it.
+    std::size_t line_column_tab_size = 0;
     bool soft_tabs = false;
     std::size_t tab_size = 0;
     std::size_t errors = 0;

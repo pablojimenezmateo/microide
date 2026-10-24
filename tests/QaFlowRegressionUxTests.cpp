@@ -90,6 +90,19 @@ struct UxFixture {
     (void)DispatchEvents(shell, {MouseMotionEvent(point.x, point.y), down, up});
   }
 
+  // The label of the ui element named `name` ("" when absent).
+  std::string ElementLabel(std::string_view name) {
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["name"].AsString() == name) {
+        return entry["label"].AsString();
+      }
+    }
+    return {};
+  }
+
+  void Frame() { shell.Render(canvas.renderer(), kWidth, kHeight); (void)shell.ConsumePendingRenderInvalidation(); }
+
   // The primary selection as 0-based (anchor line, anchor column, caret line, caret column).
   std::string Selection() {
     const editor::TextViewport& viewport = TestAccess::ActiveEditor(shell);
@@ -263,6 +276,25 @@ void TestRevertFileDiscardsChangesUndoably() {
          "with nothing unsaved revert-file refuses");
 }
 
+// state oracle: changing the tab size moved a caret that sat after a tab. The
+// viewport re-derived the caret's character from the VISUAL column it remembered
+// for Up/Down, and a tab is worth more columns now: `\tx|` became `\t|x`. The
+// status bar's Col (the visible column) then named the wrong place too.
+void TestTheStatusColumnFollowsTheTabSize() {
+  UxFixture fixture("tabs.txt", "\tx\n");
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)});
+  fixture.Frame();
+  const std::string before = fixture.ElementLabel("status:line-column");
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "tab-size 8"), "tab-size 8 runs");
+  fixture.Frame();
+  const std::string after = fixture.ElementLabel("status:line-column");
+  const editor::TextViewport& viewport = TestAccess::ActiveEditor(fixture.shell);
+  Expect(after == "Ln 1, Col 10", "with tabs of 8 the caret after \\tx is at Col 10, got " + after +
+                                      " (was " + before + "); tab size " + std::to_string(viewport.tab_size()) +
+                                      ", visual column " + std::to_string(viewport.cursor_visual_column()) +
+                                      ", column " + std::to_string(viewport.cursor_column()));
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
@@ -274,6 +306,7 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/CtrlKSSavesEveryDirtyFile", TestCtrlKSSavesEveryDirtyFile);
   AddTest(tests, "QaFlowRegressionUx/TheUnsavedPromptsLettersDoNotType", TestTheUnsavedPromptsLettersDoNotType);
   AddTest(tests, "QaFlowRegressionUx/RevertFileDiscardsChangesUndoably", TestRevertFileDiscardsChangesUndoably);
+  AddTest(tests, "QaFlowRegressionUx/TheStatusColumnFollowsTheTabSize", TestTheStatusColumnFollowsTheTabSize);
 }
 
 }  // namespace microide::tests

@@ -128,7 +128,15 @@ void TextViewport::SetTabSize(std::size_t tab_size) {
   if (document_ != nullptr) {
     InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
   }
-  ClampCursorColumn();
+  // Every caret stays on its character; what a tab is worth changed, so the
+  // VISUAL column it remembers for Up/Down is re-derived, as a wrap toggle does.
+  // Re-deriving the character from the remembered visual column instead
+  // (ClampCursorColumn) moved a caret after a tab: `\tx|` became `\t|x` going
+  // from tabs of 4 to tabs of 8 (QA state oracle: the status bar's Col).
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
+  }
   ClampScrollState();
   EnsureCursorVisible();
 }

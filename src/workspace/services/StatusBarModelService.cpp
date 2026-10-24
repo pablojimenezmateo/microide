@@ -178,8 +178,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     if (editor_segments_cache_.viewport != viewport ||
         editor_segments_cache_.cursor_line != viewport->cursor_line() ||
         editor_segments_cache_.cursor_column != viewport->cursor_column() ||
-        editor_segments_cache_.content_revision != viewport->content_revision()) {
+        editor_segments_cache_.content_revision != viewport->content_revision() ||
+        editor_segments_cache_.line_column_tab_size != viewport->tab_size()) {
       editor_segments_cache_.viewport = viewport;
+      editor_segments_cache_.line_column_tab_size = viewport->tab_size();
       editor_segments_cache_.cursor_line = viewport->cursor_line();
       editor_segments_cache_.cursor_column = viewport->cursor_column();
       editor_segments_cache_.content_revision = viewport->content_revision();
