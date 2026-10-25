@@ -103,6 +103,10 @@ class RemoteFrameTransport {
   void Fail(std::string_view reason);
 
   bool closed() const { return closed_.load(std::memory_order_acquire); }
+  // True on the I/O thread, where every callback runs. The transport must not be
+  // destroyed there: its destructor joins that thread, and a thread cannot join
+  // itself (the std::thread is then destroyed joinable: std::terminate).
+  bool OnIoThread() const { return io_thread_.get_id() == std::this_thread::get_id(); }
   // The current bulk window (bytes of bulk payload allowed unacknowledged).
   std::size_t bulk_window() const { return bulk_window_.load(std::memory_order_relaxed); }
   // What the window is aimed from: the smallest bulk frame-to-ack time seen (0 =

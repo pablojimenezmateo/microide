@@ -590,7 +590,7 @@ bool RemoteHostSession::BringUpMaster(bool reconnecting) {
 std::shared_ptr<RemoteServerClient> RemoteHostSession::StartServer(bool* not_installed,
                                                                    bool* incompatible,
                                                                    std::string* error) {
-  auto client = std::make_shared<RemoteServerClient>();
+  auto client = RemoteServerClient::Create();
   client->SetClosedHandler([signal = link_signal_](std::string_view) {
     std::lock_guard lock(signal->mutex);
     if (signal->session != nullptr) {

@@ -37,6 +37,19 @@ constexpr std::size_t kMaxOrphanBytes = 4 * 1024 * 1024;
 
 }  // namespace
 
+std::shared_ptr<RemoteServerClient> RemoteServerClient::Create() {
+  return std::shared_ptr<RemoteServerClient>(new RemoteServerClient(), [](RemoteServerClient* client) {
+    if (client->peer_.OnIoThread()) {
+      // Released inside one of its own callbacks. The destructor stops the peer
+      // (joining this thread) before any member goes, so the callback returns
+      // into a live peer and the I/O loop then exits on the stop.
+      std::thread([client] { delete client; }).detach();
+      return;
+    }
+    delete client;
+  });
+}
+
 RemoteServerClient::~RemoteServerClient() {
   peer_.Stop();
   if (command_.IsRunning()) {

@@ -41,7 +41,7 @@ struct Session {
   std::filesystem::path local = temp.path() / "mirror";
   std::filesystem::path host = temp.path() / "host";
   std::shared_ptr<remote::RemoteServerClient> client =
-      std::make_shared<remote::RemoteServerClient>();
+      remote::RemoteServerClient::Create();
   std::unique_ptr<remote::RemoteProcessLauncher> launcher;
 
   explicit Session(std::vector<std::string> command = {MICROIDE_SERVER_BINARY, "serve-stdio"}) {
@@ -138,7 +138,7 @@ void TestGitStatusIsPushedAndNeverStaleAfterAMutation() {
   CommitAll(host, "init", "pushed git status");
   WriteFile(host / "a.txt", "two\n");
 
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = host.string()},
@@ -205,7 +205,7 @@ void TestHostProcessExitIsSentWhenItHappens() {
   const std::filesystem::path host = temp.path() / "host";
   std::filesystem::create_directories(local);
   std::filesystem::create_directories(host);
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = host.string()},
@@ -246,7 +246,7 @@ void TestReadOnlyGitDoesNotTriggerAStatusPush() {
   CommitAll(host, "init", "read-only git");
   WriteFile(host / "a.txt", "two\n");
 
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = host.string()},
@@ -308,7 +308,7 @@ void TestProjectSearchRunsOnTheHostOverTheContentSet() {
   // The mirror is behind: a needle the host no longer has, and no b.txt.
   WriteFile(local / "src/a.txt", "old needle, old needle\n");
 
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = host.string()},
@@ -355,7 +355,7 @@ void TestOverARealSshLink() {
     return;
   }
   const char* server = std::getenv("MICROIDE_TEST_SSH_SERVER");
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({"ssh", "-o", "BatchMode=yes", host, "--",
                                  server != nullptr ? server : "microide-test/microide-server",
@@ -387,7 +387,7 @@ void TestGitRepositoryCreatedOnTheHostIsSeen() {
   std::filesystem::create_directories(local);
   WriteFile(host / "a.txt", "one\n");
 
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = host.string()}, &error),
@@ -408,7 +408,7 @@ void TestGitRepositoryCreatedOnTheHostIsSeen() {
 // worker that ran it.
 void TestRunReturnsWhenTheLinkDrops() {
   TemporaryDirectory temp;
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = temp.path().string()}, &error),

@@ -78,7 +78,7 @@ const KnownGap* FindKnownGap(std::string_view scenario, std::string_view localit
 // asynchrony is the mirror tests' subject, not parity's.
 struct MirrorLocality {
   std::shared_ptr<project::remote::RemoteServerClient> client =
-      std::make_shared<project::remote::RemoteServerClient>();
+      project::remote::RemoteServerClient::Create();
   std::shared_ptr<project::remote::RemoteConnection> connection;
   std::unique_ptr<project::remote::RemoteWorkspace> workspace;
   std::unique_ptr<project::remote::MirrorStore> store;

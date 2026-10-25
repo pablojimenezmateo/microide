@@ -72,9 +72,9 @@ std::shared_ptr<RemoteTerminalChannel> RemoteTerminalChannel::Open(
   // terminal it was given.
   const std::weak_ptr<RemoteTerminalChannel> weak = channel;
   // The client WEAKLY: this callback lives in the client's own peer, so a strong
-  // capture is a cycle, and the reply arriving released the last reference on
-  // the transport's I/O thread — destroying the transport from inside its own
-  // thread, which is std::terminate (a joinable std::thread destroyed).
+  // capture is a cycle that keeps the connection alive until the reply. (A last
+  // reference released on the I/O thread is safe in itself: see
+  // RemoteServerClient::Create.)
   const std::weak_ptr<RemoteServerClient> weak_client = client;
   const std::uint64_t id = client->peer().Request(
       method::kTermOpen, util::JsonValue(std::move(params)), Lane::Interactive,

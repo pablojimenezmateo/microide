@@ -49,7 +49,7 @@ struct MirrorSession {
 
   void Connect(remote::MirrorSyncEngine::Options options = {}) {
     engine.reset();
-    client = std::make_shared<remote::RemoteServerClient>();
+    client = remote::RemoteServerClient::Create();
     std::string error;
     Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                   remote::HelloRequest{.release = "test", .root = host.string()},

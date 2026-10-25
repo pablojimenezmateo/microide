@@ -166,7 +166,7 @@ void LoopbackWriteGate::DisposeStaged(std::span<const std::filesystem::path> sta
 
 std::unique_ptr<project::remote::RemoteProcessLauncher> ConnectServerLocality(
     const LoopbackPathMap& map, std::string* error) {
-  auto client = std::make_shared<project::remote::RemoteServerClient>();
+  auto client = project::remote::RemoteServerClient::Create();
   if (!client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                               project::remote::HelloRequest{.release = "parity"}, error)) {
     return nullptr;

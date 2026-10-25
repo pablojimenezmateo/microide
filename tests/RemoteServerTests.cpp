@@ -283,7 +283,7 @@ void TestListeningPortsParseProcNetTcp() {
 // reached the user as "the peer closed the connection" and nothing else (found
 // standing up tools/qa/local-sshd.sh, whose state directory was group-writable).
 void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(!client->ConnectCommand({"sh", "-c", "echo 'microide-server: the socket directory is unsafe' >&2; exit 3"},
                                  remote::HelloRequest{.release = "test", .root = "/"}, &error),
@@ -294,7 +294,7 @@ void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
 #endif
   // And a command that connects keeps working: its stderr is sealed, not grown.
   TemporaryDirectory root;
-  auto good = std::make_shared<remote::RemoteServerClient>();
+  auto good = remote::RemoteServerClient::Create();
   Expect(good->ConnectCommand({Server(), "serve-stdio"},
                               remote::HelloRequest{.release = "test", .root = root.path().string()}, &error),
          "a real server still connects: " + error);
@@ -304,7 +304,7 @@ void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
 // user starts listening on afterwards is pushed (the sampler's 2 s period).
 void TestPortsSubscribePushesANewListener() {
   TemporaryDirectory root;
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({Server(), "serve-stdio"},
                                 remote::HelloRequest{.release = "test", .root = root.path().string()}, &error),
@@ -343,6 +343,37 @@ void TestPortsSubscribePushesANewListener() {
 
 }  // namespace
 
+// The last reference to a client can be released inside one of its own I/O-thread
+// callbacks: here a response handler holds it, and the peer destroys the handler
+// on that thread once it has run. The destructor joins the I/O thread, which
+// cannot join itself -- std::terminate with no exception in flight, which is what
+// CI's ASan job hit in two remote kernel tests (TD-2026-10-21-373, a terminal
+// channel kept alive across a dropped link by its frame callback's weak lock).
+void TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere() {
+  TemporaryDirectory root;
+  auto client = remote::RemoteServerClient::Create();
+  std::string error;
+  Expect(client->ConnectCommand({Server(), "serve-stdio"},
+                                remote::HelloRequest{.release = "test", .root = root.path().string()}, &error),
+         "connects: " + error);
+  const std::weak_ptr<remote::RemoteServerClient> weak = client;
+  std::atomic<bool> answered{false};
+  std::atomic<bool> released_on_io_thread{false};
+  Expect(client->peer().Request(remote::method::kLinkPing, util::JsonValue(util::JsonObject{}),
+                                remote::Lane::Interactive,
+                                [keep = client, &answered, &released_on_io_thread](
+                                    std::optional<util::JsonValue>, std::optional<remote::RemotePeer::RpcError>) {
+                                  released_on_io_thread = keep->peer().OnIoThread();
+                                  answered = true;
+                                }) != 0,
+         "the request is sent");
+  client.reset();  // the handler holds the only reference now
+  Expect(WaitUntil([&] { return answered.load(); }, std::chrono::seconds(10)), "the ping is answered");
+  Expect(released_on_io_thread.load(), "the handler ran on the client's I/O thread");
+  Expect(WaitUntil([&] { return weak.expired(); }, std::chrono::seconds(10)),
+         "the client went with the handler, without terminating the process");
+}
+
 void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteServer/AConnectionThatDiesEarlyReportsWhatTheHostSaid",
@@ -359,6 +390,8 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
           TestAttachStartsOnDemandAndTheServerIdlesOut);
   AddTest(tests, "RemoteServer/ListeningPortsParseProcNetTcp", TestListeningPortsParseProcNetTcp);
   AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);
+  AddTest(tests, "RemoteServer/AClientReleasedOnItsOwnThreadIsDestroyedElsewhere",
+          TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere);
 #else
   (void)tests;
 #endif

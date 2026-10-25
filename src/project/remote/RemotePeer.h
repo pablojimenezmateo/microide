@@ -66,6 +66,7 @@ class RemotePeer {
   // End the connection with `reason` (reported through OnClosed).
   void Fail(std::string_view reason) { transport_.Fail(reason); }
   bool closed() const { return transport_.closed(); }
+  bool OnIoThread() const { return transport_.OnIoThread(); }
   // Wait up to `timeout` for what was sent so far to be written (RemoteFrameTransport::Flush).
   bool Flush(std::chrono::milliseconds timeout) { return transport_.Flush(timeout); }
 

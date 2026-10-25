@@ -20,7 +20,7 @@ namespace remote = project::remote;
 // A real `microide-server serve-stdio` with a hello naming `root`.
 struct WorkspaceSession {
   std::shared_ptr<remote::RemoteServerClient> client =
-      std::make_shared<remote::RemoteServerClient>();
+      remote::RemoteServerClient::Create();
   std::unique_ptr<remote::RemoteWorkspace> workspace;
 
   explicit WorkspaceSession(const std::filesystem::path& root) {
@@ -76,7 +76,7 @@ void TestManifestFailureIsAnErrorNotAnEmptyTree() {
 }
 
 void TestManifestNeedsAWorkspace() {
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   std::string error;
   Expect(client->ConnectCommand({MICROIDE_SERVER_BINARY, "serve-stdio"},
                                remote::HelloRequest{.release = "test", .root = ""}, &error),

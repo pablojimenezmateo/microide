@@ -143,7 +143,7 @@ Link Connect(std::uint64_t bytes_per_second = kLinkBytesPerSecond) {
   link.relay = std::make_unique<DelayRelay>(
       platform::ConnectUnixSocket(remote::ServerSocketPath(server.socket_dir())), kRtt,
       bytes_per_second);
-  link.client = std::make_shared<remote::RemoteServerClient>();
+  link.client = remote::RemoteServerClient::Create();
   const int fd = link.relay->TakeClientFd();
   std::string error;
   if (!link.client->ConnectFds(fd, fd,

@@ -25,7 +25,7 @@ using terminal::TerminalSession;
 #if defined(__unix__) || defined(__APPLE__)
 
 std::shared_ptr<remote::RemoteServerClient> Connect(const ShortServerDir& dir) {
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
   std::string error;
   Expect(fd >= 0 && client->ConnectFds(fd, fd, remote::HelloRequest{.release = "test"}, &error),
@@ -168,7 +168,7 @@ void TestPredictionLeadsTheEchoByARoundTrip() {
 
   DelayRelay relay(platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path())), kRtt);
   Expect(relay.ok(), "the relay is up");
-  auto client = std::make_shared<remote::RemoteServerClient>();
+  auto client = remote::RemoteServerClient::Create();
   const int fd = relay.TakeClientFd();
   std::string error;
   const auto hello_start = std::chrono::steady_clock::now();

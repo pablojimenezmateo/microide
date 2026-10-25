@@ -31,6 +31,14 @@ namespace microide::project::remote {
 // Threading: synchronous calls (Connect*, Spawn, GitMetadata) block the calling
 // thread on a reply and must not be made from the connection's own I/O thread;
 // the per-process callbacks run on that I/O thread.
+//
+// Made only by Create(), shared: what the connection serves (a terminal channel,
+// a launcher) holds it, and the last of those references can be released inside
+// one of its own I/O-thread callbacks -- a channel the editor already dropped,
+// kept alive for the length of a frame callback by its weak lock. The
+// destructor joins that thread, which cannot join itself, so Create's deleter
+// destroys a client released there on another thread (TD-2026-10-21-373: a
+// kernel shard's std::terminate with no exception in flight).
 class RemoteServerClient {
  public:
   struct ProcessEvents {
@@ -53,7 +61,7 @@ class RemoteServerClient {
     bool operator==(const GitMetadata&) const = default;
   };
 
-  RemoteServerClient() = default;
+  static std::shared_ptr<RemoteServerClient> Create();
   ~RemoteServerClient();
   RemoteServerClient(const RemoteServerClient&) = delete;
   RemoteServerClient& operator=(const RemoteServerClient&) = delete;
@@ -174,6 +182,8 @@ class RemoteServerClient {
                                       std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
  private:
+  RemoteServerClient() = default;
+
   struct Orphan {
     std::vector<std::pair<FrameType, std::string>> output;
     std::optional<util::JsonValue> exit;
