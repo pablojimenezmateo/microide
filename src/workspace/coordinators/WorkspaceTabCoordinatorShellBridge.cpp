@@ -472,7 +472,7 @@ void WorkspaceShell::ApplyAsyncFileRead(project::FileReadService::Completion com
       editor_state.folding_model->Clear();
       NotifyPluginBufferOpen(path);
       const bool is_active = group_index == context_.current_project_state.focused_group_index &&
-                             &tab == &group.open_tabs[group.active_tab_index];
+                             &tab == &group.active_tab();
       if (is_active) {
         SyncActiveEditorTabMetadata();
         lsp_service_.ScheduleBufferOpen(path);

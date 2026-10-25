@@ -23,8 +23,8 @@ constexpr float kMergeToolbarRowGap = 6.0f;
 
 bool WorkspaceShell::ActiveTabIsMerge() const {
   return context_.current_project_state.focused_group().active_tab_index < context_.current_project_state.focused_group().open_tabs.size() &&
-         context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].kind == TabEntry::Kind::Merge &&
-         context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].merge.has_value();
+         context_.current_project_state.focused_group().active_tab().kind == TabEntry::Kind::Merge &&
+         context_.current_project_state.focused_group().active_tab().merge.has_value();
 }
 
 WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() {
@@ -35,7 +35,7 @@ const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
   if (!ActiveTabIsMerge()) {
     return nullptr;
   }
-  return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].merge.value();
+  return &context_.current_project_state.focused_group().active_tab().merge.value();
 }
 
 WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(

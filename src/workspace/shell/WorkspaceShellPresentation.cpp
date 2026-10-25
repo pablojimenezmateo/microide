@@ -46,7 +46,7 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
   std::string_view right;
   const EditorGroup& group = groups[std::min(slot, groups.size() - 1)];
   const TabEntry* active = group.active_tab_index < group.open_tabs.size()
-                               ? &group.open_tabs[group.active_tab_index]
+                               ? &group.active_tab()
                                : nullptr;
   if (active != nullptr && active->kind == TabEntry::Kind::Compare) {
     if (!active->compare.has_value()) {

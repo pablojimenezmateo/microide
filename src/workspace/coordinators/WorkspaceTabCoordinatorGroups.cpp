@@ -37,7 +37,7 @@ void TabCoordinator::HydrateGroupActiveTab(EditorGroup& group) {
   if (group.active_tab_index >= group.open_tabs.size()) {
     return;
   }
-  TabEntry& tab = group.open_tabs[group.active_tab_index];
+  TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor) {
     return;
   }
@@ -220,7 +220,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   if (source.active_tab_index >= source.open_tabs.size()) {
     return false;
   }
-  if (const TabEntry& active = source.open_tabs[source.active_tab_index];
+  if (const TabEntry& active = source.active_tab();
       active.kind != TabEntry::Kind::Editor || !active.editor_state.has_value()) {
     return false;
   }
@@ -229,7 +229,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   SyncActiveEditorTabMetadata();
 
   EditorGroup new_group;
-  new_group.open_tabs.push_back(CloneEditorTabForSplit(source.open_tabs[source.active_tab_index]));
+  new_group.open_tabs.push_back(CloneEditorTabForSplit(source.active_tab()));
   new_group.active_tab_index = 0;
 
   // VS Code's "Split Right"/"Split Down" put the new pane after the active one.

@@ -60,7 +60,7 @@ MergeTabState* MergeMouseCoordinator::ActiveMergeTab() const {
   if (!ActiveTabIsMerge()) {
     return nullptr;
   }
-  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+  auto& tab = state_.focused_group().active_tab();
   return tab.merge.has_value() ? &tab.merge.value() : nullptr;
 }
 

@@ -197,7 +197,7 @@ WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::GroupActiveEditorTab(E
   if (group.active_tab_index >= group.open_tabs.size()) {
     return nullptr;
   }
-  TabEntry& tab = group.open_tabs[group.active_tab_index];
+  TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return nullptr;
   }
@@ -209,7 +209,7 @@ const WorkspaceShell::TabEntry::EditorTabState* WorkspaceShell::GroupActiveEdito
   if (group.active_tab_index >= group.open_tabs.size()) {
     return nullptr;
   }
-  const TabEntry& tab = group.open_tabs[group.active_tab_index];
+  const TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return nullptr;
   }
@@ -479,7 +479,7 @@ std::filesystem::path WorkspaceShell::ActiveTabPath() const {
   if (context_.current_project_state.focused_group().active_tab_index >= context_.current_project_state.focused_group().open_tabs.size()) {
     return {};
   }
-  return context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index]
+  return context_.current_project_state.focused_group().active_tab()
       .path.lexically_normal();
 }
 

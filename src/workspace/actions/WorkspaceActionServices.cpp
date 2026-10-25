@@ -719,7 +719,7 @@ bool WorkspaceActionContext::RunAllDiscoveredTests(std::string* error_message) {
 
 bool WorkspaceActionContext::ActiveTabIsCompare() const {
   return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Compare;
+         state_.focused_group().active_tab().kind == TabEntry::Kind::Compare;
 }
 
 bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
@@ -730,7 +730,7 @@ bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {
   return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;
+         state_.focused_group().active_tab().kind == TabEntry::Kind::Merge;
 }
 
 bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_message) {

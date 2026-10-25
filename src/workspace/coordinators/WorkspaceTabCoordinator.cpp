@@ -44,7 +44,7 @@ std::string TabCoordinator::ActiveTitle() const {
   if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
     return EditorTabLabel(state_.focused_group().welcome_surface.viewport, 0);
   }
-  return state_.focused_group().open_tabs[state_.focused_group().active_tab_index].title;
+  return state_.focused_group().active_tab().title;
 }
 
 bool TabCoordinator::Save(std::size_t index, SaveMode mode) {
@@ -331,7 +331,7 @@ const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
   if (!ActiveTabIsEditor()) {
     return nullptr;
   }
-  return &state_.focused_group().open_tabs[state_.focused_group().active_tab_index].editor_state.value();
+  return &state_.focused_group().active_tab().editor_state.value();
 }
 
 editor::TextViewport* TabCoordinator::ActiveEditorViewport() {
@@ -439,7 +439,7 @@ void TabCoordinator::SyncActiveEditorTab() {
     return;
   }
 
-  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+  auto& tab = state_.focused_group().active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return;
   }
@@ -456,7 +456,7 @@ void TabCoordinator::SyncActiveEditorTab() {
   editor_state.restore.scroll_line = editor_state.viewport.scroll_line();
   editor_state.restore.horizontal_scroll = editor_state.viewport.horizontal_scroll();
   if (state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-      &tab == &state_.focused_group().open_tabs[state_.focused_group().active_tab_index]) {
+      &tab == &state_.focused_group().active_tab()) {
     SyncActiveEditorTabMetadata();
   }
 }
@@ -473,7 +473,7 @@ bool TabCoordinator::ActivateCurrentTabAfterStateLoad() {
     if (group.active_tab_index >= group.open_tabs.size()) {
       continue;
     }
-    TabEntry& tab = group.open_tabs[group.active_tab_index];
+    TabEntry& tab = group.active_tab();
     if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value()) {
       // Skip the preference re-apply for a freshly-hydrated tab: RestoreEditorTab
       // already applied current preferences, and re-running them here would fire
@@ -500,7 +500,7 @@ void TabCoordinator::SyncActiveEditorTabMetadata() {
     return;
   }
 
-  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+  auto& tab = state_.focused_group().active_tab();
   if (tab.kind != TabEntry::Kind::Editor) {
     return;
   }
@@ -978,7 +978,7 @@ void TabCoordinator::ObserveNavigationLocation() {
   if (group.active_tab_index >= group.open_tabs.size()) {
     return;
   }
-  const TabEntry& tab = group.open_tabs[group.active_tab_index];
+  const TabEntry& tab = group.active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
       !tab.path.is_absolute()) {
     return;  // compare/merge/virtual/untitled tabs are not places to go back to
@@ -1041,7 +1041,7 @@ void TabCoordinator::Close(std::size_t index) {
     --state_.focused_group().active_tab_index;
   } else if (index == state_.focused_group().active_tab_index) {
     state_.focused_group().active_tab_index = std::min(index, state_.focused_group().open_tabs.size() - 1);
-    auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+    auto& tab = state_.focused_group().active_tab();
     if (tab.kind == TabEntry::Kind::Editor) {
       // Promote the neighbor through the same loader Activate uses so a deferred
       // (session-restored, never-activated) tab restores its cursor/scroll/

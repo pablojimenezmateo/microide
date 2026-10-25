@@ -261,7 +261,7 @@ bool TabCoordinator::ReopenActive() {
     return false;
   }
 
-  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+  auto& tab = state_.focused_group().active_tab();
   if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
     return false;
   }

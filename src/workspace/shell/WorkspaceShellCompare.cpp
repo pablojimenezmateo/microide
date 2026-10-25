@@ -214,8 +214,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
 
 bool WorkspaceShell::ActiveTabIsCompare() const {
   return context_.current_project_state.focused_group().active_tab_index < context_.current_project_state.focused_group().open_tabs.size() &&
-         context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].kind == TabEntry::Kind::Compare &&
-         context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.has_value();
+         context_.current_project_state.focused_group().active_tab().kind == TabEntry::Kind::Compare &&
+         context_.current_project_state.focused_group().active_tab().compare.has_value();
 }
 
 WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() {
@@ -226,7 +226,7 @@ const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const 
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.value();
+  return &context_.current_project_state.focused_group().active_tab().compare.value();
 }
 
 WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(

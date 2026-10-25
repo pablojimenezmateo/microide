@@ -792,7 +792,7 @@ struct EditorGroup {
     if (!has_active_tab()) {
       return;
     }
-    const std::uint64_t id = EnsureTabStableId(open_tabs[active_tab_index]);
+    const std::uint64_t id = EnsureTabStableId(active_tab());
     if (!recent_tab_ids.empty() && recent_tab_ids.front() == id &&
         recent_tab_ids.size() <= open_tabs.size()) {
       return;  // the settled frame: nothing moved

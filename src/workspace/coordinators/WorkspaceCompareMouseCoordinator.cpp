@@ -34,14 +34,14 @@ CompareMouseCoordinator::CompareMouseCoordinator(ProjectWorkspaceState& state,
 
 bool CompareMouseCoordinator::ActiveTabIsCompare() const {
   return state_.focused_group().active_tab_index < state_.focused_group().open_tabs.size() &&
-         state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Compare;
+         state_.focused_group().active_tab().kind == TabEntry::Kind::Compare;
 }
 
 CompareTabState* CompareMouseCoordinator::ActiveCompareTab() const {
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  auto& tab = state_.focused_group().open_tabs[state_.focused_group().active_tab_index];
+  auto& tab = state_.focused_group().active_tab();
   return tab.compare.has_value() ? &tab.compare.value() : nullptr;
 }
 

@@ -186,7 +186,7 @@
     return viewport != nullptr ? viewport->scroll_line() : 0;
   }
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
+    return shell.context_.current_project_state.focused_group().active_tab().compare.value();
   }
   // The editor viewport for an OPEN tab on `path`, whichever tab is in front.
   // A test that switches tabs mid-gesture still has to read the buffer it armed
@@ -211,7 +211,7 @@
     if (group.active_tab_index >= group.open_tabs.size()) {
       return nullptr;
     }
-    auto& editor_tab = group.open_tabs[group.active_tab_index].editor_state;
+    auto& editor_tab = group.active_tab().editor_state;
     return editor_tab.has_value() ? &editor_tab->viewport : nullptr;
   }
   // Null when the front tab is not a compare tab (or there is none) -- an action
@@ -221,7 +221,7 @@
     if (group.active_tab_index >= group.open_tabs.size()) {
       return nullptr;
     }
-    auto& compare = group.open_tabs[group.active_tab_index].compare;
+    auto& compare = group.active_tab().compare;
     return compare.has_value() ? &*compare : nullptr;
   }
   static const std::vector<TabEntry>& FocusedGroupTabs(WorkspaceShell& shell) {
@@ -246,7 +246,7 @@
     shell.RefreshCompareTabDerivedState(ActiveCompare(shell));
   }
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge.value();
+    return shell.context_.current_project_state.focused_group().active_tab().merge.value();
   }
   // Null when the front tab is not a merge tab (or there is none).
   // Drives the watcher-side staleness decision directly: the path a real file
@@ -261,16 +261,16 @@
     if (group.active_tab_index >= group.open_tabs.size()) {
       return nullptr;
     }
-    auto& merge = group.open_tabs[group.active_tab_index].merge;
+    auto& merge = group.active_tab().merge;
     return merge.has_value() ? &*merge : nullptr;
   }
   static bool ActiveMergeHasSelection(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
+    return shell.context_.current_project_state.focused_group().active_tab()
         .merge->result_viewport.selection_range()
         .has_value();
   }
   static std::string ActiveMergeSelectedText(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->result_viewport.SelectedText();
+    return shell.context_.current_project_state.focused_group().active_tab().merge->result_viewport.SelectedText();
   }
   static void ApplyMergeChoice(WorkspaceShell& shell, microide::compare::MergeChoice choice) {
     shell.ApplyMergeChoice(choice);
@@ -283,15 +283,15 @@
   }
   static const std::optional<WorkspaceShell::MergeHoverState>& ActiveMergeHoverState(
       const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state;
+    return shell.context_.current_project_state.focused_group().active_tab().merge->hover_state;
   }
   static bool ActiveMergeHoverIsIncomingConflict(const WorkspaceShell& shell) {
-    return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state.has_value() &&
-           shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state->kind ==
+    return shell.context_.current_project_state.focused_group().active_tab().merge->hover_state.has_value() &&
+           shell.context_.current_project_state.focused_group().active_tab().merge->hover_state->kind ==
                WorkspaceShell::MergeHoverState::Kind::IncomingConflict;
   }
   static microide::compare::MergeChoice ActiveMergeHoverPreviewChoice(const WorkspaceShell& shell) {
-    const auto& hover = shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge->hover_state;
+    const auto& hover = shell.context_.current_project_state.focused_group().active_tab().merge->hover_state;
     return hover.has_value() ? hover->preview_choice : microide::compare::MergeChoice::Base;
   }
   static WorkspaceLayout CurrentLayout(WorkspaceShell& shell) {
@@ -380,17 +380,15 @@
     return {row->collapsed_run_start_model_row, row->collapsed_run_length};
   }
   static std::optional<CompareHoverKind> ActiveCompareHoverKind(const WorkspaceShell& shell) {
-    const auto& compare = shell.context_.current_project_state
-                              .focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
-                              .compare;
+    const auto& compare =
+        shell.context_.current_project_state.focused_group().active_tab().compare;
     return compare.has_value() && compare->hover_state.has_value()
                ? std::optional<CompareHoverKind>(compare->hover_state->kind)
                : std::nullopt;
   }
   static std::optional<std::size_t> ActiveCompareHoverPresentationRow(const WorkspaceShell& shell) {
-    const auto& compare = shell.context_.current_project_state
-                              .focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
-                              .compare;
+    const auto& compare =
+        shell.context_.current_project_state.focused_group().active_tab().compare;
     return compare.has_value() && compare->hover_state.has_value()
                ? std::optional<std::size_t>(compare->hover_state->presentation_row)
                : std::nullopt;
@@ -1244,7 +1242,7 @@
     if (group.active_tab_index >= group.open_tabs.size()) {
       return false;
     }
-    const auto& editor_tab = group.open_tabs[group.active_tab_index].editor_state;
+    const auto& editor_tab = group.active_tab().editor_state;
     return editor_tab.has_value() && editor_tab->snippet_session.active;
   }
   static bool PerfExpandSnippetAtCaret(WorkspaceShell& shell, std::string_view snippet_body) {
@@ -1256,7 +1254,7 @@
     if (project.focused_group().active_tab_index >= project.focused_group().open_tabs.size()) {
       return false;
     }
-    TabEntry& tab = project.focused_group().open_tabs[project.focused_group().active_tab_index];
+    TabEntry& tab = project.focused_group().active_tab();
     if (tab.kind != TabEntry::Kind::Editor) {
       return false;
     }
