@@ -10,10 +10,12 @@
 // you last were in that file, not where you first arrived.
 //
 // Observing the unchanged location allocates nothing, which matters because it runs
-// every frame.
+// every frame. Recording a far jump in a file already on the list allocates nothing
+// either: entries of one file share its path, and the list is reserved once.
 
 #include <cstddef>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -41,11 +43,19 @@ class EditorNavigationHistory {
 
   [[nodiscard]] bool CanGoBack() const { return cursor_ > 0; }
   [[nodiscard]] bool CanGoForward() const { return cursor_ + 1 < entries_.size(); }
-  [[nodiscard]] const std::vector<Location>& entries() const { return entries_; }
+  struct Entry {
+    std::shared_ptr<const std::filesystem::path> path;  // shared by a file's entries
+    std::size_t line = 0;
+    std::size_t column = 0;
+  };
+  [[nodiscard]] const std::vector<Entry>& entries() const { return entries_; }
   [[nodiscard]] std::size_t cursor() const { return cursor_; }
 
  private:
-  std::vector<Location> entries_;
+  // The path of an entry already listed for this file, or a new one.
+  std::shared_ptr<const std::filesystem::path> SharedPath(const std::filesystem::path& path) const;
+
+  std::vector<Entry> entries_;
   std::size_t cursor_ = 0;  // index into entries_; meaningless while it is empty
 };
 
@@ -54,9 +64,10 @@ std::optional<EditorNavigationHistory::Location> EditorNavigationHistory::Step(i
                                                                                Exists&& exists) {
   while (direction < 0 ? CanGoBack() : CanGoForward()) {
     const std::size_t target = direction < 0 ? cursor_ - 1 : cursor_ + 1;
-    if (exists(entries_[target].path)) {
+    if (exists(*entries_[target].path)) {
       cursor_ = target;
-      return entries_[target];
+      const Entry& entry = entries_[target];
+      return Location{.path = *entry.path, .line = entry.line, .column = entry.column};
     }
     entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(target));
     if (direction < 0) {

@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "perf/AllocationCounter.h"
 
 #include "workspace/state/EditorNavigationHistory.h"
 
@@ -81,6 +82,31 @@ void TestHistoryIsBounded() {
          "the newest place should be kept");
 }
 
+// A far jump in a file already on the list is a new entry, and it allocates
+// nothing: the entries of one file share its path, and the list is reserved once.
+// Each recorded jump used to copy the path (large_file_restore_deep_scroll_first_paint,
+// 20 -> 26 allocations in its jump phase against v2.12.0).
+void TestAJumpWithinAListedFileAllocatesNothing() {
+  EditorNavigationHistory history;
+  history.Observe("/project/src/a-long-enough-name.cpp", 0, 0);
+  history.Observe("/project/src/a-long-enough-name.cpp", 500, 0);  // warm: reserves
+  const std::filesystem::path same = "/project/src/a-long-enough-name.cpp";
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationSnapshot before = microide::tests::perf::Allocations::Snapshot();
+#endif
+  for (std::size_t i = 2; i < 12; ++i) {
+    history.Observe(same, i * 1000, 0);
+  }
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationDelta delta = microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0, "far jumps within a listed file should not allocate, got " +
+                                     std::to_string(delta.allocations));
+#endif
+  Expect(history.entries().size() == 12, "each far jump is still its own entry");
+  Expect(history.entries().front().path == history.entries().back().path,
+         "and the file's entries share one path");
+}
+
 }  // namespace
 
 void RegisterEditorNavigationHistoryTests(std::vector<TestCase>& tests) {
@@ -90,6 +116,8 @@ void RegisterEditorNavigationHistoryTests(std::vector<TestCase>& tests) {
           TestANewPlaceDropsTheForwardHistory);
   AddTest(tests, "EditorNavigationHistory/StepSkipsFilesThatAreGone", TestStepSkipsFilesThatAreGone);
   AddTest(tests, "EditorNavigationHistory/HistoryIsBounded", TestHistoryIsBounded);
+  AddTest(tests, "EditorNavigationHistory/AJumpWithinAListedFileAllocatesNothing",
+          TestAJumpWithinAListedFileAllocatesNothing);
 }
 
 }  // namespace microide::tests
