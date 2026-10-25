@@ -366,11 +366,8 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
   wrapped_row_layouts_.clear();
   wrapped_line_row_offsets_.clear();
   util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsRebuilds);
-
-  if (!soft_wrap && !has_any_collapsed_fold) {
-    wrapped_row_layouts_trivial_ = true;
-    wrapped_row_layouts_fold_no_wrap_ = false;
-    util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits, 0);
+  // What this build was made for: the inputs the freshness check above compares.
+  const auto record_build_key = [&]() {
     wrapped_row_layouts_tab_size_ = tab_size;
     wrapped_row_layouts_visible_columns_ = visible_columns;
     wrapped_row_layouts_layout_shape_revision_ = layout_shape_revision;
@@ -382,6 +379,13 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
 #ifndef NDEBUG
     ++wrapped_row_layout_build_count_;
 #endif
+  };
+
+  if (!soft_wrap && !has_any_collapsed_fold) {
+    wrapped_row_layouts_trivial_ = true;
+    wrapped_row_layouts_fold_no_wrap_ = false;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorEnsureWrappedRowLayoutsLineVisits, 0);
+    record_build_key();
     return;
   }
 
@@ -422,17 +426,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
     wrapped_row_layouts_.push_back(WrappedRow{0, 0, 0});
     wrapped_line_row_offsets_.assign(lines.size(), 0);
   }
-  wrapped_row_layouts_tab_size_ = tab_size;
-  wrapped_row_layouts_visible_columns_ = visible_columns;
-  wrapped_row_layouts_layout_shape_revision_ = layout_shape_revision;
-  wrapped_row_layouts_content_revision_ = content_revision;
-  wrapped_row_layouts_soft_wrap_ = soft_wrap;
-  wrapped_row_layouts_folding_model_ = folding_model;
-  wrapped_row_layouts_fold_revision_ =
-      folding_model != nullptr ? folding_model->layout_revision() : 0;
-#ifndef NDEBUG
-  ++wrapped_row_layout_build_count_;
-#endif
+  record_build_key();
 }
 
 #ifndef NDEBUG
