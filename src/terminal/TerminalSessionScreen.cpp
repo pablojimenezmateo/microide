@@ -52,7 +52,7 @@ void TerminalSession::RestoreCursorLocked() {
   MoveCursorLocked(saved_cursor_row_, saved_cursor_column_);
 }
 
-void TerminalSession::SaveActiveScreenMetadataLocked(ScreenState& screen) {
+void TerminalSession::SaveActiveScreenMetadataLocked(TerminalScreenState& screen) {
   // Persist only the cheap scalar cursor / scroll-region state. The line buffer
   // is handled separately by the caller so the alternate-screen transition can
   // move the (potentially multi-MB) scrollback instead of copying it.
@@ -67,7 +67,7 @@ void TerminalSession::SaveActiveScreenMetadataLocked(ScreenState& screen) {
 }
 
 void TerminalSession::SaveActiveScreenLocked() {
-  ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
+  TerminalScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
   screen.lines = lines_;
   SaveActiveScreenMetadataLocked(screen);
 }
@@ -77,7 +77,7 @@ void TerminalSession::RestoreSavedScreenLocked() {
   // here and is rewritten on the next alternate-screen enter, so there is never
   // a second live reference to copy for. `SaveActiveScreenLocked`/`SetAlternate-
   // ScreenLocked` are the sole callers (no aliasing concern).
-  ScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
+  TerminalScreenState& screen = use_alternate_screen_ ? alternate_screen_ : primary_screen_;
   if (screen.lines.empty()) {
     lines_ = std::deque<TerminalLine>{TerminalLine{}};
   } else {
@@ -662,8 +662,8 @@ void TerminalSession::ResetEmulationStateLocked() {
   // Screens, cursor, and the scroll region. ResetScrollRegionLocked derives the
   // bottom margin from rows_, so a caller that also reseeds the geometry must do
   // that FIRST — otherwise the region is computed against the outgoing height.
-  primary_screen_ = ScreenState{};
-  alternate_screen_ = ScreenState{};
+  primary_screen_ = TerminalScreenState{};
+  alternate_screen_ = TerminalScreenState{};
   cursor_row_ = 0;
   cursor_column_ = 0;
   saved_cursor_row_ = 0;

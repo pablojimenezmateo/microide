@@ -57,6 +57,11 @@ class TerminalBackend {
   virtual void Resize(std::size_t rows, std::size_t columns) = 0;
   virtual void Write(std::string_view bytes) = 0;
   virtual bool running() const = 0;
+  // Output the program has written that has not reached on_output yet: bytes
+  // still in the pty, or being delivered. "The program printed nothing" is this
+  // being false, not on_output having been quiet -- a reader thread behind on a
+  // loaded host is not a silent program. Any thread.
+  virtual bool HasUnreadOutput() const { return false; }
 };
 
 std::unique_ptr<TerminalBackend> CreateTerminalBackend();

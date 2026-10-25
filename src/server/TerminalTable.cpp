@@ -393,11 +393,20 @@ void TerminalTable::Run() {
     const auto wake_at = [&](Clock::time_point when) {
       next_wake = next_wake ? std::min(*next_wake, when) : when;
     };
+    // The timeout stands for "the program printed nothing", so it does not run
+    // out while output is still on its way to the session: a server whose reader
+    // falls behind (a loaded host) otherwise acked input whose echo was sitting in
+    // the pty, and the client judged its prediction contradicted and stopped
+    // drawing (TD-2026-10-21-373, PredictionLeadsTheEchoByARoundTrip on CI's ASan
+    // job). The output's arrival notifies this loop.
     const auto echo_due = [&](const Terminal& terminal, const Client& client) {
-      const bool answered =
-          terminal.output_generation.load(std::memory_order_acquire) > client.written_generation;
-      return client.written_seq > client.echo_ack &&
-             (answered || now - client.written_at >= limits_.echo_timeout);
+      if (client.written_seq <= client.echo_ack) {
+        return false;
+      }
+      if (terminal.output_generation.load(std::memory_order_acquire) > client.written_generation) {
+        return true;  // answered
+      }
+      return now - client.written_at >= limits_.echo_timeout && !terminal.session.HasUnreadOutput();
     };
     due.clear();
     for (auto& [handle, terminal] : terminals_) {
@@ -406,7 +415,9 @@ void TerminalTable::Run() {
       for (Client& client : terminal->clients) {
         const bool echo = echo_due(*terminal, client);
         if (client.written_seq > client.echo_ack && !echo) {
-          wake_at(client.written_at + limits_.echo_timeout);
+          // Past the timeout only while output is unread: look again a frame
+          // later rather than spin (its arrival also notifies).
+          wake_at(std::max(client.written_at + limits_.echo_timeout, now + limits_.frame_interval));
         }
         if (client.seen_generation == generation && !echo && !client.signal_pending()) {
           continue;

@@ -482,6 +482,15 @@ void TerminalSession::SetOutputObserver(std::function<void()> observer) {
   output_observer_ = std::move(observer);
 }
 
+bool TerminalSession::HasUnreadOutput() const {
+  std::shared_ptr<platform::TerminalBackend> backend;
+  {
+    std::scoped_lock lock(mutex_);
+    backend = backend_;
+  }
+  return backend != nullptr && backend->HasUnreadOutput();
+}
+
 std::uint64_t TerminalSession::CaptureHostHistory(std::uint64_t before, std::size_t count,
                                                   std::vector<TerminalLine>& out) const {
   std::scoped_lock lock(mutex_);

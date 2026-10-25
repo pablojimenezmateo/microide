@@ -934,7 +934,37 @@ to k-1 logical pixels past its edge, alike in both frames.
 `ScopedRenderClip/PartialAndFullFramesClipASurfaceAlikeAt125` fails without it
 at device column 52, the monkey's column; seeds 1-4 run clean.
 
-### TD-2026-10-21-373 — a kernel shard aborts in std::terminate on CI's ASan job only. [OPEN]
+### TD-2026-10-21-373 — a kernel shard aborts in std::terminate on CI's ASan job only. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25: both failures were product races a slow runner widened.**
+
+*The terminate* was a `RemoteServerClient` destroyed on its own I/O thread. A
+terminal channel owns its client, and its frame and `lost` callbacks run on that
+thread holding the channel through a weak lock; when the owner dropped channel
+and client while one ran (the dropped-link test's scope end does exactly that),
+the channel, then the client, then its transport died there. `~RemoteFrameTransport`
+-> `Stop()` skips the join from its own thread, so the joinable `std::thread` was
+destroyed: `std::terminate`, no exception in flight -- the second report's
+signature. The weak client capture in `RemoteTerminalChannel::Open` had patched
+one such path. Clients are now made only by `RemoteServerClient::Create()`, whose
+deleter destroys a client released on its I/O thread on another thread (the
+destructor stops the peer, joining the I/O thread once its callback returns).
+`RemoteServer/AClientReleasedOnItsOwnThreadIsDestroyedElsewhere` releases the last
+reference inside a response handler and terminates without the deleter, every
+run. (The first report, `ManifestStreamsTheHostTree`, tears down the same way.)
+
+*Pending but not drawn* was the host's 50 ms echo timeout running out while the
+echo sat in the pty: the server's reader, behind on a loaded host, had not read
+it, so the ack went out without it, the client judged `q` contradicted and
+stopped drawing, and `w` stayed pending undrawn. The timeout means "the program
+printed nothing", so it now also requires
+`platform::TerminalBackend::HasUnreadOutput()` to be false -- no bytes in the pty
+(`FIONREAD`) and none being delivered (`TerminalBackend/ReportsOutputItHasNotDelivered`);
+a password prompt still times out at 50 ms. The session's screen state moved to
+`terminal/TerminalScreenState.h` to keep `TerminalSession.h` under its cap.
+
+Locally neither reproduced from the tests as written: 20 rounds of the remote
+kernel tests on the ASan build pinned to one core ran clean before the fix.
 
 `checks` run 39560059038 (be9f0526), job `asan`: `microide_kernel_tests_shard_7`
 aborted 3.5 s in, right after `RemoteWorkspace/ManifestStreamsTheHostTree` built

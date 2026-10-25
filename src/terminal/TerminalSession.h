@@ -11,6 +11,7 @@
 #include "terminal/TerminalInput.h"
 #include "terminal/TerminalPredictionOverlay.h"
 #include "terminal/TerminalLineBufferPool.h"
+#include "terminal/TerminalScreenState.h"
 #include "terminal/TerminalSearch.h"
 #include "util/KeyModifiers.h"
 #include "util/Waker.h"
@@ -251,20 +252,11 @@ class TerminalSession {
   // Called on the reader thread after each parsed output chunk and on exit, with
   // no lock held. Set before Start; a host-side server drives its frames off it.
   void SetOutputObserver(std::function<void()> observer);
+  // Output the program wrote that the observer has not been told of yet
+  // (platform::TerminalBackend::HasUnreadOutput). Any thread.
+  bool HasUnreadOutput() const;
 
  private:
-  struct ScreenState {
-    std::deque<TerminalLine> lines = {TerminalLine{}};
-    std::size_t cursor_row = 0;
-    std::size_t cursor_column = 0;
-    std::size_t saved_cursor_row = 0;
-    std::size_t saved_cursor_column = 0;
-    TerminalStyle saved_style = {};
-    bool saved_origin_mode = false;
-    std::size_t scroll_region_top = 0;
-    std::size_t scroll_region_bottom = 0;
-  };
-
   enum class EscapeMode {
     None,
     AfterEscape,
@@ -344,7 +336,7 @@ class TerminalSession {
   void ScrollRegionDownLocked(std::size_t top, std::size_t bottom, std::size_t count);
   void SaveCursorLocked();
   void RestoreCursorLocked();
-  void SaveActiveScreenMetadataLocked(ScreenState& screen);
+  void SaveActiveScreenMetadataLocked(TerminalScreenState& screen);
   void SaveActiveScreenLocked();
   void RestoreSavedScreenLocked();
   void ResetScreenLocked(bool fill_rows);
@@ -391,8 +383,8 @@ class TerminalSession {
   // Cell buffers rescued from trimmed scrollback lines, waiting to back the lines
   // that replace them (TD-2026-08-14-231). See TerminalLineBufferPool.
   TerminalLineBufferPool line_buffer_pool_;
-  ScreenState primary_screen_;
-  ScreenState alternate_screen_;
+  TerminalScreenState primary_screen_;
+  TerminalScreenState alternate_screen_;
   // shared_ptr (not unique_ptr) so Resize()/SendBytes() can copy it under the lock
   // and keep the backend alive across the unlocked Write()/Resize() call even if a
   // concurrent Stop() moves it out — closing a use-after-free on the raw pointer.

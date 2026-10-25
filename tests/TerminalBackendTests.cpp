@@ -13,6 +13,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #endif
 
 namespace microide::tests {
@@ -244,6 +245,57 @@ void TestTerminalBackendBareShellNameResolvesThroughPath() {
          "a bare terminal.shell program name must resolve through PATH, got: " + output);
 }
 
+// The host's echo timeout asks the backend whether the program has printed
+// anything the session has not been given yet; "no" must mean everything it
+// printed has been delivered. A reader thread held up in on_output (here, on
+// purpose: a loaded host does it by not being scheduled) leaves the output in
+// flight and the pty, and both count (TD-2026-10-21-373).
+void TestTerminalBackendReportsOutputItHasNotDelivered() {
+  auto backend = CreateTerminalBackend();
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::string output;
+  bool entered = false;
+  bool released = false;
+  TerminalBackendCallbacks callbacks;
+  callbacks.on_output = [&](std::string_view bytes) {
+    std::unique_lock<std::mutex> lock(mutex);
+    entered = true;
+    cv.notify_all();
+    cv.wait(lock, [&] { return released; });
+    output.append(bytes);
+  };
+  const auto result = backend->Start(
+      TerminalStartRequest{.command = "printf first; sleep 0.3; printf second; sleep 30",
+                           .rows = 24,
+                           .columns = 80},
+      std::move(callbacks));
+  if (!result.started) {
+    return;
+  }
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    Expect(cv.wait_for(lock, std::chrono::seconds(5), [&] { return entered; }),
+           "the first output reaches on_output");
+  }
+  Expect(backend->HasUnreadOutput(), "output being delivered is not yet delivered");
+  std::this_thread::sleep_for(std::chrono::milliseconds(600));  // "second" is in the pty now
+  Expect(backend->HasUnreadOutput(), "nor is output still in the pty");
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    released = true;
+  }
+  cv.notify_all();
+  Expect(WaitUntil([&] { return !backend->HasUnreadOutput(); }, std::chrono::seconds(5)),
+         "once delivered, nothing is unread (the program is asleep)");
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    Expect(output.find("second") != std::string::npos,
+           "and nothing unread means everything printed was delivered: '" + output + "'");
+  }
+  backend->Stop();
+}
+
 #endif  // defined(__unix__) || defined(__APPLE__)
 
 }  // namespace
@@ -262,6 +314,8 @@ void RegisterTerminalBackendTests(std::vector<TestCase>& tests) {
           TestTerminalBackendBareShellNameResolvesThroughPath);
   AddTest(tests, "TerminalBackend/ArgvAttachesCommandsWithoutInventingFlags",
           TestTerminalArgvAttachesCommandsWithoutInventingFlags);
+  AddTest(tests, "TerminalBackend/ReportsOutputItHasNotDelivered",
+          TestTerminalBackendReportsOutputItHasNotDelivered);
 #else
   (void)tests;
 #endif

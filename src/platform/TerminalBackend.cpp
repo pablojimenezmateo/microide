@@ -345,6 +345,15 @@ class PosixTerminalBackend final : public TerminalBackend {
 
   bool running() const override { return running_.load(std::memory_order_acquire); }
 
+  bool HasUnreadOutput() const override {
+    if (delivering_.load(std::memory_order_acquire)) {
+      return true;
+    }
+    const int master_fd = master_fd_.load(std::memory_order_acquire);
+    int unread = 0;
+    return master_fd >= 0 && ioctl(master_fd, FIONREAD, &unread) == 0 && unread > 0;
+  }
+
  private:
   void ReaderMain(int master_fd, int wake_fd, int child_pid) {
     std::array<char, 4096> buffer{};
@@ -395,11 +404,15 @@ class PosixTerminalBackend final : public TerminalBackend {
         continue;
       }
       const bool hangup = (pfds[0].revents & POLLHUP) != 0;
+      // Set before the read takes the bytes out of the pty's count and cleared
+      // once they are delivered, so HasUnreadOutput sees them throughout.
+      delivering_.store(true, std::memory_order_release);
       const ssize_t count = read(master_fd, buffer.data(), buffer.size());
+      if (count > 0 && callbacks_.on_output) {
+        callbacks_.on_output(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+      }
+      delivering_.store(false, std::memory_order_release);
       if (count > 0) {
-        if (callbacks_.on_output) {
-          callbacks_.on_output(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-        }
         continue;
       }
       if (count < 0 && errno == EINTR) {
@@ -515,6 +528,7 @@ class PosixTerminalBackend final : public TerminalBackend {
   int child_pid_ = -1;
   std::atomic<bool> running_{false};
   std::atomic<bool> stop_requested_{false};
+  std::atomic<bool> delivering_{false};  // the reader is inside on_output
   std::mutex write_mutex_;
   std::string pending_write_;
   std::size_t pending_write_offset_ = 0;
