@@ -41,6 +41,14 @@ namespace microide::app {
 
 namespace {
 
+// A window event the application consumed itself, with the whole frame to redraw.
+workspace::WorkspaceShell::EventResult HandledWithFullRedraw() {
+  return workspace::WorkspaceShell::EventResult{
+      .handled = true,
+      .redraw = workspace::WorkspaceShell::RenderInvalidation{.full = true, .rects = {}},
+  };
+}
+
 constexpr int kInitialWindowWidth = 1440;
 constexpr int kInitialWindowHeight = 900;
 constexpr std::size_t kRenderPerfPartialClipWarnThreshold = 8;
@@ -704,25 +712,13 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
             },
         };
       }
-      return workspace::WorkspaceShell::EventResult{
-          .handled = true,
-          .redraw = workspace::WorkspaceShell::RenderInvalidation{
-              .full = true,
-              .rects = {},
-          },
-      };
+      return HandledWithFullRedraw();
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
       // Unlike an expose, this changes what the scene should CONTAIN (every glyph
       // is re-rasterized at the new scale), so it keeps the full redraw.
       presentation_state_dirty_ = true;
       UpdateRendererPresentation();
-      return workspace::WorkspaceShell::EventResult{
-          .handled = true,
-          .redraw = workspace::WorkspaceShell::RenderInvalidation{
-              .full = true,
-              .rects = {},
-          },
-      };
+      return HandledWithFullRedraw();
     case SDL_EVENT_WINDOW_RESIZED:
     case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
     case SDL_EVENT_WINDOW_RESTORED:
@@ -735,26 +731,14 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       // motion events that keep the pointer position fresh; reseed from the live
       // pointer and force the next update to re-apply at that position.
       ReseedPointerAndForceCursorReassert();
-      return workspace::WorkspaceShell::EventResult{
-          .handled = true,
-          .redraw = workspace::WorkspaceShell::RenderInvalidation{
-              .full = true,
-              .rects = {},
-          },
-      };
+      return HandledWithFullRedraw();
     case SDL_EVENT_WINDOW_MOVED:
       // Interactive title-bar moves (SDL_HITTEST_DRAGGABLE) let the window manager
       // paint its own move/grab cursor without telling SDL. On release the pointer
       // can sit stationary over the title bar, so reseed the live position and force
       // a reassert, scheduling a frame to consume it (geometry size is unchanged).
       ReseedPointerAndForceCursorReassert();
-      return workspace::WorkspaceShell::EventResult{
-          .handled = true,
-          .redraw = workspace::WorkspaceShell::RenderInvalidation{
-              .full = true,
-              .rects = {},
-          },
-      };
+      return HandledWithFullRedraw();
     default:
       break;
   }
