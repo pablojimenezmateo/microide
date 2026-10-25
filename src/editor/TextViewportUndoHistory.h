@@ -129,6 +129,12 @@ class TextViewportUndoHistory {
     // The primary range is always the LOWEST, which is what makes `start_line`
     // valid in both coordinate frames (nothing below it moves).
     std::vector<DisjointPart> extra_parts;
+    // A change of the document's line ending (Change End of Line Sequence): the
+    // ending before and after it. The line images stay empty -- the text itself
+    // does not change, only how it is written -- yet it is an edit like any other:
+    // it dirties the buffer and undoing it to the save point makes it clean.
+    std::optional<util::LineEnding> line_ending_before;
+    std::optional<util::LineEnding> line_ending_after;
     ViewState before_state;
     ViewState after_state;
     // Cached content byte size, stamped when the entry enters the undo stack so

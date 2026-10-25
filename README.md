@@ -674,6 +674,8 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Shift+F10` / the Menu key in a sidebar list | The selected row's context menu: Stage / Unstage / Discard / Open File in the git view, Reveal / Copy Path on a search hit or problem, the file tree's menu |
 | Typing in the file tree, git view or search results | Select the next row whose name (or matched line) starts with what was typed |
 | `Ctrl+Shift+H` | Replace in Files: the search view, the keyboard in its replace field |
+| Click a breadcrumb segment, or `Ctrl+Shift+.` | Browse that folder's entries (the file segment, and the key: the file's own folder) in a pick; subfolders browse on, files open |
+| Click the status bar's `LF`/`CRLF` or `Spaces: 4` | Change End of Line Sequence (an undoable edit that dirties the file) / Indentation (spaces or tabs, tab size) |
 | `Ctrl+c` in terminal (with selection) | Copy terminal selection |
 | `Ctrl+Shift+v` or `Shift+Insert` in terminal | Paste into terminal |
 | Click a URL or a `path:line:col` in terminal output | Open the link, or the file at that line in the editor |
@@ -803,6 +805,9 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `search-refresh`
 - `search-toggle-count-all`
 - `search-toggle-details`
+- `browse-folder [path]`
+- `line-ending [lf|crlf]`
+- `indentation`
 - `plugins-reload`
 - `debug-toggle-enabled`
 - `debug-start`

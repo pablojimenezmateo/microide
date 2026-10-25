@@ -220,8 +220,8 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     }
     StatusBarService::StatusBarSegmentUpdate indent;
     indent.text = editor_segments_cache_.indent_text;
-    indent.tooltip = "Change indent settings";
-    indent.command = "settings";
+    indent.tooltip = "Select indentation";
+    indent.command = "indentation";
     indent.visible = true;
     status_bar_service.SetSegment(StatusBarSegmentId::Indent, indent);
 
@@ -250,31 +250,32 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     }
     status_bar_service.SetSegment(StatusBarSegmentId::Language, language);
 
-    StatusBarService::StatusBarSegmentUpdate encoding;
-    // `EncodingLabel`/`LineEndingLabel` return owned strings and the joined form
-    // is a third; all three were rebuilt per painted frame for a value that only
-    // moves when the file's encoding or line ending does. Memoized on the pair.
+    // VS Code's two segments: the encoding, and the line ending a click changes
+    // (Change End of Line Sequence…). The labels are owned strings the viewport
+    // composes; memoized so a settled buffer copies nothing per frame.
     const std::string encoding_label = viewport->EncodingLabel();
     const std::string line_ending_label = viewport->LineEndingLabel();
-    if (!encoding_label.empty() || !line_ending_label.empty()) {
-      if (editor_segments_cache_.encoding_source_left != encoding_label ||
-          editor_segments_cache_.encoding_source_right != line_ending_label) {
-        editor_segments_cache_.encoding_source_left = encoding_label;
-        editor_segments_cache_.encoding_source_right = line_ending_label;
-        editor_segments_cache_.encoding_text.clear();
-        editor_segments_cache_.encoding_text.reserve(encoding_label.size() +
-                                                     line_ending_label.size() + 4);
-        editor_segments_cache_.encoding_text.append(encoding_label);
-        if (!encoding_label.empty() && !line_ending_label.empty()) {
-          editor_segments_cache_.encoding_text.append(" · ");
-        }
-        editor_segments_cache_.encoding_text.append(line_ending_label);
-      }
-      encoding.text = editor_segments_cache_.encoding_text;
-      encoding.tooltip = "File encoding and line endings";
+    if (editor_segments_cache_.encoding_label != encoding_label) {
+      editor_segments_cache_.encoding_label = encoding_label;
+    }
+    if (editor_segments_cache_.line_ending_label != line_ending_label) {
+      editor_segments_cache_.line_ending_label = line_ending_label;
+    }
+    StatusBarService::StatusBarSegmentUpdate encoding;
+    if (!encoding_label.empty()) {
+      encoding.text = editor_segments_cache_.encoding_label;
+      encoding.tooltip = "File encoding";
       encoding.visible = true;
     }
     status_bar_service.SetSegment(StatusBarSegmentId::Encoding, encoding);
+    StatusBarService::StatusBarSegmentUpdate line_ending;
+    if (!line_ending_label.empty()) {
+      line_ending.text = editor_segments_cache_.line_ending_label;
+      line_ending.tooltip = "Select End of Line Sequence";
+      line_ending.command = "line-ending";
+      line_ending.visible = true;
+    }
+    status_bar_service.SetSegment(StatusBarSegmentId::LineEnding, line_ending);
   } else {
     editor_segments_cache_.viewport = nullptr;
     editor_segments_cache_.line_column_text.clear();
@@ -283,6 +284,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     status_bar_service.ClearSegment(StatusBarSegmentId::Indent);
     status_bar_service.ClearSegment(StatusBarSegmentId::Language);
     status_bar_service.ClearSegment(StatusBarSegmentId::Encoding);
+    status_bar_service.ClearSegment(StatusBarSegmentId::LineEnding);
   }
 
   StatusBarService::StatusBarSegmentUpdate problems;

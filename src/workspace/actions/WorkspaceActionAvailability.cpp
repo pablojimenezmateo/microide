@@ -411,6 +411,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ProjectSearchRefresh:
     case ActionId::ProjectSearchToggleCountAll:
     case ActionId::ProjectSearchToggleDetails:
+    case ActionId::BrowseFolder:
     case ActionId::Tab:
     case ActionId::Term:
     case ActionId::TerminalFind:
@@ -557,6 +558,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              !context_.current_project_state.focused_group().open_tabs.empty();
     case ActionId::TestsRun:
       return !context_.current_project_state.sidebar.tests.entries.empty();
+    case ActionId::LineEnding:
+    case ActionId::Indentation:
+      return active_editable_viewport != nullptr;
     case ActionId::ToggleLineComment:
     case ActionId::ToggleBlockComment:
       return active_editable_viewport != nullptr &&

@@ -789,6 +789,10 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
     util::PerformanceTrace::Scope scope("TextViewport::ApplyHistoryEntry::ApplyEntryToBuffer");
     TextViewportUndoHistory::ApplyEntryToBuffer(document_->lines, entry, forward);
   }
+  if (entry.line_ending_after.has_value() && entry.line_ending_before.has_value()) {
+    document_->line_ending = forward ? *entry.line_ending_after : *entry.line_ending_before;
+    document_->mixed_line_endings = false;
+  }
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   // Incremental, upgrade-only: scan just what the edit spliced in instead of
@@ -1100,6 +1104,33 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
   } else {
     document_->undo_history.ClearRedo();
   }
+  return true;
+}
+
+bool TextViewport::SetLineEnding(LineEnding ending) {
+  if (read_only_) {
+    ++refused_edits_;
+    return false;
+  }
+  EnsureDocument();
+  if ((document_->line_ending == ending && !document_->mixed_line_endings) ||
+      document_->undo_history.IsGroupActive()) {
+    return false;
+  }
+  HistoryEntry entry;
+  entry.line_ending_before = document_->line_ending;
+  entry.line_ending_after = ending;
+  entry.before_state = CaptureViewState();
+  document_->line_ending = ending;
+  document_->mixed_line_endings = false;
+  document_->dirty = true;
+  // The text written to disk changed: everything keyed on the content revision
+  // (the save state, the find widget, the search's live hits) sees an edit.
+  InvalidateDerivedCaches(InvalidationReason::ContentEdit);
+  ClearLastAppliedEdit();  // no line moved, so no marker has anything to follow
+  entry.after_state = CaptureViewState();
+  document_->undo_history.ClearRedo();
+  PushHistoryEntry(std::move(entry));
   return true;
 }
 

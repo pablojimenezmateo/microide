@@ -19,6 +19,7 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/services/QuickPickService.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {
 
@@ -385,6 +386,116 @@ void WorkspaceActionContext::ShowFileFinder() {
   state_.file_finder.SetQuery("");
   state_.overlay.workflow.file_finder_compare_left.clear();
   state_.overlay.workflow.file_finder_compare_title.clear();
+}
+
+std::string WorkspaceActionContext::OpenFolderPick(const std::filesystem::path& folder_arg) {
+  if (!HasProjectRoot() || !operations_.open_command_choices) {
+    return "No active project";
+  }
+  std::filesystem::path folder = folder_arg;
+  if (folder.empty()) {
+    const editor::TextViewport* viewport =
+        operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+    folder = viewport != nullptr && !viewport->path().empty() ? viewport->path().parent_path() : state_.root;
+  }
+  folder = (folder.is_absolute() ? folder : state_.root / folder).lexically_normal();
+  if (!PathEqualsOrWithin(folder, state_.root)) {
+    return "Browse only folders in the project";
+  }
+  std::error_code error;
+  if (!std::filesystem::is_directory(folder, error)) {
+    return folder.filename().string() + " is not a folder";
+  }
+  // Folders first, then files, each by name -- the tree's order.
+  std::vector<std::filesystem::path> folders;
+  std::vector<std::filesystem::path> files;
+  constexpr std::size_t kMaxEntries = 2000;
+  for (auto it = std::filesystem::directory_iterator(folder, error);
+       !error && it != std::filesystem::directory_iterator() && folders.size() + files.size() < kMaxEntries;
+       it.increment(error)) {
+    const std::string name = it->path().filename().string();
+    if (name == ".git") {
+      continue;
+    }
+    (it->is_directory(error) ? folders : files).push_back(it->path());
+  }
+  std::sort(folders.begin(), folders.end());
+  std::sort(files.begin(), files.end());
+  std::vector<QuickPickItem> items;
+  if (folder != state_.root.lexically_normal()) {
+    items.push_back(QuickPickItem{.value = "browse-folder " + QuoteCommandArg(folder.parent_path().string()),
+                                  .primary_label = "..",
+                                  .secondary_label = "parent folder"});
+  }
+  for (const std::filesystem::path& sub : folders) {
+    items.push_back(QuickPickItem{.value = "browse-folder " + QuoteCommandArg(sub.string()),
+                                  .primary_label = sub.filename().string() + "/",
+                                  .secondary_label = "folder"});
+  }
+  for (const std::filesystem::path& file : files) {
+    items.push_back(QuickPickItem{.value = "open " + QuoteCommandArg(file.string()),
+                                  .primary_label = file.filename().string()});
+  }
+  const std::string relative = RelativePathLabel(state_.root, folder);
+  operations_.open_command_choices(QuickPickService::CommandChoices(
+      relative.empty() ? state_.root.filename().string() : relative, "entries", std::move(items)));
+  return {};
+}
+
+bool WorkspaceActionContext::OpenLineEndingPick() {
+  const editor::TextViewport* viewport =
+      operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
+  if (viewport == nullptr || !operations_.open_command_choices) {
+    return false;
+  }
+  const auto current = [&](util::LineEnding ending) {
+    return viewport->line_ending() == ending && !viewport->has_mixed_line_endings() ? std::string("current")
+                                                                                     : std::string{};
+  };
+  std::vector<QuickPickItem> items = {
+      QuickPickItem{.value = "line-ending lf", .primary_label = "LF", .secondary_label = current(util::LineEnding::LF)},
+      QuickPickItem{.value = "line-ending crlf",
+                    .primary_label = "CRLF",
+                    .secondary_label = current(util::LineEnding::CRLF)},
+  };
+  operations_.open_command_choices(
+      QuickPickService::CommandChoices("Change End of Line Sequence", "line endings", std::move(items)));
+  return true;
+}
+
+bool WorkspaceActionContext::SetActiveLineEnding(util::LineEnding ending) {
+  editor::TextViewport* viewport =
+      operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
+  if (viewport == nullptr) {
+    return false;
+  }
+  if (viewport->SetLineEnding(ending)) {
+    operations_.request_window_redraw();  // the tab's dirty mark and the status bar
+  }
+  return true;
+}
+
+bool WorkspaceActionContext::OpenIndentationPick() {
+  const editor::TextViewport* viewport =
+      operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
+  if (viewport == nullptr || !operations_.open_command_choices) {
+    return false;
+  }
+  std::vector<QuickPickItem> items = {
+      QuickPickItem{.value = "soft-tabs on",
+                    .primary_label = "Indent Using Spaces",
+                    .secondary_label = viewport->soft_tabs() ? "current" : ""},
+      QuickPickItem{.value = "soft-tabs off",
+                    .primary_label = "Indent Using Tabs",
+                    .secondary_label = viewport->soft_tabs() ? "" : "current"},
+  };
+  for (const std::size_t size : {2, 4, 8}) {
+    items.push_back(QuickPickItem{.value = "tab-size " + std::to_string(size),
+                                  .primary_label = "Tab Size: " + std::to_string(size),
+                                  .secondary_label = viewport->tab_size() == size ? "current" : ""});
+  }
+  operations_.open_command_choices(QuickPickService::CommandChoices("Indentation", "options", std::move(items)));
+  return true;
 }
 
 bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {

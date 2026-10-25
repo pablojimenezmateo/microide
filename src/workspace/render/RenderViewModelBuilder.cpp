@@ -2017,6 +2017,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
     add_segment(StatusBarSegmentId::Language, vm.left_segments);
     add_segment(StatusBarSegmentId::Indent, vm.left_segments);
     add_segment(StatusBarSegmentId::Encoding, vm.left_segments);
+    add_segment(StatusBarSegmentId::LineEnding, vm.left_segments);
   }
   add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
   add_segment(StatusBarSegmentId::Problems, vm.right_segments);

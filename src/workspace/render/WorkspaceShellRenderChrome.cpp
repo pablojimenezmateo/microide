@@ -1,5 +1,6 @@
 #include <optional>
 #include "render/ScopedRenderClip.h"
+#include "workspace/BreadcrumbLayout.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -408,20 +409,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     if (band.w <= 0.0f || band.h <= 0.0f) {
       continue;
     }
-    float breadcrumb_text_x = band.x + 12.0f;
-    float breadcrumb_text_right = band.x + band.w - 12.0f;
-    for (const VisibleStatusItem& item : status_items) {
-      // Contributed status items are window chrome, laid out across the whole
-      // band; only the ones actually overlapping this column push its text in.
-      if (item.rect.x + item.rect.w <= band.x || item.rect.x >= band.x + band.w) {
-        continue;
-      }
-      if (item.item.alignment == StatusAlignment::Left) {
-        breadcrumb_text_x = std::max(breadcrumb_text_x, item.rect.x + item.rect.w + 8.0f);
-      } else {
-        breadcrumb_text_right = std::min(breadcrumb_text_right, item.rect.x - 8.0f);
-      }
-    }
+    const auto [breadcrumb_text_x, breadcrumb_text_right] = BreadcrumbTextSpan(
+        band, status_items, [](const VisibleStatusItem& item) { return item.item.alignment == StatusAlignment::Left; });
     const float breadcrumb_text_width = std::max(0.0f, breadcrumb_text_right - breadcrumb_text_x);
     DrawVCenteredTextOn(text_renderer_, renderer,
                         MakeRect(breadcrumb_text_x, band.y, breadcrumb_text_width, band.h), 0.0f,

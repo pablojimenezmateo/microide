@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
@@ -56,6 +57,9 @@ class QuickPickService {
 
   // Show `picker` (built by one of the builders below), filtered by its query.
   void Open(QuickPickState picker);
+  // How many picks have opened: an accept whose command opened the next pick (a
+  // folder browsed into) leaves that one up rather than dismissing it.
+  std::uint64_t open_count() const { return open_count_; }
   // The query changed: filter again from the top match, and preview it.
   void Refilter();
   // The selection moved (a key, a click, the wheel over a row): preview it.
@@ -103,6 +107,7 @@ class QuickPickService {
 
   QuickPickState* state_ = nullptr;
   Operations operations_;
+  std::uint64_t open_count_ = 0;
 };
 
 }  // namespace microide::workspace

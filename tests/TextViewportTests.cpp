@@ -1264,6 +1264,25 @@ void TestTextViewportReplaceAllClearsLastAppliedEdit() {
   Expect(!viewport.last_applied_edit().has_value(), "ReplaceAllRanges must not leave the previous edit behind");
 }
 
+// Change End of Line Sequence (TD-2026-10-18-361): the line ending changes as an
+// edit -- the buffer is dirty and saves with the new ending, undo puts the old one
+// back and the buffer is clean again at the save point, redo redoes it.
+void TestTextViewportSetLineEndingIsAnUndoableEdit() {
+  TextViewport viewport;
+  viewport.LoadContent("one\r\ntwo\r\n", "/tmp/eol-change.txt");
+  Expect(viewport.line_ending() == TextViewport::LineEnding::CRLF && !viewport.dirty(), "a clean CRLF file");
+  Expect(viewport.SetLineEnding(TextViewport::LineEnding::LF), "switching to LF is an edit");
+  Expect(viewport.line_ending() == TextViewport::LineEnding::LF && viewport.dirty(), "the buffer is LF and dirty");
+  Expect(viewport.SerializeDocumentText() == "one\ntwo\n", "and is written with LF");
+  Expect(!viewport.SetLineEnding(TextViewport::LineEnding::LF), "switching to the ending it has is nothing");
+  Expect(viewport.Undo(), "undo takes the change back");
+  Expect(viewport.line_ending() == TextViewport::LineEnding::CRLF && !viewport.dirty(),
+         "back to CRLF, and clean at the save point");
+  Expect(viewport.Redo(), "redo redoes it");
+  Expect(viewport.line_ending() == TextViewport::LineEnding::LF && viewport.dirty(), "LF and dirty again");
+  Expect(viewport.lines().size() == 3 && viewport.lines()[1] == "two", "the text itself never changed");
+}
+
 void TestTextViewportLastAppliedEditTracksMultilineReplacement() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/applied-edit-range.txt");
@@ -6572,6 +6591,7 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSameLineCountEditInvalidatesSyntaxCache);
   AddTest(tests, "TextViewport/LastAppliedEditTracksInsertUndoRedo",
           TestTextViewportLastAppliedEditTracksInsertUndoRedo);
+  AddTest(tests, "TextViewport/SetLineEndingIsAnUndoableEdit", TestTextViewportSetLineEndingIsAnUndoableEdit);
   AddTest(tests, "TextViewport/ReplaceAllClearsLastAppliedEdit",
           TestTextViewportReplaceAllClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/MultiCaretDeleteLineClearsLastAppliedEdit",

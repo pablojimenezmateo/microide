@@ -188,6 +188,12 @@ enum class ActionId {
   ProjectSearchRefresh,
   ProjectSearchToggleCountAll,
   ProjectSearchToggleDetails,
+  // The chrome VS Code makes interactive (TD-2026-10-18-361): a folder's entries
+  // as a pick (a breadcrumb segment's click, Ctrl+Shift+.), the line-ending pick
+  // (the status bar's LF/CRLF), the indentation pick (its Spaces/Tabs segment).
+  BrowseFolder,
+  LineEnding,
+  Indentation,
   PluginsReload,
   Quit,
   RenamePath,

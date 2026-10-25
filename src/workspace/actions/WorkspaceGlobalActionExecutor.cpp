@@ -385,6 +385,35 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return reject(args.empty() ? "usage: open-url <url>" : "Cannot open \"" + args[0] + "\"");
       }
       return DispatchResult::Handled;
+    case ActionId::BrowseFolder: {
+      std::string refusal = context_.OpenFolderPick(args.empty() ? std::filesystem::path{}
+                                                                 : std::filesystem::path(args.front()));
+      if (!refusal.empty()) {
+        return reject(std::move(refusal));
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::LineEnding: {
+      if (args.empty()) {
+        if (!context_.OpenLineEndingPick()) {
+          return reject("No editable file to change the line endings of");
+        }
+        return DispatchResult::Handled;
+      }
+      const std::string ending = util::ToLowerAscii(args.front());
+      if (ending != "lf" && ending != "crlf") {
+        return reject("line-ending expects lf or crlf");
+      }
+      if (!context_.SetActiveLineEnding(ending == "lf" ? util::LineEnding::LF : util::LineEnding::CRLF)) {
+        return reject("No editable file to change the line endings of");
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::Indentation:
+      if (!context_.OpenIndentationPick()) {
+        return reject("No editable file to change the indentation of");
+      }
+      return DispatchResult::Handled;
     case ActionId::ShowOutput:
       if (args.empty()) {
         return reject("usage: show-output <channel-id>");

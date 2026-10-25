@@ -1415,7 +1415,7 @@ pins the card to the caret until the caret or the pointer moves or Escape;
 QA `lsp-show-hover`.]** The LSP note above was a real bug too: one invalid byte
 made clangd drop a document's didOpen (fixed ab318be8: stray bytes go as '?').
 
-### TD-2026-10-18-361 — inert chrome VS Code makes interactive: breadcrumbs, the encoding/EOL segment. [OPEN]
+### TD-2026-10-18-361 — inert chrome VS Code makes interactive: breadcrumbs, the encoding/EOL segment. [RESOLVED 2026-10-25]
 
 Found probing the chrome for the QA `mouse-and-wrap` pass:
 
@@ -1431,6 +1431,37 @@ Found probing the chrome for the QA `mouse-and-wrap` pass:
   history rather than as a flag flip on the document.
 - The indentation segment opens Settings rather than VS Code's Indent Using
   Spaces / Tabs and tab-size picker (it works, it is just a longer way round).
+
+RESOLVED 2026-10-25, all three, through the `RunCommand` quick pick:
+
+- **Breadcrumbs.** A click on a segment runs `browse-folder <folder>`, a pick of
+  that folder's entries (subfolders browse on, `..` goes up, files open). For a
+  folder segment it is that folder; for the file segment, the file's own folder.
+  Ctrl+Shift+. (Focus Breadcrumbs) opens the file's folder. The text span both
+  the paint and the click use, and the segment-to-folder rule, are
+  `workspace/BreadcrumbLayout.h`.
+- **End of line.** The status bar's "UTF-8 · LF" is split into an encoding
+  segment and an end-of-line segment, as VS Code's is. A click on the
+  end-of-line segment opens `line-ending` (Change End of Line Sequence…), and
+  the change is an edit, as asked: `TextViewport::SetLineEnding` records an undo
+  entry carrying the endings before and after (`line_ending_before` /
+  `line_ending_after`, empty line images). It dirties the buffer, undo back to
+  the save point is clean, and the save writes the new ending.
+- **Indentation.** The Spaces/Tabs segment opens `indentation`, a pick of
+  Indent Using Spaces / Tabs and tab sizes 2, 4 and 8.
+
+The encoding segment stays informational: the editor reads and writes UTF-8
+(and shows a BOM or binary content as such), so there is no other encoding to
+reopen or save with. One fix along the way: a pick row whose command opens the
+next pick (a folder browsed into) used to have that pick dismissed with the old
+one, so activation now dismisses only the pick it accepted
+(`QuickPickService::open_count`).
+
+Tests: `TextViewport/SetLineEndingIsAnUndoableEdit`,
+`Breadcrumbs/FolderAtNamesTheSegmentUnderTheClick`,
+`WorkspaceShell/ChromeSegmentsAreInteractive`, and the QA flow
+`chrome-segments` (CRLF chosen, undone clean, redone and saved as CRLF on disk;
+Ctrl+Shift+. and a breadcrumb click browsing into a subfolder).
 
 ### TD-2026-10-18-360 — no Go to Symbol in Editor (Ctrl+Shift+O, `@` in Quick Open). [RESOLVED 2026-10-25]
 

@@ -14,6 +14,7 @@ enum class StatusBarSegmentId : std::uint8_t {
   Language,
   Indent,
   Encoding,
+  LineEnding,  // LF / CRLF, apart from the encoding: a click changes it
   LineColumn,
   Problems,
   Lsp,
@@ -31,6 +32,7 @@ constexpr std::string_view StatusBarSegmentName(StatusBarSegmentId id) {
     case StatusBarSegmentId::Language: return "language";
     case StatusBarSegmentId::Indent: return "indent";
     case StatusBarSegmentId::Encoding: return "encoding";
+    case StatusBarSegmentId::LineEnding: return "line-ending";
     case StatusBarSegmentId::LineColumn: return "line-column";
     case StatusBarSegmentId::Problems: return "problems";
     case StatusBarSegmentId::Lsp: return "lsp";

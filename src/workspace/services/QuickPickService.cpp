@@ -19,6 +19,7 @@ void QuickPickService::Open(QuickPickState picker) {
   if (state_ == nullptr) {
     return;
   }
+  ++open_count_;
   // A pick replacing one still previewing hands back what that one changed.
   Cancel();
   // The selection the builder chose (the active theme) survives the first

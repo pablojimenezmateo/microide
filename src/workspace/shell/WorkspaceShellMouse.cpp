@@ -1,3 +1,4 @@
+#include "workspace/BreadcrumbLayout.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -275,6 +276,37 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         EnsureRedraw(mark, [this]() { RequestChromeRedraw(); });
         return true;
       }
+    }
+  }
+
+  // A breadcrumb segment opens its folder's entries as a pick, as VS Code's do
+  // (TD-2026-10-18-361): a folder segment that folder, the file segment its own.
+  if (event.button.button == SDL_BUTTON_LEFT && !MenuSurfaceCapturingMouse()) {
+    const EditorGroupRectsLayout group_rects = ComputeEditorGroupRectsForState(layout);
+    for (std::size_t gi = 0; gi < group_rects.groups.size() && gi < context_.current_project_state.editor_groups.size();
+         ++gi) {
+      const SDL_FRect band = group_rects.groups[gi].breadcrumb;
+      const EditorGroup& group = context_.current_project_state.editor_groups[gi];
+      if (!Contains(band, event.button.x, event.button.y) || !group.has_active_tab() ||
+          group.active_tab().path.empty()) {
+        continue;
+      }
+      const auto [text_x, text_right] = BreadcrumbTextSpan(
+          band, ComputeVisibleStatusItems(layout.breadcrumb),
+          [](const VisibleStatusItem& item) { return item.item.alignment == StatusAlignment::Left; });
+      std::string_view label = BreadcrumbLabel(gi);
+      label = label.substr(0, label.find("  |  "));  // a diff's "path  |  left -> right"
+      const std::optional<std::string> folder =
+          BreadcrumbFolderAt(label, text_x, static_cast<float>(event.button.x),
+                             [this](std::string_view prefix) { return text_renderer_.MeasureWidth(prefix); });
+      if (!folder.has_value()) {
+        break;
+      }
+      std::string error_message;
+      (void)ExecuteCommandName("browse-folder", {(context_.current_project_state.root / *folder).string()},
+                               ActionSource::Command, &error_message);
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+      return true;
     }
   }
 

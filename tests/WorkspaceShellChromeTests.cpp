@@ -7,6 +7,7 @@
 #include "render/Theme.h"
 #include "perf/AllocationCounter.h"
 #include "util/PerformanceCounters.h"
+#include "workspace/BreadcrumbLayout.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -2283,6 +2284,87 @@ void TestWorkspaceShellAStatusSegmentModalOwnsThePointer() {
 // screen (Settings owns the keyboard; its query field has its own static caret),
 // and typing into Settings leaves the terminal alone. Found by the QA monkey
 // (seed 1: the terminal caret differed under Settings while typing).
+// A breadcrumb click names the folder segment under it, or the file's own folder
+// for the file segment; off the text, nothing (TD-2026-10-18-361).
+void TestBreadcrumbFolderAtNamesTheSegmentUnderTheClick() {
+  using microide::workspace::BreadcrumbFolderAt;
+  const auto width = [](std::string_view text) { return static_cast<float>(text.size()) * 10.0f; };
+  // "src/ui/view.cpp" from x = 100: "src" spans 100..130, "ui" 140..160, the file after.
+  Expect(BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 115.0f, width) == std::optional<std::string>("src"),
+         "a click on src names src");
+  Expect(BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 150.0f, width) == std::optional<std::string>("src/ui"),
+         "a click on ui names src/ui");
+  Expect(BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 200.0f, width) == std::optional<std::string>("src/ui"),
+         "a click on the file names its folder");
+  Expect(BreadcrumbFolderAt("main.cpp", 100.0f, 120.0f, width) == std::optional<std::string>(""),
+         "a file at the top names the project's own folder");
+  Expect(!BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 90.0f, width).has_value() &&
+             !BreadcrumbFolderAt("src/ui/view.cpp", 100.0f, 400.0f, width).has_value(),
+         "off the text names nothing");
+}
+
+// The status bar's line-ending and indentation segments open their picks, and
+// the line ending changes as an edit; a breadcrumb click browses its folder.
+void TestWorkspaceShellChromeSegmentsAreInteractive() {
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "src" / "ui" / "view.cpp", "int v = 1;\n");
+  WriteFile(root / "src" / "ui" / "other.cpp", "int o = 2;\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "src" / "ui" / "view.cpp");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  const auto click = [&](const SDL_FRect& rect) {
+    const float x = rect.x + rect.w / 2.0f;
+    const float y = rect.y + rect.h / 2.0f;
+    (void)SendMouseDown(shell, x, y, SDL_BUTTON_LEFT);
+    (void)SendMouseUp(shell, x, y, SDL_BUTTON_LEFT);
+  };
+  using microide::workspace::StatusBarSegmentId;
+
+  const auto eol = WorkspaceShellTestAccess::StatusBarSegmentRect(shell, StatusBarSegmentId::LineEnding);
+  Expect(eol.has_value(), "the line ending has a segment of its own");
+  click(*eol);
+  const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) && pick.title == "Change End of Line Sequence" &&
+             pick.items.size() == 2,
+         "clicking it offers LF and CRLF");
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE) && SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Down, Enter chooses CRLF");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_ending() == microide::util::LineEnding::CRLF &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the file is CRLF now, and dirty");
+  Expect(SendKeyDown(shell, SDLK_Z, SDL_KMOD_CTRL), "Ctrl+Z undoes it");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).line_ending() == microide::util::LineEnding::LF &&
+             !WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "back to LF and clean");
+
+  shell.Render(canvas.renderer(), 1280, 720);
+  const auto indent = WorkspaceShellTestAccess::StatusBarSegmentRect(shell, StatusBarSegmentId::Indent);
+  Expect(indent.has_value(), "the indentation segment shows");
+  click(*indent);
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::QuickPick(shell).title == "Indentation",
+         "clicking it offers the indentation choices, not Settings");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes it");
+
+  // The breadcrumb's file segment: the file's folder, as a pick.
+  shell.Render(canvas.renderer(), 1280, 720);
+  const auto rects = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, WorkspaceShellTestAccess::CurrentLayout(shell));
+  const SDL_FRect band = rects.groups[0].breadcrumb;
+  (void)SendMouseDown(shell, band.x + 14.0f, band.y + band.h / 2.0f, SDL_BUTTON_LEFT);  // on "src"
+  const auto& browse = WorkspaceShellTestAccess::QuickPick(shell);
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) && browse.title == "src" &&
+             std::any_of(browse.items.begin(), browse.items.end(),
+                         [](const auto& item) { return item.primary_label == "ui/"; }),
+         "a click on the src segment browses src: " + browse.title);
+}
+
 void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -2314,17 +2396,12 @@ void TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret() {
   (void)shell.ConsumePendingRenderInvalidation();
   Expect(WorkspaceShellTestAccess::CaretVisibleNow(shell), "the terminal caret should be showing");
 
-  // The indent status segment opens Settings, as a click does.
-  const std::optional<SDL_FRect> indent =
-      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::Indent);
-  Expect(indent.has_value(), "the indent segment should show");
-  const float x = indent->x + indent->w / 2.0f;
-  const float y = indent->y + indent->h / 2.0f;
+  // Ctrl+, opens Settings over the focused terminal (it skips the shell). The
+  // indent status segment used to be the way in; it opens the indentation pick
+  // now (TD-2026-10-18-361).
   const auto open = PaintAndDiffWithFullRepaint(
-      shell, canvas, kWidth, kHeight,
-      DispatchEvents(shell, {MouseMotionEvent(x, y), MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
-                             MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
-      pin_caret);
+      shell, canvas, kWidth, kHeight, DispatchEvents(shell, {KeyDownEvent(SDLK_COMMA, SDL_KMOD_CTRL)}), pin_caret);
+  Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell), "Ctrl+, opens Settings over the terminal");
   Expect(open.identical(), "opening Settings over a focused terminal should paint what a full "
                            "repaint paints; " + DescribePixelDiff(open));
   // Nothing under the modal blinks: the terminal caret is off whatever the phase.
@@ -6215,6 +6292,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAModalReleasesAHoveredWindowControl);
   AddTest(tests, "WorkspaceShell/ClosingAnAnchoredMenuReleasesItsButton",
           TestWorkspaceShellClosingAnAnchoredMenuReleasesItsButton);
+  AddTest(tests, "Breadcrumbs/FolderAtNamesTheSegmentUnderTheClick", TestBreadcrumbFolderAtNamesTheSegmentUnderTheClick);
+  AddTest(tests, "WorkspaceShell/ChromeSegmentsAreInteractive", TestWorkspaceShellChromeSegmentsAreInteractive);
   AddTest(tests, "WorkspaceShell/SettingsOverAFocusedTerminalHidesItsCaret",
           TestWorkspaceShellSettingsOverAFocusedTerminalHidesItsCaret);
   AddTest(tests, "WorkspaceShell/MaximizedPanelPaintsNoHiddenSurface",

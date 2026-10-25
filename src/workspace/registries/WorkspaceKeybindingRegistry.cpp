@@ -760,6 +760,17 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // VS Code's Focus and Select Breadcrumbs: the active file's folder as a pick.
+      KeybindingSpec{
+          .id = "browse-folder",
+          .action = ActionId::BrowseFolder,
+          .key = SDLK_PERIOD,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "project-replace",
           .action = ActionId::ProjectReplace,

@@ -1536,8 +1536,65 @@ def flow_notifications(app: q.App) -> None:
     dismiss(app)
 
 
+def flow_chrome_segments(app: q.App) -> None:
+    """The chrome VS Code makes interactive (TD-2026-10-18-361): the status bar's
+    LF/CRLF segment opens Change End of Line Sequence -- choosing CRLF is an edit
+    (the file dirty, Ctrl+Z puts LF back clean, the disk untouched until saved,
+    then written with CRLF); its Spaces/Tabs segment opens the indentation pick;
+    a breadcrumb segment, and Ctrl+Shift+., browse the folder's entries, where a
+    subfolder browses on and a file opens."""
+    open_file(app, "chrome/deep/one.txt", "one\ntwo\n")
+    write(app, "chrome/deep/two.txt", "2\n")
+    app.click_named("status:line-ending")
+    app.wait_until(lambda: app.ui()["overlay"].get("title") == "Change End of Line Sequence", 3.0,
+                   "the end-of-line pick")
+    app.expect(app.ui()["overlay"].get("count") == 2, f"it offers LF and CRLF ({app.ui()['overlay']})")
+    app.type("crlf")
+    app.key("Return")
+    step(app, "choose CRLF", 0.3)
+    status = next((e for e in app.elements("status") if e["name"] == "status:line-ending"), {}).get("label", "")
+    app.expect(status == "CRLF" and (app.active_tab() or {}).get("dirty"),
+               f"the file is CRLF and dirty ({status!r}, {app.active_tab()})")
+    app.key("ctrl+z")
+    step(app, "undo", 0.2)
+    app.expect(not (app.active_tab() or {}).get("dirty"), "undoing it leaves the file clean again")
+    app.key("ctrl+y")
+    app.key("ctrl+s")
+    app.wait_until(lambda: b"\r\n" in (app.project / "chrome/deep/one.txt").read_bytes(), 3.0,
+                   "the save to write CRLF")
+    app.expect((app.project / "chrome/deep/one.txt").read_bytes() == b"one\r\ntwo\r\n",
+               "saved, the file is written with CRLF")
+
+    app.click_named("status:indent")
+    app.wait_until(lambda: app.ui()["overlay"].get("title") == "Indentation", 3.0, "the indentation pick")
+    app.expect(app.ui()["overlay"].get("title") == "Indentation", "the Spaces/Tabs segment opens the indentation pick")
+    app.key("Escape")
+
+    app.send("focus", "editor")
+    app.key("ctrl+shift+period")
+    app.wait_until(lambda: app.ui()["overlay"].get("title") == "chrome/deep", 3.0, "the folder pick")
+    rows = [r.get("label", "") for r in app.elements("overlay-row")]
+    app.expect(any(r.startswith("two.txt") for r in rows), f"Ctrl+Shift+. lists the file's folder ({rows})")
+    app.type("two")
+    app.key("Return")
+    app.wait_until(lambda: (app.active_tab() or {}).get("title") == "two.txt", 3.0, "Enter to open two.txt")
+    app.expect((app.active_tab() or {}).get("title") == "two.txt", "a file in the pick opens")
+    band = app.ui()["surfaces"]["breadcrumb"]
+    app.click(band[0] + 16, band[1] + band[3] / 2)  # the first segment, "chrome"
+    app.wait_until(lambda: app.ui()["overlay"].get("title") == "chrome", 3.0, "the breadcrumb's folder pick")
+    app.expect(app.ui()["overlay"].get("title") == "chrome",
+               f"a click on a breadcrumb segment browses that folder ({app.ui()['overlay']})")
+    app.type("deep")
+    app.key("Return")
+    app.wait_until(lambda: app.ui()["overlay"].get("title") == "chrome/deep", 3.0, "a subfolder to browse on")
+    app.expect(app.ui()["overlay"].get("title") == "chrome/deep", "a subfolder in the pick browses into it")
+    app.key("Escape")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "nav-history": flow_nav_history,
+    "chrome-segments": flow_chrome_segments,
     "caret-motion": flow_caret_motion,
     "indentation": flow_indentation,
     "find-options": flow_find_options,

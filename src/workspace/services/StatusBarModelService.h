@@ -116,9 +116,8 @@ class StatusBarModelService {
     // the file's language, encoding or line ending does.
     std::string language_tooltip_source;
     std::string language_tooltip;
-    std::string encoding_source_left;
-    std::string encoding_source_right;
-    std::string encoding_text;
+    std::string encoding_label;
+    std::string line_ending_label;
     // The LSP readout, filled by the operations callback. Held so the callback
     // assigns into buffers that already have capacity instead of two fresh
     // strings per frame.

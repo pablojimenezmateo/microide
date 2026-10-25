@@ -554,6 +554,12 @@ class TextViewport {
   std::size_t indent_width() const { return indent_width_; }
   bool soft_tabs() const { return soft_tabs_; }
   LineEnding line_ending() const { return document_->line_ending; }
+  // Change how the document's lines are ended, as an edit: it dirties the
+  // buffer, is one undo step, and undoing it back to the save point is clean.
+  // False when that is already the ending (and the file is not mixed), for a
+  // read-only buffer, or inside an open undo group (which records line images
+  // only and would drop the change).
+  bool SetLineEnding(LineEnding ending);
   bool has_mixed_line_endings() const { return document_->mixed_line_endings; }
   TextEncoding encoding() const { return document_->encoding; }
   // True when the file opened with a UTF-8 byte order mark. The BOM is not part

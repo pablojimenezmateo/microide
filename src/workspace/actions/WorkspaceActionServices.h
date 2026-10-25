@@ -777,6 +777,16 @@ class WorkspaceActionContext {
   // of the output channels, of the other panes, the file finder to compare the
   // active file with. False when it has none to offer (the input prompt asks).
   bool OpenArgumentPicker(ActionId id);
+  // Browse Folder…: `folder`'s entries as a pick -- its subfolders browse on,
+  // its files open (the active file's folder when empty). Empty on success,
+  // else why not.
+  std::string OpenFolderPick(const std::filesystem::path& folder);
+  // Change End of Line Sequence…: LF / CRLF for the active file, as a pick; and
+  // the change itself (an undoable edit). False without an editable file.
+  bool OpenLineEndingPick();
+  bool SetActiveLineEnding(util::LineEnding ending);
+  // Indentation…: spaces or tabs, and the tab size, as a pick.
+  bool OpenIndentationPick();
   void OpenRenameSymbolPrompt();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();

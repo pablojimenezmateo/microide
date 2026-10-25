@@ -319,10 +319,18 @@ bool WorkspaceShell::ActivateOverlaySelection() {
       // just opened (matches the FileFinder / BufferSearch activation paths below).
       DismissOverlay(true);
       return true;
-    case OverlayMode::QuickPick:
+    case OverlayMode::QuickPick: {
+      // A row's command can open the next overlay (a folder browsed into opens its
+      // own pick): that one stays up; only the accepted pick is dismissed.
+      const std::uint64_t opened = quick_pick_service_.open_count();
       quick_pick_service_.Accept();
-      DismissOverlay(true);
+      if (context_.current_project_state.overlay.visible &&
+          context_.current_project_state.overlay.mode == OverlayMode::QuickPick &&
+          quick_pick_service_.open_count() == opened) {
+        DismissOverlay(true);
+      }
       return true;
+    }
     case OverlayMode::CommandPalette:
       // ConfirmCommandPaletteSelection dismisses before dispatching (the action may
       // open its own overlay), so do not dismiss again here.

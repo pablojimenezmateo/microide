@@ -94,7 +94,7 @@ def flow_file_formats(app: q.App) -> None:
     write(app, "fmt/crlf.txt", "")
     (app.project / "fmt/crlf.txt").write_bytes(b"one\r\ntwo\r\nthree\r\n")
     open_file(app, "fmt/crlf.txt")
-    app.expect("CRLF" in _status(app, "encoding"), f"the status bar says CRLF ({_status(app, 'encoding')!r})")
+    app.expect("CRLF" in _status(app, "line-ending"), f"the status bar says CRLF ({_status(app, 'line-ending')!r})")
     app.expect("\r" not in app.text(), f"the buffer holds lines, not carriage returns ({app.text()!r})")
     app.key("ctrl+End")
     app.type("four\n")
