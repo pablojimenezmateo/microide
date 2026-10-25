@@ -9,6 +9,7 @@
 
 #include "project/remote/RemoteProtocol.h"
 #include "util/Log.h"
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
 
@@ -65,12 +66,7 @@ bool ValidEnvName(std::string_view name) {
 }
 
 #if defined(__unix__) || defined(__APPLE__)
-void SetNonBlocking(int fd) {
-  const int flags = ::fcntl(fd, F_GETFL, 0);
-  if (flags >= 0) {
-    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  }
-}
+using util::SetNonBlocking;
 
 // Resolve argv[0] through PATH in the parent: the child of a multi-threaded process
 // may only call async-signal-safe functions, and execve is one; execvp is not.

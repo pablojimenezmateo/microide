@@ -29,6 +29,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #elif defined(_WIN32)
 #ifndef NOMINMAX
@@ -214,7 +215,7 @@ class PosixTerminalBackend final : public TerminalBackend {
     // PTY input buffer and block whoever writes to it — historically the shell
     // thread on paste/keystroke, freezing the whole app. Reads stay gated by
     // poll(POLLIN) so a non-blocking read only yields the already-ready bytes.
-    (void)fcntl(master_fd, F_SETFL, fcntl(master_fd, F_GETFL, 0) | O_NONBLOCK);
+    util::SetNonBlocking(master_fd);
 
     // Self-pipe used to wake the reader's poll() on shutdown (and now to nudge
     // it to drain freshly-buffered output) without closing master_fd out from

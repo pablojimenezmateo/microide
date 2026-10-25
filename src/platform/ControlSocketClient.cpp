@@ -12,6 +12,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "util/PosixFd.h"
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
@@ -50,10 +52,7 @@ bool ControlSocketClient::Connect(const std::filesystem::path& socket_path) {
   // Make subsequent send()/recv() non-blocking so poll-driven deadlines are honored
   // even when the peer's receive buffer is full: a blocking send() would otherwise
   // stall inside the kernel past the caller's timeout. connect() above stays blocking.
-  const int flags = ::fcntl(fd, F_GETFL, 0);
-  if (flags >= 0) {
-    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  }
+  util::SetNonBlocking(fd);
   fd_ = fd;
   return true;
 }

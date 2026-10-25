@@ -9,6 +9,8 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "util/PosixFd.h"
 #endif
 
 namespace microide::platform {
@@ -88,10 +90,7 @@ int ListenUnixSocket(const std::filesystem::path& path, std::string* error) {
     ::unlink(path_string.c_str());
     return -1;
   }
-  const int flags = ::fcntl(fd, F_GETFL, 0);
-  if (flags >= 0) {
-    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  }
+  util::SetNonBlocking(fd);
   return fd;
 }
 

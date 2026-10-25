@@ -29,6 +29,7 @@
 #endif
 
 #include "util/Log.h"
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #endif
 
@@ -113,12 +114,7 @@ constexpr std::size_t kMaxWriteBufferBytes = 8u << 20;
 // the dead prefix is small enough that skipping the memmove is the better trade.
 constexpr std::size_t kWriteCompactThreshold = 64u << 10;
 
-void SetNonBlocking(int fd) {
-  const int flags = ::fcntl(fd, F_GETFL, 0);
-  if (flags >= 0) {
-    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  }
-}
+using util::SetNonBlocking;
 
 }  // namespace
 

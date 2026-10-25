@@ -47,6 +47,10 @@
 #include <windows.h>
 #endif
 
+#if defined(__linux__) || defined(__APPLE__)
+#include "util/PosixFd.h"
+#endif
+
 namespace microide::platform {
 
 namespace {
@@ -73,11 +77,7 @@ void StampEntryMetadata(const std::filesystem::path& absolute_path, IndexFileEnt
 }
 
 #if defined(__linux__) || defined(__APPLE__)
-void CloseIfValid(int fd) {
-  if (fd >= 0) {
-    close(fd);
-  }
-}
+using util::CloseIfValid;
 #endif
 
 bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {

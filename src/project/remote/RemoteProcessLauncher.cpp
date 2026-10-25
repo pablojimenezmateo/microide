@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "platform/AsyncSubprocess.h"
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
 
@@ -134,8 +135,8 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
     }
     stdin_read_ = in[0];
     stdout_write_ = out[1];
-    ::fcntl(stdin_read_, F_SETFL, O_NONBLOCK);
-    ::fcntl(stdout_write_, F_SETFL, O_NONBLOCK);
+    util::SetNonBlocking(stdin_read_);
+    util::SetNonBlocking(stdout_write_);
     return std::pair{in[1], out[0]};
   }
 

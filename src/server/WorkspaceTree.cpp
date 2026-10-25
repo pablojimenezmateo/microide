@@ -14,6 +14,7 @@
 #include "project/GitMetadataSource.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/ByteCodec.h"
+#include "util/PosixFd.h"
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -29,21 +30,7 @@ using project::remote::ManifestEntryKind;
 using project::remote::ManifestRow;
 
 // A closed-on-every-path descriptor.
-class Fd {
- public:
-  explicit Fd(int fd) : fd_(fd) {}
-  ~Fd() {
-    if (fd_ >= 0) {
-      ::close(fd_);
-    }
-  }
-  Fd(const Fd&) = delete;
-  Fd& operator=(const Fd&) = delete;
-  int get() const { return fd_; }
-
- private:
-  int fd_;
-};
+using util::UniqueFd;
 
 std::int64_t Nanoseconds(const struct timespec& time) {
   return static_cast<std::int64_t>(time.tv_sec) * 1'000'000'000 + time.tv_nsec;
@@ -74,21 +61,21 @@ struct HashedFile {
 // after that the last read stands and the caller does not cache it.
 std::optional<HashedFile> HashAt(int root_fd, const std::string& path, bool follow, bool* stable) {
   for (int attempt = 0; attempt < 3; ++attempt) {
-    const Fd fd(::openat(root_fd, path.c_str(),
+    const UniqueFd fd(::openat(root_fd, path.c_str(),
                          O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK | (follow ? 0 : O_NOFOLLOW)));
-    if (fd.get() < 0) {
+    if (fd.Get() < 0) {
       return std::nullopt;
     }
     HashedFile out;
     struct stat before {};
-    if (::fstat(fd.get(), &before) != 0 || !S_ISREG(before.st_mode)) {
+    if (::fstat(fd.Get(), &before) != 0 || !S_ISREG(before.st_mode)) {
       return std::nullopt;
     }
-    const std::optional<util::ContentHash> hash = util::HashFileDescriptor(fd.get(), &out.size);
+    const std::optional<util::ContentHash> hash = util::HashFileDescriptor(fd.Get(), &out.size);
     if (!hash.has_value()) {
       return std::nullopt;
     }
-    if (::fstat(fd.get(), &out.after) != 0) {
+    if (::fstat(fd.Get(), &out.after) != 0) {
       return std::nullopt;
     }
     out.hash = *hash;
@@ -481,8 +468,8 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
     *error = OverLimitMessage();
     return std::nullopt;
   }
-  const Fd root_fd(::open(root_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-  if (root_fd.get() < 0) {
+  const UniqueFd root_fd(::open(root_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (root_fd.Get() < 0) {
     *error = "cannot open " + root_.string() + ": " + std::string(std::strerror(errno));
     return std::nullopt;
   }
@@ -490,7 +477,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
   std::unordered_map<std::string, CacheEntry> next_cache;
   next_cache.reserve(paths->size());
   std::optional<std::vector<ManifestRow>> rows =
-      RowsFor(std::move(*paths), root_fd.get(), cancelled, error, next_cache);
+      RowsFor(std::move(*paths), root_fd.Get(), cancelled, error, next_cache);
   if (!rows.has_value()) {
     return std::nullopt;
   }
@@ -578,8 +565,8 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   }
   last_update_was_full_ = false;
 #if defined(__unix__) || defined(__APPLE__)
-  const Fd root_fd(::open(root_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-  if (root_fd.get() < 0) {
+  const UniqueFd root_fd(::open(root_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (root_fd.Get() < 0) {
     *error = "cannot open " + root_.string() + ": " + std::string(std::strerror(errno));
     return std::nullopt;
   }
@@ -602,7 +589,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
       continue;
     }
     struct stat info {};
-    const bool exists = ::fstatat(root_fd.get(), path.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0;
+    const bool exists = ::fstatat(root_fd.Get(), path.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0;
     if (listed(path)) {
       if (exists) {
         recompute.push_back(path);
@@ -620,7 +607,7 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     std::sort(recompute.begin(), recompute.end());
   }
   std::optional<std::vector<ManifestRow>> fresh =
-      RowsFor(recompute, root_fd.get(), cancelled, error, cache_);
+      RowsFor(recompute, root_fd.Get(), cancelled, error, cache_);
   cache_dirty_ = cache_dirty_ || !recompute.empty();
   if (!fresh.has_value()) {
     return std::nullopt;

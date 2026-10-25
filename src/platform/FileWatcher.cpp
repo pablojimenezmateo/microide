@@ -26,6 +26,7 @@
 #endif
 
 #if defined(__unix__) || defined(__APPLE__)
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #endif
 
@@ -34,11 +35,7 @@ namespace microide::platform {
 namespace {
 
 #if defined(__linux__) || defined(__APPLE__)
-void CloseIfValid(int fd) {
-  if (fd >= 0) {
-    close(fd);
-  }
-}
+using util::CloseIfValid;
 
 using microide::util::MakeCloexecPipe;
 #endif

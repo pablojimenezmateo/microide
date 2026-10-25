@@ -1,6 +1,7 @@
 #include "project/remote/TreeFiles.h"
 
 #include "util/PerformanceCounters.h"
+#include "util/PosixFd.h"
 
 #include <atomic>
 #include <cerrno>
@@ -21,30 +22,7 @@ namespace {
 
 #if defined(__unix__) || defined(__APPLE__)
 
-class Fd {
- public:
-  Fd() = default;
-  explicit Fd(int fd) : fd_(fd) {}
-  ~Fd() { Reset(); }
-  Fd(Fd&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
-  Fd& operator=(Fd&& other) noexcept {
-    if (this != &other) {
-      Reset();
-      fd_ = std::exchange(other.fd_, -1);
-    }
-    return *this;
-  }
-  int get() const { return fd_; }
-  void Reset() {
-    if (fd_ >= 0) {
-      ::close(fd_);
-    }
-    fd_ = -1;
-  }
-
- private:
-  int fd_ = -1;
-};
+using util::UniqueFd;
 
 FileOpResult Error(std::string message) {
   FileOpResult result;
@@ -75,7 +53,7 @@ std::string Errno(std::string_view what) {
 // with O_NOFOLLOW (a link in a parent position fails with ELOOP/ENOTDIR instead of
 // being followed), and that last component's name.
 struct Parent {
-  Fd dir;
+  UniqueFd dir;
   std::string name;
 };
 
@@ -85,8 +63,8 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
     *error = "unsafe path '" + std::string(path) + "'";
     return std::nullopt;
   }
-  Fd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-  if (dir.get() < 0) {
+  UniqueFd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (dir.Get() < 0) {
     *error = Errno("cannot open the workspace root " + root.string());
     return std::nullopt;
   }
@@ -94,15 +72,15 @@ std::optional<Parent> OpenParent(const std::filesystem::path& root, std::string_
   for (std::size_t slash = path.find('/'); slash != std::string_view::npos;
        start = slash + 1, slash = path.find('/', start)) {
     const std::string component(path.substr(start, slash - start));
-    Fd next(::openat(dir.get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (next.get() < 0 && errno == ENOENT && create) {
-      if (::mkdirat(dir.get(), component.c_str(), 0755) != 0 && errno != EEXIST) {
+    UniqueFd next(::openat(dir.Get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (next.Get() < 0 && errno == ENOENT && create) {
+      if (::mkdirat(dir.Get(), component.c_str(), 0755) != 0 && errno != EEXIST) {
         *error = Errno("cannot create " + std::string(path.substr(0, slash)));
         return std::nullopt;
       }
-      next = Fd(::openat(dir.get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+      next = UniqueFd(::openat(dir.Get(), component.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     }
-    if (next.get() < 0) {
+    if (next.Get() < 0) {
       *error = errno == ELOOP || errno == ENOTDIR
                    ? std::string(path.substr(0, slash)) + " is not a directory on the host"
                    : Errno("cannot open " + std::string(path.substr(0, slash)));
@@ -131,12 +109,12 @@ std::optional<util::ContentHash> CurrentHash(int dir, const std::string& name, b
     *not_a_file = true;
     return std::nullopt;
   }
-  const Fd fd(::openat(dir, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
-  if (fd.get() < 0) {
+  const UniqueFd fd(::openat(dir, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
+  if (fd.Get() < 0) {
     *error = Errno("cannot read " + name);
     return std::nullopt;
   }
-  auto hash = util::HashFileDescriptor(fd.get());
+  auto hash = util::HashFileDescriptor(fd.Get());
   if (!hash.has_value()) {
     *error = Errno("cannot read " + name);
   }
@@ -219,23 +197,23 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
     return Error(error);
   }
   // The final component may be a link: an out-of-root link ships as its target.
-  const Fd fd(::openat(parent->dir.get(), parent->name.c_str(),
+  const UniqueFd fd(::openat(parent->dir.Get(), parent->name.c_str(),
                        O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
-  if (fd.get() < 0) {
+  if (fd.Get() < 0) {
     if (errno == ENOENT) {
       return Conflict(std::nullopt);
     }
     return Error(Errno("cannot open " + std::string(path)));
   }
   struct stat info {};
-  if (::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode)) {
+  if (::fstat(fd.Get(), &info) != 0 || !S_ISREG(info.st_mode)) {
     return Error(std::string(path) + " is not a regular file on the host");
   }
   if (static_cast<std::uint64_t>(info.st_size) > max_bytes) {
     return Error(std::string(path) + " is " + std::to_string(info.st_size) +
                  " bytes, over the " + std::to_string(max_bytes) + "-byte limit");
   }
-  const auto hash = util::HashFileDescriptor(fd.get(), nullptr, sink);
+  const auto hash = util::HashFileDescriptor(fd.Get(), nullptr, sink);
   if (!hash.has_value()) {
     return Error(Errno("cannot read " + std::string(path)));
   }
@@ -256,18 +234,18 @@ FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
   if (text.empty() || text.front() != '/' || text.find('\0') != std::string::npos) {
     return Error("not an absolute path");
   }
-  const Fd fd(::open(text.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
-  if (fd.get() < 0) {
+  const UniqueFd fd(::open(text.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK));
+  if (fd.Get() < 0) {
     return errno == ENOENT ? Conflict(std::nullopt) : Error(Errno("cannot open " + text));
   }
   struct stat info {};
-  if (::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode)) {
+  if (::fstat(fd.Get(), &info) != 0 || !S_ISREG(info.st_mode)) {
     return Error(text + " is not a regular file on the host");
   }
   if (static_cast<std::uint64_t>(info.st_size) > max_bytes) {
     return Error(text + " is over the " + std::to_string(max_bytes) + "-byte limit");
   }
-  const auto hash = util::HashFileDescriptor(fd.get(), nullptr, sink);
+  const auto hash = util::HashFileDescriptor(fd.Get(), nullptr, sink);
   if (!hash.has_value()) {
     return Error(Errno("cannot read " + text));
   }
@@ -296,7 +274,7 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(parent->dir.get(), parent->name, expect, /*allow_non_file=*/false, &refused,
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/false, &refused,
                    &exists)) {
     return refused;
   }
@@ -305,22 +283,22 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     final_mode = static_cast<mode_t>(*mode & 07777);
   } else if (exists) {
     struct stat info {};
-    if (::fstatat(parent->dir.get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0) {
+    if (::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0) {
       final_mode = info.st_mode & 07777;
     }
   }
   const std::string temp = TempName(parent->name);
   std::optional<util::ContentHash> hash;
   {
-    const Fd out(::openat(parent->dir.get(), temp.c_str(),
+    const UniqueFd out(::openat(parent->dir.Get(), temp.c_str(),
                           O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
-    if (out.get() < 0) {
+    if (out.Get() < 0) {
       return Error(Errno("cannot create a temporary file beside " + std::string(path)));
     }
     std::string fill_error;
-    hash = fill(out.get(), &fill_error);
+    hash = fill(out.Get(), &fill_error);
     if (!hash.has_value()) {
-      ::unlinkat(parent->dir.get(), temp.c_str(), 0);
+      ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
       return Error(fill_error.empty() ? Errno("cannot write " + std::string(path)) : fill_error);
     }
     if (mtime_ns.has_value()) {
@@ -328,31 +306,31 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
           {0, UTIME_OMIT},
           {static_cast<time_t>(*mtime_ns / 1'000'000'000), static_cast<long>(*mtime_ns % 1'000'000'000)},
       };
-      (void)::futimens(out.get(), times);  // best effort: only a fast path depends on it
+      (void)::futimens(out.Get(), times);  // best effort: only a fast path depends on it
     }
     if (durability == Durability::Synced) {
       util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFileFsyncs);
     }
-    if (::fchmod(out.get(), final_mode) != 0 ||
-        (durability == Durability::Synced && ::fsync(out.get()) != 0)) {
+    if (::fchmod(out.Get(), final_mode) != 0 ||
+        (durability == Durability::Synced && ::fsync(out.Get()) != 0)) {
       const std::string why = Errno("cannot finish " + std::string(path));
-      ::unlinkat(parent->dir.get(), temp.c_str(), 0);
+      ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
       return Error(why);
     }
   }
   const int renamed =
       expect.kind == Precondition::Kind::Absent
-          ? RenameNoReplace(parent->dir.get(), temp.c_str(), parent->dir.get(), parent->name.c_str())
-          : ::renameat(parent->dir.get(), temp.c_str(), parent->dir.get(), parent->name.c_str());
+          ? RenameNoReplace(parent->dir.Get(), temp.c_str(), parent->dir.Get(), parent->name.c_str())
+          : ::renameat(parent->dir.Get(), temp.c_str(), parent->dir.Get(), parent->name.c_str());
   if (renamed != 0) {
     const int saved = errno;
-    ::unlinkat(parent->dir.get(), temp.c_str(), 0);
+    ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
     if (saved == EEXIST) {
       // Created on the host between the check and the rename.
       bool now_exists = false;
       bool not_a_file = false;
       std::string ignored;
-      return Conflict(CurrentHash(parent->dir.get(), parent->name, &now_exists, &not_a_file, &ignored));
+      return Conflict(CurrentHash(parent->dir.Get(), parent->name, &now_exists, &not_a_file, &ignored));
     }
     errno = saved;
     return Error(Errno("cannot replace " + std::string(path)));
@@ -375,8 +353,8 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
 bool SyncTreeFilesystem(const std::filesystem::path& root) {
   util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes);
 #if defined(__linux__)
-  const Fd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-  return dir.get() >= 0 && ::syncfs(dir.get()) == 0;
+  const UniqueFd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  return dir.Get() >= 0 && ::syncfs(dir.Get()) == 0;
 #elif defined(__unix__) || defined(__APPLE__)
   ::sync();
   (void)root;
@@ -419,15 +397,15 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
       root, path,
       [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
 #if defined(__unix__) || defined(__APPLE__)
-        const Fd in(::open(source.c_str(), O_RDONLY | O_CLOEXEC));
-        if (in.get() < 0) {
+        const UniqueFd in(::open(source.c_str(), O_RDONLY | O_CLOEXEC));
+        if (in.Get() < 0) {
           *error = Errno("cannot open the fetched copy of " + std::string(path));
           return std::nullopt;
         }
 #if defined(__linux__)
         // In the kernel, and a reflink where the filesystem can: no bytes through here.
         for (;;) {
-          const ssize_t count = ::copy_file_range(in.get(), nullptr, fd, nullptr, 1u << 30, 0);
+          const ssize_t count = ::copy_file_range(in.Get(), nullptr, fd, nullptr, 1u << 30, 0);
           if (count == 0) {
             return hash;
           }
@@ -445,7 +423,7 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
 #endif
         char buffer[64 * 1024];
         for (;;) {
-          const ssize_t count = ::read(in.get(), buffer, sizeof(buffer));
+          const ssize_t count = ::read(in.Get(), buffer, sizeof(buffer));
           if (count < 0 && errno == EINTR) {
             continue;
           }
@@ -488,18 +466,18 @@ FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view
     return Error(error);
   }
   struct stat info {};
-  if (::fstatat(parent->dir.get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+  if (::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
       !S_ISLNK(info.st_mode)) {
     return Conflict(std::nullopt);
   }
   const std::string temp = TempName(parent->name);
   const std::string target_text(target);
-  if (::symlinkat(target_text.c_str(), parent->dir.get(), temp.c_str()) != 0) {
+  if (::symlinkat(target_text.c_str(), parent->dir.Get(), temp.c_str()) != 0) {
     return Error(Errno("cannot create the link " + std::string(path)));
   }
-  if (::renameat(parent->dir.get(), temp.c_str(), parent->dir.get(), parent->name.c_str()) != 0) {
+  if (::renameat(parent->dir.Get(), temp.c_str(), parent->dir.Get(), parent->name.c_str()) != 0) {
     const std::string why = Errno("cannot place the link " + std::string(path));
-    ::unlinkat(parent->dir.get(), temp.c_str(), 0);
+    ::unlinkat(parent->dir.Get(), temp.c_str(), 0);
     return Error(why);
   }
   return Ok(std::nullopt);
@@ -518,10 +496,10 @@ FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_vi
   if (!parent.has_value()) {
     return Error(error);
   }
-  if (::mkdirat(parent->dir.get(), parent->name.c_str(), 0755) != 0) {
+  if (::mkdirat(parent->dir.Get(), parent->name.c_str(), 0755) != 0) {
     struct stat info {};
     if (errno == EEXIST &&
-        ::fstatat(parent->dir.get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+        ::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
         S_ISDIR(info.st_mode)) {
       return Ok(std::nullopt);
     }
@@ -549,20 +527,20 @@ FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(source->dir.get(), source->name, expect, /*allow_non_file=*/true, &refused,
+  if (!CheckExpect(source->dir.Get(), source->name, expect, /*allow_non_file=*/true, &refused,
                    &exists)) {
     return refused;
   }
   if (!exists) {
     return Conflict(std::nullopt);
   }
-  if (RenameNoReplace(source->dir.get(), source->name.c_str(), target->dir.get(),
+  if (RenameNoReplace(source->dir.Get(), source->name.c_str(), target->dir.Get(),
                       target->name.c_str()) != 0) {
     if (errno == EEXIST) {
       bool now_exists = false;
       bool not_a_file = false;
       std::string ignored;
-      return Conflict(CurrentHash(target->dir.get(), target->name, &now_exists, &not_a_file, &ignored));
+      return Conflict(CurrentHash(target->dir.Get(), target->name, &now_exists, &not_a_file, &ignored));
     }
     return Error(Errno("cannot rename " + std::string(from) + " to " + std::string(to)));
   }
@@ -586,7 +564,7 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
   }
   FileOpResult refused;
   bool exists = false;
-  if (!CheckExpect(parent->dir.get(), parent->name, expect, /*allow_non_file=*/true, &refused,
+  if (!CheckExpect(parent->dir.Get(), parent->name, expect, /*allow_non_file=*/true, &refused,
                    &exists)) {
     return refused;
   }
@@ -595,9 +573,9 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
   }
   struct stat info {};
   const bool directory =
-      ::fstatat(parent->dir.get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
+      ::fstatat(parent->dir.Get(), parent->name.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 &&
       S_ISDIR(info.st_mode);
-  if (::unlinkat(parent->dir.get(), parent->name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) {
+  if (::unlinkat(parent->dir.Get(), parent->name.c_str(), directory ? AT_REMOVEDIR : 0) != 0) {
     return Error(Errno("cannot delete " + std::string(path)));
   }
   return Ok(std::nullopt);

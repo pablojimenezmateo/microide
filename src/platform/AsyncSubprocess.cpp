@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "platform/ChildSignals.h"
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 #elif defined(_WIN32)
 #ifndef NOMINMAX
@@ -176,9 +177,8 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
   }
 
   // Set stdin write-end and stdout read-end non-blocking for poll-based I/O.
-  fcntl(stdin_pipe[1], F_SETFL, O_NONBLOCK);
-  // Set stdout read-end non-blocking for poll-based reads.
-  fcntl(stdout_pipe[0], F_SETFL, O_NONBLOCK);
+  util::SetNonBlocking(stdin_pipe[1]);
+  util::SetNonBlocking(stdout_pipe[0]);
 
   // Build the argv array in the parent, before fork: the child (forked off a
   // background thread) must call only async-signal-safe functions, so it cannot
@@ -243,8 +243,8 @@ bool AsyncSubprocess::Adopt(int stdin_fd, int stdout_fd,
   if (impl_->running.load(std::memory_order_acquire)) {
     return false;
   }
-  fcntl(stdin_fd, F_SETFL, O_NONBLOCK);
-  fcntl(stdout_fd, F_SETFL, O_NONBLOCK);
+  util::SetNonBlocking(stdin_fd);
+  util::SetNonBlocking(stdout_fd);
   impl_->stdin_fd = stdin_fd;
   impl_->stdout_fd = stdout_fd;
   impl_->controller = std::move(controller);

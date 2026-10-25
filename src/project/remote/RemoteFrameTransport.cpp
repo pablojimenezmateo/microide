@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "util/PerformanceCounters.h"
+#include "util/PosixFd.h"
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
@@ -14,13 +15,6 @@
 
 namespace microide::project::remote {
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
-bool MakeNonBlocking(int fd) {
-  const int flags = ::fcntl(fd, F_GETFL, 0);
-  return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
-}
-#endif
 
 std::string EncodeU64(std::uint64_t value) {
   std::string bytes;
@@ -50,7 +44,7 @@ bool RemoteFrameTransport::Start(int read_fd, int write_fd, Callbacks callbacks,
   if (io_thread_.joinable() || read_fd < 0 || write_fd < 0) {
     return false;
   }
-  if (!MakeNonBlocking(read_fd) || (write_fd != read_fd && !MakeNonBlocking(write_fd))) {
+  if (!util::SetNonBlocking(read_fd) || (write_fd != read_fd && !util::SetNonBlocking(write_fd))) {
     return false;
   }
   wake_.Open();

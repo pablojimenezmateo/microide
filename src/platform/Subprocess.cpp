@@ -20,6 +20,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "util/PosixFd.h"
 #include "util/PosixPipe.h"
 
 // At global scope: declared inside the anonymous namespace, GCC 15 gives it
@@ -59,44 +60,8 @@ bool IsValidEnvironmentName(const std::string& name) {
 
 #if defined(__unix__) || defined(__APPLE__)
 
-class UniqueFd {
- public:
-  UniqueFd() = default;
-  explicit UniqueFd(int fd) : fd_(fd) {}
-
-  UniqueFd(const UniqueFd&) = delete;
-  UniqueFd& operator=(const UniqueFd&) = delete;
-
-  UniqueFd(UniqueFd&& other) noexcept : fd_(other.Release()) {}
-
-  UniqueFd& operator=(UniqueFd&& other) noexcept {
-    if (this != &other) {
-      Reset(other.Release());
-    }
-    return *this;
-  }
-
-  ~UniqueFd() { Reset(); }
-
-  int Get() const { return fd_; }
-  bool IsValid() const { return fd_ >= 0; }
-
-  int Release() {
-    const int fd = fd_;
-    fd_ = -1;
-    return fd;
-  }
-
-  void Reset(int fd = -1) {
-    if (fd_ >= 0) {
-      close(fd_);
-    }
-    fd_ = fd;
-  }
-
- private:
-  int fd_ = -1;
-};
+using util::SetNonBlocking;
+using util::UniqueFd;
 
 // A pollable handle on a child, so waiting for it to become reapable is an event
 // wait rather than a sleep-and-probe spin. Returns -1 when the kernel has no
@@ -141,16 +106,6 @@ bool OpenPipe(bool enabled, std::array<UniqueFd, 2>* pipe_fds) {
   (*pipe_fds)[0].Reset(raw_pipe[0]);
   (*pipe_fds)[1].Reset(raw_pipe[1]);
   return true;
-}
-
-void SetNonBlocking(int fd) {
-  if (fd < 0) {
-    return;
-  }
-  const int flags = fcntl(fd, F_GETFL, 0);
-  if (flags >= 0) {
-    (void)fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-  }
 }
 
 // Drains a (non-blocking) readable pipe into `output`. Stops on EOF (closing
