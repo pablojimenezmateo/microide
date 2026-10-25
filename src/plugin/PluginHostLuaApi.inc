@@ -178,14 +178,7 @@
   }
 
   PluginInstance* FindPluginByState(lua_State* state) {
-    if (active_plugin != nullptr && active_plugin->state == state) {
-      return active_plugin;
-    }
-    const auto it =
-        std::find_if(plugins.begin(), plugins.end(), [state](const PluginInstance& plugin) {
-          return plugin.state == state;
-        });
-    return it == plugins.end() ? nullptr : &(*it);
+    return const_cast<PluginInstance*>(std::as_const(*this).FindPluginByState(state));
   }
 
   const PluginInstance* FindPluginByState(lua_State* state) const {
@@ -197,6 +190,17 @@
           return plugin.state == state;
         });
     return it == plugins.end() ? nullptr : &(*it);
+  }
+
+  // FindPluginByState and PushBufferContext as the callables the interop helpers
+  // take, instead of a forwarding lambda at every call.
+  auto PluginLookup() const {
+    return [this](lua_State* state) { return FindPluginByState(state); };
+  }
+  auto BufferContextPusher() {
+    return [this](lua_State* state, const std::filesystem::path& buffer_path) {
+      PushBufferContext(state, buffer_path);
+    };
   }
 
   std::string FormatPluginPrefix(const PluginInstance* plugin) const {
@@ -1083,7 +1087,7 @@
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
           return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
-        [this](lua_State* state) { return FindPluginByState(state); }, items, error_message);
+        PluginLookup(), items, error_message);
   }
 
   bool ConfirmSidebarProviderItem(const SidebarProvider& provider,
@@ -1094,7 +1098,7 @@
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
           return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
-        [this](lua_State* state) { return FindPluginByState(state); }, callbacks.open_file,
+        PluginLookup(), callbacks.open_file,
         error_message);
   }
 
@@ -1106,7 +1110,7 @@
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
           return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
-        [this](lua_State* state) { return FindPluginByState(state); }, error_message);
+        PluginLookup(), error_message);
   }
 
   std::vector<PluginHost::LocationResult> QueryLanguageLocations(
@@ -1120,7 +1124,7 @@
     return language_provider_query_interop::QueryLocations(
         kind, language_id, path, line, column, include_declaration, current_project_root,
         language_query_runtimes,
-        [this](lua_State* state) { return FindPluginByState(state); },
+        PluginLookup(),
         [this](lua_State* state, const std::filesystem::path& buffer_path) {
           PushBufferContext(state, buffer_path);
         },
@@ -1138,7 +1142,7 @@
                                   std::string* error_message) {
     return language_provider_query_interop::QuerySignatureHelp(
         language_id, path, line, column, language_query_runtimes,
-        [this](lua_State* state) { return FindPluginByState(state); },
+        PluginLookup(),
         [this](lua_State* state, const std::filesystem::path& buffer_path) {
           PushBufferContext(state, buffer_path);
         },
@@ -1151,7 +1155,7 @@
       std::string* error_message) {
     return language_provider_query_interop::QueryDocumentSymbols(
         language_id, path, language_query_runtimes,
-        [this](lua_State* state) { return FindPluginByState(state); },
+        PluginLookup(),
         [this](lua_State* state, const std::filesystem::path& buffer_path) {
           PushBufferContext(state, buffer_path);
         },
@@ -1169,7 +1173,7 @@
         [this](lua_State* state, const std::filesystem::path& buffer_path) {
           PushBufferTable(state, buffer_path);
         },
-        [this](lua_State* state) { return FindPluginByState(state); }, result, error_message);
+        PluginLookup(), result, error_message);
   }
 
   // Every hover provider for `path`, in registration order, until one answers.

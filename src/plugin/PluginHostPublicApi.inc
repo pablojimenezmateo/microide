@@ -312,7 +312,7 @@ bool PluginHost::ExecuteCommand(std::string_view name,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     executed = provider_query_interop::ExecuteCommand(
         name, args, impl_->commands,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        impl_->PluginLookup(),
         [this](lua_State* state) { impl_->PushPluginContext(state); }, error_message, feedback);
   });
   return executed;
@@ -361,7 +361,7 @@ void PluginHost::ExecuteCommandAsync(
         CommandResult result;
         result.ran = provider_query_interop::ExecuteCommand(
             name, args, impl_->commands,
-            [this](lua_State* state) { return impl_->FindPluginByState(state); },
+            impl_->PluginLookup(),
             [this](lua_State* state) { impl_->PushPluginContext(state); }, &result.error,
             &result.feedback);
         return result;
@@ -623,10 +623,8 @@ std::vector<PluginHost::CompletionCandidate> PluginHost::QueryCompletions(
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     results = provider_query_interop::QueryCompletions(
         language_id, path, line, column, trigger_character, impl_->completion_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
-        [this](lua_State* state, const std::filesystem::path& buffer_path) {
-          impl_->PushBufferContext(state, buffer_path);
-        },
+        impl_->PluginLookup(),
+        impl_->BufferContextPusher(),
         error_message);
   });
 #else
@@ -664,10 +662,8 @@ void PluginHost::QueryCompletionsAsync(
         QueryResult result;
         result.items = provider_query_interop::QueryCompletions(
             language_id, path, line, column, trigger_character, impl_->completion_runtimes,
-            [this](lua_State* state) { return impl_->FindPluginByState(state); },
-            [this](lua_State* state, const std::filesystem::path& buffer_path) {
-              impl_->PushBufferContext(state, buffer_path);
-            },
+            impl_->PluginLookup(),
+            impl_->BufferContextPusher(),
             &result.error);
         return result;
       },
@@ -712,10 +708,8 @@ void PluginHost::QueryCodeActionsAsync(
         result.items = provider_query_interop::QueryCodeActions(
             language_id, path, start_line, start_column, end_line, end_column,
             impl_->code_action_runtimes,
-            [this](lua_State* state) { return impl_->FindPluginByState(state); },
-            [this](lua_State* state, const std::filesystem::path& buffer_path) {
-              impl_->PushBufferContext(state, buffer_path);
-            },
+            impl_->PluginLookup(),
+            impl_->BufferContextPusher(),
             &result.error);
         return result;
       },
@@ -989,10 +983,8 @@ std::vector<PluginHost::CodeActionCandidate> PluginHost::QueryCodeActions(
     results = provider_query_interop::QueryCodeActions(
         language_id, path, start_line, start_column, end_line, end_column,
         impl_->code_action_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
-        [this](lua_State* state, const std::filesystem::path& buffer_path) {
-          impl_->PushBufferContext(state, buffer_path);
-        },
+        impl_->PluginLookup(),
+        impl_->BufferContextPusher(),
         error_message);
   });
 #else
@@ -1135,10 +1127,8 @@ bool PluginHost::DiscoverTests(std::string_view provider_id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     ok = provider_query_interop::DiscoverTests(
         provider_id, path, impl_->current_project_root, impl_->test_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
-        [this](lua_State* state, const std::filesystem::path& buffer_path) {
-          impl_->PushBufferContext(state, buffer_path);
-        },
+        impl_->PluginLookup(),
+        impl_->BufferContextPusher(),
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
           return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
@@ -1175,7 +1165,7 @@ bool PluginHost::RunTests(std::string_view provider_id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     ok = provider_query_interop::RunTests(
         provider_id, test_ids, impl_->test_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); }, results,
+        impl_->PluginLookup(), results,
         error_message);
   });
   return ok;
@@ -1208,7 +1198,7 @@ bool PluginHost::SnapshotScm(std::string_view provider_id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     ok = provider_query_interop::SnapshotScm(
         provider_id, impl_->current_project_root, impl_->scm_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
+        impl_->PluginLookup(),
         [](const std::filesystem::path& project_root, const std::filesystem::path& runtime_path) {
           return path_interop::ResolveRuntimePath(project_root, runtime_path);
         },
@@ -1242,10 +1232,8 @@ std::vector<PluginHost::AnnotationLine> PluginHost::QueryAnnotations(
     lines = provider_query_interop::QueryAnnotations(
         provider_id, path, language_id, visible_start_line, visible_end_line,
         impl_->annotation_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); },
-        [this](lua_State* state, const std::filesystem::path& buffer_path) {
-          impl_->PushBufferContext(state, buffer_path);
-        },
+        impl_->PluginLookup(),
+        impl_->BufferContextPusher(),
         error_message);
   });
 #else
@@ -1281,7 +1269,7 @@ bool PluginHost::LoginAuthProvider(std::string_view provider_id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     ok = provider_query_interop::LoginAuthProvider(
         provider_id, scopes, impl_->auth_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); }, session,
+        impl_->PluginLookup(), session,
         error_message);
   });
   return ok;
@@ -1315,7 +1303,7 @@ bool PluginHost::RefreshAuthSession(std::string_view provider_id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     ok = provider_query_interop::RefreshAuthSession(
         provider_id, session_id, impl_->auth_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); }, session,
+        impl_->PluginLookup(), session,
         error_message);
   });
   return ok;
@@ -1341,7 +1329,7 @@ bool PluginHost::LogoutAuthSession(std::string_view provider_id,
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
     ok = provider_query_interop::LogoutAuthSession(
         provider_id, session_id, impl_->auth_provider_runtimes,
-        [this](lua_State* state) { return impl_->FindPluginByState(state); }, error_message);
+        impl_->PluginLookup(), error_message);
   });
   return ok;
 #else
