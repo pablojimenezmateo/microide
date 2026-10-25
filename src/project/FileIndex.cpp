@@ -97,6 +97,19 @@ void AppendSubtreeRanges(const std::vector<ProjectFile>& files,
 
 FileIndex::FileIndex(FileIndex&& other) noexcept {
   std::unique_lock other_lock(other.files_mutex_);
+  TakeStateFrom(other);
+}
+
+FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
+  if (this == &other) {
+    return *this;
+  }
+  std::scoped_lock lock(files_mutex_, other.files_mutex_);
+  TakeStateFrom(other);
+  return *this;
+}
+
+void FileIndex::TakeStateFrom(FileIndex& other) {
   root_ = std::move(other.root_);
   exclude_globs_ = std::move(other.exclude_globs_);
   scan_status_ = other.scan_status_;
@@ -112,27 +125,6 @@ FileIndex::FileIndex(FileIndex&& other) noexcept {
       std::memory_order_relaxed);
   exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
   include_hidden_cache_ = std::move(other.include_hidden_cache_);
-}
-
-FileIndex& FileIndex::operator=(FileIndex&& other) noexcept {
-  if (this == &other) {
-    return *this;
-  }
-
-  std::scoped_lock lock(files_mutex_, other.files_mutex_);
-  root_ = std::move(other.root_);
-  exclude_globs_ = std::move(other.exclude_globs_);
-  scan_status_ = other.scan_status_;
-  files_ = std::move(other.files_);
-  pending_ = std::move(other.pending_);
-  version_ = other.version_;
-  // See the move constructor: this per-project flag must survive the move.
-  follow_out_of_root_symlinks_.store(
-      other.follow_out_of_root_symlinks_.load(std::memory_order_relaxed),
-      std::memory_order_relaxed);
-  exclude_hidden_cache_ = std::move(other.exclude_hidden_cache_);
-  include_hidden_cache_ = std::move(other.include_hidden_cache_);
-  return *this;
 }
 
 void FileIndex::SetExcludeGlobs(std::vector<std::string> globs) {

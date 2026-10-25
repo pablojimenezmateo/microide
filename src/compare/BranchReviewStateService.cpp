@@ -94,6 +94,13 @@ bool AnyReviewedHunkContentMoved(const BranchReviewTargetState& target_state,
   return false;
 }
 
+// `identity` with its path in the form the store keys hunks by.
+BranchReviewHunkIdentity WithNormalizedPath(const std::filesystem::path& repository_root,
+                                            BranchReviewHunkIdentity identity) {
+  identity.path = NormalizeReviewPath(repository_root, identity.path);
+  return identity;
+}
+
 }  // namespace
 
 std::uint64_t BranchReviewStateService::NowUnixMs() {
@@ -220,14 +227,8 @@ void BranchReviewStateService::MarkHunkReviewed(const BranchReviewTargetIdentity
   if (target_state == nullptr) {
     return;
   }
-  const BranchReviewHunkIdentity normalized{
-      .path = NormalizeReviewPath(target.repository_root, identity.path),
-      .old_start = identity.old_start,
-      .old_count = identity.old_count,
-      .new_start = identity.new_start,
-      .new_count = identity.new_count,
-      .content_hash = identity.content_hash,
-  };
+  const BranchReviewHunkIdentity normalized =
+      WithNormalizedPath(target.repository_root, identity);
   for (BranchReviewHunkReviewEntry& entry : target_state->reviewed_hunks) {
     if (HunkIdentitiesEqual(entry.identity, normalized)) {
       entry.reviewed_at_unix_ms = NowUnixMs();
@@ -249,14 +250,8 @@ void BranchReviewStateService::MarkHunkUnreviewed(const BranchReviewTargetIdenti
   if (target_state == nullptr) {
     return;
   }
-  const BranchReviewHunkIdentity normalized{
-      .path = NormalizeReviewPath(target.repository_root, identity.path),
-      .old_start = identity.old_start,
-      .old_count = identity.old_count,
-      .new_start = identity.new_start,
-      .new_count = identity.new_count,
-      .content_hash = identity.content_hash,
-  };
+  const BranchReviewHunkIdentity normalized =
+      WithNormalizedPath(target.repository_root, identity);
   auto& hunks = target_state->reviewed_hunks;
   const std::size_t before = hunks.size();
   hunks.erase(std::remove_if(hunks.begin(), hunks.end(),

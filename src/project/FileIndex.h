@@ -153,6 +153,8 @@ class FileIndex {
   const std::filesystem::path& root() const { return root_; }
 
  private:
+  // The move body: every member taken from `other`. Both locks are held.
+  void TakeStateFrom(FileIndex& other);
   struct CacheBucket {
     SharedPathList files;
     bool needs_refresh = true;
