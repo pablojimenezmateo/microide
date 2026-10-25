@@ -10,10 +10,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
 #include "workspace/WorkspaceContext.h"
+#include "workspace/debug/DebugFrameFocus.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -30,7 +32,10 @@ DebugExecutionView BuildExecutionView(const dap_protocol::DapStoppedEvent& stop,
   // path resolves one before frames arrive); 0 is the "unknown" fallback.
   view.thread_id = stop.thread_id.value_or(0);
   view.stop_reason = stop.reason;
-  view.focused_frame_index = 0;
+  view.focused_frame_index = TopFrameWithSource(frames, [](const std::string& path) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error) && !error;
+  });
   view.frames.reserve(frames.size());
   for (const dap_protocol::DapStackFrame& frame : frames) {
     DebugStackFrameView row;

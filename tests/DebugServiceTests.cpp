@@ -6,6 +6,7 @@
 #include "util/JsonValue.h"
 #include "workspace/debug/DapProtocol.h"
 #include "workspace/debug/DebugBreakpointsModel.h"
+#include "workspace/debug/DebugFrameFocus.h"
 #include "workspace/debug/DebugService.h"
 #include "workspace/CommandSummary.h"
 #include "workspace/debug/DebugSession.h"
@@ -3342,9 +3343,42 @@ void TestLaunchArgumentsExpandWorkspaceFolder() {
   Expect((*parsed)["stopOnEntry"].AsBool(), "non-strings are left alone");
 }
 
+
+// A stop shows the topmost frame whose source can be opened (VS Code's
+// getTopStackFrame): a pause inside a sleep lands in libc frames whose sources
+// are not on this machine, and the program's own frame further down is the one
+// to show (QA dbg-pause, which passed or failed by where the pause landed).
+void TestStopFocusesTheTopFrameWithSource() {
+  using microide::workspace::TopFrameWithSource;
+  using microide::workspace::dap_protocol::DapStackFrame;
+  const auto frame = [](std::string path, std::string hint = {}) {
+    DapStackFrame f;
+    f.source.path = std::move(path);
+    f.presentation_hint = std::move(hint);
+    return f;
+  };
+  const auto on_disk = [](const std::string& path) { return path.rfind("/project/", 0) == 0; };
+  const std::vector<DapStackFrame> paused = {frame("nptl/cancellation.c"),
+                                             frame("sysdeps/unix/sysv/linux/clock_nanosleep.c"),
+                                             frame(""), frame("/project/spin.c")};
+  Expect(TopFrameWithSource(paused, on_disk) == 3, "the program's frame, past the library's");
+  Expect(TopFrameWithSource(std::vector<DapStackFrame>{frame("/project/a.c"), frame("/project/b.c")},
+                            on_disk) == 0,
+         "a top frame with source stays the one");
+  Expect(TopFrameWithSource(std::vector<DapStackFrame>{frame("/project/x.c", "label"),
+                                                       frame("/project/y.c", "subtle"),
+                                                       frame("/project/z.c")},
+                            on_disk) == 2,
+         "label and subtle frames are not the stop's");
+  Expect(TopFrameWithSource(std::vector<DapStackFrame>{frame("libc.c"), frame("")}, on_disk) == 0,
+         "with no source anywhere, the top frame, as before");
+  Expect(TopFrameWithSource(std::vector<DapStackFrame>{}, on_disk) == 0, "no frames: index 0");
+}
+
 }  // namespace
 
 void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "DebugService/StopFocusesTheTopFrameWithSource", TestStopFocusesTheTopFrameWithSource);
   AddTest(tests, "DebugService/LaunchArgumentsExpandWorkspaceFolder", TestLaunchArgumentsExpandWorkspaceFolder);
   AddTest(tests, "DebugService/ValueTreeNodeIdsAreMonotonic",
           TestDebugValueTreeNodeIdsAreMonotonic);
