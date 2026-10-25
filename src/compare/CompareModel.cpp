@@ -548,6 +548,23 @@ bool Utf8CodepointEquals(std::string_view left,
          left.substr(left_start, left_length) == right.substr(right_start, left_length);
 }
 
+// Calls `visit(first, last)` for each maximal run [first, last) of set flags.
+template <typename Visit>
+void ForEachChangedRun(const std::vector<char>& changed, Visit&& visit) {
+  std::size_t index = 0;
+  while (index < changed.size()) {
+    if (!changed[index]) {
+      ++index;
+      continue;
+    }
+    const std::size_t first = index;
+    while (index < changed.size() && changed[index]) {
+      ++index;
+    }
+    visit(first, index);
+  }
+}
+
 void BuildSpansFromChangedCodepointsInto(const std::vector<std::size_t>& offsets,
                                          const std::vector<char>& changed,
                                          std::vector<CompareTextSpan>& spans) {
@@ -556,21 +573,9 @@ void BuildSpansFromChangedCodepointsInto(const std::vector<std::size_t>& offsets
     return;
   }
 
-  std::size_t index = 0;
-  while (index < changed.size()) {
-    if (!changed[index]) {
-      ++index;
-      continue;
-    }
-    const std::size_t start = index;
-    while (index < changed.size() && changed[index]) {
-      ++index;
-    }
-    spans.push_back(CompareTextSpan{
-        .start = offsets[start],
-        .end = offsets[index],
-    });
-  }
+  ForEachChangedRun(changed, [&](std::size_t first, std::size_t last) {
+    spans.push_back(CompareTextSpan{.start = offsets[first], .end = offsets[last]});
+  });
 }
 
 void BuildSpansFromChangedTokensInto(const TokenizedLine& line,
@@ -581,21 +586,10 @@ void BuildSpansFromChangedTokensInto(const TokenizedLine& line,
     return;
   }
 
-  std::size_t index = 0;
-  while (index < changed.size()) {
-    if (!changed[index]) {
-      ++index;
-      continue;
-    }
-    const std::size_t start = index;
-    while (index < changed.size() && changed[index]) {
-      ++index;
-    }
-    spans.push_back(CompareTextSpan{
-        .start = line.tokens[start].start,
-        .end = line.tokens[index - 1].end,
-    });
-  }
+  ForEachChangedRun(changed, [&](std::size_t first, std::size_t last) {
+    spans.push_back(
+        CompareTextSpan{.start = line.tokens[first].start, .end = line.tokens[last - 1].end});
+  });
 }
 
 // Clips in place: the trimmed set is a subsequence of the input (each surviving
