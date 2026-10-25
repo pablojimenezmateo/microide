@@ -102,14 +102,10 @@ class TextViewport {
     std::size_t inserted = 0;
   };
 
-  struct WrappedVisualRow {
-    std::size_t line_index = 0;
-    std::size_t visual_start = 0;
-    std::size_t visual_end = 0;
-    // Hanging-indent: visual columns the renderer should prepend before this
-    // continuation row's content (0 for first rows of a line).
-    std::size_t indent = 0;
-  };
+  // One visual row of the wrapped layout: the layout cache's own row type (this
+  // used to be a field-for-field copy filled from it). `indent` is the hanging
+  // indent the renderer prepends to a continuation row (0 for a line's first row).
+  using WrappedVisualRow = TextLayoutCache::WrappedRow;
 
   TextViewport();
   // Defaulted: the members that do not travel memberwise say how they do travel

@@ -257,13 +257,7 @@ TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t 
   if (visual_row_index >= WrappedRowCount()) {
     return {};
   }
-  const WrappedRowLayout row = WrappedRowAt(visual_row_index);
-  return WrappedVisualRow{
-      .line_index = row.line_index,
-      .visual_start = row.visual_start,
-      .visual_end = row.visual_end,
-      .indent = row.indent,
-  };
+  return WrappedRowAt(visual_row_index);
 }
 
 LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int visual_col) const {
