@@ -2147,3 +2147,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(microide_lsp_serialize_bench PRIVATE -Werror)
   endif()
 endif()
+
+# Every test spawns git somewhere -- fixture repositories, the git sidebar, the
+# perf generators -- always against a temporary directory it just `git init`ed.
+# A GIT_DIR inherited from the caller (a git hook, `git bisect run`) silently
+# redirects all of that at the enclosing repository instead: `git init` re-inits
+# it as BARE (for a worktree, in the main repository's shared config) and the
+# fixture commits land on its HEAD. That happened once, under `git bisect run`.
+# Strip the repository-locating variables from every registered test.
+get_property(_microide_all_tests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${_microide_all_tests} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+  "GIT_DIR=unset:"
+  "GIT_WORK_TREE=unset:"
+  "GIT_INDEX_FILE=unset:"
+  "GIT_COMMON_DIR=unset:"
+  "GIT_OBJECT_DIRECTORY=unset:"
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES=unset:"
+  "GIT_NAMESPACE=unset:"
+  "GIT_PREFIX=unset:")

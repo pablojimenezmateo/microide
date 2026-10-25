@@ -24,6 +24,13 @@
 
 set -uo pipefail
 
+# The QA flows and test fixtures `git init` temporary repositories. A GIT_DIR
+# inherited from a git hook or `git bisect run` would point every one of those
+# git calls at THIS repository instead (re-initialising it as bare and
+# committing fixtures onto its HEAD), so drop the repository-locating variables.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
+  GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_PREFIX
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 

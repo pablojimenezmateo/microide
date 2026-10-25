@@ -60,8 +60,17 @@ GIT_CONFIG_ARGS = [
     "-c", "user.name=Fixture",
     "-c", "user.email=fixture@microide",
 ]
+# The repository-locating variables are DROPPED, not pinned: inherited from a
+# git hook or `git bisect run`, GIT_DIR makes `git -C <fixture> init` re-init the
+# enclosing repository (as bare) and every fixture commit lands on its HEAD.
+_REPOSITORY_LOCATING_VARIABLES = {
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
+    "GIT_PREFIX",
+}
 GIT_ENV = {
-    **os.environ,
+    **{key: value for key, value in os.environ.items()
+       if key not in _REPOSITORY_LOCATING_VARIABLES},
     "GIT_AUTHOR_DATE": "2020-01-01T00:00:00+0000",
     "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+0000",
     "GIT_CONFIG_NOSYSTEM": "1",
