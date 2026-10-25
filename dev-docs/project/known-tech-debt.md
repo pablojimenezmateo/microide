@@ -2397,7 +2397,39 @@ LTO on the static build, `-Os` for PCRE2, PCRE2 without JIT on the server (host
 search is not interactive per keystroke), `-ffunction-sections -Wl,--gc-sections`.
 Not done: the size costs one install round trip, not runtime.
 
-### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN]
+### TD-2026-10-13-338 — the LTO build leaves trivial accessors out of line. [OPEN — step 1 done; steps 2-3 need perf-runner-v1]
+
+**Step 1 done 2026-10-25, without `perf record`** (`kernel.perf_event_paranoid` is 4
+on the development box): callgrind (valgrind unpacked from the distribution's
+package without root, as tools/tidy.py does for clang-tidy) over 24 gated
+scenarios on the LTO perf build, joined with `nm -S` sizes, lists the binary's
+own functions of at most 64 bytes called at least 20,000 times. The ones the
+inliner could have taken (call counts summed over the sample):
+
+| callee (bytes) | calls | from |
+| --- | --- | --- |
+| `std::operator==(string_view, string_view)` (54) | 6.5M | `JsonValue::operator[]` 3.0M, the glyph cache's `ResolveEntry` 1.2M |
+| `string_view::substr` (40) | 1.4M | `FileFinder::Refresh` 1.0M, `JsonRpcMessageFramer::Next` |
+| `util::AddPerformanceCounter` (29) | 0.9M | `ResolveEntry`, `TextRenderer::MeasureWidth` |
+| `editor::detail::PositionLess` (24) | 0.7M | a `std::sort` comparator |
+| `PerformanceTrace::Scope::Scope` (55) | 0.4M | `EditorViewRenderer::Render`, `HighlightedLineTokens` |
+| JSON `Parser::SkipWhitespace` (64) | 0.3M | `Parser::ParseValue` |
+| `workspace::Contains(SDL_FRect, ...)` (51) | 0.08M | `PointerOver`, `CursorKindForPosition` |
+
+Not inliner misses: `LineSpan::BufferAt/BufferWindow/BufferSize` (9-12 bytes) are
+reached through `LineSpan`'s function pointers, and `TextRenderer::CharWidth` /
+`LineHeight` forward to a virtual backend -- both by design. `string_view ==` is
+the same shape as the JSON accessors this entry started from: libstdc++'s inline
+operator left out of line once the unit's growth budget is spent, which neither
+an attribute on our code nor moving a definition can reach -- that is the flag
+question below. The project-owned ones (`AddPerformanceCounter`, `Scope::Scope`,
+`Contains`, `PositionLess`) can be made inlinable by definition (header-inline)
+whatever the flag decision.
+
+The rest is unchanged: (2) the `-O3` / `--param inline-unit-growth=` A/B of the whole
+suite on `perf-runner-v1`, (3) then flag versus definitions. Reproduce the list:
+`valgrind --tool=callgrind --demangle=no` per scenario (`--no-isolate
+--pin-cores=off --iterations=1`), sum `calls=` per callee, keep `nm -S` <= 64 bytes.
 
 Found fixing TD-2026-10-09-335: under the perf preset (`-O2 -flto=auto`, whole
 program) GCC kept `JsonValue::AsInt` — by then a single `get_if` branch plus a
