@@ -127,6 +127,46 @@ void SidebarCoordinator::ApplyTreeGitStatuses(project::SharedGitTreeStatusMap st
   }
 }
 
+SidebarCoordinator::GitSelectionKey SidebarCoordinator::CurrentGitSelection() const {
+  const GitSidebarState& git = state_.sidebar.git;
+  if (git.selected_index >= git.entries.size()) {
+    return {};
+  }
+  const GitSidebarEntry& entry = git.entries[git.selected_index];
+  return GitSelectionKey{.path = entry.path, .section = entry.section};
+}
+
+void SidebarCoordinator::ApplyGitSnapshotKeepingSelection(
+    GitSidebarState::RefreshSnapshot snapshot, const GitSelectionKey& previous) {
+  if (snapshot.includes_tree_git_statuses) {
+    ApplyTreeGitStatuses(std::move(snapshot.tree_git_statuses));
+  }
+  GitSidebarState& git = state_.sidebar.git;
+  git.selected_index = 0;
+  ApplyGitRefreshSnapshot(git, std::move(snapshot), project_root_);
+  // Preserve refresh-in-flight state when data was rendered from a synchronous
+  // fallback while an async refresh request is still pending.
+  git.refreshing = false;
+
+  const bool git_view_shown = state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git;
+  for (std::size_t i = 0; i < git.entries.size(); ++i) {
+    if (git.entries[i].path == previous.path && git.entries[i].section == previous.section) {
+      git.selected_index = i;
+      RevealSelectedGitLine();
+      if (git_view_shown) {
+        operations_.request_sidebar_redraw();
+      }
+      return;
+    }
+  }
+
+  RevealSelectedGitLine();
+  operations_.request_window_redraw();
+  if (git_view_shown) {
+    operations_.request_sidebar_redraw();
+  }
+}
+
 void SidebarCoordinator::RefreshGit() {
   if (state_.sidebar.git.refreshing &&
       operations_.consume_git_refresh_snapshot != nullptr) {
@@ -137,52 +177,11 @@ void SidebarCoordinator::RefreshGit() {
       }
       return;
     }
-    if (pending_snapshot.includes_tree_git_statuses) {
-      ApplyTreeGitStatuses(std::move(pending_snapshot.tree_git_statuses));
-    }
-
-    const std::string previous_path =
-        state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
-            ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path
-            : std::string{};
-    const GitSidebarEntry::Section previous_section =
-        state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
-            ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].section
-            : GitSidebarEntry::Section::Changed;
-
-    state_.sidebar.git.selected_index = 0;
-    ApplyGitRefreshSnapshot(state_.sidebar.git, std::move(pending_snapshot), project_root_);
-    state_.sidebar.git.refreshing = false;
-
-    for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
-      if (state_.sidebar.git.entries[i].path == previous_path &&
-          state_.sidebar.git.entries[i].section == previous_section) {
-        state_.sidebar.git.selected_index = i;
-        RevealSelectedGitLine();
-        if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
-          operations_.request_sidebar_redraw();
-        }
-        return;
-      }
-    }
-
-    RevealSelectedGitLine();
-    operations_.request_window_redraw();
-    if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
-      operations_.request_sidebar_redraw();
-    }
+    ApplyGitSnapshotKeepingSelection(std::move(pending_snapshot), CurrentGitSelection());
     return;
   }
 
-  const std::string previous_path =
-      state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
-          ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path
-          : std::string{};
-  const GitSidebarEntry::Section previous_section =
-      state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
-          ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].section
-          : GitSidebarEntry::Section::Changed;
-
+  const GitSelectionKey previous = CurrentGitSelection();
   state_.sidebar.git.selected_index = 0;
   if (project_root_.empty()) {
     state_.sidebar.git.entries.clear();
@@ -190,7 +189,7 @@ void SidebarCoordinator::RefreshGit() {
   }
 
   GitSidebarState::RefreshSnapshot snapshot;
-  bool has_snapshot =
+  const bool has_snapshot =
       operations_.consume_git_refresh_snapshot != nullptr &&
       operations_.consume_git_refresh_snapshot(&snapshot);
   if (!has_snapshot) {
@@ -202,32 +201,7 @@ void SidebarCoordinator::RefreshGit() {
     operations_.request_sidebar_redraw();
     return;
   }
-  if (snapshot.includes_tree_git_statuses) {
-    ApplyTreeGitStatuses(std::move(snapshot.tree_git_statuses));
-  }
-
-  ApplyGitRefreshSnapshot(state_.sidebar.git, std::move(snapshot), project_root_);
-  // Preserve refresh-in-flight state when data was rendered from a synchronous
-  // fallback while an async refresh request is still pending.
-  state_.sidebar.git.refreshing = false;
-
-  for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
-    if (state_.sidebar.git.entries[i].path == previous_path &&
-        state_.sidebar.git.entries[i].section == previous_section) {
-      state_.sidebar.git.selected_index = i;
-      RevealSelectedGitLine();
-      if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
-        operations_.request_sidebar_redraw();
-      }
-      return;
-    }
-  }
-
-  RevealSelectedGitLine();
-  operations_.request_window_redraw();
-  if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
-    operations_.request_sidebar_redraw();
-  }
+  ApplyGitSnapshotKeepingSelection(std::move(snapshot), previous);
 }
 
 bool SidebarCoordinator::CatchUpSearchResults(const editor::TextViewport& viewport) {

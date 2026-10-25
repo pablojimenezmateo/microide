@@ -182,6 +182,17 @@ class SidebarCoordinator {
   // the git view's own repaint decisions (an early return when its selection
   // survives the refresh) say nothing about the tree's rows.
   void ApplyTreeGitStatuses(project::SharedGitTreeStatusMap statuses);
+  // What identifies the git selection across a refresh, which rebuilds the
+  // entries: the same path in the same section. Empty when nothing is selected.
+  struct GitSelectionKey {
+    std::string path;
+    GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
+  };
+  GitSelectionKey CurrentGitSelection() const;
+  // Applies a refresh snapshot, re-selects `previous` when it survived the
+  // refresh (else the first row), and repaints what changed.
+  void ApplyGitSnapshotKeepingSelection(GitSidebarState::RefreshSnapshot snapshot,
+                                        const GitSelectionKey& previous);
   const GitSidebarEntry* GitEntry(std::size_t entry_index) const;
   void ReportDisabledGitAction(GitSidebarActionId action, std::size_t entry_index) const;
   void ReportGitOperationFailure(std::string_view verb, const GitSidebarEntry& entry) const;
