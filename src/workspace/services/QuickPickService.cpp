@@ -104,6 +104,7 @@ void QuickPickService::Preview() {
     case QuickPickKind::LaunchConfig:
     case QuickPickKind::WorkspaceSymbol:  // VS Code opens nothing until Enter
     case QuickPickKind::LanguageMode:
+    case QuickPickKind::RecentEditor:
       break;
   }
 }
@@ -139,6 +140,11 @@ void QuickPickService::Accept() {
     case QuickPickKind::LanguageMode:
       if (operations_.set_language) {
         operations_.set_language(item.value);
+      }
+      break;
+    case QuickPickKind::RecentEditor:
+      if (operations_.activate_tab) {
+        operations_.activate_tab(item.index);
       }
       break;
   }
@@ -266,6 +272,50 @@ QuickPickState QuickPickService::WorkspaceSymbols(std::string query) {
   picker.noun = "symbols";
   picker.server_filtered = true;
   picker.query.SetText(std::move(query));
+  return picker;
+}
+
+QuickPickState QuickPickService::RecentEditors(const EditorGroup& group, const std::filesystem::path& root,
+                                              bool back) {
+  QuickPickState picker;
+  picker.kind = QuickPickKind::RecentEditor;
+  picker.title = "Open Editors";
+  picker.noun = "editors";
+  const auto add = [&](const TabEntry& tab) {
+    std::string where;
+    if (!tab.path.empty()) {
+      const std::filesystem::path relative = tab.path.lexically_relative(root);
+      where = relative.empty() || relative.native().starts_with("..") ? tab.path.parent_path().generic_string()
+                                                                     : relative.parent_path().generic_string();
+    }
+    picker.items.push_back(QuickPickItem{
+        .index = tab.stable_id,
+        .value = {},
+        .line = 0,
+        .column = 0,
+        .primary_label = tab.title,
+        .secondary_label = std::move(where),
+        .search_text = util::ToLowerAscii(tab.title),
+    });
+  };
+  // Most recent first, then any tab the order has not seen yet, in strip order.
+  for (const std::uint64_t id : group.recent_tab_ids) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.stable_id == id) {
+        add(tab);
+        break;
+      }
+    }
+  }
+  for (const TabEntry& tab : group.open_tabs) {
+    if (std::find(group.recent_tab_ids.begin(), group.recent_tab_ids.end(), tab.stable_id) ==
+        group.recent_tab_ids.end()) {
+      add(tab);
+    }
+  }
+  if (picker.items.size() > 1) {
+    picker.selected_index = back ? picker.items.size() - 1 : 1;
+  }
   return picker;
 }
 

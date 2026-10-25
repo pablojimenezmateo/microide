@@ -920,6 +920,22 @@ class App:
         self._focus()
         self._xdotool("key", "--clearmodifiers", chord)
 
+    def hold(self, modifier: str, chords: list[str]) -> None:
+        """Presses `chords` while `modifier` (an xdotool key name: "ctrl") stays
+        down, then lets it go: Ctrl+Tab, Tab, release. `key` releases the chord's
+        modifiers with it, which is a tap. X11 only -- the control channel's `key`
+        has no held modifier, so on Wayland this fails the flow rather than
+        pretending to have held one."""
+        self._record({"hold": modifier, "keys": chords})
+        if self.wayland:
+            self.expect(False, f"hold {modifier} has no Wayland backend")
+            return
+        self._focus()
+        self._xdotool("keydown", "--clearmodifiers", modifier)
+        for chord in chords:
+            self._xdotool("key", chord)
+        self._xdotool("keyup", modifier)
+
     def _await_typed_input(self, timeout: float = 3.0) -> None:
         """Waits until the app has taken every character typed through X since the
         last wait: their `microide input: text=` lines (MICROIDE_TRACE_INPUT), in

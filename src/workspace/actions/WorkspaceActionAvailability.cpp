@@ -496,6 +496,8 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
               operations_.active_compare_tab() != nullptr &&
               operations_.active_compare_tab()->right_editable);
     case ActionId::Focus:
+    case ActionId::FocusNextPart:
+    case ActionId::FocusPreviousPart:
       return true;
     case ActionId::IndentWidth:
       return true;

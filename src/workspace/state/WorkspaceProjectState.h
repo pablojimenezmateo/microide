@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <string_view>
 #include <filesystem>
@@ -382,6 +384,7 @@ enum class QuickPickKind : std::uint8_t {
   DocumentSymbol,  // reveal (`line`, `column`) in the active editor, previewed likewise
   WorkspaceSymbol,  // open `value` (a path) at `line`, `column` = the server's character
   LanguageMode,     // set the active buffer's language to `value` ("" detects it again)
+  RecentEditor,     // activate the focused group's tab whose stable id is `index`
 };
 
 struct QuickPickItem {
@@ -725,11 +728,60 @@ struct EditorGroup {
   std::vector<TabEntry> open_tabs;
   std::size_t active_tab_index = 0;
   int tab_scroll_index = 0;
+  // The group's tabs by stable id, most recently active first (Ctrl+Tab's order).
+  // Frame prep observes the active tab (NoteActiveTabUse), so every way a tab
+  // becomes active counts without a hook per path; ids of closed tabs drop out.
+  std::vector<std::uint64_t> recent_tab_ids;
 
   bool has_active_tab() const { return active_tab_index < open_tabs.size(); }
+  // Move the active tab to the front of recent_tab_ids, and forget closed tabs.
+  void NoteActiveTabUse() {
+    if (!has_active_tab()) {
+      return;
+    }
+    const std::uint64_t id = EnsureTabStableId(open_tabs[active_tab_index]);
+    if (!recent_tab_ids.empty() && recent_tab_ids.front() == id &&
+        recent_tab_ids.size() <= open_tabs.size()) {
+      return;  // the settled frame: nothing moved
+    }
+    std::erase(recent_tab_ids, id);
+    recent_tab_ids.insert(recent_tab_ids.begin(), id);
+    std::erase_if(recent_tab_ids, [&](std::uint64_t recent) {
+      return std::none_of(open_tabs.begin(), open_tabs.end(),
+                          [&](const TabEntry& tab) { return tab.stable_id == recent; });
+    });
+  }
   TabEntry& active_tab() { return open_tabs[active_tab_index]; }
   const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
 };
+
+// F6 / Shift+F6 (Focus Next / Previous Part): the surface after `current` among
+// those on screen, in visual order -- sidebar (left), editor (centre), debug pane
+// (right), panel (bottom) -- wrapping at both ends. An ordered ring rather than a
+// chain of conditions, so no surface can be left out of the rotation.
+inline FocusTarget NextSurfaceInFocusRing(FocusTarget current, bool sidebar, bool debug_pane, bool panel,
+                                          bool backward) {
+  std::array<FocusTarget, 4> ring{};
+  std::size_t size = 0;
+  if (sidebar) {
+    ring[size++] = FocusTarget::Sidebar;
+  }
+  ring[size++] = FocusTarget::Editor;
+  if (debug_pane) {
+    ring[size++] = FocusTarget::DebugPane;
+  }
+  if (panel) {
+    ring[size++] = FocusTarget::Panel;
+  }
+  std::size_t at = 0;
+  for (std::size_t i = 0; i < size; ++i) {
+    if (ring[i] == current) {
+      at = i;
+      break;
+    }
+  }
+  return ring[(at + (backward ? size - 1 : 1)) % size];
+}
 
 // The number a new untitled buffer takes: the smallest no open untitled tab of
 // any group uses, as VS Code numbers untitled editors.

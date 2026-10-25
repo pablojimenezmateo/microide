@@ -54,7 +54,8 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
     return *chord;
   }
 
-  const ResolvedKeybinding* binding = FindKeybinding(bindings, event.key, modifiers, key_ctx);
+  const ResolvedKeybinding* binding =
+      FindKeybinding(bindings, event.key, modifiers, key_ctx, operations_.action_enabled);
   if (binding == nullptr) {
     return false;
   }

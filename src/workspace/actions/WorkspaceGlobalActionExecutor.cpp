@@ -186,6 +186,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return reject("Cannot focus target: " +
                     (request.raw_target.empty() ? std::string("<empty>") : request.raw_target));
     }
+    case ActionId::FocusNextPart:
+    case ActionId::FocusPreviousPart:
+      context_.CycleSurfaceFocus(id == ActionId::FocusPreviousPart);
+      return DispatchResult::Handled;
     case ActionId::OpenCommandPalette:
       context_.OpenCommandPalette();
       return DispatchResult::Handled;

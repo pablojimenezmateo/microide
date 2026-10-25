@@ -243,6 +243,8 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::KeyDown");
         return finish(operations_.handle_key_down(event.key));
       }
+    case SDL_EVENT_KEY_UP:
+      return finish(operations_.handle_key_up && operations_.handle_key_up(event.key));
     default:
       return finish(false);
   }

@@ -1026,6 +1026,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                                               : kind == QuickPickKind::DocumentSymbol ? "document-symbol"
                                                               : kind == QuickPickKind::WorkspaceSymbol ? "workspace-symbol"
                                                               : kind == QuickPickKind::LanguageMode ? "language-mode"
+                                                              : kind == QuickPickKind::RecentEditor ? "recent-editor"
                                                                                                       : "launch-config"));
               }
               overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));

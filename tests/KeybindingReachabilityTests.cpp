@@ -213,8 +213,12 @@ void TestEveryBuiltinBindingDispatchesWhereItsRegistrationSays() {
       if (binding.from_plugin) {
         continue;
       }
-      const ResolvedKeybinding* first =
-          workspace::FindKeybinding(bindings, binding.key, binding.modifiers, context);
+      // The rule dispatch applies: of bindings sharing a chord, the first whose
+      // action is enabled.
+      fixture.Apply();
+      const ResolvedKeybinding* first = workspace::FindKeybinding(
+          bindings, binding.key, binding.modifiers, context,
+          [&](workspace::ActionId action) { return TestAccess::ActionEnabled(fixture.shell, action); });
       const bool registered_here = first == &binding;
       const std::optional<std::string_view> gate = Gate(binding, focus);
       const bool expected = registered_here && !gate.has_value();

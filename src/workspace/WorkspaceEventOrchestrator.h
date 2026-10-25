@@ -68,6 +68,9 @@ class WorkspaceEventDispatcher {
     std::function<void()> end_selection_gesture;
     std::function<void()> request_window_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_down;
+    // A key let go. Only the recent-editors pick listens: releasing Ctrl after
+    // Ctrl+Tab opens the editor it has selected, as in VS Code.
+    std::function<bool(const SDL_KeyboardEvent&)> handle_key_up;
     // Files dropped onto the window. Takes the raw SDL path; the decision of what
     // a drop means lives in WorkspaceFileDrop.h, not here and not in the shell.
     std::function<bool(const char*)> handle_file_drop;

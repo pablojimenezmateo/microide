@@ -714,6 +714,8 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
         continue;
       }
       EditorGroup& group = project_state.editor_groups[pane.group_index];
+      // Ctrl+Tab's most-recently-used order, from whatever made a tab active.
+      group.NoteActiveTabUse();
       editor::TextViewport* viewport = GroupActiveViewport(group);
       if (viewport == nullptr) {
         continue;

@@ -230,6 +230,17 @@ WorkspaceShell::WorkspaceShell() {
                 assist_service_.OpenWorkspaceSymbol(path, line, static_cast<int>(character));
               },
           .set_language = [this](const std::string& language) { ApplyLanguageModeToActiveEditor(language); },
+          .activate_tab =
+              [this](std::uint64_t stable_id) {
+                const EditorGroup& group = context_.current_project_state.focused_group();
+                for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
+                  if (group.open_tabs[i].stable_id == stable_id) {
+                    MakeEditorTabService().Activate(i);
+                    RequestWindowRedraw();
+                    return;
+                  }
+                }
+              },
       });
   tab_strip_chrome_.Configure(
       context_, tab_strip_service_, layout_mode_service_, output_channels_,

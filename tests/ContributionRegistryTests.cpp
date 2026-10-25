@@ -104,6 +104,10 @@ void TestBuiltinKeybindingsDoNotShadowEachOther() {
                                                           b.skips_terminal)) {
         continue;
       }
+      // Declared to take the chord when the earlier one's action is not enabled.
+      if (b.shares_chord) {
+        continue;
+      }
       offenders += a.id + " vs " + b.id + " (" +
                    microide::workspace::FormatKeyChord(a.key, a.modifiers) + "); ";
     }

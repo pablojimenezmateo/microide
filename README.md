@@ -610,7 +610,8 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 |-----|--------|
 | `Ctrl+p` | Open file finder (fuzzy quick-open; `file:line[:col]` opens at a line, a leading `>` switches to commands, `:` to Go to Line) |
 | `Ctrl+b` | Toggle sidebar |
-| `Ctrl+Tab` | Cycle focus: sidebar → editor → command/terminal pane |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Switch to the previously used editor of the focused group (hold Ctrl and press Tab again to step further back; releasing Ctrl opens the selected one) |
+| `F6` / `Shift+F6` | Move focus to the next / previous visible part: sidebar → editor panes → bottom panel → debug pane |
 | `Ctrl+w` | Close active tab |
 | `Ctrl+Shift+t` | Reopen the last closed editor, caret where it was (again for the one before) |
 | `Ctrl+q` | Quit (a hot exit: no prompt, unsaved edits come back on the next launch) |
@@ -733,6 +734,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `find-references`
 - `call-hierarchy [incoming|outgoing]`
 - `focus <editor|sidebar|panel>`
+- `focus-next-part`
+- `focus-previous-part`
 - `goto-definition`
 - `goto-symbol [query]`
 - `language-mode [language|auto|plaintext]`

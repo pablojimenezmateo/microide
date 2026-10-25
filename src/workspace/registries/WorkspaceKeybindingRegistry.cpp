@@ -428,6 +428,31 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
           .skips_terminal = true,
       },
+      // VS Code's F6 under its other `when`: with no program running (Pause is
+      // not enabled), F6 / Shift+F6 move the keyboard between the window's parts.
+      KeybindingSpec{
+          .id = "focus-next-part",
+          .action = ActionId::FocusNextPart,
+          .key = SDLK_F6,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+          .shares_chord = true,
+      },
+      KeybindingSpec{
+          .id = "focus-previous-part",
+          .action = ActionId::FocusPreviousPart,
+          .key = SDLK_F6,
+          .modifiers = SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .skips_terminal = true,
+      },
       // F5 starts a session when none is running and continues a stopped one;
       // Shift+F5 stops it (VS Code's pair).
       KeybindingSpec{
@@ -1381,6 +1406,7 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.command_name = spec.command_name;
     rb.from_plugin = false;
     rb.skips_terminal = skips_terminal(spec.id, spec.skips_terminal);
+    rb.shares_chord = spec.shares_chord;
     result.push_back(std::move(rb));
   }
 
@@ -1471,14 +1497,26 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,
                                           SDL_Keycode key,
                                           SDL_Keymod modifiers,
-                                          KeybindingContext context) {
+                                          KeybindingContext context,
+                                          const std::function<bool(ActionId)>& action_enabled) {
   const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
+  const ResolvedKeybinding* first = nullptr;
   for (const ResolvedKeybinding& rb : bindings) {
-    if (BindingMatches(rb, key, relevant, context)) {
+    if (!BindingMatches(rb, key, relevant, context)) {
+      continue;
+    }
+    if (!action_enabled) {
+      return &rb;
+    }
+    if (first == nullptr) {
+      first = &rb;
+    }
+    // A plugin command (no action) is always offered.
+    if (!rb.command_name.empty() || action_enabled(rb.action)) {
       return &rb;
     }
   }
-  return nullptr;
+  return first;
 }
 
 bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mods_out) {

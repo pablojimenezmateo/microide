@@ -3,6 +3,7 @@
 #include "workspace/services/TerminalPanelService.h"
 
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -226,6 +227,17 @@ void WorkspaceActionContext::OpenLaunchConfigPicker() {
   if (operations_.open_launch_config_picker) {
     operations_.open_launch_config_picker();
   }
+}
+
+void WorkspaceActionContext::CycleSurfaceFocus(bool backward) {
+  if (state_.overlay.visible) {
+    state_.surface.focus = FocusTarget::Overlay;
+    return;
+  }
+  state_.surface.focus = NextSurfaceInFocusRing(state_.surface.focus, state_.sidebar.visible,
+                                                state_.debug_pane.visible,
+                                                state_.panel.content != PanelContentKind::None, backward);
+  RequestLiveConfigRedraw();
 }
 
 void WorkspaceActionContext::OpenColorThemePicker() {
@@ -1074,6 +1086,37 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               },
           .press_key =
               [dispatch_injected](SDL_Keycode key, SDL_Keymod modifiers) {
+                // A chord is pressed as a keyboard presses it: its modifiers go
+                // down first and come up last, each as its own key event. What
+                // reacts to a modifier's release (letting go of Ctrl opens the
+                // editor Ctrl+Tab selected) saw only the chord's own release, so
+                // `key ctrl+Tab` left the recent-editors pick up forever.
+                struct HeldModifier {
+                  SDL_Keymod mask;
+                  SDL_Keycode key;
+                };
+                static constexpr HeldModifier kHeldModifiers[] = {
+                    {SDL_KMOD_CTRL, SDLK_LCTRL},
+                    {SDL_KMOD_SHIFT, SDLK_LSHIFT},
+                    {SDL_KMOD_ALT, SDLK_LALT},
+                    {SDL_KMOD_GUI, SDLK_LGUI},
+                };
+                const auto modifier_event = [&](const HeldModifier& held, bool down, SDL_Keymod held_mods) {
+                  SDL_Event modifier{};
+                  modifier.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                  modifier.key.key = held.key;
+                  modifier.key.mod = held_mods;
+                  modifier.key.scancode = SDL_GetScancodeFromKey(held.key, nullptr);
+                  modifier.key.down = down;
+                  dispatch_injected(modifier);
+                };
+                SDL_Keymod held_mods = SDL_KMOD_NONE;
+                for (const HeldModifier& held : kHeldModifiers) {
+                  if ((modifiers & held.mask) != 0) {
+                    held_mods = static_cast<SDL_Keymod>(held_mods | (modifiers & held.mask));
+                    modifier_event(held, true, held_mods);
+                  }
+                }
                 SDL_Event event{};
                 event.type = SDL_EVENT_KEY_DOWN;
                 event.key.key = key;
@@ -1103,6 +1146,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 event.type = SDL_EVENT_KEY_UP;
                 event.key.down = false;
                 dispatch_injected(event);
+                for (auto held = std::rbegin(kHeldModifiers); held != std::rend(kHeldModifiers); ++held) {
+                  if ((modifiers & held->mask) != 0) {
+                    held_mods = static_cast<SDL_Keymod>(held_mods & ~(modifiers & held->mask));
+                    modifier_event(*held, false, held_mods);
+                  }
+                }
               },
           .inject_pointer_event =
               [dispatch_injected](const SDL_Event& event, SDL_Keymod modifiers) {

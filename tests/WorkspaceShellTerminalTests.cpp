@@ -199,12 +199,12 @@ void TestWorkspaceShellTerminalFocusModeTracksPanelFocus() {
 
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I",
          "focused terminal tabs should receive an initial focus-in notification when focus mode is enabled");
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL),
-         "Ctrl+Tab should move focus away from the terminal panel");
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL),
-         "Ctrl+Tab should keep cycling focus targets");
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL),
-         "Ctrl+Tab should return focus to the terminal panel");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE),
+         "F6 should move focus away from the terminal panel");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE),
+         "F6 should keep cycling focus targets");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE),
+         "F6 should return focus to the terminal panel");
   Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[I\x1b[O\x1b[I",
          "terminal focus mode should emit focus-out and focus-in notifications as panel focus changes");
 }

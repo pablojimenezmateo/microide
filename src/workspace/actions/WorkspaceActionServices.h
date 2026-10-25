@@ -701,6 +701,8 @@ class WorkspaceActionContext {
   bool SoftWrapEnabled() const;
   void SetSoftWrap(bool enabled);
   bool Focus(FocusRequestTarget target);
+  // F6 / Shift+F6: the keyboard to the next (previous) part on screen.
+  void CycleSurfaceFocus(bool backward);
   bool PluginRuntimeEnabled() const;
   void ReloadPluginsWithFeedback();
   void RequestQuit();

@@ -1471,7 +1471,7 @@ on (git's convention). The registry, `EditorPreferences` and the save pipeline's
 fallback agree; the settings-registry test, three shell tests and the QA
 `save-transforms` / `editorconfig` flows assert the new defaults.
 
-### TD-2026-10-16-353 — VS Code shortcuts with no binding here. [OPEN — partly RESOLVED 2026-10-18]
+### TD-2026-10-16-353 — VS Code shortcuts with no binding here. [RESOLVED 2026-10-25]
 
 Found by the QA `keys` sweep reading the resolved table: Ctrl+Tab / Ctrl+Shift+Tab
 (cycle editors in MRU order), Ctrl+Shift+T (reopen the closed editor), Ctrl+L
@@ -1494,6 +1494,22 @@ RESOLVED 2026-10-18: Alt+Left/Right are Go Back / Go Forward (`navigate-back`,
 every way of moving the caret is covered without a hook per jump; VS Code's rule
 decides what is a place (another file, or more than ten lines away). A focused
 terminal keeps Alt+Left/Right.
+
+RESOLVED 2026-10-25: Ctrl+Tab / Ctrl+Shift+Tab step the focused group's editors
+in most-recently-used order (`EditorGroup::recent_tab_ids`, which frame prep
+updates from the active tab, so every way a tab becomes active counts). They
+show the "Open Editors" quick pick (`QuickPickKind::RecentEditor`), and letting
+go of Ctrl opens the selected editor: the event dispatcher now forwards key-up
+events. Moving focus between surfaces moved to F6 / Shift+F6 (`focus-next-part`
+/ `focus-previous-part`), as in VS Code. F6 shares its chord with
+`debug-pause`: of the bindings sharing a chord, the first enabled one runs
+(`KeybindingSpec::shares_chord`; `FindKeybinding` takes the availability
+predicate), so F6 pauses a running program and moves focus otherwise.
+The control channel's `key` now presses and releases a chord's modifiers as
+their own key events, as a keyboard does. Without that, `key ctrl+Tab` left the
+pick up. Covered by `WorkspaceShell/CtrlTabStepsRecentEditors` and
+`WorkspaceShell/F6CyclesEveryVisibleSurface`, and by the QA flow
+`tab-recent-editors`, which holds Ctrl over one and two Tabs on X11.
 
 ### TD-2026-10-16-352 — the Ctrl+K chords are invisible to the keybindings query, so the keys sweep cannot press them. [OPEN]
 

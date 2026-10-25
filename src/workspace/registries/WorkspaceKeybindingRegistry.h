@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <functional>
 #include <vector>
 
 #include "plugin/PluginHost.h"
@@ -35,6 +36,11 @@ struct KeybindingSpec {
   // Ctrl+Shift+letter, zoom) and on the few the IDE must keep (Ctrl+P, Ctrl+`,
   // Ctrl+J). Terminal-context bindings always fire in a terminal.
   bool skips_terminal = false;
+  // This binding takes a chord an EARLIER built-in also holds, whenever that one's
+  // action is not enabled (VS Code's `when` clauses: F6 pauses a running program
+  // and otherwise focuses the next part). Declared, so no two built-ins share a
+  // chord by accident (KeybindingRegistry/BuiltinKeybindingsDoNotShadowEachOther).
+  bool shares_chord = false;
 };
 
 // Whether two bindings on one chord can both be active in some focus context --
@@ -63,6 +69,7 @@ struct ResolvedKeybinding {
   std::string command_name;
   bool from_plugin = false;
   bool skips_terminal = false;  // see KeybindingSpec::skips_terminal
+  bool shares_chord = false;    // see KeybindingSpec::shares_chord
 };
 
 // `skip_shell` edits which Global bindings fire while a terminal holds focus
@@ -82,12 +89,17 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids = {},
     const std::vector<std::string>& skip_shell = {});
-// First binding for (key, modifiers) active in `context`. A Global binding is
-// active in every context except Terminal, where it must also skip the terminal.
+// The binding (key, modifiers) dispatches in `context`. A Global binding is active
+// in every context except Terminal, where it must also skip the terminal. Several
+// built-ins may share a chord, as VS Code's do under different `when` clauses
+// (F6: Pause while a program runs, Focus Next Part otherwise): given
+// `action_enabled`, the first whose action is enabled wins, else the first -- which
+// then reports why it cannot run. Without it, the first.
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,
                                           SDL_Keycode key,
                                           SDL_Keymod modifiers,
-                                          KeybindingContext context);
+                                          KeybindingContext context,
+                                          const std::function<bool(ActionId)>& action_enabled = {});
 
 // Parse "Ctrl+Shift+S" → key + modifiers. Returns false for unrecognised chords.
 bool ParseKeyChord(std::string_view chord, SDL_Keycode* key, SDL_Keymod* modifiers);

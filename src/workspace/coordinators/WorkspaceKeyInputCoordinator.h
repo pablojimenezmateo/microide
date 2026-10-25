@@ -112,6 +112,11 @@ class KeyInputCoordinator {
     std::function<void()> activate_overlay_selection;
     // The quick pick's selection moved: the kind previews it (a colour theme).
     std::function<void()> quick_pick_selection_changed;
+    // Ctrl+Tab: open the recent-editors pick, or step its selection (`back`).
+    std::function<bool(bool back)> step_recent_editors;
+    // Whether an action can run now: of several bindings on one chord, the first
+    // enabled one dispatches (FindKeybinding).
+    std::function<bool(ActionId)> action_enabled;
     std::function<void()> complete_command_palette_query;
     std::function<void(int)> move_compare_picker_selection;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;

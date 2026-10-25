@@ -21,6 +21,7 @@
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
 #include "support/GitSidebarWait.h"
+#include "support/SoftwareCanvas.h"
 #include "EditorSplitTreeInvariants.h"
 
 #include <random>
@@ -2662,10 +2663,11 @@ void TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys() {
          "PageUp at the top should clamp rather than wrap");
 }
 
-// Ctrl+Tab cycles every on-screen surface in visual order. The debug pane is a full
+// F6 (Focus Next Part; it was Ctrl+Tab, which now steps the recent editors as in
+// VS Code) cycles every on-screen surface in visual order. The debug pane is a full
 // keyboard focus target with its own row navigation, but the old nested-ternary chain
 // covered only sidebar/editor/panel, so it was reachable by click and never by keyboard.
-void TestWorkspaceShellCtrlTabCyclesEveryVisibleSurface() {
+void TestWorkspaceShellF6CyclesEveryVisibleSurface() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "main.cpp", "int main() {}\n");
@@ -2677,25 +2679,94 @@ void TestWorkspaceShellCtrlTabCyclesEveryVisibleSurface() {
   WorkspaceShellTestAccess::SetFocusEditor(shell);
 
   // Forward: editor -> debug pane -> (no panel open) wraps to sidebar -> editor.
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE), "F6 should be handled");
   Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
-         "Ctrl+Tab from the editor should reach the visible debug pane");
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should keep cycling");
+         "F6 from the editor should reach the visible debug pane");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE), "F6 should keep cycling");
   Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
-         "Ctrl+Tab past the last surface should wrap to the first");
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should keep cycling");
+         "F6 past the last surface should wrap to the first");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_NONE), "F6 should keep cycling");
   Expect(WorkspaceShellTestAccess::FocusIsEditor(shell),
-         "Ctrl+Tab should return to the editor after a full cycle");
+         "F6 should return to the editor after a full cycle");
 
   // Reverse cycles the same ring the other way.
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
-         "Ctrl+Shift+Tab should be handled");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_SHIFT),
+         "Shift+F6 should be handled");
   Expect(WorkspaceShellTestAccess::FocusIsSidebar(shell),
-         "Ctrl+Shift+Tab should step backwards through the ring");
-  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
-         "Ctrl+Shift+Tab should keep cycling backwards");
+         "Shift+F6 should step backwards through the ring");
+  Expect(SendKeyDown(shell, SDLK_F6, SDL_KMOD_SHIFT),
+         "Shift+F6 should keep cycling backwards");
   Expect(WorkspaceShellTestAccess::FocusIsDebugPane(shell),
-         "Ctrl+Shift+Tab should wrap backwards onto the debug pane");
+         "Shift+F6 should wrap backwards onto the debug pane");
+}
+
+// Ctrl+Tab steps the focused group's editors in most-recently-used order, as in
+// VS Code: a tap goes back to the previous editor, holding Ctrl and pressing Tab
+// again walks further back, and releasing Ctrl opens the selected one. Tab-strip
+// order is irrelevant -- the MRU order is what is under test.
+void TestWorkspaceShellCtrlTabStepsRecentEditors() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.cpp";
+  const std::filesystem::path beta = root / "beta.cpp";
+  const std::filesystem::path gamma = root / "gamma.cpp";
+  WriteFile(alpha, "int alpha() { return 1; }\n");
+  WriteFile(beta, "int beta() { return 2; }\n");
+  WriteFile(gamma, "int gamma() { return 3; }\n");
+
+  // Frame prep records the use order, and prep runs only with a renderer.
+  SoftwareCanvas canvas(1280, 720);
+  WorkspaceShell shell;
+  const auto render = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // Use order alpha, gamma, beta: the strip order (alpha, beta, gamma) differs.
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "first tab should open");
+  render();
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, beta), "second tab should open");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, gamma), "third tab should open");
+  render();
+  WorkspaceShellTestAccess::ActivateTab(shell, 1);
+  render();
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+
+  // A tap: Ctrl+Tab then releasing Ctrl goes back to the previous editor.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::ActiveOverlayMode(shell) == WorkspaceShell::OverlayMode::QuickPick,
+         "Ctrl+Tab should show the recent-editors pick while Ctrl is held");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "the pick should not switch editors until Ctrl is released");
+  Expect(shell.HandleEvent(KeyUpEvent(SDLK_LCTRL)).handled, "releasing Ctrl should be handled");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "releasing Ctrl should close the pick");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 2,
+         "a Ctrl+Tab tap should open the previously used editor (gamma)");
+  render();
+
+  // A tap again flips straight back: the two most recent swap places.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
+  Expect(shell.HandleEvent(KeyUpEvent(SDLK_LCTRL)).handled, "releasing Ctrl should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "a second tap should return to the editor the first one left (beta)");
+  render();
+
+  // Holding Ctrl and pressing Tab twice reaches two back: alpha.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "a second Tab under Ctrl should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "stepping should not switch editors while Ctrl is held");
+  Expect(shell.HandleEvent(KeyUpEvent(SDLK_LCTRL)).handled, "releasing Ctrl should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "Ctrl+Tab, Tab should open the least recent of three (alpha)");
+  render();
+
+  // Escape while Ctrl is held cancels: nothing switches.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_CTRL), "Ctrl+Tab should be handled");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_CTRL), "Escape should be handled");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "Escape under Ctrl should close the pick");
+  (void)shell.HandleEvent(KeyUpEvent(SDLK_LCTRL));  // nothing left for it to open
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0,
+         "Escape should leave the active editor as it was");
 }
 
 // Every resize divider answers a double-click by restoring its default size, the way
@@ -8910,8 +8981,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCtrlOOpensNativeFilePicker);
   AddTest(tests, "WorkspaceShell/TreeSidebarSupportsPageAndHomeEndKeys",
           TestWorkspaceShellTreeSidebarSupportsPageAndHomeEndKeys);
-  AddTest(tests, "WorkspaceShell/CtrlTabCyclesEveryVisibleSurface",
-          TestWorkspaceShellCtrlTabCyclesEveryVisibleSurface);
+  AddTest(tests, "WorkspaceShell/F6CyclesEveryVisibleSurface",
+          TestWorkspaceShellF6CyclesEveryVisibleSurface);
+  AddTest(tests, "WorkspaceShell/CtrlTabStepsRecentEditors",
+          TestWorkspaceShellCtrlTabStepsRecentEditors);
   AddTest(tests, "WorkspaceShell/DoubleClickResetsResizeDividers",
           TestWorkspaceShellDoubleClickResetsResizeDividers);
   AddTest(tests, "WorkspaceShell/TreeScrollDoesNotSnapToSelectionDuringRender",

@@ -466,40 +466,11 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
                                                          SDL_Keymod modifiers) {
   switch (event.key) {
     case SDLK_TAB:
-      if (modifiers & SDL_KMOD_CTRL) {
-        if (state_.overlay.visible) {
-          state_.surface.focus = FocusTarget::Overlay;
-          return true;
-        }
-        // Cycle the on-screen surfaces in visual order — sidebar (left), editor
-        // (centre), debug pane (right), panel (bottom) — wrapping at both ends.
-        // Built as an ordered ring rather than nested ternaries so a surface cannot
-        // be left out of the rotation: the debug pane is a full focus target with
-        // its own keyboard navigation, yet the old chain could only reach three of
-        // the four, leaving it clickable-but-not-tabbable.
-        std::array<FocusTarget, 4> ring{};
-        std::size_t ring_size = 0;
-        if (state_.sidebar.visible) {
-          ring[ring_size++] = FocusTarget::Sidebar;
-        }
-        ring[ring_size++] = FocusTarget::Editor;
-        if (state_.debug_pane.visible) {
-          ring[ring_size++] = FocusTarget::DebugPane;
-        }
-        if (state_.panel.content != PanelContentKind::None) {
-          ring[ring_size++] = FocusTarget::Panel;
-        }
-
-        std::size_t current = 0;
-        for (std::size_t i = 0; i < ring_size; ++i) {
-          if (ring[i] == state_.surface.focus) {
-            current = i;
-            break;
-          }
-        }
-        const std::size_t step = (modifiers & SDL_KMOD_SHIFT) ? ring_size - 1 : 1;
-        state_.surface.focus = ring[(current + step) % ring_size];
-        return true;
+      // Ctrl+Tab / Ctrl+Shift+Tab step through the focused group's editors in
+      // most-recently-used order, as in VS Code (releasing Ctrl opens the one
+      // selected); moving the keyboard between surfaces is F6 / Shift+F6.
+      if ((modifiers & SDL_KMOD_CTRL) != 0 && operations_.step_recent_editors) {
+        return operations_.step_recent_editors((modifiers & SDL_KMOD_SHIFT) != 0);
       }
       break;
     case SDLK_ESCAPE:
@@ -725,6 +696,32 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 ActivateOverlaySelection();
               },
           .quick_pick_selection_changed = [this]() { quick_pick_service_.SelectionChanged(); },
+          .step_recent_editors =
+              [this](bool back) {
+                QuickPickState& pick = context_.current_project_state.overlay.workflow.quick_pick;
+                if (context_.current_project_state.overlay.visible &&
+                    context_.current_project_state.overlay.mode == OverlayMode::QuickPick &&
+                    pick.kind == QuickPickKind::RecentEditor) {
+                  if (!pick.matches.empty()) {
+                    const std::size_t n = pick.matches.size();
+                    SetOverlaySelectedIndex(back ? (pick.selected_index + n - 1) % n : (pick.selected_index + 1) % n);
+                  }
+                  return true;
+                }
+                if (context_.current_project_state.overlay.visible) {
+                  return false;  // another overlay keeps the keys
+                }
+                EditorGroup& group = context_.current_project_state.focused_group();
+                if (group.open_tabs.empty()) {
+                  return false;
+                }
+                for (TabEntry& tab : group.open_tabs) {
+                  (void)EnsureTabStableId(tab);  // a row names its tab by id
+                }
+                quick_pick_service_.Open(QuickPickService::RecentEditors(group, context_.current_project_state.root, back));
+                return true;
+              },
+          .action_enabled = [this](ActionId id) { return MakeActionAvailability().IsEnabled(id); },
           .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
           .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },

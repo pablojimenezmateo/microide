@@ -357,9 +357,47 @@ def flow_tab_shared_close(app: q.App) -> None:
     app.expect(read(app, relative) == "original\n", "Discard never writes the shared edit")
 
 
+def flow_tab_recent_editors(app: q.App) -> None:
+    """Ctrl+Tab is the focused group's editors in most-recently-used order, as in
+    VS Code: a tap returns to the previous editor (and a second tap flips back),
+    holding Ctrl walks further back and letting go opens the one selected, and
+    Escape under Ctrl changes nothing. The strip order is deliberately not the
+    use order. F6 still moves the keyboard between the parts of the window."""
+    for name in ("alpha", "beta", "gamma"):
+        open_file(app, f"recent/{name}.txt", f"{name}\n")
+    open_file(app, "recent/beta.txt")  # used: alpha, gamma, beta (strip: alpha, beta, gamma)
+    step(app, "use order alpha, gamma, beta", 0.2)
+    app.send("focus", "editor")
+    app.key("ctrl+Tab")
+    app.wait_until(lambda: active_title(app) == "gamma.txt", 3.0, "a Ctrl+Tab tap to open gamma.txt")
+    app.expect(not app.ui()["overlay"].get("visible"), "releasing Ctrl closes the recent-editors pick")
+    step(app, "ctrl+tab tap", 0.2)
+    app.key("ctrl+Tab")
+    app.wait_until(lambda: active_title(app) == "beta.txt", 3.0, "a second tap to flip back to beta.txt")
+    step(app, "ctrl+tab flips back", 0.2)
+    if not app.wayland:
+        app.hold("ctrl", ["Tab"])
+        app.wait_until(lambda: active_title(app) == "gamma.txt", 3.0, "Ctrl held over one Tab to open gamma.txt")
+        app.hold("ctrl", ["Tab", "Tab"])
+        app.wait_until(lambda: active_title(app) == "alpha.txt", 3.0,
+                       "Ctrl held over two Tabs to reach the least recent, alpha.txt")
+        step(app, "ctrl held, tab tab", 0.2)
+        app.hold("ctrl", ["Tab", "Escape"])
+        step(app, "ctrl+tab, escape", 0.3)
+        app.expect(active_title(app) == "alpha.txt" and not app.ui()["overlay"].get("visible"),
+                   f"Escape under Ctrl changes nothing (active {active_title(app)})")
+    app.key("F6")
+    step(app, "F6", 0.2)
+    app.expect(app.ui().get("focus") != "editor", f"F6 moves focus off the editor ({app.ui().get('focus')})")
+    app.key("shift+F6")
+    step(app, "shift+F6", 0.2)
+    app.expect(app.ui().get("focus") == "editor", f"Shift+F6 brings focus back ({app.ui().get('focus')})")
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tab-context-menu": flow_tab_context_menu,
     "tab-open-twice": flow_tab_open_twice,
+    "tab-recent-editors": flow_tab_recent_editors,
     "tab-shared-history": flow_tab_shared_history,
     "tab-view-identity": flow_tab_view_identity,
     "tab-inactive-close": flow_tab_inactive_close,

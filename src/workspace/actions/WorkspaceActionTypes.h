@@ -104,6 +104,8 @@ enum class ActionId {
   CallHierarchy,
   WorkspaceSymbol,
   Focus,
+  FocusNextPart,
+  FocusPreviousPart,
   GoToDefinition,
   GoToSymbolInEditor,
   LanguageMode,

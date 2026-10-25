@@ -46,6 +46,8 @@ class QuickPickService {
         open_workspace_symbol;
     // QuickPickKind::LanguageMode: set the active buffer's language.
     std::function<void(const std::string& language)> set_language;
+    // QuickPickKind::RecentEditor: activate the focused group's tab with this id.
+    std::function<void(std::uint64_t stable_id)> activate_tab;
   };
 
   void Configure(QuickPickState& state, Operations operations);
@@ -80,6 +82,9 @@ class QuickPickService {
       std::span<const plugin::PluginHost::DocumentSymbolNode> symbols);
   // Search Workspace Symbols: server-filtered, so a query typed asks the server.
   static QuickPickState WorkspaceSymbols(std::string query);
+  // Ctrl+Tab: the focused group's editors, most recently used first, the
+  // previous one selected (`back`: the least recent) -- releasing Ctrl opens it.
+  static QuickPickState RecentEditors(const EditorGroup& group, const std::filesystem::path& root, bool back);
   // Change Language Mode: Auto Detect (naming what detection says), Plain Text,
   // then every language the registry highlights; `chosen` (the buffer's language
   // set by hand, "" when detected) selected.

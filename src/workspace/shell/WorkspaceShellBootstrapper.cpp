@@ -313,6 +313,16 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 }
                 return shell->MakeKeyInputCoordinator().HandleKeyDown(event);
               },
+          .handle_key_up =
+              [shell](const SDL_KeyboardEvent& event) {
+                const ProjectWorkspaceState& state = shell->context_.current_project_state;
+                if ((event.key != SDLK_LCTRL && event.key != SDLK_RCTRL) || !state.overlay.visible ||
+                    state.overlay.mode != OverlayMode::QuickPick ||
+                    state.overlay.workflow.quick_pick.kind != QuickPickKind::RecentEditor) {
+                  return false;
+                }
+                return shell->ActivateOverlaySelection();
+              },
           .handle_file_drop =
               [shell](const char* dropped_path) {
                 if (dropped_path == nullptr) {
