@@ -484,6 +484,8 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
           .merge = std::nullopt,
       });
       context_.current_project_state.focused_group().active_tab_index = 0;
+      // The keyboard starts in the editor (TD-2026-10-16-348).
+      context_.current_project_state.surface.focus = FocusTarget::Editor;
       if (context_.current_project_state.terminal_tabs.empty()) {
         util::PerformanceTrace::Scope scope(
             "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");
@@ -503,6 +505,7 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
       "Project loaded.\n"
       "Use the sidebar to open files.\n");
   ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
+  context_.current_project_state.surface.focus = FocusTarget::Editor;  // the welcome page, as above
   if (context_.current_project_state.terminal_tabs.empty()) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceShell::InitializeCurrentProject::OpenDefaultTerminal");

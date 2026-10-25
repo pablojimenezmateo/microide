@@ -1699,7 +1699,7 @@ helper. Unit tests: `SearchResultsTypeToNavigate` and
   cursor-dependent redraw bugs) and the sweeps run with no window manager, so
   maximize/minimize/resize-by-drag are untested.
 
-### TD-2026-10-16-348 — the app starts with the keyboard in the terminal. [OPEN — verify intent]
+### TD-2026-10-16-348 — the app starts with the keyboard in the terminal. [RESOLVED 2026-10-25]
 
 On a fresh project the `ui` query reports `focus: panel` after startup (the
 default terminal opens and takes the keyboard), so the first Ctrl+N, Ctrl+W or
@@ -1707,6 +1707,14 @@ typed character goes to the shell rather than the editor -- the QA flows that
 press editor keys first all `focus editor`. VS Code starts with the editor (or
 the welcome page) focused and the terminal closed. Decide which surface owns the
 keyboard at launch; if the editor, focus it after the default terminal opens.
+
+RESOLVED 2026-10-25, decided as VS Code does it: the editor (or the welcome page)
+owns the keyboard at launch. `OpenTerminalsForProjectInit` shows the project's
+terminal in the panel without focusing it. A fresh project focuses the editor,
+and so does a restored session, which used to give the keyboard to the sidebar
+whenever it was shown. Covered by
+`WorkspaceShell/ProjectOpensWithTheKeyboardInTheEditor` and the QA flow
+`startup-focus`, where the first typed letter lands in the file.
 
 ### TD-2026-10-16-347 — the tree's git letters appeared two frames before the tree was repainted (remote QA, scenario H). [OPEN — not reproduced in-process]
 

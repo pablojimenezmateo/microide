@@ -2494,6 +2494,19 @@ void TestWorkspaceShellTerminalRelaunchRestartsAnExitedPane() {
   Expect(session.running(), "the menu verb relaunches too");
 }
 
+// A fresh project opens its terminal in the panel but leaves the keyboard in the
+// editor, as VS Code does (TD-2026-10-16-348): the first keystroke of a session
+// used to go to the shell.
+void TestWorkspaceShellProjectOpensWithTheKeyboardInTheEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "# readme\n");
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "the project should open");
+  Expect(WorkspaceShellTestAccess::TerminalTabCount(shell) >= 1, "the project's terminal opens");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "but the keyboard starts in the editor");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
@@ -2551,6 +2564,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalTabsReflectOscTitles);
   AddTest(tests, "WorkspaceShell/TerminalOsc52CopiesToClipboard",
           TestWorkspaceShellTerminalOsc52CopiesToClipboard);
+  AddTest(tests, "WorkspaceShell/ProjectOpensWithTheKeyboardInTheEditor",
+          TestWorkspaceShellProjectOpensWithTheKeyboardInTheEditor);
   AddTest(tests, "WorkspaceShell/TerminalFocusModeTracksPanelFocus",
           TestWorkspaceShellTerminalFocusModeTracksPanelFocus);
   AddTest(tests, "WorkspaceShell/TerminalFocusModeTracksWindowFocus",

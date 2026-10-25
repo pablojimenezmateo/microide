@@ -147,19 +147,23 @@ void TerminalPanelService::OpenTerminalsForProjectInit() {
     }
     if (!state_.terminal_tabs.empty()) {
       state_.active_terminal_tab_index = std::min(layout.active_tab, state_.terminal_tabs.size() - 1);
-      ShowTerminalContent(true);
+      ShowTerminalContent(/*focus=*/false);
       operations_.note_layout_inputs_changed();
       return;
     }
   }
+  // The project's terminal is shown, but the keyboard starts in the editor, as in
+  // VS Code: the first Ctrl+N or typed letter of a session is not the shell's
+  // (TD-2026-10-16-348).
   if (!terminal::UsePlaceholderTerminalsForTesting()) {
-    OpenTerminal({}, true, false);
+    OpenTerminal({}, /*focus_terminal=*/false, false);
+    ShowTerminalContent(/*focus=*/false);
     return;
   }
   // Test mode: a bare, unstarted pane — no real shell spawn.
   state_.terminal_tabs.push_back(MakeTerminalTab(std::make_unique<TerminalPaneState>()));
   state_.active_terminal_tab_index = state_.terminal_tabs.size() - 1;
-  ShowTerminalContent(true);
+  ShowTerminalContent(/*focus=*/false);
 }
 
 TerminalLayoutRecord TerminalPanelService::CaptureLayout() const {

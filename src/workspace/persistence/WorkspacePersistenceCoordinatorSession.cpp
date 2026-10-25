@@ -612,7 +612,9 @@ bool PersistenceCoordinator::RestoreSessionState() {
             "Use the sidebar to open files.\n");
       }
     }
-    state.surface.focus = state.sidebar.visible ? FocusTarget::Sidebar : FocusTarget::Editor;
+    // A restored session starts with the keyboard in the editor, as VS Code's does
+    // (TD-2026-10-16-348); the sidebar used to take it whenever it was shown.
+    state.surface.focus = FocusTarget::Editor;
   }
   return true;
 }

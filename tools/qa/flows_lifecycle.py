@@ -167,8 +167,27 @@ def flow_plugin_errors(app: q.App) -> None:
                        f"Show Errors opens the Plugin Errors channel ({app.ui().get('output')})")
 
 
+def flow_startup_focus(app: q.App) -> None:
+    """A fresh launch puts the keyboard in the editor, as VS Code does
+    (TD-2026-10-16-348): the project's terminal is open in the panel, but the
+    first typed letter lands in the file, not at the shell's prompt."""
+    app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the startup terminal")
+    ui = app.ui()
+    app.expect(ui["focus"] == "editor", f"a fresh launch focuses the editor ({ui['focus']})")
+    app.expect(ui["panel"]["visible"] and ui["panel"]["content"] == "terminal",
+               f"with the terminal open in the panel ({ui['panel']})")
+    before = app.text()
+    app.type("Q")
+    step(app, "type at launch", 0.2)
+    app.expect((app.text() or "").replace("Q", "", 1) == before and "Q" in (app.text() or ""),
+               "the first typed letter lands in the editor")
+    app.key("ctrl+z")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "plugins-reload": flow_plugins_reload,
     "plugin-errors": flow_plugin_errors,
+    "startup-focus": flow_startup_focus,
 }
 PLUGINS: dict[str, tuple[str, ...]] = {"plugins-reload": ("qa-api",), "plugin-errors": ("qa-broken",)}
