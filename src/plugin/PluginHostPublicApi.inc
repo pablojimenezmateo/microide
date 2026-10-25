@@ -495,16 +495,7 @@ bool PluginHost::QueryHover(const std::filesystem::path& path,
 #if MICROIDE_HAS_LUA_PLUGINS
   bool ok = false;
   impl_->RunOnWorkerBlocking(impl_->CaptureSnapshot(), [&]() {
-    ok = hover_query_interop::QueryHover(
-        impl_->hover_provider_order, impl_->hovers, resolved_path, line, column,
-        [this](const runtime_types::HoverProvider& provider,
-               const std::filesystem::path& hover_path, std::size_t hover_line,
-               std::size_t hover_column, HoverResult* hover_result,
-               std::string* hover_error_message) {
-          return impl_->QueryHoverProvider(provider, hover_path, hover_line, hover_column,
-                                           hover_result, hover_error_message);
-        },
-        result, error_message);
+    ok = impl_->QueryHoverChain(resolved_path, line, column, result, error_message);
   });
   return ok;
 #else
@@ -926,16 +917,7 @@ void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
       "query:hover",
       [this, resolved_path, line, column]() {
         QueryResult result;
-        result.ok = hover_query_interop::QueryHover(
-            impl_->hover_provider_order, impl_->hovers, resolved_path, line, column,
-            [this](const runtime_types::HoverProvider& provider,
-                   const std::filesystem::path& hover_path, std::size_t hover_line,
-                   std::size_t hover_column, HoverResult* hover_result,
-                   std::string* hover_error_message) {
-              return impl_->QueryHoverProvider(provider, hover_path, hover_line, hover_column,
-                                               hover_result, hover_error_message);
-            },
-            &result.hover, nullptr);
+        result.ok = impl_->QueryHoverChain(resolved_path, line, column, &result.hover, nullptr);
         return result;
       },
       [on_result = std::move(on_result)](QueryResult result) {

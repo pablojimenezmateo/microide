@@ -1172,6 +1172,20 @@
         [this](lua_State* state) { return FindPluginByState(state); }, result, error_message);
   }
 
+  // Every hover provider for `path`, in registration order, until one answers.
+  bool QueryHoverChain(const std::filesystem::path& path, std::size_t line, std::size_t column,
+                       PluginHost::HoverResult* result, std::string* error_message) {
+    return hover_query_interop::QueryHover(
+        hover_provider_order, hovers, path, line, column,
+        [this](const HoverProvider& provider, const std::filesystem::path& hover_path,
+               std::size_t hover_line, std::size_t hover_column,
+               PluginHost::HoverResult* hover_result, std::string* hover_error_message) {
+          return QueryHoverProvider(provider, hover_path, hover_line, hover_column, hover_result,
+                                    hover_error_message);
+        },
+        result, error_message);
+  }
+
   void ClearPluginDiagnostics(const PluginInstance* plugin) {
     state_teardown_interop::ClearPluginDiagnostics(
         plugin, [this](std::string_view owner) {
