@@ -332,7 +332,16 @@ inline constexpr float kWorkspaceEditorBannerHeight = 30.0f;
 // dismiss X, which every banner has. A list, not a fixed rect per verb: a kind
 // with one action (Retry) needs no slot for the four the external-change banner
 // carries.
-enum class EditorBannerAction { Compare, Reload, Overwrite, Keep, Retry };
+enum class EditorBannerAction {
+  Compare,
+  Reload,
+  Overwrite,
+  Keep,
+  Retry,
+  // A read-only file's banner: clear the read-only bit and save; save elsewhere.
+  OverwriteReadOnly,
+  SaveAs,
+};
 struct EditorBannerButton {
   EditorBannerAction action = EditorBannerAction::Keep;
   std::string_view label;

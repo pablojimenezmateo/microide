@@ -90,9 +90,10 @@ class TabCoordinator {
     // so the user can Reload / Overwrite / Keep instead of silently clobbering.
     std::function<void(const std::filesystem::path&)> request_external_change_banner;
     // Raised when a write actually fails (permission/disk error), as opposed to a
-    // refused-overwrite (which raises request_external_change_banner). The host
-    // posts an error toast so the failure is never silently swallowed.
-    std::function<void(const std::filesystem::path&)> notify_save_failed;
+    // refused-overwrite (which raises request_external_change_banner), or a save is
+    // refused where no banner can say why. The host posts an error toast so the
+    // failure is never silently swallowed; `reason`, when given, is its why.
+    std::function<void(const std::filesystem::path&, std::string_view reason)> notify_save_failed;
     // Post an off-thread read of a file too large to read on the shell thread.
     // Returns the read's id, which the tab stores in `pending_load`; the host's
     // completion finds the tab again by matching it. Returning 0 means nothing
@@ -282,6 +283,10 @@ class TabCoordinator {
   // save participants and a formatter ran, which can take seconds.
   bool RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
                              const std::filesystem::path& normalized_path);
+  // True when `normalized_path` may be written; a read-only file is refused (as VS
+  // Code refuses one) with the ReadOnly banner -- Overwrite / Save As / Keep --
+  // where one is shown (`banner_shows`: an editor tab), else with a toast.
+  bool RefuseIfReadOnly(const std::filesystem::path& normalized_path, bool banner_shows);
   // Group-aware close: closes editor_groups[group_index].open_tabs[index] with the same
   // LSP-didClose accounting as Close(); delegates to Close() for the focused group, and
   // for a background group erases the tab, clamps its active index, and collapses the

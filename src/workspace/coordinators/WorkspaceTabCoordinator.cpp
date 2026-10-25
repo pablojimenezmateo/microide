@@ -101,9 +101,13 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
                                compare_tab.right_viewport.path().lexically_normal())) {
       return false;
     }
+    if (!RefuseIfReadOnly(compare_tab.right_viewport.path().lexically_normal(),
+                          /*banner_shows=*/false)) {
+      return false;
+    }
     if (!compare_tab.right_viewport.Save(state_.write_gate())) {
       if (operations_.notify_save_failed) {
-        operations_.notify_save_failed(compare_tab.right_viewport.path());
+        operations_.notify_save_failed(compare_tab.right_viewport.path(), {});
       }
       return false;
     }
@@ -141,9 +145,13 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
                                merge_tab.result_viewport.path().lexically_normal())) {
       return false;
     }
+    if (!RefuseIfReadOnly(merge_tab.result_viewport.path().lexically_normal(),
+                          /*banner_shows=*/false)) {
+      return false;
+    }
     if (!merge_tab.result_viewport.Save(state_.write_gate())) {
       if (operations_.notify_save_failed) {
-        operations_.notify_save_failed(merge_tab.result_viewport.path());
+        operations_.notify_save_failed(merge_tab.result_viewport.path(), {});
       }
       return false;
     }
@@ -199,6 +207,9 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
     }
     return false;
   }
+  if (!RefuseIfReadOnly(normalized_path, /*banner_shows=*/true)) {
+    return false;
+  }
   if (operations_.prepare_editor_view_for_save) {
     const SavePreparation prepared =
         operations_.prepare_editor_view_for_save(candidate->path(), *candidate, nullptr, mode);
@@ -224,7 +235,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index, Sa
   editor_state->pending_format_save.Disarm();
   if (!candidate->Save(state_.write_gate())) {
     if (operations_.notify_save_failed) {
-      operations_.notify_save_failed(candidate->path());
+      operations_.notify_save_failed(candidate->path(), {});
     }
     return false;
   }
@@ -908,6 +919,25 @@ bool TabCoordinator::RefuseIfChangedOnDisk(const editor::TextViewport& viewport,
   }
   if (operations_.request_external_change_banner) {
     operations_.request_external_change_banner(normalized_path);
+  }
+  return false;
+}
+
+bool TabCoordinator::RefuseIfReadOnly(const std::filesystem::path& normalized_path,
+                                      bool banner_shows) {
+  // The atomic save would rename a temporary file over a read-only one -- which
+  // needs only the directory's permission -- and leave a read-only file the
+  // editor had just changed (TD-2026-10-22-380).
+  if (!state_.write_gate().IsReadOnly(normalized_path)) {
+    return true;
+  }
+  if (banner_shows) {
+    SetEditorBanner(state_, EditorBannerState::Kind::ReadOnly, normalized_path);
+    if (operations_.request_editor_surface_redraw) {
+      operations_.request_editor_surface_redraw();
+    }
+  } else if (operations_.notify_save_failed) {
+    operations_.notify_save_failed(normalized_path, "the file is read-only");
   }
   return false;
 }

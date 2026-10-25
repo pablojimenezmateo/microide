@@ -704,6 +704,9 @@ FrameSurfaceViewModel RenderViewModelBuilder::BuildFrameSurface(const WorkspaceL
       case EditorBannerState::Kind::OpenFailed:
         view_model.message = banner->reason.empty() ? "Could not read " + name : banner->reason;
         break;
+      case EditorBannerState::Kind::ReadOnly:
+        view_model.message = "Failed to save " + name + ": the file is read-only";
+        break;
     }
     editor_banner = std::move(view_model);
   }

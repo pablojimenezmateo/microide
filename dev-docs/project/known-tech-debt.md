@@ -605,7 +605,20 @@ window (`WorkspaceShell/TreeMoveRepaintsEveryPaneShowingTheFile`, failing first
 at 366 pixels). Tests: `WorkspaceShell/TreeRowDragAndDrop` and the QA flow
 `tree-drag`.
 
-### TD-2026-10-22-380 — saving a read-only file overwrites it without a word. [OPEN — product decision]
+### TD-2026-10-22-380 — saving a read-only file overwrites it without a word. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25, as VS Code does it.** Every editor, compare and merge save
+asks the write gate first (`FileWriteGate::IsReadOnly`, `access(W_OK)` locally,
+so root and ACLs answer correctly) and refuses a read-only file
+(`TabCoordinator::RefuseIfReadOnly`). An editor tab gets a `ReadOnly` banner --
+"Failed to save X: the file is read-only" -- with Overwrite (gives the owner
+write permission back through `FileWriteGate::MakeWritable`, then the ordinary
+save), Save As… and Keep; a compare or merge tab, which shows no banner, gets the
+reason in its error toast. The changed-on-disk banner's Overwrite is not a way
+around it: it raises the read-only banner instead. `banner-action` takes a
+multi-word label and ignores a trailing ellipsis (`banner-action save as`).
+Tests: `WorkspaceShell/SavingAReadOnlyFileAsksFirst`, QA `file-read-only`.
+
 
 Found by the QA files pass (2026-10-22): a file made read-only (`chmod 444`),
 opened, edited and saved with Ctrl+S is written -- the atomic save renames a

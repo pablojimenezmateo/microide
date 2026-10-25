@@ -1257,9 +1257,20 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                   *error = "the active tab shows no banner";
                   return false;
                 }
-                const std::string wanted = util::ToLowerAscii(label);
+                // By label, ignoring case and a trailing ellipsis: `banner-action Save
+                // As` presses "Save As…" (nobody types the ellipsis).
+                const auto bare = [](std::string_view text) {
+                  for (const std::string_view ellipsis : {std::string_view("\u2026"),
+                                                          std::string_view("...")}) {
+                    if (text.ends_with(ellipsis)) {
+                      text.remove_suffix(ellipsis.size());
+                    }
+                  }
+                  return text;
+                };
+                const std::string wanted = util::ToLowerAscii(bare(label));
                 for (const EditorBannerButton& button : EditorBannerButtonsFor(banner->kind)) {
-                  if (util::EqualsAsciiCaseInsensitive(button.label, wanted)) {
+                  if (util::EqualsAsciiCaseInsensitive(bare(button.label), wanted)) {
                     // The path is copied: the action may erase the banner it came from.
                     ActivateEditorBannerAction(button.action, std::filesystem::path(banner->path));
                     RequestWindowRedraw();

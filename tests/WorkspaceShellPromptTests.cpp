@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "project/FileWriteGate.h"
 #include "project/GitCompareService.h"
 #include "workspace/debug/LaunchConfig.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
@@ -168,6 +169,66 @@ void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
          "the refused save must surface the external-change banner, not fail silently");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
          "the buffer keeps its unsaved edit so the user can still choose what to do");
+}
+
+// TD-2026-10-22-380: saving a read-only file is refused, as VS Code refuses it
+// (NoPermissions). The atomic save renamed a temporary file over it -- which needs
+// only the directory's permission -- and left a read-only file the editor had just
+// changed. The banner offers Overwrite (clears the read-only bit, then saves),
+// Save As and Keep, and the changed-on-disk Overwrite is no way around it.
+void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "base text\n");
+  std::filesystem::permissions(source, std::filesystem::perms::owner_read |
+                                           std::filesystem::perms::group_read |
+                                           std::filesystem::perms::others_read);
+  if (!microide::project::LocalFileWriteGate().IsReadOnly(source)) {
+    return;  // root writes anything: there is no read-only file to refuse
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  auto outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "save");
+  Expect(!outcome.ok, "saving a read-only file is refused");
+  Expect(ReadFile(source) == "base text\n", "and writes nothing");
+  Expect(WorkspaceShellTestAccess::HasEditorBanner(
+             shell, source, microide::workspace::EditorBannerState::Kind::ReadOnly),
+         "the refusal says why, with its choices: " +
+             WorkspaceShellTestAccess::DescribeEditorBanners(shell));
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the edit is kept, unsaved");
+
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "banner-action Overwrite");
+  Expect(outcome.ok, "the banner's Overwrite is pressable headlessly: " + outcome.error);
+  Expect(ReadFile(source) == "edited base text\n", "Overwrite writes the file");
+  Expect(!microide::project::LocalFileWriteGate().IsReadOnly(source),
+         "after giving the owner write permission back");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).dirty() &&
+             WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "the buffer is saved and the banner gone");
+
+  // A read-only file that ALSO changed on disk: the changed-on-disk banner's
+  // Overwrite answers the conflict, not the permission.
+  std::filesystem::permissions(source, std::filesystem::perms::owner_read);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("again ");
+  WorkspaceShellTestAccess::EditorBannerOverwrite(shell, source);
+  Expect(ReadFile(source) == "edited base text\n",
+         "the changed-on-disk Overwrite does not write a read-only file");
+  Expect(WorkspaceShellTestAccess::HasEditorBanner(
+             shell, source, microide::workspace::EditorBannerState::Kind::ReadOnly),
+         "it raises the read-only banner instead");
+  outcome = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "banner-action save as");
+  Expect(outcome.ok && WorkspaceShellTestAccess::EditorBannerCount(shell) == 0,
+         "Save As (no ellipsis needed) takes the banner down and asks for a path: " +
+             outcome.error);
+  std::filesystem::permissions(source, std::filesystem::perms::owner_all);
 }
 
 // `banner-action` is the headless route to the changed-on-disk banner: a refused
@@ -1507,6 +1568,8 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs);
   AddTest(tests, "WorkspaceShell/ClosingNonActiveDirtyTabDoesNotStrandFocus",
           TestWorkspaceShellClosingNonActiveDirtyTabDoesNotStrandFocus);
+  AddTest(tests, "WorkspaceShell/SavingAReadOnlyFileAsksFirst",
+          TestWorkspaceShellSavingAReadOnlyFileAsksFirst);
   AddTest(tests, "WorkspaceShell/DirtyPromptSaveRefusesToClobberAnExternalChange",
           TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",

@@ -121,10 +121,15 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                 RequestEditorSurfaceRedraw();
               },
           .notify_save_failed =
-              [this](const std::filesystem::path& path) {
+              [this](const std::filesystem::path& path, std::string_view reason) {
                 const std::string name =
                     path.empty() ? std::string("file") : path.filename().string();
-                Notify(NotificationService::Tone::Error, "Failed to save " + name);
+                std::string message = "Failed to save " + name;
+                if (!reason.empty()) {
+                  message += ": ";
+                  message += reason;
+                }
+                Notify(NotificationService::Tone::Error, message);
               },
           .begin_async_file_read =
               [this](const std::filesystem::path& path) {

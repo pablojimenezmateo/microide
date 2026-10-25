@@ -89,10 +89,26 @@
       }
       description += banner.kind == EditorBannerState::Kind::ExternalChange ? "external:"
                      : banner.kind == EditorBannerState::Kind::OpenFailed   ? "open-failed:"
+                     : banner.kind == EditorBannerState::Kind::ReadOnly     ? "read-only:"
                                                                             : "reloaded:";
       description += banner.path.string();
     }
     return description.empty() ? std::string("none") : description;
+  }
+  static bool HasEditorBanner(const WorkspaceShell& shell, const std::filesystem::path& path,
+                              EditorBannerState::Kind kind) {
+    const std::filesystem::path normalized = path.lexically_normal();
+    for (const EditorBannerState& banner : shell.context_.current_project_state.editor_banners) {
+      if (banner.kind == kind && banner.path == normalized) {
+        return true;
+      }
+    }
+    return false;
+  }
+  // A banner button, as a click on it runs it.
+  static void ActivateEditorBanner(WorkspaceShell& shell, EditorBannerAction action,
+                                   const std::filesystem::path& path) {
+    shell.ActivateEditorBannerAction(action, path);
   }
   static void ClearEditorBannersForTesting(WorkspaceShell& shell) {
     shell.context_.current_project_state.editor_banners.clear();

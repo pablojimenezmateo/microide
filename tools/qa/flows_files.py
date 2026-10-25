@@ -176,6 +176,36 @@ def flow_file_vanish(app: q.App) -> None:
         step(app, "overwrite", 0.3)
 
 
+def flow_file_read_only(app: q.App) -> None:
+    """Saving a read-only file is refused, as VS Code refuses it: the banner says
+    so, and its Overwrite clears the read-only bit and writes the buffer."""
+    import os
+    import stat
+    path = app.project / "locked/notes.txt"
+    open_file(app, "locked/notes.txt", "locked\n")
+    path.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+    if os.access(path, os.W_OK):
+        return  # root writes anything: nothing here is read-only
+    app.key("End")
+    app.type(" edited")
+    app.key("ctrl+s")
+    step(app, "save a read-only file", 0.4)
+    app.expect(read(app, "locked/notes.txt") == "locked\n",
+               f"the read-only file is not written ({read(app, 'locked/notes.txt')!r})")
+    app.expect(app.buffer().get("dirty") is True, "the edit is kept, unsaved")
+    overwrite = app.wait_for("button:banner/Overwrite", 3.0)
+    app.expect(overwrite is not None and bool(app.elements("button", "button:banner/Save As")),
+               "the banner offers Overwrite and Save As")
+    if overwrite:
+        app.click(*app.center(overwrite))
+        app.wait_until(lambda: read(app, "locked/notes.txt").startswith("locked edited"), 3.0,
+                       "Overwrite to write the buffer")
+        step(app, "overwrite the read-only file", 0.3)
+        app.expect(os.access(path, os.W_OK), "Overwrite gave the owner write permission back")
+        app.expect(not app.buffer().get("dirty"), "the buffer is saved")
+    path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
 def flow_undo_save_point(app: q.App) -> None:
     """The dirty flag follows the save point through undo and redo (VS Code): undo
     past a save is dirty, redo back to it is clean, and an edit undone back to the
@@ -373,6 +403,7 @@ def flow_revert_file(app: q.App) -> None:
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "file-formats": flow_file_formats,
     "file-vanish": flow_file_vanish,
+    "file-read-only": flow_file_read_only,
     "undo-save-point": flow_undo_save_point,
     "untitled-numbering": flow_untitled_numbering,
     "save-all": flow_save_all,

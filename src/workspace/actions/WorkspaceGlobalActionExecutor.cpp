@@ -438,12 +438,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                        : DispatchResult::Rejected;
     }
     case ActionId::BannerAction: {
-      if (args.size() != 1) {
-        return reject("usage: banner-action <Compare|Reload|Overwrite|Keep|Retry>");
+      if (args.empty()) {
+        return reject("usage: banner-action <Compare|Reload|Overwrite|Keep|Retry|Save As>");
+      }
+      // A label may be two words ("Save As").
+      std::string label = args[0];
+      for (std::size_t i = 1; i < args.size(); ++i) {
+        label += ' ';
+        label += args[i];
       }
       std::string error;
-      return context_.ActivateEditorBanner(args[0], &error) ? DispatchResult::Handled
-                                                            : reject(error);
+      return context_.ActivateEditorBanner(label, &error) ? DispatchResult::Handled
+                                                          : reject(error);
     }
     case ActionId::OpenSettings:
       context_.OpenSettingsOverlay();

@@ -118,6 +118,15 @@ class FileWriteGate {
   // data — so it reports nothing.
   virtual void DisposeStaged(std::span<const std::filesystem::path> staged) = 0;
 
+  // Whether `path` is a file the user may not write (chmod a-w). The editor's
+  // save refuses one until the user chooses Overwrite, as VS Code does: an atomic
+  // save renames a temporary file over it, which needs only the directory's
+  // permission, so it used to "succeed" and leave a read-only file the editor had
+  // just changed. Answered for the files this gate writes -- locally by default.
+  [[nodiscard]] virtual bool IsReadOnly(const std::filesystem::path& path) const;
+  // Give the owner write permission back (Overwrite on a read-only file).
+  [[nodiscard]] virtual bool MakeWritable(const std::filesystem::path& path);
+
   // One op — the sidebar's shape.
   [[nodiscard]] TreeResult ApplyTreeOp(const TreeOp& op) {
     return ApplyTreeOps(std::span<const TreeOp>(&op, 1));

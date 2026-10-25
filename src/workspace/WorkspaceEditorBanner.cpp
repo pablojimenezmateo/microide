@@ -23,11 +23,18 @@ std::span<const EditorBannerButton> EditorBannerButtonsFor(EditorBannerState::Ki
   static constexpr EditorBannerButton kOpenFailed[] = {
       {EditorBannerAction::Retry, "Retry", 58.0f},
   };
+  static constexpr EditorBannerButton kReadOnly[] = {
+      {EditorBannerAction::OverwriteReadOnly, "Overwrite", 78.0f, /*destructive=*/true},
+      {EditorBannerAction::SaveAs, "Save As…", 78.0f},
+      {EditorBannerAction::Keep, "Keep", 54.0f},
+  };
   switch (kind) {
     case EditorBannerState::Kind::ExternalChange:
       return kExternalChange;
     case EditorBannerState::Kind::OpenFailed:
       return kOpenFailed;
+    case EditorBannerState::Kind::ReadOnly:
+      return kReadOnly;
     case EditorBannerState::Kind::ReloadedNotice:
       break;
   }
@@ -120,7 +127,12 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       RefreshOpenCompareTabsForPath(path);
       break;
     case EditorBannerAction::Overwrite:
-      MakeEditorTabService().OverwriteEditorTabsForPath(path);
+      if (!MakeEditorTabService().OverwriteEditorTabsForPath(path)) {
+        // Refused (a read-only file swaps in its own banner) or nothing written:
+        // the banner left up is the one that still applies.
+        RequestEditorSurfaceRedraw();
+        return;
+      }
       break;
     case EditorBannerAction::Keep:
       break;
@@ -134,6 +146,23 @@ void WorkspaceShell::ActivateEditorBannerAction(EditorBannerAction action,
       RequestTabStripRedraw();
       return;
     }
+    case EditorBannerAction::OverwriteReadOnly:
+      // VS Code's Overwrite on a NoPermissions save: give the owner write
+      // permission back, then the ordinary save of the tab the banner is on.
+      if (!context_.current_project_state.write_gate().MakeWritable(path)) {
+        Notify(NotificationService::Tone::Error,
+               "Could not make " + path.filename().string() + " writable");
+        return;
+      }
+      DismissEditorBannerForPath(context_.current_project_state, path);
+      (void)ExecuteCommandName("save", {}, ActionSource::Menu, nullptr);
+      RequestEditorSurfaceRedraw();
+      return;
+    case EditorBannerAction::SaveAs:
+      DismissEditorBannerForPath(context_.current_project_state, path);
+      (void)ExecuteCommandName("save-as", {}, ActionSource::Menu, nullptr);
+      RequestEditorSurfaceRedraw();
+      return;
   }
   DismissEditorBannerForPath(context_.current_project_state, path);
   RequestEditorSurfaceRedraw();

@@ -725,12 +725,15 @@ struct WelcomeSurfaceState {
 // and appears when a clean buffer was silently refreshed from disk.
 // `OpenFailed` stays on a tab whose off-thread read failed, with a Retry: the
 // error toast is gone a few seconds later, and the tab otherwise looks like an
-// empty file at that path.
+// empty file at that path. `ReadOnly` is a save refused because the file is
+// read-only (VS Code's NoPermissions): Overwrite clears the bit and saves, Save
+// As writes elsewhere, Keep leaves the edits unsaved.
 struct EditorBannerState {
   enum class Kind {
     ExternalChange,
     ReloadedNotice,
     OpenFailed,
+    ReadOnly,
   };
   Kind kind = Kind::ExternalChange;
   std::filesystem::path path;  // normalized absolute path the banner pertains to

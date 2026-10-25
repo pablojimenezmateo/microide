@@ -24,6 +24,11 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
   const std::filesystem::path& normalized_path =
       util::PathTextNeedsNormalizing(path.native()) ? (normalized_storage = path.lexically_normal())
                                                     : path;
+  // Overwriting a change on disk is not permission to write a read-only file: that
+  // takes its own Overwrite, on the ReadOnly banner this raises instead.
+  if (!RefuseIfReadOnly(normalized_path, /*banner_shows=*/true)) {
+    return false;
+  }
   bool saved_any = false;
   // Every group: a dirty split view of the same file must also be overwritten, not
   // just the focused group's view.
