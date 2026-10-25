@@ -281,12 +281,13 @@ std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
     compare_tab = operations_.build_compare_tab_from_commit(compare_path, commit,
                                                             persisted_tab.compare_selected_row);
   }
-  if (!compare_tab.has_value()) {
+  if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return std::nullopt;
   }
-  compare_tab->compare->scroll_row = ScrollRowFromSession(persisted_tab.compare_scroll_row);
-  compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
-  compare_tab->compare->divider_fraction = persisted_tab.compare_divider_fraction;
+  CompareTabState& compare = *compare_tab->compare;
+  compare.scroll_row = ScrollRowFromSession(persisted_tab.compare_scroll_row);
+  compare.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+  compare.divider_fraction = persisted_tab.compare_divider_fraction;
   return compare_tab;
 }
 

@@ -226,7 +226,8 @@ const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const 
   if (!ActiveTabIsCompare()) {
     return nullptr;
   }
-  return &context_.current_project_state.focused_group().active_tab().compare.value();
+  const auto& compare = context_.current_project_state.focused_group().active_tab().compare;
+  return compare.has_value() ? &*compare : nullptr;
 }
 
 WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout(

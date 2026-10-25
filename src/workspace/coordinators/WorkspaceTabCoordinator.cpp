@@ -331,7 +331,8 @@ const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {
   if (!ActiveTabIsEditor()) {
     return nullptr;
   }
-  return &state_.focused_group().active_tab().editor_state.value();
+  const auto& editor_state = state_.focused_group().active_tab().editor_state;
+  return editor_state.has_value() ? &*editor_state : nullptr;
 }
 
 editor::TextViewport* TabCoordinator::ActiveEditorViewport() {

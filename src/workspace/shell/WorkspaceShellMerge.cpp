@@ -35,7 +35,8 @@ const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {
   if (!ActiveTabIsMerge()) {
     return nullptr;
   }
-  return &context_.current_project_state.focused_group().active_tab().merge.value();
+  const auto& merge = context_.current_project_state.focused_group().active_tab().merge;
+  return merge.has_value() ? &*merge : nullptr;
 }
 
 WorkspaceShell::MergeToolbarLayout WorkspaceShell::ComputeMergeToolbarLayout(

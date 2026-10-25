@@ -19,9 +19,6 @@ bugprone-unchecked-optional-access|src/editor/TextViewportHighlightCache.cpp|ret
 bugprone-unchecked-optional-access|src/editor/TextViewportHighlightCache.cpp|return cp == 0 ? *initial_highlight_state_ : highlight_checkpoints_[cp];
 bugprone-unchecked-optional-access|src/editor/TextViewportMultiCaret.cpp|out += TextInRange(*carets[i].selection);
 bugprone-unchecked-optional-access|src/project/CompileCommandsLocator.cpp|if (!best_dir.has_value() || *mtime > *best_mtime) {
-bugprone-unchecked-optional-access|src/project/GitCompareService.cpp|.content = std::move(answers[i]->content),
-bugprone-unchecked-optional-access|src/project/GitCompareService.cpp|.truncated = answers[i]->truncated});
-bugprone-unchecked-optional-access|src/project/GitCompareService.cpp|GitFileContentAtCommit{.exists = answers[i]->exists,
 bugprone-unchecked-optional-access|src/project/GitPatchApply.cpp|head, index, worktree, *target.change_span, stage, target.relative_path,
 bugprone-unchecked-optional-access|src/project/PatchGenerator.cpp|*last_change, options);
 bugprone-unchecked-optional-access|src/project/PatchGenerator.cpp|if (!lo.has_value() || seen != last - first + 1 || *hi - *lo + 1 != seen) {
@@ -50,7 +47,6 @@ bugprone-unchecked-optional-access|src/workspace/coordinators/WorkspaceTabCoordi
 bugprone-unchecked-optional-access|src/workspace/coordinators/WorkspaceTabCoordinator.cpp|auto& merge_tab = group.open_tabs[index].merge.value();
 bugprone-unchecked-optional-access|src/workspace/coordinators/WorkspaceTabCoordinator.cpp|existing->editor_state->viewport.ReloadPreservingViewState(content);
 bugprone-unchecked-optional-access|src/workspace/coordinators/WorkspaceTabCoordinator.cpp|group.open_tabs[index].editor_state->pending_format_save.armed()) {
-bugprone-unchecked-optional-access|src/workspace/coordinators/WorkspaceTabCoordinator.cpp|return &state_.focused_group().open_tabs[state_.focused_group().active_tab_index].editor_state.value();
 bugprone-unchecked-optional-access|src/workspace/coordinators/WorkspaceTabCoordinatorGroups.cpp|editor_state.restore = *EditorTabViewState(tab);
 bugprone-unchecked-optional-access|src/workspace/render/WorkspaceShellHoverPopup.cpp|viewport->cursor_column() == active_signature_help_->cursor_column;
 bugprone-unchecked-optional-access|src/workspace/render/WorkspaceShellHoverPopup.cpp|viewport->cursor_line() == active_signature_help_->cursor_line &&
@@ -66,7 +62,5 @@ bugprone-unchecked-optional-access|src/workspace/render/WorkspaceShellRenderSide
 bugprone-unchecked-optional-access|src/workspace/render/WorkspaceShellRenderSidebar.cpp|editor::GutterIconRegistry::Draw(renderer, icon->shape, icon_color, chevron_x, row_rect.y,
 bugprone-unchecked-optional-access|src/workspace/render/WorkspaceShellRenderStatusBar.cpp|fill.w = toast.progress_track.w * *entry.progress;
 bugprone-unchecked-optional-access|src/workspace/render/WorkspaceShellRenderTextInput.cpp|const OverlaySurfaceViewModel& overlay_vm = *clip_cached_overlay_vm_;
-bugprone-unchecked-optional-access|src/workspace/shell/WorkspaceShellCompare.cpp|return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.value();
-bugprone-unchecked-optional-access|src/workspace/shell/WorkspaceShellMerge.cpp|return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].merge.value();
 bugprone-unchecked-optional-access|src/workspace/shell/WorkspaceShellSettingsOverlay.cpp|builtin != nullptr ? SerializeSettingValue(*parsed_builtin_value) : std::move(value);
 bugprone-unchecked-optional-access|src/workspace/shell/WorkspaceShellSettingsOverlay.cpp|if (const float* parsed = std::get_if<float>(&*parsed_builtin_value); parsed != nullptr) {

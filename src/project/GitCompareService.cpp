@@ -255,11 +255,11 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
       repo.LookupBlobsAtRevisions(requests);
   entries_.reserve(answers.size());
   for (std::size_t i = 0; i < answers.size(); ++i) {
-    if (!answers[i].has_value()) {
+    std::optional<GitRepository::BlobLookup>& answer = answers[i];
+    if (!answer.has_value()) {
       continue;  // unanswered: the caller falls back to the single-file read
     }
-    entries_.emplace(BlobCacheKey(*request_revisions[i], *request_paths[i]),
-                     std::move(*answers[i]));
+    entries_.emplace(BlobCacheKey(*request_revisions[i], *request_paths[i]), std::move(*answer));
   }
 }
 
