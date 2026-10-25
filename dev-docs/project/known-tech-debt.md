@@ -1933,7 +1933,16 @@ whenever it was shown. Covered by
 `WorkspaceShell/ProjectOpensWithTheKeyboardInTheEditor` and the QA flow
 `startup-focus`, where the first typed letter lands in the file.
 
-### TD-2026-10-16-347 — the tree's git letters appeared two frames before the tree was repainted (remote QA, scenario H). [OPEN — not reproduced in-process]
+### TD-2026-10-16-347 — the tree's git letters appeared two frames before the tree was repainted (remote QA, scenario H). [CLOSED 2026-10-25 — fix in, not re-found]
+
+**Closed 2026-10-25.** The repair proposed below is in:
+`SidebarCoordinator::ApplyTreeGitStatuses` repaints a visible tree whenever
+`DirectoryTree::ApplyGitStatuses` reports a change. Scenario H (a host-created
+file reaching the mirror and the tree) ran with the redraw verifier on both
+passes of `tools/run-checks.sh qa-remote` on 2026-10-25 -- the loopback host and
+the 60 ms link -- with no stale frame. Reopen with the finding directory if a
+partial frame paints the tree's letters late again.
+
 
 `tools/qa/remote.py` against `worky` (2026-10-16, all 50 checks passing): in
 scenario H a host-created `qa/qa_gd.c` reached the mirror, and two partial frames
@@ -2064,7 +2073,18 @@ Not fixed in the pass because it is plugin-side product text plus a launcher-awa
 file probe the plugin API does not offer today (`ctx.fs` is project-scoped and
 local). Related: TD-2026-10-06-318 (plugin tools follow the project's launcher).
 
-### TD-2026-10-15-343 — the File menu opened over a blank sidebar, four times, then never again. [OPEN]
+### TD-2026-10-15-343 — the File menu opened over a blank sidebar, four times, then never again. [CLOSED 2026-10-25 — not re-found]
+
+**Closed 2026-10-25: not re-found in ten days.** Every QA run since the harness
+landed (the full suite many times over, `menus`/`menu-clicks` opening every menu
+by click under every focus, the monkey's seeds 1-17, qa-remote's two passes) ran
+with the frame trace and the redraw verifier on, and none painted a blank sidebar
+under a menu. What the four sightings had in common -- the first launch on a
+freshly generated fixture on a cold Xvfb -- points at the window presenting before
+the retained scene held a frame, outside the damage and skip paths the verifier
+checks. Reopen with the finding directory (it carries the frame lines and the
+verifier's images) if it recurs.
+
 
 Seen while verifying the `gui-qa-harness` proposal with the draft driver
 (`tools/qa/microide_qa.py`, Xvfb 1440x900, `make-fixture.sh` fixture, build
