@@ -174,9 +174,6 @@ class TraceChannelFacade {
   static bool SummaryEnabled() { return Derived::Channel().AggregateEnabled(); }
 
   static void ResetSummary() { Derived::Channel().ResetAggregate(); }
-  static std::vector<TraceChannel::AggregateEntry> SummarySnapshot() {
-    return Derived::Channel().AggregateSnapshot();
-  }
   static void WriteSummary(std::FILE* out) { Derived::Channel().WriteAggregate(out); }
   // Idempotent: the shutdown path and the atexit backstop both call this.
   static void DumpSummaryOnce() { Derived::Channel().DumpAggregateOnce(); }

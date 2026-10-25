@@ -84,9 +84,6 @@ class LineEditSpan {
     current_end_ = kToEnd;
   }
 
-  // Nothing of the cache is reusable.
-  void MarkFullRebuild() noexcept { NoteSuffixReplaced(0); }
-
   // "Everything from `start` on may differ" as a value, for callers that know
   // only where a change began.
   static LineEditSpan SuffixReplacedFrom(std::size_t start) noexcept {

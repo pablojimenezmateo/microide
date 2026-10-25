@@ -107,7 +107,6 @@ class DapManager {
 
   DebugSession* ActiveSession();
   const DebugSession* ActiveSession() const;
-  bool HasActiveSession() const { return ActiveSession() != nullptr; }
   int ActiveSessionId() const { return active_session_id_; }
   // Make `id` the active session (no-op if unknown). Does not touch the session.
   void SetActiveSession(int id);

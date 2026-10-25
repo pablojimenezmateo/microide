@@ -152,7 +152,6 @@ class ControlChannelService {
   // Mirror responses/events to stdout as JSONL (the `--control` stream). When on,
   // debug events surface even with zero socket clients.
   void SetStdoutMirror(bool on) { stdout_mirror_ = on; }
-  bool StdoutMirrorEnabled() const { return stdout_mirror_; }
 
   // Emit one already-serialized JSONL line to the stdout mirror (no-op when the
   // mirror is off or no sink is wired). Used for cold-start `applied` lines.

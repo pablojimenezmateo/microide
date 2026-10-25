@@ -11,10 +11,8 @@ class LayoutModeService {
   LayoutMode CurrentMode() const { return current_mode_; }
   void SetCurrentMode(LayoutMode mode) { current_mode_ = mode; }
 
-  LayoutModeInputs::Override UserOverride() const { return user_override_; }
   void SetUserOverride(LayoutModeInputs::Override override) { user_override_ = override; }
 
-  float CompactBreakpointPx() const { return compact_breakpoint_px_; }
   void SetCompactBreakpointPx(float px) { compact_breakpoint_px_ = px; }
 
   bool StatusBarVisible() const { return status_bar_visible_; }

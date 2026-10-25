@@ -36,7 +36,6 @@ struct TwoSourceState {
   bool lsp_failed = false;
 
   bool AnyPending() const { return lsp_pending || plugin_pending; }
-  bool AllResolved() const { return !lsp_pending && !plugin_pending; }
 };
 
 // Detects whether `Key` can be used with std::hash (so the hash-set fast path
