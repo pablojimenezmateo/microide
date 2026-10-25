@@ -113,12 +113,7 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
       return;
     }
 
-    RetargetOpenTabsForRename(state.path, result.resulting_path,
-                              resolution != DirtyPathResolution::Discard);
-    RetargetDiagnosticsForRename(state.path, result.resulting_path);
-    RetargetPluginDecorationsForRename(state.path, result.resulting_path);
-    operations_.clear_editor_blame();
-    RefreshProjectViewsAfterMutation(result.resulting_path);
+    FollowRename(state.path, result.resulting_path, resolution != DirtyPathResolution::Discard);
     FocusSidebarIfShown();
     return;
   }
@@ -184,6 +179,85 @@ void PathMutationCoordinator::ConfirmPromptSurface(DirtyPathResolution resolutio
   operations_.clear_editor_blame();
   RefreshProjectViewsAfterMutation(parent);
   FocusSidebarIfShown();
+}
+
+void PathMutationCoordinator::FollowRename(const std::filesystem::path& old_path,
+                                           const std::filesystem::path& new_path,
+                                           bool preserve_unsaved_state) {
+  RetargetOpenTabsForRename(old_path, new_path, preserve_unsaved_state);
+  RetargetDiagnosticsForRename(old_path, new_path);
+  RetargetPluginDecorationsForRename(old_path, new_path);
+  operations_.clear_editor_blame();
+  RefreshProjectViewsAfterMutation(new_path);
+}
+
+namespace {
+
+// "name copy.ext", then "name copy 2.ext", … -- the first name free in
+// `directory` (a folder's "name copy" has no extension to keep).
+std::filesystem::path FreeCopyName(const std::filesystem::path& directory, const std::filesystem::path& source) {
+  std::error_code error;
+  const bool is_directory = std::filesystem::is_directory(std::filesystem::symlink_status(source, error));
+  const std::string stem = is_directory ? source.filename().string() : source.stem().string();
+  const std::string extension = is_directory ? std::string{} : source.extension().string();
+  for (int n = 1;; ++n) {
+    const std::string suffix = n == 1 ? " copy" : " copy " + std::to_string(n);
+    std::filesystem::path candidate = directory / (stem + suffix + extension);
+    if (std::filesystem::symlink_status(candidate, error).type() == std::filesystem::file_type::not_found) {
+      return candidate;
+    }
+  }
+}
+
+}  // namespace
+
+std::string PathMutationCoordinator::PastePath(const std::filesystem::path& source,
+                                               bool cut,
+                                               const std::filesystem::path& directory) {
+  const std::filesystem::path from = source.lexically_normal();
+  const std::filesystem::path into = directory.lexically_normal();
+  const auto refuse = [this](std::string why) {
+    if (operations_.notify) {
+      operations_.notify(NotificationService::Tone::Error, why);
+    }
+    return why;
+  };
+  std::error_code error;
+  if (std::filesystem::symlink_status(from, error).type() == std::filesystem::file_type::not_found) {
+    return refuse(from.filename().string() + " is no longer there");
+  }
+  if (!PathEqualsOrWithin(into, CurrentProjectState().root)) {
+    return refuse("Paste only into the project");
+  }
+  std::filesystem::path destination = into / from.filename();
+  if (cut && destination == from) {
+    return {};  // cut and pasted where it is: nothing moves
+  }
+  if (cut && PathEqualsOrWithin(into, from)) {
+    return refuse("A folder cannot be moved into itself");
+  }
+  const bool taken =
+      std::filesystem::symlink_status(destination, error).type() != std::filesystem::file_type::not_found;
+  if (taken && cut) {
+    return refuse(from.filename().string() + " already exists in " + into.filename().string());
+  }
+  if (taken) {
+    destination = FreeCopyName(into, from);
+  }
+  using TreeOp = project::FileWriteGate::TreeOp;
+  const project::FileWriteGate::TreeResult result = CurrentProjectState().write_gate().ApplyTreeOp(
+      {.kind = cut ? TreeOp::Kind::Rename : TreeOp::Kind::Copy, .path = from, .new_path = destination});
+  if (!result.ok) {
+    return refuse(std::string(cut ? "Could not move " : "Could not copy ") + from.filename().string() +
+                  (result.error_message.empty() ? std::string{} : ": " + result.error_message));
+  }
+  if (cut) {
+    FollowRename(from, result.resulting_path, /*preserve_unsaved_state=*/true);
+  } else {
+    RefreshProjectViewsAfterMutation(result.resulting_path);
+  }
+  FocusSidebarIfShown();
+  return {};
 }
 
 PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabService& editor_tabs,

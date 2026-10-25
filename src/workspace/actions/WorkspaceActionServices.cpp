@@ -257,6 +257,27 @@ void WorkspaceActionContext::OpenRenamePathPrompt(const std::filesystem::path& p
                                   path.filename().string());
 }
 
+bool WorkspaceActionContext::SetTreeClipboard(const std::filesystem::path& path, bool cut) {
+  if (path.empty() || path.lexically_normal() == state_.root.lexically_normal()) {
+    return false;
+  }
+  state_.sidebar.tree_clipboard = SidebarState::TreeClipboard{.path = path.lexically_normal(), .cut = cut};
+  return true;
+}
+
+std::string WorkspaceActionContext::PasteTreeClipboard(const std::filesystem::path& directory) {
+  if (!state_.sidebar.tree_clipboard.has_value()) {
+    return "Nothing to paste: cut or copy a file in the tree first";
+  }
+  const SidebarState::TreeClipboard clipboard = *state_.sidebar.tree_clipboard;
+  std::string refusal = operations_.paste_tree_path ? operations_.paste_tree_path(clipboard.path, clipboard.cut, directory)
+                                                    : std::string("Paste is unavailable");
+  if (refusal.empty() && clipboard.cut) {
+    state_.sidebar.tree_clipboard.reset();  // a cut moves once; a copy pastes again
+  }
+  return refusal;
+}
+
 void WorkspaceActionContext::OpenDeletePathPrompt(const std::filesystem::path& path) {
   operations_.open_prompt_surface(PromptSurfaceState::Action::DeletePath,
                                   PromptSurfaceState::Kind::Confirm, path, {});

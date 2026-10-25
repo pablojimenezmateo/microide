@@ -175,6 +175,26 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       context_.OpenRenamePathPrompt(path);
       return DispatchResult::Handled;
     }
+    case ActionId::TreeCut:
+    case ActionId::TreeCopy: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      if (!context_.SetTreeClipboard(context_.ResolveTreeActionPath(source), id == ActionId::TreeCut)) {
+        return reject("No file or folder selected");
+      }
+      return DispatchResult::Handled;
+    }
+    case ActionId::TreePaste: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      std::string refusal = context_.PasteTreeClipboard(context_.TreeMutationBasePath(source));
+      if (!refusal.empty()) {
+        return reject(std::move(refusal));
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::DeletePath: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

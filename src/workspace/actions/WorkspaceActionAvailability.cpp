@@ -366,6 +366,15 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              target == TreeContextTargetKind::Background;
     }
     case ActionId::DeletePath:
+    case ActionId::TreeCut:
+    case ActionId::TreeCopy: {
+      const TreeContextTargetKind target = ActiveTreeTargetKind();
+      return !context_.current_project_state.root.empty() &&
+             (target == TreeContextTargetKind::File || target == TreeContextTargetKind::Directory);
+    }
+    case ActionId::TreePaste:
+      return !context_.current_project_state.root.empty() &&
+             context_.current_project_state.sidebar.tree_clipboard.has_value();
     case ActionId::RenamePath: {
       if (context_.current_project_state.root.empty()) {
         return false;

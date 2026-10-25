@@ -82,6 +82,10 @@ class WorkspaceActionContext {
     std::function<void(const std::filesystem::path&)> show_tree_sidebar;
     std::function<void(std::string, bool)> show_search_sidebar;
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
+    // Move (`cut`) or copy `source` into `directory` (PathMutationCoordinator::
+    // PastePath); empty on success, else why not.
+    std::function<std::string(const std::filesystem::path& source, bool cut, const std::filesystem::path& directory)>
+        paste_tree_path;
     std::function<void()> refresh_project_search;
     // The git view's Commit button: whether it is live, and pressing it.
     std::function<bool()> can_open_git_commit;
@@ -499,6 +503,11 @@ class WorkspaceActionContext {
   std::filesystem::path ActiveTabPath() const;
   void OpenCreatePathPrompt(bool directory, const std::filesystem::path& base_path);
   void OpenRenamePathPrompt(const std::filesystem::path& path);
+  // The tree's Cut / Copy: holds `path` for Paste. False for no path or the root.
+  bool SetTreeClipboard(const std::filesystem::path& path, bool cut);
+  // The tree's Paste into `directory`: what was cut moves there, what was copied
+  // is copied there. Empty on success, else why not.
+  std::string PasteTreeClipboard(const std::filesystem::path& directory);
   void OpenDeletePathPrompt(const std::filesystem::path& path);
   bool WriteClipboardText(std::string_view text) const;
   bool OpenExternalUrl(std::string_view url) const;

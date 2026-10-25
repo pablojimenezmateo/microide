@@ -280,8 +280,77 @@ def flow_tree_cancel_transactions(app: q.App) -> None:
                    3.0, "the same buffer saves normally after canceled operations")
 
 
+def _maybe_read(app: q.App, relative: str) -> str | None:
+    """`relative`'s text, or None while it does not exist."""
+    assert app.project is not None
+    path = app.project / relative
+    return path.read_text() if path.is_file() else None
+
+
+def flow_tree_clipboard(app: q.App) -> None:
+    """The tree's Cut / Copy / Paste (TD-2026-10-18-359), by Ctrl+C/X/V and by the
+    row's menu: a copy pasted beside its source is "name copy.ext", then "name
+    copy 2.ext"; pasted into a folder it keeps its name; a cut file moves, its open
+    dirty tab following with the unsaved text; a cut pastes once; moving a folder
+    into itself is refused with a toast."""
+    write(app, "clip/a.txt", "alpha\n")
+    write(app, "clip/dest/keep.txt", "keep\n")
+    app.send("tree-refresh")
+    app.send("sidebar-show", "tree")
+    _select(app, "clip")  # a click on a folder expands it
+    app.key("Right")
+    if not _select(app, "a.txt"):
+        app.expect(False, "the tree lists clip/a.txt")
+        return
+    app.key("ctrl+c")
+    app.key("ctrl+v")
+    app.wait_until(lambda: _maybe_read(app, "clip/a copy.txt") == "alpha\n", 3.0, "Ctrl+C, Ctrl+V to copy a.txt beside itself")
+    app.expect(_maybe_read(app, "clip/a copy.txt") == "alpha\n", "a copy beside its source is 'a copy.txt'")
+    _context(app, "a.txt", "Copy")
+    _context(app, "a.txt", "Paste")
+    app.wait_until(lambda: _maybe_read(app, "clip/a copy 2.txt") == "alpha\n", 3.0, "the menu's Copy, Paste to copy again")
+    app.expect(_maybe_read(app, "clip/a copy 2.txt") == "alpha\n", "the next copy is 'a copy 2.txt'")
+    _context(app, "dest", "Paste")
+    app.wait_until(lambda: _maybe_read(app, "clip/dest/a.txt") == "alpha\n", 3.0, "Paste on a folder")
+    app.expect(_maybe_read(app, "clip/dest/a.txt") == "alpha\n", "pasted into a folder, a copy keeps its name")
+
+    # Cut a file with unsaved edits open, paste it into dest.
+    open_file(app, "clip/a copy.txt")
+    app.key("ctrl+End")
+    app.type("unsaved")
+    step(app, "edit a copy.txt", 0.2)
+    if not _select(app, "a copy.txt"):
+        return
+    app.key("ctrl+x")
+    app.settle(0.2)
+    app.expect(_maybe_read(app, "clip/a copy.txt") == "alpha\n", "cutting moves nothing yet")
+    _select(app, "dest")
+    app.key("ctrl+v")
+    app.wait_until(lambda: _maybe_read(app, "clip/dest/a copy.txt") == "alpha\n", 3.0, "Ctrl+X, Ctrl+V to move the file")
+    step(app, "move", 0.3)
+    app.expect(_maybe_read(app, "clip/dest/a copy.txt") == "alpha\n" and _maybe_read(app, "clip/a copy.txt") is None,
+               "the cut file moved, its saved bytes with it")
+    tab = app.active_tab() or {}
+    app.expect(tab.get("title") == "a copy.txt" and tab.get("dirty"), f"its open tab follows it, still dirty ({tab})")
+    app.expect("unsaved" in (app.text() or ""), "with its unsaved text")
+    app.key("ctrl+z")
+
+    # A folder cannot be moved into itself.
+    app.send("sidebar-show", "tree")
+    _select(app, "dest")
+    app.key("ctrl+x")
+    app.key("Right")  # expand dest to reach a file inside it
+    _select(app, "keep.txt")
+    app.key("ctrl+v")
+    app.wait_until(lambda: any("into itself" in m for m in messages(app)), 3.0, "the refusal toast")
+    app.expect(any("into itself" in m for m in messages(app)), f"moving a folder into itself says why ({messages(app)})")
+    app.expect(_maybe_read(app, "clip/dest/keep.txt") == "keep\n", "and moves nothing")
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tree-collisions": flow_tree_collisions,
     "tree-cancel-transactions": flow_tree_cancel_transactions,
     "rename-open-tabs": flow_rename_open_tabs,
+    "tree-clipboard": flow_tree_clipboard,
 }

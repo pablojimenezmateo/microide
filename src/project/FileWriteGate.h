@@ -73,6 +73,9 @@ class FileWriteGate {
       Delete,           // see `recursive`
       Trash,            // to the desktop trash: the user can restore it; a rollback
                         // moves it back
+      Copy,             // `path` -> `new_path`, a directory with all it holds (links
+                        // copied as links); never over an existing target; missing
+                        // parents of `new_path` are created
     };
     Kind kind = Kind::CreateFile;
     std::filesystem::path path;

@@ -18,6 +18,8 @@
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
+#include "workspace/services/PromptSurfaceService.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
@@ -539,6 +541,12 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 ShowSearchSidebar(std::move(query), temporary);
               },
           .begin_project_search_edit = [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
+          .paste_tree_path =
+              [this](const std::filesystem::path& source, bool cut, const std::filesystem::path& directory) {
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+                return MakePathMutationCoordinator(editor_tabs, prompt_surfaces).PastePath(source, cut, directory);
+              },
           .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .can_open_git_commit = [this]() { return CanOpenGitCommitButton(); },
           .open_git_commit_workflow = [this]() { return OpenCommitWorkflow(); },

@@ -137,6 +137,8 @@ class Batch {
         return Delete(path, op.recursive);
       case TreeOp::Kind::Trash:
         return Trash(path);
+      case TreeOp::Kind::Copy:
+        return Copy(path, platform::NormalizeAbsolutePath(op.new_path));
     }
     return "Unknown file operation";
   }
@@ -227,6 +229,49 @@ class Batch {
                                      : "Failed to rename the path";
     }
     undo_.push_back({Undo::Kind::RenameBack, destination, source});
+    resulting_path_ = destination;
+    return {};
+  }
+
+  std::string Copy(const fs::path& source, const fs::path& destination) {
+    if (destination.empty()) {
+      return "A source and destination path are required";
+    }
+    if (IsReservedPathComponent(destination.filename())) {
+      return "Invalid destination name";
+    }
+    std::error_code error;
+    const fs::file_status status = fs::symlink_status(source, error);
+    if (status.type() == fs::file_type::not_found) {
+      return "The source path does not exist";
+    }
+    // A folder copied into itself would copy its own copy, forever.
+    const fs::path relative = destination.lexically_relative(source);
+    if (fs::is_directory(status) && !relative.empty() && !relative.native().starts_with("..")) {
+      return "A folder cannot be copied into itself";
+    }
+    if (NodeExists(destination)) {
+      return "The destination path already exists";
+    }
+    if (!EnsureParentDirectories(destination)) {
+      return "Failed to prepare the destination directory";
+    }
+    if (fs::is_directory(status)) {
+      fs::copy(source, destination, fs::copy_options::recursive | fs::copy_options::copy_symlinks, error);
+    } else if (fs::is_symlink(status)) {
+      fs::copy_symlink(source, destination, error);
+    } else {
+      // No overwrite: a target that appeared since the check fails the copy.
+      fs::copy_file(source, destination, fs::copy_options::none, error);
+    }
+    if (error) {
+      std::error_code cleanup;
+      if (NodeExists(destination)) {
+        fs::remove_all(destination, cleanup);  // a partial directory copy
+      }
+      return "Failed to copy " + source.filename().string();
+    }
+    undo_.push_back({Undo::Kind::RemoveCreatedDirs, destination, {}});
     resulting_path_ = destination;
     return {};
   }

@@ -1407,7 +1407,7 @@ apply paths were sidebar-only). Rows are indented under their parent; selecting
 one previews by putting the caret on it, Escape restores the caret and scroll,
 Enter keeps the place. `WorkspaceShell/GoToSymbolInEditorPicksFromTheOutlineSymbols`.
 
-### TD-2026-10-18-359 — the file tree cannot move or copy files. [OPEN]
+### TD-2026-10-18-359 — the file tree cannot move or copy files. [RESOLVED 2026-10-25 -- drag and drop stays with TD-386]
 
 Found writing the QA `tree-keys` flow against VS Code's explorer: there is no
 drag-and-drop of a tree entry onto a folder (VS Code moves it, Ctrl-drag copies),
@@ -1418,6 +1418,26 @@ does -- open tabs retargeted, LSP didRename/willRename, git status refreshed --
 so the move should go through Rename's path, not a second implementation. F2 and
 Delete were added as tree keys (not bindings, so sidebar text fields keep them);
 Ctrl+C/X/V would join them, keeping the editor's Ctrl+C unaffected.
+
+RESOLVED 2026-10-25: Cut / Copy / Paste are on the tree's menu (File and
+Directory rows; Paste also on the root and the background) and on Ctrl+X /
+Ctrl+C / Ctrl+V while the tree has the keyboard. Those are tree keys, as F2 and
+Delete are, so the editor's and the fields' Ctrl+C stay theirs.
+
+- `PathMutationCoordinator::PastePath` moves a cut entry through Rename's own
+  follow-up, now `FollowRename`, shared with the rename prompt: open tabs are
+  retargeted keeping their unsaved text, and diagnostics and decorations move
+  with the file.
+- A copy goes through a new `FileWriteGate` op, `Copy`. It never overwrites,
+  refuses a folder into itself, copies symlinks as links, and a rolled-back
+  batch removes it. The remote mirror gate replays a copy as folder creations
+  plus file pushes.
+- A copy onto a taken name becomes `name copy.ext`, then `name copy 2.ext`.
+- A move onto a taken name, or a folder into itself, is refused with a toast.
+
+Tests: `Project/TreeOpCopy`, `WorkspaceShell/TreeClipboardCopiesAndMoves`, and
+the QA flow `tree-clipboard`. Drag and drop onto a folder is the open part of
+TD-2026-10-24-386, and it will paste through `PastePath`.
 
 ### TD-2026-10-18-358 — no Find in Selection in the find widget. [RESOLVED 2026-10-25]
 

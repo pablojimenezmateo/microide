@@ -250,6 +250,12 @@ struct SidebarState {
   PluginSidebarState plugin;
   // The file tree's type navigation (workspace/TypeNavigation.h).
   TypeNavigationState tree_type_navigation;
+  // What the tree's Cut / Copy holds for Paste (ActionId::TreeCut / TreeCopy).
+  struct TreeClipboard {
+    std::filesystem::path path;
+    bool cut = false;
+  };
+  std::optional<TreeClipboard> tree_clipboard;
 };
 
 }  // namespace microide::workspace

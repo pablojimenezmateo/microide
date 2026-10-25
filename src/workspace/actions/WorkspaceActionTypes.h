@@ -99,6 +99,14 @@ enum class ActionId {
   CreateDirectory,
   CreateFile,
   DeletePath,
+  // The file tree's Cut / Copy / Paste (its context menu, and Ctrl+X / Ctrl+C /
+  // Ctrl+V while the tree has the keyboard): Paste moves a cut entry -- through
+  // Rename's own follow-up, so open tabs keep their unsaved text at the new path --
+  // or copies a copied one, as "name copy.ext" when the name is taken (VS Code).
+  // Context-menu and tree-key only; not registered as commands.
+  TreeCut,
+  TreeCopy,
+  TreePaste,
   Files,
   FindReferences,
   CallHierarchy,

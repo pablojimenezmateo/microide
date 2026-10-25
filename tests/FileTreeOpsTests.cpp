@@ -30,6 +30,40 @@ FileWriteGate::TreeResult TrashPath(const std::filesystem::path& p) {
   return Op({.kind = TreeOp::Kind::Trash, .path = p});
 }
 
+// Copy: a file, and a folder with what it holds, to a new path -- never over an
+// existing one, never a folder into itself; and a batch that fails after a copy
+// takes the copy back.
+void TestTreeOpCopy() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "a.txt", "alpha\n");
+  WriteFile(root / "dir" / "inner" / "b.txt", "beta\n");
+
+  const auto copied = Op({.kind = TreeOp::Kind::Copy, .path = root / "a.txt", .new_path = root / "c" / "a copy.txt"});
+  Expect(copied.ok, "a file copies, its new parent created: " + copied.error_message);
+  Expect(ReadFile(root / "c" / "a copy.txt") == "alpha\n" && ReadFile(root / "a.txt") == "alpha\n",
+         "the copy holds the source's bytes and the source stays");
+  Expect(copied.resulting_path == root / "c" / "a copy.txt", "the result names the copy");
+
+  const auto folder = Op({.kind = TreeOp::Kind::Copy, .path = root / "dir", .new_path = root / "dir2"});
+  Expect(folder.ok && ReadFile(root / "dir2" / "inner" / "b.txt") == "beta\n",
+         "a folder copies with everything in it");
+
+  const auto clash = Op({.kind = TreeOp::Kind::Copy, .path = root / "a.txt", .new_path = root / "dir2" / "inner" / "b.txt"});
+  Expect(!clash.ok && ReadFile(root / "dir2" / "inner" / "b.txt") == "beta\n",
+         "a copy never replaces an existing path");
+  const auto into_itself = Op({.kind = TreeOp::Kind::Copy, .path = root / "dir", .new_path = root / "dir" / "inner" / "dir"});
+  Expect(!into_itself.ok && !std::filesystem::exists(root / "dir" / "inner" / "dir"),
+         "a folder is not copied into itself");
+
+  const std::vector<TreeOp> batch = {
+      {.kind = TreeOp::Kind::Copy, .path = root / "a.txt", .new_path = root / "rolled.txt"},
+      {.kind = TreeOp::Kind::Rename, .path = root / "missing.txt", .new_path = root / "x.txt"},
+  };
+  const auto failed = microide::project::LocalFileWriteGate().ApplyTreeOps(batch);
+  Expect(!failed.ok && !std::filesystem::exists(root / "rolled.txt"), "a failed batch removes the copy it made");
+}
+
 void TestFileOperationService() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -399,6 +433,7 @@ void TestANonRecursiveDeleteRefusesANonEmptyDirectory() {
 
 void RegisterFileTreeOpsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/FileTreeOps", TestFileOperationService);
+  AddTest(tests, "Project/TreeOpCopy", TestTreeOpCopy);
   AddTest(tests, "Project/ATreeBatchIsAllOrNothing", TestATreeBatchIsAllOrNothing);
   AddTest(tests, "Project/AnOverwritingRenameLeavesNoStagingEntry",
           TestAnOverwritingRenameLeavesNoStagingEntry);

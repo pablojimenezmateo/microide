@@ -35,6 +35,39 @@ FileWriteGate::Result MirrorWriteGate::WriteText(const std::filesystem::path& pa
   return result;
 }
 
+namespace {
+
+// A Copy's new tree, replayed to the host: its folders created, its files pushed
+// as local writes.
+void ReplayCopiedTree(const MirrorWriteGate& gate, MirrorSyncEngine& engine, const std::filesystem::path& root,
+                      std::vector<MirrorSyncEngine::LocalTreeOp>& replay) {
+  using Kind = MirrorSyncEngine::LocalTreeOp::Kind;
+  std::error_code error;
+  if (!std::filesystem::is_directory(std::filesystem::symlink_status(root, error))) {
+    if (const std::optional<std::string> relative = gate.MirrorRelative(root)) {
+      engine.NotifyLocalWrite(*relative);
+    }
+    return;
+  }
+  if (const std::optional<std::string> relative = gate.MirrorRelative(root)) {
+    replay.push_back({Kind::CreateDirectory, *relative, {}});
+  }
+  for (auto it = std::filesystem::recursive_directory_iterator(root, error);
+       !error && it != std::filesystem::recursive_directory_iterator(); it.increment(error)) {
+    const std::optional<std::string> relative = gate.MirrorRelative(it->path());
+    if (!relative.has_value()) {
+      continue;
+    }
+    if (it->is_directory(error) && !it->is_symlink(error)) {
+      replay.push_back({Kind::CreateDirectory, *relative, {}});
+    } else {
+      engine.NotifyLocalWrite(*relative);
+    }
+  }
+}
+
+}  // namespace
+
 FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> ops) {
   TreeResult result = LocalFileWriteGate().ApplyTreeOps(ops);
   if (!result.ok) {
@@ -66,6 +99,11 @@ FileWriteGate::TreeResult MirrorWriteGate::ApplyTreeOps(std::span<const TreeOp> 
         // The host has no desktop trash to restore from; the local trash keeps the
         // user's copy, and the host's goes.
         replay.push_back({Kind::Delete, *from, {}});
+        break;
+      case TreeOp::Kind::Copy:
+        // The copy is new local content: its folders are created on the host and
+        // its files pushed like any written file.
+        ReplayCopiedTree(*this, engine_, op.new_path, replay);
         break;
     }
   }

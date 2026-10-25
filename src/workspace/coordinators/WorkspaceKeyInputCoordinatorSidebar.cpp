@@ -344,6 +344,17 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
     operations_.reveal_selected_tree_sidebar_line();
     return true;
   }
+  // VS Code's explorer clipboard: Ctrl+X / Ctrl+C hold the selected entry, Ctrl+V
+  // moves or copies it into the selected folder (a file's folder). Keys of the
+  // tree, not bindings, so the editor's and the fields' Ctrl+C/X/V stay theirs.
+  if (NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL &&
+      (event.key == SDLK_X || event.key == SDLK_C || event.key == SDLK_V)) {
+    (void)operations_.execute_action(event.key == SDLK_X   ? ActionId::TreeCut
+                                     : event.key == SDLK_C ? ActionId::TreeCopy
+                                                           : ActionId::TreePaste,
+                                     {}, ActionSource::Shortcut);
+    return true;
+  }
   switch (event.key) {
     // VS Code's explorer keys: F2 renames and Delete deletes the selected entry,
     // through the same prompts as the context menu.

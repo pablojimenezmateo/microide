@@ -34,6 +34,58 @@ std::optional<std::filesystem::path> FirstRegularFileIn(const std::filesystem::p
   return std::nullopt;
 }
 
+// The file tree's clipboard (TD-2026-10-18-359), by its keys: Ctrl+C then Ctrl+V
+// copies the selected entry into the selected folder -- as "name copy.ext" where
+// the name is taken -- and Ctrl+X then Ctrl+V moves it, through Rename's follow-up:
+// a dirty tab on the moved file follows it with its unsaved text.
+void TestWorkspaceShellTreeClipboardCopiesAndMoves() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path notes = root / "notes.txt";
+  WriteFile(notes, "base text\n");
+  std::filesystem::create_directories(root / "dest");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  const auto press = [&](SDL_Keycode key) { return SendKeyDown(shell, key, SDL_KMOD_CTRL); };
+
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, notes), "notes.txt should be selectable");
+  Expect(press(SDLK_C), "Ctrl+C in the tree should be handled");
+  Expect(press(SDLK_V), "Ctrl+V in the tree should be handled");
+  Expect(ReadFile(root / "notes copy.txt") == "base text\n",
+         "pasting a copy beside its source names it 'notes copy.txt'");
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, root / "dest"), "dest should be selectable");
+  Expect(press(SDLK_V), "a copy pastes again");
+  Expect(ReadFile(root / "dest" / "notes.txt") == "base text\n", "pasting into a folder keeps the name");
+
+  // Cut a file open with unsaved edits, paste it into dest/sub.
+  std::filesystem::create_directories(root / "dest" / "sub");
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, notes);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("edited ");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, notes), "notes.txt should be selectable again");
+  Expect(press(SDLK_X), "Ctrl+X in the tree should be handled");
+  Expect(std::filesystem::exists(notes), "cutting moves nothing yet");
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  Expect(WorkspaceShellTestAccess::SelectTreePath(shell, root / "dest" / "sub"), "dest/sub should be selectable");
+  Expect(press(SDLK_V), "Ctrl+V should paste the cut file");
+  const std::filesystem::path moved = root / "dest" / "sub" / "notes.txt";
+  Expect(!std::filesystem::exists(notes) && ReadFile(moved) == "base text\n",
+         "the cut file moved, its saved bytes with it");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == moved.lexically_normal() &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).dirty() &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines().LineView(0) == "edited base text",
+         "its open tab followed it, unsaved text and all");
+  Expect(!press(SDLK_V) || !std::filesystem::exists(root / "dest" / "sub" / "notes copy.txt"),
+         "a cut pastes once");
+}
+
 void TestWorkspaceShellRenamePromptSavesDirtyTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -1459,6 +1511,7 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange);
   AddTest(tests, "WorkspaceShell/RenamePromptSavesDirtyTabs",
           TestWorkspaceShellRenamePromptSavesDirtyTabs);
+  AddTest(tests, "WorkspaceShell/TreeClipboardCopiesAndMoves", TestWorkspaceShellTreeClipboardCopiesAndMoves);
   AddTest(tests, "WorkspaceShell/GoToLinePromptNavigatesActiveEditor",
           TestWorkspaceShellGoToLinePromptNavigatesActiveEditor);
   AddTest(tests, "WorkspaceShell/PromptCancelButtonDoesNotExecuteAction",

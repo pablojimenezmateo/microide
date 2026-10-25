@@ -54,6 +54,13 @@ class PathMutationCoordinator {
                                  std::string* blocking_label) const;
   void CloseOpenTabsForPath(const std::filesystem::path& path);
   void ConfirmPromptSurface(DirtyPathResolution resolution);
+  // The tree's Paste: `source` moved (`cut`) or copied into `directory`, under its
+  // own name. A move is a rename, with a rename's follow-up -- open tabs retargeted
+  // keeping their unsaved text, diagnostics and decorations moved with the file.
+  // A copy whose name is taken there becomes "name copy.ext", "name copy 2.ext"…
+  // (VS Code); a move onto a taken name, or a folder into itself, is refused.
+  // Empty on success, else why not (also notified).
+  std::string PastePath(const std::filesystem::path& source, bool cut, const std::filesystem::path& directory);
   // Replay a confirmed rename/delete once every write it waited on has landed
   // (a SaveContinuation of kind PathMutation; a failed write cancels it before
   // this is reached).
@@ -120,6 +127,10 @@ class PathMutationCoordinator {
                                           const std::filesystem::path& new_path);
   void ClearPluginDecorationsForPath(const std::filesystem::path& path);
   void RefreshProjectViewsAfterMutation(const std::filesystem::path& preferred_tree_path);
+  // Everything a rename or a move updates once the file has moved on disk.
+  void FollowRename(const std::filesystem::path& old_path,
+                    const std::filesystem::path& new_path,
+                    bool preserve_unsaved_state);
   void RetargetOpenTabsForRename(const std::filesystem::path& old_path,
                                  const std::filesystem::path& new_path,
                                  bool preserve_unsaved_state = true);

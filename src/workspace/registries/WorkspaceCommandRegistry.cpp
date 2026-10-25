@@ -97,6 +97,11 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::CreateDirectory, "", "", "New Folder…", ""},
       ActionSpec{ActionId::CreateFile, "", "", "New File…", ""},
       ActionSpec{ActionId::DeletePath, "", "", "Delete…", ""},
+      // The tree's clipboard (Ctrl+X / Ctrl+C / Ctrl+V are the tree's own keys, as
+      // F2 and Delete are, so the menu shows no accelerator for them either).
+      ActionSpec{ActionId::TreeCut, "", "", "Cut", ""},
+      ActionSpec{ActionId::TreeCopy, "", "", "Copy", ""},
+      ActionSpec{ActionId::TreePaste, "", "", "Paste", ""},
       ActionSpec{ActionId::Files, "files", "files [query]", "Go to File…", "Ctrl+P"},
       ActionSpec{ActionId::FindReferences, "find-references", "find-references",
                  "Find References", "Shift+F12"},
