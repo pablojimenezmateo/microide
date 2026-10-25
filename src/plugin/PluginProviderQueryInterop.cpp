@@ -551,12 +551,14 @@ static void ReadAuthSessionTable(lua_State* state, std::string_view fallback_id,
   lua_pop(state, 1);
 }
 
-bool LoginAuthProvider(
+namespace {
+
+// The auth provider `provider_id` when it registered `hook` (login / refresh /
+// logout); otherwise null, with `error_message` saying which of the two is missing.
+const runtime_types::AuthProviderRuntime* FindAuthHook(
     std::string_view provider_id,
-    const std::vector<std::string>& scopes,
     const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
-    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
-    PluginHost::AuthSessionData* session,
+    int runtime_types::AuthProviderRuntime::*hook, std::string_view verb,
     std::string* error_message) {
   const auto it =
       std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
@@ -565,30 +567,60 @@ bool LoginAuthProvider(
     if (error_message != nullptr) {
       *error_message = "unknown auth provider: " + std::string(provider_id);
     }
-    return false;
+    return nullptr;
   }
-  if (it->login_ref == LUA_NOREF || it->login_ref == LUA_REFNIL) {
+  if ((*it).*hook == LUA_NOREF || (*it).*hook == LUA_REFNIL) {
     if (error_message != nullptr) {
-      *error_message = "auth provider '" + std::string(provider_id) + "' does not support login";
+      *error_message = "auth provider '" + std::string(provider_id) + "' does not support " +
+                       std::string(verb);
+    }
+    return nullptr;
+  }
+  return &*it;
+}
+
+// Calls the hook (with its one argument) already pushed on `plugin`'s stack. The
+// message names `provider_id`, which is caller-owned: the provider entry may
+// dangle after PCall: the hook runs with registration allowed, and registering a
+// provider can reallocate the runtimes vector.
+bool PCallAuthHook(std::string_view provider_id, const runtime_types::PluginInstance* plugin,
+                   int nresults, std::string_view verb, std::string* error_message) {
+  std::string call_error;
+  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, nresults, &call_error)) {
+    if (error_message != nullptr) {
+      *error_message = "auth provider '" + std::string(provider_id) + "' " + std::string(verb) +
+                       " failed: " + call_error;
     }
     return false;
   }
+  return true;
+}
 
-  lua_State* state = it->state;
+}  // namespace
+
+bool LoginAuthProvider(
+    std::string_view provider_id,
+    const std::vector<std::string>& scopes,
+    const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
+    const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
+    PluginHost::AuthSessionData* session,
+    std::string* error_message) {
+  const runtime_types::AuthProviderRuntime* provider =
+      FindAuthHook(provider_id, auth_provider_runtimes,
+                   &runtime_types::AuthProviderRuntime::login_ref, "login", error_message);
+  if (provider == nullptr) {
+    return false;
+  }
+  lua_State* state = provider->state;
   const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->login_ref);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, provider->login_ref);
   lua_createtable(state, static_cast<int>(scopes.size()), 0);
   for (std::size_t i = 0; i < scopes.size(); ++i) {
     lua_pushlstring(state, scopes[i].c_str(), scopes[i].size());
     lua_rawseti(state, -2, static_cast<lua_Integer>(i + 1));
   }
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
-    if (error_message != nullptr) {
-      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
-      *error_message = "auth provider '" + std::string(provider_id) + "' login failed: " + call_error;
-    }
+  if (!PCallAuthHook(provider_id, plugin, /*nresults=*/1, "login", error_message)) {
     return false;
   }
   ReadAuthSessionTable(state, std::string_view{}, session);
@@ -604,35 +636,18 @@ bool RefreshAuthSession(
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     PluginHost::AuthSessionData* session,
     std::string* error_message) {
-  const auto it =
-      std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
-                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
-  if (it == auth_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown auth provider: " + std::string(provider_id);
-    }
+  const runtime_types::AuthProviderRuntime* provider =
+      FindAuthHook(provider_id, auth_provider_runtimes,
+                   &runtime_types::AuthProviderRuntime::refresh_ref, "refresh", error_message);
+  if (provider == nullptr) {
     return false;
   }
-  if (it->refresh_ref == LUA_NOREF || it->refresh_ref == LUA_REFNIL) {
-    if (error_message != nullptr) {
-      *error_message =
-          "auth provider '" + std::string(provider_id) + "' does not support refresh";
-    }
-    return false;
-  }
-
-  lua_State* state = it->state;
+  lua_State* state = provider->state;
   const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->refresh_ref);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, provider->refresh_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 1, &call_error)) {
-    if (error_message != nullptr) {
-      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
-      *error_message =
-          "auth provider '" + std::string(provider_id) + "' refresh failed: " + call_error;
-    }
+  if (!PCallAuthHook(provider_id, plugin, /*nresults=*/1, "refresh", error_message)) {
     return false;
   }
   ReadAuthSessionTable(state, session_id, session);
@@ -646,34 +661,18 @@ bool LogoutAuthSession(
     const std::vector<runtime_types::AuthProviderRuntime>& auth_provider_runtimes,
     const std::function<const runtime_types::PluginInstance*(lua_State*)>& find_plugin_by_state,
     std::string* error_message) {
-  const auto it =
-      std::find_if(auth_provider_runtimes.begin(), auth_provider_runtimes.end(),
-                   [provider_id](const auto& runtime) { return runtime.id == provider_id; });
-  if (it == auth_provider_runtimes.end()) {
-    if (error_message != nullptr) {
-      *error_message = "unknown auth provider: " + std::string(provider_id);
-    }
+  const runtime_types::AuthProviderRuntime* provider =
+      FindAuthHook(provider_id, auth_provider_runtimes,
+                   &runtime_types::AuthProviderRuntime::logout_ref, "logout", error_message);
+  if (provider == nullptr) {
     return false;
   }
-  if (it->logout_ref == LUA_NOREF || it->logout_ref == LUA_REFNIL) {
-    if (error_message != nullptr) {
-      *error_message = "auth provider '" + std::string(provider_id) + "' does not support logout";
-    }
-    return false;
-  }
-
-  lua_State* state = it->state;
+  lua_State* state = provider->state;
   const lua_interop::StackResetGuard stack_guard(state);
   const runtime_types::PluginInstance* plugin = find_plugin_by_state(state);
-  lua_rawgeti(state, LUA_REGISTRYINDEX, it->logout_ref);
+  lua_rawgeti(state, LUA_REGISTRYINDEX, provider->logout_ref);
   lua_pushlstring(state, session_id.data(), session_id.size());
-  std::string call_error;
-  if (plugin == nullptr || !plugin->runtime || !plugin->runtime->PCall(1, 0, &call_error)) {
-    if (error_message != nullptr) {
-      // provider_id (== it->id) is caller-owned; `it` may dangle after PCall (see above).
-      *error_message =
-          "auth provider '" + std::string(provider_id) + "' logout failed: " + call_error;
-    }
+  if (!PCallAuthHook(provider_id, plugin, /*nresults=*/0, "logout", error_message)) {
     return false;
   }
   return true;
