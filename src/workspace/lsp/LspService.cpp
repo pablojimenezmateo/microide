@@ -1356,6 +1356,10 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   }
 }
 
+void LspService::ForgetDocument(const std::string& uri) {
+  synced_content_revision_.erase(uri);
+}
+
 void LspService::SyncLspForActiveEditableLastChange() {
   util::PerformanceTrace::Scope perf_scope("LspService::SyncLspForActiveEditableLastChange");
   editor::TextViewport* viewport = operations_.active_editable_viewport();

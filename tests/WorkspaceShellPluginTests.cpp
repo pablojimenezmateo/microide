@@ -3368,6 +3368,12 @@ void TestWorkspaceShellSteppingOverACloserSendsTheServerNothing() {
         Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "y"), "type after the call");
         Expect(client->TrackedDocumentVersion(uri) == std::optional<int>(*before + 1),
                "the next real edit is sent once");
+        // What the sync keeps per document goes with it, or it grows by one entry
+        // for every file synced in a session.
+        Expect(WorkspaceShellTestAccess::LspSyncedDocumentCount(shell) == 1, "one document synced");
+        WorkspaceShellTestAccess::CloseTab(shell, 0);
+        Expect(WorkspaceShellTestAccess::LspSyncedDocumentCount(shell) == 0,
+               "closing it forgets its sync state");
       });
 }
 

@@ -168,6 +168,9 @@
   static void RetireCurrentProjectLspServers(WorkspaceShell& shell) {
     shell.lsp_service_.RetireCurrentProjectServers();
   }
+  static std::size_t LspSyncedDocumentCount(const WorkspaceShell& shell) {
+    return shell.lsp_service_.synced_document_count();
+  }
   static std::size_t LspRetiringClientCount(const WorkspaceShell& shell) {
     return shell.lsp_service_.RetiringClientCountForTesting();
   }

@@ -195,6 +195,10 @@ class LspService {
   std::size_t NotifyWatchedFileChanges(const std::vector<project::ProjectFileChange>& changes);
 
   // Document lifecycle / synchronization.
+  // The buffer for `uri` closed: drop what the sync kept for it, or the per-URI
+  // state grows by one entry for every file synced in a session.
+  void ForgetDocument(const std::string& uri);
+  std::size_t synced_document_count() const { return synced_content_revision_.size(); }
   LspClient* LspClientForViewport(const editor::TextViewport& viewport, std::string* language_id);
   // `precomputed_uri`, when non-empty, is used verbatim instead of re-deriving the
   // document URI from the viewport path (FileUriForPath does path normalization +

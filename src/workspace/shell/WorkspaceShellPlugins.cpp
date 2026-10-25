@@ -1424,7 +1424,9 @@ void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
   // Percent-encoded to match the open URI (FileUriForPath); a raw "file://" +
   // path never matches HasOpenDocument for special-char paths, so didClose would
   // be skipped and the server would leak the document (and its diagnostics).
-  if (CurrentLspManager().CloseDocumentEverywhere(FileUriForPath(normalized_path)) == 0) {
+  const std::string uri = FileUriForPath(normalized_path);
+  lsp_service_.ForgetDocument(uri);
+  if (CurrentLspManager().CloseDocumentEverywhere(uri) == 0) {
     return;
   }
   state.diagnostics_store.ClearOwnerFile("lsp", normalized_path);
