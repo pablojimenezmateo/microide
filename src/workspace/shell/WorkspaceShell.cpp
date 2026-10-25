@@ -5,6 +5,7 @@
 
 #include "editor/GutterIconRegistry.h"
 
+#include "util/PathMatch.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
@@ -56,8 +57,10 @@ void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path
   // (found by the QA monkey). Any editable surface draws it -- a diff's working
   // side, a merge's result pane -- and Save on a merge left its annotation on the
   // result pane (QA merge-mouse).
+  // Compared, not normalized: opening any file passes through here, and building
+  // the viewport's normal path cost an allocation per component per open.
   if (const editor::TextViewport* viewport = ActiveEditableViewport();
-      viewport != nullptr && viewport->path().lexically_normal() == normalized) {
+      viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized)) {
     RequestFocusedEditorRedraw();
   }
 }

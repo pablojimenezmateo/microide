@@ -1616,7 +1616,7 @@
   bool RevealPathInFileExplorer(const std::filesystem::path& directory);
   void ResizeTerminalToPanel(const WorkspaceLayout& layout);
   bool OpenUntitledTab();
-  bool OpenFileInNewTab(std::filesystem::path path);
+  bool OpenFileInNewTab(const std::filesystem::path& path);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherEditorGroup();
   void FocusEditorGroup(std::size_t group_index);

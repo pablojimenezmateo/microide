@@ -976,7 +976,7 @@ std::size_t WorkspaceShell::EditorGroupCount() const {
 // By value: callers pass paths that live in workspace state (a compare tab's
 // path, a tree row's), and opening a tab can reallocate or rebuild that state
 // before the path is read again -- Alt+O from a diff read its own freed path.
-bool WorkspaceShell::OpenFileInNewTab(std::filesystem::path path) {
+bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
   // A host file outside a remote project (a system header a language server named)
   // is fetched first, read-only, off the UI thread; it opens when it arrives.
   if (glue_->remote_host_service != nullptr &&
@@ -984,24 +984,28 @@ bool WorkspaceShell::OpenFileInNewTab(std::filesystem::path path) {
           path, [this](const std::filesystem::path& fetched) { (void)OpenFileInNewTab(fetched); })) {
     return false;
   }
-  const bool opened = MakeEditorTabService().OpenFileInNewTab(path);
-  if (opened && glue_->remote_host_service != nullptr &&
-      glue_->remote_host_service->IsHostFileCopy(path)) {
+  // `path` is read only up to the open: a caller may pass one that lives in state
+  // the open rebuilds (a tree row's, which revealing the file re-lays out). Taken
+  // by reference rather than copied -- a path copy is a few allocations per open.
+  const bool host_copy =
+      glue_->remote_host_service != nullptr && glue_->remote_host_service->IsHostFileCopy(path);
+  if (!MakeEditorTabService().OpenFileInNewTab(path)) {
+    return false;
+  }
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr) {
+    return true;
+  }
+  if (host_copy) {
     // A copy of a host file outside the project: not the project's to edit.
-    if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-      viewport->SetReadOnly(true);
-    }
+    viewport->SetReadOnly(true);
   }
-  if (opened) {
-    // Record into the recent-files MRU, scoped to the active project. Resolve to an
-    // absolute path so finder/welcome lookups match regardless of the caller's input.
-    const std::filesystem::path& root = context_.current_project_state.root;
-    if (!root.empty()) {
-      const std::filesystem::path absolute = path.is_absolute() ? path : root / path;
-      recents_service_.RecordFileOpen(absolute, root);
-    }
+  // Record into the recent-files MRU, scoped to the active project, under the
+  // opened tab's own path: absolute and normal whatever the caller passed.
+  if (const std::filesystem::path& root = context_.current_project_state.root; !root.empty()) {
+    recents_service_.RecordFileOpen(viewport->path(), root);
   }
-  return opened;
+  return true;
 }
 
 bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
