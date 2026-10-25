@@ -62,14 +62,8 @@ GitRepository::CommandResult GitRepository::Execute(
     const std::vector<std::string>& arguments,
     bool silence_stderr,
     int timeout_ms) const {
-  const auto result = gitutil::ReadGitCommandOutput(
-      *launcher_, root_, std::vector<std::string>(arguments), silence_stderr, timeout_ms);
-  return CommandResult{
-      .exit_code = result.exit_code,
-      .output = result.output,
-      .timed_out = result.timed_out,
-      .truncated = result.truncated,
-  };
+  return gitutil::ReadGitCommandOutput(*launcher_, root_, std::vector<std::string>(arguments),
+                                      silence_stderr, timeout_ms);
 }
 
 GitRepository::CommandResult GitRepository::ExecuteWithStdin(
@@ -77,15 +71,9 @@ GitRepository::CommandResult GitRepository::ExecuteWithStdin(
     std::string stdin_text,
     bool silence_stderr,
     int timeout_ms) const {
-  const auto result = gitutil::ReadGitCommandOutputWithStdin(
-      *launcher_, root_, std::vector<std::string>(arguments), std::move(stdin_text),
-      silence_stderr, timeout_ms);
-  return CommandResult{
-      .exit_code = result.exit_code,
-      .output = result.output,
-      .timed_out = result.timed_out,
-      .truncated = result.truncated,
-  };
+  return gitutil::ReadGitCommandOutputWithStdin(*launcher_, root_,
+                                               std::vector<std::string>(arguments),
+                                               std::move(stdin_text), silence_stderr, timeout_ms);
 }
 
 bool GitRepository::ExecuteSucceeds(std::initializer_list<std::string_view> arguments,

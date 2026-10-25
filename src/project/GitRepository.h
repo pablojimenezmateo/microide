@@ -31,13 +31,9 @@ class GitRepository {
   std::optional<std::filesystem::path> ToRelative(const std::filesystem::path& absolute_path) const;
   std::filesystem::path ToAbsolute(const std::filesystem::path& relative_path) const;
 
-  struct CommandResult {
-    int exit_code = -1;
-    std::string output;
-    bool timed_out = false;
-    bool truncated = false;
-    bool success() const { return exit_code == 0; }
-  };
+  // The git layer's one result type. This used to be a field-for-field copy that
+  // Execute filled from the internal result -- copying the whole command output.
+  using CommandResult = internal::CommandResult;
 
   // `timeout_ms` bounds the invocation (see internal::kGitReadTimeoutMs /
   // kGitWriteTimeoutMs). Read commands use the default; write/long ops (commit,
