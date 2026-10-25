@@ -612,6 +612,7 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
     return;
   }
   client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
+  synced_content_revision_[uri] = viewport.content_revision();
   // Pull semantic tokens for the freshly-opened document so identifiers recolor.
   RequestLspSemanticTokens(viewport, client);
   // Pull inlay hints for the freshly-opened document (mid-line type/param hints).
@@ -1255,7 +1256,7 @@ void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& vi
 }
 
 std::optional<LspService::BufferSyncTarget> LspService::ResolveOpenDocumentForSync(
-    const editor::TextViewport& viewport) {
+    const editor::TextViewport& viewport, std::string uri) {
   BufferSyncTarget target;
   target.client = LspClientForViewport(viewport, &target.language_id);
   if (target.client == nullptr) {
@@ -1263,7 +1264,7 @@ std::optional<LspService::BufferSyncTarget> LspService::ResolveOpenDocumentForSy
   }
   // Compute the URI once (FileUriForPath normalizes + percent-encodes) and reuse it
   // for both the was-open check and the caller's DidChange.
-  target.uri = FileUriForPath(viewport.path());
+  target.uri = uri.empty() ? FileUriForPath(viewport.path()) : std::move(uri);
   // Capture BEFORE EnsureLspDocumentOpen: if the doc was not open, the didOpen it
   // sends carries the current (already-edited) text, so a following didChange would
   // double-apply. The caller gates its DidChange on was_open for exactly this reason.
@@ -1350,6 +1351,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   if (target->was_open) {
     target->client->DidChange(target->uri, SerializeViewportText(viewport));
   }
+  synced_content_revision_[target->uri] = viewport.content_revision();
   // Re-request semantic tokens only when the edit left the buffer clean (e.g. an
   // undo landing on the saved point). The overlay is render-suppressed while
   // dirty, so requesting for a dirty buffer would paint nothing yet be superseded
@@ -1366,6 +1368,17 @@ void LspService::SyncLspForActiveEditableLastChange() {
   editor::TextViewport* viewport = operations_.active_editable_viewport();
   if (viewport == nullptr || viewport->path().empty()) {
     return;
+  }
+  // Nothing changed since the last sync (see synced_content_revision_): the
+  // viewport's last_applied_edit is an edit the server already has.
+  std::string uri_key = FileUriForPath(viewport->path());
+  if (const auto [it, inserted] =
+          synced_content_revision_.try_emplace(uri_key, viewport->content_revision());
+      !inserted) {
+    if (it->second == viewport->content_revision()) {
+      return;
+    }
+    it->second = viewport->content_revision();
   }
 
   // This keystroke/undo shifted the buffer, so the absolute-positioned semantic
@@ -1386,7 +1399,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   {
     util::PerformanceTrace::Scope scope(
         "LspService::SyncLspForActiveEditableLastChange::ResolveAndOpen");
-    target = ResolveOpenDocumentForSync(*viewport);
+    target = ResolveOpenDocumentForSync(*viewport, std::move(uri_key));
   }
   if (!target.has_value()) {
     return;

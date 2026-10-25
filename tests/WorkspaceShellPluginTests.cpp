@@ -3195,6 +3195,40 @@ return ide.plugin({
          "the language server's signature must win over the plugin's for a served language");
 }
 
+// QA flow lsp-signature-help: typing a closer steps over the auto-inserted one --
+// no edit -- yet still reported "the last change", and the LSP sync re-sent the
+// viewport's last_applied_edit, which was the PREVIOUS keystroke's. The server then
+// held `f(xx)` for a buffer of `f(x)`, and every later position was off by one
+// (clangd put a typed `,` inside a string literal and the hints never advanced).
+void TestWorkspaceShellSteppingOverACloserSendsTheServerNothing() {
+  WithMarkdownCompletionServer(
+      "\n", 0, 0,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        auto* client =
+            WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("markdown");
+        Expect(client != nullptr, "the stub client should be installed");
+        if (client == nullptr) {
+          return;
+        }
+        const std::string uri = workspace::FileUriForPath(editor.path());
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "("), "type the opener");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "x"), "type the argument");
+        Expect(std::string(editor.lines()[0]) == "(x)",
+               "the fixture auto-closes `(`, got: " + std::string(editor.lines()[0]));
+        const std::optional<int> before = client->TrackedDocumentVersion(uri);
+        Expect(before.has_value(), "the typing should have opened the document on the server");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, ")"), "type the closer");
+        Expect(std::string(editor.lines()[0]) == "(x)" && editor.cursor_column() == 3,
+               "the closer steps over the auto-inserted one");
+        Expect(client->TrackedDocumentVersion(uri) == before,
+               "stepping over a closer changes nothing, so it sends the server nothing");
+        Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "y"), "type after the call");
+        Expect(client->TrackedDocumentVersion(uri) == std::optional<int>(*before + 1),
+               "the next real edit is sent once");
+      });
+}
+
 // Inlay hints flow LSP -> mid-line virtual text: opening a served document
 // requests textDocument/inlayHint and publishes each result as an "lsp:inlay"
 // InlineText decoration anchored at the hint's byte column (padding baked into
@@ -7427,6 +7461,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellQuickSuggestionsWithNothingToOfferStayHidden);
   AddTest(tests, "WorkspaceShell/TriggerCharacterOpensCompletionAtTheCaret",
           TestWorkspaceShellTriggerCharacterOpensCompletionAtTheCaret);
+  AddTest(tests, "WorkspaceShell/SteppingOverACloserSendsTheServerNothing",
+          TestWorkspaceShellSteppingOverACloserSendsTheServerNothing);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
   AddTest(tests, "WorkspaceShell/InlayHintsPublishMidLineDecorations",

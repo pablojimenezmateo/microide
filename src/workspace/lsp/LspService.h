@@ -379,7 +379,8 @@ class LspService {
     std::string language_id;
     bool was_open = false;
   };
-  std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport);
+  std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport,
+                                                             std::string uri = {});
 
   // Shared publish scaffolding for the generation-guarded absolute-position overlays
   // (semantic tokens, inlay hints): drop a superseded response, resolve the file's
@@ -451,6 +452,15 @@ class LspService {
   // and not yet run. Drained post-frame by ConsumeDeferredBufferOpen so the didOpen
   // + token/inlay requests do not block the tab switch (TD-2026-07-17A-033).
   std::optional<std::filesystem::path> pending_buffer_open_;
+
+  // Per-URI document content revision the server-facing state last caught up to
+  // (a didOpen, a didChange, or the keystroke sync's diagnostic shift). A keystroke
+  // that changed nothing -- typing a closer steps over the auto-inserted one --
+  // still reports "the last change", and the viewport's last_applied_edit is then
+  // the PREVIOUS keystroke's: re-sending it duplicated that edit on the server and
+  // shifted the diagnostics twice. The keystroke sync acts only when the revision
+  // moved since.
+  std::unordered_map<std::string, std::uint64_t> synced_content_revision_;
 
   // Per-URI monotonic generation for semantic-token requests. Bumped on every
   // request; the response closure captures its value and PublishLspSemanticTokens
