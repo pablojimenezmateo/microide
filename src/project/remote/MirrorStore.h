@@ -52,6 +52,12 @@ class MirrorStore {
     // Written or created here, and not in the host's content set (an ignored path,
     // a .env, an empty directory): never deleted for not being listed (§ 6.3).
     bool local_only = false;
+    // The host's newest manifest id when it acknowledged this path's last push
+    // (RemoteWorkspace::WriteResult::manifest_id). A row from a manifest at or below
+    // it was built before the host saw that write -- the echo of an earlier push,
+    // say -- and must not be taken over it. Not persisted: after a reload the next
+    // manifest is newer than any push this window made.
+    std::uint64_t pushed_manifest = 0;
 
     friend bool operator==(const Entry&, const Entry&) = default;
   };

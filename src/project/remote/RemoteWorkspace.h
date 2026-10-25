@@ -117,6 +117,9 @@ class RemoteWorkspace {
     // The request never got an answer (no connection, or it closed): nothing is
     // known about the host, and the operation is worth retrying on the next one.
     bool unreachable = false;
+    // The host's newest manifest id once the write was done (0 from a server that
+    // does not say): a watch row in a manifest at or below it predates the write.
+    std::uint64_t manifest_id = 0;
   };
   using WriteDone = std::function<void(WriteResult result)>;
   std::uint64_t WriteFile(std::string path, std::string_view content, const Precondition& expect,

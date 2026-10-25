@@ -415,6 +415,62 @@ void TestMirrorPushesLocalWritesUnderCompareAndSwap() {
   Expect(session.engine->StateOf("a.txt") == ContentState::Current, "still current");
 }
 
+// TD-2026-10-22-385: a watch row the host built before it acknowledged a push --
+// the echo of the previous push -- reaches the client AFTER that acknowledgement
+// over a slow link (the host sends deltas on the bulk lane, answers on the
+// interactive one, and the serial queue runs the delta after the waiting push).
+// Taking it pulled the old content back over the save; the next push expected it
+// and conflicted, and every save after that stayed in the mirror. Delivered here
+// through the engine's watch sink, as the host's watch would deliver it.
+void TestMirrorIgnoresAWatchRowOlderThanItsPush() {
+  MirrorSession session;
+  WriteFile(session.host / "a.txt", "one\n");
+  session.Connect();
+  session.Sync();
+
+  WriteFile(session.Tree("a.txt"), "two\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "two\n", "the save reaches the host");
+  const std::uint64_t acknowledged = session.store->entries()["a.txt"].pushed_manifest;
+  Expect(acknowledged > 0, "the host's answer says which manifest it had built by then");
+
+  const auto row = [](std::string_view content) {
+    return remote::ManifestRow{.path = "a.txt",
+                               .kind = remote::ManifestEntryKind::File,
+                               .size = content.size(),
+                               .mode = 0644,
+                               .mtime_ns = 0,
+                               .hash = util::HashContent(content),
+                               .link_target = {}};
+  };
+  // The echo of the FIRST content, from a manifest the host built before the push.
+  session.engine->WatchSink()(remote::RemoteWorkspace::WatchDelta{
+      .manifest_id = acknowledged, .deleted = {}, .rows = {row("one\n")}, .repository_moved = false});
+  session.engine->Flush();
+  Expect(ReadFile(session.Tree("a.txt")) == "two\n" &&
+             session.engine->StateOf("a.txt") == ContentState::Current,
+         "a row older than the push is not taken over the save");
+
+  WriteFile(session.Tree("a.txt"), "three\n");
+  session.engine->NotifyLocalWrite("a.txt");
+  session.engine->Flush();
+  Expect(ReadFile(session.host / "a.txt") == "three\n" &&
+             session.engine->StateOf("a.txt") == ContentState::Current,
+         "so the next save lands, with no conflict");
+
+  // A row from a later manifest is the host's change, and is followed.
+  WriteFile(session.host / "a.txt", "host four\n");
+  session.engine->WatchSink()(remote::RemoteWorkspace::WatchDelta{
+      .manifest_id = session.store->entries()["a.txt"].pushed_manifest + 1,
+      .deleted = {},
+      .rows = {row("host four\n")},
+      .repository_moved = false});
+  session.engine->Flush();
+  Expect(ReadFile(session.Tree("a.txt")) == "host four\n",
+         "a newer row is a host change and is pulled");
+}
+
 void TestMirrorParksConflictsAndNeverOverwritesLocalEdits() {
   MirrorSession session;
   WriteFile(session.host / "a.txt", "base\n");
@@ -844,6 +900,8 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/InitialSyncAndHostChanges", TestMirrorInitialSyncAndHostChanges);
   AddTest(tests, "MirrorSyncEngine/PushesLocalWritesUnderCompareAndSwap",
           TestMirrorPushesLocalWritesUnderCompareAndSwap);
+  AddTest(tests, "MirrorSyncEngine/IgnoresAWatchRowOlderThanItsPush",
+          TestMirrorIgnoresAWatchRowOlderThanItsPush);
   AddTest(tests, "MirrorSyncEngine/ParksConflictsAndNeverOverwritesLocalEdits",
           TestMirrorParksConflictsAndNeverOverwritesLocalEdits);
   AddTest(tests, "MirrorSyncEngine/HoldsAMassDelete", TestMirrorHoldsAMassDelete);

@@ -27,8 +27,14 @@ constexpr std::uint64_t kMaxObjectBytes = 64u * 1024 * 1024;
 // (and go to disk on the client) whole.
 constexpr std::uint64_t kMaxDeltaBaseBytes = 8u * 1024 * 1024;
 
-util::JsonValue OpResultJson(const remote::FileOpResult& result) {
+// `manifest`: the tree's newest manifest id once the operation is done, so a
+// client can tell a watch row the host built before the write (its id is not
+// above this) from one that saw it (TD-2026-10-22-385).
+util::JsonValue OpResultJson(const remote::FileOpResult& result, std::uint64_t manifest = 0) {
   util::JsonObject json;
+  if (manifest != 0) {
+    json["manifest"] = util::JsonValue(static_cast<std::int64_t>(manifest));
+  }
   if (result.status == remote::FileOpResult::Status::Conflict) {
     json["conflict"] = util::JsonValue(true);
     json["current"] = result.current.has_value() ? util::JsonValue(result.current->Hex())
@@ -668,11 +674,13 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     tree->io_queue.Post([this, tree, connection_id, id, path = path.AsString(),
                          content = std::move(content), expect = *expect, bits]() {
       const remote::FileOpResult result = remote::WriteTreeFile(tree->tree.root(), path, content, expect, bits);
+      // After the write, so the line it draws falls after it (NewestManifestId).
+      const std::uint64_t manifest = tree->tree.NewestManifestId();
       WithPeer(connection_id, [&](remote::RemotePeer& peer) {
         if (result.status == remote::FileOpResult::Status::Error) {
           peer.ReplyError(id, remote::kErrorInvalidParams, result.error);
         } else {
-          peer.Reply(id, OpResultJson(result));
+          peer.Reply(id, OpResultJson(result, manifest));
         }
       });
     });

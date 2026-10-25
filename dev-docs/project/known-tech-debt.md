@@ -704,7 +704,26 @@ LC_CTYPE (the user's, or C.UTF-8) at startup; numbers stay locale-free.
 (`QaFlowRegressionUx/TheWindowTitleNamesTheActiveFileAndItsState`,
 `HostPlatform/CharacterLocaleIsUtf8EvenFromAPosixEnvironment`.)
 
-### TD-2026-10-22-385 — over the slow link, saves stop reaching the host under agent churn. [OPEN]
+### TD-2026-10-22-385 — over the slow link, saves stop reaching the host under agent churn. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25: the mirror took a watch row older than its own push.** The
+run ended in "LICENSE changed on qa-slow and here" -- a conflict on a file the
+agents never touch. The host sends watch deltas on the bulk lane and answers
+`file/write` on the interactive one, and the client's serial queue runs a delta
+after the push that was waiting for its answer; so the echo of the PREVIOUS push
+(built before this one landed) was reconciled after this one's acknowledgement,
+read as the host moving, and pulled the old content back over the save. The next
+push expected that content and conflicted, and every save after it stayed in the
+mirror. The host now says, in the write's answer, which manifest it had built by
+then (`WorkspaceTree::NewestManifestId`, read after the write under the lock every
+build holds, so it is an exact line); the entry keeps it (`pushed_manifest`), and
+a row -- or delete -- from a manifest at or below it is skipped. Over the 60 ms
+link J now lands 8/8 saves at 0.08 s and the trees agree 0.3 s after the agents
+stop. Scenario K was also stale against TD-2026-10-16-350 (bare `s` no longer
+stages; it stages from the row's menu now, and waits for Commit to be enabled).
+Test: `MirrorSyncEngine/IgnoresAWatchRowOlderThanItsPush` (fails without the
+skip).
+
 
 `tools/run-checks.sh qa-remote`'s second pass (the loopback host behind a 60 ms
 each-way link, `qa-slow`) fails scenario J: while four host agents rewrite the tree,

@@ -57,6 +57,9 @@ RemoteWorkspace::WriteResult WriteResultFrom(std::optional<util::JsonValue> resu
   }
   const util::JsonValue& hash = (*result)["hash"];
   const util::JsonValue& current = (*result)["current"];
+  if (const std::int64_t manifest = (*result)["manifest"].AsInt(0); manifest > 0) {
+    out.manifest_id = static_cast<std::uint64_t>(manifest);
+  }
   if ((*result)["conflict"].AsBool(false)) {
     out.status = RemoteWorkspace::WriteResult::Status::Conflict;
     if (current.IsString()) {

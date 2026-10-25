@@ -872,10 +872,20 @@ void MirrorSyncEngine::JournalLocked() {
   }
 }
 
-void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan) {
+void MirrorSyncEngine::ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint64_t manifest_id) {
   auto [it, inserted] = store_.entries().try_emplace(row.path);
   MirrorStore::Entry& entry = it->second;
   const std::string& path = it->first;
+  // Built before the host acknowledged a push to this path, so older than what
+  // that push wrote: the echo of an earlier push, typically. The host sends watch
+  // deltas on the bulk lane and answers on the interactive one, and the serial
+  // queue runs a delta after the push that was waiting for its answer, so such a
+  // row arrives AFTER the acknowledgement it predates; taking it pulled the
+  // previous content back over the save, and the next push expected that and
+  // conflicted (TD-2026-10-22-385).
+  if (!inserted && manifest_id != 0 && manifest_id <= entry.pushed_manifest) {
+    return;
+  }
   // The first sync is what the host held before this window saw it; after that, a
   // row the host moved is a host change. A pushed file's echo carries the hash the
   // push already recorded in `remote`, so it is not one.
@@ -1054,7 +1064,7 @@ void MirrorSyncEngine::SyncNow() {
     listed.reserve(manifest->rows.size());
     for (ManifestRow& row : manifest->rows) {
       listed.push_back(row.path);  // sorted and unique: the server's order
-      ReconcileRowLocked(std::move(row), plan);
+      ReconcileRowLocked(std::move(row), plan, manifest->id);
     }
     auto& entries = store_.entries();
     for (auto it = entries.begin(); it != entries.end();) {
@@ -1125,11 +1135,12 @@ void MirrorSyncEngine::ApplyWatchDelta(RemoteWorkspace::WatchDelta delta) {
         if (!held_deletes_.empty()) {
           held_deletes_.erase(row.path);  // listed again: not the host's to delete any more
         }
-        ReconcileRowLocked(std::move(row), plan);
+        ReconcileRowLocked(std::move(row), plan, delta.manifest_id);
       }
       for (const std::string& path : delta.deleted) {
         const auto it = store_.entries().find(path);
-        if (it != store_.entries().end()) {
+        // A delete from before a push to the path was acknowledged is older than it.
+        if (it != store_.entries().end() && delta.manifest_id > it->second.pushed_manifest) {
           ReconcileDeleteLocked(it, plan);
         }
       }
@@ -1535,6 +1546,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         entry->base = *result.hash;
         entry->push_pending = false;
         entry->conflict = false;
+        entry->pushed_manifest = result.manifest_id;
         if (entry->has_remote) {
           entry->remote.hash = *result.hash;
           entry->remote.size = content.size();
@@ -1554,6 +1566,7 @@ void MirrorSyncEngine::PushNow(const std::string& path) {
         entry->base = result.hash;
         entry->push_pending = false;
         entry->conflict = false;
+        entry->pushed_manifest = result.manifest_id;
         if (entry->has_remote) {
           entry->remote.hash = *result.hash;
         }

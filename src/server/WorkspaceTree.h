@@ -99,6 +99,14 @@ class WorkspaceTree {
   const std::filesystem::path& root() const { return root_; }
   // Files hashed (cache misses) by the most recent BuildManifest.
   std::size_t last_hashed_files() const { return last_hashed_files_; }
+  // The id of the newest manifest built so far (0: none). Taken under the lock a
+  // build holds, so a caller that wrote a file first and asks second learns a
+  // line: every manifest at or below it was built before the write was seen (or
+  // shows it), every one above it scanned the tree after the write.
+  std::uint64_t NewestManifestId() const {
+    std::lock_guard lock(mutex_);
+    return next_manifest_id_ - 1;
+  }
 
  private:
   struct CacheKey {

@@ -383,14 +383,22 @@ class Suite:
                                             if e["name"].endswith("/" + EDIT_FILE)), None), 20, 0.5)
             self.record("K.change-listed", row is not None, f"{dt:.1f}s rows={[e['name'] for e in app.elements('row', prefix='row:git/')][:6]}")
             if row is not None:
-                app.click(*app.center(row)); app.settle(0.3); app.send("focus", "sidebar")
-                app.send("key", "s")
+                # Stage from the row's menu: bare letters in the list navigate by
+                # name now (TD-2026-10-16-350), so `s` no longer stages.
+                app.click(*app.center(row), button=3); app.settle(0.3)
+                stage = app.wait_for("menu-item:context/Stage", 5.0)
+                app.click(*app.center(stage))
                 status, dt = wait_for(lambda: (lambda o: o if o.startswith("M ") else None)(
                     host.ssh(f"cd {host.root} && git status --porcelain -- {EDIT_FILE}")), 20, 0.5)
                 self.record("K.stage-on-host", status is not None, f"{dt:.1f}s porcelain={status!r}")
-                app.click_named("button:git/commit"); app.settle(0.5)
+                # Commit is enabled once the git view has the staged state back,
+                # a round trip later over a slow link.
+                wait_for(lambda: app.element("button:git/commit").get("enabled", True) or None, 20, 0.3)
+                app.click_named("button:git/commit")
+                confirm = app.wait_for("button:git/confirm-commit", 5.0)
                 app.send("type", f"qa remote commit {tok}")
-                app.click_named("button:git/confirm-commit")
+                if confirm is not None:
+                    app.click(*app.center(confirm))
                 head, dt = wait_for(lambda: (lambda o: o if f"qa remote commit {tok}" in o else None)(
                     host.ssh(f"cd {host.root} && git log --oneline -1")), 30, 0.5)
                 self.record("K.commit-on-host", head is not None, f"{dt:.1f}s head={head!r}")

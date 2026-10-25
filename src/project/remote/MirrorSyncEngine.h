@@ -237,7 +237,10 @@ class MirrorSyncEngine {
   };
 
   void SyncNow();
-  void ReconcileRowLocked(ManifestRow row, Plan& plan);
+  // `manifest_id`: the manifest (or watch delta) the row comes from. A row from a
+  // manifest the host built before it acknowledged a push to the path is older than
+  // that push and is skipped.
+  void ReconcileRowLocked(ManifestRow row, Plan& plan, std::uint64_t manifest_id);
   // Returns true when it erased the entry.
   bool ReconcileDeleteLocked(std::map<std::string, MirrorStore::Entry, std::less<>>::iterator it,
                              Plan& plan);
