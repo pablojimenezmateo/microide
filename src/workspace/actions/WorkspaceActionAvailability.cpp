@@ -564,7 +564,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleLineComment:
     case ActionId::ToggleBlockComment:
       return active_editable_viewport != nullptr &&
-             SettingEnabled(operations_, "editor.shaping.toggle_comment.enabled", true);
+             SettingEnabled(operations_, ShapingActionGateSettingKey(id), true);
     case ActionId::ColumnSelectUp:
     case ActionId::ColumnSelectDown:
     case ActionId::ColumnSelectLeft:
@@ -583,14 +583,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::OutdentLines:
     case ActionId::JoinLines:
       return active_editable_viewport != nullptr &&
-             SettingEnabled(operations_, "editor.shaping.line_ops.enabled", true);
+             SettingEnabled(operations_, ShapingActionGateSettingKey(id), true);
     case ActionId::ExpandSelection:
     case ActionId::ShrinkSelection:
       return active_viewport != nullptr;
     case ActionId::SortLinesAscending:
     case ActionId::SortLinesDescending:
       return active_editable_viewport != nullptr &&
-             SettingEnabled(operations_, "editor.shaping.sort_lines.enabled", true);
+             SettingEnabled(operations_, ShapingActionGateSettingKey(id), true);
     case ActionId::AddCursorAtNextMatch:
     case ActionId::AddCursorAtAllMatches:
       return active_editable_viewport != nullptr &&

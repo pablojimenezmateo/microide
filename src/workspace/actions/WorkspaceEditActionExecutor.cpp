@@ -616,24 +616,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     case ActionId::SortLinesDescending: {
       auto* viewport = context_.ActiveEditableViewport();
       if (viewport == nullptr) return DispatchResult::Handled;
-      const bool is_comment_action =
-          id == ActionId::ToggleLineComment || id == ActionId::ToggleBlockComment;
-      const bool is_line_op_action =
-          id == ActionId::MoveLineUp || id == ActionId::MoveLineDown ||
-          id == ActionId::DuplicateLine || id == ActionId::CopyLineUp ||
-          id == ActionId::InsertLineBelow || id == ActionId::InsertLineAbove ||
-          id == ActionId::DeleteLine || id == ActionId::JoinLines ||
-          id == ActionId::IndentLines || id == ActionId::OutdentLines;
-      const bool is_sort_action =
-          id == ActionId::SortLinesAscending || id == ActionId::SortLinesDescending;
-
-      if (is_comment_action && !SettingEnabled(context_, "editor.shaping.toggle_comment.enabled", true)) {
-        return DispatchResult::Handled;
-      }
-      if (is_line_op_action && !SettingEnabled(context_, "editor.shaping.line_ops.enabled", true)) {
-        return DispatchResult::Handled;
-      }
-      if (is_sort_action && !SettingEnabled(context_, "editor.shaping.sort_lines.enabled", true)) {
+      if (const char* gate = ShapingActionGateSettingKey(id);
+          gate != nullptr && !SettingEnabled(context_, gate, true)) {
         return DispatchResult::Handled;
       }
       bool changed = false;

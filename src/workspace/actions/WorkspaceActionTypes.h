@@ -509,4 +509,33 @@ inline const char* EditorEssentialsCapabilitySettingKey(ActionId id) {
   }
 }
 
+// The setting that gates a shaping edit -- the comment toggles, the line
+// operations, the sorts -- or nullptr for an action no shaping setting gates.
+// The availability check and the edit executor both read it, so a shaping action
+// is gated in both places or neither. Each key is the one its ToggleEditor*
+// action flips (EditorEssentialsCapabilitySettingKey).
+inline const char* ShapingActionGateSettingKey(ActionId id) {
+  switch (id) {
+    case ActionId::ToggleLineComment:
+    case ActionId::ToggleBlockComment:
+      return EditorEssentialsCapabilitySettingKey(ActionId::ToggleEditorToggleComment);
+    case ActionId::MoveLineUp:
+    case ActionId::MoveLineDown:
+    case ActionId::DuplicateLine:
+    case ActionId::CopyLineUp:
+    case ActionId::InsertLineBelow:
+    case ActionId::InsertLineAbove:
+    case ActionId::DeleteLine:
+    case ActionId::IndentLines:
+    case ActionId::OutdentLines:
+    case ActionId::JoinLines:
+      return EditorEssentialsCapabilitySettingKey(ActionId::ToggleEditorLineOps);
+    case ActionId::SortLinesAscending:
+    case ActionId::SortLinesDescending:
+      return EditorEssentialsCapabilitySettingKey(ActionId::ToggleEditorSortLines);
+    default:
+      return nullptr;
+  }
+}
+
 }  // namespace microide::workspace
