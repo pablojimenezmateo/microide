@@ -14,6 +14,9 @@ namespace microide::tests::architecture {
 // Negative + positive control for CheckDescriptorCreationIsCloseOnExec.
 void RunDescriptorCloseOnExecRuleFixtures();
 
+// Negative + positive control for CheckTextViewportSpecialMembersAreDefaulted.
+void RunTextViewportDefaultedSpecialMembersRuleFixtures();
+
 // Negative + positive control for CheckTerminalSessionNoExtractedImpl, whose
 // line-anchored patterns need std::regex::multiline to match at all.
 void RunTerminalExtractedImplRuleFixtures();

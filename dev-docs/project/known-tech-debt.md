@@ -15029,7 +15029,8 @@ means `hard_fail` was never set.
 sets has now been probed.** Three were dead (fixed above), one was warn-only
 (promoted), two more lacked a loud-missing-target guard (added); the remainder
 fire correctly. The four not probed by injection are self-guarding: the two TU
-line-count caps, and `CheckTextViewportSpecialMembersCoverEveryField` /
+line-count caps, and `CheckTextViewportSpecialMembersCoverEveryField` (since
+2026-10-25 `CheckTextViewportSpecialMembersAreDefaulted`, with fixtures) /
 `CheckBuildEditorViewModelUsesIncrementalVectorWrites`, which already fail when
 they cannot locate their target.
 

@@ -1399,6 +1399,42 @@ void RunWorkerDeclarationOrderRuleFixtures() {
          "a tree with no executor/mailbox pair must report a missing target");
 }
 
+void RunTextViewportDefaultedSpecialMembersRuleFixtures() {
+  TemporaryDirectory dir;
+  const std::filesystem::path& root = dir.path();
+  std::filesystem::create_directories(root / "src/editor");
+  const std::string defaulted_header =
+      "class TextViewport {\n"
+      " public:\n"
+      "  TextViewport(const TextViewport& other) = default;\n"
+      "  TextViewport& operator=(const TextViewport& other) = default;\n"
+      "  TextViewport(TextViewport&& other) noexcept = default;\n"
+      "  TextViewport& operator=(TextViewport&& other) noexcept = default;\n"
+      "};\n";
+  WriteFile(root / "src/editor/TextViewport.h", defaulted_header);
+  WriteFile(root / "src/editor/TextViewport.cpp",
+            "// TextViewport::TextViewport(const TextViewport& other) was hand-written once\n"
+            "void TextViewport::Clear() {}\n");
+  Expect(CheckTextViewportSpecialMembersAreDefaulted(root).violations.empty(),
+         "defaulted special members (and a definition named only in a comment) must pass");
+
+  WriteFile(root / "src/editor/TextViewport.cpp",
+            "TextViewport::TextViewport(const TextViewport& other) : cursor_line_(1) {}\n"
+            "TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {\n"
+            "  return *this;\n"
+            "}\n");
+  Expect(CheckTextViewportSpecialMembersAreDefaulted(root).violations.size() == 2,
+         "each out-of-line copy/move definition must be flagged");
+
+  WriteFile(root / "src/editor/TextViewport.cpp", "void TextViewport::Clear() {}\n");
+  WriteFile(root / "src/editor/TextViewport.h",
+            "class TextViewport {\n"
+            "  TextViewport(const TextViewport& other);\n"
+            "};\n");
+  Expect(CheckTextViewportSpecialMembersAreDefaulted(root).violations.size() == 4,
+         "a header without the four defaulted declarations must be flagged for each");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -1425,6 +1461,7 @@ void RunAllRuleFixtures() {
   RunGitMetadataRuleFixtures();
   RunGitLayerLocalityRuleFixtures();
   RunWriteGateRuleFixtures();
+  RunTextViewportDefaultedSpecialMembersRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

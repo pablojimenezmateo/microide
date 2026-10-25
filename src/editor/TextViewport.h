@@ -22,6 +22,7 @@
 #include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 #include "editor/TextLayoutCache.h"
+#include "editor/TextViewportMemberPolicies.h"
 #include "editor/TextViewportUndoHistory.h"
 #include "util/StringUtil.h"
 #include "project/FileWriteGate.h"
@@ -111,10 +112,12 @@ class TextViewport {
   };
 
   TextViewport();
-  TextViewport(const TextViewport& other);
-  TextViewport& operator=(const TextViewport& other);
-  TextViewport(TextViewport&& other) noexcept;
-  TextViewport& operator=(TextViewport&& other) noexcept;
+  // Defaulted: the members that do not travel memberwise say how they do travel
+  // in their own types (TextViewportMemberPolicies.h).
+  TextViewport(const TextViewport& other) = default;
+  TextViewport& operator=(const TextViewport& other) = default;
+  TextViewport(TextViewport&& other) noexcept = default;
+  TextViewport& operator=(TextViewport&& other) noexcept = default;
 
   // The pure, byte-shaped half of loading a file: everything that can be
   // computed from the bytes alone, with no document to mutate and no shared
@@ -1401,7 +1404,7 @@ class TextViewport {
   // does not. This attaches their hash to the signature ResetState just wrote.
   void RecordOpenedContentHash(std::size_t raw_content_hash);
 
-  std::shared_ptr<DocumentState> document_;
+  detail::SharedOnMove<DocumentState> document_;
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
   // Sticky column for vertical motion, measured in ON-SCREEN cells of the caret's
@@ -1468,8 +1471,8 @@ class TextViewport {
   // once per keystroke of a held Ctrl+Shift+Alt+Arrow gesture and is O(span) each
   // time; keeping the capacity here makes it allocation-free after the first
   // keystroke instead of allocating twice per keystroke.
-  std::vector<SelectionRange> box_ranges_scratch_;
-  std::vector<SecondaryCaret> secondary_caret_candidates_scratch_;
+  detail::ScratchBuffer<SelectionRange> box_ranges_scratch_;
+  detail::ScratchBuffer<SecondaryCaret> secondary_caret_candidates_scratch_;
   // One range per caret, the working set of MergeOverlappingCaretRanges. That
   // merge is the tail of EVERY caret-set mutation, so it runs once per keystroke
   // of a held column-select gesture over a span that grows with the gesture --
@@ -1482,8 +1485,8 @@ class TextViewport {
     bool caret_at_end = true;
     std::size_t source = 0;
   };
-  std::vector<CaretMergeEntry> caret_merge_scratch_;
-  mutable TextLayoutCache layout_cache_;
+  detail::ScratchBuffer<CaretMergeEntry> caret_merge_scratch_;
+  mutable detail::TransferredLayoutCache layout_cache_;
   // Per-line token cache. Entries carry the generation they were computed in
   // rather than being erased when the document changes: an edit bumps
   // `highlight_cache_generation_`, every entry becomes a miss, and the next paint
@@ -1547,10 +1550,12 @@ class TextViewport {
   std::optional<AppliedEdit> last_applied_edit_;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
   // Set only by SuppressEntryCaretCapture, above; see its comment. Transient, so
-  // the special members reset it rather than carrying it — a viewport cannot be
+  // a copy or move starts it false rather than carrying it — a viewport cannot be
   // copied or moved while a guard holding it is alive.
-  bool suppress_entry_caret_capture_ = false;
-  const FoldingModel* folding_model_ = nullptr;
+  detail::NotTransferred<bool> suppress_entry_caret_capture_;
+  // Non-owning; the owner of the FoldingModel attaches it to one viewport, so a
+  // copy or move starts detached.
+  detail::NotTransferred<const FoldingModel*> folding_model_;
 
 #ifndef NDEBUG
  public:
