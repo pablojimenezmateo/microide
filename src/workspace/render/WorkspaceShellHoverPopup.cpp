@@ -259,12 +259,21 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
       offer_quick_fix ? quick_fix_width + kEditorHoverPopupGap + quick_fix_hint_width : 0.0f;
   const std::string_view severity = DiagnosticSeverityLabel(diagnostic.severity);
   const float severity_width = text_renderer_.MeasureWidth(severity);
+  const float max_text_width = max_card_width - kEditorHoverPopupPadding * 2.0f;
   const float message_width =
-      std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
-               text_renderer_.MeasureWidth(diagnostic.message));
+      std::min(max_text_width, text_renderer_.MeasureWidth(diagnostic.message));
+  // The symbol's own hover, when it answered, is the card's second section.
+  const std::optional<plugin::PluginHost::HoverResult>& symbol =
+      active_editor_hover_target_->plugin_hover;
+  const float symbol_width =
+      symbol.has_value()
+          ? std::min(max_text_width, std::max(text_renderer_.MeasureWidth(symbol->title),
+                                              text_renderer_.MeasureWidth(symbol->content)))
+          : 0.0f;
   const float preferred_width = std::max(
       kEditorHoverPopupMinWidth,
-      std::max({severity_width, message_width, button_row_width}) + kEditorHoverPopupPadding * 2.0f);
+      std::max({severity_width, message_width, symbol_width, button_row_width}) +
+          kEditorHoverPopupPadding * 2.0f);
   const float card_width = ClampPopupWidth(
       preferred_width,
       std::max(severity_width, button_row_width) + kEditorHoverPopupPadding * 2.0f, max_card_width);
@@ -276,9 +285,29 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
       (message_lines.empty() ? 0.0f
                              : static_cast<float>(message_lines.size() - 1) *
                                    kEditorHoverPopupLineGap);
+  float symbol_height = 0.0f;
+  if (symbol.has_value()) {
+    const float wrap_width = std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f);
+    const auto block_height = [&](std::string_view text, std::size_t max_lines) {
+      if (text.empty()) {
+        return 0.0f;
+      }
+      const std::size_t lines = WrapEditorHoverPopupText(text, wrap_width, max_lines).size();
+      return static_cast<float>(lines) * line_height +
+             (lines == 0 ? 0.0f : static_cast<float>(lines - 1) * kEditorHoverPopupLineGap);
+    };
+    const float title_height = block_height(symbol->title, kEditorHoverPopupMaxPluginTitleLines);
+    const float content_height =
+        block_height(symbol->content, kEditorHoverPopupMaxPluginContentLines);
+    symbol_height = kEditorHoverPopupSectionGap + title_height +
+                    (title_height > 0.0f && content_height > 0.0f ? kEditorHoverPopupSectionGap
+                                                                   : 0.0f) +
+                    content_height;
+  }
   const float card_height = kEditorHoverPopupPadding * 2.0f + line_height +
                             (message_lines.empty() ? 0.0f
                                                    : kEditorHoverPopupSectionGap + message_height) +
+                            symbol_height +
                             (offer_quick_fix ? kEditorHoverPopupSectionGap + button_height : 0.0f);
   const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
                                                  card_width, card_height, layout.editor_surface);
@@ -294,7 +323,7 @@ std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEdit
       .rect = card_rect,
       .blame_line_index = 0,
       .diagnostic = diagnostic,
-      .plugin_hover = std::nullopt,
+      .plugin_hover = symbol,
       .primary_action_rect = action_rect,
   };
 }
@@ -440,14 +469,14 @@ SDL_FRect WorkspaceShell::ComputeTwoBlockHoverCardRect(std::string_view title,
 }
 
 void WorkspaceShell::DrawTwoBlockHoverCard(SDL_Renderer* renderer,
-                                           const SDL_FRect& card_rect,
+                                           const SDL_FRect& area,
                                            std::string_view title,
                                            std::string_view content,
                                            std::size_t max_title_lines,
                                            std::size_t max_content_lines) const {
-  const float text_x = card_rect.x + kEditorHoverPopupPadding;
-  const float text_width = std::max(0.0f, card_rect.w - kEditorHoverPopupPadding * 2.0f);
-  float text_y = card_rect.y + kEditorHoverPopupPadding;
+  const float text_x = area.x;
+  const float text_width = std::max(0.0f, area.w);
+  float text_y = area.y;
   const auto title_lines = title.empty()
                                ? std::vector<std::string>{}
                                : WrapEditorHoverPopupText(title, text_width, max_title_lines);
@@ -495,13 +524,15 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
       }
     }
   } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
-    DrawTwoBlockHoverCard(renderer, popup->rect, popup->plugin_hover->title,
-                          popup->plugin_hover->content, kEditorHoverPopupMaxPluginTitleLines,
+    DrawTwoBlockHoverCard(renderer, MakeRect(text_x, text_y, text_width, 0.0f),
+                          popup->plugin_hover->title, popup->plugin_hover->content,
+                          kEditorHoverPopupMaxPluginTitleLines,
                           kEditorHoverPopupMaxPluginContentLines);
   } else if (popup->kind == EditorHoverTarget::Kind::DebugValue &&
              popup->debug_value.has_value()) {
-    DrawTwoBlockHoverCard(renderer, popup->rect, popup->debug_value->type,
-                          popup->debug_value->value, kEditorHoverPopupMaxPluginTitleLines,
+    DrawTwoBlockHoverCard(renderer, MakeRect(text_x, text_y, text_width, 0.0f),
+                          popup->debug_value->type, popup->debug_value->value,
+                          kEditorHoverPopupMaxPluginTitleLines,
                           kEditorHoverPopupMaxPluginContentLines);
   } else if (popup->diagnostic.has_value()) {
     const SDL_Color severity_color =
@@ -516,6 +547,22 @@ void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
       text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
       DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
                           theme_.overlay_background, message_lines);
+    } else {
+      text_y += text_renderer_.LineHeight();
+    }
+    // What the symbol under the squiggle is, below the problem and a rule (VS
+    // Code's card). The rule sits in the middle of the section gap.
+    if (popup->plugin_hover.has_value()) {
+      DrawFilledRect(renderer,
+                     MakeRect(popup->rect.x + 1.0f,
+                              std::floor(text_y + kEditorHoverPopupSectionGap * 0.5f),
+                              popup->rect.w - 2.0f, 1.0f),
+                     theme_.border);
+      text_y += kEditorHoverPopupSectionGap;
+      DrawTwoBlockHoverCard(renderer, MakeRect(text_x, text_y, text_width, 0.0f),
+                            popup->plugin_hover->title, popup->plugin_hover->content,
+                            kEditorHoverPopupMaxPluginTitleLines,
+                            kEditorHoverPopupMaxPluginContentLines);
     }
   }
 
@@ -619,7 +666,13 @@ void WorkspaceShell::UpdateEditorHover(float x, float y) {
     // while the user reaches for the button. Scoped to Diagnostic popups so the
     // blame popup's own hover/redraw behavior is unaffected; the gap between anchor
     // and card is already handled by the retention check below (target null there).
-    if (previous_target.has_value() && *previous_target != *target &&
+    // The same squiggle's card gaining its symbol section (the hover answered) is
+    // that card updating, not another target taking over.
+    const bool same_card = previous_target.has_value() &&
+                           previous_target->kind == target->kind &&
+                           previous_target->diagnostic == target->diagnostic &&
+                           RectsEqual(previous_target->anchor_rect, target->anchor_rect);
+    if (previous_target.has_value() && *previous_target != *target && !same_card &&
         previous_target->kind == EditorHoverTarget::Kind::Diagnostic) {
       if (const auto sticky = ActiveEditorHoverPopupLayout();
           sticky.has_value() && sticky->primary_action_rect.has_value() &&

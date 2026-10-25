@@ -3818,6 +3818,86 @@ return ide.plugin({
          "an unsaved buffer still gets the language server's hover: '" + hover_text() + "'");
 }
 
+// TD-2026-10-22-383: under a squiggle the hover card is the problem AND what the
+// symbol is, as in VS Code. A diagnostic used to hide the symbol's hover outright,
+// so csharp-ls's load-time "System.Object is not defined" (published before the
+// project loads, never retracted) hid every signature in the file.
+void TestWorkspaceShellHoverOnASquiggleShowsTheSymbolToo() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\nother = 2\n");
+  WritePluginInit(plugins_root, "pylsp",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "the project should open");
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const client = stub.get();
+  stub->EnableTestStubMode();
+  stub->SetTestHoverHandler([](std::string, workspace::LspClient::HoverCallback cb) {
+    cb(util::ParseJson(R"({"contents":{"kind":"markdown","value":"int value"}})"));
+  });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "a stub python client should attach");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas{1280, 720};
+  const auto frame = [&] {
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+  };
+  frame();
+  client->SimulateServerNotificationForTesting(
+      "textDocument/publishDiagnostics",
+      *util::ParseJson(R"({"uri":")" + workspace::FileUriForPath(py_file) +
+                       R"(","diagnostics":[{"range":{"start":{"line":0,"character":0},)"
+                       R"("end":{"line":0,"character":5}},"severity":1,)"
+                       R"("message":"Predefined type 'System.Object' is not defined"}]})"));
+  frame();
+  const auto hover = [&]() {
+    const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+    return ui["popups"]["hover"];
+  };
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto 1:2"), "goto should run");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "show-hover"), "show-hover should run");
+  for (int i = 0; i < 10 && (!hover().IsObject() ||
+                             hover()["text"].AsString().find("int value") == std::string::npos);
+       ++i) {
+    frame();
+  }
+  const util::JsonValue card = hover();
+  const std::string text = card.IsObject() ? card["text"].AsString() : std::string();
+  Expect(card.IsObject() && card["kind"].AsString() == "diagnostic",
+         "the squiggle's card is the diagnostic card");
+  Expect(text.find("System.Object") != std::string::npos && text.find("int value") != std::string::npos,
+         "the card shows the problem and the symbol's hover, got: '" + text + "'");
+  Expect(text.find("System.Object") < text.find("int value"), "the problem comes first");
+}
+
 // TD-2026-10-21-374: a plugin hover provider in a buffer with unsaved edits is
 // asked like in any other, and reads the live text through its buffer table --
 // the host used to skip plugins there, since they could only read the disk.
@@ -7581,6 +7661,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverAsksAgainWhenThePointerReturns",
           TestWorkspaceShellHoverAsksAgainWhenThePointerReturns);
   AddTest(tests, "WorkspaceShell/ShowHoverAtTheCaret", TestWorkspaceShellShowHoverAtTheCaret);
+  AddTest(tests, "WorkspaceShell/HoverOnASquiggleShowsTheSymbolToo",
+          TestWorkspaceShellHoverOnASquiggleShowsTheSymbolToo);
   AddTest(tests, "WorkspaceShell/PluginHoverReadsTheUnsavedText",
           TestWorkspaceShellPluginHoverReadsTheUnsavedText);
   AddTest(tests, "WorkspaceShell/HoverInAnUnsavedBufferAsksTheServer",

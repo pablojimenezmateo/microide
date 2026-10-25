@@ -210,6 +210,31 @@ def flow_lsp_diagnostics(app: q.App) -> None:
     step(app, "remove the error", 0.3)
     app.wait_until(lambda: not any(e["name"] == "status:problems" and any(c.isdigit() and c != "0" for c in e.get("label", ""))
                                    for e in app.elements("status")), 15.0, "the problem to clear")
+    # A squiggle over a symbol: the card is the problem, then what the symbol is
+    # (TD-2026-10-22-383: the diagnostic used to hide the symbol's hover).
+    app.key("End")
+    app.type(" int bad = queue_;")
+    app.wait_until(lambda: any(e["name"] == "status:problems" and any(c.isdigit() and c != "0" for c in e.get("label", ""))
+                               for e in app.elements("status")), 15.0, "the type error")
+    step(app, "a type error on a symbol", 0.3)
+    # clangd puts the error on the declared name, `bad`.
+    column = app.text().splitlines()[15].find(" bad ") + 3
+    card: dict = {}
+
+    def both() -> bool:
+        hover = _hover(app, 16, column, 4.0) or {}
+        card.clear()
+        card.update(hover)
+        text = hover.get("text", "")
+        return hover.get("kind") == "diagnostic" and "viable" in text.lower() and "variable bad" in text
+    app.wait_until(both, 20.0, "the squiggle's card to show the problem and the symbol")
+    text = card.get("text", "")
+    app.expect(text.lower().find("viable") < text.find("variable bad"),
+               f"the problem comes first, then the symbol ({card})")
+    step(app, "problem and symbol in one card", 0.2)
+    app.send("focus", "editor")
+    for _ in range(len(" int bad = queue_;")):
+        app.key("BackSpace")
 
 
 def flow_lsp_rename(app: q.App) -> None:

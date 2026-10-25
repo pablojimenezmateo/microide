@@ -704,7 +704,23 @@ way (`/tmp/claude-1000/qa/rem-slow-base`). Next: the mirror sync engine's push q
 and the journal under a delayed link with concurrent host writes to the pushed file
 -- a push that waits on a pull that the churn keeps renewing is the first suspect.
 
-### TD-2026-10-22-383 — `lsp-csharp` cannot load the project's references in the QA sandbox. [OPEN]
+### TD-2026-10-22-383 — `lsp-csharp` cannot load the project's references in the QA sandbox. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25: not the sandbox -- the hover card.** Driven by hand outside
+the app, csharp-ls 0.28 (SDK 10.0.302, a net8.0 project) does the same: it
+publishes "Predefined type 'System.Object' is not defined or imported" on open
+-- and a pull (`textDocument/diagnostic`) returns it even 25 s later -- while its
+hover answers `int Util.Twice(int value)` correctly once the project has loaded.
+So the diagnostic is csharp-ls's own (outside this repo; pull diagnostics would
+not change it). What was ours: a diagnostic under the pointer HID the symbol's
+hover entirely, so a squiggle over a symbol meant no signature, ever. The card is
+now VS Code's: the problem, a rule, then the symbol's hover
+(`EditorHoverTargetAtPosition` attaches the symbol hover to the diagnostic target;
+the Quick Fix stickiness treats the same squiggle's card gaining that section as
+an update, not a takeover; the `ui` hover text carries both). Tests:
+`WorkspaceShell/HoverOnASquiggleShowsTheSymbolToo`; the QA `lsp-diagnostics` flow
+hovers a clangd type error on a declaration and expects both; `lsp-csharp` passes.
+
 
 `lsp-csharp`: csharp-ls (0.28.0, SDK 10.0.302 registered by MSBuildLocator for a
 net8.0 project) answers the hover with the diagnostic "Predefined type

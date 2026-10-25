@@ -1099,6 +1099,15 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 case EditorHoverTarget::Kind::Diagnostic:
                   kind = "diagnostic";
                   text = hover->diagnostic.has_value() ? hover->diagnostic->message : std::string{};
+                  // The symbol's hover drawn under the problem, as in the card.
+                  if (hover->plugin_hover.has_value()) {
+                    for (const std::string* block :
+                         {&hover->plugin_hover->title, &hover->plugin_hover->content}) {
+                      if (!block->empty()) {
+                        text += "\n" + *block;
+                      }
+                    }
+                  }
                   break;
                 case EditorHoverTarget::Kind::Plugin:
                   kind = "symbol";

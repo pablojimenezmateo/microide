@@ -1289,7 +1289,8 @@
                                                     std::size_t max_lines) const;
   // Shared "secondary title line(s) + gap + primary content line(s)" hover-card
   // shape used by the Plugin (title/content) and DebugValue (type/value) popups.
-  // Compute the positioned card rect, and draw the two stacked text blocks.
+  // Compute the positioned card rect, and draw the two stacked text blocks with
+  // their first line at `area`'s top-left, wrapped to its width.
   SDL_FRect ComputeTwoBlockHoverCardRect(std::string_view title,
                                          std::string_view content,
                                          std::size_t max_title_lines,
@@ -1297,7 +1298,7 @@
                                          const SDL_FRect& anchor_rect,
                                          const SDL_FRect& editor_surface) const;
   void DrawTwoBlockHoverCard(SDL_Renderer* renderer,
-                             const SDL_FRect& card_rect,
+                             const SDL_FRect& area,
                              std::string_view title,
                              std::string_view content,
                              std::size_t max_title_lines,

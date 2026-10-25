@@ -741,7 +741,16 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::EditorHoverTarg
     };
   }
 
-  if (const auto diagnostic = DiagnosticHoverTargetAtPosition(x, y); diagnostic.has_value()) {
+  if (auto diagnostic = DiagnosticHoverTargetAtPosition(x, y); diagnostic.has_value()) {
+    // Under a squiggle the card is the problem AND what the symbol is (VS Code's
+    // card): a diagnostic used to hide the hover, so a stale one -- csharp-ls
+    // reports "System.Object is not defined" while it is still loading the
+    // project -- hid the signature for good. The symbol hover is asked as for
+    // any cell, and fills the card's second section when it answers.
+    if (const auto symbol = PluginHoverTargetAtPosition(x, y);
+        symbol.has_value() && symbol->plugin_hover.has_value()) {
+      diagnostic->plugin_hover = symbol->plugin_hover;
+    }
     return diagnostic;
   }
 
