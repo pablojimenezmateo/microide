@@ -140,8 +140,10 @@ class TerminalPanelService {
   void TogglePanelMaximized();
   void SetPanelMaximized(bool maximized);
   // Frame-prep rule: the moment the editor, sidebar or debug pane takes focus
-  // the user needs that surface, so a maximized panel restores itself. Keeps
-  // immersive mode from ever trapping a file opened from a terminal link.
+  // -- or an overlay anchored to the editor opens (find, completion, code
+  // actions) -- the user needs that surface, so a maximized panel restores
+  // itself. Keeps immersive mode from ever trapping a file opened from a
+  // terminal link.
   void SyncPanelMaximizedWithFocus();
   // Frame-prep rule: the tab on screen has, by definition, no unseen output.
   void NoteActiveTabShown();

@@ -751,7 +751,20 @@ alive). What wedges gdb is not known; next: the same launch from a plain
 `gdb --interpreter=dap` driven by a script under `stress`, to tell gdb's bug
 from something in how the app spawns it (the debug sandbox, the pipes).
 
-### TD-2026-10-22-379 — a double-clicked word in the maximized terminal stays highlighted after a click under its find bar. [OPEN]
+### TD-2026-10-22-379 — a double-clicked word in the maximized terminal stays highlighted after a click under its find bar. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25: the find bar was the editor's.** Replaying the minimized
+steps by hand showed what `search` opens with the panel maximized: the EDITOR's
+find widget (four toggles; the terminal's bar has two), laid out against the
+collapsed editor and drawn over the maximized panel's tab strip and transcript --
+the `clips=968,36,460,42` the stale frame repainted. An editor-anchored overlay
+(find, replace, completion, code actions) is the editor's, so like focusing the
+editor it now restores a maximized panel (`SyncPanelMaximizedWithFocus`); a
+quick-open modal still floats over it. With that, the overlap the stale terminal
+highlight sat under cannot arise. Test: the maximize test opens the palette (the
+panel stays maximized) and Find (it restores). The monkey run of 2026-10-25
+(seeds 14-17) did not show it again.
+
 
 Found by the QA monkey (default profile, seed 16), minimized to eight actions
 (two of three replays reproduce it): `move-group-down README.md`, Ctrl+Shift+J
@@ -1467,6 +1480,16 @@ are timing-dependent and unpinned:
   in another.
 - seed 12, step 295: an 8x36 strip of a find-match highlight in a binary file
   opened as text (the monkey had opened the `taskflow` executable).
+- seed 14, step 88 (2026-10-25, `--seeds 14-17`): the first terminal tab's close
+  glyph stayed drawn hovered in a caret-blink frame after a press on that tab;
+  the frame before was a full render with the pointer resting there, and the View
+  menu had been opened, slid along and left open just before. It recurs under
+  the monkey but neither its replay nor
+  `QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton` (press, drag,
+  reorder and the menu-closing press, one paint per event) reproduces it.
+  The same run's seeds 15 (a menu row left highlighted when the pointer left
+  after a key moved the active row) and 17 (the search view's match count
+  painted before frame prep caught the results up) were real and are fixed.
 
 Also found on that pass, not a bug: the control channel is byte-transparent by
 design (remote mirror file names and terminal scrollback rely on it), so a raw

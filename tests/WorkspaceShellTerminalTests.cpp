@@ -2299,6 +2299,22 @@ void TestWorkspaceShellPanelMaximizeTakesTheWindowAndRestoresOnEditorFocus() {
   Expect(WorkspaceShellTestAccess::CurrentLayout(shell).editor_area.h > 0.0f,
          "the editor column is back");
 
+  // So does an overlay that belongs to the editor (TD-2026-10-22-379): Find drew
+  // the editor's find widget over the maximized panel's tab strip, at a buffer
+  // nobody could see. A quick-open modal leaves the panel maximized.
+  WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::PanelToggleMaximized, {});
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "command-palette"), "the palette opens");
+  fixture.PaintFrame();
+  Expect(WorkspaceShellTestAccess::PanelMaximized(shell),
+         "a centered quick-open modal leaves the panel maximized");
+  (void)SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "search"), "Find opens");
+  fixture.PaintFrame();
+  Expect(!WorkspaceShellTestAccess::PanelMaximized(shell) &&
+             WorkspaceShellTestAccess::CurrentLayout(shell).editor_surface.h > 0.0f,
+         "the editor's find widget restores the panel, so it is drawn over its editor");
+  (void)SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+
   // The header button is the mouse way in and out.
   const SDL_FRect button = WorkspaceShellTestAccess::BottomPanelMaximizeButtonRect(shell);
   Expect(SendMouseDown(shell, button.x + button.w * 0.5f, button.y + button.h * 0.5f, SDL_BUTTON_LEFT),

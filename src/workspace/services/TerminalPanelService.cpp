@@ -520,16 +520,29 @@ void TerminalPanelService::SyncPanelMaximizedWithFocus() {
   if (!state_.panel.maximized || !PanelVisible()) {
     return;
   }
+  const auto restore = [this]() {
+    state_.panel.maximized = false;
+    operations_.note_layout_inputs_changed();
+    operations_.request_window_redraw();
+  };
   switch (state_.surface.focus) {
     case FocusTarget::Editor:
     case FocusTarget::Sidebar:
     case FocusTarget::DebugPane:
-      state_.panel.maximized = false;
-      operations_.note_layout_inputs_changed();
-      operations_.request_window_redraw();
+      restore();
+      break;
+    case FocusTarget::Overlay:
+      // The find widget, completion and code actions are the editor's: with the
+      // editor collapsed under a maximized panel they were drawn over the panel's
+      // tab strip and transcript, aimed at a buffer nobody could see (the QA
+      // monkey's stale terminal highlights, TD-2026-10-22-379, sat under one).
+      // Like focusing the editor, they bring it back. A quick-open modal is
+      // centered over whatever is there and leaves the panel as it is.
+      if (state_.overlay.visible && !OverlayIsQuickOpen(state_.overlay.mode)) {
+        restore();
+      }
       break;
     case FocusTarget::Panel:
-    case FocusTarget::Overlay:
       break;
   }
 }
