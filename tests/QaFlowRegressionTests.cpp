@@ -3519,6 +3519,51 @@ void TestLeavingTheCommitSubjectFieldRepaintsItsCaret() {
                "a click lower in the sidebar");
 }
 
+// TD-2026-10-16-346: the pointer moving from a panel tab's body onto its own
+// close button lights the glyph; frame prep's hover tracker named the tab's whole
+// rect for both, so the move changed nothing it could see and no frame repainted
+// the glyph.
+void TestMovingOntoAPanelTabsCloseButtonRepaintsIt() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  TestAccess::OpenTerminalViaService(fixture.shell);
+  TestAccess::OpenTerminalViaService(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  std::vector<std::pair<SDL_FRect, SDL_FRect>> tabs;  // (tab, close button)
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const auto rect_of = [](const util::JsonValue& entry) {
+    const auto& r = entry["rect"].AsArray();
+    return SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                     static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+  };
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() != "panel-tab") {
+      continue;
+    }
+    const std::string close = "button:close-panel-tab/" + entry["label"].AsString();
+    for (const util::JsonValue& other : ui["elements"].AsArray()) {
+      if (other["name"].AsString() == close) {
+        tabs.emplace_back(rect_of(entry), rect_of(other));
+      }
+    }
+  }
+  Expect(tabs.size() >= 2, "the panel should show tabs with close buttons");
+  if (tabs.size() < 2) {
+    return;
+  }
+  for (const auto& [tab, close] : {tabs[0], tabs[1]}) {
+    const float y = tab.y + tab.h / 2.0f;
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(tab.x + 10.0f, y)}),
+                        "the pointer on a panel tab's label");
+    fixture.ExpectFresh(
+        DispatchEvents(fixture.shell, {MouseMotionEvent(close.x + close.w / 2.0f, close.y + close.h / 2.0f)}),
+        "the pointer onto that tab's close button");
+    fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(tab.x + 10.0f, y)}),
+                        "back onto its label");
+  }
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -3542,6 +3587,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestAKeyInAMenuUnderARestingPointerRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/LeavingTheCommitSubjectFieldRepaintsItsCaret",
           TestLeavingTheCommitSubjectFieldRepaintsItsCaret);
+  AddTest(tests, "QaFlowRegression/MovingOntoAPanelTabsCloseButtonRepaintsIt",
+          TestMovingOntoAPanelTabsCloseButtonRepaintsIt);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);

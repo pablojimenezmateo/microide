@@ -1949,7 +1949,17 @@ that sequence, so the remote frames are a timing case of the same seam (statuses
 applied between a frame's prep and its paint). Repaint a visible tree whenever
 `ApplyGitStatuses` changes what it holds, with a test that fails first.
 
-### TD-2026-10-16-346 — a terminal tab's close button lit up after a press that closed a menu, with no repaint. [OPEN — not reproduced in-process]
+### TD-2026-10-16-346 — a terminal tab's close button lit up after a press that closed a menu, with no repaint. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** Reproduced in-process without the menu: the pointer
+moving from a panel tab's label onto its own close button left the glyph unlit
+(13 px). The motion path's close-glyph damage (added for an editor-tab finding,
+"QA monkey, seed 1") covered the project strip and the editor groups' strips but
+not the bottom panel's tabs; it does now. The menu in the original sequence only
+made the move happen with no motion repaint of its own. Test:
+`QaFlowRegression/MovingOntoAPanelTabsCloseButtonRepaintsIt` (fails without the
+fix).
+
 
 Found by the QA monkey (`tools/qa/run.py monkey --seed 12 --steps 300`, finding 1 at
 step 11). With the Git menu open, a press on the third terminal tab (212,737) closed

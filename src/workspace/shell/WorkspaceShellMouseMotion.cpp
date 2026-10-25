@@ -517,6 +517,19 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
             return close_of(tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, strip));
           }
         }
+        // The bottom panel's tabs carry the same close glyph (TD-2026-10-16-346:
+        // they were left out, and their glyph stayed as the last frame painted it).
+        if (BottomPanelVisible()) {
+          const SDL_FRect panel_header =
+              MakeRect(layout.bottom_panel.x, layout.bottom_panel.y, layout.bottom_panel.w,
+                       kWorkspaceBottomPanelHeaderHeight);
+          if (Contains(panel_header, x, y)) {
+            return close_of(tab_strip_service_.ComputeVisibleBottomPanelTabs(
+                context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
+                [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
+                output_channels_.Channels()));
+          }
+        }
         return std::nullopt;
       };
       const std::optional<SDL_FRect> previous_close =
