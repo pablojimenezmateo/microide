@@ -1249,7 +1249,7 @@ void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& vi
 }
 
 std::optional<LspService::BufferSyncTarget> LspService::ResolveOpenDocumentForSync(
-    const editor::TextViewport& viewport, std::string uri) {
+    const editor::TextViewport& viewport, std::string_view uri) {
   BufferSyncTarget target;
   target.client = LspClientForViewport(viewport, &target.language_id);
   if (target.client == nullptr) {
@@ -1257,7 +1257,7 @@ std::optional<LspService::BufferSyncTarget> LspService::ResolveOpenDocumentForSy
   }
   // Compute the URI once (FileUriForPath normalizes + percent-encodes) and reuse it
   // for both the was-open check and the caller's DidChange.
-  target.uri = uri.empty() ? FileUriForPath(viewport.path()) : std::move(uri);
+  target.uri = uri.empty() ? FileUriForPath(viewport.path()) : std::string(uri);
   // Capture BEFORE EnsureLspDocumentOpen: if the doc was not open, the didOpen it
   // sends carries the current (already-edited) text, so a following didChange would
   // double-apply. The caller gates its DidChange on was_open for exactly this reason.
@@ -1364,13 +1364,15 @@ void LspService::SyncLspForActiveEditableLastChange() {
   }
   // Nothing changed since the last sync (see synced_content_revision_): the
   // viewport's last_applied_edit is an edit the server already has.
-  std::string uri_key = FileUriForPath(viewport->path());
-  if (const auto [it, inserted] =
-          synced_content_revision_.try_emplace(uri_key, viewport->content_revision());
-      !inserted) {
-    if (it->second == viewport->content_revision()) {
-      return;
-    }
+  if (sync_uri_.empty() || viewport->path() != sync_uri_path_) {
+    sync_uri_path_ = viewport->path();
+    sync_uri_ = FileUriForPath(sync_uri_path_);
+  }
+  if (const auto it = synced_content_revision_.find(sync_uri_); it == synced_content_revision_.end()) {
+    synced_content_revision_.emplace(sync_uri_, viewport->content_revision());
+  } else if (it->second == viewport->content_revision()) {
+    return;
+  } else {
     it->second = viewport->content_revision();
   }
 
@@ -1392,7 +1394,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
   {
     util::PerformanceTrace::Scope scope(
         "LspService::SyncLspForActiveEditableLastChange::ResolveAndOpen");
-    target = ResolveOpenDocumentForSync(*viewport, std::move(uri_key));
+    target = ResolveOpenDocumentForSync(*viewport, sync_uri_);
   }
   if (!target.has_value()) {
     return;

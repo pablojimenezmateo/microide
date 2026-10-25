@@ -380,7 +380,7 @@ class LspService {
     bool was_open = false;
   };
   std::optional<BufferSyncTarget> ResolveOpenDocumentForSync(const editor::TextViewport& viewport,
-                                                             std::string uri = {});
+                                                             std::string_view uri = {});
 
   // Shared publish scaffolding for the generation-guarded absolute-position overlays
   // (semantic tokens, inlay hints): drop a superseded response, resolve the file's
@@ -461,6 +461,12 @@ class LspService {
   // shifted the diagnostics twice. The keystroke sync acts only when the revision
   // moved since.
   std::unordered_map<std::string, std::uint64_t> synced_content_revision_;
+  // The keystroke sync's URI for the path it last saw: the revision check runs on
+  // every keystroke, with or without a server, and FileUriForPath builds a string
+  // longer than the small-string buffer -- an allocation per keystroke that the
+  // serverless path had not paid before the check existed.
+  std::filesystem::path sync_uri_path_;
+  std::string sync_uri_;
 
   // Per-URI monotonic generation for semantic-token requests. Bumped on every
   // request; the response closure captures its value and PublishLspSemanticTokens
