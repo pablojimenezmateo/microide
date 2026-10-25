@@ -1060,6 +1060,27 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
   }
 
+  // The editor banner's buttons and its close "x": the paint lights them under
+  // the pointer, so without them here a hover onto one damaged nothing and the
+  // next unrelated partial frame left it unlit (QA monkey, qa-asan seed 4).
+  if (const EditorBannerState* banner = ActiveEditorBannerForTab(context_.current_project_state);
+      banner != nullptr) {
+    const SDL_FRect strip = ComputeEditorBannerStripRect(layout.editor_surface);
+    if (Contains(strip, x, y)) {
+      const EditorBannerButtonLayout buttons =
+          ComputeEditorBannerButtonRects(strip, EditorBannerButtonsFor(banner->kind));
+      for (std::size_t i = 0; i < buttons.buttons.size(); ++i) {
+        if (Contains(buttons.rects[i], x, y)) {
+          return buttons.rects[i];
+        }
+      }
+      if (Contains(buttons.dismiss, x, y)) {
+        return buttons.dismiss;
+      }
+      return std::nullopt;
+    }
+  }
+
   // Overlay list rows (command palette / pickers / completion / code actions).
   if (context_.current_project_state.overlay.visible) {
     const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;

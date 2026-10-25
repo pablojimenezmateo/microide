@@ -557,6 +557,39 @@ void TestBannerReloadRepaintsTheCleanTab() {
          "Reload should take the disk's text");
 }
 
+// QA monkey (qa-asan, seed 4, step 150): the pointer moving onto the banner's
+// close button lit it at paint time while the motion damaged nothing there, so
+// the next partial frame (a keystroke in the sidebar) left it unlit. The banner's
+// buttons were missing from the hover probe motion damages by.
+void TestThePointerOnABannerButtonRepaintsItsHover() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("disk.txt", "one\n");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {TextInputEvent("x")}), "typing (the tab goes dirty)");
+  WriteFile(fixture.file, "two\n");
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!TestAccess::HasExternalChangeBanner(fixture.shell, fixture.file) &&
+         std::chrono::steady_clock::now() < deadline) {
+    TestAccess::ReloadProjectIfFilesChanged(fixture.shell, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  Expect(TestAccess::HasExternalChangeBanner(fixture.shell, fixture.file),
+         "the external change should raise the banner on the dirty buffer");
+  fixture.ExpectFresh(fixture.shell.ConsumePendingRenderInvalidation(), "the banner appearing");
+  const auto reload = fixture.ElementRect("button:banner/Reload");
+  Expect(reload.has_value(), "the banner should name its Reload button");
+  if (!reload) {
+    return;
+  }
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(reload->x + reload->w / 2.0f,
+                                                                      reload->y + reload->h / 2.0f)}),
+                      "the pointer moving onto the banner's Reload button");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(reload->x + reload->w / 2.0f,
+                                                                      reload->y + reload->h + 40.0f)}),
+                      "the pointer moving off it, into the editor");
+}
+
 // edit-folding: typing at the end of a collapsed fold's opener line left that row
 // stale (the typed text and the inline blame the edit hides).
 void TestTypingOnAFoldedOpenerRepaintsItsRow() {
@@ -3589,6 +3622,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
+  AddTest(tests, "QaFlowRegression/ThePointerOnABannerButtonRepaintsItsHover",
+          TestThePointerOnABannerButtonRepaintsItsHover);
   AddTest(tests, "QaFlowRegression/TabDragDropPreviewPaints", TestTabDragDropPreviewPaints);
   AddTest(tests, "QaFlowRegression/ClosingAPromptOverTheFinderGivesTheFinderTheKeyboard",
           TestClosingAPromptOverTheFinderGivesTheFinderTheKeyboard);
