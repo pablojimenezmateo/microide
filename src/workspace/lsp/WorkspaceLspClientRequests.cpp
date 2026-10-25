@@ -294,22 +294,22 @@ void DispatchLocationRequest(Impl* impl, const char* method, const std::string& 
 
 void LspClient::RequestGoToDefinitionAsync(std::string uri, Position pos,
                                            LocationCallback callback) {
-  DispatchLocationRequest(impl_, "textDocument/definition", uri, pos, std::move(callback));
+  DispatchLocationRequest(impl_.get(), "textDocument/definition", uri, pos, std::move(callback));
 }
 
 void LspClient::RequestGoToTypeDefinitionAsync(std::string uri, Position pos,
                                                LocationCallback callback) {
-  DispatchLocationRequest(impl_, "textDocument/typeDefinition", uri, pos, std::move(callback));
+  DispatchLocationRequest(impl_.get(), "textDocument/typeDefinition", uri, pos, std::move(callback));
 }
 
 void LspClient::RequestGoToImplementationAsync(std::string uri, Position pos,
                                                LocationCallback callback) {
-  DispatchLocationRequest(impl_, "textDocument/implementation", uri, pos, std::move(callback));
+  DispatchLocationRequest(impl_.get(), "textDocument/implementation", uri, pos, std::move(callback));
 }
 
 void LspClient::RequestGoToDeclarationAsync(std::string uri, Position pos,
                                             LocationCallback callback) {
-  DispatchLocationRequest(impl_, "textDocument/declaration", uri, pos, std::move(callback));
+  DispatchLocationRequest(impl_.get(), "textDocument/declaration", uri, pos, std::move(callback));
 }
 
 void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
@@ -569,13 +569,13 @@ void DispatchCallHierarchyCalls(Impl* impl, bool incoming, util::JsonValue item,
 void LspClient::RequestIncomingCallsAsync(util::JsonValue item,
                                           CallHierarchyCallsCallback callback) {
   if (!callback) return;
-  DispatchCallHierarchyCalls(impl_, /*incoming=*/true, std::move(item), std::move(callback));
+  DispatchCallHierarchyCalls(impl_.get(), /*incoming=*/true, std::move(item), std::move(callback));
 }
 
 void LspClient::RequestOutgoingCallsAsync(util::JsonValue item,
                                           CallHierarchyCallsCallback callback) {
   if (!callback) return;
-  DispatchCallHierarchyCalls(impl_, /*incoming=*/false, std::move(item), std::move(callback));
+  DispatchCallHierarchyCalls(impl_.get(), /*incoming=*/false, std::move(item), std::move(callback));
 }
 
 }  // namespace microide::workspace

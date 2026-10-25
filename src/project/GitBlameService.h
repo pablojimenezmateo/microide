@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,6 +79,7 @@ struct GitBlameSnapshot {
 
 class GitBlameService {
  public:
+  GitBlameService();
   ~GitBlameService();
 
   void SetWakeChannel(util::WakeChannel channel);
@@ -106,7 +108,7 @@ class GitBlameService {
   bool WorkerIdle() const;
 
   struct Impl;
-  Impl* impl_ = nullptr;
+  std::unique_ptr<Impl> impl_;
 
   friend struct ::microide::tests::GitBlameServiceTestAccess;
 };

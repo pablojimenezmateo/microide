@@ -6,11 +6,10 @@
 
 namespace microide::workspace {
 
-DapClient::DapClient() : impl_(new Impl{}) {}
+DapClient::DapClient() : impl_(std::make_unique<Impl>()) {}
 
 DapClient::~DapClient() {
   Shutdown();
-  delete impl_;
 }
 
 void DapClient::SetWakeChannel(Uint32 event_type) {
@@ -45,7 +44,7 @@ bool DapClient::Start(const platform::ProcessLauncher& launcher,
   impl_->initialized.store(false, std::memory_order_release);
   impl_->stop_init.store(false);
 
-  Impl* const init_impl = impl_;
+  Impl* const init_impl = impl_.get();
   impl_->init_thread = std::thread([init_impl]() { init_impl->DoInitializeBlocking(); });
   return true;
 }

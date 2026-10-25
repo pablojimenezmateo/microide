@@ -9,11 +9,10 @@
 
 namespace microide::workspace {
 
-LspClient::LspClient() : impl_(new Impl{}) {}
+LspClient::LspClient() : impl_(std::make_unique<Impl>()) {}
 
 LspClient::~LspClient() {
   Shutdown();
-  delete impl_;
 }
 
 void LspClient::SetWakeChannel(Uint32 event_type) {
@@ -68,7 +67,7 @@ bool LspClient::Start(const platform::ProcessLauncher& launcher,
   impl_->process_shutdown_started.store(false, std::memory_order_release);
 
   impl_->stop_init.store(false);
-  Impl* const init_impl = impl_;
+  Impl* const init_impl = impl_.get();
   impl_->init_thread = std::thread([init_impl]() { init_impl->DoInitializeBlocking(); });
   return true;
 }
@@ -189,7 +188,7 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
   // captured by value so it stays valid for the post-enqueue commit.
   const std::size_t approx_bytes = text.size();
   const bool queued = impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_, uri, language_id = std::move(language_id), text = std::move(text),
+      [impl = impl_.get(), uri, language_id = std::move(language_id), text = std::move(text),
        open_version]() mutable {
         using namespace util;
         JsonObject text_doc;
@@ -241,7 +240,7 @@ bool LspClient::DidChange(const std::string& uri, const std::string& text) {
   // serialization (both proportional to document size) run off the UI thread.
   // `text` must be captured by value — the caller owns the buffer only for this call.
   const bool queued = impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_, uri, text, version]() mutable {
+      [impl = impl_.get(), uri, text, version]() mutable {
         using namespace util;
         JsonObject text_doc;
         text_doc["uri"] = JsonValue(uri);
@@ -286,7 +285,7 @@ bool LspClient::DidChangeIncremental(const std::string& uri,
     version = it->second + 1;
   }
   const bool queued = impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_, uri, changed_range, new_text, version]() mutable {
+      [impl = impl_.get(), uri, changed_range, new_text, version]() mutable {
         using namespace util;
         JsonObject text_doc;
         text_doc["uri"] = JsonValue(uri);

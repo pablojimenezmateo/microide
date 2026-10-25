@@ -8,6 +8,7 @@
 #include <SDL3/SDL.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -108,7 +109,7 @@ class DapClient {
 
  private:
   struct Impl;
-  Impl* impl_;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace microide::workspace

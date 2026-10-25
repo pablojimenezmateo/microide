@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -134,7 +135,7 @@ class TraceChannel {
   std::size_t slot_ = 0;
 
   struct Impl;
-  Impl* impl_ = nullptr;
+  std::unique_ptr<Impl> impl_;
 };
 
 // RAII timer for one region on one channel. Costs a single predictable branch

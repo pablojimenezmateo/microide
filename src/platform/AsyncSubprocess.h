@@ -87,7 +87,7 @@ class AsyncSubprocess {
 
  private:
   struct Impl;
-  Impl* impl_;  // non-owning pointer to platform-specific state; managed by POSIX impl
+  std::unique_ptr<Impl> impl_;  // null once moved from
 };
 
 }  // namespace microide::platform

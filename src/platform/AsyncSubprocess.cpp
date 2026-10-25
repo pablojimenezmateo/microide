@@ -129,25 +129,20 @@ struct AsyncSubprocess::Impl {
 
 #endif
 
-AsyncSubprocess::AsyncSubprocess() : impl_(new Impl{}) {}
+AsyncSubprocess::AsyncSubprocess() : impl_(std::make_unique<Impl>()) {}
 
 AsyncSubprocess::~AsyncSubprocess() {
   if (impl_ != nullptr) {
     Shutdown(0);
-    delete impl_;
   }
 }
 
-AsyncSubprocess::AsyncSubprocess(AsyncSubprocess&& other) noexcept : impl_(other.impl_) {
-  other.impl_ = nullptr;
-}
+AsyncSubprocess::AsyncSubprocess(AsyncSubprocess&& other) noexcept = default;
 
 AsyncSubprocess& AsyncSubprocess::operator=(AsyncSubprocess&& other) noexcept {
   if (this != &other) {
     Shutdown(0);
-    delete impl_;
-    impl_ = other.impl_;
-    other.impl_ = nullptr;
+    impl_ = std::move(other.impl_);
   }
   return *this;
 }

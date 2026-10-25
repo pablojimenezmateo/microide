@@ -1017,21 +1017,20 @@ struct GitBlameService::Impl {
   std::function<void()> before_cache_apply_hook;  // test seam; empty in production
 };
 
-GitBlameService::~GitBlameService() {
-  Stop();
-  delete impl_;
-}
+GitBlameService::GitBlameService() = default;
+
+GitBlameService::~GitBlameService() { Stop(); }
 
 void GitBlameService::SetWakeChannel(util::WakeChannel channel) {
   if (impl_ == nullptr) {
-    impl_ = new Impl();
+    impl_ = std::make_unique<Impl>();
   }
   impl_->SetWakeChannel(channel);
 }
 
 void GitBlameService::Request(const GitBlameRequest& request) {
   if (impl_ == nullptr) {
-    impl_ = new Impl();
+    impl_ = std::make_unique<Impl>();
   }
   impl_->Request(request);
 }
@@ -1079,7 +1078,7 @@ void GitBlameService::Stop() {
 
 void GitBlameService::SetBeforeCacheApplyHook(std::function<void()> hook) {
   if (impl_ == nullptr) {
-    impl_ = new Impl();
+    impl_ = std::make_unique<Impl>();
   }
   impl_->SetBeforeCacheApplyHook(std::move(hook));
 }

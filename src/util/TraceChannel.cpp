@@ -147,7 +147,7 @@ TraceChannel::TraceChannel(const char* prefix,
                  kMaxChannels);
     return;
   }
-  impl_ = new Impl();
+  impl_ = std::make_unique<Impl>();
 }
 
 TraceChannel::~TraceChannel() {
@@ -161,8 +161,7 @@ TraceChannel::~TraceChannel() {
     ReleaseSlot(slot_);
     slot_ = kNoSlot;
   }
-  delete impl_;
-  impl_ = nullptr;
+  impl_.reset();
 }
 
 void TraceChannel::Reset() {
