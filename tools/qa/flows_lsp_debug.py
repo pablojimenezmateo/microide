@@ -220,13 +220,26 @@ def flow_lsp_diagnostics(app: q.App) -> None:
     # clangd puts the error on the declared name, `bad`.
     column = app.text().splitlines()[15].find(" bad ") + 3
     card: dict = {}
+    # One hover, then wait for THAT card to gain its symbol section with the
+    # pointer kept on the cell: the problem shows at once, the symbol a server
+    # round trip later, and leaving the card asks again on return (VS Code's
+    # rule). Re-hovering on every poll left the cell each time, so on a slower
+    # runner the answer never landed (QA lsp-diagnostics, on CI). A one-pixel
+    # nudge within the cell is a fresh rest, which asks again if the first answer
+    # was a cancellation.
+    _hover(app, 16, column)
+    x, y = app.text_point(16, column)
+    nudge = iter(range(10**6))
 
     def both() -> bool:
-        hover = _hover(app, 16, column, 4.0) or {}
+        hover = app.ui()["popups"]["hover"] or {}
         card.clear()
         card.update(hover)
         text = hover.get("text", "")
-        return hover.get("kind") == "diagnostic" and "viable" in text.lower() and "variable bad" in text
+        if hover.get("kind") == "diagnostic" and "viable" in text.lower() and "variable bad" in text:
+            return True
+        app.move(x + (next(nudge) % 2), y)
+        return False
     app.wait_until(both, 20.0, "the squiggle's card to show the problem and the symbol")
     text = card.get("text", "")
     app.expect(text.lower().find("viable") < text.find("variable bad"),
