@@ -16,11 +16,12 @@
 
 namespace microide::workspace::detail {
 
-enum class CardStyle {
-  Raised,
-  Overlay,
-  Tooltip,
-};
+// The render layer's card vocabulary, used as is: this namespace had its own
+// value-for-value copy of CardStyle and three wrappers translating it back.
+using render::CardBackground;
+using render::CardStyle;
+using render::DrawCardFrame;
+using render::DrawTitledCardFrame;
 
 enum class ButtonTone {
   Neutral,
@@ -80,40 +81,6 @@ inline void FillRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color co
 
 inline void OutlineRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
   render::OutlineRect(renderer, rect, color);
-}
-
-inline SDL_Color CardBackground(const render::Theme& theme, CardStyle style) {
-  switch (style) {
-    case CardStyle::Overlay:
-      return render::CardBackground(theme, render::CardStyle::Overlay);
-    case CardStyle::Tooltip:
-      return render::CardBackground(theme, render::CardStyle::Tooltip);
-    case CardStyle::Raised:
-    default:
-      return render::CardBackground(theme, render::CardStyle::Raised);
-  }
-}
-
-inline void DrawCardFrame(SDL_Renderer* renderer,
-                          const render::Theme& theme,
-                          const SDL_FRect& rect,
-                          CardStyle style) {
-  render::DrawCardFrame(renderer, theme, rect,
-                        style == CardStyle::Overlay   ? render::CardStyle::Overlay
-                        : style == CardStyle::Tooltip ? render::CardStyle::Tooltip
-                                                      : render::CardStyle::Raised);
-}
-
-inline SDL_FRect DrawTitledCardFrame(SDL_Renderer* renderer,
-                                     const render::Theme& theme,
-                                     const SDL_FRect& rect,
-                                     float header_height,
-                                     CardStyle style) {
-  return render::DrawTitledCardFrame(
-      renderer, theme, rect, header_height,
-      style == CardStyle::Overlay   ? render::CardStyle::Overlay
-      : style == CardStyle::Tooltip ? render::CardStyle::Tooltip
-                                    : render::CardStyle::Raised);
 }
 
 inline ButtonColors ResolveButtonColors(const render::Theme& theme,
