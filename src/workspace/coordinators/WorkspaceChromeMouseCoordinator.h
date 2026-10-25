@@ -106,6 +106,15 @@ class ChromeMouseCoordinator {
 
   bool HandleMenuButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleMenuMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  // The popup row under (x, y): its index (-1 for none), whether it is an enabled
+  // item (a separator never is), and its rect.
+  struct PopupRowHover {
+    int index = -1;
+    bool enabled = false;
+    SDL_FRect rect{};
+  };
+  PopupRowHover HoveredPopupRow(std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect,
+                                float x, float y) const;
   void RedrawChangedPopupRows(std::span<const MenuItemSpec> items,
                               const SDL_FRect& popup_rect,
                               PopupRowPair previous,
