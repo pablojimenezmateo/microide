@@ -449,7 +449,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- three causes fixed 2026-10-25]
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- ten causes fixed 2026-10-25]
 
 **2026-10-25, three causes found and fixed:**
 
@@ -460,8 +460,9 @@ Use `dev-docs/project/active-work.md` for current priorities.
   behind its input read the next chord's modifiers: End, handled while Ctrl+Alt
   from the following Ctrl+Alt+Down were already pumped, ran as Ctrl+End. That is
   the caret at EOF, and the three dirty rects End's frame drew on CI. Key events
-  now use only their own modifiers. Mouse paths keep the live state, which is
-  correct there because mouse events carry none. Regression test:
+  now use only their own modifiers. (Mouse paths kept the live state at first,
+  reasoning that pointer events carry none. That was wrong too: see the second
+  run below.) Regression test:
   `QaFlowRegressionUx/AKeyReadsItsOwnModifiersNotTheNextChords` (it failed with
   CI's `3:0`). The flow now also checks its own three-caret setup.
 - **`word-and-line-drags` was a driver bug.** After a drag, `_last_click` recorded
@@ -500,7 +501,51 @@ Use `dev-docs/project/active-work.md` for current priorities.
   the caret returned before the trace, so the new barrier waited 3 s on it
   (`lsp-show-hover`). It is traced now.
 
-Still open: whatever the next CI run shows with these in.
+**2026-10-25, second CI run (3674274c: `checks` 40219267430, `qa-deep`
+40219267440).** TSan is green, along with every other non-QA job. Three lanes
+still failed, and a fourth scenario passed only on retry, on four new causes,
+all fixed:
+
+- **`lsp-more` (X11 `qa` and `qa-wayland`) was a layout bug in the frame, not
+  stale paint.** A quick-pick row's right column (a workspace symbol's
+  `container · path`) was laid out at its full measured width. A long one
+  therefore started left of the row, over its own label and out past the overlay
+  into the editor. The verifier caught it only because a partial frame clipped to
+  the overlay could not repaint that spill. The label now keeps its width, up to
+  half the row, and the detail is truncated to the rest.
+  `RenderViewModelBuilder/OverlayBoundsALongSecondaryColumnToTheRow`.
+- **Monkey seed 4 (`qa-asan`) was hover damage.** The editor banner's buttons and
+  close "x" were missing from `HoveredInteractiveRect`, the probe that motion
+  damages hover changes by. The paint lit them with `PointerOver`, so a hover
+  onto one showed only when something else repainted it.
+  `QaFlowRegression/ThePointerOnABannerButtonRepaintsItsHover`.
+- **`tree-drag` (`qa-asan`, flaky) is the modifier bug's pointer half.** The drop
+  read Ctrl from `SDL_GetModState()` at the mouse-up. xdotool sends `mouseup`
+  then `keyup ctrl`, and on a slow binary one pump queues both, so the live
+  state said Ctrl was already up and the copy became a move. Pointer handlers
+  now read `InteractionState::key_modifiers`, which the dispatcher takes from
+  each key event's `mod` (in queue order) and resyncs on focus gain. The control
+  channel's injected pointer events hold their modifiers there too. Tests hold
+  modifiers with key events (`ScopedHeldModifiers`) rather than
+  `SDL_SetModState`. `WorkspaceShell/TreeRowDragAndDrop` fails without the fix
+  with CI's message.
+
+- **`journey-rename-refactor` (`qa-asan`, flaky) was the ordering guard's
+  pointer half.** The driver waited for every key it sent before any control
+  command, but not for clicks: Discard All was clicked and its prompt read at
+  once, before the slow binary had handled the click. The flow also clicked
+  Discard All as soon as it was on screen, before the git view's refresh after
+  the save had enabled it (a click on a disabled button does nothing). The input
+  trace now logs pointer button, wheel and motion events too. The driver counts
+  the presses and releases and wheel notches it sends, and the point a move
+  lands on, and every control command waits for them as it does for keys. A
+  drag's release is expected only once it is sent, since `before_release` may
+  query mid-drag. The flow waits for Discard All to be enabled and for its
+  prompt. Driver tests: `PointerInputBarrierTests` in `tools/qa/test_driver.py`.
+  Locally, 8/8 runs of it and `tree-drag` on the ASan binary under a parallel
+  QA lane, with retries off.
+
+Close this entry once a run of CI's QA lanes comes back green.
 
 Found 2026-10-25 while checking whether TD-368 could close (its condition: "a
 few CI qa lanes stay green"). They have not. From 2026-10-21 to 2026-10-25,
