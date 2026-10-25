@@ -236,14 +236,11 @@ std::string ReadTriggerCharactersField(lua_State* state, int table_index, const 
   return characters;
 }
 
-std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
-                                                             int table_index,
-                                                             const char* field) {
-  GetFieldProtected(state, table_index, field);
-  if (!lua_istable(state, -1)) {
-    lua_pop(state, 1);
-    return std::nullopt;
-  }
+namespace {
+
+// The string sequence at the stack top (left there). Nullopt when an element is
+// not a string or a cap below is passed.
+std::optional<std::vector<std::string>> ReadStringArrayOnTop(lua_State* state) {
   // Cap the drain so a plugin returning an accidentally-huge sequence cannot grow
   // this vector without bound and hang/OOM the host. 100000 is far beyond any real
   // string-array field. Elements are read *raw* (lua_rawgeti, not lua_geti): a
@@ -269,22 +266,67 @@ std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
       break;
     }
     if (!lua_isstring(state, -1)) {
-      lua_pop(state, 2);
+      lua_pop(state, 1);
       return std::nullopt;
     }
     std::size_t item_length = 0;
     const char* item = lua_tolstring(state, -1, &item_length);
     if (item_length > kMaxLuaStringArrayItemBytes ||
         item_length > kMaxLuaStringArrayAggregateBytes - aggregate_bytes) {
-      lua_pop(state, 2);
+      lua_pop(state, 1);
       return std::nullopt;  // reject the whole field rather than truncate silently
     }
     aggregate_bytes += item_length;
     values.emplace_back(item, item_length);
     lua_pop(state, 1);
   }
+  return values;
+}
+
+}  // namespace
+
+std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
+                                                             int table_index,
+                                                             const char* field) {
+  GetFieldProtected(state, table_index, field);
+  if (!lua_istable(state, -1)) {
+    lua_pop(state, 1);
+    return std::nullopt;
+  }
+  std::optional<std::vector<std::string>> values = ReadStringArrayOnTop(state);
   lua_pop(state, 1);
   return values;
+}
+
+std::optional<std::vector<std::vector<std::string>>> ReadStringArrayListField(
+    lua_State* state, int table_index, const char* field) {
+  GetFieldProtected(state, table_index, field);
+  if (!lua_istable(state, -1)) {
+    lua_pop(state, 1);
+    return std::nullopt;
+  }
+  // A handful of argvs at most; the same per-element caps apply inside each.
+  constexpr lua_Integer kMaxLists = 64;
+  std::vector<std::vector<std::string>> lists;
+  for (lua_Integer i = 1; i <= kMaxLists; ++i) {
+    lua_rawgeti(state, -1, i);
+    if (lua_isnil(state, -1)) {
+      lua_pop(state, 1);
+      break;
+    }
+    std::optional<std::vector<std::string>> list;
+    if (lua_istable(state, -1)) {
+      list = ReadStringArrayOnTop(state);
+    }
+    lua_pop(state, 1);
+    if (!list.has_value()) {
+      lua_pop(state, 1);
+      return std::nullopt;
+    }
+    lists.push_back(std::move(*list));
+  }
+  lua_pop(state, 1);
+  return lists;
 }
 
 void PushPosition(lua_State* state, std::size_t line, std::size_t column) {

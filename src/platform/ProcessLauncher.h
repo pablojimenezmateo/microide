@@ -102,4 +102,14 @@ std::vector<std::string> ExpandWorkspaceFolder(std::vector<std::string> argv,
                                                const std::filesystem::path& project_root,
                                                const ProcessLauncher& launcher);
 
+// One argv that runs the first of `candidates` whose program exists on the machine
+// that runs it, decided when it starts: a program with a `/` must be an executable
+// file (a leading `~/` is the user's home there), a bare name must be on PATH. With
+// none found it writes `install_hint` to stderr and exits 127 -- it never fetches
+// anything. A single candidate comes back as it is. The candidates travel as
+// arguments of a fixed POSIX sh script, never spliced into its text, so nothing in
+// them needs quoting and `${workspaceFolder}` expands in them like in any argv.
+std::vector<std::string> FirstAvailableCommand(
+    const std::vector<std::vector<std::string>>& candidates, std::string_view install_hint);
+
 }  // namespace microide::platform

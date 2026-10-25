@@ -75,6 +75,10 @@ int ReadFunctionRefField(lua_State* state, int table_index, const char* field);
 std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
                                                              int table_index,
                                                              const char* field);
+// A list of string lists ({ { "a", "b" }, { "c" } }): nullopt when the field is
+// not a table or any entry is not a string list.
+std::optional<std::vector<std::vector<std::string>>> ReadStringArrayListField(
+    lua_State* state, int table_index, const char* field);
 // A provider's `trigger_characters`, written either way a plugin author would:
 // a string of characters (".>") or a list of them ({ ".", ">" }), as an LSP
 // server advertises them. Entries longer than one character are dropped (typing

@@ -189,6 +189,48 @@ void TestWorkspaceFolderExpandsToTheHostRoot() {
          "and remotely to the root as the host sees it");
 }
 
+// TD-2026-10-19-365: a language server's command is "the first of these that
+// exists where it runs", decided at spawn, and with none it says what to install
+// instead of fetching something.
+void TestFirstAvailableCommandRunsTheFirstThatExists() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path tool = home / ".tools" / "say";
+  WriteFile(tool, "#!/bin/sh\nprintf 'tool:%s|' \"$@\"\n");
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_all);
+  const auto run = [&](const std::vector<std::vector<std::string>>& candidates) {
+    std::vector<std::string> argv = {"env", "HOME=" + home.string()};
+    const std::vector<std::string> resolver =
+        platform::FirstAvailableCommand(candidates, "install the say tool");
+    argv.insert(argv.end(), resolver.begin(), resolver.end());
+    return platform::RunSubprocess(argv);
+  };
+
+  Expect(platform::FirstAvailableCommand({{"clangd", "--log=error"}}, "hint") ==
+             std::vector<std::string>{"clangd", "--log=error"},
+         "a single candidate is the command as it is");
+
+  const auto from_path = run({{"microide-no-such-program", "x"}, {"printf", "%s|", "a b", "c"}});
+  Expect(from_path.exit_code == 0 && from_path.stdout_text == "a b|c|",
+         "a missing program is skipped and the next runs with its own arguments intact, got [" +
+             from_path.stdout_text + "]");
+
+  const auto from_home = run({{"/nonexistent/bin/say"}, {"~/.tools/say", "one", "two words"}});
+  Expect(from_home.exit_code == 0 && from_home.stdout_text == "tool:one|tool:two words|",
+         "a `~/` program is the user's home where it runs, got [" + from_home.stdout_text + "]");
+
+  const auto first_wins = run({{"printf", "first"}, {"printf", "second"}});
+  Expect(first_wins.stdout_text == "first", "the first that exists wins");
+
+  const auto none = run({{"microide-no-such-program"}, {"/nonexistent/also-missing"}});
+  Expect(none.exit_code == 127 && none.stderr_text.find("install the say tool") != std::string::npos,
+         "with none found it exits 127 and says what to install, got " +
+             std::to_string(none.exit_code) + " [" + none.stderr_text + "]");
+}
+
 void TestGitMetadataComesFromTheLaunchersHost() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -508,6 +550,8 @@ void RegisterProcessLauncherTests(std::vector<TestCase>& tests) {
           TestCompareServiceRunsThroughTheLauncherItIsGiven);
   AddTest(tests, "ProcessLauncher/WriteSideRunsThroughTheLauncherItIsGiven",
           TestWriteSideRunsThroughTheLauncherItIsGiven);
+  AddTest(tests, "ProcessLauncher/FirstAvailableCommandRunsTheFirstThatExists",
+          TestFirstAvailableCommandRunsTheFirstThatExists);
   AddTest(tests, "ProcessLauncher/WorkspaceFolderExpandsToTheHostRoot",
           TestWorkspaceFolderExpandsToTheHostRoot);
   AddTest(tests, "ProcessLauncher/GitMetadataComesFromTheLaunchersHost",

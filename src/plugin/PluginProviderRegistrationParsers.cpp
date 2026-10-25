@@ -1,5 +1,7 @@
 #include "plugin/PluginRegistrationParsers.h"
 
+#include "platform/ProcessLauncher.h"
+
 #if MICROIDE_HAS_LUA_PLUGINS
 
 #include <algorithm>
@@ -28,7 +30,20 @@ bool ParseLanguageServerRegistration(lua_State* state,
                                      std::string* error_message) {
   if (out == nullptr) return false;
   auto id_opt = ReadStringField(state, 1, "id");
-  auto command_opt = ReadStringArrayField(state, 1, "command");
+  // `command` is one argv; `commands` is a list of them, of which the first whose
+  // program exists where the server runs is started (TD-2026-10-19-365), with
+  // `install_hint` said when none does.
+  std::optional<std::vector<std::string>> command_opt;
+  if (auto candidates = lua_interop::ReadStringArrayListField(state, 1, "commands")) {
+    std::erase_if(*candidates, [](const std::vector<std::string>& argv) { return argv.empty(); });
+    if (!candidates->empty()) {
+      const std::string install_hint = ReadStringField(state, 1, "install_hint").value_or(
+          "no language server found; install one of the listed programs");
+      command_opt = platform::FirstAvailableCommand(*candidates, install_hint);
+    }
+  } else {
+    command_opt = ReadStringArrayField(state, 1, "command");
+  }
   // Accept either a `language_ids` array (one process serves several languages)
   // or a single `language_id` string; the latter folds into a one-element list.
   std::vector<std::string> language_ids;

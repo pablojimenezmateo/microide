@@ -1153,7 +1153,24 @@ input: weston's test protocol is not packaged, so that would mean a compositor w
 a virtual-input protocol (sway's `wlr-virtual-pointer`/`virtual-keyboard` via
 `wlrctl` or `ydotool` against a headless wlroots compositor).
 
-### TD-2026-10-19-365 — the language-server plugins resolve their server once, at load, and may download one. [OPEN]
+### TD-2026-10-19-365 — the language-server plugins resolve their server once, at load, and may download one. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** `ctx.lsp.add` takes `commands` (ordered candidate argvs)
+and an `install_hint`; the host turns them into one argv
+(`platform::FirstAvailableCommand`): a fixed POSIX sh script, the candidates
+passed as its arguments (never spliced into its text, so `${workspaceFolder}`
+expands in them like in any argv), that execs the first whose program exists
+where the server runs, when it starts, and otherwise writes the hint and exits
+127. `typescript-lsp` lists `${workspaceFolder}/node_modules/.bin/...` then PATH
+-- no `ctx.files.exists` at load (the editor's side, wrong for a remote project),
+no npm/yarn probing, no `npx --yes`; `dotnet-lsp` lists PATH then
+`~/.dotnet/tools` (the old `$DOTNET_TOOLS` override is gone: set the binary
+setting instead). Plugins do reload for each project that is initialized, so the
+"first project's choice" half was already only stale for the local-only checks;
+resolving at spawn removes the question. Tests:
+`ProcessLauncher/FirstAvailableCommandRunsTheFirstThatExists`,
+`PluginHost/RepoTypescriptLspPluginResolvesItsServerPerProject`.
+
 
 Found writing the QA `lsp-typescript` / `lsp-csharp` flows. `plugins/typescript-lsp`
 and `plugins/dotnet-lsp` build their server command in `setup`, against whichever

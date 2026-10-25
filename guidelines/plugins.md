@@ -47,6 +47,16 @@ Plugins may contribute capabilities such as:
   aliasing, so e.g. one clangd serves C/C++/Objective-C. The host sends each
   file's detected filetype as the LSP `languageId`. Optional `initialization_options`
   and `settings` are JSON-string fields forwarded to the server.
+  `${workspaceFolder}` in the command is the project the server starts for, as the
+  machine that runs it sees it. Where the server may live in several places, give
+  `commands = { argv, argv, ... }` instead of `command`, plus an `install_hint`:
+  the host starts the first whose program exists **where the server runs and when
+  it starts** (a program with a `/` must be executable, a leading `~/` is that
+  machine's home, a bare name is looked up on PATH), and with none writes the hint
+  to the LSP log and stops. Resolve nothing in `setup` against the open project
+  (`ctx.files.exists`, `ctx.workspace.project_root()`): that is the editor's side,
+  not the host's, and a remote project's server runs on the host. Never fall back
+  to fetching a server (`npx --yes ...`): say what to install.
 - tasks
 - tools
 - test providers

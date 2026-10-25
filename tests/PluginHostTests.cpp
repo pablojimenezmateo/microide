@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "platform/ProcessLauncher.h"
 #include "ScriptedProcessLauncher.h"
 
 #include "plugin/PluginHost.h"
@@ -2289,37 +2290,63 @@ return ide.plugin({
          "the surviving tool is the valid first registration");
 }
 
-void TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary() {
+// TD-2026-10-19-365: the server is resolved where and when it starts -- the
+// project's node_modules copy first, then PATH -- and with neither the command says
+// what to install. It used to be decided at plugin load against whichever project
+// was open, and to end in `npx --yes`, which downloads and runs a package.
+void TestRepoTypescriptLspPluginResolvesItsServerPerProject() {
 #if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
   const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path other_root = temp_dir.path() / "other";
   WriteFile(project_root / "README.md", "typescript plugin fixture\n");
-  WriteFile(project_root / "node_modules" / ".bin" / "typescript-language-server", "#!/bin/sh\n");
+  WriteFile(other_root / "README.md", "a project without node_modules\n");
+  const std::filesystem::path stub =
+      project_root / "node_modules" / ".bin" / "typescript-language-server";
+  WriteFile(stub, "#!/bin/sh\nprintf 'project-server %s' \"$*\"\n");
+  std::filesystem::permissions(stub, std::filesystem::perms::owner_all);
 
   CopyRepoPlugin(global_plugins, "typescript-lsp");
-
   ScopedPluginConfigHomeEnv config_env(config_home);
-
   PluginHost host;
   host.SetCallbacks(MakePluginHostCallbacks());
 
   Expect(host.Reload(project_root), "repo typescript-lsp plugin should reload successfully");
   Expect(host.ContributedLanguageServers().size() == 1,
          "repo typescript-lsp plugin should contribute one language server");
-
   const auto& server = host.ContributedLanguageServers().front();
   Expect(server.id == "typescript-lsp.typescript" &&
              server.language_ids == std::vector<std::string>{"typescript"},
          "repo typescript-lsp plugin should preserve its ids");
-  Expect(server.command.size() == 2 &&
-             server.command.front() ==
-                 (project_root / "node_modules" / ".bin" / "typescript-language-server").generic_string() &&
-             server.command.back() == "--stdio",
-         "repo typescript-lsp plugin should use an absolute project-local language server path");
+  for (const std::string& arg : server.command) {
+    Expect(arg.find("npx") == std::string::npos, "nothing is fetched from the network: " + arg);
+  }
+
+  // Run the command as the host would for each project: ${workspaceFolder} is that
+  // project, and PATH holds no typescript-language-server.
+  const auto run_for = [&](const std::filesystem::path& root) {
+    std::vector<std::string> argv = {"env", "PATH=/usr/bin:/bin"};
+    const std::vector<std::string> command =
+        platform::ExpandWorkspaceFolder(server.command, root, platform::LocalProcessLauncher());
+    argv.insert(argv.end(), command.begin(), command.end());
+    return platform::RunSubprocess(argv);
+  };
+  const auto in_project = run_for(project_root);
+  Expect(in_project.exit_code == 0 && in_project.stdout_text == "project-server --stdio",
+         "the project's node_modules server runs with --stdio, got [" + in_project.stdout_text +
+             "] " + in_project.stderr_text);
+  const auto elsewhere = run_for(other_root);
+  Expect(elsewhere.exit_code == 127 &&
+             elsewhere.stderr_text.find("npm install") != std::string::npos,
+         "a project with neither says what to install, got " +
+             std::to_string(elsewhere.exit_code) + " [" + elsewhere.stderr_text + "]");
 }
 
 void TestRepoCppLspPluginRegistersClangdForCLikeLanguages() {
@@ -4669,8 +4696,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostContributionIdIndexResetsAcrossReload);
   AddTest(tests, "PluginHost/LaunchConfigRequiresProcessExec",
           TestPluginHostLaunchConfigRequiresProcessExec);
-  AddTest(tests, "PluginHost/RepoTypescriptLspPluginUsesAbsoluteProjectBinary",
-          TestRepoTypescriptLspPluginUsesAbsoluteProjectBinary);
+  AddTest(tests, "PluginHost/RepoTypescriptLspPluginResolvesItsServerPerProject",
+          TestRepoTypescriptLspPluginResolvesItsServerPerProject);
   AddTest(tests, "PluginHost/RepoCppLspPluginRegistersClangdForCLikeLanguages",
           TestRepoCppLspPluginRegistersClangdForCLikeLanguages);
   AddTest(tests, "PluginHost/ProcessRunReportsArgumentErrorsWithoutCorruptingState",

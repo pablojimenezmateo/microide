@@ -17,35 +17,20 @@ local function declare_settings(ctx)
     default = "csharp-ls",
     scope = "project",
     label = "C# Language Server Binary",
-    description = "Path to csharp-ls. Defaults to csharp-ls from PATH, falling back to the dotnet global tools directory (~/.dotnet/tools).",
+    description = "Path to csharp-ls. Defaults to csharp-ls from PATH, falling back to the dotnet global tools directory (~/.dotnet/tools) -- resolved where the server runs.",
   })
 end
 
-local function make_command(ctx, binary)
-  -- csharp-ls speaks stdio with no extra flag and auto-discovers the .sln/.csproj
-  -- from the project root. When the configured binary is the default name, defer
-  -- resolution until first LSP use: prefer PATH, then the dotnet global tools dir.
+-- Resolved where and when the server starts (the host's FirstAvailableCommand):
+-- PATH first, then the dotnet global tools directory.
+local function server_commands(binary)
   if binary ~= "csharp-ls" then
-    return { binary }, binary
+    return { { binary } }, binary
   end
-
-  local command = {
-    "sh",
-    "-lc",
-    [[
-if command -v csharp-ls >/dev/null 2>&1; then
-  exec csharp-ls "$@"
-fi
-tools_dir="${DOTNET_TOOLS:-$HOME/.dotnet/tools}"
-if [ -x "$tools_dir/csharp-ls" ]; then
-  exec "$tools_dir/csharp-ls" "$@"
-fi
-exec csharp-ls "$@"
-    ]],
-    "csharp-ls",
-  }
-  return command, "deferred resolver (PATH, ~/.dotnet/tools)"
+  return { { "csharp-ls" }, { "~/.dotnet/tools/csharp-ls" } }, "PATH, then ~/.dotnet/tools"
 end
+
+local INSTALL_HINT = "csharp-ls not found: install it with `dotnet tool install --global csharp-ls`"
 
 return ide.plugin({
   id = "dotnet-lsp",
@@ -60,13 +45,14 @@ return ide.plugin({
     declare_settings(ctx)
 
     local binary = read_string(ctx, "binary", "csharp-ls")
-    local command, description = make_command(ctx, binary)
-    ctx.log("dotnet-lsp: using csharp-ls command: " .. description)
+    local commands, description = server_commands(binary)
+    ctx.log("dotnet-lsp: using csharp-ls from " .. description)
 
     ctx.lsp.add({
       id = "csharp-ls",
       language_ids = { "csharp" },
-      command = command,
+      commands = commands,
+      install_hint = INSTALL_HINT,
     })
   end,
 })
