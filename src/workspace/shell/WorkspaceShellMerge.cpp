@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <string_view>
+#include <utility>
 
 #include "workspace/MergeWrapRows.h"
 #include "workspace/WorkspaceLayout.h"
@@ -27,10 +28,7 @@ bool WorkspaceShell::ActiveTabIsMerge() const {
 }
 
 WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() {
-  if (!ActiveTabIsMerge()) {
-    return nullptr;
-  }
-  return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].merge.value();
+  return const_cast<MergeTabState*>(std::as_const(*this).ActiveMergeTab());
 }
 
 const WorkspaceShell::MergeTabState* WorkspaceShell::ActiveMergeTab() const {

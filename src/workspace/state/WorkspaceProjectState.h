@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <vector>
+#include <utility>
 
 #include "editor/BreakpointStore.h"
 #include "editor/FunctionBreakpointStore.h"
@@ -1112,9 +1113,7 @@ struct ProjectWorkspaceState {
   // discipline so callers never index terminal_tabs by a possibly-stale index
   // after only an emptiness check.
   TerminalTabState* active_terminal_tab() {
-    return active_terminal_tab_index < terminal_tabs.size()
-               ? terminal_tabs[active_terminal_tab_index].get()
-               : nullptr;
+    return const_cast<TerminalTabState*>(std::as_const(*this).active_terminal_tab());
   }
   const TerminalTabState* active_terminal_tab() const {
     return active_terminal_tab_index < terminal_tabs.size()

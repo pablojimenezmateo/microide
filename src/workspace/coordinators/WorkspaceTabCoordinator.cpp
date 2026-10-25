@@ -324,10 +324,7 @@ bool TabCoordinator::ActiveTabIsEditor() const {
 }
 
 TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() {
-  if (!ActiveTabIsEditor()) {
-    return nullptr;
-  }
-  return &state_.focused_group().open_tabs[state_.focused_group().active_tab_index].editor_state.value();
+  return const_cast<TabEntry::EditorTabState*>(std::as_const(*this).ActiveEditorTab());
 }
 
 const TabEntry::EditorTabState* TabCoordinator::ActiveEditorTab() const {

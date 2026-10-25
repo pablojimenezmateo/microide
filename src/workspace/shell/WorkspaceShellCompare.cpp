@@ -6,6 +6,7 @@
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <utility>
 
 #include "editor/SyntaxHighlighter.h"
 #include "util/PerformanceTrace.h"
@@ -218,10 +219,7 @@ bool WorkspaceShell::ActiveTabIsCompare() const {
 }
 
 WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() {
-  if (!ActiveTabIsCompare()) {
-    return nullptr;
-  }
-  return &context_.current_project_state.focused_group().open_tabs[context_.current_project_state.focused_group().active_tab_index].compare.value();
+  return const_cast<CompareTabState*>(std::as_const(*this).ActiveCompareTab());
 }
 
 const WorkspaceShell::CompareTabState* WorkspaceShell::ActiveCompareTab() const {
