@@ -56,6 +56,11 @@ class TaskExecutor {
   void WaitForIdle();
 
  private:
+  // Cancel every running and queued task and drop the queue. Holds mutex_.
+  void CancelAllLocked();
+  // No task queued or running. Holds mutex_.
+  bool IdleLocked() const;
+  void NotifyIfIdleLocked();
   struct TaskEntry {
     Task task;
     std::shared_ptr<CancellationToken::State> state;

@@ -69,6 +69,10 @@ void TaskExecutor::Submit(std::string coalesce_key, Task task) {
 
 void TaskExecutor::CancelAll() {
   std::lock_guard lock(mutex_);
+  CancelAllLocked();
+}
+
+void TaskExecutor::CancelAllLocked() {
   for (auto& s : active_states_) {
     if (s != nullptr) s->cancelled.store(true);
   }
@@ -76,18 +80,23 @@ void TaskExecutor::CancelAll() {
     if (task.state != nullptr) task.state->cancelled.store(true);
   }
   pending_.clear();
-  const bool all_idle = std::all_of(active_states_.begin(), active_states_.end(),
-                                    [](const auto& s) { return s == nullptr; });
-  if (all_idle) idle_cv_.notify_all();
+  NotifyIfIdleLocked();
+}
+
+bool TaskExecutor::IdleLocked() const {
+  return pending_.empty() && std::all_of(active_states_.begin(), active_states_.end(),
+                                         [](const auto& s) { return s == nullptr; });
+}
+
+void TaskExecutor::NotifyIfIdleLocked() {
+  if (IdleLocked()) {
+    idle_cv_.notify_all();
+  }
 }
 
 void TaskExecutor::WaitForIdle() {
   std::unique_lock lock(mutex_);
-  idle_cv_.wait(lock, [&]() {
-    if (!pending_.empty()) return false;
-    return std::all_of(active_states_.begin(), active_states_.end(),
-                       [](const auto& s) { return s == nullptr; });
-  });
+  idle_cv_.wait(lock, [&]() { return IdleLocked(); });
 }
 
 void TaskExecutor::WorkerMain(std::size_t slot) {
@@ -125,10 +134,7 @@ void TaskExecutor::WorkerMain(std::size_t slot) {
       if (active_states_[slot] == entry.state) {
         active_states_[slot].reset();
       }
-      const bool all_idle = pending_.empty() &&
-          std::all_of(active_states_.begin(), active_states_.end(),
-                      [](const auto& s) { return s == nullptr; });
-      if (all_idle) idle_cv_.notify_all();
+      NotifyIfIdleLocked();
     }
   }
 }
@@ -137,16 +143,7 @@ void TaskExecutor::RequestShutdown() {
   {
     std::lock_guard lock(mutex_);
     shutdown_requested_ = true;
-    for (auto& s : active_states_) {
-      if (s != nullptr) s->cancelled.store(true);
-    }
-    for (auto& task : pending_) {
-      if (task.state != nullptr) task.state->cancelled.store(true);
-    }
-    pending_.clear();
-    const bool all_idle = std::all_of(active_states_.begin(), active_states_.end(),
-                                      [](const auto& s) { return s == nullptr; });
-    if (all_idle) idle_cv_.notify_all();
+    CancelAllLocked();
   }
   cv_.notify_all();
 }
