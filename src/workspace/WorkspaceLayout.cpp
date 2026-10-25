@@ -900,6 +900,28 @@ SDL_FRect ScrollableListRowRect(const ScrollableListLayout& layout, int visible_
                   layout.row_width, layout.row_height);
 }
 
+std::optional<std::size_t> ScrollableListItemAtY(const ScrollableListLayout& layout, float y,
+                                                 std::size_t item_count) {
+  const std::optional<int> index = ScrollableListIndexAtY(layout, y);
+  if (!index.has_value() || *index < 0 || static_cast<std::size_t>(*index) >= item_count) {
+    return std::nullopt;
+  }
+  return static_cast<std::size_t>(*index);
+}
+
+std::optional<std::size_t> ScrollableListItemAt(const ScrollableListLayout& layout, float x,
+                                                float y, std::size_t item_count) {
+  const std::optional<std::size_t> index = ScrollableListItemAtY(layout, y, item_count);
+  if (!index.has_value() || !Contains(ScrollableListItemRect(layout, *index), x, y)) {
+    return std::nullopt;
+  }
+  return index;
+}
+
+SDL_FRect ScrollableListItemRect(const ScrollableListLayout& layout, std::size_t item_index) {
+  return ScrollableListRowRect(layout, static_cast<int>(item_index) - layout.scroll_row);
+}
+
 std::optional<SDL_FRect> ComputeScrollbarThumb(const SDL_FRect& track,
                                                float total_units,
                                                float visible_units,

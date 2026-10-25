@@ -101,13 +101,13 @@ void SidebarMouseCoordinator::ResolvePathDropTarget(const WorkspaceLayout& layou
   }
   const auto& entries = state_.directory_tree.entries();
   const auto list = operations_.compute_tree_sidebar_list_layout(layout.sidebar, entries.size());
-  const auto row = ScrollableListIndexAtY(list, y);
+  const auto row = ScrollableListItemAtY(list, y, entries.size());
   std::filesystem::path folder = state_.root;
   int folder_row = -1;
-  if (row.has_value() && *row >= 0 && *row < static_cast<int>(entries.size())) {
-    const auto& entry = entries[static_cast<std::size_t>(*row)];
+  if (row.has_value()) {
+    const auto& entry = entries[*row];
     folder = entry.is_directory ? entry.path : entry.path.parent_path();
-    for (int i = *row; i >= 0; --i) {  // the folder's own row, at or above the hovered one
+    for (int i = static_cast<int>(*row); i >= 0; --i) {  // the folder's own row, at or above the hovered one
       if (entries[static_cast<std::size_t>(i)].path == folder) {
         folder_row = i;
         break;

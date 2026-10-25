@@ -538,6 +538,16 @@ int RevealedScrollRow(int scroll_row, int visible_rows, int selected_index);
 int RevealScrollableListIndex(const ScrollableListLayout& layout, int selected_index);
 std::optional<int> ScrollableListIndexAtY(const ScrollableListLayout& layout, float y);
 SDL_FRect ScrollableListRowRect(const ScrollableListLayout& layout, int visible_row);
+// The item under `y` among `item_count` items: ScrollableListIndexAtY with the
+// range check every caller needs, nullopt above, below or past the last item.
+std::optional<std::size_t> ScrollableListItemAtY(const ScrollableListLayout& layout, float y,
+                                                 std::size_t item_count);
+// The item whose row rect contains (x, y). Stricter than ScrollableListItemAtY:
+// rows are inset from the list's edges, and the inset is not on any row.
+std::optional<std::size_t> ScrollableListItemAt(const ScrollableListLayout& layout, float x,
+                                                float y, std::size_t item_count);
+// The row rect of `item_index`, which is on screen (from ScrollableListItemAtY).
+SDL_FRect ScrollableListItemRect(const ScrollableListLayout& layout, std::size_t item_index);
 std::optional<SDL_FRect> ComputeScrollbarThumb(const SDL_FRect& track,
                                                float total_units,
                                                float visible_units,

@@ -125,12 +125,10 @@ bool SidebarMouseCoordinator::HandleSearchButtonDown(const SDL_Event& event,
   const auto list_layout =
       operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
   if (const auto line_index =
-          ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-      line_index.has_value() && *line_index >= 0 &&
-      *line_index < static_cast<int>(line_map.size()) &&
-      line_map[static_cast<std::size_t>(*line_index)] >= 0) {
+          ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y), line_map.size());
+      line_index.has_value() && line_map[*line_index] >= 0) {
     state_.overlay.workflow.project_search.selected_index =
-        static_cast<std::size_t>(line_map[static_cast<std::size_t>(*line_index)]);
+        static_cast<std::size_t>(line_map[*line_index]);
     const auto& result =
         state_.overlay.workflow.project_search.results[state_.overlay.workflow.project_search.selected_index];
     operations_.open_file_at_location(state_.root / result.relative_path, result.line, result.column);
@@ -152,16 +150,15 @@ bool SidebarMouseCoordinator::HandleSearchResultContextMenu(const SDL_Event& eve
   const auto line_map = operations_.build_project_search_line_map();
   const auto list_layout =
       operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
-  const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (!line_index.has_value() || *line_index < 0 ||
-      *line_index >= static_cast<int>(line_map.size()) ||
-      line_map[static_cast<std::size_t>(*line_index)] < 0) {
+  const auto line_index =
+      ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y), line_map.size());
+  if (!line_index.has_value() || line_map[*line_index] < 0) {
     return true;
   }
   // Select first, then open the menu on the selection — the same order the tree
   // and git sidebars use, so the menu and the highlight can never disagree.
   auto& search = state_.overlay.workflow.project_search;
-  search.selected_index = static_cast<std::size_t>(line_map[static_cast<std::size_t>(*line_index)]);
+  search.selected_index = static_cast<std::size_t>(line_map[*line_index]);
   operations_.open_tree_context_menu(TreeContextTargetKind::ResultRow,
                                      state_.root / search.results[search.selected_index].relative_path,
                                      PointerAnchor(event));
@@ -298,12 +295,13 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
 
   const auto& lines = operations_.build_git_sidebar_lines();
   const auto list_layout = operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
-  const auto line_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (!line_index.has_value() || *line_index < 0 || *line_index >= static_cast<int>(lines.size())) {
+  const auto line_index =
+      ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y), lines.size());
+  if (!line_index.has_value()) {
     return true;
   }
 
-  const auto& line = lines[static_cast<std::size_t>(*line_index)];
+  const auto& line = lines[*line_index];
   if (line.kind == GitSidebarLine::Kind::Directory) {
     if (!is_left) {
       return true;  // Right-click on a directory header is a no-op.
@@ -346,13 +344,13 @@ bool SidebarMouseCoordinator::HandleProblemsButtonDown(const SDL_Event& event,
 
   const auto list_layout =
       operations_.compute_problems_sidebar_list_layout(layout.sidebar, state_.sidebar.problems.entries.size());
-  const auto item_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (!item_index.has_value() || *item_index < 0 ||
-      *item_index >= static_cast<int>(state_.sidebar.problems.entries.size())) {
+  const auto item_index = ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y),
+                                                state_.sidebar.problems.entries.size());
+  if (!item_index.has_value()) {
     return true;
   }
 
-  state_.sidebar.problems.selected_index = static_cast<std::size_t>(*item_index);
+  state_.sidebar.problems.selected_index = *item_index;
   operations_.reveal_selected_problems_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
     operations_.open_selected_problem_sidebar_item();
@@ -374,13 +372,13 @@ bool SidebarMouseCoordinator::HandleTestsButtonDown(const SDL_Event& event,
 
   const auto list_layout =
       operations_.compute_tests_sidebar_list_layout(layout.sidebar, state_.sidebar.tests.entries.size());
-  const auto item_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (!item_index.has_value() || *item_index < 0 ||
-      *item_index >= static_cast<int>(state_.sidebar.tests.entries.size())) {
+  const auto item_index = ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y),
+                                                state_.sidebar.tests.entries.size());
+  if (!item_index.has_value()) {
     return true;
   }
 
-  state_.sidebar.tests.selected_index = static_cast<std::size_t>(*item_index);
+  state_.sidebar.tests.selected_index = *item_index;
   operations_.reveal_selected_tests_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
     operations_.open_selected_test_sidebar_item();
@@ -404,13 +402,13 @@ bool SidebarMouseCoordinator::HandlePluginButtonDown(const SDL_Event& event,
 
   const auto list_layout =
       operations_.compute_plugin_sidebar_list_layout(layout.sidebar, state_.sidebar.plugin.items.size());
-  const auto item_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (!item_index.has_value() || *item_index < 0 ||
-      *item_index >= static_cast<int>(state_.sidebar.plugin.items.size())) {
+  const auto item_index = ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y),
+                                                state_.sidebar.plugin.items.size());
+  if (!item_index.has_value()) {
     return true;
   }
 
-  state_.sidebar.plugin.selected_index = static_cast<std::size_t>(*item_index);
+  state_.sidebar.plugin.selected_index = *item_index;
   operations_.reveal_selected_plugin_sidebar_line();
   if (event.button.button == SDL_BUTTON_LEFT) {
     // A click in the indentation + disclosure slot of a collapsible tree row
@@ -462,14 +460,14 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
 
   const auto& entries = state_.directory_tree.entries();
   const auto list_layout = operations_.compute_tree_sidebar_list_layout(layout.sidebar, entries.size());
-  const auto entry_index = ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-  if (entry_index.has_value() && *entry_index >= 0 &&
-      *entry_index < static_cast<int>(entries.size())) {
-    state_.directory_tree.SetSelectedIndex(static_cast<std::size_t>(*entry_index));
-    const SDL_FRect row_rect = ScrollableListRowRect(list_layout, *entry_index - list_layout.scroll_row);
+  const auto entry_index =
+      ScrollableListItemAtY(list_layout, static_cast<float>(event.button.y), entries.size());
+  if (entry_index.has_value()) {
+    state_.directory_tree.SetSelectedIndex(*entry_index);
+    const SDL_FRect row_rect = ScrollableListItemRect(list_layout, *entry_index);
     if (Contains(row_rect, event.button.x, event.button.y) &&
         event.button.button == SDL_BUTTON_RIGHT) {
-      const auto& entry = entries[static_cast<std::size_t>(*entry_index)];
+      const auto& entry = entries[*entry_index];
       const TreeContextTargetKind target =
           !entry.is_directory ? TreeContextTargetKind::File
           : entry.path == state_.root ? TreeContextTargetKind::Root
@@ -480,7 +478,7 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
     if (Contains(row_rect, event.button.x, event.button.y) && event.button.button == SDL_BUTTON_LEFT) {
       // The press selects and arms a drag; the release opens the row unless the
       // pointer moved away with it (FinishPathDrag).
-      const auto& entry = entries[static_cast<std::size_t>(*entry_index)];
+      const auto& entry = entries[*entry_index];
       interaction_state_.path_drag = PathDragState{
           .armed = true,
           .path = entry.path,

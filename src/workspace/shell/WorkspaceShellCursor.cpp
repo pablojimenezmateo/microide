@@ -106,14 +106,7 @@ bool WorkspaceShell::WindowDragRegionContains(float x, float y) const {
     return false;
   }
 
-  const WorkspaceLayout layout =
-      ComputeLayout(window_width, window_height, context_.current_project_state.sidebar.visible, BottomPanelVisible(),
-                    context_.current_project_state.sidebar.width, context_.current_project_state.panel.height,
-                    layout_mode_service_.SnapshotInputs(),
-                    layout_mode_service_.StatusBarVisible(),
-                    context_.current_project_state.debug_pane.visible,
-                    context_.current_project_state.debug_pane.width,
-                    ProjectTabStripVisible());
+  const WorkspaceLayout layout = ComputeLayout(CurrentLayoutInputs(window_width, window_height));
   if (!Contains(layout.menu_bar, x, y)) {
     return false;
   }
@@ -370,9 +363,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
           Contains(overlay_list_layout.scrollbar->track, x, y)) {
         return CursorKind::Default;
       }
-      if (const auto item_index = ScrollableListIndexAtY(overlay_list_layout, y);
-          item_index.has_value() && *item_index >= 0 &&
-          *item_index < static_cast<int>(OverlayItemCount())) {
+      if (ScrollableListItemAtY(overlay_list_layout, y, OverlayItemCount()).has_value()) {
         return CursorKind::Pointer;
       }
 
@@ -511,15 +502,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       const auto line_map = BuildProjectSearchLineMap();
       const auto list_layout =
           ComputeProjectSearchSidebarListLayout(layout.sidebar, line_map.size());
-      if (const auto line_index = ScrollableListIndexAtY(list_layout, y);
-          line_index.has_value() && *line_index >= 0 &&
-          *line_index < static_cast<int>(line_map.size()) &&
-          line_map[static_cast<std::size_t>(*line_index)] >= 0) {
-        const SDL_FRect row_rect =
-            ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-        return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
-      }
-      return CursorKind::Default;
+      const auto line_index = ScrollableListItemAt(list_layout, x, y, line_map.size());
+      return line_index.has_value() && line_map[*line_index] >= 0 ? CursorKind::Pointer
+                                                                   : CursorKind::Default;
     }
     if (sidebar_mode == SidebarMode::Git) {
       if (Contains(git_sidebar_header::StageAllButtonRect(layout.sidebar), x, y) &&
@@ -565,17 +550,11 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       }
       const auto& lines = BuildGitSidebarLines();
       const auto list_layout = ComputeGitSidebarListLayout(layout.sidebar, lines.size());
-      const auto line_index = ScrollableListIndexAtY(list_layout, y);
-      if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(lines.size())) {
+      const auto line_index = ScrollableListItemAt(list_layout, x, y, lines.size());
+      if (!line_index.has_value()) {
         return CursorKind::Default;
       }
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      if (!Contains(row_rect, x, y)) {
-        return CursorKind::Default;
-      }
-      const auto& line = lines[static_cast<std::size_t>(*line_index)];
+      const auto& line = lines[*line_index];
       if (line.kind == GitSidebarLine::Kind::Directory) {
         return CursorKind::Pointer;
       }
@@ -587,40 +566,22 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
       return CursorKind::Pointer;
     }
     if (sidebar_mode == SidebarMode::Problems) {
-      const auto list_layout =
-          ComputeProblemsSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.problems.entries.size());
-      const auto line_index = ScrollableListIndexAtY(list_layout, y);
-      if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(context_.current_project_state.sidebar.problems.entries.size())) {
-        return CursorKind::Default;
-      }
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+      const std::size_t count = context_.current_project_state.sidebar.problems.entries.size();
+      return ScrollableListItemAt(ComputeProblemsSidebarListLayout(layout.sidebar, count), x, y, count).has_value()
+                 ? CursorKind::Pointer
+                 : CursorKind::Default;
     }
     if (sidebar_mode == SidebarMode::Tests) {
-      const auto list_layout =
-          ComputeTestsSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.tests.entries.size());
-      const auto line_index = ScrollableListIndexAtY(list_layout, y);
-      if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(context_.current_project_state.sidebar.tests.entries.size())) {
-        return CursorKind::Default;
-      }
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+      const std::size_t count = context_.current_project_state.sidebar.tests.entries.size();
+      return ScrollableListItemAt(ComputeTestsSidebarListLayout(layout.sidebar, count), x, y, count).has_value()
+                 ? CursorKind::Pointer
+                 : CursorKind::Default;
     }
     if (UsesPluginItemSurface(sidebar_mode)) {
-      const auto list_layout =
-          ComputePluginSidebarListLayout(layout.sidebar, context_.current_project_state.sidebar.plugin.items.size());
-      const auto line_index = ScrollableListIndexAtY(list_layout, y);
-      if (!line_index.has_value() || *line_index < 0 ||
-          *line_index >= static_cast<int>(context_.current_project_state.sidebar.plugin.items.size())) {
-        return CursorKind::Default;
-      }
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *line_index - list_layout.scroll_row);
-      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
+      const std::size_t count = context_.current_project_state.sidebar.plugin.items.size();
+      return ScrollableListItemAt(ComputePluginSidebarListLayout(layout.sidebar, count), x, y, count).has_value()
+                 ? CursorKind::Pointer
+                 : CursorKind::Default;
     }
 
     if (Contains(TreeSidebarCollapseButtonRect(layout.sidebar), x, y) &&
@@ -634,14 +595,9 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
 
     const auto& entries = context_.current_project_state.directory_tree.entries();
     const auto list_layout = ComputeTreeSidebarListLayout(layout.sidebar, entries.size());
-    const auto entry_index = ScrollableListIndexAtY(list_layout, y);
-    if (entry_index.has_value() && *entry_index >= 0 &&
-        *entry_index < static_cast<int>(entries.size())) {
-      const SDL_FRect row_rect =
-          ScrollableListRowRect(list_layout, *entry_index - list_layout.scroll_row);
-      return Contains(row_rect, x, y) ? CursorKind::Pointer : CursorKind::Default;
-    }
-    return CursorKind::Default;
+    return ScrollableListItemAt(list_layout, x, y, entries.size()).has_value()
+               ? CursorKind::Pointer
+               : CursorKind::Default;
   }
 
   if (context_.current_project_state.debug_pane.visible && layout.right_pane.w > 0.0f &&
@@ -1111,12 +1067,9 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
       const SDL_FRect overlay = ComputeOverlayRect(layout.overlay_anchor);
       if (Contains(overlay, x, y)) {
         const auto list_layout = ComputeOverlayListLayout(overlay);
-        if (const auto idx = ScrollableListIndexAtY(list_layout, y);
-            idx.has_value() && *idx >= 0 && *idx < static_cast<int>(OverlayItemCount())) {
-          const SDL_FRect row = ScrollableListRowRect(list_layout, *idx - list_layout.scroll_row);
-          if (Contains(row, x, y)) {
-            return row;
-          }
+        if (const auto idx = ScrollableListItemAt(list_layout, x, y, OverlayItemCount());
+            idx.has_value()) {
+          return ScrollableListItemRect(list_layout, *idx);
         }
       }
     }
@@ -1188,12 +1141,9 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredInteractiveRect(const WorkspaceL
     }
     const auto row_band = [&](const ScrollableListLayout& list_layout,
                               std::size_t count) -> std::optional<SDL_FRect> {
-      const auto idx = ScrollableListIndexAtY(list_layout, y);
-      if (!idx.has_value() || *idx < 0 || *idx >= static_cast<int>(count)) {
-        return std::nullopt;
-      }
-      const SDL_FRect row = ScrollableListRowRect(list_layout, *idx - list_layout.scroll_row);
-      return Contains(row, x, y) ? std::optional<SDL_FRect>(row) : std::nullopt;
+      const auto idx = ScrollableListItemAt(list_layout, x, y, count);
+      return idx.has_value() ? std::optional<SDL_FRect>(ScrollableListItemRect(list_layout, *idx))
+                             : std::nullopt;
     };
     switch (ActiveSidebarMode()) {
       case SidebarMode::Git: {

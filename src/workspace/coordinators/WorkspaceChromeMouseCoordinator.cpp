@@ -579,11 +579,10 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
     return true;
   }
 
-  if (const auto item_index =
-          ScrollableListIndexAtY(list_layout, static_cast<float>(event.button.y));
-      item_index.has_value() && *item_index >= 0 &&
-      *item_index < static_cast<int>(operations_.overlay_item_count())) {
-    operations_.set_overlay_selected_index(static_cast<std::size_t>(*item_index));
+  if (const auto item_index = ScrollableListItemAtY(
+          list_layout, static_cast<float>(event.button.y), operations_.overlay_item_count());
+      item_index.has_value()) {
+    operations_.set_overlay_selected_index(*item_index);
     operations_.reveal_overlay_selection(overlay);
     // A click on a row runs it, in every list overlay (VS Code's quick open and
     // suggest widget both do): the file finder, the project-search overlay and

@@ -72,6 +72,9 @@ using microide::workspace::MergeTrackedConflict;
 using microide::workspace::RevealScrollableListIndex;
 using microide::workspace::ScrollUnitsForPointer;
 using microide::workspace::ScrollableListIndexAtY;
+using microide::workspace::ScrollableListItemAt;
+using microide::workspace::ScrollableListItemAtY;
+using microide::workspace::ScrollableListItemRect;
 using microide::workspace::ScrollableListRowRect;
 using microide::workspace::ClampTextGridLineAtY;
 using microide::workspace::TextGridCursorX;
@@ -554,6 +557,15 @@ void TestWorkspaceSharedScrollableListLayout() {
   Expect(!ScrollableListIndexAtY(discrete, 49.0f).has_value() &&
              !ScrollableListIndexAtY(discrete, 150.0f).has_value(),
          "scrollable list hit testing should ignore y positions outside visible rows");
+  Expect(ScrollableListItemAtY(discrete, 91.0f, 8) == std::optional<std::size_t>(5) &&
+             !ScrollableListItemAtY(discrete, 91.0f, 5).has_value(),
+         "item hit testing should range-check the row against the item count");
+  Expect(ScrollableListItemAt(discrete, 100.0f, 91.0f, 8) == std::optional<std::size_t>(5) &&
+             !ScrollableListItemAt(discrete, 15.0f, 91.0f, 8).has_value(),
+         "item hit testing by point should exclude the list's horizontal inset");
+  const SDL_FRect item_rect = ScrollableListItemRect(discrete, 5);
+  Expect(item_rect.x == row_rect.x && item_rect.y == row_rect.y,
+         "an item's rect is its visible row's rect");
 
   const auto reveal = ComputeScrollableListLayout(
       MakeRect(0.0f, 0.0f, 200.0f, 100.0f), 20.0f, 10, 2, 10.0f, 20.0f, 18.0f);
