@@ -472,14 +472,17 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
   }
 
   if (menu_state_.hovered_popup_row_index >= 0) {
+    // Leaving the popup clears the hovered row AND the active one, which a key
+    // may have moved elsewhere since the pointer arrived (Up under a resting
+    // pointer): repaint both, or the key's row keeps its highlight on screen (QA
+    // monkey seed 15).
     if (const auto popup_rect =
             operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value()) {
-      RequestMenuHoverRowRedraw(
-          operations_.request_redraw_rect,
-          operations_.popup_row_rect_by_index(
-              menu_state_.active_menu_id, *popup_rect,
-              static_cast<std::size_t>(menu_state_.hovered_popup_row_index)));
+      RedrawChangedPopupRows(menu_state_.active_menu_id, *popup_rect,
+                             {menu_state_.hovered_popup_row_index,
+                              menu_state_.active_menu_item_index},
+                             {-1, -1}, SDL_FRect{});
     }
     menu_state_.active_menu_item_index = -1;
     menu_state_.hovered_popup_row_index = -1;

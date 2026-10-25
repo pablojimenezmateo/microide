@@ -3324,6 +3324,69 @@ void TestMergeToolbarHoverRepaintsTheButton() {
   }
 }
 
+// QA monkey (seed 14, 2026-10-25): after a press on a panel tab, with a menu open
+// a moment before, the tab's close button stayed drawn hovered while a full render
+// drew it plain. Neither the replay nor these gestures reproduce it (it is in
+// TD-2026-10-18-362's ledger); they pin the drag, the reorder and the
+// menu-closing press as paint-fresh one event at a time.
+void TestADragAcrossPanelTabsLeavesNoHoveredCloseButton() {
+  FlowFixture fixture("notes.txt", "notes\n");
+  TestAccess::OpenTerminalViaService(fixture.shell);
+  TestAccess::OpenTerminalViaService(fixture.shell);
+  TestAccess::NoteLayoutInputsChanged(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  std::vector<SDL_FRect> tabs;
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+    if (entry["kind"].AsString() == "panel-tab" &&
+        entry["name"].AsString().rfind("panel-tab:bash", 0) == 0) {
+      const auto& r = entry["rect"].AsArray();
+      tabs.push_back(SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                               static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())});
+    }
+  }
+  Expect(tabs.size() >= 2, "the panel should show the two shell tabs");
+  if (tabs.size() < 2) {
+    return;
+  }
+  const float y = tabs[0].y + tabs[0].h / 2.0f;
+  const float start = tabs[0].x + 12.0f;
+  const float over_close = tabs[0].x + tabs[0].w - 12.0f;  // the first tab's ×
+  const float end = tabs[1].x + tabs[1].w * 0.8f;  // past its middle: a reorder
+  // One paint per event, as the app paints between them: the press itself (the
+  // monkey's stale frame came right after it) must repaint what it changes.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(start, y)}),
+                      "resting on the first tab");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, start, y)}),
+      "pressing the first tab");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(over_close, y)}),
+                      "dragging over its close button");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(end, y)}),
+                      "dragging onto the next tab");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, end, y)}),
+      "releasing on the next tab");
+
+  // The monkey's own order: a menu open, the pointer over the first tab's close
+  // button beneath it, and the press there that closes the menu.
+  const auto view_menu = fixture.ElementRect("menu:View");
+  Expect(view_menu.has_value(), "the ui query should name the View menu");
+  if (!view_menu.has_value()) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*view_menu), "opening the View menu");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(over_close, y)}),
+                      "the pointer over a tab's close button under the open menu");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, over_close, y)}),
+      "the press that closes the menu");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, over_close, y)}),
+      "its release");
+}
+
 // QA monkey (seed 17): the search view's "18 matches" stayed on screen after the
 // results followed an edit down to 17. Frame prep caught the hits up with the
 // buffer AFTER building the sidebar's view model, so the frame that repainted the
@@ -3349,6 +3412,42 @@ void TestSearchResultsCaughtUpAtFramePrepRepaintTheirCount() {
          "the results followed the edit (a third alpha)");
 }
 
+// QA monkey (seed 15): with an open menu and the pointer resting on one of its
+// rows, Up moved the highlight to the row above; the pointer then leaving the menu
+// repainted the row it had hovered, and the highlight stayed on screen on the
+// row the key had chosen.
+void TestAKeyInAMenuUnderARestingPointerRepaintsTheRows() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  FlowFixture fixture("menu.txt", "text\n");
+  const auto go = fixture.ElementRect("menu:Go");
+  Expect(go.has_value(), "the Go menu should be on screen");
+  if (!go) {
+    return;
+  }
+  fixture.ExpectFresh(fixture.Click(*go), "opening the Go menu");
+  const auto row = fixture.ElementRect("menu-item:Go/Find in Project…");
+  Expect(row.has_value(), "the ui query should name the Go menu's Find in Project row");
+  if (!row) {
+    return;
+  }
+  // The monkey's way back to the row: off the menu to the status bar, a wheel
+  // over the editor, then onto the row.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(60.0f, 700.0f)}),
+                      "the pointer leaving the open menu");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseWheelEvent(595.0f, 400.0f, -5.0f)}),
+                      "a wheel over the editor under the open menu");
+  fixture.ExpectFresh(
+      DispatchEvents(fixture.shell, {MouseMotionEvent(row->x + row->w / 2.0f, row->y + row->h / 2.0f)}),
+      "the pointer resting on a menu row");
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_UP)}), "Up in the open menu");
+  // The key moved the highlight to the row above; leaving the menu must clear
+  // THAT row, not the one the pointer hovered before the key.
+  fixture.ExpectFresh(DispatchEvents(fixture.shell, {MouseMotionEvent(60.0f, 700.0f)}),
+                      "the pointer leaving the menu after the key");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -3364,8 +3463,12 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
+  AddTest(tests, "QaFlowRegression/ADragAcrossPanelTabsLeavesNoHoveredCloseButton",
+          TestADragAcrossPanelTabsLeavesNoHoveredCloseButton);
   AddTest(tests, "QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount",
           TestSearchResultsCaughtUpAtFramePrepRepaintTheirCount);
+  AddTest(tests, "QaFlowRegression/AKeyInAMenuUnderARestingPointerRepaintsTheRows",
+          TestAKeyInAMenuUnderARestingPointerRepaintsTheRows);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);
