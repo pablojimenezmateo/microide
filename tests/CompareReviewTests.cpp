@@ -38,7 +38,32 @@ using microide::workspace::PatchApplyService;
 using microide::workspace::ExpandCompareCollapsedContext;
 using microide::workspace::RefreshCompareReviewHeader;
 
+// The session restore reads review modes and staging views back through these
+// parsers, so every label must parse to the value that wrote it.
+static void TestCompareReviewLabelsRoundTrip() {
+  for (const CompareReviewMode mode :
+       {CompareReviewMode::WorkingTree, CompareReviewMode::Commit, CompareReviewMode::Branch,
+        CompareReviewMode::Conflict, CompareReviewMode::Plain}) {
+    Expect(microide::compare::ParseCompareReviewMode(
+               microide::compare::CompareReviewModeLabel(mode)) == mode,
+           "review mode label should round-trip: " + microide::compare::CompareReviewModeLabel(mode));
+  }
+  for (const WorkingTreeStagingView view :
+       {WorkingTreeStagingView::Combined, WorkingTreeStagingView::Unstaged,
+        WorkingTreeStagingView::Staged}) {
+    Expect(microide::compare::ParseWorkingTreeStagingView(
+               microide::compare::WorkingTreeStagingViewLabel(view)) == view,
+           "staging view label should round-trip: " +
+               microide::compare::WorkingTreeStagingViewLabel(view));
+  }
+  Expect(microide::compare::ParseCompareReviewMode("garbage") == CompareReviewMode::WorkingTree &&
+             microide::compare::ParseWorkingTreeStagingView("garbage") ==
+                 WorkingTreeStagingView::Combined,
+         "unknown labels read as the defaults");
+}
+
 void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CompareReview/LabelsRoundTrip", TestCompareReviewLabelsRoundTrip);
   // Branch review could be marked but never unmarked. MarkFileUnreviewed and
   // MarkHunkUnreviewed were fully implemented and unit-tested, but no ActionId, no
   // command spec, and no dispatch case ever reached them — so the only way to undo

@@ -52,6 +52,25 @@ DeferredTabHandle ReadViewState(const PersistedEditorTabState& tab, std::filesys
   };
 }
 
+// A persisted path made absolute against the project root and normalized; empty
+// stays empty.
+std::filesystem::path ResolveSessionPath(const std::filesystem::path& root,
+                                         std::filesystem::path path) {
+  if (path.empty()) {
+    return path;
+  }
+  if (path.is_relative()) {
+    path = root / path;
+  }
+  return path.lexically_normal();
+}
+
+// A persisted scroll row as the int the tab state holds.
+int ScrollRowFromSession(std::size_t row) {
+  return static_cast<int>(
+      std::min<std::size_t>(row, static_cast<std::size_t>(std::numeric_limits<int>::max())));
+}
+
 }  // namespace
 
 void PersistenceCoordinator::SetMaxDirtySnapshotBytesForTesting(std::size_t bytes) {
@@ -213,6 +232,107 @@ void PersistenceCoordinator::RestoreDebugState() {
   state.debug_breakpoints_panel.Rebuild(state.breakpoint_store, state.function_breakpoint_store);
 }
 
+std::optional<TabEntry> PersistenceCoordinator::RestoreCompareTab(
+    const PersistedEditorTabState& persisted_tab, const std::filesystem::path& root) {
+  const std::filesystem::path compare_path = ResolveSessionPath(root, persisted_tab.compare_path);
+  if (compare_path.empty() || persisted_tab.compare_commit_hash.empty() ||
+      persisted_tab.compare_commit_short_hash.empty()) {
+    return std::nullopt;
+  }
+
+  std::optional<TabEntry> compare_tab;
+  if (!persisted_tab.compare_right_ref.empty()) {
+    const auto side_path = [&](const std::filesystem::path& path) {
+      return path.empty() ? compare_path : ResolveSessionPath(root, path);
+    };
+    CompareTabState compare_state;
+    compare_state.path = compare_path;
+    compare_state.left_path = side_path(persisted_tab.compare_left_path);
+    compare_state.right_path = side_path(persisted_tab.compare_right_path);
+    compare_state.commit_hash = persisted_tab.compare_commit_hash;
+    compare_state.right_ref = persisted_tab.compare_right_ref;
+    compare_state.left_label = persisted_tab.compare_commit_short_hash;
+    compare_state.right_label =
+        persisted_tab.compare_right_label.empty()
+            ? (persisted_tab.compare_right_ref == "WORKTREE" ? "Working tree"
+                                                             : persisted_tab.compare_right_ref)
+            : persisted_tab.compare_right_label;
+    compare_state.selected_row = persisted_tab.compare_selected_row;
+    compare_state.scroll_row = ScrollRowFromSession(persisted_tab.compare_scroll_row);
+    compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+    if (!persisted_tab.compare_review_mode.empty()) {
+      compare_state.review_mode = compare::ParseCompareReviewMode(persisted_tab.compare_review_mode);
+    }
+    if (!persisted_tab.compare_staging_view.empty()) {
+      compare_state.staging_view =
+          compare::ParseWorkingTreeStagingView(persisted_tab.compare_staging_view);
+    }
+    compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
+    compare_state.persistable = true;
+    compare_tab = operations_.build_compare_tab_from_state(compare_path, compare_state);
+  } else {
+    const project::GitCommitEntry commit{
+        .hash = persisted_tab.compare_commit_hash,
+        .short_hash = persisted_tab.compare_commit_short_hash,
+        .subject = {},
+        .author = {},
+        .relative_date = {},
+    };
+    compare_tab = operations_.build_compare_tab_from_commit(compare_path, commit,
+                                                            persisted_tab.compare_selected_row);
+  }
+  if (!compare_tab.has_value()) {
+    return std::nullopt;
+  }
+  compare_tab->compare->scroll_row = ScrollRowFromSession(persisted_tab.compare_scroll_row);
+  compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
+  compare_tab->compare->divider_fraction = persisted_tab.compare_divider_fraction;
+  return compare_tab;
+}
+
+std::optional<TabEntry> PersistenceCoordinator::RestoreMergeTab(
+    const PersistedEditorTabState& persisted_tab, const std::filesystem::path& root) {
+  const std::filesystem::path merge_base = ResolveSessionPath(root, persisted_tab.merge_base_path);
+  const std::filesystem::path merge_incoming =
+      ResolveSessionPath(root, persisted_tab.merge_incoming_path);
+  const std::filesystem::path merge_current =
+      ResolveSessionPath(root, persisted_tab.merge_current_path);
+  const std::filesystem::path merge_output =
+      ResolveSessionPath(root, persisted_tab.merge_output_path);
+  if (merge_base.empty() || merge_incoming.empty() || merge_current.empty() ||
+      merge_output.empty()) {
+    return std::nullopt;
+  }
+
+  auto merge_tab =
+      operations_.build_merge_tab_entry(merge_base, merge_incoming, merge_current, merge_output);
+  if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
+    return std::nullopt;
+  }
+
+  auto& merge_state = merge_tab->merge.value();
+  for (std::size_t i = 0;
+       i < merge_state.model.hunks.size() && i < persisted_tab.merge_hunk_choices.size(); ++i) {
+    if (!persisted_tab.merge_hunk_choices[i].empty()) {
+      merge_state.model.hunks[i].choice = compare::ParseMergeChoice(persisted_tab.merge_hunk_choices[i]);
+    }
+  }
+  merge_state.left_divider_fraction = persisted_tab.merge_left_divider_fraction;
+  merge_state.right_divider_fraction = persisted_tab.merge_right_divider_fraction;
+  operations_.refresh_merge_tab_derived_state(merge_state);
+  merge_state.selected_hunk =
+      merge_state.conflicts.empty()
+          ? 0
+          : std::min(persisted_tab.merge_selected_hunk, merge_state.conflicts.size() - 1);
+  merge_state.scroll_row = ScrollRowFromSession(persisted_tab.merge_scroll_row);
+  merge_state.horizontal_scroll = persisted_tab.merge_horizontal_scroll;
+  merge_state.result_viewport.SetScrollLine(
+      static_cast<std::size_t>(std::max(0, merge_state.scroll_row)));
+  merge_state.result_viewport.SetHorizontalScroll(merge_state.horizontal_scroll);
+  merge_state.scroll_row = static_cast<int>(merge_state.result_viewport.scroll_line());
+  return merge_tab;
+}
+
 bool PersistenceCoordinator::RestoreSessionState() {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::RestoreSessionState");
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::RestoreSessionState");
@@ -271,166 +391,14 @@ bool PersistenceCoordinator::RestoreSessionState() {
     auto rebuild_tab = [&](const PersistedEditorTabState& persisted_tab,
                            bool should_eager_hydrate) -> std::optional<TabEntry> {
     if (persisted_tab.kind == "compare") {
-      std::filesystem::path compare_path = persisted_tab.compare_path;
-      if (compare_path.is_relative()) {
-        compare_path = state.root / compare_path;
-      }
-      compare_path = compare_path.lexically_normal();
-
-      if (compare_path.empty() || persisted_tab.compare_commit_hash.empty() ||
-          persisted_tab.compare_commit_short_hash.empty()) {
-        return std::nullopt;
-      }
-
-      const project::GitCommitEntry commit{
-          .hash = persisted_tab.compare_commit_hash,
-          .short_hash = persisted_tab.compare_commit_short_hash,
-          .subject = {},
-          .author = {},
-          .relative_date = {},
-      };
-      std::optional<TabEntry> compare_tab;
-      if (!persisted_tab.compare_right_ref.empty()) {
-        auto resolve_path = [&](std::filesystem::path path, const std::filesystem::path& fallback) {
-          if (path.empty()) {
-            return fallback;
-          }
-          if (path.is_relative()) {
-            path = state.root / path;
-          }
-          return path.lexically_normal();
-        };
-        CompareTabState compare_state;
-        compare_state.path = compare_path;
-        compare_state.left_path = resolve_path(persisted_tab.compare_left_path, compare_path);
-        compare_state.right_path = resolve_path(persisted_tab.compare_right_path, compare_path);
-        compare_state.commit_hash = persisted_tab.compare_commit_hash;
-        compare_state.right_ref = persisted_tab.compare_right_ref;
-        compare_state.left_label = persisted_tab.compare_commit_short_hash;
-        compare_state.right_label =
-            persisted_tab.compare_right_label.empty()
-                ? (persisted_tab.compare_right_ref == "WORKTREE" ? "Working tree"
-                                                                 : persisted_tab.compare_right_ref)
-                : persisted_tab.compare_right_label;
-        compare_state.selected_row = persisted_tab.compare_selected_row;
-        compare_state.scroll_row = static_cast<int>(std::min<std::size_t>(
-            persisted_tab.compare_scroll_row,
-            static_cast<std::size_t>(std::numeric_limits<int>::max())));
-        compare_state.horizontal_scroll = persisted_tab.compare_horizontal_scroll;
-        if (!persisted_tab.compare_review_mode.empty()) {
-          if (persisted_tab.compare_review_mode == "commit") {
-            compare_state.review_mode = compare::CompareReviewMode::Commit;
-          } else if (persisted_tab.compare_review_mode == "branch") {
-            compare_state.review_mode = compare::CompareReviewMode::Branch;
-          } else if (persisted_tab.compare_review_mode == "conflict") {
-            compare_state.review_mode = compare::CompareReviewMode::Conflict;
-          } else {
-            compare_state.review_mode = compare::CompareReviewMode::WorkingTree;
-          }
-        }
-        if (!persisted_tab.compare_staging_view.empty()) {
-          if (persisted_tab.compare_staging_view == "staged") {
-            compare_state.staging_view = compare::WorkingTreeStagingView::Staged;
-          } else if (persisted_tab.compare_staging_view == "unstaged") {
-            compare_state.staging_view = compare::WorkingTreeStagingView::Unstaged;
-          } else {
-            compare_state.staging_view = compare::WorkingTreeStagingView::Combined;
-          }
-        }
-        compare_state.divider_fraction = persisted_tab.compare_divider_fraction;
-        compare_state.persistable = true;
-        compare_tab = operations_.build_compare_tab_from_state(compare_path, compare_state);
-      } else {
-        compare_tab = operations_.build_compare_tab_from_commit(compare_path, commit,
-                                                                persisted_tab.compare_selected_row);
-      }
-      if (!compare_tab.has_value()) {
-        return std::nullopt;
-      }
-      compare_tab->compare->scroll_row = static_cast<int>(std::min<std::size_t>(
-          persisted_tab.compare_scroll_row,
-          static_cast<std::size_t>(std::numeric_limits<int>::max())));
-      compare_tab->compare->horizontal_scroll = persisted_tab.compare_horizontal_scroll;
-      compare_tab->compare->divider_fraction = persisted_tab.compare_divider_fraction;
-      return compare_tab;
+      return RestoreCompareTab(persisted_tab, state.root);
     }
     if (persisted_tab.kind == "merge") {
-      auto resolve_path = [&](std::filesystem::path path) {
-        if (path.is_relative()) {
-          path = state.root / path;
-        }
-        return path.lexically_normal();
-      };
-
-      const std::filesystem::path merge_base = resolve_path(persisted_tab.merge_base_path);
-      const std::filesystem::path merge_incoming = resolve_path(persisted_tab.merge_incoming_path);
-      const std::filesystem::path merge_current = resolve_path(persisted_tab.merge_current_path);
-      const std::filesystem::path merge_output = resolve_path(persisted_tab.merge_output_path);
-      if (merge_base.empty() || merge_incoming.empty() || merge_current.empty() ||
-          merge_output.empty()) {
-        return std::nullopt;
-      }
-
-      auto merge_tab =
-          operations_.build_merge_tab_entry(merge_base, merge_incoming, merge_current, merge_output);
-      if (!merge_tab.has_value() || !merge_tab->merge.has_value()) {
-        return std::nullopt;
-      }
-
-      const auto parse_choice = [](std::string_view text) {
-        if (text == "base") {
-          return compare::MergeChoice::Base;
-        }
-        if (text == "incoming") {
-          return compare::MergeChoice::Incoming;
-        }
-        if (text == "current") {
-          return compare::MergeChoice::Current;
-        }
-        if (text == "both") {
-          return compare::MergeChoice::Both;
-        }
-        if (text == "both-current-first") {
-          return compare::MergeChoice::BothCurrentFirst;
-        }
-        if (text == "both-incoming-first") {
-          return compare::MergeChoice::BothIncomingFirst;
-        }
-        return compare::MergeChoice::Base;
-      };
-
-      auto& merge_state = merge_tab->merge.value();
-      for (std::size_t i = 0;
-           i < merge_state.model.hunks.size() && i < persisted_tab.merge_hunk_choices.size(); ++i) {
-        if (persisted_tab.merge_hunk_choices[i].empty()) {
-          continue;
-        }
-        merge_state.model.hunks[i].choice = parse_choice(persisted_tab.merge_hunk_choices[i]);
-      }
-      merge_state.left_divider_fraction = persisted_tab.merge_left_divider_fraction;
-      merge_state.right_divider_fraction = persisted_tab.merge_right_divider_fraction;
-      operations_.refresh_merge_tab_derived_state(merge_state);
-      merge_state.selected_hunk =
-          merge_state.conflicts.empty()
-              ? 0
-              : std::min(persisted_tab.merge_selected_hunk, merge_state.conflicts.size() - 1);
-      merge_state.scroll_row = static_cast<int>(std::min<std::size_t>(
-          persisted_tab.merge_scroll_row,
-          static_cast<std::size_t>(std::numeric_limits<int>::max())));
-      merge_state.horizontal_scroll = persisted_tab.merge_horizontal_scroll;
-      merge_state.result_viewport.SetScrollLine(
-          static_cast<std::size_t>(std::max(0, merge_state.scroll_row)));
-      merge_state.result_viewport.SetHorizontalScroll(merge_state.horizontal_scroll);
-      merge_state.scroll_row = static_cast<int>(merge_state.result_viewport.scroll_line());
-      return merge_tab;
+      return RestoreMergeTab(persisted_tab, state.root);
     }
 
     // Editor tab: restores exactly one viewport from its inline single-view fields.
-    std::filesystem::path view_path = persisted_tab.path;
-    if (!view_path.empty() && view_path.is_relative()) {
-      view_path = state.root / view_path;
-    }
-    view_path = view_path.lexically_normal();
+    const std::filesystem::path view_path = ResolveSessionPath(state.root, persisted_tab.path);
 
     TabEntry::EditorTabState editor_state;
     editor_state.restore = ReadViewState(persisted_tab, view_path);

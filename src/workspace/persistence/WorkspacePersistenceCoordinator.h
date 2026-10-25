@@ -94,6 +94,11 @@ class PersistenceCoordinator {
   void SaveDebugState();
   void RestoreDebugState();
 
+  // Rebuild one persisted compare / merge tab; nullopt when its inputs are gone.
+  std::optional<TabEntry> RestoreCompareTab(const PersistedEditorTabState& persisted_tab,
+                                            const std::filesystem::path& root);
+  std::optional<TabEntry> RestoreMergeTab(const PersistedEditorTabState& persisted_tab,
+                                          const std::filesystem::path& root);
   std::optional<PersistedEditorTabState> BuildPersistedCompareTabState(
       const TabEntry& tab) const;
   std::optional<PersistedEditorTabState> BuildPersistedMergeTabState(

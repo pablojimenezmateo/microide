@@ -1,5 +1,7 @@
 #include "compare/CompareReviewTypes.h"
 
+#include <initializer_list>
+
 namespace microide::compare {
 
 namespace {
@@ -36,6 +38,27 @@ std::string WorkingTreeStagingViewLabel(WorkingTreeStagingView view) {
       return "staged";
   }
   return "combined";
+}
+
+CompareReviewMode ParseCompareReviewMode(std::string_view label) {
+  for (const CompareReviewMode mode :
+       {CompareReviewMode::Commit, CompareReviewMode::Branch, CompareReviewMode::Conflict,
+        CompareReviewMode::Plain}) {
+    if (label == CompareReviewModeLabel(mode)) {
+      return mode;
+    }
+  }
+  return CompareReviewMode::WorkingTree;
+}
+
+WorkingTreeStagingView ParseWorkingTreeStagingView(std::string_view label) {
+  for (const WorkingTreeStagingView view :
+       {WorkingTreeStagingView::Unstaged, WorkingTreeStagingView::Staged}) {
+    if (label == WorkingTreeStagingViewLabel(view)) {
+      return view;
+    }
+  }
+  return WorkingTreeStagingView::Combined;
 }
 
 CompareReviewMode InferCompareReviewMode(std::string_view left_ref,

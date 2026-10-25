@@ -244,6 +244,21 @@ void TestMergeChoiceLabels() {
          "both merge choice label should match");
 }
 
+// The session restore reads hunk choices back through ParseMergeChoice, so every
+// label must parse to the choice that wrote it.
+void TestMergeChoiceLabelsRoundTrip() {
+  for (const MergeChoice choice :
+       {MergeChoice::Base, MergeChoice::Incoming, MergeChoice::Current, MergeChoice::Both,
+        MergeChoice::BothCurrentFirst, MergeChoice::BothIncomingFirst}) {
+    Expect(microide::compare::ParseMergeChoice(microide::compare::MergeChoiceLabel(choice)) ==
+               choice,
+           std::string("merge choice label should round-trip: ") +
+               microide::compare::MergeChoiceLabel(choice));
+  }
+  Expect(microide::compare::ParseMergeChoice("garbage") == MergeChoice::Base,
+         "an unknown merge choice label reads as base");
+}
+
 void TestBootstrapMergeResultTextUsesOneTimeChoices() {
   // An unchanged line separates the two sides' edits; adjacent edits are one
   // conflict, as in git (see TestMergeTouchingChangesAreOneConflict).
@@ -404,6 +419,7 @@ void TestMergePreviewLayoutIsTabAware() {
 }
 
 void RegisterMergeModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "MergeModel/ChoiceLabelsRoundTrip", TestMergeChoiceLabelsRoundTrip);
   AddTest(tests, "Merge/EnsureMergePreviewLinesCachesByKey",
           TestEnsureMergePreviewLinesCachesByKey);
   AddTest(tests, "Merge/PreviewLayoutIsTabAware", TestMergePreviewLayoutIsTabAware);

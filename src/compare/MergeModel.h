@@ -106,5 +106,8 @@ std::vector<std::string> MergeResultLines(const MergeModel& model);
 std::string MergeResultText(const MergeModel& model, std::string_view separator = "\n");
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model);
 const char* MergeChoiceLabel(MergeChoice choice);
+// The inverse of MergeChoiceLabel, for restoring a persisted session; an unknown
+// label reads as Base.
+MergeChoice ParseMergeChoice(std::string_view label);
 
 }  // namespace microide::compare

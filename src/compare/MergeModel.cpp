@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <span>
 #include <string>
+#include <initializer_list>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -545,6 +546,17 @@ const char* MergeChoiceLabel(MergeChoice choice) {
       return "both-incoming-first";
   }
   return "base";
+}
+
+MergeChoice ParseMergeChoice(std::string_view label) {
+  for (const MergeChoice choice :
+       {MergeChoice::Incoming, MergeChoice::Current, MergeChoice::Both,
+        MergeChoice::BothCurrentFirst, MergeChoice::BothIncomingFirst}) {
+    if (label == MergeChoiceLabel(choice)) {
+      return choice;
+    }
+  }
+  return MergeChoice::Base;
 }
 
 }  // namespace microide::compare

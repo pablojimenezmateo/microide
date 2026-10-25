@@ -79,6 +79,10 @@ struct CompareBuildOptions {
 
 std::string CompareReviewModeLabel(CompareReviewMode mode);
 std::string WorkingTreeStagingViewLabel(WorkingTreeStagingView view);
+// The inverses of the two labels above, for restoring a persisted session. An
+// unknown label reads as the default (WorkingTree / Combined).
+CompareReviewMode ParseCompareReviewMode(std::string_view label);
+WorkingTreeStagingView ParseWorkingTreeStagingView(std::string_view label);
 CompareReviewMode InferCompareReviewMode(std::string_view left_ref,
                                          std::string_view right_ref,
                                          bool opened_from_commit_picker);
