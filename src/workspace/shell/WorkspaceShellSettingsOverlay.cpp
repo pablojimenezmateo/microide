@@ -114,7 +114,7 @@ std::unordered_map<ActionId, std::string> BuildActionChordLookup(
     if (binding.key == SDLK_UNKNOWN) {
       continue;
     }
-    const std::string chord = FormatKeyChord(binding.key, binding.modifiers);
+    const std::string chord = FormatBindingKeys(binding);
     if (chord.empty()) {
       continue;
     }

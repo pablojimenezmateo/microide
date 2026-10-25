@@ -986,7 +986,7 @@ util::JsonValue ControlChannelService::BuildKeybindings() const {
     }
     util::JsonObject object;
     object["id"] = util::JsonValue(binding.id);
-    object["chord"] = util::JsonValue(FormatKeyChord(binding.key, binding.modifiers));
+    object["chord"] = util::JsonValue(FormatBindingKeys(binding));
     object["context"] = util::JsonValue(context_name(binding.context));
     object["skipsTerminal"] = util::JsonValue(binding.skips_terminal);
     object["plugin"] = util::JsonValue(binding.from_plugin);

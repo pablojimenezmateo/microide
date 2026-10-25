@@ -1538,7 +1538,7 @@ pick up. Covered by `WorkspaceShell/CtrlTabStepsRecentEditors` and
 `WorkspaceShell/F6CyclesEveryVisibleSurface`, and by the QA flow
 `tab-recent-editors`, which holds Ctrl over one and two Tabs on X11.
 
-### TD-2026-10-16-352 — the Ctrl+K chords are invisible to the keybindings query, so the keys sweep cannot press them. [OPEN]
+### TD-2026-10-16-352 — the Ctrl+K chords are invisible to the keybindings query, so the keys sweep cannot press them. [RESOLVED 2026-10-25]
 
 `WorkspaceKeyInputCoordinatorBindings.cpp` handles Ctrl+K Ctrl+O / Ctrl+<arrow> /
 Ctrl+Shift+<arrow> / Ctrl+0 / Ctrl+J as a leader sequence outside
@@ -1546,6 +1546,26 @@ Ctrl+Shift+<arrow> / Ctrl+0 / Ctrl+J as a leader sequence outside
 `keys` scenario cannot check they reach their actions (the menus do advertise
 them). Model the chords as registry entries with a two-step chord (`Ctrl+K
 Ctrl+O`), list them in the query, and teach the sweep to press both steps.
+
+RESOLVED 2026-10-25: a binding can have a leader (`KeybindingSpec::leader_key` /
+`leader_modifiers`). The eighteen Ctrl+K chords are now registry entries:
+open-folder, save-all, color-theme, language-mode, fold-all, unfold-all,
+show-hover, the three git selected-range chords, and focus/move editor group in
+four directions. `KeyInputCoordinator::HandleKeyChord` is one generic lookup
+(`IsChordLeader`, `FindChordKeybinding`) in place of a hand-written table, and
+it still swallows the text of a printable second key that has no Ctrl.
+`FormatBindingKeys` spells a chord "Ctrl+K Ctrl+O", which is what `keybindings`
+returns, so the keys sweep presses both steps (`App.key("ctrl+k ctrl+o")`).
+Other changes:
+
+- The reachability matrix presses chords too.
+- The menu-accelerator test checks two-step accelerators and alternatives
+  ("Ctrl+Y / Ctrl+Shift+Z") instead of skipping anything containing a space.
+- The shadow lint flags a single key that takes a chord's leader.
+- Plugin conflict resolution treats a chord as holding its leader, not its
+  second key, so a plugin's Ctrl+O is free and a plugin's Ctrl+K is refused.
+- A keypad digit counts as the digit for a chord's second key, as Ctrl+K
+  Ctrl+keypad 0 did before.
 
 ### TD-2026-10-16-351 — no lane runs clang-tidy's use-after-move check, which would have caught the outline's empty URI. [OPEN]
 

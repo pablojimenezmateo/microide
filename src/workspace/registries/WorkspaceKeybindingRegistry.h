@@ -41,6 +41,11 @@ struct KeybindingSpec {
   // and otherwise focuses the next part). Declared, so no two built-ins share a
   // chord by accident (KeybindingRegistry/BuiltinKeybindingsDoNotShadowEachOther).
   bool shares_chord = false;
+  // A two-step chord (VS Code's Ctrl+K Ctrl+O): this leader first, then `key` +
+  // `modifiers`. SDLK_UNKNOWN for a single key. The leader arms in the contexts the
+  // binding is active in; a key that completes no chord dispatches as usual.
+  SDL_Keycode leader_key = SDLK_UNKNOWN;
+  SDL_Keymod leader_modifiers = SDL_KMOD_NONE;
 };
 
 // Whether two bindings on one chord can both be active in some focus context --
@@ -70,6 +75,8 @@ struct ResolvedKeybinding {
   bool from_plugin = false;
   bool skips_terminal = false;  // see KeybindingSpec::skips_terminal
   bool shares_chord = false;    // see KeybindingSpec::shares_chord
+  SDL_Keycode leader_key = SDLK_UNKNOWN;  // see KeybindingSpec::leader_key
+  SDL_Keymod leader_modifiers = SDL_KMOD_NONE;
 };
 
 // `skip_shell` edits which Global bindings fire while a terminal holds focus
@@ -100,10 +107,30 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
                                           SDL_Keymod modifiers,
                                           KeybindingContext context,
                                           const std::function<bool(ActionId)>& action_enabled = {});
+// The second step of a two-step chord: the binding whose leader is (leader_key,
+// leader_modifiers) and whose own key is (key, modifiers), active in `context`,
+// by FindKeybinding's rules (a keypad digit counts as the digit). FindKeybinding
+// itself matches single keys only.
+const ResolvedKeybinding* FindChordKeybinding(const std::vector<ResolvedKeybinding>& bindings,
+                                               SDL_Keycode leader_key,
+                                               SDL_Keymod leader_modifiers,
+                                               SDL_Keycode key,
+                                               SDL_Keymod modifiers,
+                                               KeybindingContext context,
+                                               const std::function<bool(ActionId)>& action_enabled = {});
+// Whether (key, modifiers) starts a two-step chord active in `context`.
+bool IsChordLeader(const std::vector<ResolvedKeybinding>& bindings,
+                   SDL_Keycode key,
+                   SDL_Keymod modifiers,
+                   KeybindingContext context);
 
 // Parse "Ctrl+Shift+S" → key + modifiers. Returns false for unrecognised chords.
 bool ParseKeyChord(std::string_view chord, SDL_Keycode* key, SDL_Keymod* modifiers);
 std::string FormatKeyChord(SDL_Keycode key, SDL_Keymod modifiers);
+// A binding's keys as the menus spell them: "Ctrl+S", or "Ctrl+K Ctrl+O" for a
+// two-step chord.
+std::string FormatBindingKeys(const KeybindingSpec& binding);
+std::string FormatBindingKeys(const ResolvedKeybinding& binding);
 
 // Normalized Ctrl/Shift/Alt/Meta mask for keybinding comparison.
 SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers);

@@ -32,21 +32,39 @@ SDL_Keymod NormalizedKeyModifiers(SDL_Keymod modifiers) {
 
 namespace {
 
-// The one matching rule both lookups (built-in specs and resolved bindings) share.
-// `modifiers` is already normalized. A Global binding is active everywhere except
-// a focused terminal, which owns the keyboard unless the binding skips it.
+// A Global binding is active everywhere except a focused terminal, which owns the
+// keyboard unless the binding skips it; any other binding only in its context.
+template <typename Binding>
+bool BindingActiveIn(const Binding& binding, KeybindingContext context) {
+  if (binding.context == KeybindingContext::Global) {
+    return context != KeybindingContext::Terminal || binding.skips_terminal;
+  }
+  return binding.context == context;
+}
+
+// The one matching rule both lookups (built-in specs and resolved bindings) share,
+// for a single key: a two-step chord's own key is not a binding of that key.
+// `modifiers` is already normalized.
 template <typename Binding>
 bool BindingMatches(const Binding& binding,
                     SDL_Keycode key,
                     SDL_Keymod modifiers,
                     KeybindingContext context) {
-  if (binding.key != key || binding.modifiers != modifiers) {
+  if (binding.leader_key != SDLK_UNKNOWN || binding.key != key || binding.modifiers != modifiers) {
     return false;
   }
-  if (binding.context == KeybindingContext::Global) {
-    return context != KeybindingContext::Terminal || binding.skips_terminal;
+  return BindingActiveIn(binding, context);
+}
+
+template <typename Binding>
+std::string FormatBindingKeysOf(const Binding& binding) {
+  std::string keys;
+  if (binding.leader_key != SDLK_UNKNOWN) {
+    keys = FormatKeyChord(binding.leader_key, binding.leader_modifiers);
+    keys.push_back(' ');
   }
-  return binding.context == context;
+  keys += FormatKeyChord(binding.key, binding.modifiers);
+  return keys;
 }
 
 }  // namespace
@@ -1109,9 +1127,228 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // VS Code's Ctrl+K chords: Ctrl+K, then the second key. Global ones work from
+      // the tree and the panels too (not a focused terminal, which owns Ctrl+K);
+      // the fold and hover chords act on the focused text and need the editor. A
+      // second key without Ctrl (Ctrl+K S, Ctrl+K M) has its typed text swallowed.
+      KeybindingSpec{
+          .id = "open-folder",
+          .action = ActionId::ProjectOpen,
+          .key = SDLK_O,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "save-all",
+          .action = ActionId::SaveAll,
+          .key = SDLK_S,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "color-theme",
+          .action = ActionId::Colorscheme,
+          .key = SDLK_T,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "language-mode",
+          .action = ActionId::LanguageMode,
+          .key = SDLK_M,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "fold-all",
+          .action = ActionId::FoldAll,
+          .key = SDLK_0,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "unfold-all",
+          .action = ActionId::UnfoldAll,
+          .key = SDLK_J,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "show-hover",
+          .action = ActionId::ShowHover,
+          .key = SDLK_I,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "git-stage-selected-ranges",
+          .action = ActionId::GitStageSelectedRanges,
+          .key = SDLK_S,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "git-unstage-selected-ranges",
+          .action = ActionId::GitUnstageSelectedRanges,
+          .key = SDLK_N,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "git-revert-selected-ranges",
+          .action = ActionId::GitRevertSelectedRanges,
+          .key = SDLK_R,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "focus-editor-group-left",
+          .action = ActionId::FocusEditorGroupLeft,
+          .key = SDLK_LEFT,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "focus-editor-group-right",
+          .action = ActionId::FocusEditorGroupRight,
+          .key = SDLK_RIGHT,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "focus-editor-group-up",
+          .action = ActionId::FocusEditorGroupUp,
+          .key = SDLK_UP,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "focus-editor-group-down",
+          .action = ActionId::FocusEditorGroupDown,
+          .key = SDLK_DOWN,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "move-editor-group-left",
+          .action = ActionId::MoveEditorGroupLeft,
+          .key = SDLK_LEFT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "move-editor-group-right",
+          .action = ActionId::MoveEditorGroupRight,
+          .key = SDLK_RIGHT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "move-editor-group-up",
+          .action = ActionId::MoveEditorGroupUp,
+          .key = SDLK_UP,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
+      KeybindingSpec{
+          .id = "move-editor-group-down",
+          .action = ActionId::MoveEditorGroupDown,
+          .key = SDLK_DOWN,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+          .leader_key = SDLK_K,
+          .leader_modifiers = SDL_KMOD_CTRL,
+      },
       // Code folding shortcuts: fold/unfold regions use single chords; fold-all /
-      // unfold-all use a minimal Ctrl+K leader sequence handled in
-      // KeyInputCoordinator::HandleGlobalKeyDown (no second binding entry here).
+      // unfold-all are the Ctrl+K chords above.
       // VS Code parity: F9 toggles a breakpoint on the caret line, Alt+Z toggles
       // word wrap, Ctrl+] / Ctrl+[ indent / outdent, Ctrl+\ splits the editor
       // right, and Ctrl+Shift+E / G / M open the explorer, source-control and
@@ -1407,6 +1644,8 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.from_plugin = false;
     rb.skips_terminal = skips_terminal(spec.id, spec.skips_terminal);
     rb.shares_chord = spec.shares_chord;
+    rb.leader_key = spec.leader_key;
+    rb.leader_modifiers = spec.leader_modifiers;
     result.push_back(std::move(rb));
   }
 
@@ -1431,8 +1670,13 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
   std::vector<TakenChord> taken;
   taken.reserve(result.size() + contributed.size());
   for (const ResolvedKeybinding& existing : result) {
-    taken.push_back(TakenChord{chord_key(existing.key, NormalizedKeyModifiers(existing.modifiers)),
-                               existing.context, existing.skips_terminal});
+    // A two-step chord holds its LEADER: a plugin's single Ctrl+K would leave every
+    // Ctrl+K chord dead. Its second key alone (Ctrl+O) is free for a single binding.
+    const SDL_Keycode held_key = existing.leader_key != SDLK_UNKNOWN ? existing.leader_key : existing.key;
+    const SDL_Keymod held_mods =
+        existing.leader_key != SDLK_UNKNOWN ? existing.leader_modifiers : existing.modifiers;
+    taken.push_back(TakenChord{chord_key(held_key, NormalizedKeyModifiers(held_mods)), existing.context,
+                               existing.skips_terminal});
   }
   const auto by_chord = [](const TakenChord& a, const TakenChord& b) { return a.chord < b.chord; };
   std::stable_sort(taken.begin(), taken.end(), by_chord);
@@ -1518,6 +1762,53 @@ const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& 
   }
   return first;
 }
+
+const ResolvedKeybinding* FindChordKeybinding(const std::vector<ResolvedKeybinding>& bindings,
+                                               SDL_Keycode leader_key,
+                                               SDL_Keymod leader_modifiers,
+                                               SDL_Keycode key,
+                                               SDL_Keymod modifiers,
+                                               KeybindingContext context,
+                                               const std::function<bool(ActionId)>& action_enabled) {
+  const SDL_Keymod relevant_leader = NormalizedKeyModifiers(leader_modifiers);
+  const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
+  // A keypad digit is the digit as a chord's second key: Ctrl+K, Ctrl+keypad 0
+  // folds all as Ctrl+K Ctrl+0 does.
+  if (key >= SDLK_KP_1 && key <= SDLK_KP_9) {
+    key = static_cast<SDL_Keycode>(SDLK_1 + (key - SDLK_KP_1));
+  } else if (key == SDLK_KP_0) {
+    key = SDLK_0;
+  }
+  const ResolvedKeybinding* first = nullptr;
+  for (const ResolvedKeybinding& rb : bindings) {
+    if (rb.leader_key == SDLK_UNKNOWN || rb.leader_key != leader_key ||
+        rb.leader_modifiers != relevant_leader || rb.key != key || rb.modifiers != relevant ||
+        !BindingActiveIn(rb, context)) {
+      continue;
+    }
+    if (!action_enabled || !rb.command_name.empty() || action_enabled(rb.action)) {
+      return &rb;
+    }
+    if (first == nullptr) {
+      first = &rb;
+    }
+  }
+  return first;
+}
+
+bool IsChordLeader(const std::vector<ResolvedKeybinding>& bindings,
+                   SDL_Keycode key,
+                   SDL_Keymod modifiers,
+                   KeybindingContext context) {
+  const SDL_Keymod relevant = NormalizedKeyModifiers(modifiers);
+  return std::any_of(bindings.begin(), bindings.end(), [&](const ResolvedKeybinding& rb) {
+    return rb.leader_key != SDLK_UNKNOWN && rb.leader_key == key && rb.leader_modifiers == relevant &&
+           BindingActiveIn(rb, context);
+  });
+}
+
+std::string FormatBindingKeys(const KeybindingSpec& binding) { return FormatBindingKeysOf(binding); }
+std::string FormatBindingKeys(const ResolvedKeybinding& binding) { return FormatBindingKeysOf(binding); }
 
 bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mods_out) {
   if (key_out == nullptr || mods_out == nullptr) {

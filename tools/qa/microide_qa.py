@@ -910,15 +910,19 @@ class App:
             self._xdotool("keyup", key)
 
     def key(self, chord: str) -> None:
-        """An xdotool chord: "ctrl+shift+f", "Escape", "alt+Up"."""
+        """An xdotool chord: "ctrl+shift+f", "Escape", "alt+Up"; a two-step chord
+        is its steps separated by a space: "ctrl+k ctrl+o"."""
         self._record({"key": chord})
+        steps = chord.split()
         if self.wayland:
-            answer = self._input("key", chord_for_key_command(chord))
-            if not answer.get("ok", False):
-                self.expect(False, f"key {chord} was refused: {answer}")
+            for step in steps:
+                answer = self._input("key", chord_for_key_command(step))
+                if not answer.get("ok", False):
+                    self.expect(False, f"key {step} (of {chord}) was refused: {answer}")
+                    return
             return
         self._focus()
-        self._xdotool("key", "--clearmodifiers", chord)
+        self._xdotool("key", "--clearmodifiers", *steps)
 
     def hold(self, modifier: str, chords: list[str]) -> None:
         """Presses `chords` while `modifier` (an xdotool key name: "ctrl") stays

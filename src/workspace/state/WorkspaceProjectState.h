@@ -160,9 +160,14 @@ enum class ProjectSearchEditField {
 
 struct ProjectSurfaceState {
   FocusTarget focus = FocusTarget::Sidebar;
-  // After Ctrl+K in the editor with no overriding Ctrl+K binding; cleared on the
-  // next key (fold-all / unfold-all follow-ups, or when focus leaves the editor).
-  bool editor_ctrl_k_leader_armed = false;
+  // The first key of a two-step chord (Ctrl+K of Ctrl+K Ctrl+O), pressed and
+  // waiting for the second; cleared by the next key, or by a surface that takes
+  // the keyboard for itself (KeybindingSpec::leader_key).
+  struct PendingChord {
+    SDL_Keycode key = SDLK_UNKNOWN;
+    SDL_Keymod modifiers = SDL_KMOD_NONE;
+  };
+  std::optional<PendingChord> pending_chord;
 };
 
 // Backing state for the command-line executor. The command palette is now the sole entry

@@ -31,7 +31,11 @@ _MODIFIERS = {"Ctrl": "ctrl", "Shift": "shift", "Alt": "alt", "Super": "super", 
 
 
 def xdotool_chord(chord: str) -> str | None:
-    """'Ctrl+Shift+[' -> 'ctrl+shift+bracketleft'; None for a chord this cannot type."""
+    """'Ctrl+Shift+[' -> 'ctrl+shift+bracketleft', and a two-step 'Ctrl+K Ctrl+O'
+    -> 'ctrl+k ctrl+o'; None for a chord this cannot type."""
+    if " " in chord:
+        steps = [xdotool_chord(step) for step in chord.split(" ")]
+        return None if None in steps else " ".join(steps)  # type: ignore[arg-type]
     parts = chord.split("+")
     if chord.endswith("++"):
         parts = chord[:-2].split("+") + ["+"]

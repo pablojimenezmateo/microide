@@ -25,7 +25,7 @@ using microide::workspace::ActionId;
 using microide::workspace::BuiltinKeybindingSpecs;
 using microide::workspace::FindWorkspaceActionByCommand;
 using microide::workspace::FindWorkspaceActionSpec;
-using microide::workspace::FormatKeyChord;
+using microide::workspace::FormatBindingKeys;
 using microide::workspace::KeybindingSpec;
 using microide::workspace::MenuId;
 using microide::workspace::MenuItemSpec;
@@ -67,16 +67,14 @@ std::string_view ResolvedLabel(const MenuItemSpec& item) {
 }
 
 // Keys the registry deliberately does not own, because what they do depends on
-// surrounding editor state rather than on a binding:
-//   - Two-key sequences (a Ctrl+K leader plus a follow-up) are dispatched by hand in
-//     KeyInputCoordinator::HandleGlobalKeyDown.
-//   - Tab / Shift+Tab indent only when the editor is not completing a snippet or a
-//     completion, so they live in the editor key path, not the binding table.
-// They still have to be spelled correctly, which is what the label check upholds;
-// only the "which binding produces this" half is skipped.
+// surrounding editor state rather than on a binding: Tab / Shift+Tab indent only
+// when the editor is not completing a snippet or a completion, so they live in
+// the editor key path, not the binding table. They still have to be spelled
+// correctly, which is what the label check upholds; only the "which binding
+// produces this" half is skipped. (Two-step Ctrl+K chords used to be listed here
+// too; they are registry bindings now, checked like any other.)
 bool IsContextuallyDispatched(std::string_view accelerator) {
-  return accelerator.find(' ') != std::string_view::npos || accelerator == "Tab" ||
-         accelerator == "Shift+Tab";
+  return accelerator == "Tab" || accelerator == "Shift+Tab";
 }
 
 // Same action *and* same arguments: several actions (UiScale up/down/reset,
@@ -143,10 +141,20 @@ void TestMenuAcceleratorsMatchTheirKeybindings() {
       mismatches += "\" but no keybinding produces that action";
       return;
     }
-    const bool any_match = std::any_of(
-        bindings.begin(), bindings.end(), [&](const KeybindingSpec* binding) {
-          return FormatKeyChord(binding->key, binding->modifiers) == accelerator;
-        });
+    // "Ctrl+Y / Ctrl+Shift+Z" names two keys for one entry: each must fire it.
+    bool any_match = true;
+    for (std::size_t from = 0; from <= accelerator.size();) {
+      const std::size_t slash = accelerator.find(" / ", from);
+      const std::string_view alternative =
+          accelerator.substr(from, slash == std::string_view::npos ? std::string_view::npos : slash - from);
+      any_match = any_match && std::any_of(bindings.begin(), bindings.end(), [&](const KeybindingSpec* binding) {
+                    return FormatBindingKeys(*binding) == alternative;
+                  });
+      if (slash == std::string_view::npos) {
+        break;
+      }
+      from = slash + 3;
+    }
     if (!any_match) {
       mismatches += "\n  ";
       mismatches += menu;
@@ -155,7 +163,7 @@ void TestMenuAcceleratorsMatchTheirKeybindings() {
       mismatches += ": advertises \"";
       mismatches += accelerator;
       mismatches += "\" but is bound to \"";
-      mismatches += FormatKeyChord(bindings.front()->key, bindings.front()->modifiers);
+      mismatches += FormatBindingKeys(*bindings.front());
       mismatches += "\"";
     }
   });
@@ -181,7 +189,7 @@ void TestBoundMenuActionsAdvertiseTheirAccelerator() {
     missing += " / ";
     missing += ResolvedLabel(item);
     missing += ": bound to \"";
-    missing += FormatKeyChord(bindings.front()->key, bindings.front()->modifiers);
+    missing += FormatBindingKeys(*bindings.front());
     missing += "\" but the menu shows no accelerator";
   });
   Expect(missing.empty(),

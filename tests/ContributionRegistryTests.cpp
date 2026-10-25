@@ -94,7 +94,10 @@ void TestBuiltinKeybindingsDoNotShadowEachOther() {
       const auto& a = bindings[i];
       const auto& b = bindings[j];
       if (a.key != b.key || microide::workspace::NormalizedKeyModifiers(a.modifiers) !=
-                                microide::workspace::NormalizedKeyModifiers(b.modifiers)) {
+                                microide::workspace::NormalizedKeyModifiers(b.modifiers) ||
+          a.leader_key != b.leader_key ||
+          microide::workspace::NormalizedKeyModifiers(a.leader_modifiers) !=
+              microide::workspace::NormalizedKeyModifiers(b.leader_modifiers)) {
         continue;
       }
       // The registry's own rule, not a copy: a copy that treated Global as
@@ -108,8 +111,23 @@ void TestBuiltinKeybindingsDoNotShadowEachOther() {
       if (b.shares_chord) {
         continue;
       }
-      offenders += a.id + " vs " + b.id + " (" +
-                   microide::workspace::FormatKeyChord(a.key, a.modifiers) + "); ";
+      offenders += a.id + " vs " + b.id + " (" + microide::workspace::FormatBindingKeys(a) + "); ";
+    }
+  }
+  // A single key on a chord's leader (a plain Ctrl+K binding) leaves every chord
+  // behind it dead: the leader never arms where that binding is active.
+  for (const auto& single : bindings) {
+    if (single.leader_key != SDLK_UNKNOWN) {
+      continue;
+    }
+    for (const auto& chord : bindings) {
+      if (chord.leader_key == single.key &&
+          microide::workspace::NormalizedKeyModifiers(chord.leader_modifiers) ==
+              microide::workspace::NormalizedKeyModifiers(single.modifiers) &&
+          microide::workspace::KeybindingContextsOverlap(single.context, single.skips_terminal,
+                                                          chord.context, chord.skips_terminal)) {
+        offenders += single.id + " takes the leader of " + chord.id + "; ";
+      }
     }
   }
   Expect(offenders.empty(), ("built-in bindings shadow each other: " + offenders).c_str());

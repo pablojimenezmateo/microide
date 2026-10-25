@@ -260,9 +260,9 @@ class KeyInputCoordinator {
   bool HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
                            SDL_Keymod modifiers,
                            bool active_merge_tab);
-  std::optional<bool> HandleCtrlKChord(const SDL_KeyboardEvent& event,
-                                       SDL_Keymod modifiers,
-                                       KeybindingContext key_ctx);
+  std::optional<bool> HandleKeyChord(const SDL_KeyboardEvent& event,
+                                     SDL_Keymod modifiers,
+                                     KeybindingContext key_ctx);
   KeybindingContext ActiveKeybindingContext() const;
   bool DispatchResolvedKeybinding(const ResolvedKeybinding& binding, ActionSource source);
   bool HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);

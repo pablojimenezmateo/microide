@@ -52,15 +52,15 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
 
 bool KeyInputCoordinator::DispatchKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers) {
 
-  // The Ctrl+K leader is a workbench prefix, not an editor one (see
-  // HandleGlobalKeyDown): only a surface that takes the keyboard for itself -- a
+  // A chord's leader is a workbench prefix, not an editor one (see
+  // HandleKeyChord): only a surface that takes the keyboard for itself -- a
   // prompt, a menu, an overlay, a focused terminal -- drops a half-typed chord.
-  const bool clears_editor_ctrl_k_chord =
+  const bool clears_pending_chord =
       prompts_.dirty_visible || menu_state_.tree_context_menu.open ||
       menu_state_.menu_bar_open || prompts_.surface_visible || state_.overlay.visible ||
       ActiveKeybindingContext() == KeybindingContext::Terminal;
-  if (clears_editor_ctrl_k_chord) {
-    state_.surface.editor_ctrl_k_leader_armed = false;
+  if (clears_pending_chord) {
+    state_.surface.pending_chord.reset();
   }
 
   if (prompts_.dirty_visible) {

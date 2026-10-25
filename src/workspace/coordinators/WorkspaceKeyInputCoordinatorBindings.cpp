@@ -3,7 +3,7 @@
 namespace microide::workspace {
 
 // Keybinding dispatch: which context a key is pressed in, which resolved binding
-// it runs (and the gates that refuse a matching one), and the Ctrl+K chords.
+// it runs (and the gates that refuse a matching one), and the two-step chords.
 // tests/KeybindingReachabilityTests.cpp presses every built-in binding from every
 // focus target against these rules.
 
@@ -49,7 +49,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
 
   const auto& bindings = operations_.resolved_keybindings();
   const KeybindingContext key_ctx = ActiveKeybindingContext();
-  if (const std::optional<bool> chord = HandleCtrlKChord(event, modifiers, key_ctx);
+  if (const std::optional<bool> chord = HandleKeyChord(event, modifiers, key_ctx);
       chord.has_value()) {
     return *chord;
   }
@@ -129,19 +129,18 @@ bool KeyInputCoordinator::DispatchResolvedKeybinding(const ResolvedKeybinding& b
   return operations_.execute_action(binding.action, binding.args, source);
 }
 
-// Ctrl+K chords. The leader works wherever workbench shortcuts do, as in VS Code:
-// Ctrl+K Ctrl+O opens a folder and Ctrl+K Ctrl+<arrow> moves between editor panes
-// from the tree or a panel too. It was editor-only, so from the tree the
-// advertised chords did nothing. The fold chords act on the focused text and
-// still need the editor. Answers whether the key was taken, or nullopt when it is
-// not part of a chord and dispatch goes on.
-std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEvent& event,
-                                                          SDL_Keymod modifiers,
-                                                          KeybindingContext key_ctx) {
+// Two-step chords (Ctrl+K Ctrl+O): bindings with a leader key
+// (KeybindingSpec::leader_key). The leader works wherever its chords' bindings are
+// active, as in VS Code -- Ctrl+K Ctrl+<arrow> moves between editor panes from the
+// tree too -- but not under an overlay or in a focused terminal, which owns Ctrl+K.
+// Answers whether the key was taken, or nullopt when it is not part of a chord and
+// dispatch goes on (a second key that completes no chord dispatches as itself).
+std::optional<bool> KeyInputCoordinator::HandleKeyChord(const SDL_KeyboardEvent& event,
+                                                        SDL_Keymod modifiers,
+                                                        KeybindingContext key_ctx) {
+  const auto& bindings = operations_.resolved_keybindings();
   const bool chord_allowed = !state_.overlay.visible && key_ctx != KeybindingContext::Terminal;
-  const bool editor_chord_allowed =
-      chord_allowed && state_.surface.focus == FocusTarget::Editor &&
-      key_ctx == KeybindingContext::Editor;
+  std::optional<ProjectSurfaceState::PendingChord>& pending = state_.surface.pending_chord;
 
   // A modifier pressed on its own is not the chord's second key: Ctrl+K, let go of
   // Ctrl, Ctrl+Left is how the chord is often typed, and the fresh Ctrl press used
@@ -150,99 +149,35 @@ std::optional<bool> KeyInputCoordinator::HandleCtrlKChord(const SDL_KeyboardEven
                              event.key == SDLK_LSHIFT || event.key == SDLK_RSHIFT ||
                              event.key == SDLK_LALT || event.key == SDLK_RALT ||
                              event.key == SDLK_LGUI || event.key == SDLK_RGUI;
-  if (state_.surface.editor_ctrl_k_leader_armed && modifier_only) {
+  if (pending.has_value() && modifier_only) {
     return true;
   }
-  if (state_.surface.editor_ctrl_k_leader_armed) {
-    state_.surface.editor_ctrl_k_leader_armed = false;
-    if (chord_allowed) {
-      const SDL_Keymod chord_mod = NormalizedKeyModifiers(modifiers);
-      if (chord_mod == SDL_KMOD_CTRL && editor_chord_allowed) {
-        if (event.key == SDLK_0 || event.key == SDLK_KP_0) {
-          return operations_.execute_action(ActionId::FoldAll, {}, ActionSource::Shortcut);
-        }
-        if (event.key == SDLK_J) {
-          return operations_.execute_action(ActionId::UnfoldAll, {}, ActionSource::Shortcut);
-        }
-        if (event.key == SDLK_I) {
-          // VS Code's Show Hover: the hover card for the caret, by keyboard.
-          return operations_.execute_action(ActionId::ShowHover, {}, ActionSource::Shortcut);
-        }
-      }
-      // VS Code's Save All: Ctrl+K, then S on its own. The S is printable, so its
-      // TEXT_INPUT follows and would land in the buffer: swallow it. Taken whether
-      // or not anything was saved -- the refusal says why.
-      if (chord_mod == SDL_KMOD_NONE && event.key == SDLK_S) {
-        if (operations_.set_swallow_next_text_input) {
-          operations_.set_swallow_next_text_input(true);
-        }
-        (void)operations_.execute_action(ActionId::SaveAll, {}, ActionSource::Shortcut);
-        return true;
-      }
-      // VS Code's Change Language Mode: Ctrl+K, then M on its own (its text swallowed).
-      if (chord_mod == SDL_KMOD_NONE && event.key == SDLK_M) {
-        if (operations_.set_swallow_next_text_input) {
-          operations_.set_swallow_next_text_input(true);
-        }
-        (void)operations_.execute_action(ActionId::LanguageMode, {}, ActionSource::Shortcut);
-        return true;
-      }
-      // VS Code's git chords for a diff: Ctrl+K Ctrl+Alt+S stages the selected
-      // ranges, Ctrl+K Ctrl+N unstages them, Ctrl+K Ctrl+R reverts them.
-      if (chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_ALT) && event.key == SDLK_S) {
-        return operations_.execute_action(ActionId::GitStageSelectedRanges, {}, ActionSource::Shortcut);
-      }
-      if (chord_mod == SDL_KMOD_CTRL && (event.key == SDLK_N || event.key == SDLK_R)) {
-        return operations_.execute_action(event.key == SDLK_N ? ActionId::GitUnstageSelectedRanges
-                                                              : ActionId::GitRevertSelectedRanges,
-                                          {}, ActionSource::Shortcut);
-      }
-      if (chord_mod == SDL_KMOD_CTRL) {
-        if (event.key == SDLK_T) {
-          // VS Code's Color Theme pick (a bare `colorscheme`).
-          return operations_.execute_action(ActionId::Colorscheme, {}, ActionSource::Shortcut);
-        }
-        if (event.key == SDLK_O) {
-          // File > Open Folder / Project Tab… advertises Ctrl+K Ctrl+O (VS Code's
-          // chord for the same command); the leader handler used to implement only
-          // the two fold sequences, so the advertised chord did nothing.
-          return operations_.execute_action(ActionId::ProjectOpen, {}, ActionSource::Shortcut);
-        }
-      }
-      // VS Code's editor-grid chords: Ctrl+K Ctrl+<arrow> focuses the pane that
-      // way, Ctrl+K Ctrl+Shift+<arrow> moves the focused pane there. Both are
-      // no-ops with one pane, or when nothing lies in that direction.
-      if (const bool move_pane = chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
-          move_pane || chord_mod == SDL_KMOD_CTRL) {
-        switch (event.key) {
-          case SDLK_LEFT:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupLeft : ActionId::FocusEditorGroupLeft, {},
-                ActionSource::Shortcut);
-          case SDLK_RIGHT:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupRight : ActionId::FocusEditorGroupRight, {},
-                ActionSource::Shortcut);
-          case SDLK_UP:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupUp : ActionId::FocusEditorGroupUp, {},
-                ActionSource::Shortcut);
-          case SDLK_DOWN:
-            return operations_.execute_action(
-                move_pane ? ActionId::MoveEditorGroupDown : ActionId::FocusEditorGroupDown, {},
-                ActionSource::Shortcut);
-          default:
-            break;
-        }
-      }
+  if (pending.has_value()) {
+    const ProjectSurfaceState::PendingChord leader = *pending;
+    pending.reset();
+    if (!chord_allowed) {
+      return std::nullopt;
     }
-  } else if (chord_allowed && event.key == SDLK_K &&
-             NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL) {
-    if (FindKeybinding(operations_.resolved_keybindings(), SDLK_K, modifiers, key_ctx) ==
-        nullptr) {
-      state_.surface.editor_ctrl_k_leader_armed = true;
-      return true;
+    const ResolvedKeybinding* binding = FindChordKeybinding(
+        bindings, leader.key, leader.modifiers, event.key, modifiers, key_ctx, operations_.action_enabled);
+    if (binding == nullptr) {
+      return std::nullopt;
     }
+    // A printable second key without Ctrl/Alt (Ctrl+K S) also arrives as TEXT,
+    // which would land in the buffer: swallow it.
+    const bool typed = (NormalizedKeyModifiers(modifiers) & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+                       event.key >= 0x20 && event.key < 0x7F;
+    if (typed && operations_.set_swallow_next_text_input) {
+      operations_.set_swallow_next_text_input(true);
+    }
+    // Taken whether or not the action could run: it reports why it did not.
+    (void)DispatchResolvedKeybinding(*binding, ActionSource::Shortcut);
+    return true;
+  }
+  if (chord_allowed && IsChordLeader(bindings, event.key, modifiers, key_ctx) &&
+      FindKeybinding(bindings, event.key, modifiers, key_ctx) == nullptr) {
+    pending = ProjectSurfaceState::PendingChord{event.key, NormalizedKeyModifiers(modifiers)};
+    return true;
   }
   return std::nullopt;
 }

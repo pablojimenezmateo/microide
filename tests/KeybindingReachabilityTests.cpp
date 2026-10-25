@@ -118,6 +118,9 @@ std::optional<std::string_view> Gate(const ResolvedKeybinding& binding, Focus fo
   if (focus == Focus::QuickOpen && !binding.command_name.empty()) {
     return "command-name bindings wait for the overlay to close";
   }
+  if (focus == Focus::QuickOpen && binding.leader_key != SDLK_UNKNOWN) {
+    return "a chord's leader does not arm under an overlay";
+  }
   return std::nullopt;
 }
 
@@ -183,9 +186,20 @@ struct FocusFixture {
     }
   }
 
-  // The binding id the chord dispatched, or empty.
+  // The binding id the binding's keys dispatched, or empty: a two-step chord
+  // presses its leader first.
+  std::string Press(const ResolvedKeybinding& binding) {
+    Apply();
+    if (binding.leader_key != SDLK_UNKNOWN) {
+      (void)shell.HandleEvent(KeyDownEvent(binding.leader_key, binding.leader_modifiers));
+    }
+    return PressKey(binding.key, binding.modifiers);
+  }
   std::string Press(SDL_Keycode key, SDL_Keymod modifiers) {
     Apply();
+    return PressKey(key, modifiers);
+  }
+  std::string PressKey(SDL_Keycode key, SDL_Keymod modifiers) {
     (void)shell.HandleEvent(KeyDownEvent(key, modifiers));
     (void)shell.ConsumePendingRenderInvalidation();
     const ResolvedKeybinding* last = TestAccess::KeyDispatchProbe(shell).last;
@@ -216,13 +230,18 @@ void TestEveryBuiltinBindingDispatchesWhereItsRegistrationSays() {
       // The rule dispatch applies: of bindings sharing a chord, the first whose
       // action is enabled.
       fixture.Apply();
-      const ResolvedKeybinding* first = workspace::FindKeybinding(
-          bindings, binding.key, binding.modifiers, context,
-          [&](workspace::ActionId action) { return TestAccess::ActionEnabled(fixture.shell, action); });
+      const auto enabled = [&](workspace::ActionId action) {
+        return TestAccess::ActionEnabled(fixture.shell, action);
+      };
+      const ResolvedKeybinding* first =
+          binding.leader_key == SDLK_UNKNOWN
+              ? workspace::FindKeybinding(bindings, binding.key, binding.modifiers, context, enabled)
+              : workspace::FindChordKeybinding(bindings, binding.leader_key, binding.leader_modifiers,
+                                               binding.key, binding.modifiers, context, enabled);
       const bool registered_here = first == &binding;
       const std::optional<std::string_view> gate = Gate(binding, focus);
       const bool expected = registered_here && !gate.has_value();
-      const std::string dispatched = fixture.Press(binding.key, binding.modifiers);
+      const std::string dispatched = fixture.Press(binding);
       ++checked;
       if (expected && dispatched != binding.id) {
         failures.push_back(binding.id + " should dispatch from the " + std::string(FocusName(focus)) +
