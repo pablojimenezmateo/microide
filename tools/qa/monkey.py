@@ -78,6 +78,10 @@ FORBIDDEN_ELEMENTS = ("button:window/close", "button:window/minimize")
 FORBIDDEN_LABELS = ("Quit", "Exit", "Open File", "Open Folder", "Save As", "Close Window",
                     "Open Font", "Choose Font")
 FORBIDDEN_BINDINGS = ("quit", "open-file", "open-folder", "project-open", "save-as")
+# Settings whose rows (and their checkboxes) the pointer must not press: turning
+# `control.enabled` off in the Settings overlay stops the very channel the monkey
+# drives the app through, and every later query fails (seed 1, 2026-10-25).
+FORBIDDEN_SETTINGS = ("control.enabled",)
 
 
 def project_files(root: Path) -> list[str]:
@@ -282,14 +286,17 @@ class Monkey:
 
     # ---- action sources --------------------------------------------------
 
+    @staticmethod
+    def _forbidden(element: dict[str, Any]) -> bool:
+        name = element.get("name", "")
+        label = element.get("label", "") or name.rsplit("/", 1)[-1]
+        return (name in FORBIDDEN_ELEMENTS or any(label.startswith(bad) for bad in FORBIDDEN_LABELS)
+                or any(setting in name for setting in FORBIDDEN_SETTINGS))
+
     def _safe_elements(self) -> list[dict[str, Any]]:
         out = []
         for element in self.app.ui().get("elements", []):
-            name = element.get("name", "")
-            label = element.get("label", "") or name.rsplit("/", 1)[-1]
-            if name in FORBIDDEN_ELEMENTS or any(label.startswith(bad) for bad in FORBIDDEN_LABELS):
-                continue
-            if element.get("enabled") is False:
+            if self._forbidden(element) or element.get("enabled") is False:
                 continue
             out.append(element)
         return out
@@ -345,8 +352,18 @@ class Monkey:
     def point_action(self) -> None:
         w, h = self.app.size
         # Below the menu bar's window controls: a random click there could close
-        # the window.
-        self.app.click(self.rng.randrange(0, w - 160), self.rng.randrange(30, h))
+        # the window. And never on a forbidden element (a menu's Quit row, the
+        # control channel's setting) -- a random point used to land on them.
+        forbidden = [element.get("rect") for element in self.app.ui().get("elements", [])
+                     if self._forbidden(element) and element.get("rect")]
+
+        def blocked(x: int, y: int) -> bool:
+            return any(rx <= x < rx + rw and ry <= y < ry + rh for rx, ry, rw, rh in forbidden)
+        for _ in range(20):
+            x, y = self.rng.randrange(0, w - 160), self.rng.randrange(30, h)
+            if not blocked(x, y):
+                self.app.click(x, y)
+                return
 
     # ---- driving ---------------------------------------------------------
 

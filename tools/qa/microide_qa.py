@@ -1270,8 +1270,10 @@ class App:
                     title = title.removeprefix(kind_prefix)
                 shown = label.lstrip("*")
                 if "↔" in title:
+                    # ... or, with no file behind it (the clipboard against an
+                    # untitled buffer), the comparison's own name.
                     right = title.rsplit("↔", 1)[-1].strip()
-                    named = right.startswith(shown) or shown.startswith(right)
+                    named = right.startswith(shown) or shown.startswith(right) or shown == title
                 else:
                     named = shown.startswith(title)
                 return label.startswith("*") == bool(tab.get("dirty")) and named

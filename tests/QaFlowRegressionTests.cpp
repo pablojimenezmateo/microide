@@ -3448,6 +3448,77 @@ void TestAKeyInAMenuUnderARestingPointerRepaintsTheRows() {
                       "the pointer leaving the menu after the key");
 }
 
+// QA monkey (seed 2, 2026-10-25): the git view's commit Subject field kept its
+// caret drawn after a click lower in the sidebar; a full render drew none. The
+// replay does not reproduce it (TD-2026-10-18-362's ledger); these steps pin the
+// field's focus changes -- a click in, typing, F6 out and back, a click away --
+// as paint-fresh.
+void TestLeavingTheCommitSubjectFieldRepaintsItsCaret() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  WriteFile(root / "notes.txt", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(root / "notes.txt", "changed\n");
+  RequireGitCommandSuccess(root, {"add", "notes.txt"}, "git add notes.txt");
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open its project");
+  TestAccess::SetWindowSize(shell, kWidth, kHeight);
+  TestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the git view should list the change");
+  Expect(TestAccess::ExecuteCommandLine(shell, "git-commit"),
+         "the commit form opens: " + TestAccess::CommandFeedbackText(shell));
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto pin = PinCaretOf(shell);
+  pin();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+  const auto field_rect = [&]() -> std::optional<SDL_FRect> {
+    const util::JsonValue ui = TestAccess::ControlUi(shell);
+    for (const util::JsonValue& entry : ui["elements"].AsArray()) {
+      if (entry["name"].AsString() == "field:git/subject") {
+        const auto& r = entry["rect"].AsArray();
+        return SDL_FRect{static_cast<float>(r[0].AsInt()), static_cast<float>(r[1].AsInt()),
+                         static_cast<float>(r[2].AsInt()), static_cast<float>(r[3].AsInt())};
+      }
+    }
+    return std::nullopt;
+  };
+  const auto subject = field_rect();
+  Expect(subject.has_value(), "the ui query should name the commit Subject field");
+  if (!subject) {
+    return;
+  }
+  const auto expect_fresh = [&](const workspace::RenderInvalidation& redraw, const std::string& what) {
+    const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin);
+    Expect(diff.identical(), what + " should paint what a full repaint paints; " + DescribePixelDiff(diff));
+  };
+  const float x = subject->x + subject->w / 2.0f;
+  const float y = subject->y + subject->h / 2.0f;
+  expect_fresh(DispatchEvents(shell, {MouseMotionEvent(x, y),
+                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
+                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)}),
+               "clicking into the Subject field");
+  expect_fresh(DispatchEvents(shell, {TextInputEvent("alpha")}), "typing a subject");
+  expect_fresh(DispatchEvents(shell, {KeyDownEvent(SDLK_F6)}), "F6 out of the field");
+  // The monkey's way: from the editor, F6 INTO the sidebar, then a click lower in it.
+  TestAccess::SetFocusEditor(shell);
+  expect_fresh(workspace::RenderInvalidation{.full = true, .rects = {}}, "the editor focused");
+  expect_fresh(DispatchEvents(shell, {KeyDownEvent(SDLK_F6)}), "F6 into the sidebar");
+  expect_fresh(DispatchEvents(shell, {MouseMotionEvent(x, y)}), "the pointer over the field");
+  const float below = subject->y + 240.0f;
+  expect_fresh(DispatchEvents(shell, {MouseMotionEvent(x, below),
+                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, below),
+                                      MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, below)}),
+               "a click lower in the sidebar");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -3469,6 +3540,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestSearchResultsCaughtUpAtFramePrepRepaintTheirCount);
   AddTest(tests, "QaFlowRegression/AKeyInAMenuUnderARestingPointerRepaintsTheRows",
           TestAKeyInAMenuUnderARestingPointerRepaintsTheRows);
+  AddTest(tests, "QaFlowRegression/LeavingTheCommitSubjectFieldRepaintsItsCaret",
+          TestLeavingTheCommitSubjectFieldRepaintsItsCaret);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);

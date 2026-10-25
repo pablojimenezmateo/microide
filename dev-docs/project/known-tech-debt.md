@@ -1503,6 +1503,13 @@ are timing-dependent and unpinned:
   The same run's seeds 15 (a menu row left highlighted when the pointer left
   after a key moved the active row) and 17 (the search view's match count
   painted before frame prep caught the results up) were real and are fixed.
+- seed 2, step 257 (2026-10-25, `--seeds 1-8`): the git view's commit Subject
+  field kept its 1-pixel caret after a click lower in the sidebar (F6 had moved
+  the keyboard into the sidebar just before). Does not replay;
+  `QaFlowRegression/LeavingTheCommitSubjectFieldRepaintsItsCaret` pins the
+  field's focus changes. Seed 1 of that run was the monkey switching
+  `control.enabled` off in Settings (its own channel; the monkey now never presses
+  that row), seed 8 a comparison tab named by its raw control title (fixed).
 
 Also found on that pass, not a bug: the control channel is byte-transparent by
 design (remote mirror file names and terminal scrollback rely on it), so a raw
