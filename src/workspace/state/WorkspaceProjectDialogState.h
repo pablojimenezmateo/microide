@@ -24,19 +24,12 @@ struct PendingDialogResult {
   std::string error_message;
 };
 
-struct ProjectDialogState {
-  std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher;
-  bool active = false;
-  std::mutex mutex;
-  PendingDialogResult pending_result;
-};
-
-// "Open File…" native picker. Same staged-result-under-a-mutex + shared wake
-// event shape as the project picker; it opens a file into an editor tab instead
-// of a project tab.
-struct OpenFileDialogState {
-  // Optional test seam mirroring ProjectDialogState::launcher: returns false when no
-  // native backend is available. Receives the default location the picker opens at.
+// A folder or file picker: the project picker and "Open File…" share this --
+// the same staged-result-under-a-mutex + shared wake event shape, differing only
+// in what the shell does with the selection.
+struct NativePickerState {
+  // Optional test seam: returns false when no native backend is available.
+  // Receives the default location the picker opens at.
   std::function<bool(WorkspaceShell&, const std::filesystem::path&)> launcher;
   bool active = false;
   std::mutex mutex;

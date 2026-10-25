@@ -2278,8 +2278,8 @@
   std::function<bool(std::string_view)> external_url_opener_;
   std::function<bool(const std::filesystem::path&)> file_manager_opener_;
   SDL_Window* dialog_window_ = nullptr;
-  ProjectDialogState project_dialog_state_;
-  OpenFileDialogState open_file_dialog_state_;
+  NativePickerState project_dialog_state_;
+  NativePickerState open_file_dialog_state_;
   FontFileDialogState font_file_dialog_state_;
   // Installed font families for the settings font picker, enumerated lazily on the
   // first picker open (scanning the system is not cheap) and reused thereafter.
