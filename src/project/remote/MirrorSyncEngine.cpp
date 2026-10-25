@@ -22,6 +22,20 @@ constexpr std::size_t kMaxPullsInFlight = 4;
 // than holding the editor's largest buffers twice in memory.
 constexpr std::uint64_t kMaxPushBytes = 256u * 1024 * 1024;
 
+// One streamed object as the batch ApplyFetched takes: the object on success;
+// on failure nothing, and its partly written staging file removed.
+std::optional<std::vector<RemoteWorkspace::FetchedObject>> SingleFetchedBatch(
+    RemoteWorkspace::FetchedObject object, const std::string& error) {
+  std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
+  if (error.empty()) {
+    objects.emplace().push_back(std::move(object));
+  } else if (!object.staged_file.empty()) {
+    std::error_code ignored_error;
+    std::filesystem::remove(object.staged_file, ignored_error);
+  }
+  return objects;
+}
+
 }  // namespace
 
 MirrorSyncEngine::MirrorSyncEngine(RemoteWorkspace& workspace, MirrorStore& store,
@@ -153,13 +167,8 @@ void MirrorSyncEngine::StreamPriorityPull(std::string path, std::function<void()
         if (engine == nullptr) {
           return;
         }
-        std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
-        if (error.empty()) {
-          objects.emplace().push_back(std::move(object));
-        } else if (!object.staged_file.empty()) {
-          std::error_code ignored_error;
-          std::filesystem::remove(object.staged_file, ignored_error);
-        }
+        std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
+            SingleFetchedBatch(std::move(object), error);
         engine->queue_.PostFront(
             [engine, done, objects = std::move(objects), error = std::move(error)]() mutable {
               engine->ApplyFetched(std::move(objects), error);
@@ -1259,13 +1268,8 @@ void MirrorSyncEngine::LaunchPulls(const std::shared_ptr<PullPipeline>& pipeline
             if (engine == nullptr) {
               return;
             }
-            std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects;
-            if (error.empty()) {
-              objects.emplace().push_back(std::move(object));
-            } else if (!object.staged_file.empty()) {
-              std::error_code ignored_error;
-              std::filesystem::remove(object.staged_file, ignored_error);
-            }
+            std::optional<std::vector<RemoteWorkspace::FetchedObject>> objects =
+                SingleFetchedBatch(std::move(object), error);
             engine->queue_.Post([engine, pipeline, objects = std::move(objects),
                                  error = std::move(error)]() mutable {
               engine->ApplyFetched(std::move(objects), error);
