@@ -16,6 +16,7 @@
 #include "platform/Subprocess.h"
 
 #if defined(__unix__) || defined(__APPLE__)
+#include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -33,18 +34,37 @@ inline bool ProcessIsAlive(pid_t pid) {
 // — the server started there (a plain socket dir or a fake host's home), and
 // anything still holding one of its paths. Linux reads /proc; elsewhere the
 // `stop` the caller already sent is all there is.
+//
+// Runs from destructors, against processes that exit while it reads them, so it
+// must not throw: a /proc read of a process that has just gone fails with ESRCH,
+// and libstdc++'s filebuf THROWS on a read error -- an istreambuf_iterator over
+// it has no sentry to catch that, so it escaped ~ShortServerDir as std::terminate
+// (a TSan run, RemoteTerminal/ScrollingUpFetchesOlderHostHistory). Plain read(2)
+// and the error_code forms of the directory walk instead.
+inline std::string ReadProcCmdline(const std::filesystem::path& path) {
+  std::string text;
+  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return text;
+  }
+  char buffer[4096];
+  for (ssize_t count; (count = ::read(fd, buffer, sizeof(buffer))) > 0;) {
+    text.append(buffer, static_cast<std::size_t>(count));
+  }
+  ::close(fd);
+  return text;
+}
+
 inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
 #if defined(__linux__)
   const std::string needle = fixture_root.string() + "/";
   std::error_code ec;
-  for (const auto& entry : std::filesystem::directory_iterator("/proc", ec)) {
-    const std::string name = entry.path().filename().string();
+  for (std::filesystem::directory_iterator it("/proc", ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string name = it->path().filename().string();
     if (name.empty() || name.find_first_not_of("0123456789") != std::string::npos) {
       continue;
     }
-    std::ifstream in(entry.path() / "cmdline", std::ios::binary);
-    const std::string cmdline((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (cmdline.find(needle) != std::string::npos) {
+    if (ReadProcCmdline(it->path() / "cmdline").find(needle) != std::string::npos) {
       ::kill(static_cast<pid_t>(std::atoi(name.c_str())), SIGKILL);
     }
   }
@@ -67,7 +87,9 @@ inline void ReapOrphanedFixtures() {
     return;
   }
   const auto now = std::filesystem::file_time_type::clock::now();
-  for (const auto& entry : std::filesystem::directory_iterator(tmp, ec)) {
+  std::error_code walk;  // the walk's own: an entry's failure below must not end it
+  for (std::filesystem::directory_iterator it(tmp, walk), end; !walk && it != end; it.increment(walk)) {
+    const std::filesystem::directory_entry& entry = *it;
     const std::string name = entry.path().filename().string();
     if (name.rfind("mip.", 0) != 0 || name.size() != 10 || !entry.is_directory(ec)) {
       continue;
