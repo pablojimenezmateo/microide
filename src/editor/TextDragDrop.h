@@ -24,8 +24,8 @@ class TextViewport;
 //    neither place.
 namespace text_drag_drop {
 
-// Lexicographic (line, column) order.
-bool PositionBefore(const TextPosition& lhs, const TextPosition& rhs);
+// Lexicographic (line, column) order is editor::PositionBefore (EditTypes.h).
+using editor::PositionBefore;
 
 // True when `position` lies within `range` (endpoints included). A drop there is
 // a no-op: the text would be moved onto itself, and running the edit anyway

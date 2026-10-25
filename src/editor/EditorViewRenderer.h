@@ -94,7 +94,9 @@ class EditorViewRenderer {
               // and the set is sorted by (start.line, start.column). When non-empty
               // these drive the match highlight instead of the literal `search_query`
               // scan, so regex and multi-line matches highlight correctly.
-              std::span<const SelectionRange> explicit_search_matches = {}) const;
+              std::span<const SelectionRange> explicit_search_matches = {},
+              // Find in Selection's scope, shaded under the matches.
+              const std::optional<SelectionRange>& find_scope = std::nullopt) const;
 
   // Test/diagnostic accessors for the bracket-match cache. The cache is keyed
   // on (viewport, content_revision, primary_caret_line, primary_caret_column)

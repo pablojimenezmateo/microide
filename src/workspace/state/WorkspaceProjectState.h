@@ -190,6 +190,27 @@ struct BufferSearchState {
   // regex agree on what "whole word" means.
   bool match_case = false;
   bool whole_word = false;
+  // The fourth toggle, Find in Selection (Alt+L): `scope` is the text the matches,
+  // and Replace All, are limited to -- the selection when it was turned on (the
+  // caret's line with none), shaded in the editor. A range into the buffer, so it
+  // follows edits like the match set does (BufferSearchScope::Follow); nullopt
+  // while the toggle is off.
+  struct Scope {
+    editor::SelectionRange range;
+    // What `range` was last brought up to date against.
+    const void* document = nullptr;
+    std::uint64_t content_revision = 0;
+    // `range.end` measured back from the end of the document: what an edit that
+    // stayed inside the scope (Replace All in it, typing in it) leaves unchanged,
+    // when the edit did not describe itself (a multi-range edit).
+    std::size_t lines_after_end = 0;
+    std::size_t columns_after_end = 0;
+  };
+  std::optional<Scope> scope;
+  // The selection (or caret line) the widget opened over, kept in step with edits
+  // too: the widget selects its current match as the query is typed, so by the
+  // time Alt+L is pressed the editor's selection is usually the widget's own.
+  std::optional<Scope> opened_over;
   std::vector<editor::SelectionRange> matches;
   // Bumped whenever `matches` is reassigned (see WorkspaceShell::RefreshBufferSearch) so
   // the editor overview ruler can cheaply detect when its cached markers are stale.
@@ -230,6 +251,8 @@ struct BufferSearchState {
     // different options would silently keep the old semantics.
     bool match_case = false;
     bool whole_word = false;
+    // The Find in Selection range the matches were limited to.
+    std::optional<editor::SelectionRange> scope;
   };
   IncrementalSearchCache incremental;
 };

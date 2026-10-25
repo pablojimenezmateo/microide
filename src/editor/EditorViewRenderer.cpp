@@ -335,7 +335,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                 const WelcomeViewModel* welcome_view,
                                 const FileDecorations* plugin_decorations,
                                 bool show_line_numbers,
-                                std::span<const SelectionRange> explicit_search_matches) const {
+                                std::span<const SelectionRange> explicit_search_matches,
+                                const std::optional<SelectionRange>& find_scope) const {
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
   }
@@ -791,6 +792,23 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
     column_fill_scratch_.clear();
     prepositioned_fill_scratch_.clear();
+
+    // Find in Selection's scope, first so the matches paint over it. A line the
+    // scope runs past is shaded to its end.
+    if (find_scope.has_value() && line_index >= find_scope->start.line &&
+        line_index <= find_scope->end.line) {
+      const std::size_t scope_start = line_index == find_scope->start.line ? find_scope->start.column : 0;
+      const std::size_t scope_end =
+          line_index == find_scope->end.line ? find_scope->end.column : lines.LineLength(line_index);
+      if (scope_end > scope_start && row_can_show_span(scope_start, scope_end)) {
+        column_fill_scratch_.push_back(RowFillSpan{
+            .start_column = scope_start,
+            .end_column = scope_end,
+            .color = render::FindScopeFill(theme),
+            .geometry = RowFillSpan::Geometry::kRange,
+        });
+      }
+    }
 
     if (!explicit_search_matches.empty()) {
       // Regex / whole-buffer find: the caller supplies single-line match fragments

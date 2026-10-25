@@ -101,7 +101,9 @@ for what is actually measured, and what is not.
   character classes, and `{a,b}` alternation; out-of-scope files are rejected on their path and never read
 - Count-all totals with match highlighting; replace-in-project in literal and regex modes (regex expands capture groups)
 - In-file find & replace with match case (Alt+C), whole word (Alt+W) and regex (Alt+R) — the same
-  first two toggles the terminal find bar carries, and all three apply in literal and regex mode
+  first two toggles the terminal find bar carries, and all three apply in literal and regex mode —
+  plus Find in Selection (Alt+L), which limits the matches and Replace All to the selection the
+  widget opened over (the caret's line with none), shaded in the editor and following edits
 - File finder overlay with a cached index and quality-ranked fuzzy matching: contiguous runs, word
   starts and camelCase humps rank above scattered matches, filename matches above path-only ones, and
   the shorter, shallower path wins an otherwise-equal match

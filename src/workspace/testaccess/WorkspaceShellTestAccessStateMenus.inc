@@ -712,6 +712,9 @@
   static void ReplaceCurrentBufferSearchMatch(WorkspaceShell& shell) {
     shell.ReplaceCurrentBufferSearchMatch();
   }
+  // What the announced edit paths call after an edit; a test editing the
+  // viewport directly calls it itself.
+  static void RefreshBufferSearchIfStale(WorkspaceShell& shell) { shell.RefreshBufferSearchIfStale(); }
   static void ReplaceAllBufferSearchMatches(WorkspaceShell& shell) {
     shell.ReplaceAllBufferSearchMatches();
   }

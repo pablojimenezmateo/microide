@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "util/StringUtil.h"
+#include "workspace/BufferFindScope.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/WorkspaceUiText.h"
@@ -143,6 +144,14 @@ void WorkspaceShell::OpenBufferSearchSurface(OverlayMode mode) {
   }
   if (!already_open) {
     ResetBufferSearchFoldRevealState(false);
+    // Find in Selection is about the selection the widget was opened over; a
+    // fresh open starts unscoped, as in VS Code (`autoFindInSelection: never`),
+    // and remembers that selection for Alt+L.
+    buffer_search.scope.reset();
+    buffer_search.opened_over.reset();
+    if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+      buffer_search.opened_over = FindScopeAt(*viewport);
+    }
     // VS Code's `seedSearchStringFromSelection: always`: with nothing selected the
     // word under the caret seeds the query. Only on opening -- with the widget up,
     // the caret sits on a match, and its word is not what the user typed.

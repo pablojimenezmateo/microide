@@ -1320,6 +1320,13 @@ class App:
                 and isinstance(overlay.get("count"), int) and overlay["count"] < 1000):
             haystack, needle = (text, query) if (elements.get("button:find/match-case") or {}).get("active") \
                 else (text.lower(), query.lower())
+            if scope := overlay.get("scope"):
+                # Find in Selection counts inside the scope (1-based line, byte column).
+                lines = haystack.encode().split(b"\n")
+                def offset(at: list[int]) -> int:
+                    line, column = at[0] - 1, at[1] - 1
+                    return sum(len(lines[i]) + 1 for i in range(min(line, len(lines)))) + column
+                haystack = haystack.encode()[offset(scope["start"]):offset(scope["end"])].decode("utf-8", "replace")
             want = haystack.count(needle)
             if overlay["count"] != want:
                 out.append(("state", f"the find widget counts {overlay['count']} of {query!r}; the buffer holds {want}"))

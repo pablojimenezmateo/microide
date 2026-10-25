@@ -249,6 +249,7 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
           "Match Case (Alt+C)",
           "Match Whole Word (Alt+W)",
           "Use Regular Expression (Alt+R)",
+          "Find in Selection (Alt+L)",
       };
       found = find_widget_hit(
           ComputeBufferFindWidgetLayout(layout.editor_surface,

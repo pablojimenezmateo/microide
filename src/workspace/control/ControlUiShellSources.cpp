@@ -708,7 +708,7 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 AddControlUiElement(out, kButton, "find/replace-all", fw.replace_all_button);
               }
               static constexpr std::array<std::string_view, kBufferFindToggleCount> kToggles = {
-                  "match-case", "whole-word", "regex"};
+                  "match-case", "whole-word", "regex", "in-selection"};
               for (std::size_t i = 0; i < fw.toggle_count && i < kToggles.size(); ++i) {
                 AddControlUiElement(out, kButton, std::string("find/") + std::string(kToggles[i]),
                                     fw.toggle_buttons[i]);
@@ -1032,6 +1032,22 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
               overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));
               if (const editor::SingleLineEditor* query = OverlayQueryEditor(state); query != nullptr) {
                 overlay["query"] = util::JsonValue(query->text());
+              }
+              // Find in Selection's scope, 1-based like `editor` positions: what a
+              // driver counts the matches inside.
+              if (const auto& scope = state.overlay.workflow.buffer_search.scope;
+                  scope.has_value() && (state.overlay.mode == OverlayMode::BufferSearch ||
+                                        state.overlay.mode == OverlayMode::BufferReplace)) {
+                const auto position = [](const editor::TextPosition& at) {
+                  util::JsonArray pair;
+                  pair.push_back(util::JsonValue(static_cast<std::int64_t>(at.line + 1)));
+                  pair.push_back(util::JsonValue(static_cast<std::int64_t>(at.column + 1)));
+                  return util::JsonValue(std::move(pair));
+                };
+                util::JsonObject range;
+                range["start"] = position(scope->range.start);
+                range["end"] = position(scope->range.end);
+                overlay["scope"] = util::JsonValue(std::move(range));
               }
             }
             if (context_.prompts.surface_visible || context_.prompts.dirty_visible) {

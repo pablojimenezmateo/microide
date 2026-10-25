@@ -19,6 +19,8 @@
 #include "TestSupport.h"
 
 #include <cstdint>
+#include <optional>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -83,9 +85,29 @@ const std::vector<std::string>& QueryPool() {
 }
 
 std::string Describe(std::uint64_t seed, std::string_view query, const BufferSearchOptions& o) {
+  std::string scope = "none";
+  if (o.scope.has_value()) {
+    scope = std::to_string(o.scope->start.line) + ":" + std::to_string(o.scope->start.column) + "-" +
+            std::to_string(o.scope->end.line) + ":" + std::to_string(o.scope->end.column);
+  }
   return " [seed=" + std::to_string(seed) + " query='" + std::string(query) +
          "' case_sensitive=" + (o.case_sensitive ? "1" : "0") +
-         " whole_word=" + (o.whole_word ? "1" : "0") + "]";
+         " whole_word=" + (o.whole_word ? "1" : "0") + " scope=" + scope + "]";
+}
+
+// No scope, and a Find in Selection scope drawn from the document: any start and
+// end inside it, start first, so ends fall mid-word and mid-run.
+std::vector<std::optional<SelectionRange>> Scopes(Rng& rng, const std::vector<std::string>& lines) {
+  const auto position = [&]() {
+    const std::size_t line = rng.Below(lines.size());
+    return microide::editor::TextPosition{line, rng.Below(lines[line].size() + 1)};
+  };
+  auto a = position();
+  auto b = position();
+  if (microide::editor::PositionBefore(b, a)) {
+    std::swap(a, b);
+  }
+  return {std::nullopt, SelectionRange{a, b}};
 }
 
 std::string Render(const std::vector<SelectionRange>& matches) {
@@ -141,13 +163,19 @@ void TestSnapshotAndBufferScannersAgree() {
     for (const std::string& query : QueryPool()) {
       for (const bool case_sensitive : {false, true}) {
         for (const bool whole_word : {false, true}) {
-          BufferSearchOptions options{.case_sensitive = case_sensitive, .whole_word = whole_word};
-          const auto from_lines = FindLiteralSearchMatches(lines, query, options);
-          const auto from_buffer = FindLiteralSearchMatches(buffer, query, options);
-          total_matches += from_lines.size();
-          Expect(Same(from_lines, from_buffer),
-                 "snapshot and buffer scanners must agree" + Describe(seed, query, options) +
-                     "\n  lines:  " + Render(from_lines) + "\n  buffer: " + Render(from_buffer));
+          for (const auto& scope : Scopes(rng, lines)) {
+            BufferSearchOptions options{.case_sensitive = case_sensitive, .whole_word = whole_word, .scope = scope};
+            const auto from_lines = FindLiteralSearchMatches(lines, query, options);
+            const auto from_buffer = FindLiteralSearchMatches(buffer, query, options);
+            total_matches += from_lines.size();
+            Expect(Same(from_lines, from_buffer),
+                   "snapshot and buffer scanners must agree" + Describe(seed, query, options) +
+                       "\n  lines:  " + Render(from_lines) + "\n  buffer: " + Render(from_buffer));
+            for (const SelectionRange& match : from_buffer) {
+              Expect(!scope.has_value() || microide::editor::RangeContains(*scope, match),
+                     "a scoped match lies inside the scope" + Describe(seed, query, options));
+            }
+          }
         }
       }
     }
@@ -165,9 +193,10 @@ void TestIncrementalRefineEqualsAFreshScan() {
     const TextBuffer buffer(lines);
     for (const std::string& query : QueryPool()) {
       for (const bool whole_word : {false, true}) {
+       for (const auto& scope : Scopes(rng, lines)) {
         // Refine is the case-insensitive find-as-you-type path; it is only valid
         // where the shorter query is a case-insensitive prefix of the longer.
-        BufferSearchOptions options{.case_sensitive = false, .whole_word = whole_word};
+        BufferSearchOptions options{.case_sensitive = false, .whole_word = whole_word, .scope = scope};
         std::vector<SelectionRange> previous;
         bool have_previous = false;
         for (std::size_t length = 1; length <= query.size(); ++length) {
@@ -189,6 +218,7 @@ void TestIncrementalRefineEqualsAFreshScan() {
           previous = fresh;
           have_previous = true;
         }
+       }
       }
     }
   }
@@ -206,17 +236,19 @@ void TestRegexOfAnEscapedLiteralFindsTheLiteralSpans() {
     const TextBuffer buffer(lines);
     for (const std::string& query : QueryPool()) {
       for (const bool case_sensitive : {false, true}) {
-        BufferSearchOptions options{.case_sensitive = case_sensitive, .whole_word = false};
-        const util::CompiledRegex pattern(
-            EscapeForRegex(query), util::SearchRegexCompileOptions(query, case_sensitive));
-        if (!pattern.valid()) continue;
-        const auto literal = FindLiteralSearchMatches(lines, query, options);
-        const auto regex = FindRegexSearchMatches(buffer, pattern, options);
-        ++compared;
-        Expect(Same(literal, regex),
-               "an escaped literal pattern must find the literal spans" +
-                   Describe(seed, query, options) + "\n  literal: " + Render(literal) +
-                   "\n  regex:   " + Render(regex));
+        for (const auto& scope : Scopes(rng, lines)) {
+          BufferSearchOptions options{.case_sensitive = case_sensitive, .whole_word = false, .scope = scope};
+          const util::CompiledRegex pattern(
+              EscapeForRegex(query), util::SearchRegexCompileOptions(query, case_sensitive));
+          if (!pattern.valid()) continue;
+          const auto literal = FindLiteralSearchMatches(lines, query, options);
+          const auto regex = FindRegexSearchMatches(buffer, pattern, options);
+          ++compared;
+          Expect(Same(literal, regex),
+                 "an escaped literal pattern must find the literal spans" +
+                     Describe(seed, query, options) + "\n  literal: " + Render(literal) +
+                     "\n  regex:   " + Render(regex));
+        }
       }
     }
   }

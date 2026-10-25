@@ -108,6 +108,10 @@ class ControlChannelService {
     // The resolved keybindings, for the `keybindings` query. Null in tests that do
     // not exercise it (the query then answers an empty list).
     std::function<const std::vector<ResolvedKeybinding>&()> keybindings;
+    // Whether an action can run now, for the query's `enabled`: of the bindings
+    // sharing a chord, the first enabled one is what the key runs. Null: every
+    // binding reads as enabled.
+    std::function<bool(ActionId)> action_enabled;
     // The on-screen element geometry for the `ui` query. Unset sources report
     // nothing (tests that do not exercise it).
     ControlUiQuery::Operations ui;

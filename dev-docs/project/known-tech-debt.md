@@ -1394,7 +1394,7 @@ so the move should go through Rename's path, not a second implementation. F2 and
 Delete were added as tree keys (not bindings, so sidebar text fields keep them);
 Ctrl+C/X/V would join them, keeping the editor's Ctrl+C unaffected.
 
-### TD-2026-10-18-358 — no Find in Selection in the find widget. [OPEN]
+### TD-2026-10-18-358 — no Find in Selection in the find widget. [RESOLVED 2026-10-25]
 
 Found by the QA `find-options` flow: VS Code's widget has a fourth toggle, Find in
 Selection (Alt+L), that limits the matches -- and Replace All -- to the selection
@@ -1406,6 +1406,33 @@ have to substitute inside the scope only, and the scope must follow edits (a
 replace inside it changes its end), which wants a tracked range rather than two
 positions. `kFindWidgetMaxToggles` (3) and the toggle label/tooltip/`ui` name
 tables grow by one.
+
+RESOLVED 2026-10-25: the widget's fourth toggle (Alt+L, `button:find/in-selection`)
+sets `BufferSearchState::scope`. That is the selection the widget opened over
+(`opened_over`, because typing the query selects its current match), or the
+selection made since, or the caret's line when nothing is selected. The scope is
+a matcher option (`BufferSearchOptions::scope`). The literal scan reads only the
+scope's lines and the regex scan only its span, though the regex still sees the
+text around it for lookarounds and `^`. So the retained-match cap counts only
+in-scope matches, and the refine cache stays sound because it keys on the scope.
+`SearchDifferentialTests` now draws a random scope for the snapshot, buffer,
+refine and regex scanners and checks they agree. Literal highlighting switches
+to the explicit (filtered) match set, and the scope is shaded under the matches
+(`render::FindScopeFill`). Replace All in a scope is one `ReplaceRange` of the
+scope's text, built match by match with each regex expansion taken against the
+whole buffer. It is one undo entry, and the scope follows it exactly. The scope
+is a tracked range (`workspace/BufferFindScope`): it is carried through each
+edit's `AppliedEdit` with the same `editor::MapPositionThroughEdit` the LSP
+diagnostics shift now uses (one copy instead of a private one), and an edit that
+does not describe itself puts the end back relative to the document's tail.
+A fresh open of the widget starts unscoped, as VS Code does.
+
+Writing it turned up a real bug: `CommitLineRangeEdit` (Replace All, both the
+needle form and `ReplaceAllRanges`) and `SurroundRangeBoundaries` left the
+PREVIOUS edit's `last_applied_edit` in place. So after a Replace All, the
+diagnostics shifter and the breakpoint shifter applied that older edit a second
+time. Both now clear it, as the other multi-region edits do
+(`TextViewport/ReplaceAllClearsLastAppliedEdit`).
 
 ### TD-2026-10-18-357 — commands that need arguments ask for a raw command line. [OPEN]
 

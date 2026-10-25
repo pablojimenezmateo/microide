@@ -990,6 +990,11 @@ util::JsonValue ControlChannelService::BuildKeybindings() const {
     object["context"] = util::JsonValue(context_name(binding.context));
     object["skipsTerminal"] = util::JsonValue(binding.skips_terminal);
     object["plugin"] = util::JsonValue(binding.from_plugin);
+    // F6 is debug-pause while a program runs and focus-next-part otherwise: the
+    // key runs the first enabled binding of those sharing it.
+    object["sharesChord"] = util::JsonValue(binding.shares_chord);
+    object["enabled"] = util::JsonValue(!binding.command_name.empty() || !operations_.action_enabled ||
+                                        operations_.action_enabled(binding.action));
     // The command the binding runs, as the `ui` action receipt names it: a
     // driver presses the chord and checks this ran.
     std::string command = binding.command_name;

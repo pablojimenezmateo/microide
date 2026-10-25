@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/PathMatch.h"
+#include "workspace/BufferFindScope.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -29,7 +30,11 @@ util::CompiledRegex CompileBufferSearchRegex(const std::string& query, bool case
 }
 
 BufferSearchOptions OptionsOf(const BufferSearchState& state) {
-  return BufferSearchOptions{.case_sensitive = state.match_case, .whole_word = state.whole_word};
+  return BufferSearchOptions{
+      .case_sensitive = state.match_case,
+      .whole_word = state.whole_word,
+      .scope = state.scope.has_value() ? std::optional(state.scope->range) : std::nullopt,
+  };
 }
 
 // Whole-document range [(0,0) .. (last_line, last_line_length)].
@@ -53,6 +58,54 @@ std::string BuildWholeBufferContent(const editor::TextViewport& viewport) {
   std::string content;
   viewport.lines().AppendWholeText(content);
   return content;
+}
+
+// The offset of `position` in the '\n'-joined buffer.
+std::size_t WholeBufferOffset(const editor::TextBuffer& lines, const editor::TextPosition& position) {
+  std::size_t offset = 0;
+  for (std::size_t i = 0; i < position.line; ++i) {
+    offset += lines.LineLength(i) + 1;  // + newline
+  }
+  return offset + position.column;
+}
+
+// Find in Selection's Replace All: `matches` (sorted, all inside `scope`) each
+// replaced by what `replacement` expands to for it, as ONE edit of the scope's
+// text -- one undo entry, and an edit the scope follows exactly. A regex
+// replacement expands against the whole buffer, so capture groups and
+// lookarounds see the text around the scope as the matching did. False (no
+// edit) when an expansion fails.
+bool ReplaceMatchesInScope(editor::TextViewport& viewport,
+                           const editor::SelectionRange& scope,
+                           const std::vector<editor::SelectionRange>& matches,
+                           std::string_view replacement,
+                           const util::CompiledRegex* pattern) {
+  if (matches.empty()) {
+    return true;
+  }
+  const editor::TextBuffer& lines = viewport.lines();
+  const std::string content = BuildWholeBufferContent(viewport);
+  const std::size_t scope_begin = WholeBufferOffset(lines, scope.start);
+  const std::size_t scope_end = WholeBufferOffset(lines, scope.end);
+  std::string rebuilt;
+  std::size_t copied_to = scope_begin;
+  for (const editor::SelectionRange& match : matches) {
+    const std::size_t begin = WholeBufferOffset(lines, match.start);
+    const std::size_t end = WholeBufferOffset(lines, match.end);
+    rebuilt.append(content, copied_to, begin - copied_to);
+    if (pattern != nullptr) {
+      const std::optional<std::string> expanded = pattern->ExpandMatchAt(content, begin, replacement);
+      if (!expanded.has_value()) {
+        return false;
+      }
+      rebuilt.append(*expanded);
+    } else {
+      rebuilt.append(replacement);
+    }
+    copied_to = end;
+  }
+  rebuilt.append(content, copied_to, scope_end - copied_to);
+  return viewport.ReplaceRange(scope, rebuilt);
 }
 
 // Applies a regex replace-all across `viewport` as ONE undo entry. Substitutes over
@@ -94,6 +147,25 @@ void WorkspaceShell::ToggleBufferSearchOption(BufferFindToggle toggle) {
     case BufferFindToggle::Regex:
       buffer_search.regex = !buffer_search.regex;
       break;
+    case BufferFindToggle::InSelection:
+      if (buffer_search.scope.has_value()) {
+        buffer_search.scope.reset();
+      } else if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+        FollowFindScopes(buffer_search, *viewport);
+        // A selection that is the widget's current match is the widget's answer,
+        // not the user's: the scope is then what the widget opened over.
+        const auto selection = viewport->selection_range();
+        const bool widget_selection =
+            selection.has_value() && BufferSearchMatchesAreFresh() &&
+            buffer_search.selected_index < buffer_search.matches.size() &&
+            editor::TextViewport::NormalizeRange(*selection) == buffer_search.matches[buffer_search.selected_index];
+        if (widget_selection && buffer_search.opened_over.has_value()) {
+          buffer_search.scope = buffer_search.opened_over;
+        } else {
+          buffer_search.scope = FindScopeAt(*viewport);
+        }
+      }
+      break;
     case BufferFindToggle::Count:
       return;
   }
@@ -125,8 +197,13 @@ void WorkspaceShell::RefreshBufferSearchIfStale() {
   if (mode != OverlayMode::BufferSearch && mode != OverlayMode::BufferReplace) {
     return;
   }
-  if (context_.current_project_state.overlay.workflow.buffer_search.query.text().empty() ||
-      BufferSearchMatchesAreFresh()) {
+  auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  // The scopes follow every edit, with a query or without: carried through one
+  // edit at a time, they cannot wait for the query to be typed.
+  if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+    FollowFindScopes(buffer_search, *viewport);
+  }
+  if (buffer_search.query.text().empty() || BufferSearchMatchesAreFresh()) {
     return;
   }
   util::PerformanceTrace::Scope scope("WorkspaceShell::RefreshBufferSearchIfStale");
@@ -153,6 +230,9 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
   const std::string& query = buffer_search.query.text();
   const editor::TextBuffer& buffer = viewport->lines();
   const std::uint64_t content_revision = viewport->content_revision();
+  FollowFindScopes(buffer_search, *viewport);  // drops them if the widget moved buffers
+  const std::optional<editor::SelectionRange> find_scope =
+      buffer_search.scope.has_value() ? std::optional(buffer_search.scope->range) : std::nullopt;
 
   // Find-as-you-type fast path: when the query only grows onto the end of the
   // previously searched query over the same unchanged buffer, every match for the
@@ -176,8 +256,10 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
     // other restriction -- a longer query's whole-word hits are NOT a subset of a
     // shorter prefix's -- and RefineLiteralSearchMatches now enforces that itself
     // by falling back to the cold scan, so it is not repeated here.
+    // So is the scope: matches outside an old scope were never kept.
     const bool options_unchanged = incremental.match_case == buffer_search.match_case &&
-                                   incremental.whole_word == buffer_search.whole_word;
+                                   incremental.whole_word == buffer_search.whole_word &&
+                                   incremental.scope == find_scope;
     const bool query_extends =
         buffer_search.match_case
             ? query.size() >= incremental.query.size() && query.starts_with(incremental.query)
@@ -198,6 +280,7 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
     incremental.query = query;
     incremental.match_case = buffer_search.match_case;
     incremental.whole_word = buffer_search.whole_word;
+    incremental.scope = find_scope;
   }
   ++buffer_search.matches_revision;
   buffer_search.matches_viewport = viewport;
@@ -355,13 +438,8 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
       return;
     }
     const std::string content = BuildWholeBufferContent(*viewport);
-    std::size_t offset = 0;
-    for (std::size_t i = 0; i < match.start.line; ++i) {
-      offset += viewport->lines().LineLength(i) + 1;  // + newline
-    }
-    offset += match.start.column;
-    const std::optional<std::string> expanded =
-        pattern.ExpandMatchAt(content, offset, buffer_search.replace_text.text());
+    const std::optional<std::string> expanded = pattern.ExpandMatchAt(
+        content, WholeBufferOffset(viewport->lines(), match.start), buffer_search.replace_text.text());
     if (!expanded.has_value() || !viewport->ReplaceRange(match, *expanded)) {
       return;
     }
@@ -388,7 +466,19 @@ void WorkspaceShell::ReplaceAllBufferSearchMatches() {
   }
 
   buffer_search.preserve_temporarily_expanded_folds = true;
-  if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport != nullptr && buffer_search.scope.has_value()) {
+    // Find in Selection: exactly the matches shown, which RefreshBufferSearch
+    // limited to the scope (fresh: checked above), as one edit of the scope.
+    const util::CompiledRegex pattern =
+        buffer_search.regex ? CompileBufferSearchRegex(buffer_search.query.text(), buffer_search.match_case)
+                            : util::CompiledRegex{};
+    if (!buffer_search.regex || pattern.valid()) {
+      (void)ReplaceMatchesInScope(*viewport, buffer_search.scope->range, buffer_search.matches,
+                                  buffer_search.replace_text.text(),
+                                  buffer_search.regex ? &pattern : nullptr);  // false: nothing changed
+    }
+  } else if (viewport != nullptr) {
     if (buffer_search.regex) {
       ApplyBufferRegexReplaceAll(*viewport, buffer_search.query.text(),
                                  buffer_search.replace_text.text(), buffer_search.match_case);

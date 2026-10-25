@@ -465,6 +465,7 @@ WorkspaceShell::WorkspaceShell() {
           .keybindings = [this]() -> const std::vector<ResolvedKeybinding>& {
             return ResolvedKeybindings();
           },
+          .action_enabled = [this](ActionId id) { return MakeActionAvailability().IsEnabled(id); },
           .ui = MakeControlUiOperations(),
           .active_buffer = [this]() -> ControlActiveBuffer {
             const editor::TextViewport* viewport = ActiveNavigableViewport();

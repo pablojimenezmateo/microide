@@ -1737,14 +1737,17 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       const bool buffer_find_active =
           pane.active && (overlay_vm.mode == OverlayMode::BufferSearch ||
                           overlay_vm.mode == OverlayMode::BufferReplace);
-      const bool buffer_regex_active = buffer_find_active && buffer_search_state.regex;
+      // Find in Selection highlights the scoped match set too: the literal scan
+      // would light up every occurrence in the file.
+      const bool buffer_explicit_matches = buffer_find_active && (buffer_search_state.regex ||
+                                                                  buffer_search_state.scope.has_value());
       const std::span<const editor::SelectionRange> explicit_search_matches =
-          buffer_regex_active
+          buffer_explicit_matches
               ? BufferSearchHighlightFragments(*viewport, buffer_search_state.matches,
                                                buffer_search_state.matches_revision)
               : std::span<const editor::SelectionRange>{};
       const std::string_view buffer_search_query_for_render =
-          (buffer_find_active && !buffer_search_state.regex)
+          (buffer_find_active && !buffer_explicit_matches)
               ? std::string_view(overlay_vm.buffer_search_query_text)
               : std::string_view{};
       editor_view_renderer_.Render(renderer, editor_text_renderer_, theme_, *viewport, pane.rect,
@@ -1757,7 +1760,10 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    indent_guides_enabled, render_whitespace_enabled,
                                    group_folding_model, nullptr,
                                    decorations_for_viewport(*viewport), line_numbers_enabled,
-                                   explicit_search_matches);
+                                   explicit_search_matches,
+                                   buffer_find_active && buffer_search_state.scope.has_value()
+                                       ? std::optional(buffer_search_state.scope->range)
+                                       : std::nullopt);
       {
         util::PerformanceTrace::Scope insets_scope(
             "WorkspaceShell::Render::EditorPane::Insets");

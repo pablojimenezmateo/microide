@@ -47,12 +47,17 @@ void ApplyOwnIndent(editor::TextViewport& viewport, const project::EditorConfigP
 ResolvedIndent ResolveIndent(const editor::IndentDetection& own,
                              const project::EditorConfigProperties& editor_config,
                              const ResolvedIndent& preferences) {
+  // .editorconfig widths are parsed as ints; only a positive one is a width.
+  const auto width = [](const std::optional<int>& configured) -> std::optional<std::size_t> {
+    return configured.has_value() && *configured > 0 ? std::optional(static_cast<std::size_t>(*configured))
+                                                     : std::nullopt;
+  };
   // A tab-indented buffer says nothing about how wide a tab is: the width stays
   // whatever the preferences chose (VS Code keeps its default tab size too).
   return ResolvedIndent{
-      .tab_size = editor_config.tab_size.value_or(own.indent_width.value_or(preferences.tab_size)),
+      .tab_size = width(editor_config.tab_size).value_or(own.indent_width.value_or(preferences.tab_size)),
       .indent_width =
-          editor_config.indent_width.value_or(own.indent_width.value_or(preferences.indent_width)),
+          width(editor_config.indent_width).value_or(own.indent_width.value_or(preferences.indent_width)),
       .soft_tabs = editor_config.soft_tabs.value_or(own.soft_tabs.value_or(preferences.soft_tabs)),
   };
 }

@@ -67,10 +67,30 @@ def _enter(app: q.App, context: str) -> None:
         app.send("focus", "editor")
 
 
+def _active_in(binding: dict, where: str) -> bool:
+    """Whether `binding` is meant to fire with the keyboard in `where`."""
+    context = binding["context"]
+    if context == "global":
+        return where != "terminal" or binding["skipsTerminal"]
+    return context == where
+
+
+def _runs(bindings: list[dict], binding: dict, where: str) -> dict:
+    """The binding the chord of `binding` runs in `where`. Bindings that share a
+    chord (F6: debug-pause while a program runs, focus-next-part otherwise) run the
+    first ENABLED one in table order, or the first when none is; any other chord
+    has the one binding."""
+    if not any(b["sharesChord"] for b in bindings if b["chord"] == binding["chord"]):
+        return binding
+    sharing = [b for b in bindings if b["chord"] == binding["chord"] and _active_in(b, where)]
+    return next((b for b in sharing if b["enabled"]), sharing[0] if sharing else binding)
+
+
 def scenario_keys(app: q.App) -> None:
     """Press every binding in each context it serves; the receipt must name its
-    command. A Global binding that does not skip the shell must NOT fire from a
-    focused terminal (the terminal owns the key)."""
+    command -- or, for a chord several bindings share, the first enabled one's. A
+    Global binding that does not skip the shell must NOT fire from a focused
+    terminal (the terminal owns the key)."""
     open_file(app, "src/scheduler.cpp")
     bindings = [b for b in app.keybindings() if not b.get("plugin")]
     app.expect(len(bindings) > 50, f"the keybinding table lists the bindings ({len(bindings)})")
@@ -103,11 +123,12 @@ def scenario_keys(app: q.App) -> None:
                 if not ran and owner is not None:
                     app.expect(False, f"{label}: the terminal's own {owner} should have run")
                 continue
+            expected = _runs(bindings, binding, where)
             if not ran:
                 unreachable.append(label)
-            elif after["last"] != binding["command"]:
-                app.expect(False, f"{label}: ran {after['last']!r}, the binding advertises "
-                                  f"{binding['command']!r}")
+            elif after["last"] != expected["command"]:
+                shared = "" if expected is binding else f" (it shares the chord: {expected['id']} is the enabled one)"
+                app.expect(False, f"{label}: ran {after['last']!r}, expected {expected['command']!r}{shared}")
             # A key a focused surface consumed can still have moved state (Escape
             # closing a menu); put the window back before the next press.
             if app.ui()["overlay"]["visible"] or app.ui().get("modal") or app.ui()["menu"]["open"]:

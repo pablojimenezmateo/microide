@@ -1244,6 +1244,26 @@ void TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit() {
          "multi-caret line delete must clear last_applied_edit_ so LSP/breakpoints resync");
 }
 
+// Replace All (by needle and by precomputed ranges) rewrites several regions;
+// it once left the PREVIOUS edit's AppliedEdit in place, so the diagnostics and
+// breakpoint shifters, and the find widget's scope, applied that old edit again.
+void TestTextViewportReplaceAllClearsLastAppliedEdit() {
+  TextViewport viewport;
+  viewport.LoadContent("cat\ndog cat\ncat\n", "/tmp/replace-all-applied.txt");
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertText("Z");
+  Expect(viewport.last_applied_edit().has_value(), "the insert leaves an applied edit as the stale baseline");
+  Expect(viewport.ReplaceAll("cat", "cow") == 3, "ReplaceAll should replace the three cats");
+  Expect(!viewport.last_applied_edit().has_value(), "ReplaceAll must not leave the previous edit behind");
+
+  viewport.InsertText("Y");
+  Expect(viewport.last_applied_edit().has_value(), "a fresh insert publishes again");
+  const std::optional<std::size_t> replaced =
+      viewport.ReplaceAllRanges({SelectionRange{{1, 4}, {1, 7}}, SelectionRange{{2, 0}, {2, 3}}}, "pig");
+  Expect(replaced == std::optional<std::size_t>{2}, "ReplaceAllRanges should apply both ranges");
+  Expect(!viewport.last_applied_edit().has_value(), "ReplaceAllRanges must not leave the previous edit behind");
+}
+
 void TestTextViewportLastAppliedEditTracksMultilineReplacement() {
   TextViewport viewport;
   viewport.LoadContent("alpha\nbeta\ngamma\n", "/tmp/applied-edit-range.txt");
@@ -6552,6 +6572,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSameLineCountEditInvalidatesSyntaxCache);
   AddTest(tests, "TextViewport/LastAppliedEditTracksInsertUndoRedo",
           TestTextViewportLastAppliedEditTracksInsertUndoRedo);
+  AddTest(tests, "TextViewport/ReplaceAllClearsLastAppliedEdit",
+          TestTextViewportReplaceAllClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/MultiCaretDeleteLineClearsLastAppliedEdit",
           TestTextViewportMultiCaretDeleteLineClearsLastAppliedEdit);
   AddTest(tests, "TextViewport/LastAppliedEditTracksMultilineReplacement",

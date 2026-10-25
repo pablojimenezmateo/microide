@@ -79,6 +79,13 @@ Theme MakeLightTheme();
 Theme BuildThemeFromStyles(const ThemeStyleMap& styles);
 // Colour-space math primitives (RelativeLuminance/Contrast/BlendColors/
 // CompositeOver) live in render/ColorMath.h, included above.
+
+// The find widget's Find in Selection scope: a faint wash of the selection
+// colour, light enough for the matches and the selection to read over it.
+inline SDL_Color FindScopeFill(const Theme& theme) {
+  const SDL_Color selection = theme.selection_fill;
+  return SDL_Color{selection.r, selection.g, selection.b, static_cast<Uint8>(selection.a / 2)};
+}
 std::filesystem::path FindThemeDirectory();
 std::vector<std::string> ListAvailableThemeNames(
     const std::filesystem::path& theme_directory = {});

@@ -469,6 +469,11 @@ void TextViewport::CommitLineRangeEdit(std::size_t first_changed_line,
                                        LineBlob before_changed_lines,
                                        LineBlob after_changed_lines,
                                        const ViewState& before_state) {
+  // Replace All rewrites several regions, which one contiguous AppliedEdit cannot
+  // describe; the previous edit's value left in place was fed to every marker
+  // consumer (diagnostics, breakpoints, the find scope) a second time. Empty, they
+  // take their resync fallback, as after the other multi-region edits.
+  ClearLastAppliedEdit();
   document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
                                     after_changed_lines);
   document_->dirty = true;
@@ -608,6 +613,9 @@ bool TextViewport::SurroundRangeBoundaries(const SelectionRange& norm,
     }
   }
 
+  // Two insertions (the opening and the closing text): no one AppliedEdit; see
+  // CommitLineRangeEdit.
+  ClearLastAppliedEdit();
   document_->lines.ReplaceLineRange(first, span, after_lines);
   document_->dirty = true;
   document_->undo_history.ClearRedo();

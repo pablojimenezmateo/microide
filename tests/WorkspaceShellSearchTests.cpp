@@ -2,6 +2,7 @@
 #include "TestSupportSdl.h"
 
 #include "platform/FileIndexWatcher.h"
+#include "workspace/BufferFindScope.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
@@ -1006,6 +1007,150 @@ void TestWorkspaceShellBufferFindReplaceAllHonoursOptions() {
          "replace-all should change only what the options matched");
 }
 
+// Find in Selection (Alt+L, VS Code's fourth toggle): the matches, the n-of-m and
+// Replace All are limited to the selection the toggle was turned on over, and
+// that scope follows edits -- a Replace All inside it changes its end, a line
+// typed above it moves it down.
+void TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "scope.txt";
+  WriteFile(source, "cat 0\ncat cat 1\ncat 2\ncat 3\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.JumpCursorTo(1, 0);
+  viewport.JumpCursorTo(2, 5, /*extend_selection=*/true);  // lines 1-2
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 5, "unscoped, all five cats match");
+  // Typing the query selected its current match; Alt+L still scopes to the
+  // selection the widget opened over, not to the widget's own selection.
+  Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_ALT), "Alt+L should toggle Find in Selection");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "in the selection, only the three cats of lines 1-2 match");
+
+  // Typing onto the query takes the refine fast path; the scope must hold there.
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat ");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "a refined query keeps to the scope");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
+
+  // A line typed above the scope moves it down with its text.
+  viewport.JumpCursorTo(0, 0);
+  viewport.InsertText("new\n");
+  WorkspaceShellTestAccess::RefreshBufferSearchIfStale(shell);
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "the scope follows its text down past an inserted line");
+
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "dog dog");
+  WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
+  Expect(ActiveEditorDocText(shell) == "new\ncat 0\ndog dog dog dog 1\ndog dog 2\ncat 3\n",
+         "Replace All in the selection changes only the cats inside it: " + ActiveEditorDocText(shell));
+  // The replacement grew the scope's text; its end moved with it, so a second
+  // pass over the same scope finds every dog it wrote.
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "dog");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 6,
+         "the scope's end follows a Replace All inside it");
+
+  // Off again: the whole file.
+  Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_ALT), "Alt+L should toggle Find in Selection off");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "cat");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "with the toggle off the cats outside the old scope match again");
+}
+
+// The Find in Selection scope is carried through each edit the way diagnostics
+// are: an edit before it moves it, one inside it moves its end, one across its
+// start pulls the start onto the inserted text, and an edit that does not
+// describe itself (multi-range) keeps the end where the document's tail says.
+void TestBufferFindScopeFollowsEdits() {
+  using microide::workspace::BufferSearchState;
+  editor::TextViewport viewport;
+  viewport.LoadContent("zero\none two\nthree\nfour\n", "/tmp/find-scope-fixture.txt");
+  viewport.JumpCursorTo(1, 4);
+  viewport.JumpCursorTo(2, 5, /*extend_selection=*/true);  // "two\nthree"
+  BufferSearchState::Scope scope = microide::workspace::FindScopeAt(viewport);
+  const auto expect_range = [&](std::size_t sl, std::size_t sc, std::size_t el, std::size_t ec,
+                                const char* what) {
+    Expect(scope.range == editor::SelectionRange{{sl, sc}, {el, ec}},
+           std::string(what) + ": got " + std::to_string(scope.range.start.line) + ":" +
+               std::to_string(scope.range.start.column) + "-" + std::to_string(scope.range.end.line) + ":" +
+               std::to_string(scope.range.end.column));
+  };
+  expect_range(1, 4, 2, 5, "the selection is the scope");
+
+  Expect(viewport.ReplaceRange({{0, 0}, {0, 0}}, "new\n"), "insert above");
+  Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
+  expect_range(2, 4, 3, 5, "a line inserted above moves the scope down");
+
+  Expect(viewport.ReplaceRange({{3, 0}, {3, 5}}, "3"), "edit inside, at the end line");
+  Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
+  expect_range(2, 4, 3, 1, "an edit ending at the scope's end keeps the end after the inserted text");
+
+  Expect(viewport.ReplaceRange({{2, 0}, {2, 6}}, "X"), "edit across the start");
+  Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
+  expect_range(2, 1, 3, 1, "an edit across the start pulls it onto the inserted text's end");
+  Expect(microide::workspace::FollowFindScope(scope, viewport), "a second follow at the same revision");
+  expect_range(2, 1, 3, 1, "following twice for one edit does not shift twice");
+
+  // A multi-range edit inside the scope (Replace All) leaves no single edit.
+  const std::optional<std::size_t> replaced =
+      viewport.ReplaceAllRanges({{{2, 1}, {2, 2}}, {{3, 0}, {3, 1}}}, "long");
+  Expect(replaced == std::optional<std::size_t>{2}, "two ranges replaced");
+  Expect(!viewport.last_applied_edit().has_value(),
+         "a multi-range edit leaves no single edit behind (it once left the previous one)");
+  Expect(microide::workspace::FollowFindScope(scope, viewport), "same document");
+  expect_range(2, 1, 3, 4, "the end follows the document's tail through a multi-range edit");
+
+  editor::TextViewport other;
+  other.LoadContent("other\n", "/tmp/find-scope-other.txt");
+  Expect(!microide::workspace::FollowFindScope(scope, other), "another document drops the scope");
+}
+
+// The regex Replace All in a scope expands each match against the whole buffer
+// (capture groups work) and touches nothing outside the scope.
+void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "scope.txt";
+  WriteFile(source, "a1 a2\na3 a4\na5\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  WorkspaceShellTestAccess::SetBufferSearchRegexAndRefresh(shell, true);
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "a(\\d)");
+  viewport.JumpCursorTo(0, 3);
+  viewport.JumpCursorTo(1, 2, /*extend_selection=*/true);  // "a2\na3"
+  WorkspaceShellTestAccess::ToggleBufferSearchOption(shell, microide::workspace::BufferFindToggle::InSelection);
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2, "a2 and a3 are in the selection");
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "<$1>");
+  WorkspaceShellTestAccess::ReplaceAllBufferSearchMatches(shell);
+  Expect(ActiveEditorDocText(shell) == "a1 <2>\n<3> a4\na5\n",
+         "a regex Replace All in the selection expands groups inside it only: " + ActiveEditorDocText(shell));
+
+  // With no selection the scope is the caret's line; a fresh open is unscoped.
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape should close the find widget");
+  viewport.JumpCursorTo(2, 0);
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should reopen the find widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "a(\\d)");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "reopening the widget starts unscoped: a1, a4, a5");
+  viewport.JumpCursorTo(2, 0);
+  WorkspaceShellTestAccess::ToggleBufferSearchOption(shell, microide::workspace::BufferFindToggle::InSelection);
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "with no selection the scope is the caret's line (a5)");
+}
+
 // The scope section is collapsed by default (the result list keeps its space) and
 // the "..." button expands it, exactly as VS Code's search view does.
 void TestWorkspaceShellProjectSearchScopeToggleRevealsGlobFields() {
@@ -1678,6 +1823,11 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferFindWholeWordFiltersMatches);
   AddTest(tests, "WorkspaceShell/BufferFindReplaceAllHonoursOptions",
           TestWorkspaceShellBufferFindReplaceAllHonoursOptions);
+  AddTest(tests, "WorkspaceShell/BufferFindInSelectionScopesMatchesAndReplace",
+          TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace);
+  AddTest(tests, "BufferFindScope/FollowsEdits", TestBufferFindScopeFollowsEdits);
+  AddTest(tests, "WorkspaceShell/BufferFindInSelectionRegexReplace",
+          TestWorkspaceShellBufferFindInSelectionRegexReplace);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",
           TestWorkspaceShellProjectSearchSidebarScrollPastSelection);
   AddTest(tests, "WorkspaceShell/ProjectSearchAltChordsToggleOptions",

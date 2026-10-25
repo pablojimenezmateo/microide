@@ -242,8 +242,9 @@ def flow_indentation(app: q.App) -> None:
 
 def flow_find_options(app: q.App) -> None:
     """The find widget's whole-word and regex toggles by Alt+W / Alt+R and by
-    click, Ctrl+H from the find field, a regex replace with a capture group, and
-    the query seeded from the word under the caret."""
+    click, Ctrl+H from the find field, a regex replace with a capture group, the
+    query seeded from the word under the caret, and Find in Selection (Alt+L)
+    limiting the count and Replace All to the selection."""
     open_file(app, "notes/options.txt", "cat catalog cat\nid=12 id=345\nscat\n")
     app.click_text(1, 6)
     app.key("ctrl+f")
@@ -284,7 +285,35 @@ def flow_find_options(app: q.App) -> None:
     app.key("Escape")
     step(app, "close find", 0.2)
 
-    # Find in Selection (VS Code's Alt+L) is not implemented: TD-2026-10-18-358.
+    # Find in Selection (Alt+L): the matches, the count and Replace All keep to
+    # the selection the toggle was turned on over, shaded in the editor.
+    app.click_text(1, 1)
+    app.click_text(2, 9, modifiers=("shift",))  # lines 1-2, through "n345"
+    step(app, "select two lines", 0.2)
+    app.key("ctrl+h")
+    step(app, "ctrl+h over a selection", 0.3)
+    app.click_named("field:find/search")
+    app.key("ctrl+a")
+    app.type("n")
+    step(app, "query n", 0.3)
+    unscoped = app.ui()["overlay"]["count"]
+    app.key("alt+l")
+    step(app, "alt+l", 0.3)
+    app.expect(app.element("button:find/in-selection").get("active") is True, "Alt+L turns Find in Selection on")
+    app.expect(app.ui()["overlay"]["count"] == 2,
+               f"in the selection only n12 and n345 match, not catalog or scat (all: {unscoped}, "
+               f"scoped: {app.ui()['overlay']['count']})")
+    app.click_named("field:find/replace")
+    app.key("ctrl+a")
+    app.type("id=")
+    app.click_named("button:find/replace-all")
+    step(app, "replace all in the selection", 0.3)
+    expect_text(app, "cat catalog cat\nid=12 id=345\nscat\n", "Replace All keeps to the selection")
+    app.click_named("button:find/in-selection")
+    step(app, "click find in selection off", 0.3)
+    app.expect(app.element("button:find/in-selection").get("active") is False, "a click turns it off")
+    app.key("Escape")
+    step(app, "close find", 0.2)
     dismiss(app)
 
 

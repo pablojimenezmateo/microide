@@ -47,6 +47,10 @@ std::optional<std::size_t> ReplaceRegexMatchesInText(std::string& content,
 struct BufferSearchOptions {
   bool case_sensitive = false;
   bool whole_word = false;
+  // Find in Selection: only matches wholly inside this range, and only its lines
+  // are read -- so the retained-match cap counts the scope's matches, never the
+  // rest of the file's.
+  std::optional<editor::SelectionRange> scope;
 
   friend bool operator==(const BufferSearchOptions&, const BufferSearchOptions&) = default;
 };

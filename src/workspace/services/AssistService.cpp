@@ -28,9 +28,7 @@ namespace microide::workspace {
 
 namespace {
 
-bool PositionBefore(const editor::TextPosition& a, const editor::TextPosition& b) {
-  return a.line < b.line || (a.line == b.line && a.column < b.column);
-}
+using editor::PositionBefore;
 
 // Where `position` (at or after `edit`'s end, in the pre-edit document) sits
 // after `edit` replaced its range with `new_text`.

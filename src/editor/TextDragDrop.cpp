@@ -6,10 +6,6 @@
 
 namespace microide::editor::text_drag_drop {
 
-bool PositionBefore(const TextPosition& lhs, const TextPosition& rhs) {
-  return lhs.line != rhs.line ? lhs.line < rhs.line : lhs.column < rhs.column;
-}
-
 bool PositionWithin(const SelectionRange& range, const TextPosition& position) {
   const SelectionRange normalized = TextViewport::NormalizeRange(range);
   return !PositionBefore(position, normalized.start) && !PositionBefore(normalized.end, position);

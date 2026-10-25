@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -45,15 +46,64 @@ inline bool operator==(const TextPosition& lhs, const TextPosition& rhs) {
   return lhs.line == rhs.line && lhs.column == rhs.column;
 }
 
+inline bool PositionBefore(const TextPosition& lhs, const TextPosition& rhs) {
+  return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
+}
+
 struct SelectionRange {
   TextPosition start;
   TextPosition end;
 };
 
+inline bool operator==(const SelectionRange& lhs, const SelectionRange& rhs) {
+  return lhs.start == rhs.start && lhs.end == rhs.end;
+}
+
+// True when `inner` lies wholly inside `outer` (ends included); both normalized.
+inline bool RangeContains(const SelectionRange& outer, const SelectionRange& inner) {
+  return !PositionBefore(inner.start, outer.start) && !PositionBefore(outer.end, inner.end);
+}
+
 struct AppliedEdit {
   SelectionRange range_before;
   std::string replacement_text;
 };
+
+// Where the text an edit inserted ends: `range_before`'s start advanced over
+// `replacement_text`.
+inline TextPosition AppliedEditInsertedEnd(const AppliedEdit& edit) {
+  const TextPosition start = PositionBefore(edit.range_before.end, edit.range_before.start)
+                                 ? edit.range_before.end
+                                 : edit.range_before.start;
+  const std::string& text = edit.replacement_text;
+  const std::size_t last_break = text.find_last_of('\n');
+  if (last_break == std::string::npos) {
+    return TextPosition{start.line, start.column + text.size()};
+  }
+  const auto breaks = static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n'));
+  return TextPosition{start.line + breaks, text.size() - (last_break + 1)};
+}
+
+// A position carried through one applied edit. At or before the replaced span's
+// start it stays; at or after its end it moves with the text after it; strictly
+// inside the replaced text it lands on the inserted text's end, since what it
+// pointed into is gone.
+inline TextPosition MapPositionThroughEdit(const TextPosition& position, const AppliedEdit& edit) {
+  const bool reversed = PositionBefore(edit.range_before.end, edit.range_before.start);
+  const TextPosition before_start = reversed ? edit.range_before.end : edit.range_before.start;
+  const TextPosition before_end = reversed ? edit.range_before.start : edit.range_before.end;
+  const TextPosition new_end = AppliedEditInsertedEnd(edit);
+  if (!PositionBefore(before_start, position)) {
+    return position;
+  }
+  if (PositionBefore(position, before_end)) {
+    return new_end;
+  }
+  if (position.line == before_end.line) {
+    return TextPosition{new_end.line, new_end.column + (position.column - before_end.column)};
+  }
+  return TextPosition{position.line - before_end.line + new_end.line, position.column};
+}
 
 // Whole-line-trimmed span of the last applied edit, in the same coordinate model
 // as WorkspaceShell::ComputeChangedLineSpan (common leading/trailing IDENTICAL

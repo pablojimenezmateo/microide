@@ -104,14 +104,16 @@ bool KeyInputCoordinator::HandleSharedBufferSearchKey(const SDL_KeyboardEvent& e
     operations_.request_focused_editor_redraw();
     return true;
   }
-  // Alt+C / Alt+W / Alt+R toggle match case, whole word and regex — VSCode's
-  // find-widget chords, one per button, in button order. A plain letter still
-  // types into the focused field via the default text-input path.
+  // Alt+C / Alt+W / Alt+R / Alt+L toggle match case, whole word, regex and Find
+  // in Selection — VSCode's find-widget chords, one per button, in button order.
+  // A plain letter still types into the focused field via the default text-input
+  // path.
   if ((modifiers & SDL_KMOD_ALT) != 0) {
     const std::optional<BufferFindToggle> toggle =
         event.key == SDLK_C   ? std::optional(BufferFindToggle::MatchCase)
         : event.key == SDLK_W ? std::optional(BufferFindToggle::WholeWord)
         : event.key == SDLK_R ? std::optional(BufferFindToggle::Regex)
+        : event.key == SDLK_L ? std::optional(BufferFindToggle::InSelection)
                               : std::nullopt;
     if (toggle.has_value()) {
       operations_.toggle_buffer_search_option(*toggle);

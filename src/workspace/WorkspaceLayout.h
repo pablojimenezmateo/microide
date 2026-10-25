@@ -679,16 +679,17 @@ SDL_FRect ComputeSettingsOverlaySurfaceRect(const SDL_FRect& editor_area, const 
 // zero-sized when replace_mode is false.
 // Upper bound on the mode toggles a find widget can carry. Fixed-size so the
 // layout stays a trivially copyable value.
-inline constexpr std::size_t kFindWidgetMaxToggles = 3;
+inline constexpr std::size_t kFindWidgetMaxToggles = 4;
 
 // The in-file find widget's toggles, in paint / hit-test / tooltip order. The
 // first two match the terminal find bar's `Aa` and `ab` exactly, so the two find
-// surfaces read the same left to right.
+// surfaces read the same left to right; Find in Selection last, as in VS Code.
 enum class BufferFindToggle : std::size_t {
   MatchCase = 0,
   WholeWord = 1,
   Regex = 2,
-  Count = 3,
+  InSelection = 3,
+  Count = 4,
 };
 inline constexpr std::size_t kBufferFindToggleCount =
     static_cast<std::size_t>(BufferFindToggle::Count);

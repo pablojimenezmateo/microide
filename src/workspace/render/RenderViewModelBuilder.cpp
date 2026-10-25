@@ -847,14 +847,16 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     fw_vm.search_focused = current_surface == TextInputSurface::BufferSearch ||
                            current_surface == TextInputSurface::BufferReplaceSearch;
     fw_vm.replace_focused = current_surface == TextInputSurface::BufferReplaceReplace;
-    // Aa / ab / .*, the same order and the same first two glyphs as the terminal
-    // find bar three pixels below it.
+    // Aa / ab / .* / Find in Selection, the same order and the same first two
+    // glyphs as the terminal find bar three pixels below it.
     fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::MatchCase)] =
         FindWidgetToggleViewModel{.label = "Aa", .active = buffer_search.match_case};
     fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::WholeWord)] =
         FindWidgetToggleViewModel{.label = "ab", .active = buffer_search.whole_word};
     fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::Regex)] =
         FindWidgetToggleViewModel{.label = ".*", .active = buffer_search.regex};
+    fw_vm.toggles[static_cast<std::size_t>(BufferFindToggle::InSelection)] =
+        FindWidgetToggleViewModel{.label = "\u2261", .active = buffer_search.scope.has_value()};
     fw_vm.has_matches = !buffer_search.matches.empty();
     fw_vm.has_query = !buffer_search.query.text().empty();
 

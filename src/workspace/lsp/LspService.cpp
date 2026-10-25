@@ -44,33 +44,6 @@ constexpr Uint64 kLspRequestTimeoutMs =
 static_assert(kLspRequestTimeoutMs >= 30000,
               "the LSP busy-indicator backstop must not expire before the transport deadline");
 
-// Map a document position through a single replacement of [before_start, before_end)
-// whose inserted text ends at `new_end`. Positions at or before the edit start are
-// unchanged; positions at or after the edit end shift onto the replacement's new
-// geometry; positions strictly inside the replaced span collapse to the new end (the
-// server republishes an authoritative range shortly after).
-editor::TextPosition AdjustPositionForReplace(editor::TextPosition p,
-                                              editor::TextPosition before_start,
-                                              editor::TextPosition before_end,
-                                              editor::TextPosition new_end) {
-  if (p.line < before_start.line ||
-      (p.line == before_start.line && p.column <= before_start.column)) {
-    return p;
-  }
-  if (p.line > before_end.line ||
-      (p.line == before_end.line && p.column >= before_end.column)) {
-    if (p.line == before_end.line) {
-      return editor::TextPosition{new_end.line, new_end.column + (p.column - before_end.column)};
-    }
-    const std::ptrdiff_t line_delta =
-        static_cast<std::ptrdiff_t>(new_end.line) - static_cast<std::ptrdiff_t>(before_end.line);
-    const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(p.line) + line_delta;
-    return editor::TextPosition{static_cast<std::size_t>(std::max<std::ptrdiff_t>(0, shifted)),
-                                p.column};
-  }
-  return new_end;
-}
-
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
   // TD-2026-07-17-095: stream directly from the TextBuffer via a zero-copy LineSpan
   // rather than materializing a whole-document vector of strings with Snapshot().
@@ -1240,27 +1213,16 @@ void LspService::ShiftLspDiagnosticsForAppliedEdit(const editor::TextViewport& v
   }
   const editor::SelectionRange before =
       editor::TextViewport::NormalizeRange(applied->range_before);
-  const editor::TextPosition before_start = before.start;
-  const editor::TextPosition before_end = before.end;
-  const std::string& replacement = applied->replacement_text;
-  const std::size_t newline_count =
-      static_cast<std::size_t>(std::count(replacement.begin(), replacement.end(), '\n'));
-  const std::size_t last_line_length =
-      newline_count == 0 ? replacement.size()
-                         : replacement.size() - (replacement.find_last_of('\n') + 1);
-  const editor::TextPosition new_end =
-      newline_count == 0
-          ? editor::TextPosition{before_start.line, before_start.column + last_line_length}
-          : editor::TextPosition{before_start.line + newline_count, last_line_length};
-  if (before_start == before_end && new_end == before_start) {
+  if (before.start == before.end && applied->replacement_text.empty()) {
     return;  // Empty edit -> nothing moved.
   }
-  TransformLspDiagnostics(
-      viewport, [before_start, before_end, new_end](editor::SelectionRange range) {
-        range.start = AdjustPositionForReplace(range.start, before_start, before_end, new_end);
-        range.end = AdjustPositionForReplace(range.end, before_start, before_end, new_end);
-        return range;
-      });
+  // Positions strictly inside the replaced span collapse to the inserted text's
+  // end; the server republishes an authoritative range shortly after.
+  TransformLspDiagnostics(viewport, [&edit = *applied](editor::SelectionRange range) {
+    range.start = editor::MapPositionThroughEdit(range.start, edit);
+    range.end = editor::MapPositionThroughEdit(range.end, edit);
+    return range;
+  });
 }
 
 void LspService::ShiftLspDiagnosticsForBulkChange(const editor::TextViewport& viewport,

@@ -221,13 +221,25 @@ std::vector<editor::SelectionRange> FindRegexSearchMatches(const editor::TextBuf
     return editor::TextPosition{line, offset - line_starts[line]};
   };
 
-  std::size_t search_from = 0;
+  // A scope starts the scan at its start and ends it at its end; the pattern
+  // still sees the text around it (lookarounds, `^`).
+  const auto to_offset = [&](const editor::TextPosition& position) -> std::size_t {
+    if (position.line >= line_count) {
+      return content.size();
+    }
+    return std::min(line_starts[position.line] + position.column, content.size());
+  };
+  const std::size_t scope_end = options.scope.has_value() ? to_offset(options.scope->end) : content.size();
+  std::size_t search_from = options.scope.has_value() ? to_offset(options.scope->start) : 0;
   std::size_t match_start = 0;
   std::size_t match_end = 0;
   const util::RegexSubject subject =
       util::IsAllAscii(content) ? util::RegexSubject::Ascii : util::RegexSubject::Unknown;
   while (util::FindNextRegexMatchInLine(pattern, content, &search_from, &match_data, &match_start,
                                         &match_end, /*cancel=*/nullptr, subject)) {
+    if (match_end > scope_end) {
+      break;  // matches come in order: none later fits either
+    }
     if (matches.size() >= kMaxBufferSearchMatches) {
       if (truncated != nullptr) {
         *truncated = true;
@@ -405,16 +417,18 @@ bool AppendLineLiteralMatches(std::size_t line_index,
       offset = haystack.find(needle, offset + 1);
       continue;
     }
+    const editor::SelectionRange match{{line_index, offset}, {line_index, offset + needle.size()}};
+    if (options.scope.has_value() && !editor::RangeContains(*options.scope, match)) {
+      offset = haystack.find(needle, offset + 1);
+      continue;
+    }
     // TD-2026-07-17A-029: cap the retained match set so a one-character query in a
     // huge minified buffer cannot allocate millions of ranges. Navigation re-scans
     // via FindNextLiteralMatchAfterSeedWrapOnce, so it stays correct past the cap.
     if (matches.size() >= kMaxBufferSearchMatches) {
       return false;
     }
-    matches.push_back(editor::SelectionRange{
-        .start = editor::TextPosition{line_index, offset},
-        .end = editor::TextPosition{line_index, offset + needle.size()},
-    });
+    matches.push_back(match);
     // Advance past the whole match so self-overlapping needles (e.g. "aa" in
     // "aaaa") yield non-overlapping ranges, matching find-next/replace which
     // advance by the needle length (see ReplaceLiteralMatchesInText).
@@ -449,7 +463,11 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
   }
   const std::string_view needle = options.case_sensitive ? query : std::string_view(folded_query);
   std::string folded_line;
-  for (std::size_t line_index = 0; line_index < line_count; ++line_index) {
+  // A scope's lines only; a scope past the end reads nothing.
+  const std::size_t first_line = options.scope.has_value() ? options.scope->start.line : 0;
+  const std::size_t end_line =
+      options.scope.has_value() ? std::min(line_count, options.scope->end.line + 1) : line_count;
+  for (std::size_t line_index = first_line; line_index < end_line; ++line_index) {
     const std::string_view raw_line = line_at(line_index);
     std::string_view haystack = raw_line;
     if (!options.case_sensitive) {
@@ -651,16 +669,19 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
       if (slice != needle) {
         continue;
       }
+      // The longer match can run past the scope's end where its prefix did not;
+      // the cold scan drops it the same way, without keeping it for de-overlap.
+      const editor::SelectionRange longer{{line, column}, {line, column + needle.size()}};
+      if (options.scope.has_value() && !editor::RangeContains(*options.scope, longer)) {
+        continue;
+      }
       if (matches.size() >= kMaxBufferSearchMatches) {
         if (truncated != nullptr) {
           *truncated = true;
         }
         return matches;
       }
-      matches.push_back(editor::SelectionRange{
-          .start = editor::TextPosition{line, column},
-          .end = editor::TextPosition{line, column + needle.size()},
-      });
+      matches.push_back(longer);
       kept_line = line;
       kept_end = column + needle.size();
     }
