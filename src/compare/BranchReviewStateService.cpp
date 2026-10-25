@@ -94,11 +94,19 @@ bool AnyReviewedHunkContentMoved(const BranchReviewTargetState& target_state,
   return false;
 }
 
-// `identity` with its path in the form the store keys hunks by.
+// `identity` with its path in the form the store keys hunks by. Built field by
+// field rather than copied and patched: a copy would allocate the original path
+// only to overwrite it, once per hunk the review touches.
 BranchReviewHunkIdentity WithNormalizedPath(const std::filesystem::path& repository_root,
-                                            BranchReviewHunkIdentity identity) {
-  identity.path = NormalizeReviewPath(repository_root, identity.path);
-  return identity;
+                                            const BranchReviewHunkIdentity& identity) {
+  return BranchReviewHunkIdentity{
+      .path = NormalizeReviewPath(repository_root, identity.path),
+      .old_start = identity.old_start,
+      .old_count = identity.old_count,
+      .new_start = identity.new_start,
+      .new_count = identity.new_count,
+      .content_hash = identity.content_hash,
+  };
 }
 
 }  // namespace
