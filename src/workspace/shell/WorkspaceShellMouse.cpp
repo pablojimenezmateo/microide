@@ -709,7 +709,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   // The tree drag's release: the drop, or the click a press on a row deferred
   // (the row opens). Ctrl copies what a folder drop would move, as in VS Code.
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.path_drag.armed) {
-    (void)MakeSidebarMouseCoordinator().FinishPathDrag((SDL_GetModState() & SDL_KMOD_CTRL) != 0);
+    (void)MakeSidebarMouseCoordinator().FinishPathDrag((context_.interaction_state.key_modifiers & SDL_KMOD_CTRL) != 0);
     EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
     return true;
   }
@@ -767,7 +767,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   // move or the click it deferred (TD-2026-08-13-204). Ctrl at release copies
   // instead of moving, as in VS Code.
   const bool finished_text_drag = MakeEditorMouseCoordinator().FinishTextDrag(
-      (SDL_GetModState() & SDL_KMOD_CTRL) != 0);
+      (context_.interaction_state.key_modifiers & SDL_KMOD_CTRL) != 0);
   context_.interaction_state.mouse_selecting = false;
   context_.interaction_state.editor_box_selecting = false;
   selection_autoscroll::Disarm(context_.interaction_state);

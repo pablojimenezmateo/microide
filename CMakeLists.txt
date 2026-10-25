@@ -1325,6 +1325,7 @@ add_executable(microide_tests
   tests/ArchitectureInvariantsTests.cpp
   tests/architecture/ArchitectureFileScanner.cpp
   tests/architecture/ArchitectureRuleFixtures.cpp
+  tests/architecture/InputHandlerRuleFixtures.cpp
   tests/architecture/ArchitectureRuleHelpers.cpp
   tests/architecture/WorkspaceArchitectureRules.cpp
   tests/architecture/WorkspaceShellArchitectureRules.cpp
@@ -1458,6 +1459,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     tests/ArchitectureInvariantsTests.cpp
     tests/architecture/ArchitectureFileScanner.cpp
     tests/architecture/ArchitectureRuleFixtures.cpp
+    tests/architecture/InputHandlerRuleFixtures.cpp
     tests/architecture/ArchitectureRuleHelpers.cpp
     tests/architecture/WorkspaceArchitectureRules.cpp
     tests/architecture/WorkspaceShellArchitectureRules.cpp

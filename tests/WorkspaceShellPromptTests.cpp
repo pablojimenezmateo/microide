@@ -1533,9 +1533,10 @@ void TestWorkspaceShellPromptFieldSelectsByDragAndShiftClick() {
   shift_click.button.x = right;
   shift_click.button.y = y;
   shift_click.button.clicks = 1;
-  SDL_SetModState(SDL_KMOD_SHIFT);
-  shell.HandleEvent(shift_click);
-  SDL_SetModState(SDL_KMOD_NONE);
+  {
+    const ScopedHeldModifiers shift(shell, SDL_KMOD_LSHIFT);
+    shell.HandleEvent(shift_click);
+  }
   SendMouseUp(shell, right, y, SDL_BUTTON_LEFT);
   Expect(input.SelectedText() == "drag me",
          "Shift+click extends the selection from the caret (" + input.SelectedText() + ")");

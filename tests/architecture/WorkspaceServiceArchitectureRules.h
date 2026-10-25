@@ -24,6 +24,7 @@ RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_ro
 RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(const std::filesystem::path& repo_root);
 RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_root);
 RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_root);
+RuleResult CheckPointerHandlersReadQueuedModifiers(const std::filesystem::path& repo_root);
 RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::path& repo_root);
 
 }  // namespace microide::tests::architecture

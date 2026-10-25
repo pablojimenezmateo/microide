@@ -190,7 +190,7 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         *compare_tab, static_cast<std::size_t>(visual_row),
         TextGridVisualColumnAtX(right_interaction, event.button.x));
     compare_tab->right_viewport.MoveCursorToVisualColumn(
-        hit.line, hit.visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+        hit.line, hit.visual_column, (interaction_state_.key_modifiers & SDL_KMOD_SHIFT) != 0);
     operations_.sync_compare_selection_from_viewport(*compare_tab, false);
     operations_.reset_caret_blink();
     if (event.button.button == SDL_BUTTON_MIDDLE && compare_tab->right_editable) {

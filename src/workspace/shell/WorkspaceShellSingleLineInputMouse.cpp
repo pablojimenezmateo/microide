@@ -338,7 +338,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
   const std::size_t byte =
       HitTestSingleLineByteOffset(*hit->state, hit->prefix, hit->available_width, relative_x);
 
-  const SDL_Keymod modifiers = SDL_GetModState();
+  const SDL_Keymod modifiers = context_.interaction_state.key_modifiers;
   const bool shift = (modifiers & SDL_KMOD_SHIFT) != 0;
 
   if (event.button.clicks >= 3) {

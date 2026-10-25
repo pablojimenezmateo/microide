@@ -240,7 +240,7 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     const std::size_t row = ClampTextGridLineAtY(interaction.result.text, event.button.y);
     const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, event.button.x);
     MoveMergeResultCursorToHit(merge_tab->result_viewport, row, visual_column,
-                               (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+                               (interaction_state_.key_modifiers & SDL_KMOD_SHIFT) != 0);
     if (const auto conflict_index =
             operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, row);
         conflict_index.has_value()) {

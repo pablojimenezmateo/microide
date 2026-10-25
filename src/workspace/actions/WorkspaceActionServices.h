@@ -266,7 +266,7 @@ class WorkspaceActionContext {
     // the keyboard would: shortcuts, the focused surface, the terminal's encoder.
     std::function<void(SDL_Keycode, SDL_Keymod)> press_key;
     // A mouse event (layout coordinates) delivered the same way, with `modifiers`
-    // held for it: what the shell reads from SDL_GetModState for a click.
+    // held for it: what the shell reads from InteractionState::key_modifiers for a click.
     std::function<void(const SDL_Event&, SDL_Keymod)> inject_pointer_event;
     // Show Hover: pin the editor hover to the caret. False when there is no
     // editor or the caret is off screen.

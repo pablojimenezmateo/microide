@@ -211,6 +211,13 @@ struct InteractionState {
   };
   CaretHover caret_hover;
   bool window_has_input_focus = true;
+  // The modifiers held as of the event being dispatched, in queue order: each key
+  // event's own `mod`, resynced from SDL when the window gains focus. A pointer
+  // handler reads this, never SDL_GetModState(): SDL updates its live state when
+  // it pumps, so a Ctrl released just after a drop read as already up at the
+  // drop's mouse-up (QA tree-drag on the ASan build). SDL3 pointer events carry
+  // no modifiers of their own.
+  SDL_Keymod key_modifiers = SDL_KMOD_NONE;
   bool mouse_selecting = false;
   DragTarget drag_target = DragTarget::None;
   float drag_scrollbar_offset = 0.0f;

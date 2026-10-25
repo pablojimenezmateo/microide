@@ -378,7 +378,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       ResolveEditorPointerHit(state_, *viewport, metrics, text_renderer_, event.button.x,
                               event.button.y, operations_.get_setting_value);
 
-  const SDL_Keymod modifiers = SDL_GetModState();
+  const SDL_Keymod modifiers = interaction_state_.key_modifiers;
   const bool alt_left_click =
       event.button.button == SDL_BUTTON_LEFT && (modifiers & SDL_KMOD_ALT) != 0;
   const editor::TextPosition anchor{viewport->cursor_line(), viewport->cursor_column()};

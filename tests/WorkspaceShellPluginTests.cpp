@@ -2528,11 +2528,11 @@ void TestWorkspaceShellCtrlClickRepaintsTheCaretBeforeTheDefinition() {
           }
         }
         Expect(y > 0.0f, "line 4 should be on screen");
-        SDL_SetModState(SDL_KMOD_CTRL);
-        const auto redraw = DispatchEvents(shell, {MouseMotionEvent(x, y),
+        const auto redraw = DispatchEvents(shell, {KeyDownEvent(SDLK_LCTRL, SDL_KMOD_LCTRL),
+                                                   MouseMotionEvent(x, y),
                                                    MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, x, y),
-                                                   MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y)});
-        SDL_SetModState(SDL_KMOD_NONE);
+                                                   MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, x, y),
+                                                   KeyUpEvent(SDLK_LCTRL)});
         Expect(editor.cursor_line() == 3, "Ctrl+click should place the caret on line 4");
         const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin);
         Expect(diff.identical(), "Ctrl+click should repaint the caret before the definition answers; " +
@@ -7376,7 +7376,7 @@ return ide.plugin({
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GoToDefinition),
          "Go to Definition is available with a plugin-only provider");
   {
-    ScopedSdlModState ctrl_mods(SDL_KMOD_CTRL);
+    const ScopedHeldModifiers ctrl_mods(shell, SDL_KMOD_CTRL);
     Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT), "Ctrl+click is handled by the editor");
   }
   const bool navigated = WaitUntil(

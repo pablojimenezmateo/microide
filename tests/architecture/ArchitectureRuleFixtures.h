@@ -52,6 +52,7 @@ void RunRenderTuTextCompositionRuleFixtures();
 // instead, and reports nothing when the target is there.
 void RunPaintedScrollbarRuleFixtures();
 void RunWheelFocusRuleFixtures();
+void RunQueuedModifiersRuleFixtures();
 void RunMissingRuleTargetFixtures();
 // Negative + positive control for CheckEveryPerfCounterHasAProducer.
 void RunPerfCounterProducerRuleFixtures();

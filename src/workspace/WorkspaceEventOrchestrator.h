@@ -26,6 +26,7 @@ class WorkspaceEventDispatcher {
 
   struct State {
     bool& window_has_input_focus;
+    SDL_Keymod& key_modifiers;
   };
 
   struct Operations {

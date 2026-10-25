@@ -456,11 +456,16 @@ void TestWorkspaceShellTreeRowDragAndDrop() {
     (void)SendMouseDown(shell, x, y, SDL_BUTTON_LEFT);
     (void)SendMouseMotion(shell, x + 10.0f, y + 2.0f, SDL_BUTTON_LMASK);
     (void)SendMouseMotion(shell, to_x, to_y, SDL_BUTTON_LMASK);
+    // Ctrl goes down mid-drag as a key event; SDL's live state is never set. The
+    // drop read that live state, which ran ahead of the queue: a Ctrl released
+    // right after the button read as already up (QA tree-drag, ASan build).
     if (ctrl) {
-      SDL_SetModState(SDL_KMOD_LCTRL);
+      (void)shell.HandleEvent(KeyDownEvent(SDLK_LCTRL, SDL_KMOD_LCTRL));
     }
     (void)SendMouseUp(shell, to_x, to_y, SDL_BUTTON_LEFT);
-    SDL_SetModState(SDL_KMOD_NONE);
+    if (ctrl) {
+      (void)shell.HandleEvent(KeyUpEvent(SDLK_LCTRL));
+    }
   };
   const auto pane = [&]() {
     const auto rects = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, WorkspaceShellTestAccess::CurrentLayout(shell));
@@ -5977,7 +5982,7 @@ void TestWorkspaceShellAltClickAddsSecondaryCaret() {
   const float y = metrics.first_line_y + metrics.line_height * 0.5f;
   const float click_x = metrics.text_x + char_width * 5.0f;
 
-  ScopedSdlModState alt_mods(SDL_KMOD_ALT);
+  const ScopedHeldModifiers alt_mods(shell, SDL_KMOD_ALT);
   const bool handled = SendMouseDown(shell, click_x, y, SDL_BUTTON_LEFT);
 
   Expect(handled, "Alt+left click inside the editor should be handled");
@@ -6010,7 +6015,7 @@ void TestWorkspaceShellAltClickKeepsTheExistingSelection() {
   const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
   const float y = metrics.first_line_y + metrics.line_height * 0.5f;
 
-  ScopedSdlModState alt_mods(SDL_KMOD_ALT);
+  const ScopedHeldModifiers alt_mods(shell, SDL_KMOD_ALT);
   Expect(SendMouseDown(shell, metrics.text_x + char_width * 8.0f, y, SDL_BUTTON_LEFT),
          "Alt+left click inside the editor should be handled");
   Expect(viewport.cursor_column() == 8 && !viewport.selection_range().has_value(),
@@ -6060,7 +6065,7 @@ void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
   Expect(preflight_hit.line == 2 && preflight_hit.column == 0,
          "Shift+Alt column caret fixture should target column 0 on line 2");
 
-  ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  const ScopedHeldModifiers shift_alt_mods(shell, static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
   const bool handled = SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT);
 
   Expect(handled, "Shift+Alt+left click inside the editor should be handled");
@@ -6108,7 +6113,7 @@ void TestWorkspaceShellShiftAltClickOffColumnMakesBoxSelection() {
   const float y = metrics.first_line_y + metrics.line_height * 1.5f;
   const float click_x = metrics.text_x + char_width * 5.0f;
 
-  ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  const ScopedHeldModifiers shift_alt_mods(shell, static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
   // Shift+Alt off-column is a rectangular (column/box) selection from the anchor
   // corner (0,0) to the clicked corner (1,5): every line in the span selects
   // columns 0..5 (VSCode behavior), not the old single-caret Alt+click fallback.
@@ -6162,7 +6167,7 @@ void TestWorkspaceShellShiftAltDragUpdatesBoxSelection() {
   viewport.MoveCursorTo(0, 2);
   const float press_x = metrics.text_x + char_width * 2.0f;
   const float press_y = metrics.first_line_y + metrics.line_height * 0.5f;
-  ScopedSdlModState shift_alt_mods(static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
+  const ScopedHeldModifiers shift_alt_mods(shell, static_cast<SDL_Keymod>(SDL_KMOD_ALT | SDL_KMOD_SHIFT));
   Expect(SendMouseDown(shell, press_x, press_y, SDL_BUTTON_LEFT),
          "Shift+Alt press should be handled");
 

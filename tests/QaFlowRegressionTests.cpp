@@ -2620,9 +2620,8 @@ void TestShiftWheelScrollsTheEditorSideways() {
   const auto& pane = ui["editors"].AsArray()[0];
   const float x = static_cast<float>(pane["textX"].AsDouble() + 200.0);
   const float y = static_cast<float>(pane["rows"].AsArray()[0]["y"].AsDouble() + 5.0);
-  SDL_SetModState(SDL_KMOD_LSHIFT);
-  (void)DispatchEvents(fixture.shell, {MouseMotionEvent(x, y), MouseWheelEvent(x, y, -3.0f)});
-  SDL_SetModState(SDL_KMOD_NONE);
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_LSHIFT, SDL_KMOD_LSHIFT), MouseMotionEvent(x, y),
+                                       MouseWheelEvent(x, y, -3.0f), KeyUpEvent(SDLK_LSHIFT)});
   Expect(TestAccess::ActiveEditor(fixture.shell).horizontal_scroll() > 0,
          "Shift+wheel down should scroll the line to the right, horizontal scroll is " +
              std::to_string(TestAccess::ActiveEditor(fixture.shell).horizontal_scroll()));

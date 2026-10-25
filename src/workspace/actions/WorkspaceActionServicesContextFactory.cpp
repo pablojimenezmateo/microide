@@ -1146,12 +1146,14 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 }
               },
           .inject_pointer_event =
-              [dispatch_injected](const SDL_Event& event, SDL_Keymod modifiers) {
-                // Click handlers read the held modifiers from SDL, not the event.
-                const SDL_Keymod previous = SDL_GetModState();
-                SDL_SetModState(modifiers);
+              [this, dispatch_injected](const SDL_Event& event, SDL_Keymod modifiers) {
+                // Pointer handlers read the held modifiers from the interaction
+                // state (SDL3 pointer events carry none), so hold them there.
+                SDL_Keymod& held = context_.interaction_state.key_modifiers;
+                const SDL_Keymod previous = held;
+                held = modifiers;
                 dispatch_injected(event);
-                SDL_SetModState(previous);
+                held = previous;
               },
           .show_hover_at_caret =
               [this]() {

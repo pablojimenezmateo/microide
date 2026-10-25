@@ -206,6 +206,8 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusGained");
       state_.window_has_input_focus = true;
+      // Keys pressed or released while another window had the focus sent us nothing.
+      state_.key_modifiers = SDL_GetModState();
       if (operations_.force_cursor_reassert) {
         operations_.force_cursor_reassert();
       }
@@ -240,9 +242,11 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     case SDL_EVENT_KEY_DOWN:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::KeyDown");
+        state_.key_modifiers = event.key.mod;
         return finish(operations_.handle_key_down(event.key));
       }
     case SDL_EVENT_KEY_UP:
+      state_.key_modifiers = event.key.mod;
       return finish(operations_.handle_key_up && operations_.handle_key_up(event.key));
     default:
       return finish(false);

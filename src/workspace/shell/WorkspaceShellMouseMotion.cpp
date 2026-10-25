@@ -756,7 +756,7 @@ bool WorkspaceShell::HandleMouseWheel(const SDL_Event& event) {
   const int horizontal_ticks =
       ticks.horizontal != 0
           ? ticks.horizontal
-          : ((SDL_GetModState() & SDL_KMOD_SHIFT) != 0 ? vertical_ticks : 0);
+          : ((context_.interaction_state.key_modifiers & SDL_KMOD_SHIFT) != 0 ? vertical_ticks : 0);
   if (vertical_ticks == 0 && horizontal_ticks == 0) {
     return false;
   }

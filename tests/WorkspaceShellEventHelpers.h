@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <iterator>
 #include <span>
 #include <vector>
 
@@ -122,6 +123,45 @@ inline SDL_Event MouseButtonEvent(Uint32 type, float x, float y) {
   event.button.clicks = 1;
   return event;
 }
+
+// Holds `modifiers` the way a user does: their key-downs go through the shell now
+// and their key-ups when this ends. A pointer handler reads the held modifiers
+// from what the key events said, in queue order -- never SDL's live state, which
+// this leaves alone -- so faking them with SDL_SetModState no longer reaches it.
+class ScopedHeldModifiers {
+ public:
+  ScopedHeldModifiers(workspace::WorkspaceShell& shell, SDL_Keymod modifiers)
+      : shell_(shell), modifiers_(modifiers) {
+    SDL_Keymod held = SDL_KMOD_NONE;
+    for (const Key& key : kKeys) {
+      if ((modifiers_ & key.mask) != 0) {
+        held = static_cast<SDL_Keymod>(held | (modifiers_ & key.mask));
+        (void)shell_.HandleEvent(KeyDownEvent(key.key, held));
+      }
+    }
+  }
+  ~ScopedHeldModifiers() {
+    SDL_Keymod held = modifiers_;
+    for (auto key = std::rbegin(kKeys); key != std::rend(kKeys); ++key) {
+      if ((modifiers_ & key->mask) != 0) {
+        held = static_cast<SDL_Keymod>(held & ~key->mask);
+        (void)shell_.HandleEvent(KeyUpEvent(key->key, held));
+      }
+    }
+  }
+  ScopedHeldModifiers(const ScopedHeldModifiers&) = delete;
+  ScopedHeldModifiers& operator=(const ScopedHeldModifiers&) = delete;
+
+ private:
+  struct Key {
+    SDL_Keymod mask;
+    SDL_Keycode key;
+  };
+  static constexpr Key kKeys[] = {
+      {SDL_KMOD_CTRL, SDLK_LCTRL}, {SDL_KMOD_SHIFT, SDLK_LSHIFT}, {SDL_KMOD_ALT, SDLK_LALT}};
+  workspace::WorkspaceShell& shell_;
+  SDL_Keymod modifiers_;
+};
 
 inline workspace::WorkspaceShell::EventResult SendKeyDownResult(workspace::WorkspaceShell& shell,
                                                                 SDL_Keycode key,

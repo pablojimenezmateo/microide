@@ -706,6 +706,41 @@ RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_
   return result;
 }
 
+RuleResult CheckPointerHandlersReadQueuedModifiers(const std::filesystem::path& repo_root) {
+  // SDL updates its live modifier state when it pumps, ahead of the event being
+  // handled: End ran as Ctrl+End under a following Ctrl+Alt+Down, and a Ctrl drop
+  // read Ctrl as released by the key-up queued behind it (TD-2026-10-25-392). A
+  // key event carries its own `mod`; a pointer handler reads
+  // InteractionState::key_modifiers, which the dispatcher keeps in queue order.
+  // The dispatcher's resync on focus gain is the one sanctioned live read.
+  RuleResult result;
+  result.label = "handlers read the modifiers in queue order, not SDL's live state";
+  result.hard_fail = true;
+  const std::regex live_read(R"(\bSDL_GetModState\s*\()");
+  const std::filesystem::path dispatcher = repo_root / "src/workspace/WorkspaceEventOrchestrator.cpp";
+  const std::string dispatcher_text = ReadRuleTarget(result, dispatcher);
+  if (!dispatcher_text.empty() && !CodeMaskedPatternAppears(dispatcher_text, live_read)) {
+    result.violations.push_back(Violation{
+        .path = dispatcher,
+        .line = 1,
+        .message = "rule target moved: the dispatcher no longer resyncs the held modifiers on "
+                   "focus gain; re-anchor CheckPointerHandlersReadQueuedModifiers",
+    });
+  }
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    const std::filesystem::path extension = entry.path().extension();
+    if (!entry.is_regular_file() || entry.path() == dispatcher ||
+        (extension != ".cpp" && extension != ".h" && extension != ".inc")) {
+      continue;
+    }
+    AppendCodeMaskRegexViolations(
+        result, entry.path(), ReadText(entry.path()), live_read,
+        "SDL_GetModState() runs ahead of the event being handled: read a key event's own "
+        "`mod`, or InteractionState::key_modifiers for a pointer event");
+  }
+  return result;
+}
+
 RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_root) {
   // Scrolling is not focusing. The wheel must never pull the keyboard out of
   // whatever the user is typing into — VS Code behaves the same way, and five of
