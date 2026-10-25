@@ -1663,19 +1663,7 @@ void WorkspaceActionContext::CutSelection() {
       } else {
         viewport->DeleteCurrentLine();
       }
-      RefreshActiveCompareAfterViewportEdit();
-      if (auto* merge_tab = operations_.active_merge_tab();
-          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
-      }
-      operations_.reset_caret_blink();
-      operations_.request_active_tab_redraw(false);
-      operations_.request_focused_editor_redraw();
-      operations_.request_active_editable_last_change_redraw();
-      if (viewport->dirty() != was_dirty) {
-        operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                      viewport->cursor_line());
-      }
+      FinishClipboardEdit(*viewport, was_dirty, cursor_before_line);
     }
   }
 }
@@ -1764,19 +1752,7 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     } else {
       viewport->InsertText(text);
     }
-    RefreshActiveCompareAfterViewportEdit();
-    if (auto* merge_tab = operations_.active_merge_tab();
-        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
-    }
-    operations_.reset_caret_blink();
-    operations_.request_active_tab_redraw(false);
-    operations_.request_focused_editor_redraw();
-    operations_.request_active_editable_last_change_redraw();
-    if (viewport->dirty() != was_dirty) {
-      operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
-                                                                    viewport->cursor_line());
-    }
+    FinishClipboardEdit(*viewport, was_dirty, cursor_before_line);
   }
 }
 
@@ -1979,6 +1955,20 @@ void WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit() {
   util::PerformanceTrace::Scope scope("WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit");
   operations_.refresh_compare_tab_derived_state(*compare_tab);
   operations_.sync_compare_selection_from_viewport(*compare_tab, /*reveal_selection=*/true);
+}
+
+void WorkspaceActionContext::FinishClipboardEdit(const editor::TextViewport& viewport,
+                                                 bool was_dirty, std::size_t cursor_before_line) {
+  RefreshActiveCompareAfterViewportEdit();
+  RetrackActiveMergeAfterViewportEdit();
+  operations_.reset_caret_blink();
+  operations_.request_active_tab_redraw(false);
+  operations_.request_focused_editor_redraw();
+  operations_.request_active_editable_last_change_redraw();
+  if (viewport.dirty() != was_dirty) {
+    operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                  viewport.cursor_line());
+  }
 }
 
 void WorkspaceActionContext::RetrackActiveMergeAfterViewportEdit() {

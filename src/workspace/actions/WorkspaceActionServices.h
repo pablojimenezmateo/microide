@@ -838,6 +838,11 @@ class WorkspaceActionContext {
   // and re-anchor the surface's selection on the caret. Idempotent (the rebuild is
   // fingerprint-guarded) and a no-op when the active tab is not a compare tab.
   void RefreshActiveCompareAfterViewportEdit();
+  // After a cut or paste in the active editable viewport: the compare and merge
+  // panes that mirror it, the caret, the repaint, and the blame band when the
+  // edit flipped the buffer's dirty state.
+  void FinishClipboardEdit(const editor::TextViewport& viewport, bool was_dirty,
+                           std::size_t cursor_before_line);
   void NotifyEditorViewportChanged(bool last_change);
   // Re-track the merge result pane's conflict spans after an edit to it. Reads the
   // viewport's own last-applied-edit span, so the caller captures nothing.
