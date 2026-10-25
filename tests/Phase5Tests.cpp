@@ -917,7 +917,57 @@ return ide.plugin({
 
 }  // namespace
 
+// The completed word starts where the identifier run before the caret starts,
+// however long it is and however the line is stored. The range is read from a
+// window before the caret (quick suggestions ask on every keystroke, and reading
+// the line materialized a whole minified file per keystroke), widened while the
+// run reaches the window's start: an identifier longer than the first window,
+// with a two-byte character straddling that window's edge, on a line an edit has
+// split across pieces.
+void TestCompletionWordStartsAtALongIdentifierOnAnEditedLine() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "README.md";
+  WriteFile(source, "x = \n");
+  WritePluginInit(plugins_root, "long-word",
+                  R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "long-word",
+  setup = function(ctx)
+    ctx.completion.add({
+      id = "markdown",
+      language_id = "markdown",
+      provide = function() return { { label = "WORD", insert_text = "WORD" } } end
+    })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false), "open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 4);
+  // 300 bytes, "é", then 255 more: the first 256-byte window opens inside "é".
+  const std::string identifier = std::string(300, 'a') + "\xc3\xa9" + std::string(255, 'b');
+  editor.InsertText(identifier);
+  Expect(editor.cursor_column() == 4 + identifier.size(), "the caret ends the identifier");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"), "completion runs");
+  const auto& range = WorkspaceShellTestAccess::CompletionSession(shell).replacement_range;
+  Expect(range.start.line == 0 && range.start.column == 4,
+         "the word starts after `x = `, at column " + std::to_string(range.start.column));
+  Expect(range.end.column == 4 + identifier.size(), "and ends at the caret");
+}
+
 void RegisterPhase5Tests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Completion/WordStartsAtALongIdentifierOnAnEditedLine",
+          TestCompletionWordStartsAtALongIdentifierOnAnEditedLine);
   AddTest(tests, "Phase5.CommandSurfaceDrivesPhase3Runtime",
           TestPhase3CommandSurfaceDrivesCompletionTasksAndTests);
   AddTest(tests, "Phase5.LspCommandsDriveDiagnosticsNavigationAndActions",

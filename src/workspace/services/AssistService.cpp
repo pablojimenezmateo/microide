@@ -123,7 +123,6 @@ std::string JsonValueToArgumentString(const util::JsonValue& value) {
 }
 
 editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& viewport) {
-  const std::string_view line = LineViewAt(viewport, viewport.cursor_line());
   // Only walk back over the trailing identifier token. `.`/`/`/`-` are token
   // SEPARATORS, not word chars: including them made a member completion (obj.|)
   // or path completion (a/b|) replace the whole chain, dropping the qualifier.
@@ -131,8 +130,30 @@ editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& vi
   // covers plugin completions and LSP items without a textEdit. Codepoint-aware:
   // a byte-wise ASCII walk stopped inside `größe|`, so accepting `größe_total`
   // produced `größgröße_total`.
-  const std::size_t start_column = util::Utf8IdentifierRunStart(
-      line, std::min(viewport.cursor_column(), line.size()));
+  //
+  // Quick suggestions ask this on every word character typed, and the whole line
+  // is not needed -- only the run ending at the caret. Reading the line would
+  // materialize it when it spans pieces (any edited line): on a minified file,
+  // the file, per keystroke (editor_typing_minified_line, +14% against v2.12.0).
+  // A window before the caret, widened while the run reaches its start (within a
+  // codepoint of it, so a window opening mid-character cannot cut the walk short).
+  const std::size_t line_index = viewport.cursor_line();
+  if (line_index >= viewport.lines().size()) {
+    const editor::TextPosition caret{line_index, viewport.cursor_column()};
+    return editor::SelectionRange{.start = caret, .end = caret};
+  }
+  const std::size_t caret = std::min(viewport.cursor_column(), viewport.lines().LineLength(line_index));
+  thread_local std::string scratch;
+  std::size_t start_column = caret;
+  for (std::size_t window = 256;; window *= 2) {
+    const std::size_t window_start = caret > window ? caret - window : 0;
+    const std::string_view text = viewport.lines().LineWindow(line_index, window_start, caret - window_start, scratch);
+    const std::size_t run_start = util::Utf8IdentifierRunStart(text, text.size());
+    start_column = window_start + run_start;
+    if (window_start == 0 || run_start >= 4) {
+      break;
+    }
+  }
   return editor::SelectionRange{
       .start = editor::TextPosition{viewport.cursor_line(), start_column},
       .end = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()},

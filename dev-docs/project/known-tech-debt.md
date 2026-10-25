@@ -449,6 +449,28 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-25-391 — an open menu rebuilds its item list several times per pointer move. [OPEN]
+
+Found comparing against v2.12.0 (2026-10-25): `menu_popup_hover_rows`' phase (160
+pointer moves over an open menu) runs 0.11 ms where v2.12.0 ran 0.09 -- consistent
+over three alternating runs from equal-length checkouts, allocations unchanged at
+0. Callgrind inside `WorkspaceShell::HandleEvent` puts it at ~3,800 more
+instructions per move (21.2M -> 27.9M for 1,760 moves): `MenuItems` now runs twice
+per move instead of once, because `RedrawChangedPopupRows` (the correctness fix
+that repaints the previously hovered and key-active rows) asks
+`popup_row_rect_by_index` for the old row, and every `MenuItems` call re-runs the
+LSP-visibility filter over the whole menu -- an action lookup by command name and
+a setting read per item. The hit test, the enabled check and the popup rect each
+rebuild it too.
+
+Not fixed by remembering the old row's rect: eleven sites write the hovered row
+indices, and a rect kept beside them that one of them forgets is a stale-paint bug.
+The fix is to make the list cheap: memoize `MenuItems` per menu against the inputs
+the filter reads (settings revision, LSP provider and server readiness, plugin
+menu contributions revision), so a pointer move resolves it once. Needs those
+revisions to exist and be bumped on every change, which the LSP readiness side
+does not have yet. About 0.13 us a move; no frame budget is near it.
+
 ### TD-2026-10-24-390 — folds do not survive a restart; Reopen Closed Editor moves the view. [RESOLVED 2026-10-24]
 
 Found probing session state in the QA 2026-10-24 pass. A function folded in an
