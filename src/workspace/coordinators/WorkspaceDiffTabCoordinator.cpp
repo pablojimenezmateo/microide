@@ -158,14 +158,24 @@ bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput rig
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return false;
   }
+  return AddCompareTab(std::move(*compare_tab), /*load_off_thread=*/false);
+}
+
+bool DiffTabCoordinator::AddCompareTab(TabEntry tab, bool load_off_thread) {
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
     return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
   }
   operations_.sync_active_editor_tab();
-  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
-  SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
+  state_.focused_group().open_tabs.push_back(std::move(tab));
+  // A stand-in has no changes to land on and no buffer to announce yet; both
+  // happen when its load lands (ApplyCompareTabLoad).
+  if (!load_off_thread) {
+    SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
+  }
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
-  NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
+  if (!load_off_thread) {
+    NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
+  }
   return true;
 }
 
@@ -386,21 +396,7 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(
     }
   }
 
-  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
-  }
-  operations_.sync_active_editor_tab();
-  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
-  // A stand-in has no changes to land on and no buffer to announce yet; both
-  // happen when its load lands (ApplyCompareTabLoad).
-  if (!load_off_thread) {
-    SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
-  }
-  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
-  if (!load_off_thread) {
-    NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
-  }
-  return true;
+  return AddCompareTab(std::move(*compare_tab), load_off_thread);
 }
 
 bool DiffTabCoordinator::StartPendingCompareLoad(CompareTabState& compare_tab) {
@@ -577,19 +573,7 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
     operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
   }
 
-  if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
-    return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
-  }
-  operations_.sync_active_editor_tab();
-  state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
-  if (!load_off_thread) {
-    SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
-  }
-  ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
-  if (!load_off_thread) {
-    NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
-  }
-  return true;
+  return AddCompareTab(std::move(*compare_tab), load_off_thread);
 }
 
 bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,

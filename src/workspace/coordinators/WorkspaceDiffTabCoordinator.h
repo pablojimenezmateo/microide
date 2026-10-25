@@ -128,6 +128,10 @@ class DiffTabCoordinator {
                            CompareTabLoadResult& result);
 
  private:
+  // Opens a built compare tab in the focused group and activates it; false at the
+  // per-group tab ceiling. A tab still loading off-thread gets its first-change
+  // selection and its buffer-open announcement when the load lands.
+  bool AddCompareTab(TabEntry tab, bool load_off_thread);
   void ActivateCompareTab(std::size_t index, bool dismiss_overlay);
   void ActivateMergeTab(std::size_t index);
   void RefreshExistingCompareTab(std::size_t index,
