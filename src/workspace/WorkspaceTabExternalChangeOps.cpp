@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
@@ -19,7 +20,7 @@ namespace microide::workspace {
 bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& path) {
   // Normalize the query ONCE (and only when its text says it is needed); the scan
   // below then rejects a mismatching tab with a string compare instead of a fresh
-  // path per tab -- the same shape DiskSignatureMatchesOpenView below uses.
+  // path per tab -- the same shape SweepOpenViewsOf below uses.
   std::filesystem::path normalized_storage;
   const std::filesystem::path& normalized_path =
       util::PathTextNeedsNormalizing(path.native()) ? (normalized_storage = path.lexically_normal())
@@ -68,24 +69,68 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
   return saved_any;
 }
 
-bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {
-  // `lexically_normal()` is ~12 allocations and purely lexical, and every path
-  // reaching here has been normalized on ingress — so the normalization was
-  // spending a fresh path per open tab to confirm the tab's path was already the
-  // shape it is stored in. Once per side, only when the text says it is needed
-  // (TD-2026-08-06-159). The dominant caller is opening a file that is already
-  // open, which walks EVERY tab, so this was quadratic in tab count.
+namespace {
+
+struct OpenViewSweep {
+  bool matched_any = false;  // some open editor view names the path
+  bool stopped = false;      // a visit returned false
+};
+
+// Calls `visit(viewport, signature)` for every open editor view of `path` in every
+// group -- a non-focused split view counts as much as the focused one -- until a
+// visit returns false.
+//
+// `lexically_normal()` is ~12 allocations and purely lexical, and every path
+// reaching here has been normalized on ingress -- so normalizing per tab spent a
+// fresh path per open tab to confirm the tab's path was already the shape it is
+// stored in. Once per side, only when the text says it is needed
+// (TD-2026-08-06-159). The mismatching tabs are the majority: a path whose own
+// text is already normal cannot become `normalized_path` by normalizing, so the
+// string compare answers for them.
+//
+// The file is statted lazily, on the first view that actually names it: the
+// caller is often a watcher batch naming thousands of paths of which a handful
+// are open, and statting each one costs a syscall per path on the shell thread.
+template <typename Visit>
+OpenViewSweep SweepOpenViewsOf(const std::vector<EditorGroup>& groups,
+                               const std::filesystem::path& path, Visit&& visit) {
   std::filesystem::path normalized_storage;
   const std::filesystem::path& normalized_path =
       util::PathTextNeedsNormalizing(path.native())
           ? (normalized_storage = path.lexically_normal())
           : path;
-  bool matched_any_view = false;
-  // Stat lazily, on the first view that actually names this path: the caller is a
-  // watcher batch that may name thousands of paths of which a handful are open,
-  // and statting each one to find out costs a syscall per path on the shell
-  // thread.
+  OpenViewSweep sweep;
   util::FileSignature signature;
+  for (const EditorGroup& group : groups) {
+    for (const auto& tab : group.open_tabs) {
+      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        continue;
+      }
+      const editor::TextViewport& viewport = tab.editor_state->viewport;
+      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
+        continue;
+      }
+      if (!sweep.matched_any) {
+        signature = util::StatFileSignature(normalized_path);
+        sweep.matched_any = true;
+      }
+      if (!visit(viewport, signature, normalized_path)) {
+        sweep.stopped = true;
+        return sweep;
+      }
+    }
+  }
+  return sweep;
+}
+
+}  // namespace
+
+bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& path) const {
+  // The dominant caller is opening a file that is already open, which walks EVERY
+  // tab. The self-write echo must only be suppressed if EVERY open view of this
+  // path (including a non-focused split view) already saw our write, otherwise a
+  // stale split view would be denied its reload.
+  //
   // ONE read for the whole sweep. Every view of this path asks the same question
   // of the same file, and the per-view form re-read it each time: a file open in
   // two panes cost two full reads (up to 8 MiB each) for a single watcher event,
@@ -93,100 +138,62 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
   // is that the first stat compare settles it and no read happens at all.
   std::optional<std::uint64_t> disk_content_hash;
   bool disk_read_failed = false;
-  // Check views in every group: the self-write echo must only be suppressed if EVERY
-  // open view of this path (including a non-focused split view) already saw our write,
-  // otherwise a stale split view would be denied its reload.
-  for (const EditorGroup& group : state_.editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        continue;
-      }
-      const editor::TextViewport& viewport = tab.editor_state->viewport;
-      // The mismatching tabs are the majority and were the cost: normalizing each
-      // of them to reject it is ~12 allocations spent to learn nothing, and a path
-      // whose own text is already normal cannot become `normalized_path` by
-      // normalizing, so the string compare has already answered for it.
-      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
-        continue;
-      }
-      if (!matched_any_view) {
-        signature = util::StatFileSignature(normalized_path);
-        matched_any_view = true;
-      }
-      // Not `SameContentAs`: a touch or a byte-identical rewrite moves the mtime
-      // and leaves the file as it was, and reading that as an external change
-      // reloads every open clean view and shows a "reloaded from disk" notice for
-      // a file nobody changed — or, for a dirty view, raises an external-change
-      // banner unprompted. DiskContentUnchanged confirms the mismatch against the
-      // content the view recorded before believing it, and re-baselines so the
-      // next event on this path is one stat again.
-      if (signature.SameContentAs(viewport.disk_signature())) {
-        continue;  // one stat answered it for this view
-      }
-      if (!viewport.CouldConfirmDiskContent(signature)) {
-        if (signature.SameStatAs(viewport.disk_signature())) {
-          continue;  // a racy match with no hash to confirm it: the stat is all there is
+  const OpenViewSweep sweep = SweepOpenViewsOf(
+      state_.editor_groups, path,
+      [&](const editor::TextViewport& viewport, const util::FileSignature& signature,
+          const std::filesystem::path& normalized_path) {
+        // Not `SameContentAs`: a touch or a byte-identical rewrite moves the mtime
+        // and leaves the file as it was, and reading that as an external change
+        // reloads every open clean view and shows a "reloaded from disk" notice for
+        // a file nobody changed — or, for a dirty view, raises an external-change
+        // banner unprompted. DiskContentUnchanged confirms the mismatch against the
+        // content the view recorded before believing it, and re-baselines so the
+        // next event on this path is one stat again.
+        if (signature.SameContentAs(viewport.disk_signature())) {
+          return true;  // one stat answered it for this view
         }
-        return false;  // a size change is a real change; no read needed
-      }
-      if (!disk_content_hash.has_value() && !disk_read_failed) {
-        util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
-        if (const std::optional<std::string> bytes = util::ReadTextFile(normalized_path);
-            bytes.has_value()) {
-          disk_content_hash = util::QuickContentHash(*bytes);
-        } else {
-          disk_read_failed = true;
+        if (!viewport.CouldConfirmDiskContent(signature)) {
+          // A racy match with no hash to confirm it: the stat is all there is. A
+          // size change is a real change; no read needed.
+          return signature.SameStatAs(viewport.disk_signature());
         }
-      }
-      if (!disk_content_hash.has_value() ||
-          !viewport.ConfirmDiskContentUnchanged(signature, *disk_content_hash)) {
-        return false;
-      }
-    }
-  }
-  return matched_any_view;
+        if (!disk_content_hash.has_value() && !disk_read_failed) {
+          util::AddPerformanceCounter(util::PerfCounterId::ExternalChangeConfirmInlineReads);
+          if (const std::optional<std::string> bytes = util::ReadTextFile(normalized_path);
+              bytes.has_value()) {
+            disk_content_hash = util::QuickContentHash(*bytes);
+          } else {
+            disk_read_failed = true;
+          }
+        }
+        return disk_content_hash.has_value() &&
+               viewport.ConfirmDiskContentUnchanged(signature, *disk_content_hash);
+      });
+  return sweep.matched_any && !sweep.stopped;
 }
 
 TabCoordinator::ExternalChangeVerdict TabCoordinator::ClassifyExternalChange(
     const std::filesystem::path& path) const {
-  // Same normalization discipline as DiskSignatureMatchesOpenView above: once per
-  // side, only when the text says it is needed.
-  std::filesystem::path normalized_storage;
-  const std::filesystem::path& normalized_path =
-      util::PathTextNeedsNormalizing(path.native())
-          ? (normalized_storage = path.lexically_normal())
-          : path;
-  bool matched_any_view = false;
   bool needs_confirm = false;
-  util::FileSignature signature;
-  for (const EditorGroup& group : state_.editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        continue;
-      }
-      const editor::TextViewport& viewport = tab.editor_state->viewport;
-      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
-        continue;
-      }
-      if (!matched_any_view) {
-        // Stat lazily, on the first view that actually names this path: a watcher
-        // batch may name thousands of paths of which a handful are open.
-        signature = util::StatFileSignature(normalized_path);
-        matched_any_view = true;
-      }
-      if (signature.SameContentAs(viewport.disk_signature())) {
-        continue;  // one stat answered it for this view
-      }
-      if (!viewport.CouldConfirmDiskContent(signature)) {
-        if (signature.SameStatAs(viewport.disk_signature())) {
-          continue;  // a racy match with no hash to confirm it: the stat is all there is
+  const OpenViewSweep sweep = SweepOpenViewsOf(
+      state_.editor_groups, path,
+      [&](const editor::TextViewport& viewport, const util::FileSignature& signature,
+          const std::filesystem::path&) {
+        if (signature.SameContentAs(viewport.disk_signature())) {
+          return true;  // one stat answered it for this view
         }
-        return ExternalChangeVerdict::Changed;  // no digest can excuse this one
-      }
-      needs_confirm = true;
-    }
+        if (!viewport.CouldConfirmDiskContent(signature)) {
+          // A racy match with no hash to confirm it: the stat is all there is.
+          // Otherwise no digest can excuse this one.
+          return signature.SameStatAs(viewport.disk_signature());
+        }
+        needs_confirm = true;
+        return true;
+      });
+  if (sweep.stopped) {
+    return ExternalChangeVerdict::Changed;
   }
-  if (!matched_any_view) {
+  if (!sweep.matched_any) {
     // Nothing has this path open, so there is no echo to suppress. The caller
     // still has blame, compare and merge state keyed on it.
     return ExternalChangeVerdict::Changed;
@@ -197,38 +204,17 @@ TabCoordinator::ExternalChangeVerdict TabCoordinator::ClassifyExternalChange(
 
 bool TabCoordinator::ExternalChangeIsOwnEcho(const std::filesystem::path& path,
                                              std::uint64_t disk_content_hash) const {
-  std::filesystem::path normalized_storage;
-  const std::filesystem::path& normalized_path =
-      util::PathTextNeedsNormalizing(path.native())
-          ? (normalized_storage = path.lexically_normal())
-          : path;
-  bool matched_any_view = false;
-  util::FileSignature signature;
-  for (const EditorGroup& group : state_.editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        continue;
-      }
-      const editor::TextViewport& viewport = tab.editor_state->viewport;
-      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
-        continue;
-      }
-      if (!matched_any_view) {
-        // Re-stat: the digest was computed off-thread and the file may have moved
-        // again since. Confirming against a stale stat would re-baseline a view to
-        // a state that no longer exists.
-        signature = util::StatFileSignature(normalized_path);
-        matched_any_view = true;
-      }
-      if (signature.SameContentAs(viewport.disk_signature())) {
-        continue;
-      }
-      if (!viewport.ConfirmDiskContentUnchanged(signature, disk_content_hash)) {
-        return false;
-      }
-    }
-  }
-  return matched_any_view;
+  // The sweep re-stats: the digest was computed off-thread and the file may have
+  // moved again since. Confirming against a stale stat would re-baseline a view to
+  // a state that no longer exists.
+  const OpenViewSweep sweep = SweepOpenViewsOf(
+      state_.editor_groups, path,
+      [&](const editor::TextViewport& viewport, const util::FileSignature& signature,
+          const std::filesystem::path&) {
+        return signature.SameContentAs(viewport.disk_signature()) ||
+               viewport.ConfirmDiskContentUnchanged(signature, disk_content_hash);
+      });
+  return sweep.matched_any && !sweep.stopped;
 }
 
 }  // namespace microide::workspace
