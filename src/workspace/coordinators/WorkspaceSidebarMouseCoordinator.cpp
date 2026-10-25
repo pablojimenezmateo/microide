@@ -477,17 +477,21 @@ bool SidebarMouseCoordinator::HandleTreeButtonDown(const SDL_Event& event,
       operations_.open_tree_context_menu(target, entry.path, PointerAnchor(event));
       return true;
     }
-    if (Contains(row_rect, event.button.x, event.button.y) &&
-        event.button.button != SDL_BUTTON_RIGHT) {
-      const auto opened = state_.directory_tree.ActivateSelection();
+    if (Contains(row_rect, event.button.x, event.button.y) && event.button.button == SDL_BUTTON_LEFT) {
+      // The press selects and arms a drag; the release opens the row unless the
+      // pointer moved away with it (FinishPathDrag).
+      const auto& entry = entries[static_cast<std::size_t>(*entry_index)];
+      interaction_state_.path_drag = PathDragState{
+          .armed = true,
+          .path = entry.path,
+          .is_directory = entry.is_directory,
+          .label = entry.label,
+          .press_x = static_cast<float>(event.button.x),
+          .press_y = static_cast<float>(event.button.y),
+          .pointer_x = static_cast<float>(event.button.x),
+          .pointer_y = static_cast<float>(event.button.y),
+      };
       operations_.reveal_selected_tree_sidebar_line();
-      if (opened.has_value()) {
-        operations_.open_file(*opened);
-        // Opening a file from the tree shows it in the editor but should not
-        // steal keyboard focus: keep focus on the sidebar so tree navigation
-        // shortcuts (arrows, Enter, R, D) stay live after the click.
-        state_.surface.focus = FocusTarget::Sidebar;
-      }
     }
     return true;
   }

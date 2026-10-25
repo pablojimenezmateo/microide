@@ -569,7 +569,7 @@ when a file gains its first hit. Covered by
 `WorkspaceShell/ProjectSearchHitsFollowEdits` and the QA `search-view-keys`
 flow (a line typed above an opened hit moves its row; undo moves it back).
 
-### TD-2026-10-24-386 — the file tree has no drag and drop at all. [OPEN]
+### TD-2026-10-24-386 — the file tree has no drag and drop at all. [RESOLVED 2026-10-25]
 
 Extends TD-359. A press on a tree row opens it; a drag from a row does nothing
 anywhere it is released. VS Code's explorer drags in four ways: onto an editor
@@ -579,6 +579,31 @@ strip already has the drop-zone geometry for the first two (`tab-drag`: a tab
 dropped on the editor's edge splits), so the tree drag should hand the same
 `TabDrag` machinery a path rather than grow a second implementation. Found by the
 QA 2026-10-24 pass, which had no tree drag to drive.
+
+RESOLVED 2026-10-25: a press on a tree row now arms a drag
+(`InteractionState::PathDragState`); the click it used to be happens on the
+release, when the pointer stayed put. A wobble under 4 px is still a click. Past
+the threshold, `SidebarMouseCoordinator::HandlePathDragMotion`, in its own
+companion TU, resolves the drop under the pointer:
+
+- An editor pane, by the tab drag's own zone rule (`EditorBodyDropAt`, now
+  shared by both). A pane's tab strip or middle opens the file there; an edge
+  carves a new pane holding it, via `MoveTabToNewGroup`, or a split when it is
+  the pane's only tab.
+- A tree folder: the file moves there, or is copied with Ctrl held, through the
+  tree clipboard's `PastePath`.
+- The terminal: the file's shell-quoted path is typed.
+
+The window paints a translucent preview over the target and a ghost carrying
+the name. Escape cancels.
+
+The QA redraw verifier caught a stale breadcrumb on the way. A move retitled
+the file's tab in another pane and repainted only the focused one, because the
+release's window repaint was suppressed by the smaller rects the move had
+already asked for. `FollowRename` (rename and move alike) now repaints the
+window (`WorkspaceShell/TreeMoveRepaintsEveryPaneShowingTheFile`, failing first
+at 366 pixels). Tests: `WorkspaceShell/TreeRowDragAndDrop` and the QA flow
+`tree-drag`.
 
 ### TD-2026-10-22-380 — saving a read-only file overwrites it without a word. [OPEN — product decision]
 

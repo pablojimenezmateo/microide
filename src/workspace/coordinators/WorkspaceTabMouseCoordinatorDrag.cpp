@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "util/PerformanceTrace.h"
+#include "workspace/EditorBodyDrop.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/render/TabStripAnimation.h"
 
@@ -163,11 +164,6 @@ std::size_t TabMouseCoordinator::ResolvePointerEditorGroup(
   return tab_drag_state_.target_group_index;
 }
 
-// How much of a pane's width/height at each edge reads as "split here" rather
-// than "move into this group". VS Code uses roughly a fifth; below that the
-// center target gets hard to hit on a narrow pane.
-constexpr float kBodyDropEdgeFraction = 0.2f;
-
 void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& rects) {
   tab_drag_state_.body_drop_zone = EditorBodyDropZone::None;
   if (tab_drag_state_.kind != TabDragKind::Editor || !tab_drag_state_.dragging) {
@@ -203,32 +199,7 @@ void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& re
     const bool can_split = (!state_.editor_split.full() || source_gives_up_its_pane) &&
                            (gi != tab_drag_state_.source_group_index ||
                             state_.editor_groups[gi].open_tabs.size() >= 2);
-    EditorBodyDropZone zone = EditorBodyDropZone::Center;
-    SDL_FRect region = pane;
-    if (can_split) {
-      const float left = (x - pane.x) / pane.w;
-      const float top = (y - pane.y) / pane.h;
-      const float right = 1.0f - left;
-      const float bottom = 1.0f - top;
-      const float nearest = std::min(std::min(left, right), std::min(top, bottom));
-      if (nearest < kBodyDropEdgeFraction) {
-        const float half_w = pane.w * 0.5f;
-        const float half_h = pane.h * 0.5f;
-        if (nearest == left) {
-          zone = EditorBodyDropZone::Left;
-          region = MakeRect(pane.x, pane.y, half_w, pane.h);
-        } else if (nearest == right) {
-          zone = EditorBodyDropZone::Right;
-          region = MakeRect(pane.x + pane.w - half_w, pane.y, half_w, pane.h);
-        } else if (nearest == top) {
-          zone = EditorBodyDropZone::Top;
-          region = MakeRect(pane.x, pane.y, pane.w, half_h);
-        } else {
-          zone = EditorBodyDropZone::Bottom;
-          region = MakeRect(pane.x, pane.y + pane.h - half_h, pane.w, half_h);
-        }
-      }
-    }
+    const auto [zone, region] = EditorBodyDropAt(pane, x, y, can_split);
     // Dropping a tab into the middle of the pane it already lives in changes
     // nothing, so no target is offered and no overlay is painted.
     if (zone == EditorBodyDropZone::Center && gi == tab_drag_state_.source_group_index) {

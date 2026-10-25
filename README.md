@@ -663,6 +663,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+PageUp` / `Ctrl+PageDown` in terminal | Previous / next terminal tab |
 | `Enter` in an exited terminal | Relaunch it in place with the same cwd and command |
 | `F2` / `Delete` in the file tree | Rename / delete the selected entry (Delete asks first) |
+| Drag a file-tree row | Onto an editor pane: open it there (on a pane's edge, in a new pane carved from it); onto a folder: move it there (`Ctrl` held: copy); onto the terminal: type its quoted path |
 | `Ctrl+X` / `Ctrl+C`, then `Ctrl+V` in the file tree | Move / copy the selected entry into the selected folder (also Cut / Copy / Paste on the tree's menu); a copy onto a taken name becomes `name copy.ext`, and a moved file's open tabs follow it, unsaved text included |
 | `Alt+[` / `Alt+]` in compare/merge | Previous / next hunk (bare `[` / `]` too while reviewing compare rows; while typing in a diff's working side they are brackets) |
 | `Alt+I` `Alt+B` `Alt+C` `Alt+M` in merge | Apply incoming / base / current / both for the selected hunk |

@@ -8,7 +8,10 @@
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/coordinators/WorkspacePathMutationCoordinator.h"
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/services/PromptSurfaceService.h"
 
 namespace microide::workspace {
 
@@ -114,6 +117,62 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
           .compute_tree_sidebar_list_layout =
               [this](const SDL_FRect& rect, std::size_t count) {
                 return ComputeTreeSidebarListLayout(rect, count);
+              },
+          .compute_editor_group_rects =
+              [this](const WorkspaceLayout& layout) { return ComputeEditorGroupRectsForState(layout); },
+          .editor_area_full = [this]() { return context_.current_project_state.editor_split.full(); },
+          .terminal_drop_rect = [this](const WorkspaceLayout& layout) -> std::optional<SDL_FRect> {
+            if (!BottomPanelVisible() || context_.current_project_state.panel.content != PanelContentKind::Terminal) {
+              return std::nullopt;
+            }
+            return BottomPanelContentRect(layout);
+          },
+          .open_path_in_group =
+              [this](const std::filesystem::path& path, std::size_t group) {
+                EditorTabService& tabs = MakeEditorTabService();
+                if (!tabs.FocusEditorGroupAt(group)) {
+                  return false;
+                }
+                OpenFile(path);
+                context_.current_project_state.surface.focus = FocusTarget::Editor;
+                return true;
+              },
+          .open_path_in_new_group =
+              [this](const std::filesystem::path& path, std::size_t group, EditorSplitOrientation orientation,
+                     bool insert_before) {
+                EditorTabService& tabs = MakeEditorTabService();
+                if (!tabs.FocusEditorGroupAt(group)) {
+                  return false;
+                }
+                OpenFile(path);
+                context_.current_project_state.surface.focus = FocusTarget::Editor;
+                const EditorGroup& target = context_.current_project_state.focused_group();
+                // The file is the pane's active tab now. Beside others, it moves out
+                // into the new pane; as the pane's only tab, the pane is split with a
+                // second view of it (and turned to the side the drop asked for).
+                if (target.open_tabs.size() >= 2) {
+                  return tabs.MoveTabToNewGroup(group, target.active_tab_index, group, orientation, insert_before);
+                }
+                if (!tabs.SplitEditorGroup(orientation)) {
+                  return false;
+                }
+                if (insert_before) {
+                  (void)tabs.MoveEditorGroupInDirection(orientation == EditorSplitOrientation::Vertical
+                                                            ? EditorGroupDirection::Left
+                                                            : EditorGroupDirection::Up);
+                }
+                return true;
+              },
+          .paste_tree_path =
+              [this](const std::filesystem::path& source, bool cut, const std::filesystem::path& folder) {
+                EditorTabService& editor_tabs = MakeEditorTabService();
+                PromptSurfaceService& prompt_surfaces = MakePromptSurfaceService();
+                return MakePathMutationCoordinator(editor_tabs, prompt_surfaces).PastePath(source, cut, folder);
+              },
+          .type_into_terminal =
+              [this](std::string text) {
+                context_.current_project_state.surface.focus = FocusTarget::Panel;
+                MakeTextInputCoordinator().PasteTextIntoTerminal(std::move(text));
               },
       });
   return *glue_->sidebar_mouse_coordinator;

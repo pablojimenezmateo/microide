@@ -725,6 +725,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspaceSidebarCoordinatorRefresh.cpp
   src/workspace/coordinators/WorkspaceSidebarCoordinatorActions.cpp
   src/workspace/coordinators/WorkspaceSidebarMouseCoordinator.cpp
+  src/workspace/coordinators/WorkspaceSidebarMouseCoordinatorPathDrag.cpp
   src/workspace/coordinators/WorkspaceSidebarMouseCoordinatorScroll.cpp
   src/workspace/coordinators/WorkspaceTabMouseCoordinator.cpp
   src/workspace/coordinators/WorkspaceTabMouseCoordinatorDrag.cpp
@@ -802,6 +803,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceVirtualDocument.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/BufferFindScope.cpp
+  src/workspace/EditorBodyDrop.cpp
   src/workspace/ProjectSearchLiveHits.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/shell/WorkspaceShell.cpp

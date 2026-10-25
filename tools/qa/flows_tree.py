@@ -348,9 +348,84 @@ def flow_tree_clipboard(app: q.App) -> None:
     dismiss(app)
 
 
+def flow_tree_drag(app: q.App) -> None:
+    """A tree row dragged (TD-2026-10-24-386), as VS Code's explorer drags: onto a
+    pane's right edge it opens in a new pane carved from it; onto a pane's tab
+    strip it opens in that pane; onto a folder it moves there (its open tab
+    following) and with Ctrl held copies; onto the terminal it types its quoted
+    path. A click on a row still opens it."""
+    write(app, "drag/a.txt", "alpha\n")
+    write(app, "drag/b c.txt", "beta\n")
+    write(app, "drag/dest/keep.txt", "keep\n")
+    open_file(app, "README.md")
+    app.send("tree-refresh")
+    app.send("sidebar-show", "tree")
+    _select(app, "drag")
+    app.key("Right")
+    app.settle(0.2)
+    if not app.wait_until(lambda: "row:tree/a.txt" in _rows(app), 5.0, "a.txt in the tree"):
+        return
+
+    def center(name: str) -> tuple[float, float]:
+        return app.center(app.element(f"row:tree/{name}"))
+
+    pane = app.ui()["editors"][0]["rect"]
+    # Onto the pane's right edge: a new pane on the right holds a.txt.
+    x0, y0 = center("a.txt")
+    app.drag(x0, y0, pane[0] + pane[2] - 10, pane[1] + pane[3] / 2, steps=10)
+    app.wait_until(lambda: len(app.editor_state()["groups"]) == 2, 3.0, "a drop on the right edge to split")
+    groups = app.editor_state()["groups"]
+    app.expect(len(groups) == 2 and [t["title"] for t in groups[1]["tabs"]] == ["a.txt"],
+               f"a drop on a pane's right edge opens the file in a new pane ({[[t['title'] for t in g['tabs']] for g in groups]})")
+
+    # Onto the first pane's tab strip: opened in that pane.
+    strip = app.ui()["surfaces"]["tabStrip"]
+    x0, y0 = center("b c.txt")
+    app.drag(x0, y0, strip[0] + 40, strip[1] + strip[3] / 2, steps=10)
+    app.wait_until(lambda: any(t["title"] == "b c.txt" for t in app.editor_state()["groups"][0]["tabs"]), 3.0,
+                   "a drop on the tab strip to open the file there")
+    app.expect(any(t["title"] == "b c.txt" for t in app.editor_state()["groups"][0]["tabs"]),
+               "a drop on a pane's tab strip opens the file in that pane")
+
+    # Onto a folder with Ctrl: copied; without: moved, its open tab following.
+    app.send("sidebar-show", "tree")
+    app.settle(0.2)
+    x0, y0 = center("b c.txt")
+    dx, dy = center("dest")
+    app.drag(x0, y0, dx, dy, steps=10, modifiers=("ctrl",))
+    app.wait_until(lambda: _maybe_read(app, "drag/dest/b c.txt") == "beta\n", 3.0, "a Ctrl drop to copy into dest")
+    app.expect(_maybe_read(app, "drag/dest/b c.txt") == "beta\n" and _maybe_read(app, "drag/b c.txt") == "beta\n",
+               "a Ctrl drop on a folder copies the file there")
+    x0, y0 = center("a.txt")
+    dx, dy = center("dest")
+    app.drag(x0, y0, dx, dy, steps=10)
+    app.wait_until(lambda: _maybe_read(app, "drag/dest/a.txt") == "alpha\n", 3.0, "a drop to move into dest")
+    app.expect(_maybe_read(app, "drag/dest/a.txt") == "alpha\n" and _maybe_read(app, "drag/a.txt") is None,
+               "a drop on a folder moves the file there")
+    app.expect(any(t["title"] == "a.txt" for t in app.editor_state()["groups"][1]["tabs"]),
+               "and its open tab follows it")
+
+    # Onto the terminal: its quoted path is typed at the prompt.
+    if not app.ui()["panel"]["visible"]:
+        app.send("term-toggle")
+        app.wait_until(lambda: app.ui()["panel"]["visible"], 5.0, "the terminal")
+    app.send("sidebar-show", "tree")
+    app.settle(0.3)
+    panel = app.ui()["surfaces"]["bottomPanel"]
+    x0, y0 = center("b c.txt")
+    app.drag(x0, y0, panel[0] + panel[2] / 2, panel[1] + panel[3] / 2, steps=10)
+    app.wait_until(lambda: "b c.txt'" in app.query("terminal-output").get("text", ""), 5.0,
+                   "the quoted path typed into the terminal")
+    app.expect("b c.txt'" in app.query("terminal-output").get("text", ""),
+               "a drop on the terminal types the file's quoted path")
+    app.key("ctrl+u")  # leave the shell's line empty
+    dismiss(app)
+
+
 FLOWS: dict[str, Callable[[q.App], None]] = {
     "tree-collisions": flow_tree_collisions,
     "tree-cancel-transactions": flow_tree_cancel_transactions,
     "rename-open-tabs": flow_rename_open_tabs,
     "tree-clipboard": flow_tree_clipboard,
+    "tree-drag": flow_tree_drag,
 }

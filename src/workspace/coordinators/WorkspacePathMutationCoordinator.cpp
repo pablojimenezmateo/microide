@@ -189,6 +189,9 @@ void PathMutationCoordinator::FollowRename(const std::filesystem::path& old_path
   RetargetPluginDecorationsForRename(old_path, new_path);
   operations_.clear_editor_blame();
   RefreshProjectViewsAfterMutation(new_path);
+  if (operations_.request_window_redraw) {
+    operations_.request_window_redraw();
+  }
 }
 
 namespace {
@@ -290,6 +293,7 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
           .refresh_problems_sidebar = [this]() { RefreshProblemsSidebar(); },
           .queue_editor_hover_refresh = [this]() { QueueEditorHoverRefresh(); },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .apply_editor_preferences =
               [this](editor::TextViewport& viewport) { ApplyEditorPreferences(viewport); },
           .apply_detected_indent_on_open =

@@ -428,6 +428,27 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                         theme_.chrome_text, theme_.chrome_background,
                         TruncateLabelView(BreadcrumbLabel(gi), breadcrumb_text_width));
   }
+
+  // The tree drag (PathDragState): the drop preview over what the release would
+  // drop on -- a pane or the half an edge drop carves, a folder's row, the
+  // terminal -- and the dragged name riding beside the pointer. The motion that
+  // moves it repaints the window, so nothing here is damage-tracked.
+  const PathDragState& path_drag = context_.interaction_state.path_drag;
+  if (path_drag.dragging) {
+    if (path_drag.target != PathDragState::Target::None) {
+      DrawFilledRect(renderer, path_drag.drop_rect,
+                     SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
+      render::OutlineRect(renderer, path_drag.drop_rect, theme_.accent);
+    }
+    constexpr float kGhostPaddingPx = 8.0f;
+    const float ghost_height = text_renderer_.LineHeight() + 6.0f;
+    const float ghost_width = std::min(280.0f, text_renderer_.MeasureWidth(path_drag.label) + 2.0f * kGhostPaddingPx);
+    const SDL_FRect ghost = MakeRect(path_drag.pointer_x + 14.0f, path_drag.pointer_y + 10.0f, ghost_width, ghost_height);
+    DrawFilledRect(renderer, ghost, theme_.surface_raised);
+    render::OutlineRect(renderer, ghost, theme_.border);
+    DrawVCenteredTextOn(text_renderer_, renderer, ghost, kGhostPaddingPx, theme_.text_primary, theme_.surface_raised,
+                        TruncateLabelView(path_drag.label, ghost_width - 2.0f * kGhostPaddingPx));
+  }
 }
 
 }  // namespace microide::workspace

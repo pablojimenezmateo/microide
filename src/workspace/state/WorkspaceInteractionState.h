@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 #include <span>
 #include <vector>
 
@@ -109,6 +111,32 @@ struct TabDragState {
   }
 };
 
+// A file or folder pressed on a tree row and dragged (TD-2026-10-24-386). The
+// press only arms it; past a few pixels it is a drag, and the release drops it on
+// what is under the pointer -- an editor pane (opens the file there, or on an edge
+// in a new pane carved from it), a tree folder (moves it there, Ctrl copies), the
+// terminal (types its quoted path). A release that never moved is the click: the
+// row opens, as it used to on the press.
+struct PathDragState {
+  enum class Target : std::uint8_t { None, EditorGroup, TreeFolder, Terminal };
+  bool armed = false;
+  bool dragging = false;
+  std::filesystem::path path;
+  bool is_directory = false;
+  std::string label;  // the row's name, drawn on the ghost
+  float press_x = 0.0f;
+  float press_y = 0.0f;
+  float pointer_x = 0.0f;
+  float pointer_y = 0.0f;
+  Target target = Target::None;
+  EditorBodyDropZone zone = EditorBodyDropZone::None;  // EditorGroup
+  std::size_t group_index = 0;                         // EditorGroup
+  std::filesystem::path folder;                        // TreeFolder
+  // What the drop preview paints for the target (a pane or its half, a folder's
+  // row, the terminal).
+  SDL_FRect drop_rect{0.0f, 0.0f, 0.0f, 0.0f};
+};
+
 // One animating tab strip's offsets. Indexed by model tab index; only the
 // visible subset is ever filled, and an idle slot holds no vector capacity at
 // all, so a same-group drag pays nothing for the second slot.
@@ -194,6 +222,7 @@ struct InteractionState {
   // Boundary (left pane index) of the terminal pane divider being dragged.
   std::uint8_t drag_terminal_pane_boundary = 0;
   TabDragState tab_drag;
+  PathDragState path_drag;
   TabSlideState tab_slide;
   // Sub-tick wheel accumulators. High-resolution trackpads and touchpads emit
   // many SDL_EVENT_MOUSE_WHEEL events with fractional `y`/`x` deltas. The

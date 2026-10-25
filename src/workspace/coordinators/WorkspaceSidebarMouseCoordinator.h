@@ -74,6 +74,16 @@ class SidebarMouseCoordinator {
     std::function<void(TreeContextTargetKind, const std::filesystem::path&, const SDL_FRect&)>
         open_tree_context_menu;
     std::function<ScrollableListLayout(const SDL_FRect&, std::size_t)> compute_tree_sidebar_list_layout;
+    // The tree drag's drop targets (PathDragState) and what each drop does.
+    std::function<EditorGroupRectsLayout(const WorkspaceLayout&)> compute_editor_group_rects;
+    std::function<bool()> editor_area_full;
+    std::function<std::optional<SDL_FRect>(const WorkspaceLayout&)> terminal_drop_rect;
+    std::function<bool(const std::filesystem::path&, std::size_t group)> open_path_in_group;
+    std::function<bool(const std::filesystem::path&, std::size_t group, EditorSplitOrientation, bool insert_before)>
+        open_path_in_new_group;
+    std::function<std::string(const std::filesystem::path& source, bool cut, const std::filesystem::path& folder)>
+        paste_tree_path;
+    std::function<void(std::string)> type_into_terminal;
   };
 
   SidebarMouseCoordinator(ProjectWorkspaceState& state,
@@ -86,6 +96,13 @@ class SidebarMouseCoordinator {
   // a menu (the plugin views, an empty list).
   bool OpenSelectionContextMenu(const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
+  // The tree drag (PathDragState). Motion past the threshold starts it and
+  // resolves the drop target under the pointer; the release drops it (`copy`:
+  // Ctrl held, a folder drop copies) or, if it never moved, opens the row.
+  // True when the gesture's state or target changed (the preview repaints).
+  bool HandlePathDragMotion(float x, float y, const WorkspaceLayout& layout);
+  bool FinishPathDrag(bool copy);
+  bool CancelPathDrag();
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,
                    int vertical_ticks);
@@ -113,6 +130,10 @@ class SidebarMouseCoordinator {
                             const WorkspaceLayout& layout,
                             float local_y);
   bool BeginScrollbarDrag(const SDL_Event& event, const WorkspaceLayout& layout);
+  void ResolvePathDropTarget(const WorkspaceLayout& layout);
+  // The click a press on a tree row defers to its release: a file opens, a
+  // folder toggles.
+  void ActivateTreeSelection();
   ScrollableListLayout CurrentListLayout(const WorkspaceLayout& layout) const;
 
   ProjectWorkspaceState& state_;

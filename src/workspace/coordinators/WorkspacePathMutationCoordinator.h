@@ -32,6 +32,9 @@ class PathMutationCoordinator {
     std::function<void()> refresh_problems_sidebar;
     std::function<void()> queue_editor_hover_refresh;
     std::function<void()> request_editor_surface_redraw;
+    // A rename or move retitles the tabs and breadcrumbs of every pane showing the
+    // file (not only the focused one), the tree and the status bar.
+    std::function<void()> request_window_redraw;
     std::function<void(editor::TextViewport&)> apply_editor_preferences;
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;

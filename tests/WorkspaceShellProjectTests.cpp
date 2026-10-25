@@ -21,6 +21,7 @@
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
 #include "support/GitSidebarWait.h"
+#include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "EditorSplitTreeInvariants.h"
 
@@ -404,21 +405,174 @@ void TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges() {
 
   (void)WorkspaceShellTestAccess::ConsumePendingRedraw(shell);
   WorkspaceShellTestAccess::ForceCursorReassert(shell);
-  const WorkspaceShell::EventResult result = [&] {
+  // A click: the press arms the row (it could become a drag of it), the release
+  // opens it -- for a folder, expands it (TD-2026-10-24-386).
+  const auto send = [&](Uint32 type) {
     SDL_Event event{};
-    event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+    event.type = type;
     event.button.button = SDL_BUTTON_LEFT;
     event.button.x = row->x + row->w * 0.5f;
     event.button.y = row->y + row->h * 0.5f;
     event.button.clicks = 1;
     return shell.HandleEvent(event);
-  }();
+  };
+  (void)send(SDL_EVENT_MOUSE_BUTTON_DOWN);
+  Expect(WorkspaceShellTestAccess::TreeEntries(shell).size() == rows_before,
+         "the press alone expands nothing: it may be the start of a drag");
+  const WorkspaceShell::EventResult result = send(SDL_EVENT_MOUSE_BUTTON_UP);
 
   Expect(WorkspaceShellTestAccess::TreeEntries(shell).size() > rows_before,
          "the click expanded the directory");
   const SDL_FRect sidebar = WorkspaceShellTestAccess::CurrentLayout(shell).sidebar;
   Expect(result.handled && (result.redraw.full || AnyRectCovers(result.redraw.rects, sidebar)),
          "expanding a directory repaints the whole sidebar, cursor change or not");
+}
+
+// A tree row dragged (TD-2026-10-24-386), VS Code's explorer drags: onto a pane's
+// right edge it opens in a new pane carved from that one; onto a pane's middle it
+// opens there; onto a folder it moves there, and with Ctrl held copies. A press
+// that wobbles less than the threshold is still the click that opens the row.
+void TestWorkspaceShellTreeRowDragAndDrop() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.txt", "a\n");
+  WriteFile(root / "beta.txt", "b\n");
+  WriteFile(root / "zdest" / "keep.txt", "k\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "project fixture should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, root / "beta.txt");
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  const auto row_of = [&](const std::filesystem::path& path) -> std::optional<SDL_FRect> {
+    const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].path == path.lexically_normal()) {
+        return WorkspaceShellTestAccess::TreeSidebarRowRect(shell, i);
+      }
+    }
+    return std::nullopt;
+  };
+  const auto drag = [&](const SDL_FRect& from, float to_x, float to_y, bool ctrl = false) {
+    const float x = from.x + from.w * 0.5f;
+    const float y = from.y + from.h * 0.5f;
+    (void)SendMouseDown(shell, x, y, SDL_BUTTON_LEFT);
+    (void)SendMouseMotion(shell, x + 10.0f, y + 2.0f, SDL_BUTTON_LMASK);
+    (void)SendMouseMotion(shell, to_x, to_y, SDL_BUTTON_LMASK);
+    if (ctrl) {
+      SDL_SetModState(SDL_KMOD_LCTRL);
+    }
+    (void)SendMouseUp(shell, to_x, to_y, SDL_BUTTON_LEFT);
+    SDL_SetModState(SDL_KMOD_NONE);
+  };
+  const auto pane = [&]() {
+    const auto rects = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, WorkspaceShellTestAccess::CurrentLayout(shell));
+    return rects.groups[0].editor_surface;
+  };
+
+  // A wobble under the threshold is a click: the row opens on the release.
+  const auto alpha_row = row_of(root / "alpha.txt");
+  Expect(alpha_row.has_value(), "alpha.txt is on screen");
+  const float ax = alpha_row->x + alpha_row->w * 0.5f;
+  const float ay = alpha_row->y + alpha_row->h * 0.5f;
+  (void)SendMouseDown(shell, ax, ay, SDL_BUTTON_LEFT);
+  (void)SendMouseMotion(shell, ax + 2.0f, ay + 1.0f, SDL_BUTTON_LMASK);
+  (void)SendMouseUp(shell, ax + 2.0f, ay + 1.0f, SDL_BUTTON_LEFT);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == (root / "alpha.txt").lexically_normal(),
+         "a click with a small wobble opens the row");
+
+  // Onto the pane's right edge: a new pane on the right holding alpha.txt.
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // beta.txt in front again
+  const SDL_FRect body = pane();
+  drag(*row_of(root / "alpha.txt"), body.x + body.w - 8.0f, body.y + body.h * 0.5f);
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "a drop on a pane's right edge carves a new pane");
+  Expect(WorkspaceShellTestAccess::GroupTabPaths(shell, 1) ==
+             std::vector<std::filesystem::path>{(root / "alpha.txt").lexically_normal()},
+         "the new pane, on the right, holds the dropped file");
+
+  // Onto a folder: moved there; with Ctrl, copied.
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  const auto dest_row = row_of(root / "zdest");
+  Expect(dest_row.has_value(), "zdest is on screen");
+  drag(*row_of(root / "beta.txt"), dest_row->x + dest_row->w * 0.5f, dest_row->y + dest_row->h * 0.5f,
+       /*ctrl=*/true);
+  Expect(std::filesystem::exists(root / "beta.txt") && ReadFile(root / "zdest" / "beta.txt") == "b\n",
+         "a Ctrl drop on a folder copies the file there");
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  drag(*row_of(root / "alpha.txt"), dest_row->x + dest_row->w * 0.5f, dest_row->y + dest_row->h * 0.5f);
+  Expect(!std::filesystem::exists(root / "alpha.txt") && ReadFile(root / "zdest" / "alpha.txt") == "a\n",
+         "a drop on a folder moves the file there");
+  Expect(WorkspaceShellTestAccess::GroupTabPaths(shell, 1) ==
+             std::vector<std::filesystem::path>{(root / "zdest" / "alpha.txt").lexically_normal()},
+         "and its open tab follows it");
+
+  // Escape mid-drag drops nothing.
+  WorkspaceShellTestAccess::RefreshProjectFiles(shell);
+  const auto keep_parent = row_of(root / "zdest");
+  const auto beta_row = row_of(root / "beta.txt");
+  (void)SendMouseDown(shell, beta_row->x + 10.0f, beta_row->y + 4.0f, SDL_BUTTON_LEFT);
+  (void)SendMouseMotion(shell, keep_parent->x + 20.0f, keep_parent->y + 4.0f, SDL_BUTTON_LMASK);
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape cancels the drag");
+  (void)SendMouseUp(shell, keep_parent->x + 20.0f, keep_parent->y + 4.0f, SDL_BUTTON_LEFT);
+  Expect(std::filesystem::exists(root / "beta.txt") && !std::filesystem::exists(root / "zdest" / "beta copy.txt"),
+         "a cancelled drag moves nothing");
+}
+
+// QA tree-drag (redraw verifier): moving a file retitles its tab and breadcrumb
+// in EVERY pane showing it, and the move repainted only the focused pane, so the
+// other pane's breadcrumb kept the old folder on screen. A move (Ctrl+X, Ctrl+V
+// in the tree here) repaints what it retitles.
+void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(root / "dest" / "keep.txt", "k\n");
+  constexpr int kWidth = 1280;
+  constexpr int kHeight = 720;
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false), "project fixture should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "dest" / "keep.txt"), "keep.txt opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "a.txt"), "a.txt opens");
+  Expect(SendKeyDown(shell, SDLK_BACKSLASH, SDL_KMOD_CTRL), "Ctrl+\\ splits a.txt into a second pane");
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);  // the first pane shows keep.txt; the second, a.txt
+  WorkspaceShellTestAccess::ShowTreeSidebar(shell);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas(kWidth, kHeight);
+  const auto pin = [&]() { WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks()); };
+  pin();
+  shell.Render(canvas.renderer(), kWidth, kHeight);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  // a.txt's row dragged onto dest's row.
+  const auto row_of = [&](const std::filesystem::path& path) {
+    const auto& entries = WorkspaceShellTestAccess::TreeEntries(shell);
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+      if (entries[i].path == path.lexically_normal()) {
+        return WorkspaceShellTestAccess::TreeSidebarRowRect(shell, i).value_or(SDL_FRect{});
+      }
+    }
+    return SDL_FRect{};
+  };
+  const SDL_FRect from = row_of(root / "a.txt");
+  const SDL_FRect to = row_of(root / "dest");
+  Expect(from.w > 0.0f && to.w > 0.0f, "both rows are on screen");
+  (void)DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_DOWN, from.x + 20.0f, from.y + 4.0f),
+                               MouseMotionEvent(from.x + 30.0f, from.y + 10.0f),
+                               MouseMotionEvent(to.x + 20.0f, to.y + 4.0f)});
+  shell.Render(canvas.renderer(), kWidth, kHeight);  // the drag's preview on screen
+  (void)shell.ConsumePendingRenderInvalidation();
+  const microide::workspace::RenderInvalidation redraw =
+      DispatchEvents(shell, {MouseButtonEvent(SDL_EVENT_MOUSE_BUTTON_UP, to.x + 20.0f, to.y + 4.0f)});
+  Expect(std::filesystem::exists(root / "dest" / "a.txt"), "the drop moved the file");
+  const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin);
+  Expect(diff.count == 0, "the move repaints every pane that shows the file: " + DescribePixelDiff(diff));
 }
 
 // The wheel path resolves the cursor before it dispatches too, so scrolling the
@@ -8834,6 +8988,9 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
   AddTest(tests, "WorkspaceShell/ValueCommandsFromTheMenuSeedTheCommandPalette",
           TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette);
+  AddTest(tests, "WorkspaceShell/TreeRowDragAndDrop", TestWorkspaceShellTreeRowDragAndDrop);
+  AddTest(tests, "WorkspaceShell/TreeMoveRepaintsEveryPaneShowingTheFile",
+          TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile);
   AddTest(tests, "WorkspaceShell/TreeExpandRepaintsSidebarWhenCursorChanges",
           TestWorkspaceShellTreeExpandRepaintsSidebarWhenCursorChanges);
   AddTest(tests, "WorkspaceShell/TreeWheelRepaintsSidebarWhenCursorChanges",

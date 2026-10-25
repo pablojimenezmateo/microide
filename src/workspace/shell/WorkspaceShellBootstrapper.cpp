@@ -11,6 +11,7 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
+#include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/WorkspaceFileDrop.h"
@@ -308,6 +309,11 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
                 if (event.key == SDLK_ESCAPE &&
                     shell->context_.interaction_state.tab_drag.kind != TabDragKind::None &&
                     shell->MakeTabMouseCoordinator().CancelDrag()) {
+                  shell->RequestWindowRedraw();
+                  return true;
+                }
+                if (event.key == SDLK_ESCAPE && shell->context_.interaction_state.path_drag.armed &&
+                    shell->MakeSidebarMouseCoordinator().CancelPathDrag()) {
                   shell->RequestWindowRedraw();
                   return true;
                 }

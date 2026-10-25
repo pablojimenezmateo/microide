@@ -306,6 +306,16 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
+  // A tree row pressed and moved: the tree drag owns the pointer too (its ghost
+  // and drop preview follow it across the window, so the window repaints).
+  if (context_.interaction_state.path_drag.armed) {
+    if (MakeSidebarMouseCoordinator().HandlePathDragMotion(static_cast<float>(event.motion.x),
+                                                           static_cast<float>(event.motion.y), layout)) {
+      EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    }
+    return true;
+  }
+
   // A live tab drag owns the pointer, exactly like the divider/scrollbar drags
   // above it. It used to be handled at the very bottom of this function, which
   // meant every motion event first ran the whole hover pipeline — two tooltip

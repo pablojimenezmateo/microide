@@ -723,6 +723,14 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     return true;
   }
 
+  // The tree drag's release: the drop, or the click a press on a row deferred
+  // (the row opens). Ctrl copies what a folder drop would move, as in VS Code.
+  if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.path_drag.armed) {
+    (void)MakeSidebarMouseCoordinator().FinishPathDrag((SDL_GetModState() & SDL_KMOD_CTRL) != 0);
+    EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
+    return true;
+  }
+
   if (event.button.button == SDL_BUTTON_LEFT && context_.interaction_state.tab_drag.kind != TabDragKind::None) {
     if (HandleTabMouseButtonUp(event)) {
       EnsureRedraw(mark, [this]() { RequestWindowRedraw(); });
