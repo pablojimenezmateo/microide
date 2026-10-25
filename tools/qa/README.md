@@ -197,7 +197,27 @@ summary line gives the three counts.
 A dry-run sweep (`keys`, `context-menus`, `menu-clicks`) records a receipt and
 runs nothing, so it does not count: the ledger measures what was executed. Read
 the gap list before writing a new flow, and after it to see the gap close; a
-partial run (`suite edit-*`) counts only the scenarios it ran.
+partial run (`suite edit-*`) counts only the scenarios it ran. The commands only
+the smoke pass reaches are the remote ones; `tools/run-checks.sh qa-remote` drives
+them against a host (its scenario P), outside this ledger.
+
+## What the harness cannot reach
+
+Limits of the environment, not of the flows -- each would need a different one:
+
+- **Text past Latin-1 cannot be typed.** Xvfb has no input method, and without one
+  X delivers no text for such a keysym; `App.type` inserts it through the control
+  channel's `type` (the paste path). IME composition (`SDL_TEXTEDITING`) and CJK
+  keyboard input are untested in the real window.
+- **No window manager.** The sweeps run without one, so a window manager's
+  maximize, minimize and resize-by-drag are not driven (`resize_window` resizes
+  through `xdotool windowsize`, which the X server applies directly).
+- **Cursor shapes.** The redraw verifier compares pixels the app renders; the
+  pointer's shape is the server's, so a missing cursor change is invisible to it.
+- **Wayland seat input.** Under `MQA_BACKEND=wayland` input enters at SDL's event
+  level (no virtual-input protocol is packaged), so a clipboard selection, which a
+  compositor accepts only with a recent input serial, cannot be set there
+  (TD-2026-10-19-366; those scenarios are skipped by name).
 
 ## Driver notes (things the window taught the harness)
 

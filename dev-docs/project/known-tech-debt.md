@@ -1245,7 +1245,16 @@ fix belongs in the plugin API: a contributed server's command resolved per proje
 when it starts (a resolver callback, or `${projectRoot}` in the argv), and no
 implicit network fallback (say what to install instead).
 
-### TD-2026-10-18-364 — what the QA suite does not execute (measured). [OPEN]
+### TD-2026-10-18-364 — what the QA suite does not execute (measured). [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25: the measurement is the run's own output now.** Every suite
+run writes `command-coverage.txt` (§ "The command-coverage ledger" in
+`tools/qa/README.md`); the 2026-10-25 full run read 247 of 262 commands driven by
+a flow that checks their effect, none undriven, and the 15 left to the smoke pass
+are the remote commands `qa-remote` drives against a host (scenario P). The
+interaction semantics the ledger cannot see are checked by the state oracles
+below. A gap is read off the next run's ledger, not tracked here.
+
 
 **Update 2026-10-24: state oracles, and the interaction semantics the ledger cannot see.**
 The command ledger reads 236 of 251 driven by a checking flow (the 15 left are the
@@ -1899,7 +1908,18 @@ routes, and `choose_from_context_menu_by_keys` is the shared keyboard menu
 helper. Unit tests: `SearchResultsTypeToNavigate` and
 `GitSidebarTypesToNavigate`.
 
-### TD-2026-10-16-349 — what the QA harness still cannot reach. [OPEN]
+### TD-2026-10-16-349 — what the QA harness still cannot reach. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** Three of the four items are driven now: the merge
+editor's hunk buttons have `button:merge/<n>/...` locators and `compare-merge`
+presses them; F5 starts a session from a plugin's launch configuration
+(`debug-keys`), and the watch, call-stack and breakpoint-condition surfaces have
+flows (`dbg-conditions`, `dbg-commands`, the call-stack steps of the debugger
+flows); window resizes run through `xdotool windowsize` (`layout`). What remains
+is the environment's, not the flows': no input method under Xvfb, no window
+manager, no cursor shapes in the verifier, and no seat input on Wayland -- listed
+in `tools/qa/README.md` § "What the harness cannot reach".
+
 
 - Text past Latin-1 cannot be TYPED: Xvfb has no input method, and without one X
   delivers no text for such a keysym. `App.type` inserts it through the control
