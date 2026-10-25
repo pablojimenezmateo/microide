@@ -1394,6 +1394,34 @@ bool LinesEqualForDiff(std::string_view left,
   return options.ignore_whitespace && LinesEqualIgnoringWhitespace(left, right);
 }
 
+// The lines both sides share at the start and at the end: [0, prefix) match
+// pairwise, and so do [left_suffix, end) and [right_suffix, end). The suffix
+// never reaches into the prefix.
+struct EqualEnds {
+  std::size_t prefix = 0;
+  std::size_t left_suffix = 0;
+  std::size_t right_suffix = 0;
+};
+
+EqualEnds FindEqualEnds(std::span<const std::string_view> left_lines,
+                        std::span<const std::string_view> right_lines,
+                        const CompareBuildOptions& options) {
+  EqualEnds ends;
+  while (ends.prefix < left_lines.size() && ends.prefix < right_lines.size() &&
+         LinesEqualForDiff(left_lines[ends.prefix], right_lines[ends.prefix], options)) {
+    ++ends.prefix;
+  }
+  ends.left_suffix = left_lines.size();
+  ends.right_suffix = right_lines.size();
+  while (ends.left_suffix > ends.prefix && ends.right_suffix > ends.prefix &&
+         LinesEqualForDiff(left_lines[ends.left_suffix - 1], right_lines[ends.right_suffix - 1],
+                           options)) {
+    --ends.left_suffix;
+    --ends.right_suffix;
+  }
+  return ends;
+}
+
 }  // namespace
 
 const CompareTextBuffer& EmptyCompareText() {
@@ -1432,19 +1460,7 @@ void BuildLineDiffOpsInto(std::span<const std::string_view> left_lines,
                           detail::DiffScratch& scratch,
                           std::vector<DiffOp>& ops,
                           LineDiffBuildStats* stats) {
-  std::size_t prefix = 0;
-  while (prefix < left_lines.size() && prefix < right_lines.size() &&
-         LinesEqualForDiff(left_lines[prefix], right_lines[prefix], options)) {
-    ++prefix;
-  }
-
-  std::size_t left_suffix = left_lines.size();
-  std::size_t right_suffix = right_lines.size();
-  while (left_suffix > prefix && right_suffix > prefix &&
-         LinesEqualForDiff(left_lines[left_suffix - 1], right_lines[right_suffix - 1], options)) {
-    --left_suffix;
-    --right_suffix;
-  }
+  const auto [prefix, left_suffix, right_suffix] = FindEqualEnds(left_lines, right_lines, options);
 
   ops.clear();
   ops.reserve(left_lines.size() + right_lines.size());
@@ -1640,18 +1656,7 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   // the prefix loop immediately re-scan the identical prefix; it was pure redundant
   // work per rebuild and has been removed.
   const Clock::time_point line_alignment_start = Clock::now();
-  std::size_t prefix = 0;
-  while (prefix < left_lines.size() && prefix < right_lines.size() &&
-         LinesEqualForDiff(left_lines[prefix], right_lines[prefix], options)) {
-    ++prefix;
-  }
-  std::size_t left_suffix = left_lines.size();
-  std::size_t right_suffix = right_lines.size();
-  while (left_suffix > prefix && right_suffix > prefix &&
-         LinesEqualForDiff(left_lines[left_suffix - 1], right_lines[right_suffix - 1], options)) {
-    --left_suffix;
-    --right_suffix;
-  }
+  const auto [prefix, left_suffix, right_suffix] = FindEqualEnds(left_lines, right_lines, options);
 
   const std::span<const std::string_view> left_middle =
       std::span<const std::string_view>(left_lines).subspan(prefix, left_suffix - prefix);
