@@ -18,9 +18,7 @@
 #include <string>
 #include <string_view>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -584,7 +582,6 @@ void TestGitUnstageStagedRenameResetsBothSides() {
 // succeed, and the assertion would be testing nothing. It asserts the probe
 // really did fail before asserting on the behaviour.
 void TestGitDiscardRefusesAnUnstattableTarget() {
-#if defined(__unix__) || defined(__APPLE__)
   if (::geteuid() == 0) {
     std::fprintf(stderr,
                  "[git] SKIP: running as root, so an unsearchable directory still stats and "
@@ -630,7 +627,6 @@ void TestGitDiscardRefusesAnUnstattableTarget() {
   Expect(!discarded, "a target whose node cannot be classified must be refused, not discarded");
   Expect(std::filesystem::exists(locked_dir / "untracked.txt"),
          "the refused discard must leave the file alone");
-#endif
 }
 
 void TestGitRepositoryDirectApi() {
@@ -1043,9 +1039,6 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
 // timed_out (not a bare non-zero exit), so callers can distinguish a spurious
 // timeout from a real failure instead of showing a generic error.
 void TestGitCommandTimeoutReportsTimedOut() {
-#if defined(_WIN32)
-  return;  // POSIX sh hook + SIGKILL semantics
-#else
   TemporaryDirectory temp_dir;
   const auto repo_path = temp_dir.path() / "repo";
   WriteFile(repo_path / "a.txt", "a1\n");
@@ -1067,7 +1060,6 @@ void TestGitCommandTimeoutReportsTimedOut() {
       repo_path, {"commit", "-m", "blocked"}, /*silence_stderr=*/false, /*timeout_ms=*/300);
   Expect(result.timed_out, "a git commit blocked by a slow hook must report timed_out");
   Expect(!result.success(), "a timed-out git command must not report success");
-#endif
 }
 
 }  // namespace

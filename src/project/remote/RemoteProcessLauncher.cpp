@@ -17,12 +17,10 @@
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
-#endif
 
 namespace microide::project::remote {
 namespace {
@@ -40,8 +38,6 @@ int ExitStatus(std::optional<int> code, std::optional<int> signal) {
   // As the local layer reports it: a signal is 128 + signo.
   return signal.has_value() ? 128 + *signal : code.value_or(-1);
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 // A host process materialized locally as two pipes, so AsyncSubprocess — and the
 // language server / debug adapter transports above it — drive it exactly like a
@@ -304,9 +300,6 @@ class RemoteAsyncProcess final : public platform::AsyncProcessController, public
   std::optional<int> exit_status_;
 };
 
-#endif
-
-
 }  // namespace
 
 RemoteProcessLauncher::RemoteProcessLauncher(std::shared_ptr<RemoteConnection> connection,
@@ -530,7 +523,6 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
   // The sandbox is the local one's business (Landlock on THIS machine); a host
   // process is confined by the host account it runs as.
   (void)sandbox;
-#if defined(__unix__) || defined(__APPLE__)
   const std::shared_ptr<RemoteServerClient> client = connection_->client();
   if (client == nullptr || !client->connected()) {
     return false;
@@ -551,12 +543,6 @@ bool RemoteProcessLauncher::StartAsync(platform::AsyncSubprocess& process,
   remote->Begin(spawned.handle, spawned.pid);
   connection_->Track(remote);
   return process.Adopt(consumer->first, consumer->second, remote);
-#else
-  (void)process;
-  (void)argv;
-  (void)cwd;
-  return false;
-#endif
 }
 
 std::optional<RemoteServerClient::GitMetadata> RemoteProcessLauncher::Metadata(

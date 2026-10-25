@@ -8,10 +8,8 @@
 #include <string>
 #include <system_error>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
 #include <sys/types.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -189,7 +187,6 @@ void TestReadTextFileRejectsNonRegularFiles() {
   std::string out;
   Expect(!ReadFileForTextSearch(dir_path, out), "the search reader must reject a directory");
 
-#if defined(__unix__) || defined(__APPLE__)
   // A FIFO is the canonical block-on-open hazard. mkfifo is POSIX-only.
   const std::filesystem::path fifo_path = temp_dir.path() / "a_fifo";
   if (::mkfifo(fifo_path.c_str(), 0600) == 0) {
@@ -201,7 +198,6 @@ void TestReadTextFileRejectsNonRegularFiles() {
            "the search reader must reject a FIFO without blocking");
     std::filesystem::remove(fifo_path, ec);
   }
-#endif
 }
 
 // TD-2026-07-17A-024: the bounded line-window reader returns exactly the

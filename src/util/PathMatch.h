@@ -39,11 +39,7 @@ namespace microide::util {
     return true;
   }
   const auto is_separator = [](std::filesystem::path::value_type c) {
-#ifdef _WIN32
-    return c == L'\\' || c == L'/';
-#else
     return c == '/';
-#endif
   };
   // A "." root is the current directory, whose members are spelled without any
   // "./" prefix once normalized ("./x" normalizes to "x"), so the prefix compare
@@ -92,11 +88,7 @@ namespace microide::util {
 [[nodiscard]] inline std::string_view NormalizedRelativeView(std::string_view candidate_text,
                                                              std::string_view root_text) {
   const auto is_separator = [](char c) {
-#ifdef _WIN32
-    return c == '\\' || c == '/';
-#else
     return c == '/';
-#endif
   };
   if (root_text.empty() || candidate_text == root_text) {
     return {};
@@ -120,11 +112,7 @@ namespace microide::util {
 // what `path::parent_path()` would yield, without constructing a path. An empty
 // view means the path has no directory part (a bare relative filename).
 [[nodiscard]] inline std::string_view NormalizedParentDirectoryView(std::string_view text) {
-#ifdef _WIN32
-  const std::size_t last_separator = text.find_last_of("\\/");
-#else
   const std::size_t last_separator = text.find_last_of('/');
-#endif
   if (last_separator == std::string_view::npos) {
     return {};
   }
@@ -140,11 +128,7 @@ namespace microide::util {
 // asks "is this name hidden?" per entry was spending a path plus a string on the
 // answer (`path.filename().string()[0] == '.'`).
 [[nodiscard]] inline std::string_view NormalizedFileNameView(std::string_view text) {
-#ifdef _WIN32
-  const std::size_t last_separator = text.find_last_of("\\/");
-#else
   const std::size_t last_separator = text.find_last_of('/');
-#endif
   return last_separator == std::string_view::npos ? text : text.substr(last_separator + 1);
 }
 
@@ -164,11 +148,7 @@ namespace microide::util {
 // directory-form separator, which `lexically_normal()` preserves).
 [[nodiscard]] inline bool PathTextNeedsNormalizing(std::string_view text) {
   const auto is_separator = [](char c) {
-#ifdef _WIN32
-    return c == '\\' || c == '/';
-#else
     return c == '/';
-#endif
   };
   if (text.empty()) {
     return false;

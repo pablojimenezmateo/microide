@@ -55,8 +55,8 @@ The current SDL shell already includes:
 - shared UTF-8 and line-ending utilities across editor, renderer, terminal, and workspace text
   helpers, so text decoding, serialization, and boundary handling follow one host contract
 - a filesystem tree with `.gitignore` support, git markers, and create/rename/delete flows
-- host-owned platform services for app directories, trash or recycle-bin behavior, external URL or
-  reveal-path actions, and bundled runtime asset discovery across Linux, macOS, and Windows
+- host-owned platform services for app directories (XDG), trash, external URL or reveal-path
+  actions, and bundled runtime asset discovery
 - tree mutations preserve affected editor, compare, and merge state across rename/delete workflows
 - a file finder overlay and an async project-search sidebar
 - parallelized literal-by-default project search with regex, case-mode, hidden-file controls, count-all totals, and match highlighting
@@ -267,7 +267,6 @@ whether the backend is external or built in.
   host and its host services
 - `dev-docs/project/active-work.md`: shipped baseline, active priorities, and accepted scope cuts
 - `AGENTS.md`: repo-level engineering policy, best practices, and iteration loop
-- `dev-docs/platform/host-platform-audit.md`: current host-service seam map and the remaining POSIX-only gaps
 - `dev-docs/platform/host-platform-bringup.md`: local build, launch, and focused validation flow for the Linux host
 - `dev-docs/plugins/plugin-runtime-research.md`: plugin architecture notes and external references
 - `dev-docs/project/known-tech-debt.md`: concrete open debt that still matters after recent refactors

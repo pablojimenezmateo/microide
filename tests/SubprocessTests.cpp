@@ -14,11 +14,9 @@
 #include <string>
 #include <thread>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -72,11 +70,7 @@ void TestSubprocessCapturesStdoutAndStdin() {
 
 void TestSubprocessCapturesStderrAndCwd() {
   TemporaryDirectory temp_dir;
-#if defined(_WIN32)
-  const std::vector<std::string> cwd_command{"cmd", "/c", "cd"};
-#else
   const std::vector<std::string> cwd_command{"pwd"};
-#endif
   const auto pwd_result = RunSubprocess(cwd_command, SubprocessOptions{
                                                          .cwd = temp_dir.path(),
                                                          .stdin_text = {},
@@ -113,7 +107,6 @@ void TestSubprocessCapturesStderrAndCwd() {
          "silenced subprocess execution should discard stderr output");
 }
 
-#if defined(__unix__) || defined(__APPLE__)
 class ScopedStdinRedirect {
  public:
   explicit ScopedStdinRedirect(const std::filesystem::path& path) {
@@ -351,7 +344,6 @@ void TestIgnoreBrokenPipeSignalPreventsCrash() {
 // and exited 1 where it should die quietly of the signal (141), and a shell
 // cannot reset a signal that was ignored when it started. The probe prints the
 // exit status of a `yes` whose reader went away.
-#if !defined(_WIN32)
 constexpr const char* kSigpipeProbe =
     "( yes 2>/dev/null; echo yes-exit=$? >&2 ) | head -c 1 >/dev/null";
 
@@ -396,7 +388,6 @@ void TestAsyncSubprocessChildGetsDefaultSigpipe() {
   Expect(output.find("yes-exit=141") != std::string::npos,
          "an async child must see SIGPIPE at its default disposition, got: " + output);
 }
-#endif
 
 // Regression: a child that echoes a payload larger than the kernel pipe buffer
 // would deadlock if the parent wrote all of stdin before draining stdout — the
@@ -519,7 +510,6 @@ void TestSubprocessTimeoutDoesNotTripFastCommand() {
   Expect(result.stdout_text == "fast payload\n",
          "a timed run should still capture stdout when it completes in time");
 }
-#endif
 
 // The probe is parent-side and read-only, so it is safe to call from the test process. We assert
 // internal consistency rather than concrete availability: CI kernels vary (Landlock/seccomp may be
@@ -552,7 +542,6 @@ void TestSandboxProbeReportsConsistentSupport() {
          "repeated sandbox probes must be stable (no host-process side effects)");
 }
 
-#if defined(__linux__)
 // A `read_files` entry grants that one file and nothing beside it -- the shape the
 // plugin sandbox uses for ~/.gitconfig. The fixture lives under the build tree,
 // not /tmp: every sandboxed child may read /tmp, so a probe there proves nothing.
@@ -589,7 +578,6 @@ void TestSandboxReadFilesGrantsOnlyThatFile() {
   Expect(neighbour.exit_code != 0,
          "its neighbour in the same directory is not: the grant is the file, not the directory");
 }
-#endif
 
 }  // namespace
 
@@ -598,13 +586,10 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAllowUserToolchainsGrantsPerUserInstallsOnly);
   AddTest(tests, "Subprocess/SandboxProbeReportsConsistentSupport",
           TestSandboxProbeReportsConsistentSupport);
-#if defined(__linux__)
   AddTest(tests, "Subprocess/SandboxReadFilesGrantsOnlyThatFile",
           TestSandboxReadFilesGrantsOnlyThatFile);
-#endif
   AddTest(tests, "Subprocess/CapturesStdoutAndStdin", TestSubprocessCapturesStdoutAndStdin);
   AddTest(tests, "Subprocess/CapturesStderrAndCwd", TestSubprocessCapturesStderrAndCwd);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Subprocess/AppliesEnvironmentOverrides",
           TestSubprocessAppliesEnvironmentOverrides);
   AddTest(tests, "Subprocess/WithoutExplicitStdinDoesNotInheritParentStdin",
@@ -615,11 +600,9 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessMovedFromAccessorsDoNotCrash);
   AddTest(tests, "Subprocess/IgnoreBrokenPipeSignalPreventsCrash",
           TestIgnoreBrokenPipeSignalPreventsCrash);
-#if !defined(_WIN32)
   AddTest(tests, "Subprocess/ChildGetsDefaultSigpipe", TestSubprocessChildGetsDefaultSigpipe);
   AddTest(tests, "AsyncSubprocess/ChildGetsDefaultSigpipe",
           TestAsyncSubprocessChildGetsDefaultSigpipe);
-#endif
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
           TestSubprocessLargeStdinDoesNotDeadlock);
   AddTest(tests, "Subprocess/TimeoutKillsHungChild", TestSubprocessTimeoutKillsHungChild);
@@ -629,7 +612,6 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestSubprocessCaptureCapTruncatesFirehose);
   AddTest(tests, "Subprocess/TimeoutDoesNotTripFastCommand",
           TestSubprocessTimeoutDoesNotTripFastCommand);
-#endif
 }
 
 }  // namespace microide::tests

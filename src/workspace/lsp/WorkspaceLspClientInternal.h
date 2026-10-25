@@ -26,11 +26,9 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
-#endif
 
 #include "util/StartupTrace.h"
 #include "workspace/lsp/LspClientTrace.h"

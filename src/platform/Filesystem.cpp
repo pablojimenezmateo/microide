@@ -4,9 +4,7 @@
 #include <chrono>
 #include <system_error>
 
-#if !defined(_WIN32)
 #include <sys/stat.h>
-#endif
 
 #include "util/PathMatch.h"
 
@@ -28,30 +26,6 @@ std::optional<FileMetadata> ReadFileMetadata(const std::filesystem::path& path) 
   if (path.empty()) {
     return std::nullopt;
   }
-#if defined(_WIN32)
-  // No single-call equivalent worth hand-rolling here; the POSIX hosts are the
-  // ones whose walks this exists for. Same answers, three calls.
-  std::error_code error;
-  const std::filesystem::file_status status = std::filesystem::status(path, error);
-  if (error) {
-    return std::nullopt;
-  }
-  FileMetadata metadata;
-  metadata.type = PathTypeFromStatus(status);
-  if (metadata.type == PathType::RegularFile) {
-    std::error_code size_error;
-    metadata.size = std::filesystem::file_size(path, size_error);
-    if (size_error) {
-      metadata.size = 0;
-    }
-  }
-  std::error_code mtime_error;
-  metadata.mtime = std::filesystem::last_write_time(path, mtime_error);
-  if (mtime_error) {
-    metadata.mtime = {};
-  }
-  return metadata;
-#else
   struct ::stat st {};
   // stat(), not lstat(): std::filesystem::file_size / last_write_time / status
   // all resolve symlinks, and this replaces those at call sites that compare
@@ -77,7 +51,6 @@ std::optional<FileMetadata> ReadFileMetadata(const std::filesystem::path& path) 
                                                        nanoseconds{st.st_mtim.tv_nsec}};
   metadata.mtime = std::chrono::file_clock::from_sys(system_time);
   return metadata;
-#endif
 }
 
 PathType ReadPathType(const std::filesystem::path& path) {

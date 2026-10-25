@@ -8,15 +8,11 @@
 #include <string_view>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define MICROIDE_PERF_CAN_FORK 1
-#else
-#define MICROIDE_PERF_CAN_FORK 0
-#endif
 
 namespace microide::tests::perf {
 

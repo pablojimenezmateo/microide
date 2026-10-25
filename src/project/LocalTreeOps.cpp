@@ -10,14 +10,8 @@
 #include "platform/FsOps.h"
 #include "platform/Trash.h"
 
-#ifdef _WIN32
-#include <fcntl.h>
-#include <io.h>
-#include <sys/stat.h>
-#else
 #include <fcntl.h>
 #include <unistd.h>
-#endif
 
 namespace microide::project {
 
@@ -32,24 +26,12 @@ using TreeResult = FileWriteGate::TreeResult;
 // a single kernel operation, so unlike an exists() probe followed by a truncating
 // open it cannot clobber a file another process creates in the meantime.
 int ExclusiveCreateEmptyFile(const fs::path& path) {
-#ifdef _WIN32
-  int fd = -1;
-  const errno_t open_error = _wsopen_s(&fd, path.c_str(),
-                                       _O_BINARY | _O_CREAT | _O_EXCL | _O_WRONLY,
-                                       _SH_DENYNO, _S_IREAD | _S_IWRITE);
-  if (open_error != 0 || fd < 0) {
-    return (open_error == EEXIST) ? 0 : -1;
-  }
-  _close(fd);
-  return 1;
-#else
   const int fd = ::open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0644);
   if (fd < 0) {
     return (errno == EEXIST) ? 0 : -1;
   }
   ::close(fd);
   return 1;
-#endif
 }
 
 // Presence of the directory entry itself, without following a symlink. exists()

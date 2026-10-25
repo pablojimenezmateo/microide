@@ -2,9 +2,7 @@
 
 #include <utility>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
-#endif
 
 namespace microide::server {
 
@@ -51,14 +49,12 @@ void WorkspaceWatch::OnBatch(platform::IndexUpdateBatch batch) {
 
 WorkspaceWatch::Polled WorkspaceWatch::StatPolled(const std::filesystem::path& root, std::string path) {
   Polled polled;
-#if defined(__unix__) || defined(__APPLE__)
   struct stat info {};
   if (::lstat((root / path).c_str(), &info) == 0) {
     polled.size = static_cast<std::int64_t>(info.st_size);
     polled.mtime_ns = static_cast<std::int64_t>(info.st_mtim.tv_sec) * 1'000'000'000 + info.st_mtim.tv_nsec;
     polled.ctime_ns = static_cast<std::int64_t>(info.st_ctim.tv_sec) * 1'000'000'000 + info.st_ctim.tv_nsec;
   }
-#endif
   polled.path = std::move(path);
   return polled;
 }

@@ -4,14 +4,12 @@
 
 #include "terminal/TerminalSession.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <chrono>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
-#endif
 
 // Terminal lifecycle platform stress suite (TD-2026-07-17-015): real PTY-backed
 // sessions driven through the teardown paths the placeholder-terminal shell
@@ -28,8 +26,6 @@
 
 namespace microide::tests {
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using microide::terminal::TerminalSession;
 
@@ -161,12 +157,9 @@ void TestTerminalStressMultiTerminalShutdown() {
   sessions.clear();
 }
 
-#endif  // defined(__unix__) || defined(__APPLE__)
-
 }  // namespace
 
 void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TerminalLifecycleStress/StopDuringHeavyOutput",
           TestTerminalStressStopDuringHeavyOutput);
   AddTest(tests, "TerminalLifecycleStress/StopDuringAlternateScreen",
@@ -177,9 +170,6 @@ void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests) {
           TestTerminalStressOpenCloseLoopRacesChildExit);
   AddTest(tests, "TerminalLifecycleStress/MultiTerminalShutdown",
           TestTerminalStressMultiTerminalShutdown);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

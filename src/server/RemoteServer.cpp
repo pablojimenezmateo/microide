@@ -13,11 +13,9 @@
 #include "util/Log.h"
 #include "util/TextFileIO.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#endif
 
 namespace microide::server {
 
@@ -433,9 +431,7 @@ util::JsonValue RemoteServer::StatusJson() {
   std::lock_guard lock(mutex_);
   util::JsonObject status;
   status["socket"] = util::JsonValue(config_.socket_path.string());
-#if defined(__unix__) || defined(__APPLE__)
   status["pid"] = util::JsonValue(static_cast<std::int64_t>(::getpid()));
-#endif
   status["release"] = util::JsonValue(config_.release);
   status["daemon_epoch"] = util::JsonValue(epoch_);
   status["on_demand"] = util::JsonValue(config_.on_demand);
@@ -551,7 +547,6 @@ bool RemoteServer::Idle() {
 }
 
 int RemoteServer::RunListener(int listen_fd) {
-#if defined(__unix__) || defined(__APPLE__)
   util::Log("listening on " + config_.socket_path.string() + " (epoch " + epoch_ +
             (config_.on_demand ? ", on demand)" : ", started by hand)"));
   while (!shutdown_.load(std::memory_order_acquire)) {
@@ -589,14 +584,9 @@ int RemoteServer::RunListener(int listen_fd) {
     ::unlink(config_.socket_path.c_str());
   }
   return 0;
-#else
-  (void)listen_fd;
-  return 1;
-#endif
 }
 
 int RemoteServer::ServeOne(int read_fd, int write_fd) {
-#if defined(__unix__) || defined(__APPLE__)
   Connection& connection = Accept(read_fd, write_fd);
   while (!connection.closed && !shutdown_.load(std::memory_order_acquire)) {
     pollfd fd{wake_.read_fd(), POLLIN, 0};
@@ -606,11 +596,6 @@ int RemoteServer::ServeOne(int read_fd, int write_fd) {
   (void)connection.peer.Flush(std::chrono::milliseconds(500));
   connection.peer.Stop();
   return 0;
-#else
-  (void)read_fd;
-  (void)write_fd;
-  return 1;
-#endif
 }
 
 }  // namespace microide::server

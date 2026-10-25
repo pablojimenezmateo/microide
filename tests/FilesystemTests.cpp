@@ -7,10 +7,8 @@
 #include "platform/HostIntegration.h"
 #include "platform/Trash.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <poll.h>
 #include <unistd.h>
-#endif
 
 #include <chrono>
 #include <condition_variable>
@@ -206,7 +204,6 @@ void TestFileWatcherTreeTooLargeSuppressesPolling() {
   Expect(!watcher.TreeTooLarge(), "Clear should reset the too-large flag");
 }
 
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
 void TestFileWatcherWakeCallbackSignalsNestedChanges() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "plugins";
@@ -271,62 +268,6 @@ void TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll() {
   watcher.Clear();
 }
 
-#if defined(_WIN32)
-void TestFileWatcherDeferredInitialSnapshotArmsWithoutReportingIgnoredWake() {
-  TemporaryDirectory temp_dir;
-  const std::filesystem::path root = temp_dir.path() / "workspace";
-  std::filesystem::create_directories(root / "node_modules" / "pkg");
-  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 1;\n");
-  WriteFile(root / "src" / "main.ts", "export const main = 1;\n");
-
-  std::mutex mutex;
-  std::condition_variable condition;
-  bool notified = false;
-  FileTreeWatcher watcher(std::chrono::milliseconds(500));
-  watcher.SetDeferInitialSnapshot(true);
-  watcher.SetEntryFilter([&root](const std::filesystem::path& path, PathType) {
-    if (path == root) {
-      return true;
-    }
-
-    const std::filesystem::path relative = path.lexically_relative(root);
-    if (relative.empty()) {
-      return true;
-    }
-
-    for (const auto& component : relative) {
-      if (component == "node_modules") {
-        return false;
-      }
-    }
-    return true;
-  });
-  watcher.SetWakeCallback([&]() {
-    {
-      std::lock_guard lock(mutex);
-      notified = true;
-    }
-    condition.notify_one();
-  });
-  watcher.SetRoots({root});
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-  WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 2;\n");
-
-  std::unique_lock lock(mutex);
-  const bool woke = condition.wait_for(lock, std::chrono::seconds(2), [&]() { return notified; });
-  Expect(woke, "deferred watcher should still receive a native wake for ignored directory churn");
-  lock.unlock();
-
-  Expect(!watcher.Poll(),
-         "deferred watcher should arm its first filtered snapshot instead of reporting ignored changes");
-  watcher.SetWakeCallback({});
-  watcher.Clear();
-}
-#endif  // _WIN32
-#endif  // __linux__ || __APPLE__ || _WIN32
-
-#if defined(__unix__) || defined(__APPLE__)
 // CopyPath must not throw when the tree contains a symlink (previously it walked
 // with a throwing recursive_directory_iterator and dereferenced symlinks). It
 // should copy symlinks as symlinks, not follow them into real files/dirs.
@@ -410,7 +351,6 @@ void TestMovePathNoOverwriteRefusesDanglingDestinationSymlink() {
 
   fs::remove_all(base, ec);
 }
-#endif
 
 // TD-2026-07-17-064: CopyPath must accept a bare-filename destination (empty
 // parent_path). Previously it unconditionally called create_directories("") which
@@ -437,7 +377,6 @@ void TestCopyPathAcceptsBareFilenameDestination() {
   Expect(copied == "bare filename copy", "the bare-filename copy should hold the source bytes");
 }
 
-#if defined(__linux__)
 // TD-2026-07-17-063: a dangling symlink is a real, removable directory entry that a
 // normal file manager can trash. MovePathToTrash validated the source with
 // std::filesystem::exists, which follows the link and reports a broken link as
@@ -462,7 +401,6 @@ void TestTrashAcceptsDanglingSymlink() {
   Expect(!fs::is_symlink(fs::symlink_status(link)),
          "the dangling symlink should be removed from its original location");
 }
-#endif
 
 // TD-2026-07-17-027: OpenUrl is a trust boundary. Unsupported schemes and
 // over-long URLs must be refused before reaching the OS opener. Only the
@@ -480,8 +418,6 @@ void TestOpenUrlRejectsUnsafeSchemesAndOverlongInput() {
   Expect(!microide::platform::OpenUrl(overlong).ok, "an over-long URL is refused");
 }
 
-
-#if defined(__unix__) || defined(__APPLE__)
 // RetireDescriptorAsync hands a descriptor to a background worker so the caller
 // never blocks in close(2) -- which, for an inotify descriptor, sporadically
 // costs milliseconds. The contract that matters is simply that the close DOES
@@ -509,30 +445,23 @@ void TestRetireDescriptorAsyncEventuallyCloses() {
          "descriptor is actually closed");
   ::close(fds[0]);
 }
-#endif
 
 }  // namespace
 
 void RegisterFilesystemTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Platform/RetireDescriptorAsyncEventuallyCloses",
           TestRetireDescriptorAsyncEventuallyCloses);
-#endif
   AddTest(tests, "Platform/OpenUrlRejectsUnsafeSchemesAndOverlongInput",
           TestOpenUrlRejectsUnsafeSchemesAndOverlongInput);
   AddTest(tests, "Filesystem/CopyPathAcceptsBareFilenameDestination",
           TestCopyPathAcceptsBareFilenameDestination);
-#if defined(__linux__)
   AddTest(tests, "Trash/AcceptsDanglingSymlink", TestTrashAcceptsDanglingSymlink);
-#endif
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Filesystem/CopyPathPreservesSymlinksAndDoesNotThrow",
           TestCopyPathPreservesSymlinksAndDoesNotThrow);
   AddTest(tests, "Filesystem/CopyPathPreservesTopLevelFileSymlink",
           TestCopyPathPreservesTopLevelFileSymlink);
   AddTest(tests, "Filesystem/MovePathNoOverwriteRefusesDanglingDestinationSymlink",
           TestMovePathNoOverwriteRefusesDanglingDestinationSymlink);
-#endif
   AddTest(tests, "Filesystem/ListDirectorySortsAndClassifiesEntries",
           TestFilesystemListDirectorySortsAndClassifiesEntries);
   AddTest(tests, "FileWatcher/DetectsNestedCreatesUpdatesAndDeletes",
@@ -547,20 +476,10 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestReadFileMetadataMatchesStdFilesystem);
   AddTest(tests, "FileWatcher/TreeTooLargeSuppressesPolling",
           TestFileWatcherTreeTooLargeSuppressesPolling);
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   AddTest(tests, "FileWatcher/WakeCallbackSignalsNestedChanges",
           TestFileWatcherWakeCallbackSignalsNestedChanges);
   AddTest(tests, "FileWatcher/NativeWakeDoesNotForceZeroDelayPoll",
           TestFileWatcherNativeWakeDoesNotForceZeroDelayPoll);
-#endif
-#if defined(_WIN32)
-  // Windows watches the full subtree via FindFirstChangeNotificationW(subtree=TRUE),
-  // so churn under a filtered subdirectory still wakes the watcher. inotify/kqueue
-  // place per-directory watches and skip filtered subtrees entirely, so this
-  // wake-on-ignored-churn contract is Windows-specific.
-  AddTest(tests, "FileWatcher/DeferredInitialSnapshotArmsWithoutReportingIgnoredWake",
-          TestFileWatcherDeferredInitialSnapshotArmsWithoutReportingIgnoredWake);
-#endif
 }
 
 }  // namespace microide::tests

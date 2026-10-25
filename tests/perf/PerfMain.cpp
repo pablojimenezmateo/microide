@@ -38,9 +38,7 @@
 #include "util/TraceChannel.h"
 #include "util/StringUtil.h"
 
-#if defined(__linux__)
 #include <unistd.h>
-#endif
 
 #include "util/JsonValue.h"
 #include "util/Parse.h"
@@ -114,7 +112,6 @@ struct ProcessSample {
 };
 
 ProcessSample ReadProcessSample() {
-#if defined(__linux__)
   ProcessSample sample{};
   {
     std::ifstream statm("/proc/self/statm");
@@ -156,15 +153,11 @@ ProcessSample ReadProcessSample() {
     }
   }
   return sample;
-#else
-  return {};
-#endif
 }
 
 double CpuPercentFromSamples(const ProcessSample& before,
                              const ProcessSample& after,
                              std::chrono::milliseconds elapsed) {
-#if defined(__linux__)
   if (after.cpu_ticks < before.cpu_ticks || elapsed.count() <= 0) {
     return 0.0;
   }
@@ -176,12 +169,6 @@ double CpuPercentFromSamples(const ProcessSample& before,
       static_cast<double>(after.cpu_ticks - before.cpu_ticks) / static_cast<double>(ticks_per_sec);
   const double wall_seconds = static_cast<double>(elapsed.count()) / 1000.0;
   return wall_seconds > 0.0 ? (cpu_seconds / wall_seconds) * 100.0 : 0.0;
-#else
-  (void)before;
-  (void)after;
-  (void)elapsed;
-  return 0.0;
-#endif
 }
 
 std::string ReadFileTextOrThrow(const std::filesystem::path& path) {

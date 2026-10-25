@@ -11,13 +11,11 @@
 #include <optional>
 #include <system_error>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <csignal>
 #include <cerrno>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#endif
 
 #include "platform/AppDirectories.h"
 #include "platform/RuntimePaths.h"
@@ -53,11 +51,7 @@ constexpr std::size_t kMaxControlInstances = 4096;
 constexpr std::size_t kMaxControlInstanceScan = 65536;
 
 int CurrentProcessId() {
-#if defined(__unix__) || defined(__APPLE__)
   return static_cast<int>(::getpid());
-#else
-  return 0;
-#endif
 }
 
 // Base runtime directory for control sockets/descriptors: $XDG_RUNTIME_DIR when
@@ -109,7 +103,6 @@ std::filesystem::path DescriptorPathForPid(int pid) {
 // Whether a process is still running. Used to drop descriptors left behind by a
 // hard kill / crash (the graceful shutdown path removes its own).
 bool ProcessIsAlive(int pid) {
-#if defined(__unix__) || defined(__APPLE__)
   if (pid <= 0) {
     return false;
   }
@@ -117,10 +110,6 @@ bool ProcessIsAlive(int pid) {
     return true;
   }
   return errno == EPERM;  // exists but not signalable by us
-#else
-  (void)pid;
-  return true;
-#endif
 }
 
 }  // namespace
@@ -302,7 +291,6 @@ void ControlChannelService::WriteDescriptor() {
   std::error_code ec;
   const std::filesystem::path parent = descriptor_path_.parent_path();
   std::filesystem::create_directories(parent, ec);
-#if defined(__unix__) || defined(__APPLE__)
   // The descriptor exposes project_root/project_hash. Keep the runtime + instances
   // directories owner-only (0700) so other local users cannot enumerate active
   // project roots even when $XDG_RUNTIME_DIR is absent and we fell back to /tmp.
@@ -310,7 +298,6 @@ void ControlChannelService::WriteDescriptor() {
   if (parent.has_parent_path()) {
     ::chmod(parent.parent_path().c_str(), S_IRWXU);
   }
-#endif
   util::JsonObject descriptor;
   descriptor["pid"] = util::JsonValue(static_cast<std::int64_t>(pid));
   descriptor["socket"] = util::JsonValue(SocketPathForPid(pid).generic_string());
@@ -337,9 +324,7 @@ void ControlChannelService::WriteDescriptor() {
       return;
     }
   }
-#if defined(__unix__) || defined(__APPLE__)
   ::chmod(temp_path.c_str(), S_IRUSR | S_IWUSR);  // 0600 before it becomes visible
-#endif
   std::error_code rename_ec;
   std::filesystem::rename(temp_path, descriptor_path_, rename_ec);
   if (rename_ec) {

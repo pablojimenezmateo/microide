@@ -43,9 +43,8 @@ std::optional<std::filesystem::path> ResolveToolSourcePath(const std::string& ur
     // Reuse the shared strict file-URI parser rather than a private lax decode
     // (TD-2026-07-17A-109): PathFromFileUri does strict percent-decoding (a malformed
     // %-escape rejects the whole URI), rejects a decoded NUL (which would truncate a
-    // C-string filesystem call), rejects non-local authorities, and handles the Windows
-    // drive form — none of which the old util::PercentDecode path did before hashing and
-    // copying the local source.
+    // C-string filesystem call) and rejects non-local authorities — none of which the
+    // old util::PercentDecode path did before hashing and copying the local source.
     return PathFromFileUri(url);
   }
 

@@ -10,12 +10,10 @@
 #include <string_view>
 #include <system_error>
 
-#if !defined(_WIN32)
 #include <climits>
 #include <sys/stat.h>
 #if !defined(PATH_MAX)
 #define PATH_MAX 4096
-#endif
 #endif
 
 #include "platform/Subprocess.h"
@@ -31,7 +29,6 @@ bool HasGitMarker(const std::filesystem::path& root) {
   if (root.empty()) {
     return false;
   }
-#if !defined(_WIN32)
   // POSIX fast path: assemble `<root>/.git` in a stack buffer and stat it.
   // `root / ".git"` is not free — the resulting path allocates its own string
   // plus libstdc++'s component list, ~167 bytes across the pair — and this runs
@@ -58,7 +55,6 @@ bool HasGitMarker(const std::filesystem::path& root) {
       return ::stat(buffer, &info) == 0;
     }
   }
-#endif
   // Use the non-throwing overload: this runs on the background-executor thread on
   // essentially every git operation, and the throwing exists() aborts the process
   // when the failure is not "does not exist" (a parent dir losing +x, an unmounted
@@ -69,7 +65,6 @@ bool HasGitMarker(const std::filesystem::path& root) {
 }
 
 namespace {
-
 
 std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
     const std::filesystem::path& root,
@@ -94,22 +89,6 @@ std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
   if (relative.empty() ||
       (relative.begin() != relative.end() &&
        *relative.begin() == std::filesystem::path(".."))) {
-#if defined(_WIN32)
-    const std::string root_text = normalized_root.generic_string();
-    const std::string path_text = normalized_path.generic_string();
-    std::string lowered_root = util::ToLowerAscii(root_text);
-    std::string lowered_path = util::ToLowerAscii(path_text);
-    const std::string lowered_root_prefix =
-        lowered_root.ends_with('/') ? lowered_root : lowered_root + "/";
-    const std::string root_prefix = root_text.ends_with('/') ? root_text : root_text + "/";
-    if (lowered_path == lowered_root) {
-      return std::filesystem::path(".");
-    }
-    if (lowered_path.size() > lowered_root_prefix.size() &&
-        lowered_path.rfind(lowered_root_prefix, 0) == 0) {
-      return std::filesystem::path(path_text.substr(root_prefix.size())).lexically_normal();
-    }
-#endif
     return std::nullopt;
   }
   return util::NormalizedPath(relative);

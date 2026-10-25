@@ -13,14 +13,11 @@
 #include <chrono>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
 
-#if defined(__unix__) || defined(__APPLE__)
 // WakePipe::PollReadableOrWake is the stdio-transport poll shared by the LSP and
 // DAP clients. It previously existed as two verbatim copies inside those clients,
 // reachable only through a live subprocess, so its behaviour was never asserted
@@ -91,16 +88,11 @@ void TestWakePipePollReadableOrWakeContract() {
   ::close(more_fds[0]);
   ::close(more_fds[1]);
 }
-#endif  // __unix__ || __APPLE__
 
 }  // namespace
 
 void RegisterWakePipeTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "WakePipe/PollReadableOrWakeContract", TestWakePipePollReadableOrWakeContract);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

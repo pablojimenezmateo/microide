@@ -16,11 +16,9 @@
 #include <unordered_map>
 #include <vector>
 
-#if defined(__unix__)
 #include <sys/resource.h>
 #include <fcntl.h>
 #include <unistd.h>
-#endif
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -215,7 +213,6 @@ std::uint64_t MeasureCpuCalibrationNanoseconds() {
 }  // namespace
 
 double ProcessCpuMilliseconds() {
-#if defined(__unix__)
   // RUSAGE_SELF sums every thread in the process, which is the point: a scenario
   // that offloads work to the background executor still pays for it here even
   // though its wall time does not move.
@@ -227,9 +224,6 @@ double ProcessCpuMilliseconds() {
     return static_cast<double>(tv.tv_sec) * 1000.0 + static_cast<double>(tv.tv_usec) / 1000.0;
   };
   return to_ms(usage.ru_utime) + to_ms(usage.ru_stime);
-#else
-  return 0.0;
-#endif
 }
 
 // Hand every page the allocator is merely *holding* back to the OS, so a resident
@@ -255,7 +249,6 @@ void SettleResidentSet() {
 }
 
 std::uint64_t ProcessResidentBytes() {
-#if defined(__unix__)
   // statm's second field is resident pages. ru_maxrss would be cheaper but it is
   // a high-water mark that never comes down, so it cannot express the growth of
   // one iteration inside a long-lived process.
@@ -300,9 +293,6 @@ std::uint64_t ProcessResidentBytes() {
     return 0;
   }
   return resident_pages * static_cast<std::uint64_t>(page_size);
-#else
-  return 0;
-#endif
 }
 
 ScenarioContext::ScenarioContext(workspace::WorkspaceShell& shell,

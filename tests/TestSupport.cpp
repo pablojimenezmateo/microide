@@ -217,25 +217,11 @@ std::string ShellEscape(std::string_view text) {
 std::string EscapedRepoPath(const std::filesystem::path& repo_path) {
   std::string path = repo_path.lexically_normal().generic_string();
   std::replace(path.begin(), path.end(), '\\', '/');
-#if defined(_WIN32)
-  if (path.size() >= 3 && std::isalpha(static_cast<unsigned char>(path[0])) && path[1] == ':' &&
-      path[2] == '/') {
-    path = "/" + std::string(1, static_cast<char>(std::tolower(static_cast<unsigned char>(path[0])))) +
-           path.substr(2);
-  }
-#endif
   return ShellEscape(path);
 }
 
 int RunCommand(const std::string& command) {
-#if defined(_WIN32)
-  platform::SubprocessOptions options;
-  options.capture_stdout = false;
-  options.capture_stderr = false;
-  return platform::RunSubprocess({"C:\\msys64\\usr\\bin\\bash.exe", "-lc", command}, options).exit_code;
-#else
   return std::system(command.c_str());
-#endif
 }
 
 void RequireCommandSuccess(const std::string& command, std::string_view context) {
@@ -327,28 +313,11 @@ ScopedEnvVar::~ScopedEnvVar() {
     Set(previous_value_);
     return;
   }
-#if defined(_WIN32)
-  _putenv_s(name_.c_str(), "");
-#else
   unsetenv(name_.c_str());
-#endif
 }
 
 void ScopedEnvVar::Set(const std::string& value) {
-#if defined(_WIN32)
-  _putenv_s(name_.c_str(), value.c_str());
-#else
   setenv(name_.c_str(), value.c_str(), 1);
-#endif
-}
-
-ScopedHostPlatformOverride::ScopedHostPlatformOverride(platform::HostPlatform platform)
-    : previous_(microide::platform::CurrentHostPlatform()) {
-  microide::platform::SetHostPlatformOverrideForTesting(platform);
-}
-
-ScopedHostPlatformOverride::~ScopedHostPlatformOverride() {
-  microide::platform::SetHostPlatformOverrideForTesting(previous_);
 }
 
 }  // namespace microide::tests

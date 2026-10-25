@@ -15,8 +15,6 @@ namespace {
 
 namespace remote = project::remote;
 
-#if defined(__unix__) || defined(__APPLE__)
-
 void TestRemoteProjectOpensAMirrorOverSsh() {
   FakeSshHost host;
   const std::filesystem::path host_root = host.home / "src" / "app";
@@ -133,17 +131,11 @@ void TestRemoteProjectBenchFirstSync() {
                files, static_cast<double>(bytes) / (1024.0 * 1024.0), cold, warm);
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteProjectTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteProject/OpensAMirrorOverSsh", TestRemoteProjectOpensAMirrorOverSsh);
   AddTest(tests, "RemoteProject/BenchFirstSync", TestRemoteProjectBenchFirstSync);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

@@ -35,11 +35,7 @@ std::string FormatBlameDate(std::int64_t author_time) {
 
   const std::time_t timestamp = static_cast<std::time_t>(author_time);
   std::tm utc_time{};
-#if defined(_WIN32)
-  gmtime_s(&utc_time, &timestamp);
-#else
   gmtime_r(&timestamp, &utc_time);
-#endif
 
   // strftime into a stack buffer rather than an ostringstream: the stream is
   // several allocations plus a locale imbue for a fixed 21-byte result, and this

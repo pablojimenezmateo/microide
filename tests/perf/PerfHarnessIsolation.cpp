@@ -7,20 +7,14 @@
 #include <string>
 #include <system_error>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::tests::perf {
 
 namespace {
 
 std::uint64_t CurrentProcessId() {
-#if defined(__unix__) || defined(__APPLE__)
   return static_cast<std::uint64_t>(::getpid());
-#else
-  return 0ULL;
-#endif
 }
 
 }  // namespace
@@ -61,17 +55,10 @@ std::filesystem::path EstablishIsolatedAppRoot(bool keep_artifacts, std::string*
     }
   }
 
-#if defined(_WIN32)
-  _putenv_s("XDG_CONFIG_HOME", (root / "config").string().c_str());
-  _putenv_s("XDG_STATE_HOME", (root / "state").string().c_str());
-  _putenv_s("XDG_CACHE_HOME", (root / "cache").string().c_str());
-  _putenv_s("XDG_DATA_HOME", (root / "data").string().c_str());
-#else
   setenv("XDG_CONFIG_HOME", (root / "config").string().c_str(), 1);
   setenv("XDG_STATE_HOME", (root / "state").string().c_str(), 1);
   setenv("XDG_CACHE_HOME", (root / "cache").string().c_str(), 1);
   setenv("XDG_DATA_HOME", (root / "data").string().c_str(), 1);
-#endif
 
   if (keep_artifacts) {
     std::cerr << "[perf] keeping isolated app-root at " << root.string() << "\n";

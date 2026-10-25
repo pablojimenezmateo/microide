@@ -232,11 +232,7 @@ JsonValue InitializeParams(const std::string& root_uri, const JsonValue& initial
   client_info["name"] = JsonValue("microide");
 
   JsonObject init_params;
-#if defined(__unix__) || defined(__APPLE__)
   init_params["processId"] = JsonValue(static_cast<std::int64_t>(::getpid()));
-#else
-  init_params["processId"] = JsonValue(static_cast<std::int64_t>(0));
-#endif
   init_params["clientInfo"] = JsonValue(std::move(client_info));
   init_params["rootUri"] = JsonValue(root_uri);
   if (!root_uri.empty()) {

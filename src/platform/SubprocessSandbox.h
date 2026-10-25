@@ -7,7 +7,7 @@
 namespace microide::platform {
 
 // Resource ceilings applied to a sandboxed child via setrlimit. Zero means "leave the inherited
-// limit untouched". Portable across Linux and macOS.
+// limit untouched".
 struct SubprocessResourceLimits {
   long cpu_seconds = 0;          // RLIMIT_CPU
   long address_space_bytes = 0;  // RLIMIT_AS

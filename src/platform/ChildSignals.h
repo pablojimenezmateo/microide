@@ -1,8 +1,6 @@
 #pragma once
 
-#if !defined(_WIN32)
 #include <signal.h>
-#endif
 
 namespace microide::platform {
 
@@ -18,12 +16,10 @@ namespace microide::platform {
 // that was ignored when it started. A blocked signal mask survives exec too, so
 // it is cleared as well. Both calls are async-signal-safe.
 inline void RestoreDefaultSignalsInChild() {
-#if !defined(_WIN32)
   signal(SIGPIPE, SIG_DFL);
   sigset_t unblocked;
   sigemptyset(&unblocked);
   sigprocmask(SIG_SETMASK, &unblocked, nullptr);
-#endif
 }
 
 }  // namespace microide::platform

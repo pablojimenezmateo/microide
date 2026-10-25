@@ -12,9 +12,7 @@
 #include "platform/RuntimePaths.h"
 #include "util/ByteCodec.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
-#endif
 
 namespace microide::project::remote {
 namespace {
@@ -71,7 +69,6 @@ struct LocalStat {
 
 LocalStat StatNoFollow(const std::filesystem::path& path) {
   LocalStat out;
-#if defined(__unix__) || defined(__APPLE__)
   struct stat info {};
   if (::lstat(path.c_str(), &info) != 0) {
     return out;
@@ -81,9 +78,6 @@ LocalStat StatNoFollow(const std::filesystem::path& path) {
   out.size = static_cast<std::uint64_t>(info.st_size);
   out.mtime_ns = static_cast<std::int64_t>(info.st_mtim.tv_sec) * 1'000'000'000 + info.st_mtim.tv_nsec;
   out.ctime_ns = static_cast<std::int64_t>(info.st_ctim.tv_sec) * 1'000'000'000 + info.st_ctim.tv_nsec;
-#else
-  (void)path;
-#endif
   return out;
 }
 

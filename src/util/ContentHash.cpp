@@ -9,11 +9,9 @@
 
 #include "util/Hex.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::util {
 namespace {
@@ -88,7 +86,6 @@ ContentHash HashContent(std::string_view bytes) {
 
 std::optional<ContentHash> HashFileDescriptor(int fd, std::uint64_t* size_out,
                                               const std::function<void(std::string_view)>& sink) {
-#if defined(__unix__) || defined(__APPLE__)
   ContentHasher hasher;
   std::uint64_t total = 0;
   char buffer[64 * 1024];
@@ -115,17 +112,10 @@ std::optional<ContentHash> HashFileDescriptor(int fd, std::uint64_t* size_out,
     *size_out = total;
   }
   return hasher.Finish();
-#else
-  (void)fd;
-  (void)size_out;
-  (void)sink;
-  return std::nullopt;
-#endif
 }
 
 std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
                                            std::uint64_t* size_out) {
-#if defined(__unix__) || defined(__APPLE__)
   // O_NONBLOCK so opening a FIFO cannot hang; the fstat below then refuses it.
   const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
   if (fd < 0) {
@@ -138,11 +128,6 @@ std::optional<ContentHash> HashFileContent(const std::filesystem::path& path,
   }
   ::close(fd);
   return hash;
-#else
-  (void)path;
-  (void)size_out;
-  return std::nullopt;
-#endif
 }
 
 }  // namespace microide::util

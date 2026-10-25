@@ -1,12 +1,12 @@
 #include "TestSupport.h"
 
+#include "platform/HostPlatform.h"
 #include "platform/ShellProcess.h"
 #include "platform/TerminalBackend.h"
 
 #include <string>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -14,12 +14,9 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#endif
 
 namespace microide::tests {
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using microide::platform::CreateTerminalBackend;
 using microide::platform::TerminalBackendCallbacks;
@@ -296,12 +293,9 @@ void TestTerminalBackendReportsOutputItHasNotDelivered() {
   backend->Stop();
 }
 
-#endif  // defined(__unix__) || defined(__APPLE__)
-
 }  // namespace
 
 void RegisterTerminalBackendTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TerminalBackend/WriteDoesNotBlockOnStuckChild",
           TestTerminalBackendWriteDoesNotBlockOnStuckChild);
   AddTest(tests, "TerminalBackend/BufferedWriteReachesDrainingChild",
@@ -316,9 +310,6 @@ void RegisterTerminalBackendTests(std::vector<TestCase>& tests) {
           TestTerminalArgvAttachesCommandsWithoutInventingFlags);
   AddTest(tests, "TerminalBackend/ReportsOutputItHasNotDelivered",
           TestTerminalBackendReportsOutputItHasNotDelivered);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

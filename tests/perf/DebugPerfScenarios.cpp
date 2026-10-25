@@ -376,10 +376,6 @@ bool HavePython3() {
 }
 
 void RunDebugSessionStopToVariables(ScenarioContext& context) {
-#if !defined(__unix__) && !defined(__APPLE__)
-  (void)context;
-  return;
-#else
   if (!HavePython3()) {
     std::fprintf(stderr, "debug_session_stop_to_variables: python3 unavailable; skipping\n");
     return;
@@ -471,7 +467,6 @@ void RunDebugSessionStopToVariables(ScenarioContext& context) {
   });
 
   std::filesystem::remove_all(dir, ec);
-#endif
 }
 
 // ---- Registration ----------------------------------------------------------

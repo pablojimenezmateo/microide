@@ -3,10 +3,8 @@
 #include "platform/HostPlatform.h"
 #include "platform/RuntimePaths.h"
 
-#if !defined(_WIN32)
 #include <clocale>
 #include <langinfo.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -63,7 +61,6 @@ void TestRuntimePathsResolveInstalledShareLayout() {
 // pre-existing untrusted directory must be refused, so the /tmp fallback cannot be
 // hijacked to redirect state or plant forged descriptors.
 void TestEnsureSecurePrivateDirectory() {
-#if defined(__unix__) || defined(__APPLE__)
   TemporaryDirectory temp_dir;
   const std::filesystem::path base = temp_dir.path();
 
@@ -105,7 +102,6 @@ void TestEnsureSecurePrivateDirectory() {
   WriteFile(file_path, "not a dir");
   Expect(!platform::EnsureSecurePrivateDirectory(file_path),
          "a non-directory at the runtime path must be refused");
-#endif
 }
 
 // The server for a host's architecture: the package's lib/microide/server first,
@@ -134,14 +130,12 @@ void TestBundledServerBinaryIsChosenByArchitecture() {
 // convert a title with an em dash and left the window's _NET_WM_NAME at
 // "microide". From a bare POSIX environment the app still takes a UTF-8 LC_CTYPE.
 void TestCharacterLocaleIsUtf8EvenFromAPosixEnvironment() {
-#if !defined(_WIN32)
   ScopedEnvVar lc_all("LC_ALL", "C");
   ScopedEnvVar lang("LANG", "C");
   const std::string locale = platform::UseUtf8CharacterLocale();
   const std::string codeset = nl_langinfo(CODESET);
   (void)std::setlocale(LC_CTYPE, "C");
   Expect(codeset == "UTF-8", "LC_CTYPE " + locale + " should be UTF-8, its codeset is " + codeset);
-#endif
 }
 
 }  // namespace

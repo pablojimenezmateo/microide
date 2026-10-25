@@ -18,9 +18,7 @@
 #include <string>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -43,8 +41,6 @@ void TestHostTargetsAreValidatedBeforeAnythingRuns() {
            std::string("refused before any process is spawned: ") + hostile);
   }
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 // The fake host: the ssh shim, a home directory, and the server it starts there,
 // stopped when the test ends.
@@ -484,14 +480,11 @@ void TestSocketDirAndBackfillBoundReachTheServer() {
          "naming the setting: " + bad_log.Error());
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostSession/HostTargetsAreValidatedBeforeAnythingRuns",
           TestHostTargetsAreValidatedBeforeAnythingRuns);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteHostSession/SshConfigHostsFollowsIncludesAndSkipsPatterns",
           TestSshConfigHostsFollowsIncludesAndSkipsPatterns);
   AddTest(tests, "RemoteHostSession/SocketDirAndBackfillBoundReachTheServer",
@@ -515,7 +508,6 @@ void RegisterRemoteHostSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostSession/PortForwardsAreTheHosts", TestPortForwardsAreTheHosts);
   AddTest(tests, "RemoteHostSession/ABrokenServerCommandFailsFastWithAReason",
           TestABrokenServerCommandFailsFastWithAReason);
-#endif
 }
 
 }  // namespace microide::tests

@@ -117,9 +117,6 @@ std::vector<std::string> MockAdapterCommand(const std::filesystem::path& server_
 }
 
 void TestWorkspaceDapClientInitializeHandshakeReportsCapabilities() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   const auto marker_path = temp_dir.path() / "disconnect.txt";
@@ -138,9 +135,6 @@ void TestWorkspaceDapClientInitializeHandshakeReportsCapabilities() {
 }
 
 void TestWorkspaceDapClientCorrelatesResponsesBySeq() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   const auto marker_path = temp_dir.path() / "disconnect.txt";
@@ -175,9 +169,6 @@ void TestWorkspaceDapClientCorrelatesResponsesBySeq() {
 }
 
 void TestWorkspaceDapClientDispatchesEventsOnMainThread() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   const auto marker_path = temp_dir.path() / "disconnect.txt";
@@ -210,9 +201,6 @@ void TestWorkspaceDapClientDispatchesEventsOnMainThread() {
 }
 
 void TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string("import sys\nsys.exit(3)\n"));
@@ -240,9 +228,6 @@ void TestWorkspaceDapClientReportsAdapterThatExitsBeforeInitialize() {
 // without limit for the whole timeout window. A flooding adapter must fail initialization
 // cleanly rather than accumulating an unbounded backlog.
 void TestWorkspaceDapClientBoundsPreInitializeEventFlood() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "flood_adapter.py";
   // On the initialize request, emit far more than kMaxDapEarlyMessages (10000) output
@@ -303,9 +288,6 @@ while sys.stdin.buffer.readline():
 }
 
 void TestWorkspaceDapClientShutdownSendsDisconnect() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   const auto marker_path = temp_dir.path() / "disconnect.txt";
@@ -360,9 +342,6 @@ void TestWorkspaceDapClientStubModeAnswersRequestsAndInjectsEvents() {
 }
 
 void TestWorkspaceDapClientInitFailureFailsPendingRequest() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "stall-adapter.py";
   // Consume the initialize request, then stall briefly and exit WITHOUT ever
@@ -414,9 +393,6 @@ time.sleep(0.3)
 // adapter floods 200 `output` events ahead of the response; the client must still
 // initialize.
 void TestWorkspaceDapClientPreInitializeEventFloodStillInitializes() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "flood-adapter.py";
   WriteFile(server_path, std::string(R"py(import json
@@ -489,9 +465,6 @@ while True:
 // hanging a debuggee that needs it. The client now buffers pre-response messages and
 // replays them only after capabilities are stored.
 void TestWorkspaceDapClientEmitsInitializedBeforeResponseSeesCapabilities() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "reorder-adapter.py";
   WriteFile(server_path, std::string(R"py(import json

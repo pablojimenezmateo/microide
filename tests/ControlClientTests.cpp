@@ -16,12 +16,10 @@
 #include "workspace/control/ControlClient.h"
 #include "workspace/WorkspaceCommandParsing.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <cstring>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -159,8 +157,6 @@ void TestParseRejectsBadShapes() {
   Expect(!ParseControlSendArgs({"--pid", "1", "--socket", "/tmp/x", "debug-start"}).valid,
          "--pid and --socket together should be rejected");
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using microide::platform::ControlInboundMessage;
 using microide::platform::ControlSocketServer;
@@ -390,8 +386,6 @@ void TestSendLineRejectsOversizeLine() {
          "an over-cap outbound line must be rejected before framing");
 }
 
-#endif  // POSIX
-
 }  // namespace
 
 void RegisterControlClientTests(std::vector<TestCase>& tests) {
@@ -406,7 +400,6 @@ void RegisterControlClientTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ControlClient/ParseRejectsBadShapes", TestParseRejectsBadShapes);
   AddTest(tests, "ControlClient/CommandTokensRoundTripThroughParser",
           TestControlSendCommandTokensRoundTripThroughParser);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "ControlClient/RunControlSendQuerySucceeds", TestRunControlSendQuerySucceeds);
   AddTest(tests, "ControlClient/RunControlSendFailureExitsOne", TestRunControlSendFailureExitsOne);
   AddTest(tests, "ControlClient/RunControlSendWaitsForResolvedStop",
@@ -420,7 +413,6 @@ void RegisterControlClientTests(std::vector<TestCase>& tests) {
           TestSendLineSucceedsForShortRequest);
   AddTest(tests, "ControlClient/SendLineRejectsOversizeLine",
           TestSendLineRejectsOversizeLine);
-#endif
 }
 
 }  // namespace microide::tests

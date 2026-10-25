@@ -875,54 +875,6 @@ void TestPluginHostPhase2Apis() {
   WriteFile(project_root / "README.md", "plugin host phase2\n");
 
   const char* plugin_script =
-#if defined(_WIN32)
-      R"WIN(local ide = require("microide")
-return ide.plugin({
-  id = "phase2",
-  capabilities = { process = { exec = true } },
-  setup = function(ctx)
-    ctx.sidebar.add({
-      id = "problems",
-      label = "Problems",
-      snapshot = function()
-        return {
-          { label = "README", detail = "2:3", path = "README.md", line = 2, column = 3 }
-        }
-      end,
-      on_confirm = function(item)
-        ctx.log("confirm:" .. item.path .. ":" .. tostring(item.line) .. ":" .. tostring(item.column))
-      end
-    })
-
-    ctx.commands.add("phase2.probe", function(ctx, args)
-      local readme = ctx.files.read_text("README.md") or "missing"
-      local exists = ctx.files.exists("README.md")
-      local wrote = ctx.files.write_text("notes.txt", "written by plugin\n")
-      local cat = ctx.process.run({"cmd", "/c", "more"}, { stdin = "stdin payload\n", cwd = "." })
-      local pwd = ctx.process.run({"cmd", "/c", "cd"}, { cwd = "." })
-      local envset = ctx.process.run({"cmd", "/c", "echo|set /p=%PHASE2_SET_ENV%"}, {
-        cwd = ".",
-        env = { PHASE2_SET_ENV = "plugin-value" }
-      })
-      local envunset = ctx.process.run({"cmd", "/c",
-        "if defined PHASE2_REMOVE_ENV (echo|set /p=set) else (echo|set /p=unset)"}, {
-        cwd = ".",
-        env = { PHASE2_REMOVE_ENV = false }
-      })
-      ctx.log("read:" .. readme)
-      ctx.log("exists:" .. tostring(exists))
-      ctx.log("wrote:" .. tostring(wrote))
-      ctx.log("cat:" .. tostring(cat.exit_code) .. ":" .. cat.stdout)
-      ctx.log("pwd:" .. tostring(pwd.exit_code) .. ":" .. pwd.stdout)
-      ctx.log("envset:" .. tostring(envset.exit_code) .. ":" .. envset.stdout)
-      ctx.log("envunset:" .. tostring(envunset.exit_code) .. ":" .. envunset.stdout)
-      ctx.workspace.open_file("README.md", 2, 3)
-      ctx.sidebar.show("problems")
-    end)
-  end
-})
-)WIN";
-#else
       R"WIN(local ide = require("microide")
 return ide.plugin({
   id = "phase2",
@@ -971,7 +923,6 @@ return ide.plugin({
   end
 })
 )WIN";
-#endif
 
   WritePluginInit(global_plugins, "phase2", plugin_script);
 
@@ -1034,21 +985,12 @@ return ide.plugin({
   Expect(pwd_message != host.Messages().end() &&
              pwd_message->find(project_root.lexically_normal().string()) != std::string::npos,
          "ctx.process.run should honor cwd relative to the active project");
-#if defined(_WIN32)
-  Expect(std::find(host.Messages().begin(), host.Messages().end(),
-                   "phase2: envset:1:plugin-value") != host.Messages().end(),
-         "ctx.process.run should apply environment overrides");
-  Expect(std::find(host.Messages().begin(), host.Messages().end(),
-                   "phase2: envunset:1:unset") != host.Messages().end(),
-         "ctx.process.run should allow clearing inherited environment variables");
-#else
   Expect(std::find(host.Messages().begin(), host.Messages().end(),
                    "phase2: envset:0:plugin-value") != host.Messages().end(),
          "ctx.process.run should apply environment overrides");
   Expect(std::find(host.Messages().begin(), host.Messages().end(),
                    "phase2: envunset:0:unset") != host.Messages().end(),
          "ctx.process.run should allow clearing inherited environment variables");
-#endif
 
   std::vector<PluginHost::SidebarItem> items;
   Expect(host.SnapshotSidebar("problems", &items, &command_error),
@@ -2296,9 +2238,6 @@ return ide.plugin({
 // was open, and to end in `npx --yes`, which downloads and runs a package.
 void TestRepoTypescriptLspPluginResolvesItsServerPerProject() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -4140,7 +4079,6 @@ return ide.plugin({
   host.Shutdown();
 }
 
-
 // TD-2026-10-06-318. A plugin's operations follow the project for a path IN the
 // project tree and stay local for the plugin's own data directory. The project's
 // locality here is a recording gate and a scripted launcher; in a remote project
@@ -4162,7 +4100,7 @@ class RecordingWriteGate final : public microide::project::FileWriteGate {
 };
 
 void TestPluginOperationsFollowTheProjectForProjectPaths() {
-#if !MICROIDE_HAS_LUA_PLUGINS || !defined(__linux__)
+#if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #else
   TemporaryDirectory temp_dir;

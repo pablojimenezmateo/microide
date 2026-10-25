@@ -10,14 +10,10 @@
 #include <string>
 #include <vector>
 
-#if defined(__linux__)
 #include <sched.h>
-#endif
 
 namespace microide::tests::perf {
 namespace {
-
-#if defined(__linux__)
 
 std::optional<std::uint64_t> ReadCpuMaxFrequencyKhz(int cpu) {
   const std::filesystem::path path = std::filesystem::path("/sys/devices/system/cpu") /
@@ -109,8 +105,6 @@ bool PinTo(const std::vector<int>& cpus) {
   return sched_setaffinity(0, sizeof(set), &set) == 0;
 }
 
-#endif  // defined(__linux__)
-
 }  // namespace
 
 CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
@@ -118,9 +112,6 @@ CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
     return CpuAffinityPlan{.description = "off", .pinned = false};
   }
 
-#if !defined(__linux__)
-  return CpuAffinityPlan{.description = "unsupported platform", .pinned = false};
-#else
   if (request != "auto") {
     const std::vector<int> cpus = ParseCpuList(request);
     if (cpus.empty()) {
@@ -166,7 +157,6 @@ CpuAffinityPlan ApplyPerfCpuAffinity(const std::string& request) {
                      std::to_string(fastest.second.size()) + " cpus @ " +
                      std::to_string(fastest.first / 1000) + " MHz)",
       .pinned = true};
-#endif
 }
 
 }  // namespace microide::tests::perf

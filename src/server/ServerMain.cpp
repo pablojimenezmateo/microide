@@ -35,7 +35,6 @@
 #include "util/Log.h"
 #include "util/Parse.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <pwd.h>
@@ -44,7 +43,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 
 #ifndef MICROIDE_VERSION
 #define MICROIDE_VERSION "dev"
@@ -122,8 +120,6 @@ std::optional<Options> ParseOptions(int argc, char** argv) {
   }
   return options;
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 // Diagnostics go to a size-capped file beside the socket: a daemon's stderr is
 // /dev/null, and an unbounded log on a user's home is its own incident.
@@ -384,12 +380,9 @@ int ServeStdio() {
   return server.ServeOne(0, 1);
 }
 
-#endif
-
 }  // namespace
 
 int main(int argc, char** argv) {
-#if defined(__unix__) || defined(__APPLE__)
   ::signal(SIGPIPE, SIG_IGN);
   const std::optional<Options> options = ParseOptions(argc, argv);
   if (!options.has_value()) {
@@ -415,10 +408,4 @@ int main(int argc, char** argv) {
     return Attach(*options, "/proc/self/exe");
   }
   return Usage();
-#else
-  (void)argc;
-  (void)argv;
-  std::cerr << "microide-server is POSIX-only\n";
-  return 1;
-#endif
 }

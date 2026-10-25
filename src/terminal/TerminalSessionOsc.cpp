@@ -17,9 +17,7 @@
 #include <string_view>
 #include <utility>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::terminal {
 
@@ -42,7 +40,6 @@ std::string FormatOscRgbReply(util::Rgba8 color) {
 // Lowercased local machine hostname (short name), or empty if unavailable.
 // Used to distinguish a local OSC 7 report from a remote (SSH) shell's report.
 std::string LocalHostNameLower() {
-#if defined(__unix__) || defined(__APPLE__)
   char buffer[256] = {0};
   if (::gethostname(buffer, sizeof(buffer) - 1) != 0) {
     return {};
@@ -56,9 +53,6 @@ std::string LocalHostNameLower() {
     ch = util::ToLowerAsciiChar(static_cast<char>(ch));
   }
   return name;
-#else
-  return {};
-#endif
 }
 
 // True when an OSC 7 host component names this machine: empty, `localhost`, or

@@ -15,12 +15,10 @@
 #include <filesystem>
 #include <string>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#endif
 
 namespace microide::workspace {
 struct AssistServiceTestAccess {
@@ -36,8 +34,6 @@ namespace {
 using workspace::StatusBarSegmentId;
 using workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = workspace::WorkspaceShell::TestAccess;
-
-#if defined(__unix__) || defined(__APPLE__)
 
 std::string ScreenText(const terminal::TerminalSession& session) {
   std::string text;
@@ -982,8 +978,6 @@ void TestOpenFolderOnHostEditsTheHostTree() {
   RemoveFakeMaster(target);
 }
 
-#endif
-
 // What counts as a host-local link: http(s), a loopback name, an explicit port.
 // A mass delete the sync holds (§ 6.3) is a prompt the user can answer: its row
 // carries Apply and Disconnect, and Apply deletes what the host deleted. The row
@@ -1085,7 +1079,6 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteHostService/HeldMassDeleteIsAppliedFromItsRow", TestHeldMassDeleteIsAppliedFromItsRow);
   AddTest(tests, "RemoteHostService/StatusPathsAbbreviateHome", TestStatusPathsAbbreviateHome);
   AddTest(tests, "RemoteHostService/LoopbackUrlsAreRecognized", TestLoopbackUrlsAreRecognized);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteHostService/OpenTerminalOnHostFromTheCommand",
           TestOpenTerminalOnHostFromTheCommand);
   AddTest(tests, "RemoteHostService/MixedTerminalsSayWhereTheyRun", TestMixedTerminalsSayWhereTheyRun);
@@ -1099,7 +1092,6 @@ void RegisterRemoteHostServiceTests(std::vector<TestCase>& tests) {
           TestRemoveMirrorDeletesAClosedMirrorAndKeepsUnsentSaves);
   AddTest(tests, "RemoteHostService/OpenFolderOnHostEditsTheHostTree",
           TestOpenFolderOnHostEditsTheHostTree);
-#endif
 }
 
 }  // namespace microide::tests

@@ -4,17 +4,13 @@
 
 #include <cstdlib>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
-#endif
 
-#if defined(__linux__)
 #include <fcntl.h>
 #include <unistd.h>
-#endif
 
 // Landlock (filesystem) — guarded so the build still works on kernels/toolchains without the uapi.
-#if defined(__linux__) && defined(__has_include)
+#if defined(__has_include)
 #if __has_include(<linux/landlock.h>)
 #define MICROIDE_HAS_LANDLOCK 1
 #include <linux/landlock.h>
@@ -23,7 +19,7 @@
 #endif
 
 // seccomp (network) — only meaningful on architectures whose audit arch + syscall numbers we know.
-#if defined(__linux__) && defined(__has_include) && (defined(__x86_64__) || defined(__aarch64__))
+#if defined(__has_include) && (defined(__x86_64__) || defined(__aarch64__))
 #if __has_include(<linux/seccomp.h>) && __has_include(<linux/filter.h>) && \
     __has_include(<linux/audit.h>)
 #define MICROIDE_HAS_SECCOMP 1
@@ -40,7 +36,6 @@
 namespace microide::platform {
 namespace {
 
-#if defined(__unix__) || defined(__APPLE__)
 void ApplyLimit(int resource, long value) {
   if (value <= 0) {
     return;
@@ -57,7 +52,6 @@ void ApplyResourceLimits(const SubprocessResourceLimits& limits) {
   ApplyLimit(RLIMIT_NOFILE, limits.open_files);
   ApplyLimit(RLIMIT_FSIZE, limits.file_size_bytes);
 }
-#endif
 
 #if defined(MICROIDE_HAS_LANDLOCK)
 
@@ -213,9 +207,7 @@ void ApplyChildSandbox(const SubprocessSandbox& sandbox) {
   // cache to ~/.cache and so cannot run under the Landlock write ruleset). Limits
   // default to 0 (= inherit the parent's), so this is a no-op unless a caller set
   // one.
-#if defined(__unix__) || defined(__APPLE__)
   ApplyResourceLimits(sandbox.limits);
-#endif
   if (!sandbox.enabled) {
     return;
   }

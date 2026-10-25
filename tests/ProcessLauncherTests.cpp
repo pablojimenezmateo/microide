@@ -26,7 +26,6 @@
 namespace microide::tests {
 namespace {
 
-
 void TestScriptedLauncherDrivesGitWithoutAGitBinary() {
   ScriptedProcessLauncher launcher;
   launcher.standing_response.stdout_text = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
@@ -76,7 +75,6 @@ void TestScriptedLauncherReportsFailureThrough() {
          "a non-zero scripted exit code must surface as failure");
 }
 
-
 // The cases REAL git cannot be made to produce on demand, which is the whole
 // reason the seam is worth having. Each one used to be indistinguishable from a
 // clean working tree.
@@ -122,7 +120,6 @@ void TestTruncatedStatusIsNotACompleteChangeList() {
   Expect(!repo.GetWorkingTreeEntries().has_value(),
          "a truncated status cannot be presented as the complete set of changes");
 }
-
 
 // The sidebar's status refresh, driven through a scripted git. Before
 // `BuildGitRepositoryStateFromStatus` was split out of `GitRepositoryService`,
@@ -193,9 +190,6 @@ void TestWorkspaceFolderExpandsToTheHostRoot() {
 // exists where it runs", decided at spawn, and with none it says what to install
 // instead of fetching something.
 void TestFirstAvailableCommandRunsTheFirstThatExists() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path home = temp_dir.path() / "home";
   const std::filesystem::path tool = home / ".tools" / "say";
@@ -328,7 +322,6 @@ void TestStatusRefreshDistinguishesItsFailures() {
   Expect(partial.refresh_error.category != project::GitRefreshErrorCategory::None,
          "and says why, rather than showing a prefix as the whole truth");
 }
-
 
 // The seam only means anything if the service actually USES the launcher it was
 // handed. Before TD-2026-09-22-301's first slice, every one of these functions

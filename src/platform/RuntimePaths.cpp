@@ -7,11 +7,9 @@
 #include <system_error>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
-#endif
 
 namespace microide::platform {
 
@@ -21,16 +19,12 @@ namespace {
 // reading /proc/self/exe directly keeps the path resolver out of the windowing
 // library, which is what lets a headless build resolve its own assets.
 std::filesystem::path BasePath() {
-#if defined(__linux__)
   std::error_code ec;
   const std::filesystem::path exe = std::filesystem::read_symlink("/proc/self/exe", ec);
   if (ec || exe.empty()) {
     return {};
   }
   return exe.parent_path().lexically_normal();
-#else
-  return {};
-#endif
 }
 
 }  // namespace
@@ -89,12 +83,10 @@ std::string NormalizeArchitecture(std::string_view uname_m) {
 }
 
 std::string ThisMachineArchitecture() {
-#if defined(__unix__) || defined(__APPLE__)
   struct utsname name{};
   if (::uname(&name) == 0) {
     return NormalizeArchitecture(name.machine);
   }
-#endif
   return {};
 }
 
@@ -133,7 +125,6 @@ bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir) {
   if (dir.empty()) {
     return false;
   }
-#if defined(__unix__) || defined(__APPLE__)
   // Create any missing ancestors with normal permissions, then handle the leaf
   // ourselves so we never follow a symlink or trust a pre-existing foreign leaf.
   std::error_code ec;
@@ -167,11 +158,6 @@ bool EnsureSecurePrivateDirectory(const std::filesystem::path& dir) {
     return false;
   }
   return ::chmod(dir.c_str(), S_IRWXU) == 0;
-#else
-  std::error_code ec;
-  std::filesystem::create_directories(dir, ec);
-  return !ec;
-#endif
 }
 
 }  // namespace microide::platform

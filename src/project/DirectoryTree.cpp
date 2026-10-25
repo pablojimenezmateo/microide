@@ -115,7 +115,6 @@ void DirectoryTree::Refresh() {
   RebuildEntries();
 }
 
-
 bool DirectoryTree::ApplyGitStatuses(SharedGitTreeStatusMap statuses) {
   git_statuses_ = std::move(statuses);
   // One scratch buffer for the whole sweep — after the first few entries it is
@@ -669,9 +668,7 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
   }
 
   // Match the writer's key form: GitPorcelainParser stores keys in generic
-  // ('/'-separated) form, relative to the repository root. Using the native string
-  // here would look up backslash-separated keys on Windows and never hit, so no
-  // badge would ever resolve.
+  // ('/'-separated) form, relative to the repository root.
   //
   // Every tree entry is enumerated from root_, so its path is root_ plus a relative
   // tail — the key is a prefix strip, not the lexically_relative + lexically_normal
@@ -679,11 +676,7 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
   // sweep, identical hits). A path that is NOT under root_ (an out-of-root symlink
   // target, when following is enabled) has no repository-relative key at all, which
   // is the Clean the old code also produced via a "../.." relative that never hit.
-#if defined(_WIN32)
-  scratch = path.generic_string();
-#else
   scratch.assign(path.native());  // POSIX: the native form IS the generic form.
-#endif
   // A root recorded with a trailing separator (e.g. "/") owns its separator, so the
   // tail starts immediately after the prefix instead of one byte later.
   const bool root_ends_with_separator = root_generic_.back() == '/';
@@ -699,7 +692,6 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
 }
 
 bool DirectoryTree::ContainsPathKey(const PathKeySet& keys, const std::filesystem::path& path) {
-#if !defined(_WIN32)
   // POSIX: the native spelling IS the generic spelling, and `absolute()` returns
   // an already-absolute path unchanged, so an absolute path whose text is already
   // normal is byte-identical to its NormalizePathKey.
@@ -707,7 +699,6 @@ bool DirectoryTree::ContainsPathKey(const PathKeySet& keys, const std::filesyste
       !text.empty() && text.front() == '/' && !util::PathTextNeedsNormalizing(text)) {
     return keys.contains(std::string_view(text));
   }
-#endif
   return keys.contains(NormalizePathKey(path));
 }
 
@@ -724,9 +715,6 @@ std::string DirectoryTree::NormalizePathKey(const std::filesystem::path& path) {
   const auto absolute = std::filesystem::absolute(path, error);
   std::string key =
       error ? path.lexically_normal().generic_string() : absolute.lexically_normal().generic_string();
-#ifdef _WIN32
-  key = util::ToLowerAscii(key);
-#endif
   return key;
 }
 

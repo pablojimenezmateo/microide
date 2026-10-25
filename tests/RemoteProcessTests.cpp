@@ -18,17 +18,13 @@
 #include <thread>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <csignal>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
 
 namespace remote = project::remote;
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using ShortDir = ShortServerDir;
 
@@ -294,12 +290,9 @@ void TestMalformedSpawnIsRefused() {
          "a bad env name is refused");
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteProcessTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteProcess/ArgvArrivesIntact", TestArgvArrivesIntact);
   AddTest(tests, "RemoteProcess/ExitCodesStderrAndSignals", TestExitCodesStderrAndSignals);
   AddTest(tests, "RemoteProcess/KeptProcessResumesFromItsOffset", TestKeptProcessResumesFromItsOffset);
@@ -310,9 +303,6 @@ void RegisterRemoteProcessTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteProcess/ExitWhileDetachedIsDeliveredOnAttach",
           TestExitWhileDetachedIsDeliveredOnAttach);
   AddTest(tests, "RemoteProcess/MalformedSpawnIsRefused", TestMalformedSpawnIsRefused);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

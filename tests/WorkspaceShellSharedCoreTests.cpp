@@ -214,7 +214,6 @@ void TestWorkspaceSharedUiScaleParsing() {
   Expect(!invalid.has_value(), "invalid ui scale should fail");
 }
 
-
 void TestWorkspaceSharedQuoteAndLineEndings() {
   Expect(QuoteCommandArg("plain-token") == "plain-token", "plain token should not be quoted");
   Expect(QuoteCommandArg("two words") == "'two words'", "spaced token should be quoted");
@@ -504,7 +503,6 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
              !CompleteRemoteHostText("zz", false, hosts).has_value() &&
              !CompleteRemoteHostText("w", false, {}).has_value(),
          "past the ':', no match, or no hosts: nothing");
-#if !defined(_WIN32)
   // `term bash -c "echo hi; sleep 1"` is parsed again by the shell: the quoted
   // argument must stay one word, or bash ran `echo` with $0 = `hi;` and printed
   // a blank line. Bare words and operators are left alone, so a typed pipe pipes.
@@ -515,7 +513,6 @@ void TestWorkspaceSharedCommandCompletionHelpers() {
          "operators typed bare stay operators");
   Expect(JoinShellCommandArguments({"echo", "it's", ""}, 0) == "echo 'it'\\''s' ''",
          "a quote inside and an empty argument survive");
-#endif
 }
 
 // Command-line completion pulls plugin command names by reference from the host-owned
@@ -1025,7 +1022,6 @@ void TestWorkspaceSharedChromeTextModel() {
              "src/result.txt  |  Incoming -> Current",
          "merge breadcrumb helper should include both merge sides");
 }
-
 
 void TestWorkspaceReadmeCommandDocsStayInSync() {
   const std::string readme =

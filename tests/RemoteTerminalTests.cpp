@@ -22,8 +22,6 @@ namespace {
 namespace remote = project::remote;
 using terminal::TerminalSession;
 
-#if defined(__unix__) || defined(__APPLE__)
-
 std::shared_ptr<remote::RemoteServerClient> Connect(const ShortServerDir& dir) {
   auto client = remote::RemoteServerClient::Create();
   const int fd = platform::ConnectUnixSocket(remote::ServerSocketPath(dir.path()));
@@ -419,12 +417,9 @@ void TestScrollingUpFetchesOlderHostHistory() {
   session.Stop();
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteTerminal/HostTerminalRunsTheShellOnTheHost",
           TestHostTerminalRunsTheShellOnTheHost);
   AddTest(tests, "RemoteTerminal/HostTerminalSurvivesADroppedConnection",
@@ -437,9 +432,6 @@ void RegisterRemoteTerminalTests(std::vector<TestCase>& tests) {
           TestScrollingUpFetchesOlderHostHistory);
   AddTest(tests, "RemoteTerminal/TwoClientsShareAHostTerminalAtTheSmallerSize",
           TestTwoClientsShareAHostTerminalAtTheSmallerSize);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

@@ -17,7 +17,6 @@
 #include <utility>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
 #include <fcntl.h>
 #include <climits>
@@ -31,36 +30,12 @@
 
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
-#elif defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
 
-#ifndef PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE
-#define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 0x00020016
-#endif
-
-extern "C" {
-HRESULT WINAPI CreatePseudoConsole(COORD size,
-                                   HANDLE hInput,
-                                   HANDLE hOutput,
-                                   DWORD dwFlags,
-                                   HPCON* phPC);
-HRESULT WINAPI ResizePseudoConsole(HPCON hPC, COORD size);
-void WINAPI ClosePseudoConsole(HPCON hPC);
-}
-#endif
-
-#if defined(__unix__) || defined(__APPLE__)
 extern "C" char** environ;
-#endif
 
 namespace microide::platform {
 
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 class PosixTerminalBackend final : public TerminalBackend {
  public:
@@ -105,18 +80,9 @@ class PosixTerminalBackend final : public TerminalBackend {
       return pty_failure();
     }
     char slave_name[PATH_MAX];
-#if defined(__APPLE__)
-    // No ptsname_r on macOS; ptsname's static buffer is the only option there.
-    const char* slave_path = ptsname(master_fd);
-    if (slave_path == nullptr) {
-      return pty_failure();
-    }
-    std::snprintf(slave_name, sizeof(slave_name), "%s", slave_path);
-#else
     if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
       return pty_failure();
     }
-#endif
     slave_fd = open(slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC);
     if (slave_fd < 0) {
       return pty_failure();
@@ -535,327 +501,10 @@ class PosixTerminalBackend final : public TerminalBackend {
   std::size_t pending_write_offset_ = 0;
 };
 
-#elif defined(_WIN32)
-
-class WinHandle {
- public:
-  WinHandle() = default;
-  explicit WinHandle(HANDLE handle) : handle_(handle) {}
-  ~WinHandle() { Reset(); }
-
-  WinHandle(const WinHandle&) = delete;
-  WinHandle& operator=(const WinHandle&) = delete;
-
-  WinHandle(WinHandle&& other) noexcept : handle_(other.Release()) {}
-  WinHandle& operator=(WinHandle&& other) noexcept {
-    if (this != &other) {
-      Reset(other.Release());
-    }
-    return *this;
-  }
-
-  HANDLE Get() const { return handle_; }
-  bool Valid() const { return handle_ != nullptr && handle_ != INVALID_HANDLE_VALUE; }
-  HANDLE Release() {
-    HANDLE handle = handle_;
-    handle_ = nullptr;
-    return handle;
-  }
-  void Reset(HANDLE handle = nullptr) {
-    if (Valid()) {
-      CloseHandle(handle_);
-    }
-    handle_ = handle;
-  }
-
- private:
-  HANDLE handle_ = nullptr;
-};
-
-std::wstring ToWide(std::string_view text) {
-  if (text.empty()) {
-    return {};
-  }
-  const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
-                                       nullptr, 0);
-  if (size <= 0) {
-    return {};
-  }
-  std::wstring wide(static_cast<std::size_t>(size), L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), size);
-  return wide;
-}
-
-std::wstring ToWidePath(const std::filesystem::path& path) {
-  return path.wstring();
-}
-
-class WindowsTerminalBackend final : public TerminalBackend {
- public:
-  WindowsTerminalBackend() = default;
-  ~WindowsTerminalBackend() override { Stop(); }
-
-  TerminalStartResult Start(const TerminalStartRequest& request,
-                            TerminalBackendCallbacks callbacks) override {
-    Stop();
-    callbacks_ = std::move(callbacks);
-
-    SECURITY_ATTRIBUTES attributes{
-        .nLength = sizeof(SECURITY_ATTRIBUTES),
-        .lpSecurityDescriptor = nullptr,
-        .bInheritHandle = TRUE,
-    };
-
-    HANDLE input_read = nullptr;
-    HANDLE input_write = nullptr;
-    HANDLE output_read = nullptr;
-    HANDLE output_write = nullptr;
-    if (!CreatePipe(&input_read, &input_write, &attributes, 0) ||
-        !CreatePipe(&output_read, &output_write, &attributes, 0)) {
-      return FailureResult(request.command, "failed to create terminal pipes.");
-    }
-
-    input_read_.Reset(input_read);
-    input_write_.Reset(input_write);
-    output_read_.Reset(output_read);
-    output_write_.Reset(output_write);
-    SetHandleInformation(input_write_.Get(), HANDLE_FLAG_INHERIT, 0);
-    SetHandleInformation(output_read_.Get(), HANDLE_FLAG_INHERIT, 0);
-
-    const COORD size{
-        static_cast<SHORT>(std::min<std::size_t>(request.columns, 32767)),
-        static_cast<SHORT>(std::min<std::size_t>(request.rows, 32767)),
-    };
-    if (FAILED(CreatePseudoConsole(size, input_read_.Get(), output_write_.Get(), 0, &pseudo_console_))) {
-      return FailureResult(request.command,
-                           "Windows pseudoconsole is unavailable on this host.");
-    }
-
-    SIZE_T attribute_list_size = 0;
-    InitializeProcThreadAttributeList(nullptr, 1, 0, &attribute_list_size);
-    attribute_list_.resize(attribute_list_size);
-    auto* attribute_list =
-        reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attribute_list_.data());
-    if (!InitializeProcThreadAttributeList(attribute_list, 1, 0, &attribute_list_size)) {
-      return FailureResult(request.command, "failed to initialize pseudoconsole attributes.");
-    }
-    if (!UpdateProcThreadAttribute(attribute_list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-                                   pseudo_console_, sizeof(pseudo_console_), nullptr, nullptr)) {
-      return FailureResult(request.command, "failed to attach pseudoconsole attributes.");
-    }
-
-    const std::string shell_path =
-        request.shell.empty() ? DefaultShellPath() : request.shell.front();
-    std::wstring shell = ToWide(shell_path);
-    const std::wstring shell_name = ToWide(ShellProgramName(shell_path));
-    std::wstring command_line = shell;
-    if (!request.command.empty()) {
-      command_line += L" /D /C ";
-      command_line += ToWide(request.command);
-    }
-
-    STARTUPINFOEXW startup_info{};
-    startup_info.StartupInfo.cb = sizeof(startup_info);
-    startup_info.lpAttributeList = attribute_list;
-
-    std::wstring cwd = ToWidePath(request.working_directory);
-    std::vector<wchar_t> mutable_command(command_line.begin(), command_line.end());
-    mutable_command.push_back(L'\0');
-    if (!CreateProcessW(nullptr, mutable_command.data(), nullptr, nullptr, FALSE,
-                        EXTENDED_STARTUPINFO_PRESENT, nullptr,
-                        cwd.empty() ? nullptr : cwd.c_str(), &startup_info.StartupInfo,
-                        &process_info_)) {
-      return FailureResult(request.command, "failed to launch Windows terminal process.");
-    }
-
-    input_read_.Reset();
-    output_write_.Reset();
-    running_ = true;
-    stop_requested_ = false;
-    reader_thread_ = std::thread(&WindowsTerminalBackend::ReaderMain, this);
-
-    return TerminalStartResult{
-        .started = true,
-        .running = true,
-        .child_process_id = static_cast<int>(process_info_.dwProcessId),
-        .launch_label = request.command.empty() ? std::string(shell_name.begin(), shell_name.end())
-                                                : request.command,
-        .initial_output = {},
-    };
-  }
-
-  void Stop() override {
-    stop_requested_ = true;
-    if (input_write_.Valid()) {
-      input_write_.Reset();
-    }
-
-    if (process_info_.hProcess != nullptr) {
-      const DWORD wait_result = WaitForSingleObject(process_info_.hProcess, 200);
-      if (wait_result == WAIT_TIMEOUT) {
-        TerminateProcess(process_info_.hProcess, 1);
-      }
-    }
-
-    if (reader_thread_.joinable()) {
-      reader_thread_.join();
-    }
-
-    CleanupProcessHandles();
-    if (!attribute_list_.empty()) {
-      DeleteProcThreadAttributeList(
-          reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attribute_list_.data()));
-      attribute_list_.clear();
-    }
-    if (pseudo_console_ != nullptr) {
-      ClosePseudoConsole(pseudo_console_);
-      pseudo_console_ = nullptr;
-    }
-    output_read_.Reset();
-    output_write_.Reset();
-    input_read_.Reset();
-    running_ = false;
-    stop_requested_ = false;
-  }
-
-  void Resize(std::size_t rows, std::size_t columns) override {
-    if (pseudo_console_ == nullptr) {
-      return;
-    }
-    const COORD size{
-        static_cast<SHORT>(std::min<std::size_t>(columns, 32767)),
-        static_cast<SHORT>(std::min<std::size_t>(rows, 32767)),
-    };
-    ResizePseudoConsole(pseudo_console_, size);
-  }
-
-  void Write(std::string_view bytes) override {
-    if (!input_write_.Valid() || bytes.empty()) {
-      return;
-    }
-
-    std::size_t offset = 0;
-    while (offset < bytes.size()) {
-      DWORD written = 0;
-      if (!WriteFile(input_write_.Get(), bytes.data() + offset,
-                     static_cast<DWORD>(bytes.size() - offset), &written, nullptr) ||
-          written == 0) {
-        break;
-      }
-      offset += written;
-    }
-  }
-
-  bool running() const override { return running_; }
-
- private:
-  TerminalStartResult FailureResult(std::string_view command, std::string message) {
-    CleanupProcessHandles();
-    if (!attribute_list_.empty()) {
-      DeleteProcThreadAttributeList(
-          reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(attribute_list_.data()));
-      attribute_list_.clear();
-    }
-    if (pseudo_console_ != nullptr) {
-      ClosePseudoConsole(pseudo_console_);
-      pseudo_console_ = nullptr;
-    }
-    output_read_.Reset();
-    output_write_.Reset();
-    input_read_.Reset();
-    input_write_.Reset();
-    return TerminalStartResult{
-        .started = false,
-        .running = false,
-        .child_process_id = -1,
-        .launch_label = command.empty() ? "terminal unavailable" : std::string(command),
-        .initial_output = std::move(message),
-    };
-  }
-
-  void CleanupProcessHandles() {
-    if (process_info_.hThread != nullptr) {
-      CloseHandle(process_info_.hThread);
-      process_info_.hThread = nullptr;
-    }
-    if (process_info_.hProcess != nullptr) {
-      CloseHandle(process_info_.hProcess);
-      process_info_.hProcess = nullptr;
-    }
-    process_info_.dwProcessId = 0;
-    process_info_.dwThreadId = 0;
-  }
-
-  void ReaderMain() {
-    std::array<char, 4096> buffer{};
-    while (output_read_.Valid()) {
-      DWORD bytes_read = 0;
-      if (!ReadFile(output_read_.Get(), buffer.data(), static_cast<DWORD>(buffer.size()),
-                    &bytes_read, nullptr) ||
-          bytes_read == 0) {
-        break;
-      }
-      if (callbacks_.on_output) {
-        callbacks_.on_output(
-            std::string_view(buffer.data(), static_cast<std::size_t>(bytes_read)));
-      }
-    }
-
-    if (process_info_.hProcess != nullptr) {
-      WaitForSingleObject(process_info_.hProcess, INFINITE);
-    }
-    running_ = false;
-    if (!stop_requested_ && callbacks_.on_exit) {
-      callbacks_.on_exit();
-    }
-  }
-
-  TerminalBackendCallbacks callbacks_;
-  std::thread reader_thread_;
-  std::vector<std::byte> attribute_list_;
-  WinHandle input_read_;
-  WinHandle input_write_;
-  WinHandle output_read_;
-  WinHandle output_write_;
-  PROCESS_INFORMATION process_info_{};
-  HPCON pseudo_console_ = nullptr;
-  bool running_ = false;
-  bool stop_requested_ = false;
-};
-
-#else
-
-class UnsupportedTerminalBackend final : public TerminalBackend {
- public:
-  TerminalStartResult Start(const TerminalStartRequest& request,
-                            TerminalBackendCallbacks) override {
-    return TerminalStartResult{
-        .started = false,
-        .running = false,
-        .child_process_id = -1,
-        .launch_label = request.command.empty() ? "terminal unavailable" : request.command,
-        .initial_output = "terminal support is unavailable on this host.",
-    };
-  }
-
-  void Stop() override {}
-  void Resize(std::size_t, std::size_t) override {}
-  void Write(std::string_view) override {}
-  bool running() const override { return false; }
-};
-
-#endif
-
 }  // namespace
 
 std::unique_ptr<TerminalBackend> CreateTerminalBackend() {
-#if defined(__unix__) || defined(__APPLE__)
   return std::make_unique<PosixTerminalBackend>();
-#elif defined(_WIN32)
-  return std::make_unique<WindowsTerminalBackend>();
-#else
-  return std::make_unique<UnsupportedTerminalBackend>();
-#endif
 }
 
 }  // namespace microide::platform

@@ -15,9 +15,7 @@
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceUiText.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::workspace {
 namespace {
@@ -31,11 +29,7 @@ std::filesystem::path ControlDirectory() {
   if (const char* runtime = std::getenv("XDG_RUNTIME_DIR"); runtime != nullptr && runtime[0] == '/') {
     return std::filesystem::path(runtime) / "microide-ssh";
   }
-#if defined(__unix__) || defined(__APPLE__)
   return std::filesystem::path("/tmp") / ("microide-ssh-" + std::to_string(::getuid()));
-#else
-  return std::filesystem::temp_directory_path() / "microide-ssh";
-#endif
 }
 
 std::size_t SettingSize(const std::optional<std::string>& value) {

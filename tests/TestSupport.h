@@ -9,7 +9,6 @@
 #include <string_view>
 #include <vector>
 
-#include "platform/HostPlatform.h"
 
 namespace microide::tests {
 
@@ -122,52 +121,36 @@ class ScopedEnvVar {
   std::string previous_value_;
 };
 
-// Points the plugin host's config lookup (XDG_CONFIG_HOME, APPDATA) at a fixture
+// Points the plugin host's config lookup (XDG_CONFIG_HOME) at a fixture
 // directory for the lifetime of the object. Six test files used to carry their
 // own copy of this and of WritePluginInit.
 class ScopedPluginConfigHomeEnv {
  public:
   explicit ScopedPluginConfigHomeEnv(const std::filesystem::path& config_home)
-      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
-        appdata_("APPDATA", config_home.string()) {}
+      : xdg_config_home_("XDG_CONFIG_HOME", config_home.string()) {}
 
  private:
   ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar appdata_;
 };
 
 // Write `<root>/<directory_name>/init.lua`.
 void WritePluginInit(const std::filesystem::path& root, std::string_view directory_name,
                      std::string_view content);
 
-// Scope the app config/state homes so persistence is test-local on every
-// platform (XDG on Linux, *APPDATA on Windows). Two test files carried a
-// byte-identical private copy of this; a persistence test that forgets one of
-// the four variables writes into the developer's real profile, which is exactly
-// the kind of thing a copy drifts into.
+// Scope the app config/state homes (XDG_STATE_HOME, XDG_CONFIG_HOME) so
+// persistence is test-local. Two test files carried a byte-identical private copy
+// of this; a persistence test that forgets one of the variables writes into the
+// developer's real profile, which is exactly the kind of thing a copy drifts into.
 class ScopedAppHomes {
  public:
   ScopedAppHomes(const std::filesystem::path& state_home,
                  const std::filesystem::path& config_home)
       : xdg_state_home_("XDG_STATE_HOME", state_home.string()),
-        xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
-        localappdata_("LOCALAPPDATA", state_home.string()),
-        appdata_("APPDATA", config_home.string()) {}
+        xdg_config_home_("XDG_CONFIG_HOME", config_home.string()) {}
 
  private:
   ScopedEnvVar xdg_state_home_;
   ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar localappdata_;
-  ScopedEnvVar appdata_;
-};
-
-class ScopedHostPlatformOverride {
- public:
-  explicit ScopedHostPlatformOverride(platform::HostPlatform platform);
-  ~ScopedHostPlatformOverride();
-
- private:
-  std::optional<platform::HostPlatform> previous_;
 };
 
 }  // namespace microide::tests

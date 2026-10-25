@@ -3,7 +3,6 @@
 #include <cerrno>
 #include <cstring>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -11,11 +10,8 @@
 #include <unistd.h>
 
 #include "util/PosixFd.h"
-#endif
 
 namespace microide::platform {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 namespace {
 
@@ -93,16 +89,5 @@ int ListenUnixSocket(const std::filesystem::path& path, std::string* error) {
   util::SetNonBlocking(fd);
   return fd;
 }
-
-#else
-
-bool ClearStaleSocketPath(const std::filesystem::path&) { return false; }
-int ConnectUnixSocket(const std::filesystem::path&) { return -1; }
-int ListenUnixSocket(const std::filesystem::path&, std::string* error) {
-  *error = "unix sockets are not available on this platform";
-  return -1;
-}
-
-#endif
 
 }  // namespace microide::platform

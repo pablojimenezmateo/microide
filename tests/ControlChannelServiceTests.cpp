@@ -18,17 +18,13 @@
 #include "workspace/WorkspaceContext.h"
 #include "workspace/state/WorkspaceTabState.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 // Connect to an AF_UNIX socket, returning the fd or -1.
 int ConnectUnix(const std::string& path) {
@@ -853,7 +849,6 @@ void TestDebugCommandAutoEnablesDebugger() {
   std::filesystem::remove_all(runtime, ec);
 }
 
-
 // `--query notifications` lists every toast with its inline buttons, so an agent
 // can see "Reconnect" before pressing it with `notification-action`.
 void TestNotificationsQueryListsActions() {
@@ -940,24 +935,6 @@ void TestNotificationsQueryListsActions() {
   service.Stop();
   std::filesystem::remove_all(runtime, ec);
 }
-
-#else
-
-void TestQueryAndCommandOverSocket() {}
-void TestAgentQueriesOverSocket() {}
-void TestQueryResponseIsBounded() {}
-void TestControlListFiltersDeadPids() {}
-void TestLaunchConfigsAndAdaptersOverSocket() {}
-void TestSocketSelfHealsAfterExternalDeletion() {}
-void TestSocketRebindRehardensTheRuntimeDirectory() {}
-void TestDebugCommandAutoEnablesDebugger() {}
-void TestNotificationsQueryListsActions() {}
-void TestControlDiscoveryIgnoresForgedSocketAndPid() {}
-void TestControlListPrintsCanonicalSingleLineJson() {}
-void TestControlDiscoveryRejectsOversizedDescriptor() {}
-void TestControlDiscoveryBoundsHostileSweep() {}
-
-#endif
 
 // Cross-platform: the stdout JSONL mirror must surface debug events even when no
 // socket client is connected (the whole point of `--control`).

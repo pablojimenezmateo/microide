@@ -126,9 +126,6 @@ bool PumpUntil(DapClient& client, Predicate&& ready, int timeout_ms) {
 }
 
 void TestDapRealAdapterGdbHandshakeAndShutdown() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   const std::string gdb = LocateGdb();
   if (gdb.empty()) {
     std::fprintf(stderr,
@@ -211,7 +208,6 @@ void TestDapRealAdapterGdbHandshakeAndShutdown() {
   client.Shutdown();
   Expect(PumpUntil(client, [&]() { return !client.IsRunning(); }, 10000),
          "the adapter process should exit after Shutdown()");
-#endif
 }
 
 // The launch -> breakpoint -> stopped -> inspect -> continue -> exit cycle,
@@ -324,9 +320,6 @@ GdbCycleResult RunGdbBreakpointCycle(const std::string& gdb,
 // loopback run not stopping is a failure -- deciding the skip from the loopback run
 // itself is how this test first passed with translation switched off.
 void TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   const std::string gdb = LocateGdb();
   const std::string compiler = LocateCCompiler();
   if (gdb.empty() || compiler.empty()) {
@@ -381,13 +374,9 @@ void TestDapRealAdapterGdbStopsInTheMirrorThroughALoopbackHost() {
            "the stop is reported in the MIRROR's file, on the breakpoint's line; got " +
                remote.frame_path + ":" + std::to_string(remote.frame_line) + where);
   }
-#endif
 }
 
 void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   const std::string gdb = LocateGdb();
   if (gdb.empty()) {
     std::fprintf(stderr, "[dap-e2e] SKIP: no gdb on PATH for the launch cycle\n");
@@ -600,7 +589,6 @@ void TestDapRealAdapterGdbLaunchBreakpointStopCycle() {
   client.Shutdown();
   Expect(PumpUntil(client, [&]() { return !client.IsRunning(); }, 10000),
          "the adapter process should exit after Shutdown()");
-#endif
 }
 
 }  // namespace

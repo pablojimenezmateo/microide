@@ -314,14 +314,6 @@ std::string JoinShellCommandArguments(const std::vector<std::string>& args,
       joined += arg;
       continue;
     }
-#if defined(_WIN32)
-    // cmd.exe: double quotes, an embedded one doubled.
-    joined.push_back('"');
-    for (const char c : arg) {
-      joined += c == '"' ? std::string("\"\"") : std::string(1, c);
-    }
-    joined.push_back('"');
-#else
     // POSIX: single quotes take everything literally; a ' closes, escapes, reopens.
     joined.push_back('\'');
     for (const char c : arg) {
@@ -332,7 +324,6 @@ std::string JoinShellCommandArguments(const std::vector<std::string>& args,
       }
     }
     joined.push_back('\'');
-#endif
   }
   return joined;
 }

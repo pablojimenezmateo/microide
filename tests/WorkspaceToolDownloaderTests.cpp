@@ -19,7 +19,6 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
   std::filesystem::create_directories(bin_dir);
   WriteFile(source, "payload\n");
 
-#if !defined(_WIN32)
   // Keep PATH scoped to this fixture so `sha256sum` is absent and fallback uses `shasum`.
   const std::filesystem::path shasum_path = bin_dir / "shasum";
   WriteFile(shasum_path,
@@ -29,7 +28,6 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
                                                 std::filesystem::perms::owner_read |
                                                 std::filesystem::perms::owner_write,
                                std::filesystem::perm_options::add);
-#endif
 
   ScopedEnvVar path_env("PATH", bin_dir.string());
 
@@ -49,7 +47,6 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
 // remove that tree. The default now comes from ResolveAppDirectory, and an empty
 // one refuses instead.
 void TestToolDownloaderWithoutUserCacheDirectoryRefuses() {
-#if defined(__linux__)
   TemporaryDirectory temp_dir;
   const std::filesystem::path source = temp_dir.path() / "tool.bin";
   WriteFile(source, "payload\n");
@@ -63,16 +60,12 @@ void TestToolDownloaderWithoutUserCacheDirectoryRefuses() {
   downloader.ClearCache();
   Expect(!std::filesystem::exists(std::filesystem::current_path() / "~"),
          "no cache tree may appear under the working directory");
-#endif
 }
 
 // Regression: the expected digest may be uppercase (manifests accept either case)
 // while the computed digest is lowercase. Download must compare case-insensitively
 // so a correct file with an uppercase expected sha still verifies.
 void TestToolDownloaderAcceptsUppercaseExpectedSha() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path bin_dir = temp_dir.path() / "bin";
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
@@ -96,7 +89,6 @@ void TestToolDownloaderAcceptsUppercaseExpectedSha() {
       "tool", source.string(), "D4E4877BAC978B7952F0D544FC52EBFF5411D351D129F1F056FA43F11DA9AF2B");
   Expect(downloaded.has_value(),
          "an uppercase expected sha256 must verify against the lowercase computed digest");
-#endif
 }
 
 // A tool_id containing path-traversal (or an absolute-ish component) must be
@@ -212,9 +204,6 @@ void TestToolDownloaderRejectsMalformedFileUri() {
 }
 
 void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
   const std::filesystem::path source = temp_dir.path() / "tool.bin";
@@ -230,16 +219,12 @@ void TestToolDownloaderHashMismatchLeavesNoPartialFile() {
          "no partial/unverified executable is published at the cache path");
   Expect(!std::filesystem::exists(cache_dir / "tool.partial"),
          "the temporary partial file is cleaned up on mismatch");
-#endif
 }
 
 // Regression: GetCachedTool must verify the cached file's digest before handing
 // it to a launcher when an expected sha is supplied — a mismatch (stale/tampered
 // cache) returns nothing; an empty expected digest returns the path unverified.
 void TestToolDownloaderGetCachedToolVerifiesHash() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path bin_dir = temp_dir.path() / "bin";
   const std::filesystem::path cache_dir = temp_dir.path() / "cache";
@@ -265,7 +250,6 @@ void TestToolDownloaderGetCachedToolVerifiesHash() {
          "GetCachedTool rejects a cached file whose digest does not match");
   Expect(downloader.GetCachedTool("tool").has_value(),
          "GetCachedTool returns the path unverified when no expected digest is given");
-#endif
 }
 
 // Regression: there is NO networking. Any remote scheme is rejected regardless of

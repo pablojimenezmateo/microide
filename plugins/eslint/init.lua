@@ -48,10 +48,6 @@ local function supported_path_kind(path)
   return nil
 end
 
-local function is_windows_project_root(project_root)
-  return type(project_root) == "string" and project_root:match("^%a:[/\\]") ~= nil
-end
-
 local function append_args(prefix, suffix)
   local command = {}
   for _, value in ipairs(prefix) do
@@ -114,20 +110,6 @@ local function local_binary_command(ctx, name, args)
   end
 
   local base_relative_path = "node_modules/.bin/" .. name
-  if is_windows_project_root(project_root) then
-    local cmd_relative_path = base_relative_path .. ".cmd"
-    if ctx.files.exists(cmd_relative_path) then
-      return append_args({ "cmd.exe", "/d", "/c", project_root .. "/" .. cmd_relative_path }, args)
-    end
-    if ctx.files.exists(base_relative_path) then
-      return {
-        "bash",
-        "-lc",
-        shell_with_user_env(append_args({ project_root .. "/" .. base_relative_path }, args)),
-      }
-    end
-  end
-
   if ctx.files.exists(base_relative_path) then
     return append_args({ project_root .. "/" .. base_relative_path }, args)
   end

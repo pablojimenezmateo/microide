@@ -16,10 +16,8 @@
 #include <system_error>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
 #include <sys/types.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -459,9 +457,6 @@ void TestRemovingOnlyPrimaryResurrectsFromBackup() {
 // test !exists() first and report NotFound, letting a transient I/O error look
 // like "no persisted state" — which a later save would overwrite with defaults.
 void TestPersistedRecordReaderReportsReadFailureOnStatError() {
-#if defined(_WIN32)
-  return;  // POSIX symlink semantics
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path loopa = temp_dir.path() / "loopa";
   const std::filesystem::path loopb = temp_dir.path() / "loopb";
@@ -477,7 +472,6 @@ void TestPersistedRecordReaderReportsReadFailureOnStatError() {
   Expect(!result.has_value(), "reading through a symlink cycle should not succeed");
   Expect(error == PersistedRecordReaderError::ReadFailed,
          "a stat failure must be reported as ReadFailed, not NotFound");
-#endif
 }
 
 // I16 regression: a readable but stale `.bak` must not silently mask a primary
@@ -616,7 +610,6 @@ void TestPersistedRecordReaderRejectsNonRegularPath() {
   Expect(dir_error == PersistedRecordReaderError::ReadFailed,
          "a directory persisted-state path is a read failure, not NotFound");
 
-#if defined(__unix__) || defined(__APPLE__)
   const std::filesystem::path fifo_path = temp_dir.path() / "state_fifo";
   if (::mkfifo(fifo_path.c_str(), 0600) == 0) {
     PersistedRecordReaderError fifo_error = PersistedRecordReaderError::None;
@@ -626,7 +619,6 @@ void TestPersistedRecordReaderRejectsNonRegularPath() {
            "a FIFO persisted-state path is a read failure");
     std::filesystem::remove(fifo_path, ec);
   }
-#endif
 }
 
 // TD-2026-07-17A-127: writing a persisted-state record through a symlinked path must
@@ -634,9 +626,6 @@ void TestPersistedRecordReaderRejectsNonRegularPath() {
 // and publish a fresh regular file at the link path (which breaks user-managed
 // config/session symlinks).
 void TestPersistedRecordWriterPreservesSymlinkedTarget() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path target = temp_dir.path() / "real" / "session.bin";
   const std::filesystem::path link_path = temp_dir.path() / "link" / "session.bin";

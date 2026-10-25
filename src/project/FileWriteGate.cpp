@@ -4,10 +4,8 @@
 
 #include <system_error>
 
-#ifndef _WIN32
 #include <cerrno>
 #include <unistd.h>
-#endif
 
 namespace microide::project {
 
@@ -50,14 +48,9 @@ bool FileWriteGate::IsReadOnly(const std::filesystem::path& path) const {
   if (error || !std::filesystem::is_regular_file(status)) {
     return false;  // nothing there yet: the save creates it
   }
-#ifndef _WIN32
   // Asked of the kernel rather than read off the mode bits: it knows the owner,
   // the groups, ACLs, and that root may write anything.
   return ::access(path.c_str(), W_OK) != 0 && errno == EACCES;
-#else
-  return (status.permissions() & std::filesystem::perms::owner_write) ==
-         std::filesystem::perms::none;
-#endif
 }
 
 bool FileWriteGate::MakeWritable(const std::filesystem::path& path) {

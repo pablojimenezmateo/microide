@@ -67,20 +67,6 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   if (relative.empty()) {
     return true;
   }
-#ifdef _WIN32
-  // IgnoreMatcher speaks generic (forward-slash) relatives, which on POSIX the
-  // native text already is. On Windows it is not, so the separators are swapped
-  // into a reused member buffer -- one conversion per entry rather than the
-  // lexically_relative()/generic_string() pair, and no per-entry allocation once
-  // the buffer has grown.
-  generic_relative_scratch_.assign(relative);
-  for (char& c : generic_relative_scratch_) {
-    if (c == '\\') {
-      c = '/';
-    }
-  }
-  relative = generic_relative_scratch_;
-#endif
 
   DirectoryState* const state = StateForParentDirectoryText(
       util::NormalizedParentDirectoryView(normalized_text), *normalized);
@@ -159,9 +145,7 @@ std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDir
     return root_matcher_;
   }
 
-  // Keyed on the NATIVE text, which is what the per-entry fast path above looks
-  // up: a generic key would silently never match it on Windows, turning every
-  // cache hit into a full ancestor recursion.
+  // Keyed on the native text, which is what the per-entry fast path above looks up.
   const std::string& key = directory.native();
   const auto existing = directory_states_.find(key);
   if (existing != directory_states_.end()) {

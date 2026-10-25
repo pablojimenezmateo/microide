@@ -6,7 +6,7 @@
 namespace microide::platform {
 
 // Path to the interactive shell to launch for a terminal session. Honors $SHELL
-// (or %COMSPEC% on Windows) and falls back to a sane platform default.
+// and falls back to a sane default.
 std::string DefaultShellPath();
 
 // Basename of a shell path, e.g. "/usr/bin/zsh" -> "zsh". Used for argv[0].

@@ -252,9 +252,9 @@ These are absent today. None of them are on the roadmap unless a separate phase 
 - **No isolation of the Lua state itself.** Capability enforcement happens at the host-API
   boundary and (for subprocesses) in the kernel; the `lua_State` still runs in the editor process,
   so a memory-safety bug in the host bindings is not contained by this model.
-- **No kernel confinement off Linux.** macOS/Windows get the in-process capability gate (fs
-  containment, process gate, allowlist) plus portable `setrlimit`, but not Landlock/seccomp. On
-  Linux, both `ctx.process.run` children and contributed language-server processes are confined.
+- **Kernel confinement needs Landlock/seccomp.** Both `ctx.process.run` children and contributed
+  language-server processes are confined; on a kernel without Landlock the in-process capability
+  gate (fs containment, process gate, allowlist) and `setrlimit` still apply.
 - **No marketplace, no remote install, no auto-update.** Plugins are placed by the user in
   `~/.config/microide/plugins/`.
 

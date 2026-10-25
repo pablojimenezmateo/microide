@@ -198,8 +198,6 @@ std::optional<std::string> BuildControlSendRequest(const ControlSendOptions& opt
   return util::SerializeJson(util::JsonValue(std::move(object)));
 }
 
-#if defined(__unix__) || defined(__APPLE__)
-
 namespace {
 
 // Resolve the target socket from options + discovery. Returns nullopt and sets
@@ -354,14 +352,5 @@ int RunControlSend(int argc, char** argv) {
   }
   return 0;
 }
-
-#else  // non-POSIX: control channel unsupported.
-
-int RunControlSend(int, char**) {
-  EmitError("the control channel is not supported on this platform");
-  return 2;
-}
-
-#endif
 
 }  // namespace microide::workspace

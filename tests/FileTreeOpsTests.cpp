@@ -98,7 +98,6 @@ void TestFileOperationService() {
   Expect(std::filesystem::is_regular_file(root / "nested" / "renamed" / "final.txt"),
          "renamed directory should keep its contents");
 
-#if defined(__linux__)
   const auto trash_home = temp_dir.path() / "xdg-data-home";
   ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
   const auto trash_target = root / "trash-me.txt";
@@ -111,7 +110,6 @@ void TestFileOperationService() {
   const auto info_path =
       trash_home / "Trash" / "info" / (trashed.resulting_path.filename().string() + ".trashinfo");
   Expect(std::filesystem::is_regular_file(info_path), "trash metadata file should exist");
-#endif
 }
 
 void TestCreateDirectoryClassifiesExistingTargets() {
@@ -137,7 +135,6 @@ void TestCreateDirectoryClassifiesExistingTargets() {
          "the pre-existing file must be left untouched");
 }
 
-#if defined(__linux__)
 // Regression: the .trashinfo file is now reserved atomically with O_EXCL, so a
 // trash whose base name's metadata already exists must NOT overwrite it — it must
 // skip to the next suffix. The old truncating ofstream silently clobbered the
@@ -241,7 +238,6 @@ void TestTrashRetriesPastADanglingSlot() {
   Expect(ReadFile(trashed.resulting_path) == "new content",
          "the trashed content lands at the retried slot");
 }
-#endif
 
 }  // namespace
 
@@ -292,7 +288,6 @@ void TestMovePathNoOverwriteRefusesExistingDestination() {
 // TD-2026-07-17A-125: a dangling symlink is a real directory entry the file manager
 // should be able to rename. The source pre-check used std::filesystem::exists, which
 // follows the link and reports a broken target as absent, so the rename was refused.
-#if defined(__unix__) || defined(__APPLE__)
 void TestRenamePathAcceptsDanglingSymlinkSource() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -311,7 +306,6 @@ void TestRenamePathAcceptsDanglingSymlinkSource() {
   Expect(!std::filesystem::is_symlink(std::filesystem::symlink_status(link)),
          "the original link node is gone after the rename");
 }
-#endif
 
 // A move that FAILS must be a no-op. The rollback that removes a partially copied
 // destination is gated on whether the destination pre-existed, and that check used
@@ -319,7 +313,6 @@ void TestRenamePathAcceptsDanglingSymlinkSource() {
 // "did not pre-exist" and the rollback deleted a directory entry the move never
 // created. MovePathNoOverwrite already classified with symlink_status for exactly
 // this reason (TD-2026-07-17A-132); MovePath did not.
-#if defined(__unix__) || defined(__APPLE__)
 void TestFailedMovePathLeavesADanglingDestinationSymlinkAlone() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -338,7 +331,6 @@ void TestFailedMovePathLeavesADanglingDestinationSymlinkAlone() {
              std::filesystem::file_type::not_found,
          "a failed move must not delete the destination entry it found there");
 }
-#endif
 
 // ---- The transaction (TD-2026-09-29-305) -----------------------------------
 //
@@ -445,19 +437,15 @@ void RegisterFileTreeOpsTests(std::vector<TestCase>& tests) {
           TestMovePathNoOverwriteRefusesExistingDestination);
   AddTest(tests, "Project/CreateDirectoryClassifiesExistingTargets",
           TestCreateDirectoryClassifiesExistingTargets);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Project/RenamePathAcceptsDanglingSymlinkSource",
           TestRenamePathAcceptsDanglingSymlinkSource);
   AddTest(tests, "Project/FailedMovePathLeavesADanglingDestinationSymlinkAlone",
           TestFailedMovePathLeavesADanglingDestinationSymlinkAlone);
-#endif
-#if defined(__linux__)
   AddTest(tests, "Project/TrashReservationDoesNotOverwriteExistingMetadata",
           TestTrashReservationDoesNotOverwriteExistingMetadata);
   AddTest(tests, "Project/TrashFinalMoveRefusesExistingFilesDestination",
           TestTrashFinalMoveRefusesExistingFilesDestination);
   AddTest(tests, "Project/TrashRetriesPastADanglingSlot", TestTrashRetriesPastADanglingSlot);
-#endif
 }
 
 }  // namespace microide::tests

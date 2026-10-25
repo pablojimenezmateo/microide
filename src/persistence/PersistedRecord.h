@@ -16,9 +16,10 @@ namespace microide::persistence {
 inline constexpr std::array<char, 4> kPersistedRecordMagic = {'M', 'I', 'D', 'E'};
 inline constexpr std::uint32_t kPersistedRecordFormatVersion = 1;
 
+// The tag byte in front of every persisted path. Only POSIX paths are written or
+// accepted (the value 2 was once reserved for Windows paths and is never valid).
 enum class PathPlatform : std::uint8_t {
   Posix = 1,
-  Windows = 2,
 };
 
 struct PersistedRecordHeader {

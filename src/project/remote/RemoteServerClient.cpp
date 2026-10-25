@@ -6,13 +6,9 @@
 #include <thread>
 #include <utility>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#if defined(__linux__)
 #include <fcntl.h>
 #include <sys/mman.h>
-#endif
-#endif
 
 namespace microide::project::remote {
 namespace {
@@ -62,11 +58,9 @@ RemoteServerClient::~RemoteServerClient() {
 
 bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
                                         const HelloRequest& hello, std::string* error) {
-#if defined(__linux__)
   if (command_stderr_fd_ < 0) {
     command_stderr_fd_ = ::memfd_create("microide-remote-stderr", MFD_CLOEXEC | MFD_ALLOW_SEALING);
   }
-#endif
   if (!command_.Start(argv, {}, {}, command_stderr_fd_)) {
     *error = "could not run " + (argv.empty() ? std::string("<nothing>") : argv.front());
     return false;
@@ -84,14 +78,12 @@ bool RemoteServerClient::ConnectCommand(const std::vector<std::string>& argv,
     AppendCommandStderr(error);
     return false;
   }
-#if defined(__linux__)
   // Connected: what the command printed getting here is no longer wanted, and it
   // keeps this stderr for the whole session. Empty the file and seal it against
   // growth, so anything it prints later fails to write instead of piling up.
   if (command_stderr_fd_ >= 0 && ::ftruncate(command_stderr_fd_, 0) == 0) {
     (void)::fcntl(command_stderr_fd_, F_ADD_SEALS, F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL);
   }
-#endif
   return true;
 }
 

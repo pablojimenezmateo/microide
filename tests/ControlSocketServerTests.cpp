@@ -11,14 +11,12 @@
 
 #include "platform/ControlSocketServer.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <poll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
-#endif
 #endif
 
 namespace microide::tests {
@@ -74,8 +72,6 @@ void TestScanControlRequestLinesRejectsOversizeCompleteLine() {
            "a line one byte over the cap is rejected");
   }
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using microide::platform::ControlInboundMessage;
 using microide::platform::ControlSocketServer;
@@ -479,9 +475,6 @@ void TestLargeMultiLineBroadcastDeliveredInOrder() {
   server.Stop();
 }
 
-#endif  // POSIX
-
-
 // The client must not frame a request line the server will shed. These were two
 // constants of the same name in two files -- the client's comment claiming to
 // mirror the server's, at 16x the value -- so a request between the two ceilings
@@ -501,7 +494,6 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestControlRequestCeilingIsOneValue);
   AddTest(tests, "ControlSocketServer/ScanRejectsOversizeCompleteLine",
           TestScanControlRequestLinesRejectsOversizeCompleteLine);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "ControlSocketServer/StartRefusesToDeleteNonSocketFile",
           TestStartRefusesToDeleteNonSocketFile);
   AddTest(tests, "ControlSocketServer/OversizedCompleteLineIsShed",
@@ -522,9 +514,6 @@ void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
           TestIdleConnectionFloodIsCapped);
   AddTest(tests, "ControlSocketServer/LargeMultiLineBroadcastDeliveredInOrder",
           TestLargeMultiLineBroadcastDeliveredInOrder);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

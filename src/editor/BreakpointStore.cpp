@@ -40,11 +40,6 @@ std::string_view BreakpointStore::PathKeyView(const std::filesystem::path& path,
   if (path.empty()) {
     return {};
   }
-#ifdef _WIN32
-  // The native separator is not the generic one, so the conversion is real work.
-  scratch = path.lexically_normal().generic_string();
-  return scratch;
-#else
   // `lexically_normal()` is ~12 allocations (a fresh path plus a component list
   // holding a string per component) and is a no-op for a path whose text is
   // already normal — which is every path the editor opened a file with.
@@ -53,7 +48,6 @@ std::string_view BreakpointStore::PathKeyView(const std::filesystem::path& path,
   }
   scratch = path.lexically_normal().generic_string();
   return scratch;
-#endif
 }
 
 void BreakpointStore::BumpRevision() {

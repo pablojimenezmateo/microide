@@ -1,7 +1,5 @@
 #pragma once
 
-#if defined(__unix__) || defined(__APPLE__)
-
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -67,4 +65,3 @@ inline void CloseIfValid(int fd) {
 
 }  // namespace microide::util
 
-#endif  // __unix__ || __APPLE__

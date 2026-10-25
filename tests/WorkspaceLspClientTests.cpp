@@ -57,9 +57,6 @@ void TestWorkspaceLspManagerReportsAServerThatDiesAtStartup() {
 // microide never said it, so every TypeScript error went unreported while clangd,
 // which pushes regardless, hid the gap (QA lsp-typescript).
 void TestWorkspaceLspClientDeclaresPublishDiagnostics() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto capabilities_path = temp_dir.path() / "capabilities.json";
   const auto server_path = temp_dir.path() / "server.py";
@@ -120,9 +117,6 @@ while True:
 // -- no diagnostics, hover or completion for it, and nothing said why. The byte
 // goes as '?', so the server's columns stay the editor's.
 void TestWorkspaceLspClientSendsInvalidUtf8AsValidJson() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto opened_path = temp_dir.path() / "opened.txt";
   const auto server_path = temp_dir.path() / "server.py";
@@ -180,9 +174,6 @@ while True:
 }
 
 void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   for (int iteration = 0; iteration < 200; ++iteration) {
     LspClient client;
@@ -194,9 +185,6 @@ void TestWorkspaceLspClientShutdownDoesNotRaceInitialization() {
 }
 
 void TestWorkspaceLspClientShutdownWaitsForGracefulExit() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto marker_path = temp_dir.path() / "graceful-exit.txt";
@@ -270,9 +258,6 @@ while True:
 }
 
 void TestWorkspaceLspClientBeginShutdownDoesNotBlockGracefulExit() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto marker_path = temp_dir.path() / "async-graceful-exit.txt";
@@ -351,9 +336,6 @@ while True:
 }
 
 void TestWorkspaceLspClientShutdownClosesStdinAfterExitNotification() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto marker_path = temp_dir.path() / "stdin-eof-exit.txt";
@@ -425,9 +407,6 @@ while True:
 }
 
 void TestWorkspaceLspClientBeginShutdownCancelsPreInitServerImmediately() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto marker_path = temp_dir.path() / "preinit-cancel.txt";
@@ -465,9 +444,6 @@ time.sleep(10)
 }
 
 void TestWorkspaceLspClientReadinessSnapshotTracksProgress() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -560,9 +536,6 @@ while True:
 }
 
 void TestWorkspaceLspClientDidOpenQueuedBeforeInitializeStillDeliversFullText() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto marker_path = temp_dir.path() / "did-open.txt";
@@ -657,9 +630,6 @@ while True:
 }
 
 void TestWorkspaceLspClientAnswersServerRequestsAndAdvertisesEnablers() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
 
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
@@ -789,9 +759,6 @@ while True:
 // positionEncoding "utf-8", which the client must capture so the host knows its
 // byte-offset columns are already exact LSP positions (no conversion needed).
 void TestWorkspaceLspClientCapturesNegotiatedPositionEncoding() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(server_path, std::string(R"py(import json
@@ -1121,9 +1088,6 @@ void TestWorkspaceLspClientOutboundByteBudgetRefusesOversized() {
 // must be skipped whole, not tear the session down: the stream has to resync so
 // later messages (here a diagnostics push) are still delivered.
 void TestWorkspaceLspClientSkipsOversizedFrameAndResyncs() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(
@@ -1214,7 +1178,6 @@ while True:
   Expect(got_resynced_diag,
          "client must skip the oversized frame, resync, and deliver the later diagnostic");
   client.Shutdown();
-#endif
 }
 
 // A frame that arrives before the initialize response must be dispatched, not
@@ -1225,9 +1188,6 @@ while True:
 // diagnostics notification *before* the initialize response; the client must
 // still deliver it. Mirrors the DAP client's pre-initialize dispatch.
 void TestWorkspaceLspClientDispatchesPreInitializeFrames() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(
@@ -1308,7 +1268,6 @@ while True:
   Expect(got_preinit_diag,
          "a frame arriving before the initialize response must be dispatched, not dropped");
   client.Shutdown();
-#endif
 }
 
 // A server that answers initialize with an error has said why it will not run
@@ -1316,9 +1275,6 @@ while True:
 // lsp-typescript). The failure must carry that message: it was reported as
 // "exited before initialize response", sending the user looking for a crash.
 void TestWorkspaceLspClientInitializeErrorKeepsTheServersMessage() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(server_path, std::string(R"py(import json
@@ -1361,7 +1317,6 @@ sys.stdout.buffer.flush()
   Expect(message.find("no tsserver.js here") != std::string::npos,
          "the failure should carry the server's own message, got: " + message);
   client.Shutdown();
-#endif
 }
 
 // Regression: the initialize-wait budget is wall-clock (each miss does a ~500 ms
@@ -1371,9 +1326,6 @@ sys.stdout.buffer.flush()
 // perfectly healthy. This server floods far more than 60 notifications ahead of the
 // response; the client must still initialize.
 void TestWorkspaceLspClientPreInitializeNotificationFloodStillInitializes() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(
@@ -1441,7 +1393,6 @@ while True:
          "a burst of pre-initialize notifications must not exhaust the init budget and kill "
          "a healthy server");
   client.Shutdown();
-#endif
 }
 
 // Diagnostics computed against a document version the client has already
@@ -1450,9 +1401,6 @@ while True:
 // v2 didChange with a stale (v1) push followed by a fresh (v2) push; only the
 // fresh one may reach the callback.
 void TestWorkspaceLspClientDropsStaleDiagnosticsVersion() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(
@@ -1552,7 +1500,6 @@ while True:
   Expect(std::find(received.begin(), received.end(), "stale-v1") == received.end(),
          "superseded-version diagnostics must be dropped");
   client.Shutdown();
-#endif
 }
 
 // Same as above, but the server echoes the document version as a JSON FLOAT
@@ -1560,9 +1507,6 @@ while True:
 // stale-drop gate must accept IsDouble() as well as IsInt() (mirroring the
 // response-id gate) or the stale v1 push slips through onto the v2 buffer.
 void TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(
@@ -1661,7 +1605,6 @@ while True:
   Expect(std::find(received.begin(), received.end(), "stale-v1") == received.end(),
          "superseded-version diagnostics must be dropped even when the version is a float");
   client.Shutdown();
-#endif
 }
 
 // Ingestion and UI delivery are separate: a diagnostic can be current when
@@ -1732,9 +1675,6 @@ void TestWorkspaceLspClientDropsDiagnosticsSupersededBeforeDelivery() {
 // republish. Versions are monotonic per URI across a reopen now, so the old push
 // is still stale.
 void TestWorkspaceLspClientDropsDiagnosticsFromAPreviousOpen() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(
@@ -1847,7 +1787,6 @@ while True:
   Expect(std::find(received.begin(), received.end(), "stale-from-previous-open") == received.end(),
          "diagnostics computed for the previous open must not paint on the reopened buffer");
   client.Shutdown();
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -2050,9 +1989,6 @@ void TestJsonRpcMessageFramerOversizedFrameSplitOnHeaderNewlineDoesNotDesync() {
 // builder runs SerializeMessage lazily). This must preserve FIFO order and the full
 // per-change payload — a reorder or a captured-by-reference bug would corrupt sync.
 void TestWorkspaceLspClientDidChangePreservesOrderAndPayload() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto log_path = temp_dir.path() / "didchange.log";
   const auto server_path = temp_dir.path() / "server.py";
@@ -2154,9 +2090,6 @@ while True:
 // that returns a JSON CompletionList. The stub path bypasses the parser, so this is
 // the only place the move-out parsing of label/detail/insertText/textEdit runs.
 void TestWorkspaceLspClientCompletionParsesJsonResult() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "server.py";
   WriteFile(server_path, std::string(R"py(import json
@@ -2254,9 +2187,6 @@ while True:
 // must still correlate to its pending request. The dispatch gate used to accept
 // only IsInt(), silently dropping float-id responses and hanging the request.
 void TestWorkspaceLspClientAcceptsFloatEchoedResponseId() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "float-id-server.py";
   WriteFile(server_path, std::string(R"py(import json
@@ -2331,9 +2261,6 @@ while True:
 }
 
 void TestWorkspaceLspClientInitFailureFailsPendingRequest() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "stall-server.py";
   // Consume the initialize request, then stall briefly and exit WITHOUT ever
@@ -2400,7 +2327,6 @@ time.sleep(0.3)
 // initialize (advertising hover + definition), then dispatches on a per-method
 // script — never responding to `hover` (to exercise the timeout sweep), erroring on
 // `signatureHelp`, and returning an authoritative empty `[]` for `definition`.
-#if defined(__unix__) || defined(__APPLE__)
 constexpr const char* kOutcomeFixtureServer = R"py(import json
 import sys
 
@@ -2462,15 +2388,10 @@ void PumpUntilOutcomeDelivered(LspClient& client, const std::atomic<bool>& done,
   }
   client.DrainCallbacks();
 }
-#endif
 
 // A silent server (never answers hover) must resolve the request as a Timeout, not a
 // silent empty success -> so a slow/hung server no longer reads as "no hover here".
 void TestWorkspaceLspClientTimeoutReportsTimeoutOutcome() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
-#if defined(__unix__) || defined(__APPLE__)
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "silent-hover.py";
   WriteFile(server_path, std::string(kOutcomeFixtureServer));
@@ -2498,16 +2419,11 @@ void TestWorkspaceLspClientTimeoutReportsTimeoutOutcome() {
   Expect(!answered.load(std::memory_order_acquire),
          "a timed-out request is not an authoritative empty answer");
   client.Shutdown();
-#endif
 }
 
 // A JSON-RPC error response is a ProtocolError (not answered); an empty `[]` result
 // is an authoritative empty answer (answered, so "No X found" is still correct).
 void TestWorkspaceLspClientOutcomeTaxonomy() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
-#if defined(__unix__) || defined(__APPLE__)
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "outcome.py";
   WriteFile(server_path, std::string(kOutcomeFixtureServer));
@@ -2552,7 +2468,6 @@ void TestWorkspaceLspClientOutcomeTaxonomy() {
   Expect(def_empty.load(std::memory_order_acquire),
          "the empty result carries a present-but-empty location list");
   client.Shutdown();
-#endif
 }
 
 // LSP servers return completion items in arbitrary array order and encode their

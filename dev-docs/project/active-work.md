@@ -553,10 +553,9 @@ carries its own gates and coverage.
 
 Not current work unless deliberately promoted into its own phase.
 
-- **Non-Linux host backends.** Linux is the supported host. The `src/platform/*`
-  seams stay because they keep the boundary testable, but native Windows/macOS
-  subprocess, terminal, and file-watcher backends are not being built, and the
-  poll/snapshot watcher fallback is the accepted permanent baseline elsewhere.
+- **Non-Linux hosts.** Linux is the only host. The macOS and Windows code
+  paths were removed (2026-10-25) and CMake refuses to configure elsewhere; the
+  `src/platform/*` seams stay because they keep the boundary testable.
 - **Hosted perf gating.** Perf baselines are absolute timings from the pinned
   `perf-runner-v1` machine, so CI cannot re-measure them. CI *does* enforce that
   a changed baseline carries a `perf-baseline:` justification. Rebaselining

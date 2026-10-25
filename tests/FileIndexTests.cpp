@@ -178,19 +178,10 @@ void TestFileIndexExcludesGitMetadataCaseInsensitiveOnFoldingHosts() {
     return index.Snapshot();
   };
 
-  {
-    ScopedHostPlatformOverride windows(platform::HostPlatform::Windows);
-    const auto snapshot = index_with_git_variant(".GIT/config");
-    Expect(snapshot.size() == 1 &&
-               snapshot.front().relative_path == std::filesystem::path("src/main.cpp"),
-           "a case-insensitive host must exclude .GIT metadata like .git");
-  }
-  {
-    ScopedHostPlatformOverride linux(platform::HostPlatform::Linux);
-    const auto snapshot = index_with_git_variant(".GIT/config");
-    // On Linux `.GIT` is a genuine directory; it is indexed, not excluded.
-    Expect(snapshot.size() == 2, "a case-sensitive host treats .GIT as a real directory");
-  }
+  // Linux paths are case-sensitive: `.GIT` is a genuine directory, indexed rather
+  // than excluded as git metadata.
+  const auto snapshot = index_with_git_variant(".GIT/config");
+  Expect(snapshot.size() == 2, "a case-sensitive host treats .GIT as a real directory");
 }
 
 void TestFileIndexInitialBatchAbortsWhenCancelled() {

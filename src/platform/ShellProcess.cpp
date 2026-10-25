@@ -6,27 +6,18 @@
 #include <thread>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#endif
 
 namespace microide::platform {
 
 std::string DefaultShellPath() {
-#if defined(_WIN32)
-  if (const char* shell = std::getenv("COMSPEC"); shell != nullptr && shell[0] != '\0') {
-    return shell;
-  }
-  return "C:\\Windows\\System32\\cmd.exe";
-#else
   if (const char* shell = std::getenv("SHELL"); shell != nullptr && shell[0] != '\0') {
     return shell;
   }
   return "/bin/sh";
-#endif
 }
 
 std::string ShellProgramName(const std::string& shell_path) {
@@ -94,7 +85,6 @@ std::vector<std::string> BuildTerminalArgv(const std::vector<std::string>& shell
 
 namespace {
 
-#if defined(__unix__) || defined(__APPLE__)
 constexpr auto kTerminalHangupGrace = std::chrono::milliseconds(75);
 constexpr auto kTerminalTerminateGrace = std::chrono::milliseconds(150);
 constexpr auto kTerminalKillGrace = std::chrono::milliseconds(100);
@@ -144,12 +134,10 @@ bool WaitForTerminalChildExit(int child_pid, std::chrono::milliseconds timeout) 
   }
   return ReapTerminalChildNoHang(child_pid);
 }
-#endif
 
 }  // namespace
 
 void RequestTerminalChildShutdown(int child_pid) {
-#if defined(__unix__) || defined(__APPLE__)
   if (child_pid <= 0 || ReapTerminalChildNoHang(child_pid)) {
     return;
   }
@@ -166,9 +154,6 @@ void RequestTerminalChildShutdown(int child_pid) {
 
   SendSignalToTerminalProcessGroup(child_pid, SIGKILL);
   WaitForTerminalChildExit(child_pid, kTerminalKillGrace);
-#else
-  (void)child_pid;
-#endif
 }
 
 }  // namespace microide::platform

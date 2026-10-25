@@ -1896,7 +1896,7 @@ void TestHoverTextKeepsItsLines() {
 // program is stopped and Pause while it runs, and the adapter's output lands in
 // the output panel below. Both kept their old pixels.
 void TestDebugSessionRepaintsToolbarAndOutput() {
-#if !MICROIDE_HAS_SDL3_TTF || !(defined(__unix__) || defined(__APPLE__))
+#if !MICROIDE_HAS_SDL3_TTF
   return;
 #endif
   FlowFixture fixture("main.c", "int main() { return 0; }\n");
@@ -1942,7 +1942,7 @@ void TestDebugSessionRepaintsToolbarAndOutput() {
 // the partial one. The toolbar read the raw pointer, not PointerOver, so it was
 // the one surface that hovered through a modal.
 void TestDebugToolbarDoesNotHoverUnderAModal() {
-#if !MICROIDE_HAS_SDL3_TTF || !(defined(__unix__) || defined(__APPLE__))
+#if !MICROIDE_HAS_SDL3_TTF
   return;
 #endif
   FlowFixture fixture("main.c", "int main() { return 0; }\n");
@@ -2023,9 +2023,6 @@ void TestASettingsRowValueClickRepaintsTheRows() {
 // nor turned off until a session was running again. VS Code keeps the
 // checkboxes between sessions; a new session replaces them with its own.
 void TestExceptionFiltersStayListedAfterAStop() {
-#if !(defined(__unix__) || defined(__APPLE__))
-  return;
-#endif
   FlowFixture fixture("main.c", "int main() { return 0; }\n");
   const std::filesystem::path adapter = fixture.temp_dir.path() / "adapter.py";
   WriteFile(adapter, MockAdapterSource());

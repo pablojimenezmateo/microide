@@ -10,9 +10,7 @@
 #include <filesystem>
 #include <thread>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/stat.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -341,7 +339,6 @@ void TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef() {
          "an absolute (unsafe) symbolic HEAD ref must not be followed for change detection");
 }
 
-#if defined(__unix__) || defined(__APPLE__)
 // TD-2026-07-17A-113: a special file (FIFO) named HEAD must be rejected before any
 // stream open, or opening it O_RDONLY would block the sampling thread forever. If the
 // guard regressed, this test would hang and be killed by the ctest timeout.
@@ -358,7 +355,6 @@ void TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking() {
   // Index still ticks normally; a FIFO HEAD is simply treated as unavailable.
   Expect(tracker.SampleChanges().empty(), "sampling a FIFO HEAD returns without blocking");
 }
-#endif
 
 // ReadHeadBranchName backs the status bar's branch label before the first
 // `git status` snapshot exists, so it has to handle the same layouts the tracker
@@ -415,10 +411,8 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
           TestReadHeadBranchNameResolvesLayouts);
   AddTest(tests, "ProjectChange/GitMetadataRejectsUnsafeSymbolicRef",
           TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "ProjectChange/GitMetadataSkipsFifoHead",
           TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking);
-#endif
   AddTest(tests, "ProjectChange/GitMetadataSameBranchCommit",
           TestGitRepositoryMetadataTrackerDetectsSameBranchCommit);
   AddTest(tests, "ProjectChange/GitMetadataPackedRefsChange",

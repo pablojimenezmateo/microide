@@ -28,11 +28,9 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
-#endif
 
 namespace microide::workspace {
 

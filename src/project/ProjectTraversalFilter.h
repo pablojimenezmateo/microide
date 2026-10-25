@@ -68,17 +68,10 @@ class ProjectTraversalFilter {
 
   std::filesystem::path root_;
   // `root_.native()`, computed once. `Includes` compares a candidate's own text
-  // against it per entry, and doing that through `path` would allocate. NATIVE
-  // rather than generic because every text this class compares — the candidate,
-  // the cache key, the parent view — is native, and mixing the two spellings
-  // would make the prefix compare and the matcher cache silently miss on Windows.
+  // against it per entry, and doing that through `path` would allocate. Every
+  // text this class compares — the candidate, the cache key, the parent view —
+  // is the path's native spelling.
   std::string root_native_;
-#ifdef _WIN32
-  // Separator-swapped relative text for IgnoreMatcher, which speaks generic. A
-  // member so the buffer is reused across entries instead of reallocated per one;
-  // POSIX needs no conversion at all and so carries no buffer.
-  std::string generic_relative_scratch_;
-#endif
   // Matchers are parent-linked (each holds only its own directory's rules and
   // shares the ancestor chain), so the cache stores shared pointers a descendant
   // can reference cheaply instead of a full copy of the inherited rule set per

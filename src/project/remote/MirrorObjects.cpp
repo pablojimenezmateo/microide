@@ -23,7 +23,6 @@ namespace {
 // temp + rename, no fsync: a reader never sees a half-written object, and a torn
 // one after a crash fails Get's hash check.
 void WriteUnflushed(const std::filesystem::path& path, std::string_view bytes) {
-#if defined(__unix__) || defined(__APPLE__)
   const std::string temp = path.string() + ".tmp";
   const int fd = ::open(temp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
   if (fd < 0) {
@@ -44,9 +43,6 @@ void WriteUnflushed(const std::filesystem::path& path, std::string_view bytes) {
   if (written != bytes.size() || ::rename(temp.c_str(), path.c_str()) != 0) {
     ::unlink(temp.c_str());
   }
-#else
-  (void)util::WriteTextFileAtomically(path, bytes);
-#endif
 }
 
 }  // namespace

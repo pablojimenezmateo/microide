@@ -8,8 +8,6 @@
 // blackhole both (a link that dies without a FIN, which only the heartbeat can
 // detect). Header-only and free of the test harness so the perf binary can use it.
 
-#if defined(__unix__) || defined(__APPLE__)
-
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -207,4 +205,3 @@ class DelayRelay {
 
 }  // namespace microide::tests
 
-#endif

@@ -20,7 +20,6 @@
 #include <string_view>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
 #include <signal.h>
 #include <sys/wait.h>
@@ -39,7 +38,6 @@ bool ForkAvailableForTerminalTests() {
   (void)waitpid(child_pid, &status, 0);
   return true;
 }
-#endif
 
 namespace microide::tests {
 
@@ -1426,7 +1424,6 @@ void TestTerminalSessionRejectedWakeLatchesOwedBit() {
   Expect(owed, "a rejected terminal wake push must latch the process-wide owed-wake bit");
 }
 
-#if defined(__unix__) || defined(__APPLE__)
 void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
   // Cursor/agent sandboxes and some CI containers block fork(); skip instead of failing.
   if (!ForkAvailableForTerminalTests()) {
@@ -1466,7 +1463,6 @@ void TestTerminalSessionStopEscalatesToKillForStubbornChild() {
   Expect(waited == -1 && errno == ECHILD,
          "terminal stop should reap the stubborn child process instead of leaving it behind");
 }
-#endif
 
 void TestTerminalCsiParameterParsingEdgeCases() {
   using microide::terminal::CsiParamOrDefault;
@@ -3362,7 +3358,6 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionIndexPreservesColumn);
   AddTest(tests, "TerminalSession/RestartResetsNegotiatedState",
           TestTerminalSessionRestartResetsNegotiatedState);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TerminalSession/SoftWrapOntoExistingRowMarksContinuation",
           TestTerminalSessionSoftWrapOntoExistingRowMarksContinuation);
   AddTest(tests, "TerminalSession/HardLineFeedDoesNotRelabelWrappedRow",
@@ -3373,7 +3368,6 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionShrinkKeepsCursorOnScreenAfterClear);
   AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
           TestTerminalSessionStopEscalatesToKillForStubbornChild);
-#endif
 }
 
 }  // namespace microide::tests

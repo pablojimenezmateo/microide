@@ -2,14 +2,12 @@
 
 #include "platform/DescriptorRetire.h"
 #include "platform/Filesystem.h"
-#include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/Log.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
-
 
 #include <algorithm>
 #include <array>
@@ -31,25 +29,12 @@
 #include <thread>
 #include <vector>
 
-#if defined(__linux__)
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/inotify.h>
 #include <unistd.h>
-#elif defined(__APPLE__)
-#include <CoreServices/CoreServices.h>
-#include <fcntl.h>
-#include <unistd.h>
-#elif defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
 
-#if defined(__linux__) || defined(__APPLE__)
 #include "util/PosixFd.h"
-#endif
 
 namespace microide::platform {
 
@@ -76,9 +61,7 @@ void StampEntryMetadata(const std::filesystem::path& absolute_path, IndexFileEnt
   entry.size = 0;
 }
 
-#if defined(__linux__) || defined(__APPLE__)
 using util::CloseIfValid;
-#endif
 
 bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   const auto it = relative_path.begin();
@@ -88,18 +71,7 @@ bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   // A view, not a copy: this runs once per filesystem entry of the initial walk
   // and of every poll re-walk, and `it->string()` is an allocation per entry.
   const std::string_view first = it->native();
-  if (first == ".git") {
-    return true;
-  }
-  // Case-insensitive hosts (Windows / default macOS): `.GIT`/`.Git` name the same
-  // metadata directory and must also be excluded from the watched index.
-  if (HostPathsAreCaseInsensitive() && first.size() == 4) {
-    return (first[0] == '.') &&
-           (first[1] == 'g' || first[1] == 'G') &&
-           (first[2] == 'i' || first[2] == 'I') &&
-           (first[3] == 't' || first[3] == 'T');
-  }
-  return false;
+  return first == ".git";
 }
 
 // True when a computed relative path escapes the project root — either it is
@@ -116,7 +88,6 @@ bool IsEscapingRelativePath(const std::filesystem::path& relative_path) {
   // per filesystem entry is an allocation for a two-character comparison.
   return it != relative_path.end() && std::string_view(it->native()) == "..";
 }
-
 
 bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
                             const std::filesystem::path& root,
@@ -158,22 +129,7 @@ bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
     relative_path = std::move(relative);
     return true;
   }
-#ifdef _WIN32
-  const std::string path_text = normalized_path.generic_string();
-  const std::string root_text = normalized_root.generic_string();
-  if (path_text.size() <= root_text.size()) {
-    return false;
-  }
-  const std::string lower_path = util::ToLowerAscii(path_text);
-  const std::string lower_root = util::ToLowerAscii(root_text);
-  if (lower_path.rfind(lower_root, 0) != 0 || path_text[root_text.size()] != '/') {
-    return false;
-  }
-  relative_path = std::filesystem::path(path_text.substr(root_text.size() + 1)).lexically_normal();
-  return !relative_path.empty();
-#else
   return false;
-#endif
 }
 
 // A directory is skipped (not walked, not watched, not indexed) when the shared
@@ -202,22 +158,6 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
   relative_path = std::move(rel);
   return true;
 }
-
-#if defined(_WIN32)
-bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& root,
-                                     const std::filesystem::path& relative_path,
-                                     project::ProjectTraversalFilter* filter) {
-  if (relative_path.empty() || IsGitMetadataRelativePath(relative_path)) {
-    return true;
-  }
-  if (filter == nullptr) {
-    return false;
-  }
-  // The filter walks the full ancestor chain (nested .gitignore + defaults) itself.
-  return !filter->Includes(util::NormalizedPath(root / relative_path),
-                           platform::PathType::RegularFile);
-}
-#endif
 
 // Called once per KEPT directory (post-prune, pre-descend) by the walk below.
 // The native backend registers an inotify watch here, which is what lets the
@@ -322,26 +262,6 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
   }
   return truncated;
 }
-
-#if defined(__APPLE__) || defined(_WIN32)
-// Standalone initial scan, for the backends whose watch registration is not a
-// tree walk and so has nothing to share one with. On Linux the registration walk
-// IS the initial scan (see Impl::WalkSubtree), which is why this is guarded
-// rather than merely unused there.
-IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
-                                   project::ProjectTraversalFilter* filter,
-                                   std::size_t max_entries,
-                                   const std::atomic<bool>* stop_requested = nullptr) {
-  // Full recursive walk of the project tree. Runs once per watch on a background
-  // thread, and it is the dominant single cost of opening a project.
-  util::PerformanceTrace::Scope perf_scope("watch::BuildInitialBatch");
-  IndexUpdateBatch batch;
-  batch.is_initial = true;
-  batch.truncated =
-      CollectTrackedCreations(root, root, filter, max_entries, stop_requested, &batch.changes);
-  return batch;
-}
-#endif
 
 // Stop flag plus wakeup channel for the poll-fallback worker. The worker used to
 // sleep its interval in fixed slices purely so a stop request was noticed
@@ -570,8 +490,6 @@ std::vector<IndexUpdateBatch::Change> detail::BuildPollSnapshotDiff(
 // ============================================================
 // Platform-specific backends
 // ============================================================
-
-#if defined(__linux__)
 
 struct FileIndexWatcher::Impl {
   std::atomic<bool> is_native{false};
@@ -1110,478 +1028,6 @@ struct FileIndexWatcher::Impl {
 
 };
 
-#elif defined(__APPLE__)
-
-struct FileIndexWatcher::Impl {
-  std::atomic<bool> is_native{false};
-  std::filesystem::path root;
-  FileIndexWatcher::Callback callback;
-  // See the __linux__ backend for the threading contract: inputs set before any
-  // walk thread starts; each walk constructs its own (non-shareable) filter.
-  std::vector<std::string> exclude_globs;
-  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
-
-  // FSEvents backend
-  FSEventStreamRef stream = nullptr;
-  CFRunLoopRef run_loop = nullptr;
-  std::thread worker;
-  bool native_active = false;
-
-  // poll-fallback
-  bool poll_mode = false;
-  bool force_poll = false;
-  std::chrono::milliseconds poll_interval{750};
-  std::thread poll_worker;
-  PollStopSignal stop_poll;
-  std::thread initial_scan_worker;
-  std::atomic<bool> stop_initial_scan{false};
-  bool warned_fallback = false;
-
-  ~Impl() {
-    StopNative();
-    StopPoll();
-  }
-
-  void StopInitialScan() {
-    stop_initial_scan.store(true, std::memory_order_release);
-    if (initial_scan_worker.joinable()) {
-      util::PerformanceTrace::Scope scope("watch::StopInitialScan::Join");
-      initial_scan_worker.join();
-    }
-    stop_initial_scan.store(false, std::memory_order_release);
-  }
-
-  void StopNative() {
-    StopInitialScan();
-    if (!native_active) {
-      return;
-    }
-    native_active = false;
-    if (run_loop != nullptr) {
-      CFRunLoopStop(run_loop);
-    }
-    if (worker.joinable()) {
-      worker.join();
-    }
-    run_loop = nullptr;
-    if (stream != nullptr) {
-      FSEventStreamStop(stream);
-      FSEventStreamInvalidate(stream);
-      FSEventStreamRelease(stream);
-      stream = nullptr;
-    }
-  }
-
-  void StopPoll() {
-    StopInitialScan();
-    stop_poll.Stop();
-    if (poll_worker.joinable()) {
-      poll_worker.join();
-    }
-  }
-
-  void StartInitialScan() {
-    StopInitialScan();
-    stop_initial_scan.store(false, std::memory_order_release);
-    initial_scan_worker = std::thread([this]() {
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      IndexUpdateBatch initial =
-          BuildInitialBatch(root, &filter, entry_budget, &stop_initial_scan);
-      if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
-        callback(std::move(initial));
-      }
-    });
-  }
-
-  static void FsEventsCallback(ConstFSEventStreamRef /*stream_ref*/,
-                                void* client_callback_info,
-                                size_t num_events,
-                                void* event_paths,
-                                const FSEventStreamEventFlags* event_flags,
-                                const FSEventStreamEventId* /*event_ids*/) {
-    Impl* self = static_cast<Impl*>(client_callback_info);
-    if (self == nullptr || !self->callback) {
-      return;
-    }
-
-    char** paths = static_cast<char**>(event_paths);
-    std::vector<IndexUpdateBatch::Change> changes;
-    bool structure_changed = false;
-
-    for (size_t i = 0; i < num_events; ++i) {
-      const FSEventStreamEventFlags flags = event_flags[i];
-      const std::filesystem::path abs_path =
-          std::filesystem::path(paths[i]).lexically_normal();
-
-      const bool is_dir =
-          (flags & kFSEventStreamEventFlagItemIsDir) != 0;
-      if (is_dir) {
-        // The index holds regular files only, so a directory event carries no
-        // change — but it does move the tree's shape, which the coarse consumers
-        // (sidebar tree, finder, search) subscribe to. Only creates/removes/renames
-        // qualify; a plain content event on a directory is noise.
-        constexpr FSEventStreamEventFlags kShapeFlags =
-            kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved |
-            kFSEventStreamEventFlagItemRenamed;
-        if ((flags & kShapeFlags) != 0) {
-          structure_changed = true;
-        }
-        continue;
-      }
-
-      std::filesystem::path rel;
-      if (!TryBuildTrackedRelativePath(abs_path, self->root, rel)) {
-        continue;
-      }
-
-      IndexUpdateBatch::Change change;
-      if ((flags & kFSEventStreamEventFlagItemRemoved) != 0) {
-        change.kind = IndexUpdateBatch::Kind::Deleted;
-        change.entry.relative_path = rel;
-      } else {
-        change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-        change.entry.relative_path = rel;
-        StampEntryMetadata(abs_path, change.entry);
-      }
-      changes.push_back(std::move(change));
-    }
-
-    if (!changes.empty() || structure_changed) {
-      IndexUpdateBatch batch;
-      batch.is_initial = false;
-      batch.changes = std::move(changes);
-      batch.tree_structure_changed = structure_changed;
-      self->callback(std::move(batch));
-    }
-  }
-
-  bool StartNative() {
-    CFStringRef path_str =
-        CFStringCreateWithCString(nullptr, root.c_str(), kCFStringEncodingUTF8);
-    if (path_str == nullptr) {
-      return false;
-    }
-    CFArrayRef paths_to_watch =
-        CFArrayCreate(nullptr, reinterpret_cast<const void**>(&path_str), 1,
-                      &kCFTypeArrayCallBacks);
-    CFRelease(path_str);
-    if (paths_to_watch == nullptr) {
-      return false;
-    }
-
-    FSEventStreamContext ctx{};
-    ctx.info = this;
-
-    stream = FSEventStreamCreate(
-        nullptr, &FsEventsCallback, &ctx, paths_to_watch,
-        kFSEventStreamEventIdSinceNow,
-        0.05,  // 50ms latency
-        kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer);
-    CFRelease(paths_to_watch);
-
-    if (stream == nullptr) {
-      return false;
-    }
-
-    native_active = true;
-    worker = std::thread([this]() {
-      run_loop = CFRunLoopGetCurrent();
-      FSEventStreamScheduleWithRunLoop(stream, run_loop, kCFRunLoopDefaultMode);
-      FSEventStreamStart(stream);
-      CFRunLoopRun();
-      FSEventStreamStop(stream);
-      FSEventStreamUnscheduleFromRunLoop(stream, run_loop, kCFRunLoopDefaultMode);
-    });
-
-    return true;
-  }
-
-  void StartPollFallback() {
-    poll_mode = true;
-    stop_poll.Reset();
-    poll_worker = std::thread([this]() {
-      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
-    });
-  }
-
-};
-
-#elif defined(_WIN32)
-
-struct FileIndexWatcher::Impl {
-  std::atomic<bool> is_native{false};
-  std::filesystem::path root;
-  FileIndexWatcher::Callback callback;
-  // See the __linux__ backend for the threading contract: inputs set before any
-  // walk thread starts; each walk constructs its own (non-shareable) filter.
-  std::vector<std::string> exclude_globs;
-  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
-  bool warned_fallback = false;
-
-  HANDLE dir_handle = INVALID_HANDLE_VALUE;
-  HANDLE stop_event = nullptr;
-  std::thread worker;
-  bool native_active = false;
-
-  bool poll_mode = false;
-  bool force_poll = false;
-  std::chrono::milliseconds poll_interval{750};
-  std::thread poll_worker;
-  PollStopSignal stop_poll;
-  std::thread initial_scan_worker;
-  std::atomic<bool> stop_initial_scan{false};
-
-  ~Impl() {
-    StopNative();
-    StopPoll();
-  }
-
-  void StopInitialScan() {
-    stop_initial_scan.store(true, std::memory_order_release);
-    if (initial_scan_worker.joinable()) {
-      util::PerformanceTrace::Scope scope("watch::StopInitialScan::Join");
-      initial_scan_worker.join();
-    }
-    stop_initial_scan.store(false, std::memory_order_release);
-  }
-
-  void StopNative() {
-    StopInitialScan();
-    if (!native_active) {
-      return;
-    }
-    native_active = false;
-    if (stop_event != nullptr) {
-      SetEvent(stop_event);
-    }
-    if (worker.joinable()) {
-      worker.join();
-    }
-    if (dir_handle != INVALID_HANDLE_VALUE) {
-      CloseHandle(dir_handle);
-      dir_handle = INVALID_HANDLE_VALUE;
-    }
-    if (stop_event != nullptr) {
-      CloseHandle(stop_event);
-      stop_event = nullptr;
-    }
-  }
-
-  void StopPoll() {
-    StopInitialScan();
-    stop_poll.Stop();
-    if (poll_worker.joinable()) {
-      poll_worker.join();
-    }
-  }
-
-  void StartInitialScan() {
-    StopInitialScan();
-    stop_initial_scan.store(false, std::memory_order_release);
-    initial_scan_worker = std::thread([this]() {
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      IndexUpdateBatch initial =
-          BuildInitialBatch(root, &filter, entry_budget, &stop_initial_scan);
-      if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
-        callback(std::move(initial));
-      }
-    });
-  }
-
-  bool StartNative() {
-    stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (stop_event == nullptr) {
-      return false;
-    }
-
-    dir_handle = CreateFileW(
-        root.wstring().c_str(),
-        FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-        nullptr);
-    if (dir_handle == INVALID_HANDLE_VALUE) {
-      CloseHandle(stop_event);
-      stop_event = nullptr;
-      return false;
-    }
-
-    native_active = true;
-    worker = std::thread([this]() { WorkerMain(); });
-    return true;
-  }
-
-  void WorkerMain() {
-    // Single-threaded worker: one filter for its whole lifetime is safe.
-    project::ProjectTraversalFilter filter(root, exclude_globs);
-    constexpr DWORD kFilter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
-                              FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE;
-    constexpr DWORD kBufSize = 65536;
-    std::vector<BYTE> buffer(kBufSize);
-    OVERLAPPED overlapped{};
-    overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (overlapped.hEvent == nullptr) {
-      return;
-    }
-
-    auto issue_read = [&]() -> bool {
-      ResetEvent(overlapped.hEvent);
-      DWORD bytes = 0;
-      return ReadDirectoryChangesW(dir_handle, buffer.data(), kBufSize, TRUE, kFilter, &bytes,
-                                   &overlapped, nullptr) != 0 ||
-             GetLastError() == ERROR_IO_PENDING;
-    };
-
-    if (!issue_read()) {
-      CloseHandle(overlapped.hEvent);
-      return;
-    }
-
-    HANDLE wait_handles[2] = {stop_event, overlapped.hEvent};
-
-    while (true) {
-      const DWORD wait_result =
-          WaitForMultipleObjects(2, wait_handles, FALSE, INFINITE);
-
-      if (wait_result == WAIT_OBJECT_0) {
-        // Stop requested. CancelIo only *requests* cancellation of the pending
-        // ReadDirectoryChangesW; the kernel may still be about to complete it into
-        // `buffer`/`overlapped`, both of which are function-local and destroyed as
-        // this returns. Wait for the operation to actually finish (bWait=TRUE, which
-        // returns once the abort completes) before freeing them, otherwise the async
-        // write lands in freed stack memory (use-after-free).
-        CancelIo(dir_handle);
-        DWORD drained_bytes = 0;
-        GetOverlappedResult(dir_handle, &overlapped, &drained_bytes, TRUE);
-        CloseHandle(overlapped.hEvent);
-        return;
-      }
-      if (wait_result != WAIT_OBJECT_0 + 1) {
-        CloseHandle(overlapped.hEvent);
-        return;
-      }
-
-      DWORD bytes_transferred = 0;
-      if (!GetOverlappedResult(dir_handle, &overlapped, &bytes_transferred, FALSE) ||
-          bytes_transferred == 0) {
-        if (!issue_read()) {
-          CloseHandle(overlapped.hEvent);
-          return;
-        }
-        continue;
-      }
-
-      std::vector<IndexUpdateBatch::Change> changes;
-      bool structure_changed = false;
-      const BYTE* ptr = buffer.data();
-      while (true) {
-        const FILE_NOTIFY_INFORMATION* info =
-            reinterpret_cast<const FILE_NOTIFY_INFORMATION*>(ptr);
-        const std::wstring wname(info->FileName, info->FileNameLength / sizeof(WCHAR));
-        const std::filesystem::path rel = std::filesystem::path(wname).lexically_normal();
-        if (ShouldIgnoreTrackedRelativePath(root, rel, &filter)) {
-          if (info->NextEntryOffset == 0) {
-            break;
-          }
-          ptr += info->NextEntryOffset;
-          continue;
-        }
-
-        IndexUpdateBatch::Change change;
-        if (info->Action == FILE_ACTION_REMOVED || info->Action == FILE_ACTION_RENAMED_OLD_NAME) {
-          change.kind = IndexUpdateBatch::Kind::Deleted;
-          change.entry.relative_path = rel;
-          changes.push_back(std::move(change));
-        } else {
-          const std::filesystem::path abs_path = (root / rel).lexically_normal();
-          std::error_code status_error;
-          const auto status = std::filesystem::status(abs_path, status_error);
-          if (!status_error && !std::filesystem::is_regular_file(status)) {
-            // A directory (or other non-regular entry) appearing/renamed: no index
-            // change, but the tree's shape moved. See tree_structure_changed.
-            structure_changed = true;
-          }
-          if (!status_error && std::filesystem::is_regular_file(status)) {
-            change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-            change.entry.relative_path = rel;
-            StampEntryMetadata(abs_path, change.entry);
-            changes.push_back(std::move(change));
-          }
-        }
-
-        if (info->NextEntryOffset == 0) {
-          break;
-        }
-        ptr += info->NextEntryOffset;
-      }
-
-      if ((!changes.empty() || structure_changed) && callback) {
-        IndexUpdateBatch batch;
-        batch.is_initial = false;
-        batch.changes = std::move(changes);
-        batch.tree_structure_changed = structure_changed;
-        callback(std::move(batch));
-      }
-
-      if (!issue_read()) {
-        CloseHandle(overlapped.hEvent);
-        return;
-      }
-    }
-  }
-
-  void StartPollFallback() {
-    poll_mode = true;
-    stop_poll.Reset();
-    poll_worker = std::thread([this]() {
-      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
-    });
-  }
-
-};
-
-#else
-
-// Unknown platform: poll-only fallback
-struct FileIndexWatcher::Impl {
-  std::atomic<bool> is_native{false};
-  std::filesystem::path root;
-  FileIndexWatcher::Callback callback;
-  // See the __linux__ backend for the threading contract: inputs set before any
-  // walk thread starts; each walk constructs its own (non-shareable) filter.
-  std::vector<std::string> exclude_globs;
-  std::size_t entry_budget = platform::kTreeTraversalEntryBudget;
-  bool warned_fallback = false;
-  bool poll_mode = false;
-  bool force_poll = false;
-  std::chrono::milliseconds poll_interval{750};
-  std::thread poll_worker;
-  PollStopSignal stop_poll;
-
-  ~Impl() { StopPoll(); }
-
-  void StopPoll() {
-    stop_poll.Stop();
-    if (poll_worker.joinable()) {
-      util::PerformanceTrace::Scope scope("watch::StopPoll::Join");
-      poll_worker.join();
-    }
-  }
-
-  void StartPollFallback() {
-    poll_mode = true;
-    stop_poll.Reset();
-    poll_worker = std::thread([this]() {
-      RunPollFallbackWorker(root, exclude_globs, entry_budget, poll_interval, stop_poll, callback);
-    });
-  }
-
-};
-
-#endif
-
 // ============================================================
 // FileIndexWatcher public API
 // ============================================================
@@ -1703,7 +1149,6 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   // constructed per-walk on the walk's own thread; exclude_globs / entry_budget are
   // set via the setters before this call and read race-free by those threads.
 
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   // Try native backend (unless a test forced the poll fallback so the
   // backend-independent contract suite can exercise both paths on one host).
   if (!impl_->force_poll) {
@@ -1718,7 +1163,6 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
       util::Log("FileIndexWatcher: native file events unavailable, falling back to poll mode");
     }
   }
-#endif
 
   // Poll fallback: the poll worker owns the initial batch too. Starting a separate
   // initial-scan thread here would race it — a file created between the two walks
@@ -1733,7 +1177,6 @@ void FileIndexWatcher::Unwatch() {
   // thread from StopFileIndexWatcher (project switch / close). Scope the halves
   // so a switch stall can be attributed to the backend that actually blocked.
   util::PerformanceTrace::Scope perf_scope("watch::Unwatch");
-#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
   {
     util::PerformanceTrace::Scope scope("watch::Unwatch::StopNative");
     impl_->StopNative();
@@ -1742,12 +1185,6 @@ void FileIndexWatcher::Unwatch() {
     util::PerformanceTrace::Scope scope("watch::Unwatch::StopPoll");
     impl_->StopPoll();
   }
-#else
-  {
-    util::PerformanceTrace::Scope scope("watch::Unwatch::StopPoll");
-    impl_->StopPoll();
-  }
-#endif
   impl_->is_native.store(false, std::memory_order_release);
   impl_->root.clear();
   // The workers are joined, so no initial scan is in flight — and a cancelled

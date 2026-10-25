@@ -21,17 +21,13 @@
 #include <string>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
 
 namespace remote = project::remote;
 using ContentState = remote::MirrorSyncEngine::ContentState;
-
-#if defined(__unix__) || defined(__APPLE__)
 
 // A host tree served by a real `microide-server serve-stdio`, and a mirror of it in
 // a different directory.
@@ -891,12 +887,9 @@ void TestMirrorListsWhatItHasNotFetched() {
   Expect(session.engine->PendingPaths() == nullptr, "and nothing is pending any more");
 }
 
-#endif
-
 }  // namespace
 
 void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "MirrorSyncEngine/InitialSyncAndHostChanges", TestMirrorInitialSyncAndHostChanges);
   AddTest(tests, "MirrorSyncEngine/PushesLocalWritesUnderCompareAndSwap",
           TestMirrorPushesLocalWritesUnderCompareAndSwap);
@@ -930,9 +923,6 @@ void RegisterMirrorSyncEngineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MirrorSyncEngine/WriteGateReachesTheHost", TestMirrorWriteGateReachesTheHost);
   AddTest(tests, "MirrorSyncEngine/TreeOpsMadeOfflineReplay", TestMirrorTreeOpsMadeOfflineReplay);
   AddTest(tests, "MirrorSyncEngine/FollowsTheHostWatch", TestMirrorFollowsTheHostWatch);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

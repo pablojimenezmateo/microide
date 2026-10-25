@@ -2,7 +2,6 @@
 
 #include <system_error>
 
-#if defined(__linux__)
 #include <fcntl.h>        // AT_FDCWD
 #include <sys/syscall.h>  // SYS_renameat2
 #include <unistd.h>       // syscall
@@ -11,7 +10,6 @@
 
 #ifndef RENAME_NOREPLACE
 #define RENAME_NOREPLACE (1 << 0)
-#endif
 #endif
 
 namespace microide::platform {
@@ -146,7 +144,6 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
 
 bool MovePathNoOverwrite(const std::filesystem::path& source,
                          const std::filesystem::path& destination) {
-#if defined(__linux__)
   // Atomic no-clobber rename on the same filesystem: the kernel fails with EEXIST
   // rather than overwriting, closing the exists()-then-rename TOCTOU window.
   if (::syscall(SYS_renameat2, AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(),
@@ -162,7 +159,6 @@ bool MovePathNoOverwrite(const std::filesystem::path& source,
   if (err != EXDEV && err != EINVAL && err != ENOSYS) {
     return false;
   }
-#endif
   // Portable / cross-device fallback: guard against overwrite with an exists()
   // check (a small residual TOCTOU window — the atomic path above covers the
   // common same-filesystem case) then copy + remove with rollback.

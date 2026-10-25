@@ -24,9 +24,6 @@ bool ContainsName(const std::vector<std::filesystem::path>& files, std::string_v
 // filesystem-wide DoS and an information-disclosure/traversal escape, since the
 // opened project is untrusted).
 void TestScannerDoesNotFollowRootEscapingSymlink() {
-#if defined(_WIN32)
-  return;  // POSIX symlink semantics
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
   const std::filesystem::path outside = temp_dir.path() / "outside";
@@ -43,16 +40,12 @@ void TestScannerDoesNotFollowRootEscapingSymlink() {
   Expect(ContainsName(files, "inside.txt"), "in-project files should still be indexed");
   Expect(!ContainsName(files, "secret.txt"),
          "a root-escaping symlink target must not be indexed");
-#endif
 }
 
 // A symlink that points to a directory *within* the project is legitimate and
 // should still be followed (containment allows it) — the guard only blocks
 // escapes and cycles, not all symlinks.
 void TestScannerFollowsInProjectSymlink() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
   const std::filesystem::path sub = project / "sub";
@@ -67,16 +60,12 @@ void TestScannerFollowsInProjectSymlink() {
   // The real path is always indexed; the alias may also surface. The key
   // assertion is that in-project symlinks do not crash or get wholesale dropped.
   Expect(ContainsName(files, "linked.txt"), "in-project content should be indexed");
-#endif
 }
 
 // Opting in (project.follow_out_of_root_symlinks = true) restores following an
 // out-of-root symlink target, for monorepos / symlinked dependencies. Cycle
 // detection still applies; only the containment guard is relaxed.
 void TestScannerFollowsRootEscapingSymlinkWhenOptedIn() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
   const std::filesystem::path outside = temp_dir.path() / "outside";
@@ -94,16 +83,12 @@ void TestScannerFollowsRootEscapingSymlinkWhenOptedIn() {
   Expect(ContainsName(files, "inside.txt"), "in-project files should still be indexed");
   Expect(ContainsName(files, "shared.txt"),
          "opting in should follow an out-of-root symlink target");
-#endif
 }
 
 // Regression: an in-root directory whose name begins with ".." (e.g. "..cache")
 // must not be misclassified as a root escape. The containment check compares the
 // first path *component*, not a raw string prefix.
 void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
   const std::filesystem::path dotdot_dir = project / "..cache";
@@ -119,7 +104,6 @@ void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
   const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
   Expect(ContainsName(files, "cached.txt"),
          "in-root '..'-prefixed directory content should be indexed");
-#endif
 }
 
 // Regression: a symlink cycle makes directory_entry::is_directory() throw
@@ -128,9 +112,6 @@ void TestScannerFollowsSymlinkToDotDotPrefixedInRootDir() {
 // input the scanner explicitly expects (SymlinkLoopGuard) — into a std::terminate.
 // The scan must classify safely, skip the looping entry, and still index real files.
 void TestScannerSurvivesSymlinkCycle() {
-#if defined(_WIN32)
-  return;
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path project = temp_dir.path() / "project";
   std::filesystem::create_directories(project);
@@ -147,7 +128,6 @@ void TestScannerSurvivesSymlinkCycle() {
   const auto files = CollectProjectFiles(project, ProjectFileScanMode::ExcludeHidden);
   Expect(ContainsName(files, "real.txt"),
          "a symlink cycle must not crash the scan or drop real files");
-#endif
 }
 
 // Without any .gitignore, the scanner must still prune VCS metadata and build
@@ -240,9 +220,6 @@ void TestScannerReportsEntryBudgetTruncation() {
 // silently skipped) while readable siblings are still indexed. Root-run CI can
 // read 0000 dirs, so the assertion is gated on the mode actually taking effect.
 void TestScannerReportsPermissionLimited() {
-#if defined(_WIN32)
-  return;  // POSIX permission semantics
-#else
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "readable.txt", "ok\n");
@@ -271,7 +248,6 @@ void TestScannerReportsPermissionLimited() {
   }
   // Restore perms so the temp dir can be cleaned up.
   std::filesystem::permissions(locked, std::filesystem::perms::owner_all, ec);
-#endif
 }
 
 }  // namespace

@@ -13,17 +13,13 @@
 #include "util/PosixPipe.h"
 #include "util/WakePipe.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#if defined(__linux__)
 #include <sys/syscall.h>
-#endif
-#endif
 
 extern char** environ;
 
@@ -40,7 +36,7 @@ constexpr std::size_t kChunkBytes = 64 * 1024;
 // stdout) before the exit is reported anyway.
 constexpr auto kExitDrainGrace = std::chrono::seconds(5);
 
-#if defined(__linux__) && defined(SYS_pidfd_open)
+#if defined(SYS_pidfd_open)
 // A descriptor that turns readable when `pid` exits. Close-on-exec by definition
 // (pidfd_open(2) always sets it), so no spawned process inherits it. -1 on a
 // kernel older than 5.3, and the loop falls back to polling for the exit.
@@ -65,7 +61,6 @@ bool ValidEnvName(std::string_view name) {
   });
 }
 
-#if defined(__unix__) || defined(__APPLE__)
 using util::SetNonBlocking;
 
 // Resolve argv[0] through PATH in the parent: the child of a multi-threaded process
@@ -106,7 +101,6 @@ std::string ResolveExecutable(
   }
   return name;  // execve fails with ENOENT; the child exits 127 like a shell would
 }
-#endif
 
 }  // namespace
 
@@ -121,7 +115,6 @@ ProcessTable::~ProcessTable() {
   if (thread_.joinable()) {
     thread_.join();
   }
-#if defined(__unix__) || defined(__APPLE__)
   std::lock_guard lock(mutex_);
   for (auto& [handle, process] : processes_) {
     (void)handle;
@@ -135,7 +128,6 @@ ProcessTable::~ProcessTable() {
       }
     }
   }
-#endif
 }
 
 std::optional<ProcessTable::SpawnRequest> ProcessTable::ParseSpawn(const util::JsonValue& params,
@@ -194,7 +186,6 @@ std::optional<ProcessTable::SpawnRequest> ProcessTable::ParseSpawn(const util::J
 }
 
 ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnRequest request) {
-#if defined(__unix__) || defined(__APPLE__)
   {
     std::lock_guard lock(mutex_);
     if (processes_.size() >= limits_.max_processes) {
@@ -299,15 +290,9 @@ ProcessTable::SpawnResult ProcessTable::Spawn(std::uint64_t connection, SpawnReq
   }
   wake_.Wake();
   return SpawnResult{.handle = handle, .pid = pid};
-#else
-  (void)connection;
-  (void)request;
-  return SpawnResult{.error = "not supported"};
-#endif
 }
 
 bool ProcessTable::WriteStdin(std::uint64_t handle, std::string_view bytes) {
-#if defined(__unix__) || defined(__APPLE__)
   std::lock_guard lock(mutex_);
   const auto it = processes_.find(handle);
   if (it == processes_.end() || it->second->stdin_fd < 0) {
@@ -335,15 +320,9 @@ bool ProcessTable::WriteStdin(std::uint64_t handle, std::string_view bytes) {
     return false;
   }
   return true;
-#else
-  (void)handle;
-  (void)bytes;
-  return false;
-#endif
 }
 
 bool ProcessTable::CloseStdin(std::uint64_t handle) {
-#if defined(__unix__) || defined(__APPLE__)
   std::lock_guard lock(mutex_);
   const auto it = processes_.find(handle);
   if (it == processes_.end() || it->second->stdin_fd < 0) {
@@ -352,25 +331,15 @@ bool ProcessTable::CloseStdin(std::uint64_t handle) {
   ::close(it->second->stdin_fd);
   it->second->stdin_fd = -1;
   return true;
-#else
-  (void)handle;
-  return false;
-#endif
 }
 
 bool ProcessTable::Signal(std::uint64_t handle, int signal) {
-#if defined(__unix__) || defined(__APPLE__)
   std::lock_guard lock(mutex_);
   const auto it = processes_.find(handle);
   if (it == processes_.end() || it->second->exited) {
     return false;
   }
   return ::kill(-it->second->pid, signal) == 0;
-#else
-  (void)handle;
-  (void)signal;
-  return false;
-#endif
 }
 
 void ProcessTable::Ack(std::uint64_t handle, std::uint64_t stdout_offset,
@@ -427,7 +396,6 @@ bool ProcessTable::Attach(std::uint64_t connection, std::uint64_t handle,
 }
 
 void ProcessTable::Release(std::uint64_t handle) {
-#if defined(__unix__) || defined(__APPLE__)
   std::lock_guard lock(mutex_);
   const auto it = processes_.find(handle);
   if (it == processes_.end() || !it->second->exited) {
@@ -439,13 +407,9 @@ void ProcessTable::Release(std::uint64_t handle) {
     }
   }
   processes_.erase(it);
-#else
-  (void)handle;
-#endif
 }
 
 void ProcessTable::Detach(std::uint64_t connection) {
-#if defined(__unix__) || defined(__APPLE__)
   {
     std::lock_guard lock(mutex_);
     for (auto& [handle, process] : processes_) {
@@ -467,9 +431,6 @@ void ProcessTable::Detach(std::uint64_t connection) {
     }
   }
   wake_.Wake();
-#else
-  (void)connection;
-#endif
 }
 
 std::size_t ProcessTable::LiveCount() const {
@@ -555,7 +516,6 @@ void ProcessTable::Flush(std::vector<Outgoing>& outgoing) {
 }
 
 void ProcessTable::Reap() {
-#if defined(__unix__) || defined(__APPLE__)
   for (auto& [handle, process] : processes_) {
     (void)handle;
     if (process->exited) {
@@ -581,11 +541,9 @@ void ProcessTable::Reap() {
       process->stdin_fd = -1;
     }
   }
-#endif
 }
 
 void ProcessTable::Run() {
-#if defined(__unix__) || defined(__APPLE__)
   std::map<std::uint64_t, std::chrono::steady_clock::time_point> exited_at;
   std::vector<Outgoing> outgoing;
   std::vector<pollfd> fds;
@@ -710,7 +668,6 @@ void ProcessTable::Run() {
       }
     }
   }
-#endif
 }
 
 }  // namespace microide::server

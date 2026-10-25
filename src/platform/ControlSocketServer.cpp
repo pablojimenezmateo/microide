@@ -17,7 +17,6 @@
 #include <unordered_map>
 #include <utility>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -31,7 +30,6 @@
 #include "util/Log.h"
 #include "util/PosixFd.h"
 #include "util/PosixPipe.h"
-#endif
 
 namespace microide::platform {
 
@@ -66,8 +64,6 @@ ControlRequestLineScan ScanControlRequestLines(std::string_view buffer,
   }
   return scan;
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 namespace {
 
@@ -684,22 +680,5 @@ std::size_t ControlSocketServer::ConnectionCount() const {
 bool ControlSocketServer::ConsumeRebound() {
   return impl_->rebound.exchange(false, std::memory_order_acq_rel);
 }
-
-#else  // non-POSIX: control channel unsupported.
-
-struct ControlSocketServer::Impl {};
-ControlSocketServer::ControlSocketServer() : impl_(nullptr) {}
-ControlSocketServer::~ControlSocketServer() = default;
-bool ControlSocketServer::Start(const std::filesystem::path&) { return false; }
-bool ControlSocketServer::IsRunning() const { return false; }
-void ControlSocketServer::Stop() {}
-void ControlSocketServer::SetWakeChannel(std::uint32_t) {}
-std::vector<ControlInboundMessage> ControlSocketServer::TakeInbound() { return {}; }
-void ControlSocketServer::SendLine(std::uint64_t, const std::string&) {}
-void ControlSocketServer::Broadcast(const std::string&) {}
-std::size_t ControlSocketServer::ConnectionCount() const { return 0; }
-bool ControlSocketServer::ConsumeRebound() { return false; }
-
-#endif
 
 }  // namespace microide::platform

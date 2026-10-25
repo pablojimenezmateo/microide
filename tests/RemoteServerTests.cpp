@@ -21,20 +21,16 @@
 #include <thread>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
 
 namespace remote = project::remote;
-
-#if defined(__unix__) || defined(__APPLE__)
 
 // The AF_UNIX limit makes the usual long temp paths unusable for a socket, so the
 // daemon tests use a short directory of their own.
@@ -288,10 +284,8 @@ void TestAConnectionThatDiesEarlyReportsWhatTheHostSaid() {
   Expect(!client->ConnectCommand({"sh", "-c", "echo 'microide-server: the socket directory is unsafe' >&2; exit 3"},
                                  remote::HelloRequest{.release = "test", .root = "/"}, &error),
          "a command that exits before the hello does not connect");
-#if defined(__linux__)
   Expect(error.find("the socket directory is unsafe") != std::string::npos,
          "the error carries what the command printed: " + error);
-#endif
   // And a command that connects keeps working: its stderr is sealed, not grown.
   TemporaryDirectory root;
   auto good = remote::RemoteServerClient::Create();
@@ -339,8 +333,6 @@ void TestPortsSubscribePushesANewListener() {
   ::close(fd);
 }
 
-#endif
-
 }  // namespace
 
 // The last reference to a client can be released inside one of its own I/O-thread
@@ -375,7 +367,6 @@ void TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere() {
 }
 
 void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteServer/AConnectionThatDiesEarlyReportsWhatTheHostSaid",
           TestAConnectionThatDiesEarlyReportsWhatTheHostSaid);
   AddTest(tests, "RemoteServer/SocketDirIsCreatedPrivateAndBadModesAreRefused",
@@ -392,9 +383,6 @@ void RegisterRemoteServerTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteServer/PortsSubscribePushesANewListener", TestPortsSubscribePushesANewListener);
   AddTest(tests, "RemoteServer/AClientReleasedOnItsOwnThreadIsDestroyedElsewhere",
           TestAClientReleasedOnItsOwnThreadIsDestroyedElsewhere);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

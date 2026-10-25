@@ -15,8 +15,6 @@ namespace {
 
 namespace remote = project::remote;
 
-#if defined(__unix__) || defined(__APPLE__)
-
 // A real `microide-server serve-stdio` with a hello naming `root`.
 struct WorkspaceSession {
   std::shared_ptr<remote::RemoteServerClient> client =
@@ -159,12 +157,9 @@ void TestWriteAndTreeOpsAreCompareAndSwap() {
          "a delete on its base removes the file");
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteWorkspace/ManifestStreamsTheHostTree", TestManifestStreamsTheHostTree);
   AddTest(tests, "RemoteWorkspace/ManifestFailureIsAnErrorNotAnEmptyTree",
           TestManifestFailureIsAnErrorNotAnEmptyTree);
@@ -172,9 +167,6 @@ void RegisterRemoteWorkspaceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteWorkspace/ObjectFetchServesVerifiedBytes", TestObjectFetchServesVerifiedBytes);
   AddTest(tests, "RemoteWorkspace/WriteAndTreeOpsAreCompareAndSwap",
           TestWriteAndTreeOpsAreCompareAndSwap);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

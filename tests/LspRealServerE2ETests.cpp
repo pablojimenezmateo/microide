@@ -76,9 +76,6 @@ bool PumpUntil(LspClient& client, Predicate&& ready, int timeout_ms) {
 }
 
 void TestLspRealServerClangdDrivesFullFeatureSet() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   const std::string clangd = LocateClangd();
   if (clangd.empty()) {
     std::fprintf(stderr,
@@ -186,7 +183,6 @@ void TestLspRealServerClangdDrivesFullFeatureSet() {
          "renaming `add` should edit both its declaration and its call site");
 
   client.Shutdown();
-#endif
 }
 
 struct ClangdDefinitionResult {
@@ -252,9 +248,6 @@ ClangdDefinitionResult RunClangdDefinition(const std::string& clangd,
 // is told about the mirror's file, the include is not found, and there is no
 // definition. The skip is decided by a local reference run against the host tree.
 void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#else
   const std::string clangd = LocateClangd();
   if (clangd.empty()) {
     std::fprintf(stderr, "[lsp-e2e] SKIP: no clangd on PATH\n");
@@ -301,7 +294,6 @@ void TestLspRealServerClangdSeesHostOnlyFilesThroughALoopbackHost() {
            "go-to-definition into the host-only header comes back as the mirror's path; got '" +
                remote.definition_path + "'" + where);
   }
-#endif
 }
 
 }  // namespace

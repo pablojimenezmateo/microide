@@ -72,8 +72,7 @@ class PerformanceTrace : public TraceChannelFacade<PerformanceTrace> {
     ScopeLabel& Field(std::string_view key, long long value);
 
     // Paths are the most common field, so they get an overload rather than
-    // leaving each caller to reach for `.native()` (free on POSIX, a wstring
-    // that will not convert on Windows) or `.string()` (an allocation on both).
+    // leaving each caller to reach for `.string()`, an allocation per field.
     //
     // Constrained to *exactly* std::filesystem::path: a plain
     // `const std::filesystem::path&` overload is ambiguous against the

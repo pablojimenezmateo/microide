@@ -14,17 +14,13 @@
 #include <thread>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using project::remote::AppendFrame;
 using project::remote::Frame;
@@ -414,12 +410,9 @@ void TestFlushWaitsForQueuedFrames() {
   ::close(pair.b);
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteFrameTransport/FramesRoundTripBetweenTwoTransports",
           TestFramesRoundTripBetweenTwoTransports);
   AddTest(tests, "RemoteFrameTransport/InteractiveOvertakesABulkBacklog",
@@ -433,9 +426,6 @@ void RegisterRemoteFrameTransportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteFrameTransport/WedgedPeerIsTornDown", TestWedgedPeerIsTornDown);
   AddTest(tests, "RemoteFrameTransport/FlushWaitsForQueuedFrames", TestFlushWaitsForQueuedFrames);
   AddTest(tests, "RemoteFrameTransport/LyingAckCloses", TestLyingAckCloses);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

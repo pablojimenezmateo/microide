@@ -81,14 +81,9 @@ for path in sorted(root.rglob("*.cpp")):
 
 # Clone groups that are ACCEPTED, keyed by the signature line every occurrence
 # in the group must carry. Each entry is a decision with a reason, not a mute
-# button: the `#ifdef _WIN32` subprocess trio is never compiled on the supported
-# host, and deduplicating untestable code risks breaking it invisibly (the
-# platform WON'T-DO policy, TD-2026-09-03-282).
-ACCEPTED_CLONES = {
-    "std::wstring ToWide(std::string_view text) {",
-    "std::wstring QuoteWindowsArgument(std::string_view arg) {",
-    "std::wstring BuildCommandLine(const std::vector<std::string>& argv) {",
-}
+# button. (Empty since the Windows/macOS code was removed: its subprocess trio was
+# the only accepted group.)
+ACCEPTED_CLONES: set[str] = set()
 
 found = False
 accepted_seen = set()

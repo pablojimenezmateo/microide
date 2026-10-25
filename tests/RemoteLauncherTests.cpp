@@ -18,16 +18,12 @@
 #include <thread>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <csignal>
-#endif
 
 namespace microide::tests {
 namespace {
 
 namespace remote = project::remote;
-
-#if defined(__unix__) || defined(__APPLE__)
 
 remote::HelloRequest TestHello() {
   return remote::HelloRequest{.release = "test", .root = ""};
@@ -430,12 +426,9 @@ void TestRunReturnsWhenTheLinkDrops() {
          "and says why: " + result.stderr_text);
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemoteLauncher/RunMapsCwdAndReportsLikeALocalRun",
           TestRunMapsCwdAndReportsLikeALocalRun);
   AddTest(tests, "RemoteLauncher/StartAsyncAdoptsAHostProcess", TestStartAsyncAdoptsAHostProcess);
@@ -451,9 +444,6 @@ void RegisterRemoteLauncherTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RemoteLauncher/GitStatusIsPushedAndNeverStaleAfterAMutation",
           TestGitStatusIsPushedAndNeverStaleAfterAMutation);
   AddTest(tests, "RemoteLauncher/OverARealSshLink", TestOverARealSshLink);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

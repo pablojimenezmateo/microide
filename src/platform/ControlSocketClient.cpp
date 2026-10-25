@@ -6,7 +6,6 @@
 #include <cerrno>
 #include <cstring>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -17,11 +16,8 @@
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
-#endif
 
 namespace microide::platform {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 namespace {
 // A control response/event line is small (query results, debug state). Bound the
@@ -175,18 +171,5 @@ void ControlSocketClient::Close() {
   }
   read_buf_.clear();
 }
-
-#else  // non-POSIX: control channel unsupported.
-
-ControlSocketClient::~ControlSocketClient() = default;
-bool ControlSocketClient::Connect(const std::filesystem::path&) { return false; }
-bool ControlSocketClient::SendLine(const std::string&, std::chrono::milliseconds) { return false; }
-void ControlSocketClient::ShutdownWrite() {}
-std::optional<std::string> ControlSocketClient::ReadLine(std::chrono::milliseconds) {
-  return std::nullopt;
-}
-void ControlSocketClient::Close() {}
-
-#endif
 
 }  // namespace microide::platform

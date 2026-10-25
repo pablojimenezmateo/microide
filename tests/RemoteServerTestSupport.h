@@ -15,7 +15,6 @@
 #include "TestSupport.h"
 #include "platform/Subprocess.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -56,7 +55,6 @@ inline std::string ReadProcCmdline(const std::filesystem::path& path) {
 }
 
 inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
-#if defined(__linux__)
   const std::string needle = fixture_root.string() + "/";
   std::error_code ec;
   for (std::filesystem::directory_iterator it("/proc", ec), end; !ec && it != end; it.increment(ec)) {
@@ -68,9 +66,6 @@ inline void KillProcessesUnder(const std::filesystem::path& fixture_root) {
       ::kill(static_cast<pid_t>(std::atoi(name.c_str())), SIGKILL);
     }
   }
-#else
-  (void)fixture_root;
-#endif
 }
 
 // A fixture whose test process was KILLED (a ctest timeout, a sanitizer abort, a
@@ -200,4 +195,3 @@ struct FakeSshHost {
 
 }  // namespace microide::tests
 
-#endif

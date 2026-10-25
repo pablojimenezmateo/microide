@@ -18,13 +18,9 @@ namespace microide::util {
 // must do that separately. (Intentionally omitted on the document-save hot path.)
 bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const std::byte> bytes);
 
-// Atomically replace `to` with `from` via rename. On POSIX this is a single rename
-// (which already clobbers a regular-file destination atomically); a failure is surfaced
-// as-is rather than papered over with a destructive remove+retry. On Windows, where
-// rename cannot clobber, a failure falls back to remove+retry ONLY when the destination
-// is a regular file or symlink — never a directory or special file, so an unrelated
-// directory collision can never be deleted and replaced with a regular file. Returns
-// success.
+// Atomically replace `to` with `from` via a single rename, which already clobbers a
+// regular-file destination atomically; a failure is surfaced as-is rather than
+// papered over with a destructive remove+retry. Returns success.
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to);
 
 // Marks a file as an in-flight atomic-write staging temp. Kept distinctive (rather
@@ -55,7 +51,6 @@ bool IsTemporaryStagingFilename(std::string_view filename);
 // POSIX permission + ownership snapshot of an existing file, used to carry a file's
 // mode/owner across an atomic save (which otherwise creates a fresh 0644 inode and
 // silently drops +x / setuid / setgid / group-write / restrictive bits and ownership).
-// On Windows these fields are inert and Capture/Apply are no-ops.
 struct FilePermissions {
   bool valid = false;
   std::uint32_t mode = 0;  // st_mode & 07777 (perm + setuid/setgid/sticky)
@@ -70,7 +65,7 @@ FilePermissions CaptureFilePermissions(const std::filesystem::path& path);
 // Best-effort restore of a captured snapshot onto a freshly written file. Applies
 // ownership BEFORE mode (chown can clear setuid/setgid on some systems) and ignores
 // EPERM so a non-root save of a same-owner file still preserves its mode. No-op when
-// `permissions.valid` is false or on Windows.
+// `permissions.valid` is false.
 void ApplyFilePermissions(const std::filesystem::path& path, const FilePermissions& permissions);
 
 }  // namespace microide::util

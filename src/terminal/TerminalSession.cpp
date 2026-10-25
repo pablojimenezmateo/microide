@@ -21,9 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <unistd.h>
-#endif
 
 namespace microide::terminal {
 
@@ -242,10 +240,8 @@ void TerminalSession::Stop() {
   }
   if (backend) {
     backend->Stop();
-#if defined(__unix__) || defined(__APPLE__)
   } else if (child_pid > 0) {
     RequestTerminalChildShutdown(child_pid);
-#endif
   }
 
   std::scoped_lock lock(mutex_);

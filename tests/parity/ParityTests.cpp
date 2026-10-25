@@ -445,9 +445,6 @@ void RegisterParityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Parity/GitSidebarShowsTheWorkingTree",
           [] { parity::ExpectParity(GitSidebarShowsTheWorkingTree()); });
   AddTest(tests, "Parity/TerminalStartsInTheHostTree", [] {
-#if !defined(__unix__)
-    return;
-#endif
     // The suite runs terminals as placeholders that spawn nothing; this row is
     // about where a REAL shell starts, so it turns them off for its own duration.
     struct RealTerminals {

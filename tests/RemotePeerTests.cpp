@@ -13,10 +13,8 @@
 #include <string>
 #include <vector>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <sys/socket.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -130,8 +128,6 @@ void TestCompatibilityNamesBothReleases() {
   Expect(client_old.has_value() && client_old->find("this microide 2.10") != std::string::npos,
          "and so is a client below the server's floor");
 }
-
-#if defined(__unix__) || defined(__APPLE__)
 
 struct Pair {
   int a = -1;
@@ -297,8 +293,6 @@ void TestHeartbeatMeasuresRttAndDetectsADeadPeer() {
   ::close(silent.b);
 }
 
-#endif
-
 }  // namespace
 
 void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
@@ -312,7 +306,6 @@ void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
           TestMinimumProtocolVersionIsADeliberateChoice);
   AddTest(tests, "RemotePeer/ReleaseOrderingIsNumericAndRefusesTheUnparseable",
           TestReleaseOrderingIsNumericAndRefusesTheUnparseable);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "RemotePeer/RequestsAndErrorsRoundTrip", TestRequestsAndErrorsRoundTrip);
   AddTest(tests, "RemotePeer/MalformedBodyIsRejectedAndTheConnectionContinues",
           TestMalformedBodyIsRejectedAndTheConnectionContinues);
@@ -321,7 +314,6 @@ void RegisterRemotePeerTests(std::vector<TestCase>& tests) {
           TestPendingRequestsAreAnsweredOnClose);
   AddTest(tests, "RemotePeer/HeartbeatMeasuresRttAndDetectsADeadPeer",
           TestHeartbeatMeasuresRttAndDetectsADeadPeer);
-#endif
 }
 
 }  // namespace microide::tests

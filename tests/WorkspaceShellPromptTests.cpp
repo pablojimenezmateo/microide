@@ -177,9 +177,6 @@ void TestWorkspaceShellDirtyPromptSaveRefusesToClobberAnExternalChange() {
 // changed. The banner offers Overwrite (clears the read-only bit, then saves),
 // Save As and Keep, and the changed-on-disk Overwrite is no way around it.
 void TestWorkspaceShellSavingAReadOnlyFileAsksFirst() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   std::filesystem::create_directories(root);
@@ -415,7 +412,6 @@ void TestWorkspaceShellRenamePromptPasteShortcutUsesSharedTextInputPath() {
          "Ctrl+V should route clipboard text through the shared prompt text-input path");
 }
 
-#if defined(__linux__) || defined(__APPLE__)
 void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -454,11 +450,7 @@ void TestWorkspaceShellDeletePromptDiscardsDirtyTabs() {
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
          "delete discard flow should close affected tabs");
 
-#if defined(__linux__)
   const std::filesystem::path trash_files = xdg_data_home / "Trash" / "files";
-#else
-  const std::filesystem::path trash_files = home / ".Trash";
-#endif
   const auto trashed_file = FirstRegularFileIn(trash_files);
   Expect(trashed_file.has_value(), "delete discard flow should create a trash entry");
   Expect(ReadFile(*trashed_file) == "original text\n",
@@ -658,8 +650,6 @@ void TestWorkspaceShellDiscardAllGitPromptReconcilesOpenTabs() {
            "bulk discard should leave restored tracked files attached to their editor tabs");
   }
 }
-
-#endif
 
 void TestWorkspaceShellRenamePreservesWorkingTreeCompareState() {
   TemporaryDirectory temp_dir;
@@ -1607,7 +1597,6 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorBreadcrumbUsesRelativePathForLargeFixtures);
   AddTest(tests, "WorkspaceShell/BreadcrumbCacheInvalidatesOnTabSwitch",
           TestWorkspaceShellBreadcrumbCacheInvalidatesOnTabSwitch);
-#if defined(__linux__) || defined(__APPLE__)
   AddTest(tests, "WorkspaceShell/DeletePromptDiscardsDirtyTabs",
           TestWorkspaceShellDeletePromptDiscardsDirtyTabs);
   AddTest(tests, "WorkspaceShell/DeletePromptClearsDiagnostics",
@@ -1621,7 +1610,6 @@ void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/LaunchConfigPicker", TestWorkspaceShellLaunchConfigPicker);
   AddTest(tests, "WorkspaceShell/BannerActionCommandPressesTheActiveTabsBanner",
           TestWorkspaceShellBannerActionCommandPressesTheActiveTabsBanner);
-#endif
 }
 
 }  // namespace microide::tests

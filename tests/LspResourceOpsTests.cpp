@@ -217,7 +217,6 @@ void TestTargetsOutsideTheProjectRootAreRejected() {
 // symlinked parent lands wherever the link points. The link does not have to be
 // planted by the attacker: it is an ordinary thing for a checkout to contain, so a
 // compromised server only has to name a path the repository already provides.
-#if defined(__unix__) || defined(__APPLE__)
 void TestTargetsEscapingThroughASymlinkAreRejected() {
   Fixture fx;
   const std::filesystem::path outside_dir = fx.dir.path().parent_path() / "outside-root";
@@ -255,7 +254,6 @@ void TestTargetsEscapingThroughASymlinkAreRejected() {
 
   std::filesystem::remove_all(outside_dir, ec);
 }
-#endif
 
 void TestNonRecursiveDirectoryDeleteIsRefused() {
   Fixture fx;
@@ -336,10 +334,8 @@ void RegisterLspResourceOpsTests(std::vector<TestCase>& tests) {
           TestOverwriteWinsOverIgnoreIfExists);
   AddTest(tests, "LspResourceOps/TargetsOutsideTheProjectRootAreRejected",
           TestTargetsOutsideTheProjectRootAreRejected);
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "LspResourceOps/TargetsEscapingThroughASymlinkAreRejected",
           TestTargetsEscapingThroughASymlinkAreRejected);
-#endif
   AddTest(tests, "LspResourceOps/NonRecursiveDirectoryDeleteIsRefused",
           TestNonRecursiveDirectoryDeleteIsRefused);
   AddTest(tests, "LspResourceOps/MidBatchFailureRollsBackCompletedOps",

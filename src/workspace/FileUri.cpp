@@ -24,13 +24,6 @@ std::string FileUriForPath(const std::filesystem::path& path) {
   // path the editor normalized when it opened the file. `PathTextNeedsNormalizing`
   // is the allocation-free scan that says so, leaving the common case at the one
   // allocation the result itself needs (TD-2026-08-06-159).
-#ifdef _WIN32
-  // Windows' `native()` is a wide string and its separator is not the generic
-  // one, so the guard's byte scan does not apply and the conversion is real work
-  // either way. Keep the original form there.
-  const std::string raw_storage = path.lexically_normal().generic_string();
-  const std::string_view raw = raw_storage;
-#else
   std::filesystem::path normalized;
   const std::filesystem::path* source = &path;
   if (util::PathTextNeedsNormalizing(path.native())) {
@@ -38,14 +31,8 @@ std::string FileUriForPath(const std::filesystem::path& path) {
     source = &normalized;
   }
   const std::string_view raw = source->native();
-#endif
   std::string encoded = "file://";
   encoded.reserve(raw.size() + 8);
-#ifdef _WIN32
-  if (!raw.empty() && raw.front() != '/') {
-    encoded.push_back('/');
-  }
-#endif
   for (unsigned char ch : raw) {
     if (IsUnreservedUriByte(ch)) {
       encoded.push_back(static_cast<char>(ch));
@@ -90,12 +77,6 @@ std::optional<std::filesystem::path> PathFromFileUri(std::string_view uri) {
   if (decoded->find('\0') != std::string::npos) {
     return std::nullopt;
   }
-#ifdef _WIN32
-  if (decoded->size() >= 3 && (*decoded)[0] == '/' &&
-      util::IsAsciiAlpha(static_cast<unsigned char>((*decoded)[1])) != 0 && (*decoded)[2] == ':') {
-    decoded->erase(decoded->begin());
-  }
-#endif
   return std::filesystem::path(*decoded).lexically_normal();
 }
 

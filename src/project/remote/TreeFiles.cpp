@@ -11,16 +11,12 @@
 
 #include "project/remote/RemoteManifest.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::project::remote {
 namespace {
-
-#if defined(__unix__) || defined(__APPLE__)
 
 using util::UniqueFd;
 
@@ -162,7 +158,7 @@ bool CheckExpect(int dir, const std::string& name, const Precondition& expect, b
 // renameat2(RENAME_NOREPLACE), falling back to link+unlink where the filesystem
 // does not support it (link refuses an existing destination just the same).
 int RenameNoReplace(int from_dir, const char* from, int to_dir, const char* to) {
-#if defined(__linux__) && defined(RENAME_NOREPLACE)
+#if defined(RENAME_NOREPLACE)
   if (::renameat2(from_dir, from, to_dir, to, RENAME_NOREPLACE) == 0) {
     return 0;
   }
@@ -183,14 +179,11 @@ std::string TempName(const std::string& name) {
          std::to_string(counter.fetch_add(1)) + ".tmp";
 }
 
-#endif
-
 }  // namespace
 
 FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view path,
                                std::uint64_t max_bytes,
                                const std::function<void(std::string_view chunk)>& sink) {
-#if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
   if (!parent.has_value()) {
@@ -218,18 +211,10 @@ FileOpResult ReadTreeFile(const std::filesystem::path& root, std::string_view pa
     return Error(Errno("cannot read " + std::string(path)));
   }
   return Ok(hash);
-#else
-  (void)root;
-  (void)path;
-  (void)max_bytes;
-  (void)sink;
-  return FileOpResult{};
-#endif
 }
 
 FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
                           const std::function<void(std::string_view chunk)>& sink) {
-#if defined(__unix__) || defined(__APPLE__)
   const std::string text(path);
   if (text.empty() || text.front() != '/' || text.find('\0') != std::string::npos) {
     return Error("not an absolute path");
@@ -250,12 +235,6 @@ FileOpResult ReadHostFile(std::string_view path, std::uint64_t max_bytes,
     return Error(Errno("cannot read " + text));
   }
   return Ok(hash);
-#else
-  (void)path;
-  (void)max_bytes;
-  (void)sink;
-  return FileOpResult{};
-#endif
 }
 
 namespace {
@@ -266,7 +245,6 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
                                const std::function<std::optional<util::ContentHash>(int fd, std::string* error)>& fill,
                                const Precondition& expect, std::optional<std::uint32_t> mode,
                                std::optional<std::int64_t> mtime_ns, Durability durability) {
-#if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
   if (!parent.has_value()) {
@@ -336,33 +314,14 @@ FileOpResult WriteTreeFileFrom(const std::filesystem::path& root, std::string_vi
     return Error(Errno("cannot replace " + std::string(path)));
   }
   return Ok(*hash);
-#else
-  (void)root;
-  (void)path;
-  (void)fill;
-  (void)durability;
-  (void)expect;
-  (void)mode;
-  (void)mtime_ns;
-  return FileOpResult{};
-#endif
 }
 
 }  // namespace
 
 bool SyncTreeFilesystem(const std::filesystem::path& root) {
   util::AddPerformanceCounter(util::PerfCounterId::RemoteTreeFlushes);
-#if defined(__linux__)
   const UniqueFd dir(::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
   return dir.Get() >= 0 && ::syncfs(dir.Get()) == 0;
-#elif defined(__unix__) || defined(__APPLE__)
-  ::sync();
-  (void)root;
-  return true;
-#else
-  (void)root;
-  return true;
-#endif
 }
 
 FileOpResult WriteTreeFile(const std::filesystem::path& root, std::string_view path,
@@ -396,13 +355,11 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
   return WriteTreeFileFrom(
       root, path,
       [&](int fd, std::string* error) -> std::optional<util::ContentHash> {
-#if defined(__unix__) || defined(__APPLE__)
         const UniqueFd in(::open(source.c_str(), O_RDONLY | O_CLOEXEC));
         if (in.Get() < 0) {
           *error = Errno("cannot open the fetched copy of " + std::string(path));
           return std::nullopt;
         }
-#if defined(__linux__)
         // In the kernel, and a reflink where the filesystem can: no bytes through here.
         for (;;) {
           const ssize_t count = ::copy_file_range(in.Get(), nullptr, fd, nullptr, 1u << 30, 0);
@@ -420,7 +377,6 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
             return std::nullopt;
           }
         }
-#endif
         char buffer[64 * 1024];
         for (;;) {
           const ssize_t count = ::read(in.Get(), buffer, sizeof(buffer));
@@ -446,20 +402,12 @@ FileOpResult CopyFileIntoTree(const std::filesystem::path& root, std::string_vie
             done += wrote;
           }
         }
-#else
-        (void)fd;
-        (void)error;
-        return hash;
-#endif
       },
       expect, mode, mtime_ns, durability);
 }
 
-
-
 FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view path,
                              std::string_view target) {
-#if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
   if (!parent.has_value()) {
@@ -481,16 +429,9 @@ FileOpResult MakeTreeSymlink(const std::filesystem::path& root, std::string_view
     return Error(why);
   }
   return Ok(std::nullopt);
-#else
-  (void)root;
-  (void)path;
-  (void)target;
-  return FileOpResult{};
-#endif
 }
 
 FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_view path) {
-#if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/true, &error);
   if (!parent.has_value()) {
@@ -506,16 +447,10 @@ FileOpResult MakeTreeDirectory(const std::filesystem::path& root, std::string_vi
     return Error(Errno("cannot create " + std::string(path)));
   }
   return Ok(std::nullopt);
-#else
-  (void)root;
-  (void)path;
-  return FileOpResult{};
-#endif
 }
 
 FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view from,
                                   std::string_view to, const Precondition& expect) {
-#if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> source = OpenParent(root, from, /*create=*/false, &error);
   if (!source.has_value()) {
@@ -545,18 +480,10 @@ FileOpResult RenameTreeEntry(const std::filesystem::path& root, std::string_view
     return Error(Errno("cannot rename " + std::string(from) + " to " + std::string(to)));
   }
   return Ok(std::nullopt);
-#else
-  (void)root;
-  (void)from;
-  (void)to;
-  (void)expect;
-  return FileOpResult{};
-#endif
 }
 
 FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view path,
                                   const Precondition& expect) {
-#if defined(__unix__) || defined(__APPLE__)
   std::string error;
   std::optional<Parent> parent = OpenParent(root, path, /*create=*/false, &error);
   if (!parent.has_value()) {
@@ -579,12 +506,6 @@ FileOpResult DeleteTreeEntry(const std::filesystem::path& root, std::string_view
     return Error(Errno("cannot delete " + std::string(path)));
   }
   return Ok(std::nullopt);
-#else
-  (void)root;
-  (void)path;
-  (void)expect;
-  return FileOpResult{};
-#endif
 }
 
 }  // namespace microide::project::remote

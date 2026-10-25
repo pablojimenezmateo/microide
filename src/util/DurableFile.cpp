@@ -7,31 +7,17 @@
 #include <string>
 #include <system_error>
 
-#if defined(_WIN32)
-#include <fcntl.h>
-#include <io.h>
-#include <process.h>
-#include <sys/stat.h>
-#else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::util {
 namespace {
 
 int OpenForBinaryWrite(const std::filesystem::path& path) {
-#if defined(_WIN32)
-  // _O_NOINHERIT keeps the staging fd out of forked/spawned children, matching the
-  // close-on-exec hygiene every other fd-opening site in the tree enforces.
-  return _wopen(path.c_str(), _O_BINARY | _O_CREAT | _O_TRUNC | _O_WRONLY | _O_NOINHERIT,
-                _S_IREAD | _S_IWRITE);
-#else
   // O_CLOEXEC: a concurrent fork+exec (terminal shell, git, LSP/DAP adapter) must not
   // inherit a live writable handle to this durable-write staging file and pin it open.
   return ::open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY | O_CLOEXEC, 0644);
-#endif
 }
 
 bool WriteAll(int fd, std::span<const std::byte> bytes) {
@@ -39,15 +25,10 @@ bool WriteAll(int fd, std::span<const std::byte> bytes) {
   while (offset < bytes.size()) {
     const std::size_t remaining = bytes.size() - offset;
     const std::size_t chunk = std::min<std::size_t>(remaining, static_cast<std::size_t>(1u << 20));
-#if defined(_WIN32)
-    const int wrote = _write(fd, bytes.data() + static_cast<std::ptrdiff_t>(offset),
-                             static_cast<unsigned int>(chunk));
-#else
     const ssize_t wrote = ::write(fd, bytes.data() + static_cast<std::ptrdiff_t>(offset), chunk);
     if (wrote < 0 && errno == EINTR) {
       continue;  // interrupted by a signal before any byte was written; retry
     }
-#endif
     if (wrote <= 0) {
       return false;
     }
@@ -57,19 +38,11 @@ bool WriteAll(int fd, std::span<const std::byte> bytes) {
 }
 
 bool FsyncFile(int fd) {
-#if defined(_WIN32)
-  return _commit(fd) == 0;
-#else
   return fsync(fd) == 0;
-#endif
 }
 
 void CloseFile(int fd) {
-#if defined(_WIN32)
-  _close(fd);
-#else
   close(fd);
-#endif
 }
 
 }  // namespace
@@ -86,50 +59,20 @@ bool WriteFileBytesDurable(const std::filesystem::path& path, std::span<const st
 }
 
 bool RenameReplacing(const std::filesystem::path& from, const std::filesystem::path& to) {
+  // rename already atomically replaces a regular-file destination, so a failure is
+  // something other than "destination exists" (a directory, a cross-device link, a
+  // permission or I/O error, an invalid source). Removing `to` cannot help any of
+  // those and could silently delete a valid directory or file, so the failure is
+  // surfaced instead.
   std::error_code error;
   std::filesystem::rename(from, to, error);
-  if (!error) {
-    return true;
-  }
-
-#if defined(_WIN32)
-  // Windows rename refuses to clobber an existing destination, so a remove+retry is the
-  // only way to get replace semantics there. But a rename failure does NOT prove the
-  // destination merely "exists" — it may be a directory, a special file, or a genuine
-  // I/O/permission error. Removing `to` in those cases can destroy an unrelated
-  // directory (empty dirs remove cleanly) and then replace it with our regular file.
-  // Only remove when the destination is an actual regular file (or a symlink, whose
-  // link we replace, never the target). `symlink_status` classifies without following.
-  std::error_code status_error;
-  const std::filesystem::file_status status = std::filesystem::symlink_status(to, status_error);
-  const bool removable_destination =
-      !status_error && (status.type() == std::filesystem::file_type::regular ||
-                        status.type() == std::filesystem::file_type::symlink);
-  if (!removable_destination) {
-    return false;
-  }
-  std::filesystem::remove(to, error);
-  error.clear();
-  std::filesystem::rename(from, to, error);
   return !error;
-#else
-  // POSIX rename already atomically replaces a regular-file destination, so reaching
-  // here means the failure was something other than "destination exists" (destination
-  // is a directory, cross-device link, permission/I-O error, invalid source). Removing
-  // `to` cannot help any of those and can silently delete a valid directory or file,
-  // so we never remove on POSIX — we surface the failure to the caller instead.
-  return false;
-#endif
 }
 
 std::filesystem::path UniqueTemporaryPath(const std::filesystem::path& path) {
   static std::atomic<std::uint64_t> counter{0};
   const std::uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
-#if defined(_WIN32)
-  const long long pid = static_cast<long long>(_getpid());
-#else
   const long long pid = static_cast<long long>(::getpid());
-#endif
   // Leading dot + a distinctive marker. The staging file lives INSIDE the project
   // tree for the duration of a save, so anything that walks the tree can observe
   // it: the dot makes it hidden (the file index already excludes hidden paths) and
@@ -150,10 +93,6 @@ bool IsTemporaryStagingFilename(std::string_view filename) {
 }
 
 FilePermissions CaptureFilePermissions(const std::filesystem::path& path) {
-#if defined(_WIN32)
-  (void)path;
-  return FilePermissions{};
-#else
   struct stat status{};
   if (::stat(path.c_str(), &status) != 0) {
     return FilePermissions{};
@@ -164,16 +103,12 @@ FilePermissions CaptureFilePermissions(const std::filesystem::path& path) {
       .uid = static_cast<std::uint32_t>(status.st_uid),
       .gid = static_cast<std::uint32_t>(status.st_gid),
   };
-#endif
 }
 
 void ApplyFilePermissions(const std::filesystem::path& path, const FilePermissions& permissions) {
   if (!permissions.valid) {
     return;
   }
-#if defined(_WIN32)
-  (void)path;
-#else
   // Ownership first: chown can strip setuid/setgid, so restore mode afterwards. Both
   // are best-effort — a non-root save of a file it does not own keeps whatever the
   // fresh temp got, which is strictly no worse than today's unconditional 0644.
@@ -195,7 +130,6 @@ void ApplyFilePermissions(const std::filesystem::path& path, const FilePermissio
     mode &= ~static_cast<mode_t>(S_ISUID | S_ISGID);
   }
   ::chmod(path.c_str(), mode);
-#endif
 }
 
 }  // namespace microide::util

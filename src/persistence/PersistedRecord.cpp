@@ -48,26 +48,9 @@ const std::array<std::uint32_t, 256>& CrcTable() {
 }
 
 std::string PathToUtf8String(const std::filesystem::path& path) {
-#if defined(_WIN32)
-  const std::u8string path_u8 = path.generic_u8string();
-  std::string value;
-  value.reserve(path_u8.size());
-  for (char8_t ch : path_u8) {
-    value.push_back(static_cast<char>(ch));
-  }
-  return value;
-#else
   return path.generic_string();
-#endif
 }
 
-PathPlatform HostPathPlatform() {
-#if defined(_WIN32)
-  return PathPlatform::Windows;
-#else
-  return PathPlatform::Posix;
-#endif
-}
 
 }  // namespace
 
@@ -204,10 +187,9 @@ bool PrimitiveWriter::WriteString(std::string_view value) {
 }
 
 bool PrimitiveWriter::WritePath(const std::filesystem::path& path) {
-  return WriteU8(static_cast<std::uint8_t>(HostPathPlatform())) &&
+  return WriteU8(static_cast<std::uint8_t>(PathPlatform::Posix)) &&
          WriteString(PathToUtf8String(path));
 }
-
 
 bool PrimitiveReader::ReadU8(std::uint8_t* value) {
   if (value == nullptr || offset_ + 1 > input_.size()) {
@@ -315,21 +297,11 @@ bool PrimitiveReader::ReadPath(std::filesystem::path* path) {
   if (!ReadU8(&platform_tag) || !ReadString(&encoded)) {
     return false;
   }
-  if (platform_tag != static_cast<std::uint8_t>(PathPlatform::Posix) &&
-      platform_tag != static_cast<std::uint8_t>(PathPlatform::Windows)) {
+  if (platform_tag != static_cast<std::uint8_t>(PathPlatform::Posix)) {
     return false;
   }
 
-#if defined(_WIN32)
-  std::u8string decoded;
-  decoded.reserve(encoded.size());
-  for (char ch : encoded) {
-    decoded.push_back(static_cast<char8_t>(ch));
-  }
-  *path = std::filesystem::path(decoded);
-#else
   *path = std::filesystem::path(encoded);
-#endif
   return true;
 }
 

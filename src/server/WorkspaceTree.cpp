@@ -16,11 +16,9 @@
 #include "util/ByteCodec.h"
 #include "util/PosixFd.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::server {
 namespace {
@@ -456,7 +454,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
     std::string* error, const std::function<bool()>& cancelled) {
   std::string scratch_error;
   error = error != nullptr ? error : &scratch_error;
-#if defined(__unix__) || defined(__APPLE__)
   Manifest manifest;
   std::optional<std::vector<std::string>> paths = ContentSet(&manifest.git, error);
   if (!paths.has_value()) {
@@ -519,11 +516,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::BuildManifestLocked(
     }
   }
   return manifest;
-#else
-  *error = "not supported on this platform";
-  (void)cancelled;
-  return std::nullopt;
-#endif
 }
 
 std::string WorkspaceTree::OverLimitMessage() const {
@@ -564,7 +556,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
     return BuildManifestLocked(error, cancelled);
   }
   last_update_was_full_ = false;
-#if defined(__unix__) || defined(__APPLE__)
   const UniqueFd root_fd(::open(root_.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
   if (root_fd.Get() < 0) {
     *error = "cannot open " + root_.string() + ": " + std::string(std::strerror(errno));
@@ -653,12 +644,6 @@ std::optional<WorkspaceTree::Manifest> WorkspaceTree::UpdateManifest(
   manifest.id = next_manifest_id_++;
   last_rows_ = manifest.rows;
   return manifest;
-#else
-  (void)changes;
-  (void)cancelled;
-  *error = "not supported on this platform";
-  return std::nullopt;
-#endif
 }
 
 std::optional<std::vector<std::string>> WorkspaceTree::AdmitCandidates(

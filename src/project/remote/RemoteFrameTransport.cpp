@@ -7,11 +7,9 @@
 #include "util/PerformanceCounters.h"
 #include "util/PosixFd.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
-#endif
 
 namespace microide::project::remote {
 namespace {
@@ -40,7 +38,6 @@ RemoteFrameTransport::~RemoteFrameTransport() {
 
 bool RemoteFrameTransport::Start(int read_fd, int write_fd, Callbacks callbacks,
                                  Options options) {
-#if defined(__unix__) || defined(__APPLE__)
   if (io_thread_.joinable() || read_fd < 0 || write_fd < 0) {
     return false;
   }
@@ -60,13 +57,6 @@ bool RemoteFrameTransport::Start(int read_fd, int write_fd, Callbacks callbacks,
                      std::memory_order_relaxed);
   io_thread_ = std::thread([this]() { Run(); });
   return true;
-#else
-  (void)read_fd;
-  (void)write_fd;
-  (void)callbacks;
-  (void)options;
-  return false;
-#endif
 }
 
 void RemoteFrameTransport::SetFixedBulkWindow(std::size_t bytes) {
@@ -116,7 +106,6 @@ void RemoteFrameTransport::Stop() {
     }
     io_thread_.join();
   }
-#if defined(__unix__) || defined(__APPLE__)
   if (options_.owns_fds) {
     if (read_fd_ >= 0) {
       ::close(read_fd_);
@@ -125,7 +114,6 @@ void RemoteFrameTransport::Stop() {
       ::close(write_fd_);
     }
   }
-#endif
   read_fd_ = -1;
   write_fd_ = -1;
   wake_.Close();
@@ -168,7 +156,6 @@ bool RemoteFrameTransport::HasWritable() {
 }
 
 void RemoteFrameTransport::Run() {
-#if defined(__unix__) || defined(__APPLE__)
   std::string close_reason;
   const bool ticking = options_.tick_interval.count() > 0;
   if (ticking) {
@@ -239,11 +226,9 @@ void RemoteFrameTransport::Run() {
       return;
     }
   }
-#endif
 }
 
 bool RemoteFrameTransport::FlushWrites() {
-#if defined(__unix__) || defined(__APPLE__)
   for (;;) {
     if (writing_offset_ == writing_.size()) {
       writing_.clear();
@@ -286,13 +271,9 @@ bool RemoteFrameTransport::FlushWrites() {
     }
     return false;
   }
-#else
-  return false;
-#endif
 }
 
 bool RemoteFrameTransport::ReadAvailable() {
-#if defined(__unix__) || defined(__APPLE__)
   char buffer[64 * 1024];
   for (;;) {
     const ssize_t count = ::read(read_fd_, buffer, sizeof(buffer));
@@ -351,9 +332,6 @@ bool RemoteFrameTransport::ReadAvailable() {
     QueueAck();
   }
   return true;
-#else
-  return false;
-#endif
 }
 
 void RemoteFrameTransport::QueueAck() {

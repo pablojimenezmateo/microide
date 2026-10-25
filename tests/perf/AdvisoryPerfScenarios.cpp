@@ -12,9 +12,7 @@
 #include <tuple>
 #include <utility>
 
-#if defined(__linux__)
 #include <unistd.h>
-#endif
 
 #include "perf/AllocationCounter.h"
 #include "compare/MergeModel.h"
@@ -49,7 +47,6 @@ struct ProcessSample {
 };
 
 ProcessSample ReadProcessSample() {
-#if defined(__linux__)
   ProcessSample sample{};
   std::ifstream statm("/proc/self/statm");
   std::uint64_t total_pages = 0;
@@ -61,9 +58,6 @@ ProcessSample ReadProcessSample() {
   const long page_size = sysconf(_SC_PAGESIZE);
   sample.rss_bytes = rss_pages * static_cast<std::uint64_t>(page_size > 0 ? page_size : 4096);
   return sample;
-#else
-  return {};
-#endif
 }
 
 std::string ReadFileTextOrThrow(const std::filesystem::path& path) {

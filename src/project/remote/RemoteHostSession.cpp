@@ -14,13 +14,11 @@
 #include "util/Sha256.h"
 #include "util/TextFileIO.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fnmatch.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::project::remote {
 namespace {
@@ -204,7 +202,6 @@ void CollectSshConfigHosts(const std::filesystem::path& file, const std::filesys
           CollectSshConfigHosts(path, ssh_directory, depth + 1, hosts);
           continue;
         }
-#if defined(__unix__) || defined(__APPLE__)
         // A glob in the last component (`config.d/*`), in name order as glob(3) gives.
         std::vector<std::filesystem::path> matches;
         std::error_code ec;
@@ -217,7 +214,6 @@ void CollectSshConfigHosts(const std::filesystem::path& file, const std::filesys
         for (const std::filesystem::path& match : matches) {
           CollectSshConfigHosts(match, ssh_directory, depth + 1, hosts);
         }
-#endif
       }
     }
   }
@@ -548,11 +544,9 @@ bool RemoteHostSession::MasterAlive() {
 bool RemoteHostSession::BringUpMaster(bool reconnecting) {
   Report(reconnecting ? State::Reconnecting : State::Connecting,
          "connecting to " + config_.target.Display());
-#if defined(__unix__) || defined(__APPLE__)
   std::error_code ec;
   std::filesystem::create_directories(config_.control_dir, ec);
   ::chmod(config_.control_dir.c_str(), 0700);
-#endif
   const std::filesystem::path log = control_path().string() + ".log";
   std::error_code ec_remove;
   std::filesystem::remove(log, ec_remove);
@@ -712,7 +706,6 @@ namespace {
 // one the kernel picks. Probed by binding, the only answer that counts; the
 // window until ssh binds it is a race ssh reports as a failed forward.
 std::optional<std::uint16_t> FreeLocalPort(std::uint16_t wanted) {
-#if defined(__unix__) || defined(__APPLE__)
   for (const std::uint16_t candidate : {wanted, std::uint16_t{0}}) {
     const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) {
@@ -730,9 +723,6 @@ std::optional<std::uint16_t> FreeLocalPort(std::uint16_t wanted) {
       return ntohs(address.sin_port);
     }
   }
-#else
-  (void)wanted;
-#endif
   return std::nullopt;
 }
 

@@ -13,8 +13,6 @@ using project::remote::Precondition;
 using project::remote::FileOpResult;
 using util::HashContent;
 
-#if defined(__unix__) || defined(__APPLE__)
-
 void TestTreeFilesWriteIsCompareAndSwap() {
   TemporaryDirectory temp;
   const auto root = temp.path();
@@ -133,19 +131,13 @@ void TestTreeFilesTreeOps() {
          "an empty directory is deleted under Any");
 }
 
-#endif
-
 }  // namespace
 
 void RegisterTreeFilesTests(std::vector<TestCase>& tests) {
-#if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "TreeFiles/WriteIsCompareAndSwap", TestTreeFilesWriteIsCompareAndSwap);
   AddTest(tests, "TreeFiles/StayUnderTheRoot", TestTreeFilesStayUnderTheRoot);
   AddTest(tests, "TreeFiles/Read", TestTreeFilesRead);
   AddTest(tests, "TreeFiles/TreeOps", TestTreeFilesTreeOps);
-#else
-  (void)tests;
-#endif
 }
 
 }  // namespace microide::tests

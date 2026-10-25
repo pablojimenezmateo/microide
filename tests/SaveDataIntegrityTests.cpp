@@ -10,10 +10,8 @@
 #include <system_error>
 #include <utility>
 
-#if !defined(_WIN32)
 #include <sys/stat.h>
 #include <unistd.h>
-#endif
 
 namespace microide::tests {
 namespace {
@@ -22,7 +20,6 @@ using microide::editor::TextViewport;
 namespace util = microide::util;
 using microide::util::WriteTextFileAtomically;
 
-#if !defined(_WIN32)
 // True when the current process can bypass DAC permission checks (root), which would
 // defeat a "make the directory unwritable" failure-injection test.
 bool RunningAsRoot() { return ::geteuid() == 0; }
@@ -46,7 +43,6 @@ std::pair<ino_t, nlink_t> PosixInodeAndLinks(const std::filesystem::path& path) 
   }
   return {status.st_ino, status.st_nlink};
 }
-#endif
 
 // No directory entry beside `path` should be a leftover staging temp once a save
 // settles. Asks the generator's own predicate rather than re-spelling the naming
@@ -107,7 +103,6 @@ void TestAtomicWriteUsesUniqueTempAndSpareTmpSurvives() {
          "the unique staging temp must be renamed/removed, not left behind");
 }
 
-#if !defined(_WIN32)
 // A1: an atomic save must preserve the destination's permission bits instead of
 // resetting the file to a fresh 0644 inode. Executable and restrictive modes are the
 // data-integrity-critical cases.
@@ -214,7 +209,6 @@ void TestSaveWriteFailureKeepsDirtyAndFileIntact() {
   Expect(!viewport.dirty(),
          "after a failed save, undoing to the loaded content must read clean (MarkSaved not applied)");
 }
-#endif  // !_WIN32
 
 // C3: an in-place round-trip through the editor must preserve the file's original line
 // ending. Opening canonicalizes CRLF/CR to an LF buffer; saving must restore the
@@ -368,7 +362,6 @@ void TestSavePreservesUtf8Bom() {
   Expect(ReadFile(path) == original, "a clean save must preserve the UTF-8 BOM bytes verbatim");
 }
 
-#if !defined(_WIN32)
 // #5: the atomic temp+rename save deliberately replaces the file's inode, which breaks a
 // hardlink -- other names for the old inode keep the pre-save content. This is the accepted
 // trade-off for crash-atomic saves (a partial in-place write would risk corruption), so pin
@@ -397,7 +390,6 @@ void TestAtomicSaveReplacesInodeAndBreaksHardlink() {
   Expect(ReadFile(hardlink_name) == "shared\n",
          "the sibling hardlink keeps the original bytes intact, never a half-written file");
 }
-#endif  // !_WIN32
 
 // C13: saving over a file that changed on disk since it was opened must be detectable so the
 // higher layer can refuse and surface the reload/overwrite banner instead of silently
@@ -565,7 +557,6 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
           TestAtomicWriteSupportsRelativeFilenameInCurrentDirectory);
   AddTest(tests, "SaveDataIntegrity/AtomicWriteUsesUniqueTemp",
           TestAtomicWriteUsesUniqueTempAndSpareTmpSurvives);
-#if !defined(_WIN32)
   AddTest(tests, "SaveDataIntegrity/AtomicWritePreservesFileMode",
           TestAtomicWritePreservesFileMode);
   AddTest(tests, "SaveDataIntegrity/AtomicWriteThroughSymlinkPreservesLink",
@@ -574,7 +565,6 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
           TestAtomicWriteThroughSymlinkWithMissingTargetPreservesLink);
   AddTest(tests, "SaveDataIntegrity/SaveWriteFailureKeepsDirtyAndFileIntact",
           TestSaveWriteFailureKeepsDirtyAndFileIntact);
-#endif
   AddTest(tests, "SaveDataIntegrity/SavePreservesCrlfLineEnding",
           TestSavePreservesCrlfLineEnding);
   AddTest(tests, "SaveDataIntegrity/SavePreservesCrOnlyLineEnding",
@@ -590,10 +580,8 @@ void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SaveDataIntegrity/SaveDetectsExternalChangeConflict",
           TestSaveDetectsExternalChangeConflict);
   AddTest(tests, "SaveDataIntegrity/SavePreservesUtf8Bom", TestSavePreservesUtf8Bom);
-#if !defined(_WIN32)
   AddTest(tests, "SaveDataIntegrity/AtomicSaveReplacesInodeAndBreaksHardlink",
           TestAtomicSaveReplacesInodeAndBreaksHardlink);
-#endif
   AddTest(tests, "SaveDataIntegrity/ReloadResetsUndoHistory", TestReloadResetsUndoHistory);
   AddTest(tests, "SaveDataIntegrity/GitDiscardRestoresExactCommittedBytes",
           TestGitDiscardRestoresExactCommittedBytes);

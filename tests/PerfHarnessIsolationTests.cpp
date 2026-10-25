@@ -75,7 +75,6 @@ void TestColdStartupIgnoresRealUserWorkspaceSession() {
   ScopedEnvVar xdg_state("XDG_STATE_HOME", "");
   ScopedEnvVar xdg_cache("XDG_CACHE_HOME", "");
   ScopedEnvVar xdg_data("XDG_DATA_HOME", "");
-  ScopedHostPlatformOverride linux_platform(platform::HostPlatform::Linux);
 
   // Sanity: without isolation, AppDirectories points at the planted state dir.
   const std::filesystem::path baseline_state =

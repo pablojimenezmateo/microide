@@ -1,12 +1,10 @@
 #pragma once
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 
 #include "util/PosixPipe.h"
-#endif
 
 #include <mutex>
 
@@ -30,7 +28,6 @@ class WakePipe {
   WakePipe& operator=(const WakePipe&) = delete;
 
   void Open() {
-#if defined(__unix__) || defined(__APPLE__)
     std::lock_guard lock(mutex_);
     if (read_fd_ >= 0) {
       return;
@@ -46,11 +43,9 @@ class WakePipe {
     }
     read_fd_ = fds[0];
     write_fd_ = fds[1];
-#endif
   }
 
   void Close() {
-#if defined(__unix__) || defined(__APPLE__)
     std::lock_guard lock(mutex_);
     if (write_fd_ >= 0) {
       ::close(write_fd_);
@@ -60,13 +55,11 @@ class WakePipe {
       ::close(read_fd_);
       read_fd_ = -1;
     }
-#endif
   }
 
   // Break the I/O thread's poll(). Safe to call from any thread; a full pipe
   // already means a wake is pending, so a failed write is ignored.
   void Wake() {
-#if defined(__unix__) || defined(__APPLE__)
     std::lock_guard lock(mutex_);
     if (write_fd_ < 0) {
       return;
@@ -74,19 +67,16 @@ class WakePipe {
     const char byte = 1;
     ssize_t written = ::write(write_fd_, &byte, 1);
     (void)written;
-#endif
   }
 
   // Consume pending wake bytes. Call only on the I/O thread (see class note).
   void Drain() {
-#if defined(__unix__) || defined(__APPLE__)
     if (read_fd_ < 0) {
       return;
     }
     char scratch[64];
     while (::read(read_fd_, scratch, sizeof(scratch)) > 0) {
     }
-#endif
   }
 
   // Read end to add to a poll() set; -1 when closed.
@@ -108,7 +98,6 @@ class WakePipe {
   //
   // Call only on the I/O thread — it drains the wake pipe (see Drain()).
   bool PollReadableOrWake(int watched_fd, int timeout_ms) {
-#if defined(__unix__) || defined(__APPLE__)
     if (watched_fd < 0) {
       return true;  // nothing pollable; let the caller's read report EOF
     }
@@ -134,11 +123,6 @@ class WakePipe {
     }
     const short revents = fds[watched_index].revents;
     return (revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL)) != 0;
-#else
-    (void)watched_fd;
-    (void)timeout_ms;
-    return true;
-#endif
   }
 
  private:

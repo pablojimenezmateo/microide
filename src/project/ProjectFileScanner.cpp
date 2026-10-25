@@ -58,9 +58,6 @@ void CollectFiles(const std::filesystem::path& root,
   // Reused across this directory's entries rather than allocated per entry; see
   // the relative-text derivation below for what they are for.
   std::filesystem::path relative_storage;
-#ifdef _WIN32
-  std::string generic_relative_scratch;
-#endif
 
   while (!error && iterator != end) {
     if (visited >= entry_budget) {
@@ -118,20 +115,10 @@ void CollectFiles(const std::filesystem::path& root,
 
     // `relative_text` stays the entry's own (native) spelling — that is what gets
     // stored. `matcher_relative_text` is the forward-slash spelling IgnoreMatcher
-    // speaks, which the native text already is on POSIX; on Windows it is the
-    // conversion, into the same reused buffer ProjectTraversalFilter::Includes
-    // uses. Keeping them as two names is the point: overwriting the one view with
-    // the other stored the matcher's spelling in the index.
+    // speaks, which the native text already is. Keeping them as two names is the
+    // point: overwriting the one view with the other stored the matcher's spelling
+    // in the index.
     std::string_view matcher_relative_text = relative_text;
-#ifdef _WIN32
-    generic_relative_scratch.assign(relative_text);
-    for (char& c : generic_relative_scratch) {
-      if (c == '\\') {
-        c = '/';
-      }
-    }
-    matcher_relative_text = generic_relative_scratch;
-#endif
 
     if (is_directory) {
       // Decide the directory's own ignore status with the PARENT matcher first: a rule

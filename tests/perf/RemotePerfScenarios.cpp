@@ -23,8 +23,6 @@
 // measurement -- and says so with the perf-measure-waits-on-clock exemption.
 #include "perf/PerfHarness.h"
 
-#if defined(__unix__) || defined(__APPLE__)
-
 #include "platform/Subprocess.h"
 #include "platform/UnixSocket.h"
 #include "project/remote/RemoteConnection.h"
@@ -482,4 +480,3 @@ const ScenarioRegistration g_remote_stalled_server_input({Scenario{
 }  // namespace
 }  // namespace microide::tests::perf
 
-#endif

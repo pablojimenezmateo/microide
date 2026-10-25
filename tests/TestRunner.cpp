@@ -256,10 +256,6 @@ int RunTestSuite(int argc, char** argv, const TestSuiteConfig& config) {
                                                         (user_root / "data").string());
   const microide::tests::ScopedEnvVar isolated_xdg_cache("XDG_CACHE_HOME",
                                                          (user_root / "cache").string());
-  const microide::tests::ScopedEnvVar isolated_localappdata("LOCALAPPDATA",
-                                                            (user_root / "state").string());
-  const microide::tests::ScopedEnvVar isolated_appdata("APPDATA",
-                                                       (user_root / "config").string());
 
   std::vector<std::string_view> args;
   args.reserve(argc > 1 ? static_cast<std::size_t>(argc - 1) : 0);

@@ -147,9 +147,6 @@ bool SawState(const CapturedSession& captured, DebugSession::State state) {
 }
 
 void TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -193,9 +190,6 @@ void TestDebugSessionDrivesLaunchLifecycleWithConfigurationDone() {
 }
 
 void TestDebugSessionRunsWithoutConfigurationDoneSupport() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -224,9 +218,6 @@ void TestDebugSessionRunsWithoutConfigurationDoneSupport() {
 }
 
 void TestDebugSessionLaunchHandshakeOrder() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -310,9 +301,6 @@ void TestDebugSessionLaunchHandshakeOrder() {
 }
 
 void TestDebugSessionResolvesStackOnStopAndStepsResume() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -386,9 +374,6 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
 // response until it receives the resume, then flushes it late; a correct host
 // (state_ != Stopped guard in RequestStackTrace) never fires on_stopped for it.
 void TestDebugSessionDropsStaleStackResolvedAfterResume() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -442,9 +427,6 @@ void TestDebugSessionDropsStaleStackResolvedAfterResume() {
 // undo its optimistic Running flip and restore the stopped view rather than leaving
 // the UI showing Running while the target is still stopped.
 void TestDebugSessionRejectedResumeRestoresStoppedView() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -480,9 +462,6 @@ void TestDebugSessionRejectedResumeRestoresStoppedView() {
 }
 
 void TestDebugSessionPauseFromRunning() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -519,9 +498,6 @@ void TestDebugSessionPauseFromRunning() {
 // runs -- the `threads` request timed out and `pause` was never sent. The thread
 // the adapter announced by a `thread` event is the one to pause.
 void TestDebugSessionPausesAThreadAnnouncedByEvent() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -555,9 +531,6 @@ void TestDebugSessionPausesAThreadAnnouncedByEvent() {
 // launched debuggee is the session's own and ends with it (VS Code's rule); an
 // attached one was there before and is left running.
 void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -593,9 +566,6 @@ void TestTeardownEndsALaunchedDebuggeeAndSparesAnAttachedOne() {
 // program spinning. A stop the adapter does not answer forces the adapter down and
 // ends the session, as VS Code does.
 void TestAStopTheAdapterDoesNotAnswerEndsTheSession() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -627,9 +597,6 @@ void TestAStopTheAdapterDoesNotAnswerEndsTheSession() {
 // Reverse execution: an adapter advertising supportsStepBack accepts `stepBack`
 // and `reverseContinue`, each optimistically resuming like a forward step.
 void TestDebugSessionReverseStepAndContinue() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -669,9 +636,6 @@ void TestDebugSessionReverseStepAndContinue() {
 // Without supportsStepBack the reverse commands are dropped at the session layer:
 // nothing reaches the wire and no optimistic resume fires.
 void TestDebugSessionReverseGatedOnCapability() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -711,9 +675,6 @@ void TestDebugSessionReverseGatedOnCapability() {
 // stored capability, fire on_capabilities_changed (drives the toolbar redraw), and
 // then accept the reverse commands it previously gated out.
 void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -763,9 +724,6 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
 // adapter, feeding responses into a DebugVariablesModel exactly as DebugService
 // does — exercising protocol + session + model end to end.
 void TestDebugSessionVariablesTreeAndSetVariable() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -857,9 +815,6 @@ void TestDebugSessionVariablesTreeAndSetVariable() {
 // The session-level capability gate: an adapter without supportsSetVariable
 // rejects setVariable without sending anything on the wire.
 void TestDebugSessionSetVariableGatedOnCapability() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -891,9 +846,6 @@ void TestDebugSessionSetVariableGatedOnCapability() {
 // and feeds the result into a DebugHoverModel exactly as DebugService::EvaluateHover
 // does — protocol + session + model end to end, including dedup + generation guard.
 void TestDebugSessionEvaluateHover() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -947,9 +899,6 @@ void TestDebugSessionEvaluateHover() {
 // capability-gated) and folding the result onto a DebugWatchModel root —
 // mirroring DebugService::EvaluateWatches.
 void TestDebugSessionWatchEvaluate() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -992,9 +941,6 @@ void TestDebugSessionWatchEvaluate() {
 // watch) — mirroring DebugService::EvaluateRepl's wire interaction. Frame 0 is the
 // fallback when running; here we evaluate against the stopped top frame.
 void TestDebugSessionReplEvaluate() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1062,9 +1008,6 @@ void TestDebugSessionReplEvaluate() {
 // symbol still resolves a value. (GDB-style adapters omit the capability but
 // evaluate fine; silently gating left users with no hover value at all.)
 void TestDebugSessionHoverFallsBackToReplWithoutCapability() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1587,9 +1530,6 @@ void TestDebugVariablesPagingAndErrors() {
 // present frameId:0 pre-launch makes gdb's DAP error "list index out of range" and
 // the limits would silently never apply. A non-gdb adapter must send none.
 void TestGdbAdapterClampsValueFormatting() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1816,9 +1756,6 @@ void TestDebugWatchNestedChildCascadeFetchIsReturned() {
 // Restart via the DAP `restart` request: the adapter re-runs its handshake and
 // re-stops; the session re-sends configurationDone and reports a second stop.
 void TestDebugSessionRestartViaRestartRequest() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1849,9 +1786,6 @@ void TestDebugSessionRestartViaRestartRequest() {
 // A session whose adapter lacks supportsRestartRequest performs no in-place
 // restart (the service layer terminates + relaunches instead).
 void TestDebugSessionRestartNoOpWithoutCapability() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1881,9 +1815,6 @@ void TestDebugSessionRestartNoOpWithoutCapability() {
 // Multi-thread: on stop the session caches the full thread list via `threads`,
 // and SwitchThread re-resolves the picked thread's frames (observably different).
 void TestDebugSessionThreadsCachedAndSwitch() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1921,9 +1852,6 @@ void TestDebugSessionThreadsCachedAndSwitch() {
 // reports a single thread at the stop, then announces a worker via a `thread`
 // event; the host must fetch the list a second time and grow it to two.
 void TestDebugSessionThreadEventRefreshesThreadList() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -1950,9 +1878,6 @@ void TestDebugSessionThreadEventRefreshesThreadList() {
 // surfaces them and sends the enabled ids via setExceptionBreakpoints on launch;
 // a live re-send reflects a toggle.
 void TestDebugSessionExceptionFiltersSentOnLaunchAndToggle() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2279,9 +2204,6 @@ void TestDebugExecutionViewPanelRowDispatch() {
 // and Reactivate re-projects, and stopping the active session prunes it so the
 // active advances — down to an empty manager.
 void TestDebugManagerMultipleConcurrentSessions() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2350,9 +2272,6 @@ void TestDebugManagerMultipleConcurrentSessions() {
 // the session set stays size 1 (no second row) and the replacement is active with
 // a fresh id.
 void TestDebugManagerReplaceActiveSession() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2380,9 +2299,6 @@ void TestDebugManagerReplaceActiveSession() {
 // live session at once; the subsequent prune empties the manager. This is the
 // manager path DebugService::StopAllDebugging wraps.
 void TestDebugManagerStopAllSessions() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2418,9 +2334,6 @@ void TestDebugManagerStopAllSessions() {
 // empty/late control-channel `stopped` event (the immediate phase let a headless
 // agent learn of the halt while a slow adapter still resolved the stack).
 void TestDebugServiceTwoPhaseStopReporting() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2496,9 +2409,6 @@ void TestDebugServiceTwoPhaseStopReporting() {
 // broadcast — notify_stop_began fires for the active session only (mirrors the
 // active-session guard the shared thread/stop selector already enforces).
 void TestDebugServiceBackgroundStopDoesNotBroadcast() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2565,9 +2475,6 @@ void TestDebugServiceBackgroundStopDoesNotBroadcast() {
 // stays (marked as ended) until the next session starts, as VS Code's does; the
 // next start drops it, so dead consoles still do not pile up.
 void TestDebugConsoleOutlivesItsSessionUntilTheNext() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2792,9 +2699,6 @@ void TestDebugValueTreeSameNamedSiblingsExpandIndependently() {
 // DAP terminated/exited event must be reconciled to a terminal state and pruned,
 // not left as a zombie session forever.
 void TestDebugSessionReconciledWhenAdapterDiesSilently() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2849,9 +2753,6 @@ void TestDebugSessionReconciledWhenAdapterDiesSilently() {
 // and before configurationDone (the gdb launch order), with verification reflected
 // back into a FunctionBreakpointStore by requested name.
 void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -2913,9 +2814,6 @@ void TestDebugSessionFunctionBreakpointsSentOnLaunch() {
 // Exception-filter conditions reach the wire as filterOptions when the adapter
 // advertises supportsExceptionFilterOptions + the filter advertises supportsCondition.
 void TestDebugSessionExceptionFilterConditionsSent() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -3063,9 +2961,6 @@ bool CompileWithGcc(const std::filesystem::path& source, const std::filesystem::
 // launch ordering (launch -> setBreakpoints -> setFunctionBreakpoints ->
 // configurationDone) against the real adapter. Skipped when gdb/gcc are absent.
 void TestGdbRealFunctionBreakpointsE2E() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   if (!GdbDapAvailable()) {
     return;  // gated: no gdb on this host
   }
@@ -3178,9 +3073,6 @@ void TestGdbRealFunctionBreakpointsE2E() {
 // relocates the breakpoint reconciles by that id and likewise keeps the requested
 // line — so the response and the event agree and the marker never jumps.
 void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -3250,9 +3142,6 @@ void TestDebugServiceBreakpointVerificationStaysAtRequestedLine() {
 // session keeps its focused stack/execution state until a full resume or the next
 // stop. The mock stops, then emits a partial `continued` for a different thread.
 void TestDebugSessionPartialContinueDoesNotResume() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -3287,9 +3176,6 @@ void TestDebugSessionPartialContinueDoesNotResume() {
 // threads query) first. The mock surfaces the threadId it received on stackTrace
 // and on resume so the test can assert it was the resolved thread, never 0.
 void TestDebugSessionStopWithoutThreadIdResolvesThread() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const auto server_path = temp_dir.path() / "adapter.py";
   WriteFile(server_path, std::string(MockAdapterSource()));
@@ -3342,7 +3228,6 @@ void TestLaunchArgumentsExpandWorkspaceFolder() {
   Expect((*parsed)["env"]["HOME"].AsString() == "/p/proj/home", "nested objects expand");
   Expect((*parsed)["stopOnEntry"].AsBool(), "non-strings are left alone");
 }
-
 
 // A stop shows the topmost frame whose source can be opened (VS Code's
 // getTopStackFrame): a pause inside a sleep lands in libc frames whose sources

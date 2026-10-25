@@ -11,11 +11,7 @@ namespace microide::workspace {
 namespace {
 
 bool IsPathSeparator(char c) {
-#ifdef _WIN32
-  return c == '\\' || c == '/';
-#else
   return c == '/';
-#endif
 }
 
 }  // namespace
@@ -50,9 +46,6 @@ std::string RelativePathLabel(const std::filesystem::path& root,
         IsPathSeparator(root_text.back()) ? root_text.size() : root_text.size() + 1;
     if (offset < path_text.size()) {
       std::string label = path_text.substr(offset);
-#ifdef _WIN32
-      std::replace(label.begin(), label.end(), '\\', '/');
-#endif
       return label;
     }
   }

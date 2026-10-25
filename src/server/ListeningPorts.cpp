@@ -6,10 +6,8 @@
 #include <string>
 #include <utility>
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <unistd.h>
-#endif
 
 namespace microide::server {
 namespace {
@@ -55,7 +53,6 @@ bool ForwardableAddress(std::string_view address) {
   return false;
 }
 
-#if defined(__linux__)
 // A procfs table: it states size 0, so it is read to EOF (bounded: thousands of
 // sockets are a few hundred KiB).
 std::optional<std::string> ReadProcTable(const char* path) {
@@ -78,7 +75,6 @@ std::optional<std::string> ReadProcTable(const char* path) {
   ::close(fd);
   return text;
 }
-#endif
 
 }  // namespace
 
@@ -132,7 +128,6 @@ std::vector<std::uint16_t> ParseListeningPorts(std::string_view proc_net_tcp, st
 }
 
 std::vector<std::uint16_t> ListeningPorts() {
-#if defined(__linux__)
   const std::uint32_t uid = static_cast<std::uint32_t>(::getuid());
   std::vector<std::uint16_t> ports;
   for (const char* table : {"/proc/net/tcp", "/proc/net/tcp6"}) {
@@ -144,9 +139,6 @@ std::vector<std::uint16_t> ListeningPorts() {
   std::sort(ports.begin(), ports.end());
   ports.erase(std::unique(ports.begin(), ports.end()), ports.end());
   return ports;
-#else
-  return {};
-#endif
 }
 
 }  // namespace microide::server

@@ -5,22 +5,14 @@
 #include <thread>
 #include <vector>
 
-#if defined(_WIN32)
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 namespace microide::platform {
 
 namespace {
 
 int CloseDescriptor(int fd) {
-#if defined(_WIN32)
-  return ::_close(fd);
-#else
   return ::close(fd);
-#endif
 }
 
 // One process-lifetime worker draining a queue of descriptors.

@@ -51,16 +51,6 @@ void CopyRepoPlugin(const std::filesystem::path& root, std::string_view director
   CopyTree(RepoPluginsRoot() / directory_name, root / directory_name);
 }
 
-#if defined(_WIN32)
-void WriteWindowsCmdWrapper(const std::filesystem::path& root_script_path,
-                            std::string_view powershell_file_name) {
-  WriteFile(root_script_path,
-            "@echo off\r\n"
-            "powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0" +
-                std::string(powershell_file_name) + "\" %*\r\n");
-}
-#endif
-
 void WriteFakeEslint(const std::filesystem::path& project_root) {
   const std::filesystem::path eslint_path = project_root / "node_modules" / ".bin" / "eslint";
   WriteFile(
@@ -94,40 +84,6 @@ exit 0
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
       std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
-#if defined(_WIN32)
-  WriteWindowsCmdWrapper(eslint_path.string() + ".cmd", "eslint.ps1");
-  WriteFile(
-      eslint_path.string() + ".ps1",
-      R"PS1(
-$output_file = ""
-$previous = ""
-foreach ($arg in $args) {
-  if ($previous -eq "--output-file") {
-    $output_file = $arg
-  }
-  $previous = $arg
-}
-$file = $args[-1]
-$content = Get-Content -LiteralPath $file -Raw
-$report = '[{"messages":[]}]'
-if ($content -match "broken") {
-  $report = '[{"messages":[{"ruleId":"no-broken","severity":2,"message":"Unexpected broken token","line":1,"column":1,"endLine":1,"endColumn":7}]}]'
-}
-if ($output_file -ne "") {
-  try {
-    [System.IO.File]::WriteAllText($output_file, $report + "`n")
-  } catch {
-    [Console]::Out.WriteLine($report)
-  }
-} else {
-  [Console]::Out.WriteLine($report)
-}
-if ($content -match "broken") {
-  exit 1
-}
-exit 0
-)PS1");
-#endif
 }
 
 void WriteFakeEslintNoExplicitAny(const std::filesystem::path& project_root) {
@@ -163,39 +119,6 @@ exit 0
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
-#if defined(_WIN32)
-  WriteWindowsCmdWrapper(eslint_path.string() + ".cmd", "eslint.ps1");
-  WriteFile(
-      eslint_path.string() + ".ps1",
-      R"PS1(
-$output_file = ""
-$previous = ""
-foreach ($arg in $args) {
-  if ($previous -eq "--output-file") {
-    $output_file = $arg
-  }
-  $previous = $arg
-}
-$file = $args[-1]
-$report = '[{"messages":[]}]'
-if ([System.IO.Path]::GetFileName($file) -eq "profile-manager.ts") {
-  $report = '[{"messages":[{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":10,"column":33,"endLine":10,"endColumn":36},{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":32,"column":48,"endLine":32,"endColumn":51},{"ruleId":"@typescript-eslint/no-explicit-any","severity":2,"message":"Unexpected any. Specify a different type.","line":33,"column":36,"endLine":33,"endColumn":39}]}]'
-}
-if ($output_file -ne "") {
-  try {
-    [System.IO.File]::WriteAllText($output_file, $report + "`n")
-  } catch {
-    [Console]::Out.WriteLine($report)
-  }
-} else {
-  [Console]::Out.WriteLine($report)
-}
-if ([System.IO.Path]::GetFileName($file) -eq "profile-manager.ts") {
-  exit 1
-}
-exit 0
-)PS1");
-#endif
 }
 
 void WriteFakeTsc(const std::filesystem::path& project_root) {
@@ -215,20 +138,6 @@ exit 0
       std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
           std::filesystem::perms::owner_exec,
       std::filesystem::perm_options::replace);
-#if defined(_WIN32)
-  WriteWindowsCmdWrapper(tsc_path.string() + ".cmd", "tsc.ps1");
-  WriteFile(
-      tsc_path.string() + ".ps1",
-      R"PS1(
-$project = $args[1]
-$content = Get-Content -LiteralPath $project -Raw
-if ($content -match "ignoreDeprecations") {
-  [Console]::Out.WriteLine("${project}(17,5): error TS5103: Invalid value for '--ignoreDeprecations'.")
-  exit 2
-}
-exit 0
-)PS1");
-#endif
 }
 
 std::string DescribePluginState(const WorkspaceShell& shell) {
@@ -455,14 +364,8 @@ void TestWorkspaceShellSavePipelineRunsParticipantsBeforeFormatter() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "README.todo";
   WriteFile(source, "seed\n");
-#if defined(_WIN32)
-  const std::string uppercase_formatter_command =
-      "{ \"powershell\", \"-NoProfile\", \"-Command\", "
-      "\"[Console]::Out.Write(([Console]::In.ReadToEnd()).ToUpperInvariant())\" }";
-#else
   const std::string uppercase_formatter_command =
       "{ \"sh\", \"-c\", \"tr '[:lower:]' '[:upper:]'\" }";
-#endif
 
   WritePluginInit(
       plugins_root, "save-pipeline",
@@ -665,14 +568,8 @@ void TestWorkspaceShellSavePipelineFormatterFailureLeavesBufferUnchanged() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "README.todo";
   WriteFile(source, "alpha\n");
-#if defined(_WIN32)
-  const std::string failing_formatter_command =
-      "{ \"powershell\", \"-NoProfile\", \"-Command\", "
-      "\"[void][Console]::In.ReadToEnd(); [Console]::Error.Write('formatter-broke'); exit 3\" }";
-#else
   const std::string failing_formatter_command =
       "{ \"sh\", \"-c\", \"cat >/dev/null; echo formatter-broke >&2; exit 3\" }";
-#endif
 
   WritePluginInit(
       plugins_root, "save-pipeline-fail",
@@ -730,14 +627,8 @@ void TestWorkspaceShellSavePipelineOverlappingSavesCoalesceCorrectly() {
   const std::filesystem::path project_root = temp_dir.path() / "project";
   const std::filesystem::path source = project_root / "README.todo";
   WriteFile(source, "alpha\n");
-#if defined(_WIN32)
-  const std::string delayed_formatter_command =
-      "{ \"powershell\", \"-NoProfile\", \"-Command\", "
-      "\"Start-Sleep -Milliseconds 200; [Console]::Out.Write(([Console]::In.ReadToEnd()).ToUpperInvariant())\" }";
-#else
   const std::string delayed_formatter_command =
       "{ \"sh\", \"-c\", \"sleep 0.2; tr '[:lower:]' '[:upper:]'\" }";
-#endif
 
   WritePluginInit(
       plugins_root, "save-pipeline-overlap",
@@ -1708,9 +1599,6 @@ void TestWorkspaceShellOutlineSidebarFromLspFallback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -1802,9 +1690,6 @@ void TestWorkspaceShellGoToSymbolInEditorPicksFromTheOutlineSymbols() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -1881,9 +1766,6 @@ void TestWorkspaceShellOutlineCapsLargeLspResult() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -1952,9 +1834,6 @@ void TestWorkspaceShellHoverFromLspFallback() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -2008,9 +1887,6 @@ return ide.plugin({
 // cache, and require its content not to appear under the second cell.
 void TestWorkspaceShellHoverSupersededCompletionIsDropped() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -2082,9 +1958,6 @@ void TestWorkspaceShellFormatDocumentAppliesLspEdits() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -2139,9 +2012,6 @@ return ide.plugin({
 // on confirm applies the language server's workspace edit to the open buffer.
 void TestWorkspaceShellRenameSymbolAppliesLspEdit() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -2220,9 +2090,6 @@ return ide.plugin({
 // opens every affected file, applies the edit, and saves them all to disk.
 void TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -2305,9 +2172,6 @@ return ide.plugin({
 // the server entirely (serial plugin-first fallback).
 void TestWorkspaceShellCompletionMergesPluginAndLspSources() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -2407,9 +2271,6 @@ void TestWorkspaceShellCompletionAppliesAdditionalTextEdits() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -2487,9 +2348,6 @@ void TestWorkspaceShellRenameOfDirtyFileWaitsForTheFormatterNotTheWindow() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugin = config_home / "microide" / "plugins" / "fmt";
@@ -2551,9 +2409,6 @@ void WithMarkdownCompletionServer(
     const std::function<void(WorkspaceShell&, editor::TextViewport&)>& body,
     std::string_view trigger_characters = {}) {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -3125,9 +2980,6 @@ void TestWorkspaceShellSignatureHelpPrefersLspOverPlugin() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -3384,9 +3236,6 @@ void TestWorkspaceShellPluginProvidersOpenOnTheirTriggerCharacters() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -3462,9 +3311,6 @@ void TestWorkspaceShellInlayHintsPublishMidLineDecorations() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -3533,9 +3379,6 @@ return ide.plugin({
 // click back to the server as workspace/executeCommand with the original arguments.
 void TestWorkspaceShellCodeLensesResolveAndActivate() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -3657,9 +3500,6 @@ void TestWorkspaceShellServerRegisteredAfterOpenStartsForTheActiveFile() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -3703,9 +3543,6 @@ return ide.plugin({
 // Frame prep now repaints the row whenever the items differ from what it painted.
 void TestWorkspaceShellAReloadedStatusItemRepaintsTheBreadcrumb() {
 #if !MICROIDE_HAS_LUA_PLUGINS || !MICROIDE_HAS_SDL3_TTF
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   EnsureDummySdlVideoInitialized();
@@ -3760,9 +3597,6 @@ return ide.plugin({
 // provider, the server (which has every edit) must answer.
 void TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   EnsureDummySdlVideoInitialized();
@@ -3830,9 +3664,6 @@ return ide.plugin({
 // project loads, never retracted) hid every signature in the file.
 void TestWorkspaceShellHoverOnASquiggleShowsTheSymbolToo() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   EnsureDummySdlVideoInitialized();
@@ -3911,9 +3742,6 @@ void TestWorkspaceShellPluginHoverReadsTheUnsavedText() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
@@ -3974,9 +3802,6 @@ return ide.plugin({
 // and so does moving the caret. The card was pointer-only (TD-2026-10-18-362).
 void TestWorkspaceShellShowHoverAtTheCaret() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   EnsureDummySdlVideoInitialized();
@@ -4057,9 +3882,6 @@ return ide.plugin({
 // lsp-typescript, under a loaded suite).
 void TestWorkspaceShellHoverAsksAgainWhenThePointerReturns() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   EnsureDummySdlVideoInitialized();
@@ -4156,9 +3978,6 @@ void TestWorkspaceShellDisablingLspClearsEveryServerOverlay() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -4234,9 +4053,6 @@ return ide.plugin({
 // ones still painted on screen inert — they would look clickable and do nothing.
 void TestWorkspaceShellSupersededCodeLensResponseKeepsLiveLensesClickable() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -4340,9 +4156,6 @@ return ide.plugin({
 // each callee's own name.
 void TestWorkspaceShellCallHierarchyRendersBothDirections() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -4464,9 +4277,6 @@ void TestWorkspaceShellPrepareRenameRefinesPrompt() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -4544,9 +4354,6 @@ void TestWorkspaceShellServerApplyEditEditsOpenAndClosedFiles() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   TemporaryDirectory temp_dir;
   const std::filesystem::path config_home = temp_dir.path() / "config";
   const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
@@ -4618,9 +4425,6 @@ return ide.plugin({
 // the file on disk stays untouched.
 void TestWorkspaceShellServerApplyEditRejectsOutOfRangeClosedFileEdit() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -4740,9 +4544,6 @@ void TestWorkspaceShellServerApplyEditAppliesResourceOps() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   ServerApplyEditFixture fx;
   Expect(fx.SetUp(), "resource-op fixture should come up with the handler bound");
   const std::filesystem::path created_md = fx.project / "created.md";
@@ -4786,9 +4587,6 @@ void TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
 #endif
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   ServerApplyEditFixture fx;
   Expect(fx.SetUp(), "atomicity fixture should come up with the handler bound");
   const std::filesystem::path created_md = fx.project / "created.md";
@@ -4818,9 +4616,6 @@ void TestWorkspaceShellServerApplyEditResourceOpBatchIsAtomic() {
 // rejected wholesale; the matching version applies (TD-2026-07-17-011).
 void TestWorkspaceShellServerApplyEditHonorsDocumentVersions() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   ServerApplyEditFixture fx;
@@ -5083,10 +4878,6 @@ return ide.plugin({
   const auto normalize_path_text = [](std::string text) {
     std::string normalized =
         std::filesystem::path(text).lexically_normal().generic_string();
-#if defined(_WIN32)
-    std::transform(normalized.begin(), normalized.end(), normalized.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-#endif
     return normalized;
   };
   const std::string expected_project_a = normalize_path_text(project_a.string());
@@ -6193,9 +5984,6 @@ return ide.plugin({
 // reload to open_lsp_documents=true so open buffers are engaged after servers exist.
 void TestWorkspaceShellRestoreEngagesLspForOpenDocument() {
 #if !MICROIDE_HAS_LUA_PLUGINS
-  return;
-#endif
-#if !defined(__unix__) && !defined(__APPLE__)
   return;
 #endif
   TemporaryDirectory temp_dir;
@@ -7533,7 +7321,6 @@ void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
          "the NON-focused split group's viewport must also pick up the new tab size");
 }
 
-
 // Ctrl+click goes to the definition of the symbol under the pointer (VS Code): the
 // caret moves to the click first, so the provider is asked about the clicked
 // position, not wherever the caret was. Ctrl+click used to be a plain click.
@@ -7604,7 +7391,6 @@ return ide.plugin({
   Expect(active.cursor_line() == 1 && active.cursor_column() == 15,
          "the caret lands on the definition (provider line/column are 1-based)");
 }
-
 
 // The Go menu greyed out "Go to Definition (LSP: No LSP server)" for a language a
 // plugin provider serves with no language server, although the command worked.

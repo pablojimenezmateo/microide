@@ -360,9 +360,6 @@ void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
 // which is the case that makes `conflicted_entry_count` non-zero, and the only
 // consumer of it.
 void TestGitRepositorySummaryAgreesWithFullState() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   using microide::project::GitRepositoryState;
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::GitRepositoryService;
@@ -433,9 +430,6 @@ void TestGitRepositorySummaryAgreesWithFullState() {
 // After the worker finishes the git commit, the state must stay "in flight"
 // until DrainCompletions() runs on the main thread.
 void TestCommitResultIsMarshaledToMainThread() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
   using microide::workspace::CommitWorkflowState;
@@ -502,9 +496,6 @@ void TestCommitResultIsMarshaledToMainThread() {
 // dispatched", not "the target went away", so draining after a close was a
 // use-after-free. Heap-allocate the state so ASAN sees the freed region.
 void TestCommitCompletionSurvivesStateDestruction() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
   using microide::workspace::CommitWorkflowState;
@@ -559,9 +550,6 @@ void TestCommitCompletionSurvivesStateDestruction() {
 // commit that a different project dispatched in the meantime. The claim is released
 // on publication, so its destructor has nothing left to abandon.
 void TestPublishedCommitDoesNotCancelALaterOne() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   using microide::project::ProjectBackgroundExecutor;
   using microide::workspace::CommitWorkflowService;
   using microide::workspace::CommitWorkflowState;
@@ -628,9 +616,6 @@ void TestPublishedCommitDoesNotCancelALaterOne() {
 // pre-dispatch check pays for it. Gating off must not surface the blocking check;
 // gating on must surface it for the same staged content.
 void TestConflictMarkerScanGate() {
-#if !defined(__unix__) && !defined(__APPLE__)
-  return;
-#endif
   using microide::workspace::GitRepositoryService;
   using microide::workspace::GitSidebarRefreshScope;
   using microide::workspace::OutgoingBaseChoice;

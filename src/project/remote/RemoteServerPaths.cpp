@@ -13,14 +13,10 @@
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
-#if defined(__unix__) || defined(__APPLE__)
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#if defined(__linux__)
 #include <sys/random.h>
-#endif
-#endif
 
 namespace microide::project::remote {
 namespace {
@@ -59,7 +55,6 @@ std::filesystem::path ServerLogPath(const std::filesystem::path& dir) {
 }
 
 bool EnsureServerSocketDir(const std::filesystem::path& dir, std::string* error) {
-#if defined(__unix__) || defined(__APPLE__)
   if (!dir.is_absolute()) {
     *error = "the server socket directory must be an absolute path: " + dir.string();
     return false;
@@ -148,20 +143,12 @@ bool EnsureServerSocketDir(const std::filesystem::path& dir, std::string* error)
     ::close(parent);
   }
   return ok;
-#else
-  (void)dir;
-  *error = "the remote server is not available on this platform";
-  return false;
-#endif
 }
 
 std::string MakeDaemonEpoch() {
   unsigned char bytes[16] = {};
   bool filled = false;
-#if defined(__linux__)
   filled = ::getrandom(bytes, sizeof(bytes), 0) == static_cast<ssize_t>(sizeof(bytes));
-#endif
-#if defined(__unix__) || defined(__APPLE__)
   if (!filled) {
     const int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
     if (fd >= 0) {
@@ -169,7 +156,6 @@ std::string MakeDaemonEpoch() {
       ::close(fd);
     }
   }
-#endif
   if (!filled) {
     // Unique enough to tell two server processes apart, which is all it is for.
     const auto stamp = static_cast<std::uint64_t>(
@@ -177,12 +163,10 @@ std::string MakeDaemonEpoch() {
     for (std::size_t i = 0; i < 8; ++i) {
       bytes[i] = static_cast<unsigned char>(stamp >> (8 * i));
     }
-#if defined(__unix__) || defined(__APPLE__)
     const auto pid = static_cast<std::uint64_t>(::getpid());
     for (std::size_t i = 0; i < 8; ++i) {
       bytes[8 + i] = static_cast<unsigned char>(pid >> (8 * i));
     }
-#endif
   }
   static constexpr char kHex[] = "0123456789abcdef";
   std::string epoch;
