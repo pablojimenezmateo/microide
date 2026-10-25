@@ -34,7 +34,11 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
     operations_.set_swallow_next_text_input(false);  // a new press: the last arm is spent
   }
 
-  const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
+  // The modifiers the event carries, never SDL_GetModState(): SDL updates the live
+  // state as it PUMPS, so a press handled behind its input reads the next chord's
+  // modifiers -- End ran as Ctrl+End under a following Ctrl+Alt+Down (QA
+  // multi-caret-pairs, on CI). An event with no modifiers had none.
+  const SDL_Keymod modifiers = event.mod;
   const TextInputSurface surface_before = operations_.current_text_input_surface
                                               ? operations_.current_text_input_surface()
                                               : TextInputSurface::None;

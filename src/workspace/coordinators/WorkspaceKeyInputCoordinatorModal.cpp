@@ -28,7 +28,7 @@ bool KeyInputCoordinator::HandleDirtyPromptKeyDown(const SDL_KeyboardEvent& even
       operations_.confirm_dirty_prompt();
       return true;
     default: {
-      const char input_character = operations_.keycode_to_ascii(event.key, SDL_GetModState());
+      const char input_character = operations_.keycode_to_ascii(event.key, event.mod);
       if (input_character == 's') {
         prompts_.dirty.selected_action = 0;
         operations_.confirm_dirty_prompt();
@@ -182,7 +182,7 @@ bool KeyInputCoordinator::HandleMenuOverflowPopupKeyDown(const SDL_KeyboardEvent
 
 bool KeyInputCoordinator::HandlePromptSurfaceKeyDown(const SDL_KeyboardEvent& event) {
   if (prompts_.surface.kind == PromptSurfaceState::Kind::TextInput) {
-    const SDL_Keymod modifiers = event.mod != SDL_KMOD_NONE ? event.mod : SDL_GetModState();
+    const SDL_Keymod modifiers = event.mod;  // the event's own, as HandleKeyDown reads them
     if ((modifiers & SDL_KMOD_CTRL) != 0 && event.key == SDLK_V) {
       return operations_.execute_action(ActionId::PasteClipboard, {}, ActionSource::Shortcut);
     }

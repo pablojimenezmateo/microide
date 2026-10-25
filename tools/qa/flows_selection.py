@@ -233,6 +233,11 @@ def flow_multi_caret_pairs(app: q.App) -> None:
         app.key("ctrl+alt+Down")
         app.key("ctrl+alt+Down")
         step(app, "three carets at the line ends", 0.2)
+        # The setup checked on its own: on CI the carets once never formed, and the
+        # first evidence was a `(` closed at one caret on the wrong line.
+        lines = text.count("\n")
+        ends = sorted((line + 1, len(row) + 1) for line, row in enumerate(text.split("\n")[:lines]))
+        app.expect(sorted(app.cursors()) == ends, f"three carets at the line ends ({app.cursors()})")
 
     three("a\nb\nc\n")
     app.type("(")

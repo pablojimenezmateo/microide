@@ -287,6 +287,35 @@ void TestTheUnsavedPromptsLettersDoNotType() {
          "the following key types as usual, got " + ViewportText(TestAccess::ActiveEditor(fixture.shell)));
 }
 
+// multi-caret-pairs, on CI only: End, then Ctrl+Alt+Down twice, left one caret
+// at the end of the DOCUMENT. A key event that carried no modifiers fell back to
+// SDL's live modifier state -- which SDL updates when it pumps, so on a runner
+// behind its input it already held the NEXT chord's Ctrl and Alt, and End ran as
+// Ctrl+End. A key's modifiers are the ones its event carries.
+void TestAKeyReadsItsOwnModifiersNotTheNextChords() {
+  UxFixture fixture("pairs.c", "a\nb\nc\n");
+  {
+    const ScopedSdlModState next_chord(static_cast<SDL_Keymod>(SDL_KMOD_LCTRL | SDL_KMOD_LALT));
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_END)});
+  }
+  const auto& viewport = TestAccess::ActiveEditor(fixture.shell);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 1,
+         "End goes to the end of the line, got " + std::to_string(viewport.cursor_line()) + ":" +
+             std::to_string(viewport.cursor_column()));
+
+  // The unsaved-changes prompt's letters read the same way: a Shift pumped for the
+  // next key made `d` a `D`, which answers nothing.
+  Expect(TestAccess::ExecuteCommandLine(fixture.shell, "tab"), "an untitled buffer opens");
+  (void)DispatchEvents(fixture.shell, {TextInputEvent("scratch")});
+  (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_W, SDL_KMOD_CTRL)});
+  {
+    const ScopedSdlModState next_chord(SDL_KMOD_LSHIFT);
+    (void)DispatchEvents(fixture.shell, {KeyDownEvent(SDLK_D), TextInputEvent("d")});
+  }
+  Expect(TestAccess::ActiveEditor(fixture.shell).path() == fixture.file,
+         "d answers Don't Save and the file comes back to the front");
+}
+
 // revert-file: there was no way to throw unsaved changes away but undoing them
 // one by one -- Reload from Disk refuses a dirty buffer, rightly, because it
 // swaps the buffer and its history. VS Code's Revert File takes the disk's text
@@ -702,6 +731,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetFollowsATabSwitch", TestTheFindWidgetFollowsATabSwitch);
   AddTest(tests, "QaFlowRegressionUx/CtrlKSSavesEveryDirtyFile", TestCtrlKSSavesEveryDirtyFile);
   AddTest(tests, "QaFlowRegressionUx/TheUnsavedPromptsLettersDoNotType", TestTheUnsavedPromptsLettersDoNotType);
+  AddTest(tests, "QaFlowRegressionUx/AKeyReadsItsOwnModifiersNotTheNextChords",
+          TestAKeyReadsItsOwnModifiersNotTheNextChords);
   AddTest(tests, "QaFlowRegressionUx/RevertFileDiscardsChangesUndoably", TestRevertFileDiscardsChangesUndoably);
   AddTest(tests, "QaFlowRegressionUx/TheStatusColumnFollowsTheTabSize", TestTheStatusColumnFollowsTheTabSize);
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetRecountsAfterAReload", TestTheFindWidgetRecountsAfterAReload);
