@@ -509,29 +509,9 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 return SwitchProject(index, log_feedback);
               },
           .open_native_project_picker =
-              [this]() {
-                switch (OpenNativeProjectPicker(nullptr)) {
-                  case ProjectOpenDialogLaunchResult::Launched:
-                    return ProjectOpenPickerResult::Launched;
-                  case ProjectOpenDialogLaunchResult::AlreadyOpen:
-                    return ProjectOpenPickerResult::AlreadyOpen;
-                  case ProjectOpenDialogLaunchResult::Unavailable:
-                    return ProjectOpenPickerResult::Unavailable;
-                }
-                return ProjectOpenPickerResult::Unavailable;
-              },
+              [this]() { return OpenNativeProjectPicker(nullptr); },
           .open_native_file_picker =
-              [this]() {
-                switch (OpenNativeFilePicker(nullptr)) {
-                  case ProjectOpenDialogLaunchResult::Launched:
-                    return ProjectOpenPickerResult::Launched;
-                  case ProjectOpenDialogLaunchResult::AlreadyOpen:
-                    return ProjectOpenPickerResult::AlreadyOpen;
-                  case ProjectOpenDialogLaunchResult::Unavailable:
-                    return ProjectOpenPickerResult::Unavailable;
-                }
-                return ProjectOpenPickerResult::Unavailable;
-              },
+              [this]() { return OpenNativeFilePicker(nullptr); },
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
           .toggle_sidebar = [this]() { ToggleSidebar(); },
           .close_sidebar = [this]() { CloseSidebar(); },

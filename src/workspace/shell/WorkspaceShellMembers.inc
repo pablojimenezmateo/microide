@@ -493,12 +493,6 @@
   // Leaves the cell in Pending until the async result lands (then Resolved/Failed).
   void KickOffLspHover(const std::filesystem::path& path, std::size_t line, std::size_t column);
 
-  enum class ProjectOpenDialogLaunchResult {
-    Launched,
-    AlreadyOpen,
-    Unavailable,
-  };
-
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
   static const std::vector<std::string>& CommandNames();
   static std::span<const MenuSpec> MenuSpecs();
@@ -576,7 +570,7 @@
   std::optional<SDL_FRect> ComputeTreeContextMenuRect() const;
   static char KeycodeToAscii(SDL_Keycode keycode, SDL_Keymod modifiers);
   std::filesystem::path ResolveProjectRootInput(const std::filesystem::path& project_root) const;
-  ProjectOpenDialogLaunchResult OpenNativeProjectPicker(std::string* error_message = nullptr);
+  ProjectOpenPickerResult OpenNativeProjectPicker(std::string* error_message = nullptr);
   static void SDLCALL OnProjectOpenDialogComplete(void* userdata,
                                                   const char* const* filelist,
                                                   int filter);
@@ -584,7 +578,7 @@
   // Native "Open File…" picker behind File > Open File… / Ctrl+O / the welcome
   // screen's Open File action. Async in the same shape as the project picker: the
   // result is staged under a mutex and consumed on the shared dialog wake event.
-  ProjectOpenDialogLaunchResult OpenNativeFilePicker(std::string* error_message = nullptr);
+  ProjectOpenPickerResult OpenNativeFilePicker(std::string* error_message = nullptr);
   static void SDLCALL OnOpenFileDialogComplete(void* userdata,
                                                const char* const* filelist,
                                                int filter);

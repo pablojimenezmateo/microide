@@ -470,6 +470,13 @@ enum class ActionSource {
   ContextMenu,
 };
 
+// What asking for a native Open Folder / Open File dialog did.
+enum class ProjectOpenPickerResult {
+  Launched,
+  AlreadyOpen,
+  Unavailable,
+};
+
 struct ActionSpec {
   ActionId id;
   std::string_view command_name;

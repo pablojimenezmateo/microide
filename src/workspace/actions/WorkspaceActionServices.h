@@ -33,12 +33,6 @@ enum class GitSidebarActionId;
 // the caret): stage them, unstage them, or revert them in the working tree.
 enum class GitRangeVerb { Stage, Unstage, Revert };
 
-enum class ProjectOpenPickerResult {
-  Launched,
-  AlreadyOpen,
-  Unavailable,
-};
-
 // TD-2026-07-17A-119: shared clipboard-export byte budget. A huge explicit selection (or
 // many multi-caret selections) must not allocate and duplicate a large fraction of a big
 // file into both clipboards on the shell thread. Copies over this budget are truncated on

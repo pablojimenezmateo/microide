@@ -250,8 +250,10 @@ void TestArchitectureFileSizes() {
              // 1657: the editor hover types (DebugHoverValue, EditorHoverTarget,
              // EditorHoverPopupLayout) moved to workspace/EditorHoverTypes.h, so
              // PreparedFrameState can hold the card prep lays out.
+             // 1652: the shell's private ProjectOpenDialogLaunchResult, a
+             // value-for-value copy of ProjectOpenPickerResult, is gone.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1657);
+                                                     1652);
            });
 
   AssertRuleResultsPass(results);

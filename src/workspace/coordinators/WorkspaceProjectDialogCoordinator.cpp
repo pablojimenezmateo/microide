@@ -65,13 +65,13 @@ void LatchDialogResult(DialogState& state, Pending pending, Uint32 wake_event) {
 
 }  // namespace
 
-WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectPicker(
+ProjectOpenPickerResult WorkspaceShell::OpenNativeProjectPicker(
     std::string* error_message) {
   if (project_dialog_state_.active) {
     if (error_message != nullptr) {
       *error_message = "Project picker already open";
     }
-    return ProjectOpenDialogLaunchResult::AlreadyOpen;
+    return ProjectOpenPickerResult::AlreadyOpen;
   }
 
   std::error_code error;
@@ -89,9 +89,9 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectP
       if (error_message != nullptr) {
         *error_message = "Native dialog backend unavailable";
       }
-      return ProjectOpenDialogLaunchResult::Unavailable;
+      return ProjectOpenPickerResult::Unavailable;
     }
-    return ProjectOpenDialogLaunchResult::Launched;
+    return ProjectOpenPickerResult::Launched;
   }
 
   const std::string default_location_string = normalized_default.string();
@@ -106,10 +106,10 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeProjectP
     if (error_message != nullptr) {
       *error_message = dialog_error;
     }
-    return ProjectOpenDialogLaunchResult::Unavailable;
+    return ProjectOpenPickerResult::Unavailable;
   }
 
-  return ProjectOpenDialogLaunchResult::Launched;
+  return ProjectOpenPickerResult::Launched;
 }
 
 void SDLCALL WorkspaceShell::OnProjectOpenDialogComplete(void* userdata,
@@ -150,13 +150,13 @@ void WorkspaceShell::ConsumePendingProjectOpenDialogResult() {
   OpenProjectTab(pending.selected_path, true, true);
 }
 
-WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeFilePicker(
+ProjectOpenPickerResult WorkspaceShell::OpenNativeFilePicker(
     std::string* error_message) {
   if (open_file_dialog_state_.active) {
     if (error_message != nullptr) {
       *error_message = "File picker already open";
     }
-    return ProjectOpenDialogLaunchResult::AlreadyOpen;
+    return ProjectOpenPickerResult::AlreadyOpen;
   }
 
   // Open where the user is working: the project root, falling back to the process
@@ -176,9 +176,9 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeFilePick
       if (error_message != nullptr) {
         *error_message = "Native dialog backend unavailable";
       }
-      return ProjectOpenDialogLaunchResult::Unavailable;
+      return ProjectOpenPickerResult::Unavailable;
     }
-    return ProjectOpenDialogLaunchResult::Launched;
+    return ProjectOpenPickerResult::Launched;
   }
 
   const std::string default_location_string = normalized_default.string();
@@ -194,10 +194,10 @@ WorkspaceShell::ProjectOpenDialogLaunchResult WorkspaceShell::OpenNativeFilePick
     if (error_message != nullptr) {
       *error_message = dialog_error;
     }
-    return ProjectOpenDialogLaunchResult::Unavailable;
+    return ProjectOpenPickerResult::Unavailable;
   }
 
-  return ProjectOpenDialogLaunchResult::Launched;
+  return ProjectOpenPickerResult::Launched;
 }
 
 void SDLCALL WorkspaceShell::OnOpenFileDialogComplete(void* userdata,
