@@ -240,6 +240,18 @@ void AssistService::CompletionAfterTyping(std::string_view typed) {
     }
     return;
   }
+  // Nothing serves completions for this language (no server, no plugin provider):
+  // nothing below can trigger or suggest. Asked first because this runs on every
+  // keystroke, and the questions below (feature settings, the server, the word at
+  // the caret) cost a keystroke in a split ~25% over v2.12.0 for files nothing
+  // completes (editor_split_grid_workout's typing phase).
+  if (operations_.has_completion_provider &&
+      !operations_.has_completion_provider(viewport->language_id())) {
+    if (list_up) {
+      FollowCompletionCaret();
+    }
+    return;
+  }
   const char c = typed.front();
   // A trigger character -- a server's, or a plugin provider's -- starts a new list
   // at the caret, replacing any list the character just ended (`obj` + `.` ->
@@ -275,10 +287,6 @@ void AssistService::CompletionAfterTyping(std::string_view typed) {
   const editor::SelectionRange word = CompletionReplacementRange(*viewport);
   if (auto_completion_anchor_.has_value() && auto_completion_anchor_->line == word.start.line &&
       auto_completion_anchor_->column == word.start.column) {
-    return;
-  }
-  if (operations_.has_completion_provider &&
-      !operations_.has_completion_provider(viewport->language_id())) {
     return;
   }
   StartAutomaticCompletion(*viewport, '\0');
