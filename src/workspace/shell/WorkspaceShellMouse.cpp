@@ -13,6 +13,7 @@
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "workspace/coordinators/EditorPointerHit.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
@@ -496,67 +497,17 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           editor_text_renderer_, *viewport, pane_it->rect, 0, LineNumbersEnabled());
       viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
 
-      const auto setting_on = [this](std::string_view id) {
-        return SettingFlagEnabled(GetSettingValue(id));
-      };
-      // No plugin/LSP contribution: no insets, so the gap-aware mapping collapses
-      // to the legacy row formula. Skip the store probing entirely.
-      const auto* pres = context_.current_project_state.plugin_presentation_if_present();
-      std::size_t row = 0;
-      if (pres == nullptr) {
-        row = editor::EditorRowYLayout(metrics.first_line_y, metrics.line_height,
-                                       static_cast<std::uint32_t>(viewport->scroll_line()))
-                  .HitTest(event.button.y, metrics.visible_rows)
-                  .row;
-      } else {
-        const editor::InsetGapOptions inset_options{
-            .inline_surfaces = setting_on("plugins.inline_surfaces"),
-            .code_lens_above = setting_on("plugins.code_lens_above"),
-            .code_lens_height = metrics.line_height};
-        row = editor::ResolveInsetClick(pres->surfaces, pres->decorations, *viewport,
-                                        metrics.first_line_y, metrics.line_height,
-                                        metrics.visible_rows, event.button.y, inset_options)
-                  .hit.row;
-      }
-      const float text_offset_x = std::max(0.0f, event.button.x - metrics.text_x);
-      std::size_t visual_column =
-          viewport->horizontal_scroll() +
-          static_cast<std::size_t>(std::max(
-              0L, std::lround(text_offset_x / std::max(1.0f, editor_text_renderer_.CharWidth()))));
-      const int visual_row = static_cast<int>(viewport->scroll_line() + row);
-      // Undo the mid-line inlay-hint display shift so the retargeted caret lands on
-      // the glyph under the cursor (identity when no hints / soft-wrapped).
-      if (pres != nullptr && !viewport->soft_wrap() &&
-          static_cast<std::size_t>(visual_row) < viewport->visual_line_count()) {
-        const std::size_t line_index =
-            viewport->VisualRowLineIndex(static_cast<std::size_t>(visual_row));
-        const editor::FileDecorations* file_dec =
-            pres->decorations.FindByPath(viewport->path());
-        const auto inline_texts =
-            file_dec != nullptr ? file_dec->InlineTextsForLine(static_cast<std::uint32_t>(line_index))
-                                : std::span<const editor::InlineTextDecoration>{};
-        if (!inline_texts.empty()) {
-          const editor::LayoutLine& layout = viewport->VisibleLineLayoutRef(line_index);
-          const std::size_t row_start = viewport->horizontal_scroll();
-          visual_column = editor::RealVisualColumnForDisplayColumn(
-              inline_texts, &layout, nullptr, row_start, row_start + viewport->visible_columns(),
-              editor_text_renderer_, editor_text_renderer_.CharWidth(), visual_column);
-        }
-      }
-      // Screen-relative column, like the left-click path: LogicalPositionForVisualHit
-      // re-adds the row's own visual origin. Placing the caret at the ABSOLUTE
-      // `visual_column` instead was wrong under soft wrap -- on a continuation row
-      // starting at visual column N, the pointer's screen column addresses N + it,
-      // so a right-click retargeted the caret to near the START of the logical line
-      // (and ignored the row's hanging indent).
-      const int hit_column =
-          std::max(0, static_cast<int>(visual_column) -
-                          static_cast<int>(viewport->horizontal_scroll()));
+      // The same pointer-to-caret mapping as the left click (screen-relative
+      // column, inlay-hint and inset gaps undone).
+      const auto [visual_row, hit_column, hit] = ResolveEditorPointerHit(
+          context_.current_project_state, *viewport, metrics, editor_text_renderer_,
+          event.button.x, event.button.y,
+          [this](std::string_view id) { return GetSettingValue(id); });
       // A right-click inside a selection keeps it (and every other caret's), so
       // the menu's Cut and Copy act on what was selected; collapsing it here made
       // Cut take the whole line instead (empty-selection cut). Outside, the caret
       // moves to the pointer as before.
-      if (viewport->AnySelectionContains(viewport->LogicalPositionForVisualHit(visual_row, hit_column))) {
+      if (viewport->AnySelectionContains(hit)) {
         return false;
       }
       viewport->MoveCursorToVisualHit(visual_row, hit_column, false);

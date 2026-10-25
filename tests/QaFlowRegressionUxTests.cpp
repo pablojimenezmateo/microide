@@ -15,6 +15,7 @@
 #include "support/GitSidebarWait.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
+#include "plugin/PluginHost.h"
 #include "util/JsonValue.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -180,6 +181,35 @@ void TestARightClickInsideASelectionKeepsIt() {
   fixture.Click(fixture.TextPoint(2, 4), SDL_BUTTON_RIGHT);
   Expect(fixture.Selection() == "none -> 1:3",
          "a right-click outside it moves the caret there, got " + fixture.Selection());
+}
+
+// editor-context-menu: the right-click retargets the caret through its own copy
+// of the click's pointer-to-position mapping, and that copy did not open the gap
+// a multi-line ghost-text suggestion draws below its line -- so a right-click on
+// a line below a suggestion put the caret on a line above the one clicked. The
+// left click mirrored the gap; both now share one mapping.
+void TestARightClickBelowAGhostSuggestionLandsOnTheClickedLine() {
+  UxFixture fixture("ghost.txt", "one\ntwo\nthree\nfour\nfive\n");
+  Expect(TestAccess::SetSettingValueTransient(fixture.shell, "plugins.ghost_text", "true"),
+         "plugins.ghost_text is settable");
+  TestAccess::ActiveEditor(fixture.shell).MoveCursorTo(0, 3);
+  plugin::PluginHost::GhostTextRequest request;
+  request.text = "X\nY\nZ";
+  TestAccess::PublishGhostText(fixture.shell, "test", request);
+  fixture.Frame();
+  Expect(TestAccess::GhostText(fixture.shell) != nullptr, "precondition: the suggestion is live");
+  // The suggestion draws its two continuation rows between lines 1 and 2, so
+  // line 4 sits two rows lower than the gapless row table (ControlUi `rows`) says.
+  const util::JsonValue ui = TestAccess::ControlUi(fixture.shell);
+  const util::JsonValue& pane = ui["editors"].AsArray()[0];
+  const double line_height = pane["lineHeight"].AsDouble();
+  const SDL_FPoint line4{
+      static_cast<float>(pane["textX"].AsDouble() + 1.2 * pane["charWidth"].AsDouble()),
+      static_cast<float>(pane["firstLineY"].AsDouble() + (3 + 2 + 0.5) * line_height)};
+  fixture.Click(line4, SDL_BUTTON_RIGHT);
+  Expect(fixture.Selection() == "none -> 3:1",
+         "a right-click on line 4 below the suggestion puts the caret there, got " +
+             fixture.Selection());
 }
 
 // find-across-tabs: the find widget stays open across a tab switch, but its
@@ -667,6 +697,8 @@ void RegisterQaFlowRegressionUxTests(std::vector<TestCase>& tests) {
   AddTest(tests, "QaFlowRegressionUx/AltEnterInTheFindWidgetSelectsEveryMatch",
           TestAltEnterInTheFindWidgetSelectsEveryMatch);
   AddTest(tests, "QaFlowRegressionUx/ARightClickInsideASelectionKeepsIt", TestARightClickInsideASelectionKeepsIt);
+  AddTest(tests, "QaFlowRegressionUx/ARightClickBelowAGhostSuggestionLandsOnTheClickedLine",
+          TestARightClickBelowAGhostSuggestionLandsOnTheClickedLine);
   AddTest(tests, "QaFlowRegressionUx/TheFindWidgetFollowsATabSwitch", TestTheFindWidgetFollowsATabSwitch);
   AddTest(tests, "QaFlowRegressionUx/CtrlKSSavesEveryDirtyFile", TestCtrlKSSavesEveryDirtyFile);
   AddTest(tests, "QaFlowRegressionUx/TheUnsavedPromptsLettersDoNotType", TestTheUnsavedPromptsLettersDoNotType);
