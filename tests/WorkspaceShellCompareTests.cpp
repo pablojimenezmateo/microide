@@ -2058,6 +2058,28 @@ void TestWorkspaceShellMergeBlameLoadsForResultPane() {
          "merge blame should keep the blame summary metadata");
 }
 
+// QA monkey (seed 8, state oracle): comparing an untitled buffer with the
+// clipboard named its tab "compare: Clipboard  ↔  Untitled" -- the control
+// channel's title, prefix and all -- where every other comparison's tab is named.
+void TestWorkspaceShellPathlessComparisonTabIsNamedLikeVsCode() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() -> std::optional<std::string> { return std::string("from the clipboard\n"); });
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "tab"), "an untitled buffer opens");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("typed\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "compare-clipboard"),
+         "the clipboard compares with the untitled buffer");
+  const std::size_t active = WorkspaceShellTestAccess::ActiveTabIndex(shell);
+  const std::string title = WorkspaceShellTestAccess::TabDisplayTitle(shell, active);
+  Expect(title.find("compare:") == std::string::npos && title.find("↔") != std::string::npos &&
+             title.find("Clipboard") != std::string::npos,
+         "the tab is named by its two sides, without the control title's prefix: " + title);
+}
+
 void TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -3547,6 +3569,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareBlameLoadsForWorkingTreePane);
   AddTest(tests, "WorkspaceShell/MergeBlameLoadsForResultPane",
           TestWorkspaceShellMergeBlameLoadsForResultPane);
+  AddTest(tests, "WorkspaceShell/PathlessComparisonTabIsNamedLikeVsCode",
+          TestWorkspaceShellPathlessComparisonTabIsNamedLikeVsCode);
   AddTest(tests, "WorkspaceShell/CompareTabUsesFilenameOnlyLabelAndTooltip",
           TestWorkspaceShellCompareTabUsesFilenameOnlyLabelAndTooltip);
   AddTest(tests, "WorkspaceShell/MergeTabUsesFilenameOnlyLabelAndTooltip",

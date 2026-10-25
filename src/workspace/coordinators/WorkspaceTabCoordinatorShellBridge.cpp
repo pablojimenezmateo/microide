@@ -790,6 +790,23 @@ const std::filesystem::path& TabLabelPath(const TabEntry& tab) {
   return tab.path;
 }
 
+// What a tab is called when no file names it (an untitled buffer, a comparison of
+// the clipboard with one): its title, less the "compare: " / "merge: " that the
+// title carries for the control channel. The strip showed "compare: Clipboard  ↔
+// Untitled" there, where every other comparison shows a name (VS Code: "Clipboard
+// ↔ Untitled-1").
+std::string_view TabLabelFallback(const TabEntry& tab) {
+  std::string_view title = tab.title;
+  if (tab.kind == TabEntry::Kind::Compare || tab.kind == TabEntry::Kind::Merge) {
+    for (const std::string_view prefix : {std::string_view("compare: "), std::string_view("merge: ")}) {
+      if (title.starts_with(prefix)) {
+        title.remove_prefix(prefix.size());
+      }
+    }
+  }
+  return title;
+}
+
 }  // namespace
 
 const TabEntry* WorkspaceShell::TabForLabels(std::size_t group_index, std::size_t index) const {
@@ -808,7 +825,7 @@ WorkspaceTabTextModel WorkspaceShell::TabTextModel(std::size_t group_index,
     return {};
   }
   return BuildWorkspaceTabTextModel(context_.current_project_state.root, TabLabelPath(*tab),
-                                    tab->title, TabCoordinator::TabStateIsDirty(*tab));
+                                    TabLabelFallback(*tab), TabCoordinator::TabStateIsDirty(*tab));
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
@@ -819,7 +836,7 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t
   if (tab == nullptr) {
     return {};
   }
-  std::string title = BuildWorkspaceTabDisplayTitle(TabLabelPath(*tab), tab->title,
+  std::string title = BuildWorkspaceTabDisplayTitle(TabLabelPath(*tab), TabLabelFallback(*tab),
                                                     TabCoordinator::TabStateIsDirty(*tab));
   // Two tabs in the group with the same file name are told apart by their
   // parent folder, "index.ts — src" (VS Code's tab description). Without it both
