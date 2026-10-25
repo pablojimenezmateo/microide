@@ -150,6 +150,28 @@ void LuaRuntime::TimeoutHook(lua_State* state, lua_Debug* /*ar*/) {
   lua_error(state);
 }
 
+namespace {
+
+// After lua_pcall: clears `error_message` on success; on failure takes the error
+// value off the stack into it and counts the error.
+bool ReportPCallStatus(lua_State* state, int status, std::string* error_message) {
+  if (status == LUA_OK) {
+    if (error_message != nullptr) {
+      error_message->clear();
+    }
+    return true;
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackErrors);
+  if (error_message != nullptr) {
+    const char* raw = lua_tostring(state, -1);
+    *error_message = raw != nullptr ? std::string(raw) : std::string("unknown Lua error");
+  }
+  lua_pop(state, 1);
+  return false;
+}
+
+}  // namespace
+
 bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) const {
   if (state_ == nullptr) {
     if (error_message != nullptr) {
@@ -171,19 +193,7 @@ bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) cons
   const int status = lua_pcall(state_, nargs, nresults, 0);
   lua_sethook(state_, nullptr, 0, 0);
 
-  if (status == LUA_OK) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
-    return true;
-  }
-  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackErrors);
-  if (error_message != nullptr) {
-    const char* raw = lua_tostring(state_, -1);
-    *error_message = raw != nullptr ? std::string(raw) : std::string("unknown Lua error");
-  }
-  lua_pop(state_, 1);
-  return false;
+  return ReportPCallStatus(state_, status, error_message);
 }
 
 bool LuaRuntime::PCallNested(int nargs, int nresults, std::string* error_message) const {
@@ -212,19 +222,7 @@ bool LuaRuntime::PCallNested(int nargs, int nresults, std::string* error_message
   lua_sethook(state_, outer_hook, outer_mask, outer_count);
   deadline_ = outer_deadline;
 
-  if (status == LUA_OK) {
-    if (error_message != nullptr) {
-      error_message->clear();
-    }
-    return true;
-  }
-  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackErrors);
-  if (error_message != nullptr) {
-    const char* raw = lua_tostring(state_, -1);
-    *error_message = raw != nullptr ? std::string(raw) : std::string("unknown Lua error");
-  }
-  lua_pop(state_, 1);
-  return false;
+  return ReportPCallStatus(state_, status, error_message);
 }
 #endif
 
