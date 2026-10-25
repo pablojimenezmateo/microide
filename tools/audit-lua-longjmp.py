@@ -292,8 +292,12 @@ def clang_args(entry) -> list:
         if skip:
             skip = False
             continue
-        if a in ("-o", "-c"):
-            skip = a == "-o"
+        if a in ("-o", "-c", "-MF", "-MT", "-MQ"):
+            skip = a != "-c"
+            continue
+        # Dependency-file generation (-MD/-MMD write a .d next to the cwd when the
+        # -MF that named it is dropped) is the build's business, not the audit's.
+        if a in ("-MD", "-MMD"):
             continue
         if a == entry["file"] or a.endswith(entry["file"]):
             continue
