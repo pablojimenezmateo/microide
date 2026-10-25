@@ -37,15 +37,8 @@ bool DapClient::Start(const platform::ProcessLauncher& launcher,
     return false;
   }
 
-  impl_->shutdown_started.store(false, std::memory_order_release);
-  impl_->shutdown_complete.store(false, std::memory_order_release);
-  impl_->shutting_down.store(false, std::memory_order_release);
-  impl_->process_shutdown_started.store(false, std::memory_order_release);
   impl_->initialized.store(false, std::memory_order_release);
-  impl_->stop_init.store(false);
-
-  Impl* const init_impl = impl_.get();
-  impl_->init_thread = std::thread([init_impl]() { init_impl->DoInitializeBlocking(); });
+  impl_->LaunchInitializeThread();
   return true;
 }
 
@@ -157,9 +150,6 @@ bool DapClient::IsShuttingDown() const {
   return impl_->shutting_down.load(std::memory_order_acquire);
 }
 
-bool DapClient::IsShutdownComplete() const {
-  return impl_->shutdown_started.load(std::memory_order_acquire) &&
-         impl_->shutdown_complete.load(std::memory_order_acquire);
-}
+bool DapClient::IsShutdownComplete() const { return impl_->IsShutdownComplete(); }
 
 }  // namespace microide::workspace

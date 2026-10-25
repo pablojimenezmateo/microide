@@ -4,7 +4,9 @@
 // the bulk of the former 1332-line transport header.
 #include "workspace/lsp/WorkspaceLspClientInternal.h"
 
+#include <algorithm>
 #include <chrono>
+#include <initializer_list>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -39,52 +41,56 @@ void LspClient::Impl::SetProgressReadiness(const util::JsonValue& value) {
                                                    ExtractIndexedCount(title), percentage});
     }
   }
-  TraceLspLifecycle(language_id, proc.pid(), "progress", kind.empty() ? "report" : kind);
+  TraceLifecycle("progress", kind.empty() ? "report" : kind);
 }
 
-void LspClient::Impl::DoInitializeBlocking() {
-  util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
-  TraceLspLifecycle(language_id, proc.pid(), "init-thread-begin");
-  initializing.store(true, std::memory_order_release);
-  {
-    std::lock_guard lock(mutex);
-    readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
-    readiness_snapshot.message.clear();
-    readiness_snapshot.indexed_count = 0;
-  }
+namespace {
 
-  using namespace util;
-  JsonObject text_doc_sync;
-  text_doc_sync["dynamicRegistration"] = JsonValue(false);
+using util::JsonArray;
+using util::JsonObject;
+using util::JsonValue;
+
+JsonValue StringArray(std::initializer_list<const char*> values) {
+  JsonArray array;
+  array.reserve(values.size());
+  for (const char* value : values) {
+    array.push_back(JsonValue(value));
+  }
+  return JsonValue(std::move(array));
+}
+
+// The capability object nearly every feature advertises: statically registered.
+JsonObject StaticRegistration() {
+  JsonObject caps;
+  caps["dynamicRegistration"] = JsonValue(false);
+  return caps;
+}
+
+// typeDefinition / implementation / declaration share definition's link support.
+JsonObject NavigationCapabilities() {
+  JsonObject caps = StaticRegistration();
+  caps["linkSupport"] = JsonValue(true);
+  return caps;
+}
+
+JsonObject TextDocumentClientCapabilities() {
+  JsonObject text_doc_sync = StaticRegistration();
   text_doc_sync["willSave"] = JsonValue(false);
   text_doc_sync["didSave"] = JsonValue(true);
 
   JsonObject completion_item_caps;
   completion_item_caps["snippetSupport"] = JsonValue(true);
-  {
-    JsonArray doc_formats;
-    doc_formats.push_back(JsonValue("markdown"));
-    doc_formats.push_back(JsonValue("plaintext"));
-    completion_item_caps["documentationFormat"] = JsonValue(std::move(doc_formats));
-  }
-  JsonObject completion_caps;
-  completion_caps["dynamicRegistration"] = JsonValue(false);
+  completion_item_caps["documentationFormat"] = StringArray({"markdown", "plaintext"});
+  JsonObject completion_caps = StaticRegistration();
   completion_caps["completionItem"] = JsonValue(std::move(completion_item_caps));
   // The request carries `context.triggerKind`, so a re-request for an incomplete
   // list is announced as one (TriggerForIncompleteCompletions).
   completion_caps["contextSupport"] = JsonValue(true);
 
-  JsonObject hover_caps;
-  hover_caps["dynamicRegistration"] = JsonValue(false);
-  {
-    JsonArray hover_formats;
-    hover_formats.push_back(JsonValue("markdown"));
-    hover_formats.push_back(JsonValue("plaintext"));
-    hover_caps["contentFormat"] = JsonValue(std::move(hover_formats));
-  }
+  JsonObject hover_caps = StaticRegistration();
+  hover_caps["contentFormat"] = StringArray({"markdown", "plaintext"});
 
-  JsonObject signature_caps;
-  signature_caps["dynamicRegistration"] = JsonValue(false);
+  JsonObject signature_caps = StaticRegistration();
   {
     JsonObject parameter_info;
     // We resolve `[start, end]` parameter-label offsets against the signature label.
@@ -93,65 +99,30 @@ void LspClient::Impl::DoInitializeBlocking() {
     signature_info["parameterInformation"] = JsonValue(std::move(parameter_info));
     // Per-signature activeParameter overrides the top-level value (LSP 3.16+).
     signature_info["activeParameterSupport"] = JsonValue(true);
-    JsonArray doc_formats;
-    doc_formats.push_back(JsonValue("markdown"));
-    doc_formats.push_back(JsonValue("plaintext"));
-    signature_info["documentationFormat"] = JsonValue(std::move(doc_formats));
+    signature_info["documentationFormat"] = StringArray({"markdown", "plaintext"});
     signature_caps["signatureInformation"] = JsonValue(std::move(signature_info));
   }
 
-  JsonObject definition_caps;
-  definition_caps["dynamicRegistration"] = JsonValue(false);
-  definition_caps["linkSupport"] = JsonValue(true);
-
-  // typeDefinition / implementation / declaration share definition's link support.
-  const auto make_nav_caps = []() {
-    JsonObject caps;
-    caps["dynamicRegistration"] = JsonValue(false);
-    caps["linkSupport"] = JsonValue(true);
-    return caps;
-  };
-
-  JsonObject references_caps;
-  references_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject rename_caps;
-  rename_caps["dynamicRegistration"] = JsonValue(false);
+  JsonObject rename_caps = StaticRegistration();
   rename_caps["prepareSupport"] = JsonValue(true);
 
-  JsonObject code_action_caps;
-  code_action_caps["dynamicRegistration"] = JsonValue(false);
+  JsonObject code_action_caps = StaticRegistration();
   {
-    JsonArray kinds;
-    for (const char* kind : {"quickfix", "refactor", "refactor.extract", "refactor.inline",
-                             "refactor.rewrite", "source", "source.organizeImports"}) {
-      kinds.push_back(JsonValue(kind));
-    }
     JsonObject kind_obj;
-    kind_obj["valueSet"] = JsonValue(std::move(kinds));
+    kind_obj["valueSet"] =
+        StringArray({"quickfix", "refactor", "refactor.extract", "refactor.inline",
+                     "refactor.rewrite", "source", "source.organizeImports"});
     JsonObject literal;
     literal["codeActionKind"] = JsonValue(std::move(kind_obj));
     code_action_caps["codeActionLiteralSupport"] = JsonValue(std::move(literal));
   }
 
-  JsonObject formatting_caps;
-  formatting_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject range_formatting_caps;
-  range_formatting_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject document_symbol_caps;
-  document_symbol_caps["dynamicRegistration"] = JsonValue(false);
-
-  JsonObject semantic_tokens_caps;
-  semantic_tokens_caps["dynamicRegistration"] = JsonValue(false);
+  JsonObject semantic_tokens_caps = StaticRegistration();
   {
     JsonObject requests;
     requests["full"] = JsonValue(true);
     semantic_tokens_caps["requests"] = JsonValue(std::move(requests));
-    JsonArray formats;
-    formats.push_back(JsonValue("relative"));
-    semantic_tokens_caps["formats"] = JsonValue(std::move(formats));
+    semantic_tokens_caps["formats"] = StringArray({"relative"});
     // The server still picks its own legend; we map its token-type indices by
     // name at publish time, so an empty client tokenTypes/tokenModifiers set is
     // fine (we accept whatever legend the server reports).
@@ -164,16 +135,16 @@ void LspClient::Impl::DoInitializeBlocking() {
   text_document_caps["completion"] = JsonValue(std::move(completion_caps));
   text_document_caps["hover"] = JsonValue(std::move(hover_caps));
   text_document_caps["signatureHelp"] = JsonValue(std::move(signature_caps));
-  text_document_caps["definition"] = JsonValue(std::move(definition_caps));
-  text_document_caps["typeDefinition"] = JsonValue(make_nav_caps());
-  text_document_caps["implementation"] = JsonValue(make_nav_caps());
-  text_document_caps["declaration"] = JsonValue(make_nav_caps());
-  text_document_caps["references"] = JsonValue(std::move(references_caps));
+  text_document_caps["definition"] = JsonValue(NavigationCapabilities());
+  text_document_caps["typeDefinition"] = JsonValue(NavigationCapabilities());
+  text_document_caps["implementation"] = JsonValue(NavigationCapabilities());
+  text_document_caps["declaration"] = JsonValue(NavigationCapabilities());
+  text_document_caps["references"] = JsonValue(StaticRegistration());
   text_document_caps["rename"] = JsonValue(std::move(rename_caps));
   text_document_caps["codeAction"] = JsonValue(std::move(code_action_caps));
-  text_document_caps["formatting"] = JsonValue(std::move(formatting_caps));
-  text_document_caps["rangeFormatting"] = JsonValue(std::move(range_formatting_caps));
-  text_document_caps["documentSymbol"] = JsonValue(std::move(document_symbol_caps));
+  text_document_caps["formatting"] = JsonValue(StaticRegistration());
+  text_document_caps["rangeFormatting"] = JsonValue(StaticRegistration());
+  text_document_caps["documentSymbol"] = JsonValue(StaticRegistration());
   text_document_caps["semanticTokens"] = JsonValue(std::move(semantic_tokens_caps));
   {
     // Pushed diagnostics. Some servers publish only to a client that says it takes
@@ -184,41 +155,20 @@ void LspClient::Impl::DoInitializeBlocking() {
     publish_diagnostics_caps["versionSupport"] = JsonValue(true);
     text_document_caps["publishDiagnostics"] = JsonValue(std::move(publish_diagnostics_caps));
   }
-  {
-    JsonObject inlay_hint_caps;
-    inlay_hint_caps["dynamicRegistration"] = JsonValue(false);
-    text_document_caps["inlayHint"] = JsonValue(std::move(inlay_hint_caps));
-  }
-  {
-    JsonObject document_highlight_caps;
-    document_highlight_caps["dynamicRegistration"] = JsonValue(false);
-    text_document_caps["documentHighlight"] = JsonValue(std::move(document_highlight_caps));
-  }
-  {
-    JsonObject code_lens_caps;
-    code_lens_caps["dynamicRegistration"] = JsonValue(false);
-    text_document_caps["codeLens"] = JsonValue(std::move(code_lens_caps));
-  }
-  {
-    JsonObject call_hierarchy_caps;
-    call_hierarchy_caps["dynamicRegistration"] = JsonValue(false);
-    text_document_caps["callHierarchy"] = JsonValue(std::move(call_hierarchy_caps));
-  }
+  text_document_caps["inlayHint"] = JsonValue(StaticRegistration());
+  text_document_caps["documentHighlight"] = JsonValue(StaticRegistration());
+  text_document_caps["codeLens"] = JsonValue(StaticRegistration());
+  text_document_caps["callHierarchy"] = JsonValue(StaticRegistration());
+  return text_document_caps;
+}
 
+JsonObject WorkspaceClientCapabilities() {
   JsonObject workspace_caps;
   workspace_caps["configuration"] = JsonValue(true);
   workspace_caps["workspaceFolders"] = JsonValue(true);
-  {
-    JsonObject symbol_caps;
-    symbol_caps["dynamicRegistration"] = JsonValue(false);
-    workspace_caps["symbol"] = JsonValue(std::move(symbol_caps));
-  }
-  {
-    // Activating a code lens runs its command through workspace/executeCommand.
-    JsonObject execute_command_caps;
-    execute_command_caps["dynamicRegistration"] = JsonValue(false);
-    workspace_caps["executeCommand"] = JsonValue(std::move(execute_command_caps));
-  }
+  workspace_caps["symbol"] = JsonValue(StaticRegistration());
+  // Activating a code lens runs its command through workspace/executeCommand.
+  workspace_caps["executeCommand"] = JsonValue(StaticRegistration());
   // Server-initiated edits are applied by the host (open buffers in place, closed
   // files silently on disk) via the bound apply-edit handler.
   workspace_caps["applyEdit"] = JsonValue(true);
@@ -231,19 +181,11 @@ void LspClient::Impl::DoInitializeBlocking() {
     // first failure (our applier additionally rolls back completed ops).
     JsonObject workspace_edit_caps;
     workspace_edit_caps["documentChanges"] = JsonValue(true);
-    JsonArray resource_ops;
-    resource_ops.push_back(JsonValue("create"));
-    resource_ops.push_back(JsonValue("rename"));
-    resource_ops.push_back(JsonValue("delete"));
-    workspace_edit_caps["resourceOperations"] = JsonValue(std::move(resource_ops));
+    workspace_edit_caps["resourceOperations"] = StringArray({"create", "rename", "delete"});
     workspace_edit_caps["failureHandling"] = JsonValue("textOnlyTransactional");
     workspace_caps["workspaceEdit"] = JsonValue(std::move(workspace_edit_caps));
   }
-  {
-    JsonObject did_change_config;
-    did_change_config["dynamicRegistration"] = JsonValue(false);
-    workspace_caps["didChangeConfiguration"] = JsonValue(std::move(did_change_config));
-  }
+  workspace_caps["didChangeConfiguration"] = JsonValue(StaticRegistration());
   {
     // On-disk changes the editor did not make (a `git switch`, a `pull`, a
     // generated header) reach the server only through this notification. Without
@@ -261,7 +203,10 @@ void LspClient::Impl::DoInitializeBlocking() {
     did_change_watched_files["relativePatternSupport"] = JsonValue(true);
     workspace_caps["didChangeWatchedFiles"] = JsonValue(std::move(did_change_watched_files));
   }
+  return workspace_caps;
+}
 
+JsonObject ClientCapabilities() {
   JsonObject window_caps;
   window_caps["workDoneProgress"] = JsonValue(true);
 
@@ -272,19 +217,17 @@ void LspClient::Impl::DoInitializeBlocking() {
   // UTF-16 default and our byte offsets corrupt every position past any
   // non-ASCII char on the incremental-sync mirror.
   JsonObject general_caps;
-  {
-    JsonArray encodings;
-    encodings.push_back(JsonValue("utf-8"));
-    encodings.push_back(JsonValue("utf-16"));
-    general_caps["positionEncodings"] = JsonValue(std::move(encodings));
-  }
+  general_caps["positionEncodings"] = StringArray({"utf-8", "utf-16"});
 
   JsonObject caps;
-  caps["textDocument"] = JsonValue(std::move(text_document_caps));
-  caps["workspace"] = JsonValue(std::move(workspace_caps));
+  caps["textDocument"] = JsonValue(TextDocumentClientCapabilities());
+  caps["workspace"] = JsonValue(WorkspaceClientCapabilities());
   caps["window"] = JsonValue(std::move(window_caps));
   caps["general"] = JsonValue(std::move(general_caps));
+  return caps;
+}
 
+JsonValue InitializeParams(const std::string& root_uri, const JsonValue& initialization_options) {
   JsonObject client_info;
   client_info["name"] = JsonValue("microide");
 
@@ -309,22 +252,130 @@ void LspClient::Impl::DoInitializeBlocking() {
   if (!initialization_options.IsNull()) {
     init_params["initializationOptions"] = initialization_options;
   }
-  init_params["capabilities"] = JsonValue(std::move(caps));
+  init_params["capabilities"] = JsonValue(ClientCapabilities());
+  return JsonValue(std::move(init_params));
+}
+
+// A `*Provider` server capability that may be a bare bool or an options object;
+// either truthy shape means the server serves the request.
+bool ProviderAdvertised(const JsonValue& provider) {
+  return provider.IsObject() || provider.AsBool(false);
+}
+
+}  // namespace
+
+void LspClient::Impl::ApplyServerCapabilities(const util::JsonValue& server_caps) {
+  const auto& sync = server_caps["textDocumentSync"];
+  int sync_kind = 1;
+  if (sync.IsInt()) {
+    sync_kind = sync.AsInt();
+  } else if (sync.HasKey("change")) {
+    sync_kind = sync["change"].AsInt(1);
+  }
+  supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
+
+  // Completion trigger characters (TD-2026-10-07-321) and signature-help
+  // trigger characters (TD-2026-10-20-369): typing one opens the list or
+  // the parameter hints, as VS Code does.
+  completion_triggers.Store(server_caps["completionProvider"]["triggerCharacters"]);
+  signature_help_triggers.Store(server_caps["signatureHelpProvider"]["triggerCharacters"]);
+
+  // Capture the negotiated position encoding. utf-8 means our editor
+  // byte offsets are already exact; utf-16/utf-32 are converted per line
+  // at every position seam (lsp_encoding::*), and the per-keystroke
+  // incremental sync falls back to full-document sync for those so the
+  // pre-edit byte range never needs re-encoding.
+  {
+    std::string negotiated = "utf-16";
+    if (server_caps.HasKey("positionEncoding") && server_caps["positionEncoding"].IsString()) {
+      negotiated = server_caps["positionEncoding"].AsString();
+    }
+    std::lock_guard lock(mutex);
+    position_encoding = negotiated;
+  }
+
+  // Capture the semantic-token legend (type names) so the host can map
+  // a response's token-type indices back to names at publish time.
+  if (server_caps.HasKey("semanticTokensProvider")) {
+    const auto& provider = server_caps["semanticTokensProvider"];
+    if (provider.HasKey("legend") && provider["legend"].HasKey("tokenTypes")) {
+      const auto& types = provider["legend"]["tokenTypes"];
+      if (types.IsArray()) {
+        const auto& array = types.AsArray();
+        // Cap the harvested legend like the steady-state result parsers: a
+        // buggy/hostile server can advertise a huge tokenTypes array in the
+        // initialize response, which would be duplicated into a long-lived
+        // vector (and copied by value on every SemanticTokenLegend() call) for
+        // a feature that only maps a small set of token-type indices to names.
+        // Token types past the cap are not useful for rendering. (TD-32.)
+        constexpr std::size_t kMaxSemanticTokenLegendEntries = 1024;
+        const std::size_t harvested = std::min(array.size(), kMaxSemanticTokenLegendEntries);
+        std::vector<std::string> legend;
+        legend.reserve(harvested);
+        for (std::size_t i = 0; i < harvested; ++i) {
+          legend.push_back(array[i].AsString());
+        }
+        std::lock_guard lock(mutex);
+        semantic_token_types = std::move(legend);
+      }
+      supports_semantic_tokens.store(true, std::memory_order_release);
+    }
+  }
+
+  // inlayHintProvider: bare bool or an object (resolveProvider).
+  if (server_caps.HasKey("inlayHintProvider")) {
+    supports_inlay_hints.store(ProviderAdvertised(server_caps["inlayHintProvider"]),
+                               std::memory_order_release);
+  }
+  // documentHighlightProvider: bare bool or a WorkDoneProgressOptions object.
+  if (server_caps.HasKey("documentHighlightProvider")) {
+    supports_document_highlight.store(
+        ProviderAdvertised(server_caps["documentHighlightProvider"]), std::memory_order_release);
+  }
+  // callHierarchyProvider: bare bool or a (Static)RegistrationOptions object.
+  if (server_caps.HasKey("callHierarchyProvider")) {
+    supports_call_hierarchy.store(ProviderAdvertised(server_caps["callHierarchyProvider"]),
+                                  std::memory_order_release);
+  }
+  // codeLensProvider is always an object when present, and its optional
+  // `resolveProvider` decides whether range-only lenses can be filled in.
+  if (server_caps.HasKey("codeLensProvider")) {
+    const auto& provider = server_caps["codeLensProvider"];
+    const bool provided = ProviderAdvertised(provider);
+    supports_code_lens.store(provided, std::memory_order_release);
+    supports_code_lens_resolve.store(provided && provider["resolveProvider"].AsBool(false),
+                                     std::memory_order_release);
+  }
+  // renameProvider may be a bare bool (plain rename) or an object that can
+  // carry prepareProvider (textDocument/prepareRename support).
+  if (server_caps.HasKey("renameProvider")) {
+    const auto& rename_provider = server_caps["renameProvider"];
+    if (rename_provider.HasKey("prepareProvider")) {
+      supports_prepare_rename.store(rename_provider["prepareProvider"].AsBool(false),
+                                    std::memory_order_release);
+    }
+  }
+}
+
+void LspClient::Impl::DoInitializeBlocking() {
+  util::StartupTrace::Scope trace_scope("LspClient::DoInitializeBlocking");
+  TraceLifecycle("init-thread-begin");
+  initializing.store(true, std::memory_order_release);
+  {
+    std::lock_guard lock(mutex);
+    readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Starting;
+    readiness_snapshot.message.clear();
+    readiness_snapshot.indexed_count = 0;
+  }
 
   const int init_id = GetNextId();
-  const auto req = MakeRequest(init_id, "initialize", JsonValue(std::move(init_params)));
+  const auto req = MakeRequest(init_id, "initialize", InitializeParams(root_uri, initialization_options));
   if (!SendMessageImmediate(req)) {
     SetLastError("failed to send initialize request to language server");
-    ShutdownProcessOnce();
-    // A feature request registered during init (before `initialized`) would
-    // otherwise strand its UI loading state — fail it so the handler runs its
-    // no-result path instead of being silently dropped by teardown.
-    FailPendingRequests(false);
-    ClearDeferredMessages();
-    initializing.store(false, std::memory_order_release);
+    AbandonInitialize();
     return;
   }
-  TraceLspLifecycle(language_id, proc.pid(), "initialize-request", "sent");
+  TraceLifecycle("initialize-request", "sent");
 
   bool got_init = false;
   std::string init_error;  // the server's message when it answered initialize with an error
@@ -341,10 +392,7 @@ void LspClient::Impl::DoInitializeBlocking() {
     const auto init_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     while (std::chrono::steady_clock::now() < init_deadline) {
       if (stop_init.load(std::memory_order_acquire)) {
-        ShutdownProcessOnce();
-        FailPendingRequests(false);
-        ClearDeferredMessages();
-        initializing.store(false, std::memory_order_release);
+        AbandonInitialize();
         return;
       }
       auto resp_opt = framer_.Next();
@@ -387,122 +435,17 @@ void LspClient::Impl::DoInitializeBlocking() {
         init_error = message.empty() ? std::string("no message") : message;
         break;
       }
-
       if (resp.HasKey("result")) {
         const auto& result = resp["result"];
         if (result.HasKey("capabilities")) {
-          const auto& server_caps = result["capabilities"];
-          const auto& sync = server_caps["textDocumentSync"];
-          int sync_kind = 1;
-          if (sync.IsInt()) {
-            sync_kind = sync.AsInt();
-          } else if (sync.HasKey("change")) {
-            sync_kind = sync["change"].AsInt(1);
-          }
-          supports_incremental_sync.store(sync_kind == 2, std::memory_order_release);
-
-          // Completion trigger characters (TD-2026-10-07-321) and signature-help
-          // trigger characters (TD-2026-10-20-369): typing one opens the list or
-          // the parameter hints, as VS Code does.
-          completion_triggers.Store(server_caps["completionProvider"]["triggerCharacters"]);
-          signature_help_triggers.Store(
-              server_caps["signatureHelpProvider"]["triggerCharacters"]);
-
-          // Capture the negotiated position encoding. utf-8 means our editor
-          // byte offsets are already exact; utf-16/utf-32 are converted per line
-          // at every position seam (lsp_encoding::*), and the per-keystroke
-          // incremental sync falls back to full-document sync for those so the
-          // pre-edit byte range never needs re-encoding.
-          {
-            std::string negotiated = "utf-16";
-            if (server_caps.HasKey("positionEncoding") &&
-                server_caps["positionEncoding"].IsString()) {
-              negotiated = server_caps["positionEncoding"].AsString();
-            }
-            {
-              std::lock_guard lock(mutex);
-              position_encoding = negotiated;
-            }
-          }
-
-          // Capture the semantic-token legend (type names) so the host can map
-          // a response's token-type indices back to names at publish time.
-          if (server_caps.HasKey("semanticTokensProvider")) {
-            const auto& provider = server_caps["semanticTokensProvider"];
-            if (provider.HasKey("legend") && provider["legend"].HasKey("tokenTypes")) {
-              const auto& types = provider["legend"]["tokenTypes"];
-              if (types.IsArray()) {
-                const auto& array = types.AsArray();
-                // Cap the harvested legend like the steady-state result parsers: a
-                // buggy/hostile server can advertise a huge tokenTypes array in the
-                // initialize response, which would be duplicated into a long-lived
-                // vector (and copied by value on every SemanticTokenLegend() call) for
-                // a feature that only maps a small set of token-type indices to names.
-                // Token types past the cap are not useful for rendering. (TD-32.)
-                constexpr std::size_t kMaxSemanticTokenLegendEntries = 1024;
-                const std::size_t harvested =
-                    std::min(array.size(), kMaxSemanticTokenLegendEntries);
-                std::vector<std::string> legend;
-                legend.reserve(harvested);
-                for (std::size_t i = 0; i < harvested; ++i) {
-                  legend.push_back(array[i].AsString());
-                }
-                std::lock_guard lock(mutex);
-                semantic_token_types = std::move(legend);
-              }
-              supports_semantic_tokens.store(true, std::memory_order_release);
-            }
-          }
-
-          // inlayHintProvider may be a bare bool or an object (resolveProvider);
-          // either truthy shape means the server serves textDocument/inlayHint.
-          if (server_caps.HasKey("inlayHintProvider")) {
-            const auto& provider = server_caps["inlayHintProvider"];
-            const bool provided = provider.IsObject() || provider.AsBool(false);
-            supports_inlay_hints.store(provided, std::memory_order_release);
-          }
-
-          // documentHighlightProvider: bare bool or a WorkDoneProgressOptions object.
-          if (server_caps.HasKey("documentHighlightProvider")) {
-            const auto& provider = server_caps["documentHighlightProvider"];
-            const bool provided = provider.IsObject() || provider.AsBool(false);
-            supports_document_highlight.store(provided, std::memory_order_release);
-          }
-
-          // callHierarchyProvider: bare bool or a (Static)RegistrationOptions object.
-          if (server_caps.HasKey("callHierarchyProvider")) {
-            const auto& provider = server_caps["callHierarchyProvider"];
-            const bool provided = provider.IsObject() || provider.AsBool(false);
-            supports_call_hierarchy.store(provided, std::memory_order_release);
-          }
-
-          // codeLensProvider is always an object when present, and its optional
-          // `resolveProvider` decides whether range-only lenses can be filled in.
-          if (server_caps.HasKey("codeLensProvider")) {
-            const auto& provider = server_caps["codeLensProvider"];
-            const bool provided = provider.IsObject() || provider.AsBool(false);
-            supports_code_lens.store(provided, std::memory_order_release);
-            supports_code_lens_resolve.store(provided && provider["resolveProvider"].AsBool(false),
-                                             std::memory_order_release);
-          }
-
-          // renameProvider may be a bare bool (plain rename) or an object that can
-          // carry prepareProvider (textDocument/prepareRename support).
-          if (server_caps.HasKey("renameProvider")) {
-            const auto& rename_provider = server_caps["renameProvider"];
-            if (rename_provider.HasKey("prepareProvider")) {
-              supports_prepare_rename.store(
-                  rename_provider["prepareProvider"].AsBool(false), std::memory_order_release);
-            }
-          }
+          ApplyServerCapabilities(result["capabilities"]);
         }
         got_init = true;
       }
       break;
     }
   }
-  TraceLspLifecycle(language_id, proc.pid(), "initialize-response",
-                    got_init ? "received" : "missing");
+  TraceLifecycle("initialize-response", got_init ? "received" : "missing");
 
   if (!got_init) {
     (void)proc.IsRunning();
@@ -515,10 +458,7 @@ void LspClient::Impl::DoInitializeBlocking() {
     } else {
       SetLastError("timed out waiting for initialize response from language server");
     }
-    ShutdownProcessOnce();
-    FailPendingRequests(false);
-    ClearDeferredMessages();
-    initializing.store(false, std::memory_order_release);
+    AbandonInitialize();
     return;
   }
 
@@ -562,9 +502,7 @@ void LspClient::Impl::DoInitializeBlocking() {
   if (initialized_send_failed) {
     // send_mutex is released above; FailPendingRequests takes the protocol mutex,
     // so failing pending requests here avoids nesting send_mutex -> mutex.
-    ShutdownProcessOnce();
-    FailPendingRequests(false);
-    initializing.store(false, std::memory_order_release);
+    AbandonInitialize();
     return;
   }
 
@@ -584,57 +522,27 @@ void LspClient::Impl::DoInitializeBlocking() {
     is_indexing = readiness_snapshot.state == LspClient::ReadinessSnapshot::State::Indexing;
   }
   initializing.store(false, std::memory_order_release);
-  TraceLspLifecycle(language_id, proc.pid(), "initialized", is_indexing ? "indexing" : "ready");
+  TraceLifecycle("initialized", is_indexing ? "indexing" : "ready");
 }
 
 void LspClient::Impl::DoShutdown() {
-  TraceLspLifecycle(language_id, proc.pid(), "shutdown-begin");
+  TraceLifecycle("shutdown-begin");
   shutting_down.store(true, std::memory_order_release);
   stop_init.store(true);
   if (test_stub_mode.load(std::memory_order_acquire)) {
     ClearDeferredMessages();
-    ResetProtocolState();
     {
       std::lock_guard hook_lock(mutex);
       test_handlers.Reset();
       apply_edit_handler = nullptr;
     }
-    initialized.store(false, std::memory_order_release);
-    initializing.store(false, std::memory_order_release);
-    supports_incremental_sync.store(false, std::memory_order_release);
     test_stub_mode.store(false, std::memory_order_release);
-    shutting_down.store(false, std::memory_order_release);
-    shutdown_complete.store(true, std::memory_order_release);
+    MarkSessionEnded();
     main_mailbox.PushWake();
     return;
   }
   if (!initialized.load(std::memory_order_acquire)) {
-    TraceLspLifecycle(language_id, proc.pid(), "preinit-cancel");
-    stop_io.store(true, std::memory_order_release);
-    Wake();
-    ShutdownProcessOnce(0);
-    if (init_thread.joinable()) {
-      init_thread.join();
-    }
-    // The init thread may have just promoted itself to the running state and
-    // launched the I/O thread between our check and here; join it if so. The
-    // success path resets stop_io to false and spawns io_thread after we set
-    // stop_io above (a lost-signal window), so re-assert the stop and wake the
-    // io_thread — mirroring the DAP client — instead of relying on the force-kill
-    // making the server hit EOF up to a poll cycle later.
-    if (io_thread.joinable()) {
-      stop_io.store(true, std::memory_order_release);
-      Wake();
-      io_thread.join();
-    }
-    ClearDeferredMessages();
-    CloseWakePipe();
-    ResetProtocolState();
-    initialized.store(false, std::memory_order_release);
-    initializing.store(false, std::memory_order_release);
-    supports_incremental_sync.store(false, std::memory_order_release);
-    shutting_down.store(false, std::memory_order_release);
-    shutdown_complete.store(true, std::memory_order_release);
+    CancelBeforeInitialized();
     main_mailbox.PushWake();
     return;
   }
@@ -661,53 +569,26 @@ void LspClient::Impl::DoShutdown() {
   const bool sent_shutdown =
       SendMessageImmediate(MakeRequest(shutdown_id, "shutdown", JsonValue(JsonObject{})), true,
                            std::chrono::milliseconds(1000));
-  TraceLspLifecycle(language_id, proc.pid(), "shutdown-request",
-                    sent_shutdown ? "sent" : "send-failed");
+  TraceLifecycle("shutdown-request", sent_shutdown ? "sent" : "send-failed");
   if (sent_shutdown) {
     std::unique_lock lock(mutex);
     const bool got_shutdown_response =
         shutdown_cv.wait_for(lock, std::chrono::milliseconds(750), [this]() {
       return shutdown_response_received;
     });
-    TraceLspLifecycle(language_id, proc.pid(), "shutdown-response",
-                      got_shutdown_response ? "received" : "timeout");
+    TraceLifecycle("shutdown-response", got_shutdown_response ? "received" : "timeout");
   }
   if (proc.IsRunning()) {
     // Also bounded: never block teardown behind a stuck write. If it times out,
     // CloseStdin + the force-kill below still tear the server down.
     (void)SendMessageImmediate(MakeNotification("exit", JsonValue(JsonObject{})), true,
                                std::chrono::milliseconds(1000));
-    TraceLspLifecycle(language_id, proc.pid(), "exit-notification", "sent");
+    TraceLifecycle("exit-notification", "sent");
     proc.CloseStdin();
-    TraceLspLifecycle(language_id, proc.pid(), "stdin", "closed");
+    TraceLifecycle("stdin", "closed");
   }
-
-  const auto graceful_shutdown_deadline =
-      std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
-  while (proc.IsRunning() && std::chrono::steady_clock::now() < graceful_shutdown_deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  }
-  TraceLspLifecycle(language_id, proc.pid(), "graceful-wait",
-                    proc.IsRunning() ? "still-running" : "exited");
-
-  stop_io.store(true, std::memory_order_release);
-  Wake();
-  if (proc.IsRunning()) {
-    TraceLspLifecycle(language_id, proc.pid(), "forced-shutdown");
-    ShutdownProcessOnce(1000);
-  }
-
-  if (io_thread.joinable()) {
-    io_thread.join();
-  }
-  CloseWakePipe();
-
-  ResetProtocolState();
-  initialized.store(false, std::memory_order_release);
-  initializing.store(false, std::memory_order_release);
-  supports_incremental_sync.store(false, std::memory_order_release);
-  shutting_down.store(false, std::memory_order_release);
-  shutdown_complete.store(true, std::memory_order_release);
+  StopProcessAfterGoodbye(std::chrono::milliseconds(3000));
+  MarkSessionEnded();
   const std::optional<int> code = proc.exit_code();
   if (code.has_value()) {
     const std::string detail = "exit-code=" + std::to_string(*code);
@@ -716,22 +597,6 @@ void LspClient::Impl::DoShutdown() {
     TraceLspLifecycle(language_id, -1, "shutdown-complete");
   }
   main_mailbox.PushWake();
-}
-
-void LspClient::Impl::BeginShutdown() {
-  bool expected = false;
-  if (!shutdown_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-    return;
-  }
-  shutdown_complete.store(false, std::memory_order_release);
-  shutdown_thread = std::thread([this]() { DoShutdown(); });
-}
-
-void LspClient::Impl::WaitForShutdown() {
-  BeginShutdown();
-  if (shutdown_thread.joinable()) {
-    shutdown_thread.join();
-  }
 }
 
 }  // namespace microide::workspace

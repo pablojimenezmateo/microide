@@ -107,17 +107,13 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
 
   // No per-message send trace; LSP tracing is lifecycle-level (LspClientTrace).
   void TraceSend(const util::JsonValue&) const {}
+  void TraceLifecycle(std::string_view phase, std::string_view detail = {}) {
+    TraceLspLifecycle(language_id, proc.pid(), phase, detail);
+  }
   void WakeMainThread() { main_mailbox.PushWake(); }
 
   std::mutex mutex;
 
-  // Initialization thread state
-  std::thread init_thread;
-  std::atomic<bool> initializing{false};
-  std::atomic<bool> stop_init{false};
-  std::thread shutdown_thread;
-  std::atomic<bool> shutdown_started{false};
-  std::atomic<bool> shutdown_complete{false};
   std::condition_variable shutdown_cv;
   bool shutdown_response_received = false;
   int shutdown_request_id = 0;
@@ -306,6 +302,7 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     shutdown_response_received = false;
     shutdown_request_id = 0;
     readiness_snapshot = LspClient::ReadinessSnapshot{};
+    supports_incremental_sync.store(false, std::memory_order_release);
   }
 
   static int ExtractIndexedCount(std::string_view text) {
@@ -486,14 +483,14 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   // and spawn the I/O thread. Runs on init_thread. Defined in
   // WorkspaceLspClientLifecycle.cpp.
   void DoInitializeBlocking();
+  // Records what the initialize response's `capabilities` advertise: sync kind,
+  // trigger characters, position encoding, semantic-token legend, optional providers.
+  void ApplyServerCapabilities(const util::JsonValue& server_caps);
 
   // Graceful shutdown: shutdown/exit handshake with bounded waits, then join the
   // I/O thread and force-kill if the server does not exit. Runs on
   // shutdown_thread. Defined in WorkspaceLspClientLifecycle.cpp.
   void DoShutdown();
-
-  void BeginShutdown();
-  void WaitForShutdown();
 };
 
 }  // namespace microide::workspace

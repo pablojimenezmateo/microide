@@ -61,14 +61,7 @@ bool LspClient::Start(const platform::ProcessLauncher& launcher,
   // resolved against it, and a restart re-derives it from the new root.
   impl_->root_path = PathFromFileUri(root_uri).value_or(std::filesystem::path{});
   impl_->language_id = language_id;
-  impl_->shutdown_started.store(false, std::memory_order_release);
-  impl_->shutdown_complete.store(false, std::memory_order_release);
-  impl_->shutting_down.store(false, std::memory_order_release);
-  impl_->process_shutdown_started.store(false, std::memory_order_release);
-
-  impl_->stop_init.store(false);
-  Impl* const init_impl = impl_.get();
-  impl_->init_thread = std::thread([init_impl]() { init_impl->DoInitializeBlocking(); });
+  impl_->LaunchInitializeThread();
   return true;
 }
 
@@ -411,10 +404,7 @@ bool LspClient::IsShuttingDown() const {
   return impl_->shutting_down.load(std::memory_order_acquire);
 }
 
-bool LspClient::IsShutdownComplete() const {
-  return impl_->shutdown_started.load(std::memory_order_acquire) &&
-         impl_->shutdown_complete.load(std::memory_order_acquire);
-}
+bool LspClient::IsShutdownComplete() const { return impl_->IsShutdownComplete(); }
 
 void LspClient::SetMaxQueuedBytesForTesting(std::size_t bytes) {
   std::lock_guard lock(impl_->send_mutex);

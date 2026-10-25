@@ -7,6 +7,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 
@@ -32,6 +33,11 @@ namespace microide::workspace {
 //   void FailPendingRequests(bool only_expired);      // sweep / fail-all
 //   void SetLastError(std::string message);           // surface a transport error
 //   void TraceSend(const util::JsonValue& msg);       // per-message send trace (may be a no-op)
+//   void TraceLifecycle(std::string_view phase, std::string_view detail = {});
+//   void WakeMainThread();                            // nudge the main thread's mailbox
+//   void ResetProtocolState();                        // forget every per-session id/request
+//   void DoInitializeBlocking();                      // the handshake; runs on init_thread
+//   void DoShutdown();                                // the teardown; runs on shutdown_thread
 // and the base calls them with zero indirection on the per-message path.
 //
 // Threading contract (unchanged from the two originals, and the reason the
@@ -96,6 +102,16 @@ class StdioJsonRpcClientTransport {
   std::atomic<bool> initialized{false};
   // When true, the client behaves as a connected peer for unit tests (no subprocess).
   std::atomic<bool> test_stub_mode{false};
+
+  // Session lifecycle: the initialize handshake runs on init_thread, teardown on
+  // shutdown_thread. The LSP and DAP clients each declared this set and each
+  // carried their own copy of every transition below.
+  std::thread init_thread;
+  std::atomic<bool> initializing{false};
+  std::atomic<bool> stop_init{false};
+  std::thread shutdown_thread;
+  std::atomic<bool> shutdown_started{false};
+  std::atomic<bool> shutdown_complete{false};
 
   std::deque<QueuedMessage> deferred_messages;
   std::deque<QueuedMessage> outbound_messages;
@@ -296,6 +312,103 @@ class StdioJsonRpcClientTransport {
       return;
     }
     proc.Shutdown(timeout_ms);
+  }
+
+  // --- session lifecycle ----------------------------------------------------
+  // Arms a freshly started process for a new session and runs the derived
+  // client's handshake on init_thread.
+  void LaunchInitializeThread() {
+    shutdown_started.store(false, std::memory_order_release);
+    shutdown_complete.store(false, std::memory_order_release);
+    shutting_down.store(false, std::memory_order_release);
+    process_shutdown_started.store(false, std::memory_order_release);
+    stop_init.store(false);
+    init_thread = std::thread([this]() { derived().DoInitializeBlocking(); });
+  }
+
+  // The initialize handshake failed or was cancelled: kill the process, and fail
+  // (not silently drop) any request registered during init, so its UI loading
+  // state runs its no-result path instead of stranding.
+  void AbandonInitialize() {
+    ShutdownProcessOnce();
+    derived().FailPendingRequests(false);
+    ClearDeferredMessages();
+    initializing.store(false, std::memory_order_release);
+  }
+
+  void BeginShutdown() {
+    bool expected = false;
+    if (!shutdown_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      return;
+    }
+    shutdown_complete.store(false, std::memory_order_release);
+    shutdown_thread = std::thread([this]() { derived().DoShutdown(); });
+  }
+
+  void WaitForShutdown() {
+    BeginShutdown();
+    if (shutdown_thread.joinable()) {
+      shutdown_thread.join();
+    }
+  }
+
+  // Shutdown requested before the handshake finished: stop everything without a
+  // protocol goodbye. Ends with the session reset; the caller wakes the main thread.
+  void CancelBeforeInitialized() {
+    derived().TraceLifecycle("preinit-cancel");
+    stop_io.store(true, std::memory_order_release);
+    Wake();
+    ShutdownProcessOnce(0);
+    if (init_thread.joinable()) {
+      init_thread.join();
+    }
+    // The init thread's success path may have observed our shutdown request too
+    // late: it resets stop_io to false and spawns io_thread after we set stop_io
+    // above (a lost-signal window). Re-assert the stop and wake io_thread so it
+    // terminates promptly instead of relying on the force-kill making the peer
+    // hit EOF. io_thread is only joinable when init opened the wake pipe.
+    if (io_thread.joinable()) {
+      stop_io.store(true, std::memory_order_release);
+      Wake();
+      io_thread.join();
+    }
+    ClearDeferredMessages();
+    CloseWakePipe();
+    MarkSessionEnded();
+  }
+
+  // After the protocol goodbye: give the peer `grace` to exit by itself, then stop
+  // the I/O thread and force-kill whatever is still running.
+  void StopProcessAfterGoodbye(std::chrono::milliseconds grace) {
+    const auto deadline = std::chrono::steady_clock::now() + grace;
+    while (proc.IsRunning() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    derived().TraceLifecycle("graceful-wait", proc.IsRunning() ? "still-running" : "exited");
+    stop_io.store(true, std::memory_order_release);
+    Wake();
+    if (proc.IsRunning()) {
+      derived().TraceLifecycle("forced-shutdown");
+      ShutdownProcessOnce(1000);
+    }
+    if (io_thread.joinable()) {
+      io_thread.join();
+    }
+    CloseWakePipe();
+  }
+
+  // The last step of every shutdown path: the client is back to "never started".
+  void MarkSessionEnded() {
+    derived().ResetProtocolState();
+    initialized.store(false, std::memory_order_release);
+    initializing.store(false, std::memory_order_release);
+    shutting_down.store(false, std::memory_order_release);
+    shutdown_complete.store(true, std::memory_order_release);
+  }
+
+  bool IsShutdownComplete() const {
+    return shutdown_started.load(std::memory_order_acquire) &&
+           shutdown_complete.load(std::memory_order_acquire);
   }
 
   // Wait until stdout has data/EOF or an outbound wake arrives. Returns true when

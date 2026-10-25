@@ -152,20 +152,17 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
         }) {}
 
   void TraceSend(const util::JsonValue& msg) const { util::DebugTrace::Message("send", msg); }
+  void TraceLifecycle(std::string_view phase, std::string_view detail = {}) {
+    TraceDapLifecycle(adapter_id, proc.pid(), phase, detail);
+  }
   void WakeMainThread() { main_mailbox.PushWake(); }
 
   std::mutex mutex;
 
-  std::thread init_thread;
-  std::atomic<bool> initializing{false};
-  std::atomic<bool> stop_init{false};
-  std::thread shutdown_thread;
-  std::atomic<bool> shutdown_started{false};
   // Whether the teardown `disconnect` ends the debuggee. A launched program is the
   // session's and ends with it; gdb's DAP takes an unnamed terminateDebuggee as
   // false and detached, leaving the program running after the editor quit.
   std::atomic<bool> terminate_debuggee_on_disconnect{false};
-  std::atomic<bool> shutdown_complete{false};
   std::condition_variable shutdown_cv;
   bool shutdown_response_received = false;
   int shutdown_request_seq = 0;
@@ -421,12 +418,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     const auto req = dap_protocol::MakeRequest(init_seq, "initialize", JsonValue(std::move(args)));
     if (!SendMessageImmediate(req)) {
       SetLastError("failed to send initialize request to debug adapter");
-      ShutdownProcessOnce();
-      // Fail (don't silently drop) any request registered during init so its UI
-      // loading state resolves instead of stranding — symmetric with the LSP client.
-      FailPendingRequests(false);
-      ClearDeferredMessages();
-      initializing.store(false, std::memory_order_release);
+      AbandonInitialize();
       return;
     }
 
@@ -450,10 +442,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     const auto init_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
     while (std::chrono::steady_clock::now() < init_deadline) {
       if (stop_init.load(std::memory_order_acquire)) {
-        ShutdownProcessOnce();
-        FailPendingRequests(false);
-        ClearDeferredMessages();
-        initializing.store(false, std::memory_order_release);
+        AbandonInitialize();
         return;
       }
       auto msg_opt = framer_.Next();
@@ -490,10 +479,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
         // of retaining an unbounded event backlog for the full timeout window.
         if (early_messages.size() > kMaxDapEarlyMessages) {
           SetLastError("debug adapter emitted too many events before initialize response");
-          ShutdownProcessOnce();
-          FailPendingRequests(false);
-          ClearDeferredMessages();
-          initializing.store(false, std::memory_order_release);
+          AbandonInitialize();
           return;
         }
         continue;
@@ -503,10 +489,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
         const std::string message =
             message_val.IsString() ? message_val.AsString() : "initialize failed";
         SetLastError("debug adapter rejected initialize: " + message);
-        ShutdownProcessOnce();
-        FailPendingRequests(false);
-        ClearDeferredMessages();
-        initializing.store(false, std::memory_order_release);
+        AbandonInitialize();
         return;
       }
       {
@@ -525,10 +508,7 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
       } else {
         SetLastError("timed out waiting for initialize response from debug adapter");
       }
-      ShutdownProcessOnce();
-      FailPendingRequests(false);
-      ClearDeferredMessages();
-      initializing.store(false, std::memory_order_release);
+      AbandonInitialize();
       return;
     }
 
@@ -557,51 +537,24 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   }
 
   void DoShutdown() {
-    TraceDapLifecycle(adapter_id, proc.pid(), "shutdown-begin");
+    TraceLifecycle("shutdown-begin");
     shutting_down.store(true, std::memory_order_release);
     stop_init.store(true);
 
     if (test_stub_mode.load(std::memory_order_acquire)) {
       ClearDeferredMessages();
-      ResetProtocolState();
       {
         std::lock_guard lock(mutex);
         test_request_handler = nullptr;
       }
-      initialized.store(false, std::memory_order_release);
-      initializing.store(false, std::memory_order_release);
       test_stub_mode.store(false, std::memory_order_release);
-      shutting_down.store(false, std::memory_order_release);
-      shutdown_complete.store(true, std::memory_order_release);
+      MarkSessionEnded();
       main_mailbox.PushWake();
       return;
     }
 
     if (!initialized.load(std::memory_order_acquire)) {
-      TraceDapLifecycle(adapter_id, proc.pid(), "preinit-cancel");
-      stop_io.store(true, std::memory_order_release);
-      Wake();
-      ShutdownProcessOnce(0);
-      if (init_thread.joinable()) {
-        init_thread.join();
-      }
-      // The init thread's success path may have observed our shutdown request too
-      // late: it resets stop_io to false and spawns io_thread after we set stop_io
-      // above (a lost-signal window). Re-assert the stop and wake io_thread so it
-      // terminates promptly instead of relying on the force-kill making the adapter
-      // hit EOF. io_thread is only joinable when init opened the wake pipe.
-      if (io_thread.joinable()) {
-        stop_io.store(true, std::memory_order_release);
-        Wake();
-        io_thread.join();
-      }
-      ClearDeferredMessages();
-      CloseWakePipe();
-      ResetProtocolState();
-      initialized.store(false, std::memory_order_release);
-      initializing.store(false, std::memory_order_release);
-      shutting_down.store(false, std::memory_order_release);
-      shutdown_complete.store(true, std::memory_order_release);
+      CancelBeforeInitialized();
       main_mailbox.PushWake();
       return;
     }
@@ -630,57 +583,20 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
     const bool sent_disconnect = SendMessageImmediate(
         dap_protocol::MakeRequest(disconnect_seq, "disconnect", JsonValue(std::move(disconnect_args))),
         true, std::chrono::milliseconds(1000));
-    TraceDapLifecycle(adapter_id, proc.pid(), "disconnect-request",
-                      sent_disconnect ? "sent" : "send-failed");
+    TraceLifecycle("disconnect-request", sent_disconnect ? "sent" : "send-failed");
     if (sent_disconnect) {
       std::unique_lock lock(mutex);
       const bool got_response = shutdown_cv.wait_for(lock, std::chrono::milliseconds(750),
                                                      [this]() { return shutdown_response_received; });
-      TraceDapLifecycle(adapter_id, proc.pid(), "disconnect-response",
-                        got_response ? "received" : "timeout");
+      TraceLifecycle("disconnect-response", got_response ? "received" : "timeout");
     }
     if (proc.IsRunning()) {
       proc.CloseStdin();
     }
-
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(3000);
-    while (proc.IsRunning() && std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-
-    stop_io.store(true, std::memory_order_release);
-    Wake();
-    if (proc.IsRunning()) {
-      TraceDapLifecycle(adapter_id, proc.pid(), "forced-shutdown");
-      ShutdownProcessOnce(1000);
-    }
-    if (io_thread.joinable()) {
-      io_thread.join();
-    }
-    CloseWakePipe();
-    ResetProtocolState();
-    initialized.store(false, std::memory_order_release);
-    initializing.store(false, std::memory_order_release);
-    shutting_down.store(false, std::memory_order_release);
-    shutdown_complete.store(true, std::memory_order_release);
+    StopProcessAfterGoodbye(std::chrono::milliseconds(3000));
+    MarkSessionEnded();
     TraceDapLifecycle(adapter_id, -1, "shutdown-complete");
     main_mailbox.PushWake();
-  }
-
-  void BeginShutdown() {
-    bool expected = false;
-    if (!shutdown_started.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-      return;
-    }
-    shutdown_complete.store(false, std::memory_order_release);
-    shutdown_thread = std::thread([this]() { DoShutdown(); });
-  }
-
-  void WaitForShutdown() {
-    BeginShutdown();
-    if (shutdown_thread.joinable()) {
-      shutdown_thread.join();
-    }
   }
 };
 
