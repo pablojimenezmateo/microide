@@ -24,7 +24,8 @@ class ToolDownloader {
   ToolDownloader();
   ~ToolDownloader();
 
-  // Set cache directory (defaults to ~/.cache/microide/tools).
+  // Set cache directory (defaults to the user cache directory's microide/tools;
+  // empty when there is none, and an empty cache directory refuses every operation).
   void SetCacheDir(const std::filesystem::path& dir);
 
   // Resolve a tool from a LOCAL source and cache it, verifying its SHA256.

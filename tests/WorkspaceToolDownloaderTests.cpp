@@ -44,6 +44,28 @@ void TestToolDownloaderFallsBackToShasumWhenSha256sumMissing() {
          "successful download should return the cached tool path");
 }
 
+// Regression: with no user cache directory the default used to be a literal `~`
+// path -- relative, so it cached under the working directory and ClearCache would
+// remove that tree. The default now comes from ResolveAppDirectory, and an empty
+// one refuses instead.
+void TestToolDownloaderWithoutUserCacheDirectoryRefuses() {
+#if defined(__linux__)
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path source = temp_dir.path() / "tool.bin";
+  WriteFile(source, "payload\n");
+  ScopedEnvVar home("HOME", "");
+  ScopedEnvVar xdg_cache("XDG_CACHE_HOME", "");
+
+  ToolDownloader downloader;
+  Expect(!downloader.Download("tool", source.string(), "").has_value(),
+         "a downloader with no cache directory must refuse to cache");
+  Expect(!downloader.IsCached("tool"), "a downloader with no cache directory caches nothing");
+  downloader.ClearCache();
+  Expect(!std::filesystem::exists(std::filesystem::current_path() / "~"),
+         "no cache tree may appear under the working directory");
+#endif
+}
+
 // Regression: the expected digest may be uppercase (manifests accept either case)
 // while the computed digest is lowercase. Download must compare case-insensitively
 // so a correct file with an uppercase expected sha still verifies.
@@ -284,6 +306,8 @@ void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests) {
           TestToolDownloaderRejectsTraversalToolId);
   AddTest(tests, "WorkspaceToolDownloader/EmptyHashDoesNotTrustCacheWithoutLocalSource",
           TestToolDownloaderEmptyHashDoesNotTrustCacheWithoutLocalSource);
+  AddTest(tests, "WorkspaceToolDownloader/WithoutUserCacheDirectoryRefuses",
+          TestToolDownloaderWithoutUserCacheDirectoryRefuses);
   AddTest(tests, "WorkspaceToolDownloader/EmptyHashReCopiesFromLocalSource",
           TestToolDownloaderEmptyHashReCopiesFromLocalSource);
 }

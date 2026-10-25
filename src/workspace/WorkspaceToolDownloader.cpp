@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <future>
 
+#include "platform/AppDirectories.h"
 #include "util/DurableFile.h"
 #include "util/Sha256.h"
 #include "workspace/FileUri.h"
@@ -83,16 +84,14 @@ std::optional<std::string> ComputeSha256Blocking(const std::filesystem::path& pa
 }  // namespace
 
 ToolDownloader::ToolDownloader() {
-#ifdef _WIN32
-  const auto* appdata = std::getenv("APPDATA");
-  cache_dir_ = appdata ? std::filesystem::path(appdata) / "microide" / "tools"
-                       : std::filesystem::path("~") / ".cache" / "microide" / "tools";
-#else
-  const auto* home = std::getenv("HOME");
-  cache_dir_ =
-      home ? std::filesystem::path(home) / ".cache" / "microide" / "tools"
-           : std::filesystem::path("~") / ".cache" / "microide" / "tools";
-#endif
+  // With no resolvable user cache directory the cache stays empty and every
+  // operation refuses. The fallback this replaced was a literal `~` path, which is
+  // RELATIVE: it cached under the working directory, and ClearCache removed that.
+  if (const std::filesystem::path app_cache =
+          platform::ResolveAppDirectory(platform::UserDirectoryKind::Cache, "microide");
+      !app_cache.empty()) {
+    cache_dir_ = app_cache / "tools";
+  }
 }
 
 ToolDownloader::~ToolDownloader() = default;
@@ -102,7 +101,7 @@ void ToolDownloader::SetCacheDir(const std::filesystem::path& dir) { cache_dir_ 
 std::optional<std::filesystem::path> ToolDownloader::Download(const std::string& tool_id,
                                                                const std::string& url,
                                                                const std::string& expected_sha256_in) {
-  if (!IsSafeToolId(tool_id)) {
+  if (cache_dir_.empty() || !IsSafeToolId(tool_id)) {
     return std::nullopt;
   }
 
@@ -214,7 +213,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
 }
 
 bool ToolDownloader::IsCached(const std::string& tool_id) const {
-  if (!IsSafeToolId(tool_id)) {
+  if (cache_dir_.empty() || !IsSafeToolId(tool_id)) {
     return false;
   }
   const auto cached = cache_dir_ / tool_id;
@@ -223,7 +222,7 @@ bool ToolDownloader::IsCached(const std::string& tool_id) const {
 
 std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
     const std::string& tool_id, const std::string& expected_sha256) const {
-  if (!IsSafeToolId(tool_id)) {
+  if (cache_dir_.empty() || !IsSafeToolId(tool_id)) {
     return std::nullopt;
   }
   const auto cached = cache_dir_ / tool_id;
@@ -243,6 +242,9 @@ std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
 }
 
 void ToolDownloader::ClearCache() {
+  if (cache_dir_.empty()) {
+    return;
+  }
   std::error_code ec;
   std::filesystem::remove_all(cache_dir_, ec);
 }
