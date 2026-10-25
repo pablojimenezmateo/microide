@@ -858,24 +858,28 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   SDL_assert(frame_token.valid() &&
              "Application::WorkspaceRenderClip requires PrepareFrameOnce() in current frame");
 #endif
+  // Without a usable scene texture the whole window is drawn straight to it.
+  const auto render_fallback_full = [&]() {
+    {
+      util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
+      util::AddPerformanceCounter(util::PerfCounterId::RenderSceneFallbackFrames);
+      workspace_shell_.RenderClip(frame_token, renderer_, width, height);
+    }
+    SDL_RenderPresent(renderer_);
+    redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = true,
+                                          .full_redraw = true,
+                                          .promoted_partial_to_full = false,
+                                          .dirty_rect_count = 0,
+                                          .rendered_clip_count = 0,
+                                          .frame_index = frame_index_,
+                                          .reason = "fallback-full",
+                                          .elapsed_ns = SDL_GetTicksNS() - render_start});
+  };
   if (scene_texture_ready) {
     if (!SDL_SetRenderTarget(renderer_, scene_texture_.texture())) {
       SDL_Log("SDL_SetRenderTarget(scene texture) failed: %s", SDL_GetError());
       scene_texture_.Destroy();
-      {
-        util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
-        util::AddPerformanceCounter(util::PerfCounterId::RenderSceneFallbackFrames);
-        workspace_shell_.RenderClip(frame_token, renderer_, width, height);
-      }
-      SDL_RenderPresent(renderer_);
-      redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = true,
-                                            .full_redraw = true,
-                                            .promoted_partial_to_full = false,
-                                            .dirty_rect_count = 0,
-                                            .rendered_clip_count = 0,
-                                            .frame_index = frame_index_,
-                                            .reason = "fallback-full",
-                                            .elapsed_ns = SDL_GetTicksNS() - render_start});
+      render_fallback_full();
       first_render_complete_ = true;
       workspace_shell_.OnFramePresented();
       return;
@@ -962,18 +966,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                           .reason = reason,
                                           .elapsed_ns = SDL_GetTicksNS() - render_start});
   } else {
-    util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
-    util::AddPerformanceCounter(util::PerfCounterId::RenderSceneFallbackFrames);
-    workspace_shell_.RenderClip(frame_token, renderer_, width, height);
-    SDL_RenderPresent(renderer_);
-    redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = true,
-                                          .full_redraw = true,
-                                          .promoted_partial_to_full = false,
-                                          .dirty_rect_count = 0,
-                                          .rendered_clip_count = 0,
-                                          .frame_index = frame_index_,
-                                          .reason = "fallback-full",
-                                          .elapsed_ns = SDL_GetTicksNS() - render_start});
+    render_fallback_full();
   }
   first_render_complete_ = true;
   workspace_shell_.OnFramePresented();
