@@ -1532,7 +1532,15 @@ scheme in use back, Enter keeps and persists the choice. `ui` names the pick's
 `kind`. `QaFlowRegressionUx/TheColorThemePickPreviewsRevertsAndApplies`; QA
 `color-theme-pick`. TD-2026-10-18-360/356/357 are the next kinds.
 
-### TD-2026-10-18-362 — two monkey stale frames that do not replay; no Show Hover by keyboard. [OPEN]
+### TD-2026-10-18-362 — two monkey stale frames that do not replay; no Show Hover by keyboard. [CLOSED 2026-10-25 — every seed runs clean]
+
+**Closed 2026-10-25.** Every seed this ledger names runs clean on the 2026-10-25
+build with the redraw verifier on: seeds 2, 10 and 12 re-run alone, seed 14 after
+the panel tabs joined the close-glyph damage (TD-2026-10-16-346, most likely the
+same gap), and seeds 1-8 and 14-17 as a batch once their fixes landed. Show Hover
+and the LSP byte sanitising below were fixed earlier. A new non-replaying finding
+gets its own entry with its finding directory.
+
 
 The QA monkey (`run.py monkey --seeds 10-13 --steps 300`, 2026-10-18) found two
 stale partial frames that a replay of the same seed does not reproduce, so they

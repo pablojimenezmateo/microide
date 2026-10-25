@@ -312,7 +312,17 @@ class Monkey:
         else:
             self.app.click(x, y, clicks=2 if self.rng.random() < 0.1 else 1)
 
+    def _step_off_a_forbidden_setting(self) -> None:
+        """Before a key or typed text: with a forbidden setting's row selected in the
+        Settings overlay, Enter or Space would toggle it -- seed 1 switched
+        `control.enabled` off that way, after a click that selected the row from
+        empty space beside it. Down first, so the keys land on the next row."""
+        if any(element.get("selected") and any(setting in element.get("name", "") for setting in FORBIDDEN_SETTINGS)
+               for element in self.app.ui().get("elements", [])):
+            self.app.key("Down")
+
     def chord_action(self) -> None:
+        self._step_off_a_forbidden_setting()
         if self._chords is None:
             self._chords = []
             for binding in self.app.keybindings():
@@ -332,6 +342,7 @@ class Monkey:
         self.app.send_line(command)
 
     def type_action(self) -> None:
+        self._step_off_a_forbidden_setting()
         self.app.type(self.rng.choice(["alpha", "b", "  ", "x" * 40, "}", "//", "\n"]))
 
     def drag_action(self) -> None:
