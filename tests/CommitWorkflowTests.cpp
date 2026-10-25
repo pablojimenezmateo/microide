@@ -851,6 +851,73 @@ void TestCancelledWarningConfirmationCommitsNothing() {
          "cancelling must not acknowledge anything, so the next attempt asks again");
 }
 
+// The checks read the repository snapshot, and the snapshot can be stale when
+// Commit is pressed: a file appeared (or was un-staged) outside the app and the
+// watcher's refresh has not landed yet. The commit went in on the old snapshot,
+// past the untracked-files question it should have asked (qa-asan,
+// journey-feature-branch). A request made on a stale snapshot asks for a refresh
+// and is evaluated against what that refresh finds.
+void TestCommitOnAStaleSnapshotWaitsForTheRefresh() {
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowPendingConfirmation;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const auto repo = temp_dir.path() / "repo";
+  WriteFile(repo / "seed.txt", "seed\n");
+  InitializeGitRepo(repo);
+  CommitAll(repo, "base", "base");
+  WriteFile(repo / "seed.txt", "seed\nmore\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage a change to commit");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  const auto refresh = [&] {
+    git_service.RunRefreshSynchronouslyForTesting(repo, Local(), GitSidebarRefreshScope::Full,
+                                                  OutgoingBaseChoice{}, false);
+  };
+  refresh();
+
+  CommitWorkflowService service(executor, git_service);
+  int confirmations = 0;
+  int refresh_requests = 0;
+  service.SetCallbacks(CommitWorkflowService::Callbacks{
+      .request_git_refresh = [&] { ++refresh_requests; },
+      .open_commit_warning_confirmation = [&](std::string) { ++confirmations; },
+  });
+  CommitWorkflowState state;
+  service.Open(state);
+  state.subject.SetText("Add more");
+
+  // The tree changes under the snapshot; the watcher only marks it stale.
+  WriteFile(repo / "scratch.txt", "untracked\n");
+  git_service.MarkStale();
+
+  Expect(service.RequestCommit(state, CommitOperationKind::Create),
+         "a commit on a stale snapshot is accepted, to be evaluated after the refresh");
+  Expect(!state.operation_in_flight, "nothing may be committed on a stale snapshot");
+  Expect(confirmations == 0, "and nothing asked yet: the snapshot does not know the file");
+  Expect(refresh_requests == 1, "the request asks for the refresh it waits on");
+
+  refresh();
+  service.NoteGitRefreshOutcome(state, git_service.CurrentSummary().generation, "");
+  Expect(confirmations == 1,
+         "the refreshed snapshot holds the untracked file, so the commit asks about it");
+  Expect(state.pending_confirmation == CommitWorkflowPendingConfirmation::Warnings,
+         "parked on the warnings confirmation");
+  Expect(!state.operation_in_flight, "still nothing committed before the answer");
+
+  // Once answered, a later refresh does not evaluate the commit again.
+  service.CancelPendingConfirmation(state);
+  refresh();
+  service.NoteGitRefreshOutcome(state, git_service.CurrentSummary().generation, "");
+  Expect(confirmations == 1, "a commit waits for one refresh, not every refresh after");
+}
+
 }  // namespace
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
@@ -871,6 +938,8 @@ void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
           TestUnacknowledgedWarningsConfirmRatherThanBlock);
   AddTest(tests, "CommitWorkflow/CancelledWarningConfirmationCommitsNothing",
           TestCancelledWarningConfirmationCommitsNothing);
+  AddTest(tests, "CommitWorkflow/CommitOnAStaleSnapshotWaitsForTheRefresh",
+          TestCommitOnAStaleSnapshotWaitsForTheRefresh);
   AddTest(tests, "CommitWorkflow/DraftPersistenceRoundTrip", TestCommitDraftPersistenceRoundTrip);
   AddTest(tests, "CommitWorkflow/PartialStageWarnsForV2SingleModifiedEntry",
           TestPartialStageWarnsForV2SingleModifiedEntry);

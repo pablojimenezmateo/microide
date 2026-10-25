@@ -192,8 +192,28 @@ void CommitWorkflowService::ReportRefusal(std::string message) const {
 
 bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
                                           const project::CommitOperationKind operation) {
+  return RequestCommitImpl(state, operation, /*may_wait_for_refresh=*/true);
+}
+
+bool CommitWorkflowService::RequestCommitImpl(CommitWorkflowState& state,
+                                              const project::CommitOperationKind operation,
+                                              const bool may_wait_for_refresh) {
   if (!state.open || state.operation_in_flight) {
     return false;
+  }
+  // The checks below read the repository snapshot. A stale one (the tree changed
+  // since: an outside `git reset`, a build writing files) would decide the
+  // untracked-files question and the conflict check on what the tree no longer
+  // holds, so ask for a refresh and come back when it lands.
+  if (may_wait_for_refresh && callbacks_.request_git_refresh != nullptr &&
+      (git_repository_service_.CurrentSummary().stale || git_repository_service_.IsRefreshing())) {
+    {
+      std::lock_guard lock(mutex_);
+      pre_commit_refresh_watch_ = git_repository_service_.CurrentRefreshGeneration() + 1;
+      commit_waiting_for_refresh_ = operation;
+    }
+    callbacks_.request_git_refresh();
+    return true;
   }
   // Pre-dispatch refresh runs the full conflict-marker scan; a positive result is a
   // blocking check that CanExecuteCommit rejects below.
@@ -412,8 +432,23 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
   }
 }
 
-void CommitWorkflowService::NoteGitRefreshOutcome(const std::uint64_t snapshot_generation,
+void CommitWorkflowService::NoteGitRefreshOutcome(CommitWorkflowState& state,
+                                                  const std::uint64_t snapshot_generation,
                                                   const std::string_view refresh_error) {
+  // A commit waiting on this refresh is evaluated now, outside the lock below
+  // (RequestCommitImpl takes it), and only once: a refresh that leaves the
+  // snapshot stale does not hold the commit forever.
+  std::optional<project::CommitOperationKind> waiting;
+  {
+    std::lock_guard lock(mutex_);
+    if (pre_commit_refresh_watch_ != 0 && snapshot_generation >= pre_commit_refresh_watch_) {
+      pre_commit_refresh_watch_ = 0;
+      waiting = commit_waiting_for_refresh_;
+    }
+  }
+  if (waiting.has_value()) {
+    (void)RequestCommitImpl(state, *waiting, /*may_wait_for_refresh=*/false);
+  }
   // Same locking shape as PublishResult: `callbacks_` is guarded by mutex_, and
   // both run on the main thread, so the callbacks fire under the lock.
   std::lock_guard lock(mutex_);

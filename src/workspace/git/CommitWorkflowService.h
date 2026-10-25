@@ -109,10 +109,17 @@ class CommitWorkflowService {
   // promptly matters more than waiting out a refresh that may take seconds. A
   // newer commit disarms the watch, so the operation in front of the user always
   // owns the feedback.
-  void NoteGitRefreshOutcome(std::uint64_t snapshot_generation,
+  //
+  // It also answers a commit that was waiting for this refresh (see
+  // RequestCommit): the commit's checks are evaluated again, now against it.
+  void NoteGitRefreshOutcome(CommitWorkflowState& state, std::uint64_t snapshot_generation,
                              std::string_view refresh_error);
 
  private:
+  // `may_wait_for_refresh`: a request made while the repository snapshot is stale
+  // or refreshing asks for a refresh and is evaluated when it lands, once.
+  bool RequestCommitImpl(CommitWorkflowState& state, project::CommitOperationKind operation,
+                         bool may_wait_for_refresh);
   // Reports a refusal on both channels: command feedback (palette / control channel)
   // and a toast, which is all a user who pressed the Commit button ever sees.
   void ReportRefusal(std::string message) const;
@@ -132,6 +139,13 @@ class CommitWorkflowService {
   // throttled or folded into an already-deferred refresh, in which case the
   // commit's changes are picked up by a later generation than the call returned.
   std::uint64_t post_commit_refresh_watch_ = 0;
+  // A commit requested while the repository snapshot was stale: its checks ("untracked
+  // files are not included", conflicts, a branch behind) read that snapshot, so the
+  // request waits for the refresh it asked for (0 = none waiting; same "current + 1"
+  // floor as above). A file un-staged outside the app the moment before Commit was
+  // otherwise committed past without the untracked-files question.
+  std::uint64_t pre_commit_refresh_watch_ = 0;
+  project::CommitOperationKind commit_waiting_for_refresh_ = project::CommitOperationKind::Create;
   // Background-thread commit result -> main-thread PublishResult marshaling. Keeps
   // all mutation of CommitWorkflowState (subject/body viewports, status message)
   // on the render thread; the worker only produces the CommitOperationResult.

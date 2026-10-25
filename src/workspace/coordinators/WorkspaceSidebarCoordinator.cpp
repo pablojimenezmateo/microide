@@ -288,8 +288,9 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                   // to hear whether it failed (TD-2026-07-26-003). Every consumed
                   // snapshot goes through here, so this is the one place the async
                   // outcome is known on the main thread.
-                  commit_workflow_service_.NoteGitRefreshOutcome(snapshot->generation,
-                                                                 snapshot->refresh_error);
+                  commit_workflow_service_.NoteGitRefreshOutcome(
+                      context_.current_project_state.sidebar.git.commit_workflow,
+                      snapshot->generation, snapshot->refresh_error);
                 }
                 return consumed;
               },
