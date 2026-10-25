@@ -482,6 +482,11 @@ void TerminalSession::SetOutputObserver(std::function<void()> observer) {
   output_observer_ = std::move(observer);
 }
 
+std::uint64_t TerminalSession::OutputCount() const {
+  std::scoped_lock lock(mutex_);
+  return output_count_;
+}
+
 bool TerminalSession::HasUnreadOutput() const {
   std::shared_ptr<platform::TerminalBackend> backend;
   {
@@ -575,6 +580,7 @@ void TerminalSession::CaptureForHost(std::uint64_t from, std::size_t max_lines_b
     dest.wrapped_from_previous = lines_[i].wrapped_from_previous;
   }
   out.generation = snapshot_generation_;
+  out.output_count = output_count_;
 
   // The URIs of the links those lines carry; the frame builder sends the ones
   // its lines use. Most captures have none and pay one pass over the cells.

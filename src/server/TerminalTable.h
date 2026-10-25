@@ -132,9 +132,13 @@ class TerminalTable {
     std::uint64_t echo_ack = 0;
     std::chrono::steady_clock::time_point written_at{};
     // The terminal's output_generation this client last captured, and the one
-    // when it last wrote input: output after that answers it.
+    // when it last wrote input: output after that answers it. Scheduling only --
+    // the observer bumps it after the buffer's lock is released.
     std::uint64_t seen_generation = 0;
     std::uint64_t written_generation = 0;
+    // The session's OutputCount() when it last wrote input: a capture holding
+    // more output answers it. What the ack is decided by.
+    std::uint64_t written_output = 0;
     // One-shot signals a capture took for every client; this one's are unsent.
     bool bell = false;
     std::optional<std::string> clipboard;

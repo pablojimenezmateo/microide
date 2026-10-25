@@ -242,6 +242,9 @@ class TerminalSession {
     std::uint64_t first_line = 0;      // absolute index of lines[0]
     std::vector<TerminalLine> lines;   // [first_line, end); the screen is the tail
     std::uint64_t generation = 0;
+    // OutputCount() as of these lines, read under the same lock: the server acks
+    // input against THIS, so a frame acks exactly what it shows (TD-392).
+    std::uint64_t output_count = 0;
   };
   void CaptureForHost(std::uint64_t from, std::size_t max_lines_before_screen, HostCapture& out);
   // Server side, term/scrollback: up to `count` primary-buffer lines ending just
@@ -255,6 +258,10 @@ class TerminalSession {
   // Output the program wrote that the observer has not been told of yet
   // (platform::TerminalBackend::HasUnreadOutput). Any thread.
   bool HasUnreadOutput() const;
+  // How many output chunks (and the exit) have been applied to the buffer --
+  // advanced under the buffer's lock as each is applied, unlike the observer,
+  // which runs after the lock is released. Any thread.
+  std::uint64_t OutputCount() const;
 
  private:
   enum class EscapeMode {
@@ -464,6 +471,7 @@ class TerminalSession {
   std::size_t scroll_region_top_ = 0;
   std::size_t scroll_region_bottom_ = 23;
   std::uint64_t snapshot_generation_ = 1;
+  std::uint64_t output_count_ = 0;  // OutputCount()
 
   // Test seam: captures bytes written while no backend is attached (placeholder
   // test mode). Always present so the core ABI is identical for the production

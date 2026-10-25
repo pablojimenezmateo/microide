@@ -140,6 +140,7 @@ bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
             {
               std::scoped_lock lock(mutex_);
               AppendOutputLocked(output);
+              ++output_count_;
               wake = ConsumeWakeDecisionLocked();
               observer = output_observer_;
             }
@@ -165,6 +166,7 @@ bool TerminalSession::StartArgv(const platform::ProcessLauncher& launcher,
               if (emit_exit_marker) {
                 EmitProcessExitMarkerLocked();
               }
+              ++output_count_;
               observer = output_observer_;
             }
             if (observer) {

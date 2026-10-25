@@ -213,6 +213,21 @@ void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
   }
   using Kind = terminal::TerminalInputEvent::Kind;
   terminal::TerminalSession& session = terminal->session;
+  // The input is on record as written -- with what the program had printed
+  // before it -- BEFORE it reaches the pty, so whatever is applied after answers
+  // it. Recorded after the write, a quick echo could be captured first: counted
+  // as older than the input, or captured while no input was outstanding at all,
+  // so a frame showed the echo without acking it and the client's prediction was
+  // re-placed past it (TD-2026-10-25-392).
+  {
+    std::lock_guard lock(mutex_);
+    if (Client* client = terminal->FindClient(connection)) {
+      client->written_seq = std::max(client->written_seq, events.back().seq);
+      client->written_at = std::chrono::steady_clock::now();
+      client->written_generation = terminal->output_generation.load(std::memory_order_acquire);
+      client->written_output = session.OutputCount();
+    }
+  }
   // Encoded HERE, against the modes this session is in now — not the client's
   // one-round-trip-old view of them.
   for (const terminal::TerminalInputEvent& event : events) {
@@ -236,14 +251,6 @@ void TerminalTable::Input(std::uint64_t connection, std::uint64_t handle,
       case Kind::Focus:
         session.SendFocusEvent(event.pressed);
         break;
-    }
-  }
-  {
-    std::lock_guard lock(mutex_);
-    if (Client* client = terminal->FindClient(connection)) {
-      client->written_seq = std::max(client->written_seq, events.back().seq);
-      client->written_at = std::chrono::steady_clock::now();
-      client->written_generation = terminal->output_generation.load(std::memory_order_acquire);
     }
   }
   Notify();
@@ -439,14 +446,25 @@ void TerminalTable::Run() {
       if (client == nullptr) {
         continue;
       }
-      // Read the echo state BEFORE capturing: output that answered the input is
-      // then already in the capture, so the ack never claims what it cannot show.
-      const std::uint64_t echo_ack =
-          echo_due(terminal, *client) ? client->written_seq : client->echo_ack;
+      // The ack is decided by the CAPTURE: answered when the lines it holds include
+      // output applied after the input was written, read under the same lock as
+      // the lines. Deciding from output_generation before capturing left a window
+      // -- the observer bumps it after the buffer's lock is released -- in which a
+      // frame showed the echo without acking it; the client then re-placed the
+      // still-pending prediction one cell past the echo, and the next frame's ack
+      // judged it against a blank cell: contradicted, and drawing stopped
+      // (TD-2026-10-25-392, PredictionLeadsTheEchoByARoundTrip on CI). The
+      // timeout half ("printed nothing") is read before capturing, so nothing it
+      // relies on being unread can land in between.
+      const bool unanswered = client->written_seq > client->echo_ack;
+      const bool timed_out = unanswered && now - client->written_at >= limits_.echo_timeout &&
+                             !terminal.session.HasUnreadOutput();
       client->seen_generation = terminal.output_generation.load(std::memory_order_acquire);
       terminal.session.CaptureForHost(
           client->builder.capture_from(),
           client->builder.capture_lines_before_screen(terminal.prefetch_lines), capture);
+      const bool answered = unanswered && capture.output_count > client->written_output;
+      const std::uint64_t echo_ack = answered || timed_out ? client->written_seq : client->echo_ack;
       // A capture CONSUMES the one-shot signals; every client is owed them.
       terminal::TerminalHostFrame& header = capture.header;
       if (header.has(terminal::TerminalHostFrame::kBell) || header.clipboard || header.notification) {
