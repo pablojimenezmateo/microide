@@ -1062,6 +1062,66 @@ void TestStopBeganEmitsImmediatePendingEvent() {
   Expect(!(*event).AsObject().count("frames"), "immediate stop omits frames");
 }
 
+// `hit-test` names where a press at a point lands, so the QA driver waits for a
+// press's button events only when the app will get them: a press on the title
+// bar's drag area or a resize edge goes to the window manager, and one past the
+// window's current size goes nowhere (QA monkey: 9 s waits on CI's ASan lane).
+void TestHitTestQueryNamesWhereAPressLands() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-hit-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+  microide::workspace::ControlChannelService service;
+  service.Configure(context,
+                    microide::workspace::ControlChannelService::Operations{
+                        .execute_command_line =
+                            [](const std::string&) {
+                              return microide::workspace::ControlChannelService::CommandOutcome{
+                                  .ok = true};
+                            },
+                        .window_hit_region = [](float x, float y) -> std::string_view {
+                          return x < 6.0f ? "resize" : y < 20.0f ? "draggable" : "normal";
+                        },
+                    });
+  service.SetWakeChannel(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+  const std::string socket_path =
+      (runtime / "microide" / (std::to_string(::getpid()) + ".sock")).string();
+  int fd = -1;
+  const auto connect_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  while (fd < 0 && std::chrono::steady_clock::now() < connect_deadline) {
+    fd = ConnectUnix(socket_path);
+    if (fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  Expect(fd >= 0, "client should connect to the control socket");
+
+  const auto region_at = [&](const char* request) {
+    const auto json = util::ParseJson(ExchangeLine(service, fd, request));
+    return json.has_value() && (*json)["ok"].AsBool() ? (*json)["result"]["region"].AsString()
+                                                       : std::string("(failed)");
+  };
+  Expect(region_at(R"({"id":1,"query":"hit-test","args":{"x":2,"y":300}})") == "resize",
+         "a press on the window's edge resizes it");
+  Expect(region_at(R"({"id":2,"query":"hit-test","args":{"x":400.5,"y":10}})") == "draggable",
+         "a press on the title bar's drag area moves it (fractional coordinates read too)");
+  Expect(region_at(R"({"id":3,"query":"hit-test","args":{"x":400,"y":300}})") == "normal",
+         "a press elsewhere reaches the app");
+  const auto missing = util::ParseJson(ExchangeLine(service, fd, R"({"id":4,"query":"hit-test"})"));
+  Expect(missing.has_value() && !(*missing)["ok"].AsBool(), "hit-test without a point fails");
+
+  ::close(fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 }  // namespace
 
 // Regression: a socket path over the AF_UNIX limit made Start() return false and
@@ -1100,6 +1160,8 @@ void TestOverlongSocketPathSaysWhyItRefused() {
 }
 
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlChannelService/HitTestQueryNamesWhereAPressLands",
+          TestHitTestQueryNamesWhereAPressLands);
   AddTest(tests, "ControlChannelService/OverlongSocketPathSaysWhyItRefused",
           TestOverlongSocketPathSaysWhyItRefused);
   AddTest(tests, "ControlChannelService/NotificationsQueryListsActions",

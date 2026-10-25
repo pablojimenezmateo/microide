@@ -115,6 +115,11 @@ class ControlChannelService {
     // The on-screen element geometry for the `ui` query. Unset sources report
     // nothing (tests that do not exercise it).
     ControlUiQuery::Operations ui;
+    // What a press at window point (x, y) reaches, for the `hit-test` query:
+    // "normal" (the app), "draggable" / "resize" (the window manager: SDL never
+    // delivers the press), or "outside" the window. Null in tests that do not
+    // exercise it (the query then fails).
+    std::function<std::string_view(float, float)> window_hit_region;
     // The buffer the caret is in, for the `buffer` query. Null in tests that do
     // not exercise it (the query then answers `{available:false}`).
     std::function<ControlActiveBuffer()> active_buffer;

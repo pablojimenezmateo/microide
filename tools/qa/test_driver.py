@@ -213,5 +213,26 @@ class PointerInputBarrierTests(unittest.TestCase):
             self.assertEqual(app._pointer_at, (40, 61))
 
 
+    def test_a_press_the_window_manager_takes_expects_nothing(self):
+        """A press on a resize edge or the title bar's drag area, or past the
+        window's current size, never reaches the app; waiting for it cost a 3 s
+        timeout per click (9 s under ASan) in the monkey."""
+        with tempfile.TemporaryDirectory() as scratch:
+            app = self._app(Path(scratch) / "microide.log")
+            app._last_click = (0.0, -100.0, -100.0)
+            regions = {(0, 0): "resize", (400, 10): "draggable", (2000, 300): "outside",
+                       (400, 300): "normal"}
+
+            def hit_test(payload, timeout, what):
+                x, y = payload["args"]["x"], payload["args"]["y"]
+                return {"ok": True, "result": {"region": regions[(x, y)]}}
+            with patch.object(q.App, "_socket_request", side_effect=hit_test), \
+                 patch.object(q.App, "_xdotool"):
+                for point in ((0, 0), (400, 10), (2000, 300)):
+                    app.click(*point)
+                    self.assertEqual(app._buttons_pending, 0, f"no button events expected at {point}")
+                app.click(400, 300)
+                self.assertEqual(app._buttons_pending, 2, "a press inside reaches the app")
+
 if __name__ == "__main__":
     unittest.main()

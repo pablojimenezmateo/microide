@@ -467,6 +467,20 @@ util::JsonValue ControlChannelService::HandleQuery(const std::string& verb,
         operations_.active_buffer ? operations_.active_buffer() : ControlActiveBuffer{};
     return BuildControlBufferJson(active.viewport, active.kind);
   }
+  if (verb == "hit-test") {
+    // The QA driver asks before a press it sends through X, so it waits for the
+    // button events only when the app will get them (tools/qa/microide_qa.py).
+    if (!operations_.window_hit_region || !args.IsObject() || !args.HasKey("x") ||
+        !args.HasKey("y")) {
+      *ok = false;
+      *error = "hit-test needs {\"x\": number, \"y\": number}";
+      return util::JsonValue(nullptr);
+    }
+    util::JsonObject result;
+    result["region"] = util::JsonValue(std::string(operations_.window_hit_region(
+        static_cast<float>(args["x"].AsDouble()), static_cast<float>(args["y"].AsDouble()))));
+    return util::JsonValue(std::move(result));
+  }
   if (verb == "ui") {
     return context_ == nullptr ? util::JsonValue(util::JsonObject{})
                                : ControlUiQuery::Build(*context_, operations_.ui);

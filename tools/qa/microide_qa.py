@@ -532,6 +532,11 @@ class App:
         waits for its reply. Records it for replay unless `record` is False."""
         if record:
             self._record({"line": line})
+        return self._socket_request({"command": line}, timeout, repr(line))
+
+    def _socket_request(self, payload: dict[str, Any], timeout: float, what: str) -> dict[str, Any]:
+        """One request (`command` or `query`) over the persistent control socket,
+        after the app has taken the input sent before it; returns the reply."""
         self._await_typed_input()
         if self._socket is None:
             listing = _last_json(self._control(["control-list"]).stdout) or {}
@@ -544,7 +549,7 @@ class App:
         self._next_id += 1
         self._socket.settimeout(timeout)
         try:
-            self._socket.sendall(json.dumps({"id": request_id, "command": line}).encode() + b"\n")
+            self._socket.sendall(json.dumps({"id": request_id, **payload}).encode() + b"\n")
             while True:
                 newline = self._socket_buffer.find(b"\n")
                 if newline < 0:
@@ -560,7 +565,7 @@ class App:
                     if isinstance(reply, dict) and reply.get("id") == request_id:
                         return reply
         except (OSError, socket.timeout) as error:
-            raise QaFailure(f"command {line!r} got no reply: {error}") from error
+            raise QaFailure(f"{what} got no reply: {error}") from error
 
     def query(self, verb: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         command = ["control-send", "--query", verb]
@@ -826,7 +831,7 @@ class App:
         if self.wayland:
             self._pointer("move", x, y)
             return
-        self._expect_pointer_input(motion=(x, y))
+        self._expect_pointer_input(motion=(x, y), motion_lands=self._hit_region(x, y) != "outside")
         self._xdotool("mousemove", *self._root(x, y))
 
     def click(self, x: float, y: float, button: int = 1, clicks: int = 1,
@@ -840,9 +845,10 @@ class App:
             self._pointer("click", x, y, button, clicks, modifiers=modifiers)
             self._last_click = (time.monotonic(), x, y)
             return
+        reaches_app = self._hit_region(x, y) == "normal"
         for key in modifiers:
             self._xdotool("keydown", key)
-        self._expect_pointer_input(buttons=2 * clicks, at=(x, y))
+        self._expect_pointer_input(buttons=2 * clicks if reaches_app else 0, at=(x, y))
         self._xdotool("mousemove", *self._root(x, y), "click", "--repeat", str(clicks),
                       "--delay", "60", str(button))
         for key in reversed(modifiers):
@@ -886,11 +892,15 @@ class App:
             self._pointer("up", x1, y1, 1, modifiers=modifiers)
             self._last_click = (time.monotonic(), x0, y0)
             return
+        # A press the window manager takes (a drag on the title bar, a resize edge)
+        # reaches the app with none of the drag.
+        reaches_app = self._hit_region(x0, y0) == "normal"
+        end_lands = reaches_app and self._hit_region(x1, y1) != "outside"
         for key in modifiers:
             self._xdotool("keydown", key)
         # Every press and release but the last, then the move onto (x1, y1), then
         # the release: `before_release` may query the app with the button held.
-        self._expect_pointer_input(buttons=2 * clicks - 1, at=(x0, y0))
+        self._expect_pointer_input(buttons=2 * clicks - 1 if reaches_app else 0, at=(x0, y0))
         if clicks > 1:
             self._xdotool("mousemove", *self._root(x0, y0), "click", "--repeat", str(clicks - 1),
                           "--delay", "60", "1")
@@ -899,12 +909,12 @@ class App:
             x = x0 + (x1 - x0) * i / steps
             y = y0 + (y1 - y0) * i / steps
             if i == steps:
-                self._expect_pointer_input(motion=(x, y))
+                self._expect_pointer_input(motion=(x, y), motion_lands=end_lands)
             self._xdotool("mousemove", *self._root(x, y))
             time.sleep(0.02)
         if before_release is not None:
             before_release()
-        self._expect_pointer_input(buttons=1)
+        self._expect_pointer_input(buttons=1 if reaches_app else 0)
         self._xdotool("mouseup", "1")
         for key in reversed(modifiers):
             self._xdotool("keyup", key)
@@ -923,7 +933,8 @@ class App:
             self._pointer("wheel", x, y, notches, modifiers=modifiers)
             return
         button = "5" if notches > 0 else "4"
-        self._expect_pointer_input(wheels=abs(notches), at=(x, y))
+        lands = self._hit_region(x, y) != "outside"
+        self._expect_pointer_input(wheels=abs(notches) if lands else 0, at=(x, y))
         self._xdotool("mousemove", *self._root(x, y))
         for key in modifiers:
             self._xdotool("keydown", key)
@@ -980,17 +991,33 @@ class App:
         if keys:
             self._keys_sent.append(keys)
 
+    def _hit_region(self, x: float, y: float) -> str:
+        """Where a press at window (x, y) lands, as the app's own hit-test says
+        (the `hit-test` query): "normal", "draggable" or "resize" (the window
+        manager takes those presses; SDL never delivers them), or "outside" the
+        window as it is sized now -- which the monkey changes (maximize/restore).
+        Asked after the input sent before it is taken, since that input can move
+        the window's edges. Expecting a press the app never gets cost a 3 s wait
+        (9 s on the ASan lane) each time."""
+        try:
+            reply = self._socket_request({"query": "hit-test", "args": {"x": x, "y": y}},
+                                         10.0, "hit-test")
+        except QaFailure:
+            return "normal"
+        return str((reply.get("result") or {}).get("region", "normal")) if reply.get("ok") else "normal"
+
     def _expect_pointer_input(self, buttons: int = 0, wheels: int = 0,
                               motion: tuple[float, float] | None = None,
-                              at: tuple[float, float] | None = None) -> None:
+                              at: tuple[float, float] | None = None,
+                              motion_lands: bool = True) -> None:
         """Notes pointer input about to go through X, as _expect_typed_input does
         keys: `buttons` press and release events, `wheels` notches, and a `motion`
         that must be seen to land. A click answered before the app handled it is
         the same race as a key: Discard All clicked, then the prompt read at once,
         found none on the slow ASan build (QA journey-rename-refactor). A move
         waits only when the pointer is not already there (X sends no motion
-        then) and the point is inside the window. `at` is where the input leaves
-        the pointer, for the next move to compare with."""
+        then) and `motion_lands` (the point is in the window: _hit_region). `at`
+        is where the input leaves the pointer, for the next move to compare with."""
         if self.wayland or self.log_path is None:
             return
         self._expect_typed_input("", 0)
@@ -998,10 +1025,9 @@ class App:
         self._wheels_pending += wheels
         if motion is not None:
             target = (round(motion[0]), round(motion[1]))
-            w, h = self.size
             if self._pointer_at is None:
                 self._pointer_at = self._x_pointer_location()
-            if target != self._pointer_at and 0 <= target[0] < w and 0 <= target[1] < h:
+            if target != self._pointer_at and motion_lands:
                 self._motion_pending = target
             at = motion
         if at is not None:
@@ -1068,7 +1094,7 @@ class App:
             note = (f"typed input not seen taken after {timeout * SLOW_FACTOR:.0f}s: "
                     f"{taken_presses} of {self._keys_pending} key presses ({' '.join(self._keys_sent)}), "
                     f"text {taken!r} of {self._typed_pending!r}, "
-                    f"{taken_buttons} of {self._buttons_pending} button events, "
+                    f"{taken_buttons} of {self._buttons_pending} button events (pointer at {self._pointer_at}), "
                     f"{taken_wheels} of {self._wheels_pending} wheel notches"
                     + ("" if moved else f", no motion to {self._motion_pending}"))
             self._record({"note": note})

@@ -480,6 +480,20 @@ WorkspaceShell::WorkspaceShell() {
           },
           .action_enabled = [this](ActionId id) { return MakeActionAvailability().IsEnabled(id); },
           .ui = MakeControlUiOperations(),
+          .window_hit_region = [this](float x, float y) -> std::string_view {
+            const auto window = CurrentWindowRect();
+            if (!window.has_value() || x < 0.0f || y < 0.0f || x >= window->w || y >= window->h) {
+              return "outside";
+            }
+            switch (WindowHitTest(x, y)) {
+              case SDL_HITTEST_NORMAL:
+                return "normal";
+              case SDL_HITTEST_DRAGGABLE:
+                return "draggable";
+              default:
+                return "resize";
+            }
+          },
           .active_buffer = [this]() -> ControlActiveBuffer {
             const editor::TextViewport* viewport = ActiveNavigableViewport();
             if (viewport == nullptr || viewport->is_placeholder()) {

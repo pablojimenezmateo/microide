@@ -163,7 +163,14 @@ Newline-delimited JSON, one object per line.
 Query verbs: `debug-state`, `breakpoints`, `function-breakpoints`,
 `exception-filters`, `tabs`, `projects`, `status`, `launch-configs`, `adapters`,
 `editor`, `commands`, `terminals`, `terminal-output`, `notifications`,
-`keybindings`, `settings`, `ui`, `buffer`, `output`, `action-counts`.
+`keybindings`, `settings`, `ui`, `buffer`, `output`, `action-counts`, `hit-test`.
+
+**Where a press lands (`hit-test`).** Args `{x, y}` in layout units; answers
+`{region}`: `normal` (the app gets the press), `draggable` or `resize` (the title
+bar's drag area and the window's resize edges: SDL hands the press to the window
+manager and the app never sees it), or `outside` the window as it is now sized.
+`tools/qa` asks before every press it sends through X, so it waits for the press's
+button events only when the app will get them.
 
 **Debug state.** `debug-state` reports the active session's lifecycle as
 `session` (`none`, `initializing`, `configuring`, `running`, `stopped`,
