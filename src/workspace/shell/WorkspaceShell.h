@@ -74,6 +74,7 @@
 #include "workspace/state/WorkspaceMenuState.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/services/LayoutModeService.h"
+#include "workspace/git/AutomaticGitRefreshPacer.h"
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/git/CommitWorkflowService.h"
 #include "workspace/git/GitOperationService.h"

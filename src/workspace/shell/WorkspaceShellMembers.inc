@@ -2264,7 +2264,7 @@
   util::WakeChannel control_event_type_ = 0;
   util::WakeChannel plugin_thread_event_type_ = 0;
   util::WakeChannel highlight_prefetch_event_type_ = 0;
-  Uint64 next_automatic_git_sidebar_refresh_ms_ = 0;
+  AutomaticGitRefreshPacer automatic_git_refresh_pacer_{git_sidebar_event_type_};
   bool pending_tree_git_badge_refresh_after_paint_ = false;
   project::GitBlameService git_blame_service_;
   editor::HighlightPrefetchService highlight_prefetch_service_;

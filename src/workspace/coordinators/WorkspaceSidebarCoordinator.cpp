@@ -511,18 +511,16 @@ void WorkspaceShell::OnFramePresented() {
 }
 
 void WorkspaceShell::RequestAutomaticGitSidebarRefresh() {
-  if (context_.current_project_state.root.empty() ||
-      context_.current_project_state.sidebar.git.refreshing) {
+  if (context_.current_project_state.root.empty()) {
     return;
   }
-
-  constexpr Uint64 kAutomaticGitRefreshThrottleMs = 750;
-  const Uint64 now_ms = SDL_GetTicks();
-  if (now_ms < next_automatic_git_sidebar_refresh_ms_) {
+  // Paced, never dropped: one turned away now is issued by ConsumeGitSidebarRefresh
+  // once the running refresh lands or the interval ends.
+  if (!automatic_git_refresh_pacer_.Request(SDL_GetTicks(),
+                                            context_.current_project_state.sidebar.git.refreshing)) {
     git_repository_service_.MarkStale();
     return;
   }
-  next_automatic_git_sidebar_refresh_ms_ = now_ms + kAutomaticGitRefreshThrottleMs;
   const bool git_sidebar_active =
       context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git;
   RequestGitSidebarRefresh(git_sidebar_active ? GitSidebarRefreshScope::Full
@@ -546,7 +544,17 @@ void WorkspaceShell::ConsumeGitSidebarRefresh() {
   commit_workflow_service_.DrainCompletions();
   git_operation_service_.DrainCompletions();
   patch_apply_service_.DrainCompletions();
+  // A paced automatic refresh is due on the pacer's own wake (before RefreshGit,
+  // so that one finds it running), or once the refresh it waited behind lands.
+  const auto resume_paced_refresh = [this]() {
+    if (automatic_git_refresh_pacer_.Resume(SDL_GetTicks(),
+                                            context_.current_project_state.sidebar.git.refreshing)) {
+      RequestAutomaticGitSidebarRefresh();
+    }
+  };
+  resume_paced_refresh();
   MakeSidebarService().RefreshGit();
+  resume_paced_refresh();
 }
 
 bool WorkspaceShell::RefreshProblemsSidebar() {

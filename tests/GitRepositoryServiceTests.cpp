@@ -13,6 +13,7 @@
 
 #include "util/BackgroundTaskCounter.h"
 #include "project/ProjectBackgroundExecutor.h"
+#include "workspace/git/AutomaticGitRefreshPacer.h"
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 
@@ -614,9 +615,42 @@ void TestResetDoesNotCancelUnrelatedQueuedWork() {
   executor.Shutdown();
 }
 
+// Automatic refreshes are paced -- one at a time, kIntervalMs apart -- and none is
+// dropped: one turned away is kept until Resume() finds it due (TD-2026-10-25-392,
+// journey-feature-branch). Channel 0 arms no real timer; the deadline is recorded.
+void TestAutomaticGitRefreshPacerKeepsWhatItTurnsAway() {
+  using microide::workspace::AutomaticGitRefreshPacer;
+  constexpr std::uint64_t kInterval = AutomaticGitRefreshPacer::kIntervalMs;
+  const microide::util::WakeChannel no_channel = 0;
+  AutomaticGitRefreshPacer pacer(no_channel);
+
+  Expect(pacer.Request(1000, false), "the first request is issued at once");
+  Expect(!pacer.Request(1100, false), "a second inside the interval waits");
+  Expect(pacer.pending() && pacer.wake_armed_for_ms() == 1000 + kInterval,
+         "and is kept, with a wake armed for the interval's end");
+  Expect(!pacer.Resume(1500, false), "before the interval ends it is not due");
+  Expect(pacer.pending(), "and still kept");
+  Expect(pacer.Resume(1000 + kInterval, false), "at the interval's end it is due");
+  Expect(pacer.Request(1000 + kInterval, false), "and the caller's request issues it");
+  Expect(!pacer.pending(), "nothing is kept after it ran");
+
+  // A request while one runs waits for it, with no timer: the snapshot resumes it.
+  AutomaticGitRefreshPacer running(no_channel);
+  Expect(!running.Request(5000, true), "a request while a refresh runs waits");
+  Expect(running.pending() && running.wake_armed_for_ms() == 0,
+         "kept, and woken by the running refresh's snapshot rather than a timer");
+  Expect(!running.Resume(5100, true), "not due while that one still runs");
+  Expect(running.Resume(5200, false), "due once it has landed (the interval had passed)");
+
+  Expect(!AutomaticGitRefreshPacer(no_channel).Resume(9000, false),
+         "with nothing kept, Resume issues nothing");
+}
+
 }  // namespace
 
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "GitRepositoryService/AutomaticRefreshPacerKeepsWhatItTurnsAway",
+          TestAutomaticGitRefreshPacerKeepsWhatItTurnsAway);
   AddTest(tests, "GitRepositoryService/ResetDoesNotCancelUnrelatedQueuedWork",
           TestResetDoesNotCancelUnrelatedQueuedWork);
   AddTest(tests, "GitRepositoryService/RefreshMarksSubmoduleConflict",

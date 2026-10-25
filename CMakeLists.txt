@@ -713,6 +713,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp
   src/workspace/persistence/WorkspacePersistenceBinaryFormatDebug.cpp
   src/workspace/persistence/WorkspacePersistenceBinaryFormatMru.cpp
+  src/workspace/git/AutomaticGitRefreshPacer.cpp
   src/workspace/git/GitRepositoryService.cpp
   src/workspace/git/PatchApplyService.cpp
   src/workspace/persistence/PersistenceService.cpp

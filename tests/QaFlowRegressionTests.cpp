@@ -2139,6 +2139,50 @@ void TestSidebarViewTabsStayInsideANarrowSidebar() {
   }
 }
 
+// journey-feature-branch (CI): an automatic git refresh asked for inside the
+// throttle interval was dropped -- the snapshot marked stale, nothing asking
+// again -- so the tree (and a commit waiting on that refresh) never saw the
+// change. It is kept now and issued when the interval ends.
+void TestAnAutomaticGitRefreshInsideTheIntervalIsKept() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "a.txt", "a\n");
+  WriteFile(root / "b.txt", "b\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add the pacing fixture", "paced refresh fixture");
+
+  WorkspaceShell shell;
+  Expect(TestAccess::OpenProjectTab(shell, root, false, false), "the fixture should open");
+  TestAccess::SetWindowSize(shell, 1280, 720);
+  TestAccess::OnFramePresented(shell);
+  TestAccess::ShowTreeSidebar(shell);  // the git view would ask again on its own
+  (void)SettleGitSidebarRefresh(shell);
+
+  const auto status_of = [&](const char* name) {
+    for (const project::TreeEntry& entry : TestAccess::TreeEntries(shell)) {
+      if (entry.path == (root / name).lexically_normal()) {
+        return entry.git_status;
+      }
+    }
+    return project::GitFileStatus::Clean;
+  };
+  const auto wait_for_modified = [&](const char* name) {
+    return WaitUntil([&]() { return status_of(name) == project::GitFileStatus::Modified; },
+                     kGitSidebarWaitTimeout, std::chrono::milliseconds(10),
+                     [&]() { TestAccess::ConsumeGitSidebarRefresh(shell); });
+  };
+
+  WriteFile(root / "a.txt", "a changed\n");
+  TestAccess::RequestAutomaticGitSidebarRefresh(shell);
+  Expect(wait_for_modified("a.txt"), "the first automatic refresh should mark a.txt modified");
+  // Well inside the interval the first one started.
+  WriteFile(root / "b.txt", "b changed\n");
+  TestAccess::RequestAutomaticGitSidebarRefresh(shell);
+  Expect(wait_for_modified("b.txt"),
+         "a refresh asked for inside the interval should still run once it ends");
+}
+
 // edit-transforms: saving a new file in a repository repainted the tree's rows but
 // not the git badges the following async status refresh gave them. The refresh
 // returned early whenever the git view's selected entry survived it, and that
@@ -3738,6 +3782,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestPaletteRowWhoseLabelStartsWithACommandRunsTheRow);
   AddTest(tests, "QaFlowRegression/PaletteAsksForTheArgumentsACommandNeeds",
           TestPaletteAsksForTheArgumentsACommandNeeds);
+  AddTest(tests, "QaFlowRegression/AnAutomaticGitRefreshInsideTheIntervalIsKept",
+          TestAnAutomaticGitRefreshInsideTheIntervalIsKept);
   AddTest(tests, "QaFlowRegression/TreeGitBadgesRepaintWhenTheGitSelectionSurvives",
           TestTreeGitBadgesRepaintWhenTheGitSelectionSurvives);
   AddTest(tests, "QaFlowRegression/MarkingAnOutgoingFileReviewedMarksItsRow",

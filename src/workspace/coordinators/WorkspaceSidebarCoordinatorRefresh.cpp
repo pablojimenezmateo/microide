@@ -182,11 +182,13 @@ void SidebarCoordinator::RefreshGit() {
   }
 
   const GitSelectionKey previous = CurrentGitSelection();
-  state_.sidebar.git.selected_index = 0;
   if (project_root_.empty()) {
+    state_.sidebar.git.selected_index = 0;
     state_.sidebar.git.entries.clear();
     return;
   }
+  // A wake with no snapshot (a paced refresh's timer, a compare picker's answer)
+  // leaves the selection alone: it used to reset it to the first row.
 
   GitSidebarState::RefreshSnapshot snapshot;
   const bool has_snapshot =
