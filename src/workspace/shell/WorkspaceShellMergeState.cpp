@@ -561,11 +561,7 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_t
     return;
   }
 
-  const ChangedLineSpan change{
-      .old_start = applied_span->old_start,
-      .old_end = applied_span->old_end,
-      .new_end = applied_span->new_end,
-  };
+  const editor::AppliedEditLineSpan& change = *applied_span;
   const long long line_delta =
       static_cast<long long>(change.new_end) - static_cast<long long>(change.old_end);
 

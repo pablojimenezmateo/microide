@@ -252,8 +252,9 @@ void TestArchitectureFileSizes() {
              // PreparedFrameState can hold the card prep lays out.
              // 1652: the shell's private ProjectOpenDialogLaunchResult, a
              // value-for-value copy of ProjectOpenPickerResult, is gone.
+             // 1647: ChangedLineSpan, a copy of editor::AppliedEditLineSpan.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1652);
+                                                     1647);
            });
 
   AssertRuleResultsPass(results);

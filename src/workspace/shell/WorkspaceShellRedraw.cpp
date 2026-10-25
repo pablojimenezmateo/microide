@@ -900,7 +900,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentPromptRedrawRect() const {
   return rect;
 }
 
-std::optional<WorkspaceShell::ChangedLineSpan> WorkspaceShell::ComputeChangedLineSpan(
+std::optional<editor::AppliedEditLineSpan> WorkspaceShell::ComputeChangedLineSpan(
     const std::vector<std::string>& before_lines,
     const std::vector<std::string>& after_lines) {
   std::size_t prefix = 0;
@@ -919,7 +919,7 @@ std::optional<WorkspaceShell::ChangedLineSpan> WorkspaceShell::ComputeChangedLin
     ++suffix;
   }
 
-  return ChangedLineSpan{
+  return editor::AppliedEditLineSpan{
       .old_start = prefix,
       .old_end = before_lines.size() - suffix,
       .new_end = after_lines.size() - suffix,

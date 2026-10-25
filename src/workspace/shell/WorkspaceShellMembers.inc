@@ -353,12 +353,6 @@
     std::array<float, 4> result_action_widths{};
   };
 
-  struct ChangedLineSpan {
-    std::size_t old_start = 0;
-    std::size_t old_end = 0;
-    std::size_t new_end = 0;
-  };
-
  public:
   // Geometry of a scrollable text/list surface (content rect + text origin +
   // scroll surface). Shared by the bottom panel (terminal/output) and the
@@ -1942,7 +1936,7 @@
   std::optional<SDL_FRect> CurrentBottomPanelContentRedrawRect() const;
   std::optional<SDL_FRect> CurrentOverlayRedrawRect() const;
   std::optional<SDL_FRect> CurrentPromptRedrawRect() const;
-  static std::optional<ChangedLineSpan> ComputeChangedLineSpan(
+  static std::optional<editor::AppliedEditLineSpan> ComputeChangedLineSpan(
       const std::vector<std::string>& before_lines,
       const std::vector<std::string>& after_lines);
   std::optional<Uint32> NextCaretBlinkDelayMs() const;
