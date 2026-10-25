@@ -113,6 +113,22 @@ std::string SummarizeMessage(const JsonValue& msg) {
   return summary;
 }
 
+// One `note <category>: <detail><tail>` line, built only when a sink is open.
+template <typename AppendTail>
+void WriteNote(const char* category, std::string_view detail, AppendTail&& append_tail) {
+  TraceState& state = State();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  if (EnsureSinkLocked(state) == nullptr) {
+    return;
+  }
+  std::string line = "note ";
+  line += category;
+  line += ": ";
+  line.append(detail);
+  append_tail(line);
+  WriteLineLocked(state, line);
+}
+
 }  // namespace
 
 bool DebugTrace::Enabled() {
@@ -150,81 +166,40 @@ void DebugTrace::Message(const char* direction, const JsonValue& msg) {
 }
 
 void DebugTrace::Note(const char* category, std::string_view detail) {
-  TraceState& state = State();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  if (EnsureSinkLocked(state) == nullptr) {
-    return;
-  }
-  std::string line = "note ";
-  line += category;
-  line += ": ";
-  line.append(detail);
-  WriteLineLocked(state, line);
+  WriteNote(category, detail, [](std::string&) {});
 }
 
 void DebugTrace::Note(const char* category, std::string_view detail, std::string_view a) {
-  TraceState& state = State();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  if (EnsureSinkLocked(state) == nullptr) {
-    return;
-  }
-  std::string line = "note ";
-  line += category;
-  line += ": ";
-  line.append(detail);
-  line += " ";
-  line.append(a);
-  WriteLineLocked(state, line);
+  WriteNote(category, detail, [a](std::string& line) {
+    line += " ";
+    line.append(a);
+  });
 }
 
 void DebugTrace::Note(const char* category, std::string_view detail, long long n) {
-  TraceState& state = State();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  if (EnsureSinkLocked(state) == nullptr) {
-    return;
-  }
-  std::string line = "note ";
-  line += category;
-  line += ": ";
-  line.append(detail);
-  line += " ";
-  line += std::to_string(n);
-  WriteLineLocked(state, line);
+  WriteNote(category, detail, [n](std::string& line) {
+    line += " ";
+    line += std::to_string(n);
+  });
 }
 
 void DebugTrace::Note(const char* category, std::string_view detail, std::string_view a,
                       long long n) {
-  TraceState& state = State();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  if (EnsureSinkLocked(state) == nullptr) {
-    return;
-  }
-  std::string line = "note ";
-  line += category;
-  line += ": ";
-  line.append(detail);
-  line += " ";
-  line.append(a);
-  line += "=";
-  line += std::to_string(n);
-  WriteLineLocked(state, line);
+  WriteNote(category, detail, [a, n](std::string& line) {
+    line += " ";
+    line.append(a);
+    line += "=";
+    line += std::to_string(n);
+  });
 }
 
 void DebugTrace::Note(const char* category, std::string_view detail, long long n1, long long n2) {
-  TraceState& state = State();
-  std::lock_guard<std::mutex> lock(state.mutex);
-  if (EnsureSinkLocked(state) == nullptr) {
-    return;
-  }
-  std::string line = "note ";
-  line += category;
-  line += ": ";
-  line.append(detail);
-  line += " ";
-  line += std::to_string(n1);
-  line += " ";
-  line += std::to_string(n2);
-  WriteLineLocked(state, line);
+  WriteNote(category, detail, [n1, n2](std::string& line) {
+    line += " ";
+    line += std::to_string(n1);
+    line += " ";
+    line += std::to_string(n2);
+  });
 }
 
 }  // namespace microide::util
