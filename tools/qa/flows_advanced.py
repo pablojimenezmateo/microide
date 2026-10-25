@@ -13,24 +13,42 @@ from flows_lsp_debug import _lsp_ready, _require
 
 
 def flow_signature_help(app: q.App) -> None:
-    """Inside a call's parentheses, Ctrl+Shift+Space shows the signature; moving
-    out of the call closes it."""
+    """Typing a call's `(` opens its signature, `,` moves the active parameter and
+    `)` closes it; inside the parentheses Ctrl+Shift+Space shows it again, and
+    moving out of the call closes it."""
     if not _require(app, "clangd") or not _lsp_ready(app):
         return
+    popup = lambda: app.ui()["popups"]
     app.click_text(9, 1)
     app.key("End")
     app.key("Return")
-    app.type("add(")
-    step(app, "type add(", 0.5)
-    app.key("ctrl+shift+space")
-    app.wait_until(lambda: app.ui()["popups"]["signatureHelp"], 8.0, "signature help")
-    step(app, "signature help", 0.3)
-    sig = app.ui()["popups"]["signatureHelp"] or ""
+    app.type("add")
+    app.expect(not popup()["signatureHelp"], "a word opens no parameter hints")
+    app.type("(")
+    app.wait_until(lambda: popup()["signatureHelp"], 8.0, "parameter hints on `(`")
+    step(app, "type add(", 0.3)
+    sig = popup()["signatureHelp"] or ""
     app.expect("priority" in sig and "cost" in sig, f"the signature names the parameters ({sig!r})")
+    first = popup()["signatureHelpDetail"] or ""
+    # A well-typed first argument: clangd answers nothing for a call no overload
+    # of add() can take, which closes the hints as it should.
+    app.type('"job",')
+    app.wait_until(lambda: popup()["signatureHelp"] and (popup()["signatureHelpDetail"] or "") != first,
+                   8.0, "the active parameter to move past the comma")
+    step(app, "type the first argument", 0.3)
+    detail = popup()["signatureHelpDetail"] or ""
+    app.expect("priority" in detail, f"the second parameter is the active one ({detail!r})")
+    app.type(" 1, 2)")
+    app.wait_until(lambda: not popup()["signatureHelp"], 8.0, "parameter hints to close on `)`")
+    step(app, "close the call", 0.3)
+    app.key("Left")
+    app.key("ctrl+shift+space")
+    app.wait_until(lambda: popup()["signatureHelp"], 8.0, "signature help on demand")
+    step(app, "signature help", 0.3)
     app.key("Escape")
     app.key("Up")
     step(app, "leave the call", 0.3)
-    app.wait_until(lambda: not app.ui()["popups"]["signatureHelp"], 4.0, "signature help to close")
+    app.wait_until(lambda: not popup()["signatureHelp"], 4.0, "signature help to close")
 
 
 def flow_code_actions(app: q.App) -> None:

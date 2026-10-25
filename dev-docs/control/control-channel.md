@@ -237,7 +237,7 @@ title the last prepared frame gave the window (`● file — project — microid
 quick pick (`launch-config`, `color-theme`, `document-symbol`, `workspace-symbol`, `language-mode`) and `selected`
 (the row Enter runs). With a prompt up, `prompt` is `{kind: unsaved|input|confirm,
 title, message, detail?, input?}`. `popups` is `{hover: {kind: blame|diagnostic|symbol|
-debug-value, text, rect, action?: {label, rect}} | null, signatureHelp: <label> | null}`
+debug-value, text, rect, action?: {label, rect}} | null, signatureHelp: <label> | null, signatureHelpDetail: <active parameter, then docs> | null}`
 (a blame card's `text` is its author, date and summary lines; `action` is the
 card's button, Copy SHA or Quick Fix). `editors` lists every
 editor pane's text geometry -- `{group, focused, rect, textX, firstLineY, lineHeight,

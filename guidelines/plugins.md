@@ -277,7 +277,10 @@ actions). All line/column values are **1-based**.
   active_parameter, parameters = { { label, documentation }, ... } } } }`. The
   `signature-help` command (default `Ctrl+Shift+Space`) renders the active
   signature in a caret-anchored popup; the active parameter and docs form the
-  supporting block. The popup self-dismisses on Escape, caret movement, or edit.
+  supporting block. Typing one of the provider's `trigger_characters` (a string,
+  default `"(,"`) opens the popup too (`editor.parameterHints`); while it is up
+  every keystroke re-asks the provider, and `)` closes it. It also closes on
+  Escape or a caret move that is not typing.
 - `ctx.document_symbols.add{ id, language_id, provide = function(buffer) }` →
   returns a nested array of `{ name, detail, kind, line, column, children = {...} }`.
   The built-in **Outline** sidebar view (`sidebar-show outline`, default

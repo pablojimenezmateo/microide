@@ -39,6 +39,50 @@
 
 namespace microide::workspace {
 
+// A set of single ASCII characters, written once by the I/O thread (at initialize)
+// and read lock-free by the UI thread on every typed character.
+class AtomicAsciiSet {
+ public:
+  void Store(std::string_view characters) {
+    std::uint64_t mask[2] = {0, 0};
+    for (const char c : characters) {
+      Add(c, mask);
+    }
+    Publish(mask);
+  }
+  // An LSP `triggerCharacters` array; multi-character and non-ASCII entries are not
+  // representable and no real server advertises them.
+  void Store(const util::JsonValue& strings) {
+    std::uint64_t mask[2] = {0, 0};
+    if (strings.IsArray()) {
+      for (const util::JsonValue& entry : strings.AsArray()) {
+        if (entry.IsString() && entry.AsString().size() == 1) {
+          Add(entry.AsString()[0], mask);
+        }
+      }
+    }
+    Publish(mask);
+  }
+  bool Contains(char c) const {
+    const auto byte = static_cast<unsigned char>(c);
+    return byte < 128 &&
+           ((mask_[byte / 64].load(std::memory_order_acquire) >> (byte % 64)) & 1U) != 0;
+  }
+
+ private:
+  static void Add(char c, std::uint64_t (&mask)[2]) {
+    const auto byte = static_cast<unsigned char>(c);
+    if (byte < 128) {
+      mask[byte / 64] |= std::uint64_t{1} << (byte % 64);
+    }
+  }
+  void Publish(const std::uint64_t (&mask)[2]) {
+    mask_[0].store(mask[0], std::memory_order_release);
+    mask_[1].store(mask[1], std::memory_order_release);
+  }
+  std::array<std::atomic<std::uint64_t>, 2> mask_{};
+};
+
 // ---------------------------------------------------------------------------
 // Impl
 // ---------------------------------------------------------------------------
@@ -149,10 +193,11 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   std::atomic<bool> supports_code_lens_resolve{false};
   // Server advertised a callHierarchyProvider (captured at initialize).
   std::atomic<bool> supports_call_hierarchy{false};
-  // completionProvider.triggerCharacters as a bitmask over ASCII (every server
-  // in use advertises single ASCII characters: `.`, `:`, `>`, `/`, `"`, `<`, `@`).
-  // Asked on every typed character, so lock-free.
-  std::array<std::atomic<std::uint64_t>, 2> completion_trigger_mask{};
+  // completionProvider.triggerCharacters and signatureHelpProvider.triggerCharacters
+  // (every server in use advertises single ASCII characters: `.`, `:`, `>`, `(`,
+  // `,`). Asked on every typed character, so lock-free.
+  AtomicAsciiSet completion_triggers;
+  AtomicAsciiSet signature_help_triggers;
 
   // File watchers the server registered via client/registerCapability for
   // workspace/didChangeWatchedFiles. Written on the I/O thread (registrations

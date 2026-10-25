@@ -220,17 +220,22 @@ void AssistService::CompletionAfterTyping(std::string_view typed) {
     return;
   }
   const char c = typed.front();
-  // A server trigger character starts a new list at the caret, replacing any list
-  // the character just ended (`obj` + `.` -> members of obj).
+  // A trigger character -- a server's, or a plugin provider's -- starts a new list
+  // at the caret, replacing any list the character just ended (`obj` + `.` ->
+  // members of obj).
+  bool server_trigger = false;
   if (LspFeatureEnabled(operations_.get_setting_value, "lsp.completion.enabled")) {
-    if (LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
-        client != nullptr && client->IsCompletionTriggerCharacter(c)) {
-      if (list_up) {
-        operations_.dismiss_overlay(true);
-      }
-      StartAutomaticCompletion(*viewport, c);
-      return;
+    LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+    server_trigger = client != nullptr && client->IsCompletionTriggerCharacter(c);
+  }
+  if (server_trigger || (operations_.plugin_completion_trigger_characters &&
+                         operations_.plugin_completion_trigger_characters(viewport->language_id())
+                                 .find(c) != std::string::npos)) {
+    if (list_up) {
+      operations_.dismiss_overlay(true);
     }
+    StartAutomaticCompletion(*viewport, server_trigger ? c : '\0');
+    return;
   }
   if (list_up) {
     FollowCompletionCaret();
@@ -1976,29 +1981,77 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
     }
     return false;
   }
+  RequestSignatureHelp(*viewport, /*close_when_empty=*/false);
+  return true;
+}
 
+bool AssistService::IsSignatureHelpTrigger(editor::TextViewport& viewport, char c) {
+  if (LspFeatureEnabled(operations_.get_setting_value, "lsp.signature_help.enabled")) {
+    if (LspClient* client = operations_.lsp_client_for_viewport(viewport, nullptr);
+        client != nullptr && client->IsSignatureHelpTriggerCharacter(c)) {
+      return true;
+    }
+  }
+  const plugin::PluginHost::ContributedLanguageProvider* provider =
+      plugin_runtime_->Host().FindLanguageProvider(
+          plugin::PluginHost::ContributedLanguageProvider::Kind::SignatureHelp,
+          viewport.language_id());
+  return provider != nullptr && provider->trigger_characters.find(c) != std::string::npos;
+}
+
+void AssistService::SignatureHelpAfterTyping(std::string_view typed) {
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  // A paste or a multi-caret edit is not typing into one call: the hints, if up,
+  // expire with the caret move.
+  if (typed.size() != 1 || viewport == nullptr || viewport->path().empty() ||
+      viewport->has_multiple_carets() ||
+      !SettingFlagEnabled(operations_.get_setting_value("editor.parameterHints"),
+                          /*default_value=*/true)) {
+    return;
+  }
+  const bool showing = operations_.signature_help_showing && operations_.signature_help_showing();
+  if (!showing && !IsSignatureHelpTrigger(*viewport, typed.front())) {
+    return;
+  }
+  // A language server knows where a call ends and answers the re-ask with the
+  // enclosing call or nothing; a plugin provider is asked by position alone and
+  // commonly answers the same signature anywhere, so `)` closes its hints.
+  if (showing && typed.front() == ')' &&
+      operations_.lsp_client_for_viewport(*viewport, nullptr) == nullptr) {
+    operations_.show_signature_help({}, {});
+    return;
+  }
+  if (showing && operations_.anchor_signature_help_at_caret) {
+    operations_.anchor_signature_help_at_caret();
+  }
+  RequestSignatureHelp(*viewport, /*close_when_empty=*/showing);
+}
+
+void AssistService::RequestSignatureHelp(editor::TextViewport& viewport,
+                                         bool close_when_empty) {
   // Query the plugin provider and the language server CONCURRENTLY (mirrors
   // completion / definition). The server is authoritative for its language: the
   // popup waits for its answer and uses the plugin result only if the server
   // comes back empty. The lookups run on the worker / I/O thread so neither
   // blocks the UI; the popup is chosen and shown from the mailbox drain.
-  const std::string language_id = viewport->language_id();
-  const std::filesystem::path request_path = viewport->path();
-  const std::size_t request_line = viewport->cursor_line();
-  const std::size_t request_column = viewport->cursor_column();
+  const std::string language_id = viewport.language_id();
+  const std::filesystem::path request_path = viewport.path();
+  const std::size_t request_line = viewport.cursor_line();
+  const std::size_t request_column = viewport.cursor_column();
 
   auto merge = std::make_shared<SignatureHelpMerge>();
   merge->generation = ++signature_request_generation_;
+  merge->close_when_empty = close_when_empty;
 
-  LspClient* client = operations_.lsp_client_for_viewport(*viewport, nullptr);
+  LspClient* client = operations_.lsp_client_for_viewport(viewport, nullptr);
   merge->sources.lsp_authoritative = client != nullptr;
   if (client != nullptr) {
-    operations_.ensure_lsp_document_open(*viewport, *client, language_id);
+    operations_.ensure_lsp_document_open(viewport, *client, language_id);
     operations_.begin_tracked_lsp_request();
     const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
     client->RequestSignatureHelpAsync(
         FileUriForPath(request_path),
-        ByteColumnToLspPosition(*viewport, request_line, request_column, encoding),
+        ByteColumnToLspPosition(viewport, request_line, request_column, encoding),
         [this, request_path, merge](LspResult<LspClient::SignatureHelp> help) {
           operations_.finish_tracked_lsp_request();
           merge->sources.lsp_pending = false;
@@ -2029,7 +2082,6 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
         }
         ResolveSignatureHelp(merge, request_path);
       });
-  return true;
 }
 
 void AssistService::ResolveSignatureHelp(const std::shared_ptr<SignatureHelpMerge>& merge,
@@ -2048,9 +2100,13 @@ void AssistService::ResolveSignatureHelp(const std::shared_ptr<SignatureHelpMerg
     case assist_merge::NavChoice::Pending:
       return;
     case assist_merge::NavChoice::None:
-      // Nothing to show. Leave any existing popup untouched (the host lifecycle
-      // dismisses it on Escape / edits), matching the prior plugin-only behavior.
+      // Nothing to show. An explicit request or a fresh trigger leaves any popup
+      // untouched (the host lifecycle dismisses it on Escape / caret moves); a
+      // re-ask while the hints are up means the caret has left the call.
       merge->acted = true;
+      if (merge->close_when_empty && operations_.show_signature_help) {
+        operations_.show_signature_help({}, {});
+      }
       return;
     case assist_merge::NavChoice::UsePlugin:
       merge->acted = true;

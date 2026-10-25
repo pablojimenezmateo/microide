@@ -990,6 +990,19 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Suggestions",
       },
       SettingSpec{
+          .id = "editor.parameterHints",
+          .label = "Parameter Hints",
+          .description = "Show the signature of the call being typed when '(' or ',' (the "
+                         "language server's trigger characters) is typed, and keep it up "
+                         "until the call ends. Ctrl+Shift+Space still shows it on demand.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → Suggestions",
+      },
+      SettingSpec{
           .id = "editor.snippets.enabled",
           .label = "Snippets",
           .description = "Enable snippet expansion and the Insert Snippet overlay.",

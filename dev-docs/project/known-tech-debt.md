@@ -1020,7 +1020,24 @@ typing); it opens no project. `find [query]`, which already did that under
 another name, is gone. `QaFlowRegressionUx/TheFinderCommandsArgumentIsAQuery`;
 QA `commands-args` checks the project count stays put.
 
-### TD-2026-10-20-369 — parameter hints only on request; a shadowed plugin keybinding is dropped without a word. [OPEN]
+### TD-2026-10-20-369 — parameter hints only on request; a shadowed plugin keybinding is dropped without a word. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** Parameter hints open while typing: `AssistService::
+SignatureHelpAfterTyping` asks on the server's `signatureHelpProvider.triggerCharacters`
+(captured beside the completion triggers in one lock-free `AtomicAsciiSet`) or a
+plugin provider's `trigger_characters` (default `"(,"`, published on the UI-thread
+`ContributedLanguageProvider` snapshot), gated by the new `editor.parameterHints`.
+While the popup is up every keystroke re-anchors it and re-asks, so `,` moves the
+active parameter and the server's empty answer after `)` closes it; a plugin
+provider, asked by position alone, closes on `)`. Found alongside: a plugin
+completion provider's `trigger_characters` were parsed and stored but never read --
+they now open the list too. A plugin keybinding whose chord another binding holds
+is still skipped, and the Plugin Log now says which binding took the chord
+(`ShadowedContributedKeybindings`). Covered by
+`WorkspaceShell/SignatureHelpFollowsTheCallBeingTyped`,
+`WorkspaceShell/PluginProvidersOpenOnTheirTriggerCharacters`, the extended
+`ContributionRegistry` keybinding test and the QA `lsp-signature-help` flow.
+
 
 Found writing the QA `plugin-api` flow:
 

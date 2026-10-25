@@ -1376,14 +1376,14 @@ PluginHost::ContributedLanguageProviders() const {
   return impl_->published_.language_providers;
 }
 
-bool PluginHost::HasLanguageProvider(ContributedLanguageProvider::Kind kind,
-                                     std::string_view language_id) const {
+const PluginHost::ContributedLanguageProvider* PluginHost::FindLanguageProvider(
+    ContributedLanguageProvider::Kind kind, std::string_view language_id) const {
   for (const auto& provider : impl_->published_.language_providers) {
     if (provider.kind == kind && provider.language_id == language_id) {
-      return true;
+      return &provider;
     }
   }
-  return false;
+  return nullptr;
 }
 
 const std::vector<PluginHost::ContributedLanguageServer>&

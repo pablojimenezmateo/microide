@@ -1626,10 +1626,15 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
   return ResolveKeybindings(plugin_host.ContributedKeybindings(), disabled_ids, skip_shell);
 }
 
-std::vector<ResolvedKeybinding> ResolveKeybindings(
+namespace {
+
+// ResolveKeybindings, also naming each contributed binding it drops and the
+// resolved binding that holds its chord (`shadowed`, when given).
+std::vector<ResolvedKeybinding> ResolveKeybindingsReporting(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids,
-    const std::vector<std::string>& skip_shell) {
+    const std::vector<std::string>& skip_shell,
+    std::vector<ShadowedKeybinding>* shadowed) {
   std::vector<ResolvedKeybinding> result;
   const auto builtin_specs = BuiltinKeybindingSpecs();
   result.reserve(builtin_specs.size() + contributed.size());
@@ -1687,6 +1692,7 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     std::uint64_t chord = 0;
     KeybindingContext context = KeybindingContext::Global;
     bool skips_terminal = false;
+    std::size_t owner = 0;  // index into `result`: who holds the chord
   };
   std::vector<TakenChord> taken;
   taken.reserve(result.size() + contributed.size());
@@ -1697,17 +1703,19 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     const SDL_Keymod held_mods =
         existing.leader_key != SDLK_UNKNOWN ? existing.leader_modifiers : existing.modifiers;
     taken.push_back(TakenChord{chord_key(held_key, NormalizedKeyModifiers(held_mods)), existing.context,
-                               existing.skips_terminal});
+                               existing.skips_terminal, static_cast<std::size_t>(&existing - result.data())});
   }
   const auto by_chord = [](const TakenChord& a, const TakenChord& b) { return a.chord < b.chord; };
   std::stable_sort(taken.begin(), taken.end(), by_chord);
-  const auto conflicts_with_resolved = [&](SDL_Keycode key, SDL_Keymod mods,
-                                           KeybindingContext context, bool skips) {
+  // The resolved binding holding (key, mods) where `context` is active, if any.
+  const auto holder_of = [&](SDL_Keycode key, SDL_Keymod mods, KeybindingContext context,
+                             bool skips) -> const TakenChord* {
     const TakenChord probe{chord_key(key, NormalizedKeyModifiers(mods))};
     const auto [first, last] = std::equal_range(taken.begin(), taken.end(), probe, by_chord);
-    return std::any_of(first, last, [&](const TakenChord& entry) {
+    const auto holder = std::find_if(first, last, [&](const TakenChord& entry) {
       return KeybindingContextsOverlap(entry.context, entry.skips_terminal, context, skips);
     });
+    return holder == last ? nullptr : &*holder;
   };
 
   for (const auto& contrib : contributed) {
@@ -1733,7 +1741,12 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     // instead. Skip the shadowed contribution so the UI never shows a dead binding.
     const bool skips = context == KeybindingContext::Global &&
                        skips_terminal(contrib.id, contrib.skips_terminal);
-    if (conflicts_with_resolved(key, mods, context, skips)) {
+    if (const TakenChord* holder = holder_of(key, mods, context, skips); holder != nullptr) {
+      if (shadowed != nullptr) {
+        shadowed->push_back(ShadowedKeybinding{.id = contrib.id,
+                                               .chord = FormatKeyChord(key, mods),
+                                               .held_by = result[holder->owner].id});
+      }
       continue;
     }
     const ActionSpec* spec = FindWorkspaceActionByCommand(contrib.action);
@@ -1751,12 +1764,30 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     rb.skips_terminal = skips;
     // Keep the conflict index in sync so a later plugin binding that collides
     // with this accepted one is skipped, matching the old rescan-of-result.
-    const TakenChord accepted{chord_key(key, NormalizedKeyModifiers(mods)), context, skips};
+    const TakenChord accepted{chord_key(key, NormalizedKeyModifiers(mods)), context, skips, result.size()};
     taken.insert(std::upper_bound(taken.begin(), taken.end(), accepted, by_chord), accepted);
     result.push_back(std::move(rb));
   }
 
   return result;
+}
+
+}  // namespace
+
+std::vector<ResolvedKeybinding> ResolveKeybindings(
+    const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
+    const std::vector<std::string>& disabled_ids,
+    const std::vector<std::string>& skip_shell) {
+  return ResolveKeybindingsReporting(contributed, disabled_ids, skip_shell, nullptr);
+}
+
+std::vector<ShadowedKeybinding> ShadowedContributedKeybindings(
+    const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
+    const std::vector<std::string>& disabled_ids,
+    const std::vector<std::string>& skip_shell) {
+  std::vector<ShadowedKeybinding> shadowed;
+  (void)ResolveKeybindingsReporting(contributed, disabled_ids, skip_shell, &shadowed);
+  return shadowed;
 }
 
 const ResolvedKeybinding* FindKeybinding(const std::vector<ResolvedKeybinding>& bindings,

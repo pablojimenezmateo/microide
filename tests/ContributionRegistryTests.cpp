@@ -693,6 +693,12 @@ return ide.plugin({
     return rb.id == "collide.kb.shadow-save";
   });
   Expect(!shadow_present, "the colliding plugin binding must be dropped, not advertised");
+  // ...and the drop is reported, naming who holds the chord, for the plugin log
+  // (TD-2026-10-20-369): it used to vanish without a word.
+  const auto shadowed = microide::workspace::ShadowedContributedKeybindings(host.ContributedKeybindings());
+  Expect(shadowed.size() == 1 && shadowed.front().id == "collide.kb.shadow-save" && shadowed.front().chord == "Ctrl+S" &&
+             shadowed.front().held_by == "save",
+         "the shadowed plugin binding is reported with the built-in that holds Ctrl+S");
 
   const auto* free_chord = FindKeybinding(
       bindings, SDLK_Y, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
@@ -1396,8 +1402,12 @@ return ide.plugin({
   // definition/references providers used to be invisible here, so Go to Definition
   // stayed disabled (menu, Ctrl+click) for languages without a language server.
   using LangKind = PluginHost::ContributedLanguageProvider::Kind;
-  Expect(host.ContributedLanguageProviders().size() == 2,
-         "definition + references providers are published to the UI-thread snapshot");
+  Expect(host.ContributedLanguageProviders().size() == 3,
+         "definition + references + signature-help providers are published to the UI-thread "
+         "snapshot");
+  const auto* signature_provider = host.FindLanguageProvider(LangKind::SignatureHelp, "lua");
+  Expect(signature_provider != nullptr && signature_provider->trigger_characters == "(,",
+         "a signature-help provider opens on `(` and `,` unless it names its own triggers");
   Expect(host.HasLanguageProvider(LangKind::Definition, "lua") &&
              host.HasLanguageProvider(LangKind::References, "lua") &&
              !host.HasLanguageProvider(LangKind::Definition, "python"),

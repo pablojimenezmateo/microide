@@ -96,6 +96,18 @@ std::vector<ResolvedKeybinding> ResolveKeybindings(
     const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
     const std::vector<std::string>& disabled_ids = {},
     const std::vector<std::string>& skip_shell = {});
+// A contributed binding ResolveKeybindings drops because one resolved before it
+// holds its chord where it would be active (TD-2026-10-20-369): which, and who.
+struct ShadowedKeybinding {
+  std::string id;
+  std::string chord;    // as the menus spell it
+  std::string held_by;  // the holding binding's id
+};
+std::vector<ShadowedKeybinding> ShadowedContributedKeybindings(
+    const std::vector<plugin::PluginHost::ContributedKeybinding>& contributed,
+    const std::vector<std::string>& disabled_ids = {},
+    const std::vector<std::string>& skip_shell = {});
+
 // The binding (key, modifiers) dispatches in `context`. A Global binding is active
 // in every context except Terminal, where it must also skip the terminal. Several
 // built-ins may share a chord, as VS Code's do under different `when` clauses

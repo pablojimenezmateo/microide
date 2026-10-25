@@ -661,17 +661,27 @@ struct PluginHost::Impl {
     snapshot.completions = completions;
     snapshot.code_actions = code_actions;
     for (const LanguageQueryRuntime& runtime : language_query_runtimes) {
-      if (runtime.kind != runtime_types::LanguageQueryKind::Definition &&
-          runtime.kind != runtime_types::LanguageQueryKind::References) {
-        continue;
+      using Kind = PluginHost::ContributedLanguageProvider::Kind;
+      Kind kind = Kind::Definition;
+      switch (runtime.kind) {
+        case runtime_types::LanguageQueryKind::Definition:
+          kind = Kind::Definition;
+          break;
+        case runtime_types::LanguageQueryKind::References:
+          kind = Kind::References;
+          break;
+        case runtime_types::LanguageQueryKind::SignatureHelp:
+          kind = Kind::SignatureHelp;
+          break;
+        case runtime_types::LanguageQueryKind::DocumentSymbol:
+          continue;  // the outline asks the worker directly; nothing gates on it
       }
       snapshot.language_providers.push_back(PluginHost::ContributedLanguageProvider{
-          .kind = runtime.kind == runtime_types::LanguageQueryKind::Definition
-                      ? PluginHost::ContributedLanguageProvider::Kind::Definition
-                      : PluginHost::ContributedLanguageProvider::Kind::References,
+          .kind = kind,
           .id = runtime.id,
           .language_id = runtime.language_id,
           .plugin_id = runtime.plugin_id,
+          .trigger_characters = runtime.trigger_characters,
       });
     }
     snapshot.language_servers = language_servers;

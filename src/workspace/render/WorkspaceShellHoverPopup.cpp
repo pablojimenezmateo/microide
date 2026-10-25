@@ -797,7 +797,11 @@ std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEdit
 void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string documentation) {
   const editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty() || signature.empty()) {
-    active_signature_help_.reset();
+    // Clearing a popup on screen is a repaint of the pixels it covered.
+    if (active_signature_help_.has_value()) {
+      active_signature_help_.reset();
+      RequestEditorSurfaceRedraw();
+    }
     return;
   }
   active_signature_help_ = SignatureHelpPopup{

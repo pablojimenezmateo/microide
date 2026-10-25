@@ -52,6 +52,11 @@ class AssistService {
     // Hand a prebuilt (signature, documentation) pair to the host's caret-anchored
     // signature-help popup. Empty signature clears it.
     std::function<void(std::string, std::string)> show_signature_help;
+    // Is the signature-help popup up? Typing inside the call re-asks for it.
+    std::function<bool()> signature_help_showing;
+    // Re-anchor the popup at the caret, so the hint stays on screen across the
+    // keystroke instead of expiring until the re-asked answer arrives.
+    std::function<void()> anchor_signature_help_at_caret;
     std::function<bool(std::string_view, const std::vector<std::string>&, std::string*)>
         execute_command_name;
     // Collect the diagnostics for the viewport's file that overlap `range`,
@@ -96,6 +101,9 @@ class AssistService {
     // this language? Gates quick suggestions, so typing prose in a file nothing
     // completes asks no one.
     std::function<bool(std::string_view)> has_completion_provider;
+    // The trigger characters a plugin completion provider registered for this
+    // language (`ctx.completion.add{ trigger_characters = "." }`); empty if none.
+    std::function<std::string(std::string_view)> plugin_completion_trigger_characters;
     // A short message where the user is looking (an info toast): a navigation that
     // found nothing says so, as VS Code's "No definition found" does, instead of
     // writing only to an output channel no one has open.
@@ -140,6 +148,17 @@ class AssistService {
   // first character of a word when `editor.quickSuggestions` is on -- once per
   // word, hidden until it has rows.
   void CompletionAfterTyping(std::string_view typed);
+  // Text was typed into the editor. Parameter hints open on a trigger character
+  // (the server's signatureHelpProvider.triggerCharacters, a plugin provider's
+  // `trigger_characters`, `(` and `,` by default) and, while they are up, are
+  // re-asked on every keystroke: the active parameter follows `,`, and they
+  // close once the answer is empty (a `)` that ends the call).
+  void SignatureHelpAfterTyping(std::string_view typed);
+  // Both of the above, the editor's typing hook.
+  void AfterTyping(std::string_view typed) {
+    CompletionAfterTyping(typed);
+    SignatureHelpAfterTyping(typed);
+  }
   bool ApplySelectedCompletion();
   bool ShowInsertSnippetOverlay(std::string* error_message = nullptr);
   bool TrySnippetTabInEditor(bool shift_tab);
@@ -278,8 +297,15 @@ class AssistService {
     std::string plugin_signature;
     std::string plugin_documentation;
     bool acted = false;
+    // A re-ask while the hints are up: an empty answer closes them (the caret left
+    // the call) instead of leaving the old signature on screen.
+    bool close_when_empty = false;
     std::uint64_t generation = 0;  // see signature_request_generation_ (TD-2026-07-17A-030)
   };
+  // Ask both sources for the signature at the caret (see ShowSignatureHelp).
+  void RequestSignatureHelp(editor::TextViewport& viewport, bool close_when_empty);
+  // Does typing `c` into this buffer open parameter hints?
+  bool IsSignatureHelpTrigger(editor::TextViewport& viewport, char c);
 
   // Transform a source's raw results into the shared overlay item type.
   std::vector<CompletionSessionItem> TransformPluginCompletions(

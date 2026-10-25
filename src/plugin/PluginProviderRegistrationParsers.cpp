@@ -99,12 +99,19 @@ bool ParseLanguageQueryRegistration(lua_State* state,
     }
     return false;
   }
+  // Parameter hints open on these as they are typed, like a language server's
+  // signatureHelpProvider.triggerCharacters; a call's `(` and `,` by default.
+  std::string trigger_characters;
+  if (kind == runtime_types::LanguageQueryKind::SignatureHelp) {
+    trigger_characters = ReadStringField(state, 1, "trigger_characters").value_or("(,");
+  }
   out->has_runtime = true;
   out->runtime = runtime_types::LanguageQueryRuntime{
       .kind = kind,
       .id = plugin_id + "." + *id_opt,
       .language_id = std::move(*language_id_opt),
       .plugin_id = plugin_id,
+      .trigger_characters = std::move(trigger_characters),
       .state = state,
       .provide_ref = provide_ref,
   };

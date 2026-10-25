@@ -512,21 +512,19 @@ bool LspClient::SupportsPrepareRename() const {
 }
 
 bool LspClient::IsCompletionTriggerCharacter(char c) const {
-  const auto byte = static_cast<unsigned char>(c);
-  return byte < 128 && ((impl_->completion_trigger_mask[byte / 64].load(std::memory_order_acquire) >>
-                         (byte % 64)) & 1U) != 0;
+  return impl_->completion_triggers.Contains(c);
 }
 
 void LspClient::SetCompletionTriggerCharactersForTesting(std::string_view characters) {
-  std::uint64_t mask[2] = {0, 0};
-  for (const char c : characters) {
-    const auto byte = static_cast<unsigned char>(c);
-    if (byte < 128) {
-      mask[byte / 64] |= std::uint64_t{1} << (byte % 64);
-    }
-  }
-  impl_->completion_trigger_mask[0].store(mask[0], std::memory_order_release);
-  impl_->completion_trigger_mask[1].store(mask[1], std::memory_order_release);
+  impl_->completion_triggers.Store(characters);
+}
+
+bool LspClient::IsSignatureHelpTriggerCharacter(char c) const {
+  return impl_->signature_help_triggers.Contains(c);
+}
+
+void LspClient::SetSignatureHelpTriggerCharactersForTesting(std::string_view characters) {
+  impl_->signature_help_triggers.Store(characters);
 }
 
 bool LspClient::SupportsInlayHints() const {

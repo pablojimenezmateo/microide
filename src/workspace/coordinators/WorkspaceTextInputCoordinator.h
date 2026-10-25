@@ -65,8 +65,9 @@ class TextInputCoordinator {
     std::function<char(SDL_Keycode, SDL_Keymod)> keycode_to_ascii;
     std::function<bool(editor::TextViewport*, std::string_view)> try_editor_snippet_insert_text;
     // Typed text reached the editor: the completion list follows it, or opens on
-    // a trigger character / the start of a word (AssistService::CompletionAfterTyping).
-    std::function<void(std::string_view)> completion_after_typing;
+    // a trigger character / the start of a word, and parameter hints open on a
+    // trigger character or follow the call (AssistService::AfterTyping).
+    std::function<void(std::string_view)> assist_after_typing;
     // Restart the active pane's exited session in place (TerminalPanelService).
     std::function<bool()> relaunch_active_terminal;
   };

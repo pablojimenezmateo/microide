@@ -386,8 +386,8 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
         // ended the word; with no list up, a trigger character or the start of a
         // word may open one. A paste is not typing.
         const auto follow_completion = [this, input, distribute_across_carets] {
-          if (operations_.completion_after_typing) {
-            operations_.completion_after_typing(distribute_across_carets ? std::string_view{}
+          if (operations_.assist_after_typing) {
+            operations_.assist_after_typing(distribute_across_carets ? std::string_view{}
                                                                          : input);
           }
         };

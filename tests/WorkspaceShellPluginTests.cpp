@@ -3195,6 +3195,148 @@ return ide.plugin({
          "the language server's signature must win over the plugin's for a served language");
 }
 
+// TD-2026-10-20-369: parameter hints open as a call is typed. The server's
+// signatureHelpProvider.triggerCharacters open them; while they are up every
+// keystroke re-asks, so the active parameter follows `,`, and the server's empty
+// answer once `)` ends the call closes them.
+void TestWorkspaceShellSignatureHelpFollowsTheCallBeingTyped() {
+  WithMarkdownCompletionServer(
+      "\n", 0, 0,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        auto* client =
+            WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("markdown");
+        Expect(client != nullptr, "the stub client should be installed");
+        if (client == nullptr) {
+          return;
+        }
+        client->SetSignatureHelpTriggerCharactersForTesting("(,)");
+        int requests = 0;
+        // Answers like a server: inside `f(` the parameter is the count of commas
+        // before the caret; after the closing `)` there is no call.
+        client->SetTestSignatureHelpHandler(
+            [&requests, &editor](std::string, workspace::LspClient::Position pos,
+                                 workspace::LspClient::SignatureHelpCallback cb) {
+              ++requests;
+              const std::string before =
+                  std::string(editor.lines()[pos.line]).substr(0, pos.character);
+              workspace::LspClient::SignatureHelp help;
+              const std::size_t open = before.rfind('(');
+              if (open != std::string::npos && before.find(')', open) == std::string::npos) {
+                workspace::LspClient::SignatureInformation info;
+                info.label = "f(a, b)";
+                info.parameters.push_back({.label = "a", .documentation = {}});
+                info.parameters.push_back({.label = "b", .documentation = {}});
+                help.signatures.push_back(std::move(info));
+                help.active_parameter = static_cast<int>(
+                    std::count(before.begin() + static_cast<std::ptrdiff_t>(open), before.end(), ','));
+              }
+              cb(std::move(help));
+            });
+        const auto type = [&](std::string_view text) {
+          Expect(WorkspaceShellTestAccess::HandleTextInput(shell, text), "type");
+          WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+          WorkspaceShellTestAccess::ExpireSignatureHelp(shell);  // the frame's expiry check
+        };
+        type("f");
+        Expect(requests == 0 && !WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "a word character asks for no signature");
+        type("(");
+        auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+        Expect(requests == 1 && popup.has_value() && popup->signature == "f(a, b)" &&
+                   popup->documentation == "a",
+               "the trigger character opens the hints on the first parameter");
+        type("1");
+        popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+        Expect(requests == 2 && popup.has_value() && popup->documentation == "a",
+               "typing an argument keeps the hints up and re-asks");
+        type(",");
+        popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+        Expect(popup.has_value() && popup->documentation == "b",
+               "a comma moves the active parameter to the second");
+        type(")");
+        Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "the server's empty answer after `)` closes the hints");
+        type(" ");
+        Expect(requests == 4, "with the hints closed, a non-trigger character asks nothing");
+
+        Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.parameterHints",
+                                                                  "false"),
+               "parameter hints off");
+        type("(");
+        Expect(requests == 4 && !WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "with editor.parameterHints off, the trigger character asks nothing");
+      });
+}
+
+// QA flow lsp-signature-help: a re-ask whose answer is empty clears the popup
+// through ShowSignatureHelpPopup(""), which dropped it without a repaint -- the
+// keystroke repainted its own line and the card stayed on screen below it.
+void TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  WithMarkdownCompletionServer(
+      "one\ntwo\nthree\n", 0, 3,
+      [](std::string, workspace::LspClient::Position, workspace::LspClient::CompletionCallback) {},
+      [&](WorkspaceShell& shell, editor::TextViewport& editor) {
+        auto* client =
+            WorkspaceShellTestAccess::LspManagerForTesting(shell).FindStartedServer("markdown");
+        Expect(client != nullptr, "the stub client should be installed");
+        if (client == nullptr) {
+          return;
+        }
+        client->SetSignatureHelpTriggerCharactersForTesting("(");
+        // A signature while the caret follows `(`; nothing once anything else is typed.
+        client->SetTestSignatureHelpHandler(
+            [&editor](std::string, workspace::LspClient::Position pos,
+                      workspace::LspClient::SignatureHelpCallback cb) {
+              workspace::LspClient::SignatureHelp help;
+              const std::string_view line = editor.lines()[pos.line];
+              if (pos.character > 0 && line[pos.character - 1] == '(') {
+                workspace::LspClient::SignatureInformation info;
+                info.label = "one(alpha, beta)";
+                help.signatures.push_back(std::move(info));
+              }
+              cb(std::move(help));
+            });
+        constexpr int kWidth = 1280;
+        constexpr int kHeight = 720;
+        EnsureDummySdlVideoInitialized();
+        WorkspaceShellTestAccess::SetWindowSize(shell, kWidth, kHeight);
+        WorkspaceShellTestAccess::SetFocusEditor(shell);
+        WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+        const auto pin_caret = [&]() {
+          WorkspaceShellTestAccess::SetCaretBlinkEpochMs(shell, SDL_GetTicks());
+        };
+        SoftwareCanvas canvas(kWidth, kHeight);
+        pin_caret();
+        shell.Render(canvas.renderer(), kWidth, kHeight);
+        (void)shell.ConsumePendingRenderInvalidation();
+        // The keystroke paints its frame; the server's answer arrives in a later one.
+        const auto type = [&](const char* text) {
+          const auto typed = PaintAndDiffWithFullRepaint(
+              shell, canvas, kWidth, kHeight, DispatchEvents(shell, {TextInputEvent(text)}),
+              pin_caret);
+          Expect(typed.identical(), "the keystroke's frame paints what a full repaint paints; " +
+                                        DescribePixelDiff(typed));
+          WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+          return PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight,
+                                             shell.ConsumePendingRenderInvalidation(), pin_caret);
+        };
+        const auto opened = type("(");
+        Expect(WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "the trigger character opens the hints");
+        Expect(opened.identical(),
+               "opening the hints paints what a full repaint paints; " + DescribePixelDiff(opened));
+        const auto closed = type("x");
+        Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+               "the empty re-ask closes the hints");
+        Expect(closed.identical(), "closing the hints takes them off screen; " +
+                                       DescribePixelDiff(closed));
+      });
+}
+
 // QA flow lsp-signature-help: typing a closer steps over the auto-inserted one --
 // no edit -- yet still reported "the last change", and the LSP sync re-sent the
 // viewport's last_applied_edit, which was the PREVIOUS keystroke's. The server then
@@ -3227,6 +3369,83 @@ void TestWorkspaceShellSteppingOverACloserSendsTheServerNothing() {
         Expect(client->TrackedDocumentVersion(uri) == std::optional<int>(*before + 1),
                "the next real edit is sent once");
       });
+}
+
+// A plugin signature-help provider opens on its trigger characters (`(` and `,` by
+// default) with no language server; it is asked by position alone, so `)` closes
+// its hints. A plugin completion provider's `trigger_characters` open the list.
+void TestWorkspaceShellPluginProvidersOpenOnTheirTriggerCharacters() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "\n");
+  WritePluginInit(
+      plugins_root, "mdsig",
+      R"lua(local ide = require("microide")
+return ide.plugin({
+  id = "mdsig",
+  setup = function(ctx)
+    ctx.signature_help.add({
+      id = "sig",
+      language_id = "markdown",
+      provide = function(_, _)
+        return { signatures = { { label = "plugin_sig(a)" } } }
+      end
+    })
+    ctx.completion.add({
+      id = "members",
+      language_id = "markdown",
+      trigger_characters = ":",
+      provide = function(_, _)
+        return { { label = "member", insert_text = "member" } }
+      end
+    })
+  end
+})
+)lua");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.quickSuggestions",
+                                                            "false"),
+         "quick suggestions off, so only trigger characters ask");
+  const auto type = [&](std::string_view text) {
+    Expect(WorkspaceShellTestAccess::HandleTextInput(shell, text), "type");
+    WaitUntil([] { return false; }, std::chrono::milliseconds(150), std::chrono::milliseconds(5),
+              [&]() {
+                WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+                (void)shell.HandleScheduledWake();
+              });
+    WorkspaceShellTestAccess::ExpireSignatureHelp(shell);
+  };
+  type("g(");
+  Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+         "pasted text is not typing");
+  type(")");
+  type("g");
+  type("(");
+  const auto popup = WorkspaceShellTestAccess::SignatureHelpPopup(shell);
+  Expect(popup.has_value() && popup->signature == "plugin_sig(a)",
+         "the provider's default trigger `(` opens its hints");
+  type("x");
+  Expect(WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+         "typing an argument keeps them up");
+  type(")");
+  Expect(!WorkspaceShellTestAccess::SignatureHelpPopup(shell).has_value(),
+         "`)` closes a plugin provider's hints");
+  type(":");
+  Expect(CompletionListUp(shell), "the completion provider's trigger character opens the list");
 }
 
 // Inlay hints flow LSP -> mid-line virtual text: opening a served document
@@ -7461,6 +7680,12 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellQuickSuggestionsWithNothingToOfferStayHidden);
   AddTest(tests, "WorkspaceShell/TriggerCharacterOpensCompletionAtTheCaret",
           TestWorkspaceShellTriggerCharacterOpensCompletionAtTheCaret);
+  AddTest(tests, "WorkspaceShell/SignatureHelpFollowsTheCallBeingTyped",
+          TestWorkspaceShellSignatureHelpFollowsTheCallBeingTyped);
+  AddTest(tests, "WorkspaceShell/PluginProvidersOpenOnTheirTriggerCharacters",
+          TestWorkspaceShellPluginProvidersOpenOnTheirTriggerCharacters);
+  AddTest(tests, "WorkspaceShell/SignatureHelpClosingRepaintsWhereItWas",
+          TestWorkspaceShellSignatureHelpClosingRepaintsWhereItWas);
   AddTest(tests, "WorkspaceShell/SteppingOverACloserSendsTheServerNothing",
           TestWorkspaceShellSteppingOverACloserSendsTheServerNothing);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",

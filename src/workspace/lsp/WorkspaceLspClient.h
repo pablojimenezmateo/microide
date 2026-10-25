@@ -621,6 +621,9 @@ class LspClient {
   // Is `c` one of the server's completionProvider.triggerCharacters?
   bool IsCompletionTriggerCharacter(char c) const;
   void SetCompletionTriggerCharactersForTesting(std::string_view characters);
+  // Is `c` one of the server's signatureHelpProvider.triggerCharacters?
+  bool IsSignatureHelpTriggerCharacter(char c) const;
+  void SetSignatureHelpTriggerCharactersForTesting(std::string_view characters);
 
   // Async textDocument/documentHighlight for the symbol at `pos`. Reports nullopt
   // when the server advertises no documentHighlightProvider, so the caller keeps

@@ -166,16 +166,18 @@ class PluginHost {
     std::string plugin_id;
   };
 
-  // A plugin-native definition/references provider (ctx.definition.add /
-  // ctx.references.add). Published so the UI thread can answer "is Go to
-  // Definition available for this buffer?" without touching the worker-owned
+  // A plugin-native definition/references/signature-help provider
+  // (ctx.definition.add / ctx.references.add / ctx.signature_help.add). Published
+  // so the UI thread can answer "is Go to Definition available for this buffer?"
+  // and "does typing `(` open parameter hints?" without touching the worker-owned
   // provider table; the provide function itself stays behind the query API.
   struct ContributedLanguageProvider {
-    enum class Kind { Definition, References };
+    enum class Kind { Definition, References, SignatureHelp };
     Kind kind = Kind::Definition;
     std::string id;
     std::string language_id;
     std::string plugin_id;
+    std::string trigger_characters;  // SignatureHelp only
   };
 
   struct ContributedLanguageServer {
@@ -849,9 +851,13 @@ class PluginHost {
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
   const std::vector<ContributedLanguageProvider>& ContributedLanguageProviders() const;
-  // Whether any loaded plugin registered a `kind` provider for `language_id`.
+  // The first loaded plugin's `kind` provider for `language_id`, or null.
+  const ContributedLanguageProvider* FindLanguageProvider(ContributedLanguageProvider::Kind kind,
+                                                          std::string_view language_id) const;
   bool HasLanguageProvider(ContributedLanguageProvider::Kind kind,
-                           std::string_view language_id) const;
+                           std::string_view language_id) const {
+    return FindLanguageProvider(kind, language_id) != nullptr;
+  }
   const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;
   const std::vector<ContributedDebugAdapter>& ContributedDebugAdapters() const;
   const std::vector<ContributedLaunchConfig>& ContributedLaunchConfigs() const;

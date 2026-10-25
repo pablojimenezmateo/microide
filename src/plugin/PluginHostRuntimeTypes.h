@@ -122,6 +122,8 @@ struct LanguageQueryRuntime {
   std::string id;
   std::string language_id;
   std::string plugin_id;
+  // SignatureHelp only: typing one of these opens the parameter hints.
+  std::string trigger_characters;
 #if MICROIDE_HAS_LUA_PLUGINS
   lua_State* state = nullptr;
   int provide_ref = LUA_NOREF;

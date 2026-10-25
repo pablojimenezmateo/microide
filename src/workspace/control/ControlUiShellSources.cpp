@@ -1140,6 +1140,11 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                 active_signature_help_.has_value()
                     ? util::JsonValue(active_signature_help_->signature)
                     : util::JsonValue(nullptr);
+            // The block under it, which leads with the active parameter.
+            popups["signatureHelpDetail"] =
+                active_signature_help_.has_value()
+                    ? util::JsonValue(active_signature_help_->documentation)
+                    : util::JsonValue(nullptr);
             root["popups"] = util::JsonValue(std::move(popups));
 
             // The last action a key, menu row, palette entry or command ran

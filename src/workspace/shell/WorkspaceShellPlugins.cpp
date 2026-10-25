@@ -528,6 +528,16 @@ WorkspaceShell::WorkspaceShell() {
               [this](std::string signature, std::string documentation) {
                 ShowSignatureHelpPopup(std::move(signature), std::move(documentation));
               },
+          .signature_help_showing = [this]() { return active_signature_help_.has_value(); },
+          .anchor_signature_help_at_caret =
+              [this]() {
+                const editor::TextViewport* viewport = ActiveEditableViewport();
+                if (active_signature_help_.has_value() && viewport != nullptr) {
+                  active_signature_help_->cursor_line = viewport->cursor_line();
+                  active_signature_help_->cursor_column = viewport->cursor_column();
+                  RequestEditorSurfaceRedraw();
+                }
+              },
           .execute_command_name =
               [this](std::string_view command_name,
                      const std::vector<std::string>& args,
@@ -597,6 +607,13 @@ WorkspaceShell::WorkspaceShell() {
                 return !language_id.empty() &&
                        (FindProvider(completion_registry_, std::string(language_id)) != nullptr ||
                         CurrentLspManager().HasServer(std::string(language_id)));
+              },
+          .plugin_completion_trigger_characters =
+              [this](std::string_view language_id) {
+                const CompletionProviderSpec* provider =
+                    language_id.empty() ? nullptr
+                                        : FindProvider(completion_registry_, language_id);
+                return provider != nullptr ? provider->trigger_characters : std::string{};
               },
           .notify_info = [this](std::string message) { Notify(NotificationService::Tone::Info, message); },
       });
@@ -1061,6 +1078,17 @@ void WorkspaceShell::ConsumeReloadResult(PluginReloadRequest request, bool clean
     RebuildPhase4Registries();
     RebuildPresentationRegistries();
     RefreshPluginEditorEventInterest();
+  }
+  // A plugin keybinding on a chord another binding holds is not registered (Help
+  // and Settings never advertise a key that cannot fire), and the plugin's author
+  // is told which binding has it (TD-2026-10-20-369).
+  if (const auto& contributed = plugin_runtime_.Host().ContributedKeybindings(); !contributed.empty()) {
+    for (const ShadowedKeybinding& shadowed : ShadowedContributedKeybindings(
+             contributed, context_.disabled_keybinding_ids,
+             ParseSkipShellList(GetSettingValue("terminal.commands_to_skip_shell")))) {
+      plugin_runtime_.AppendLog("keybinding " + shadowed.id + " (" + shadowed.chord + ") not registered: " +
+                                shadowed.held_by + " already uses " + shadowed.chord);
+    }
   }
   {
     util::StartupTrace::Scope syntax_scope("InvalidateSyntaxCaches");
