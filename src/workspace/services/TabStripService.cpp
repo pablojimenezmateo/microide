@@ -503,6 +503,10 @@ std::string TerminalLabelPrefix(const ProjectWorkspaceState& state, const Termin
 
 }  // namespace
 
+std::string TerminalPaneLabelPrefix(const ProjectWorkspaceState& state, const TerminalPaneState& pane) {
+  return TerminalLabelPrefix(state, pane, TerminalsAreMixed(state));
+}
+
 std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
     const ProjectWorkspaceState& state,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {

@@ -440,7 +440,10 @@ class Suite:
             reply = app.send("remote-status")
             self.record("P.status", bool(reply.get("ok")), f"reply={reply}")
             reply = app.send("remote-show-log", host.name)
-            shown = app.query("output").get("shown", "")
+            # The log is fetched from the host first: a round trip before it shows.
+            shown, _ = wait_for(lambda: (lambda s: s if "remote" in s.lower() else None)(
+                app.query("output").get("shown", "")), 10, 0.2)
+            shown = shown or app.query("output").get("shown", "")
             self.record("P.show-log", bool(reply.get("ok")) and "remote" in shown.lower(),
                         f"reply={reply} shown={shown!r}")
             reply = app.send("remote-copy-command", host.name, "ssh")

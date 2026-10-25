@@ -1196,8 +1196,9 @@ class App:
         tabs = tabs if isinstance(tabs, list) else tabs.get("tabs", [])
 
         def label_of(tab: dict) -> str:
+            # As the strip shows it: a host terminal's label carries "host · ".
             pane = next((p for p in tab.get("panes", []) if p.get("active")), (tab.get("panes") or [{}])[0])
-            return pane.get("label", "")
+            return pane.get("labelPrefix", "") + pane.get("label", "")
 
         def names(element: dict, label: str) -> bool:
             shown_label = element.get("label", "")

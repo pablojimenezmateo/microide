@@ -1,5 +1,7 @@
 #include "workspace/control/ControlChannelService.h"
 
+#include "workspace/services/TabStripService.h"
+
 #include "workspace/WorkspaceOutputChannels.h"
 
 #include <cstdlib>
@@ -1084,6 +1086,8 @@ util::JsonValue ControlChannelService::BuildTerminals() const {
       pane_object["pane"] = util::JsonValue(static_cast<std::int64_t>(p));
       pane_object["active"] = util::JsonValue(p == tab->active_pane);
       pane_object["label"] = util::JsonValue(pane->session.LaunchLabel());
+      // What the tab strip shows before the label ("host · " for a host terminal).
+      pane_object["labelPrefix"] = util::JsonValue(TerminalPaneLabelPrefix(state, *pane));
       pane_object["running"] = util::JsonValue(pane->session.running());
       pane_object["lineCount"] =
           util::JsonValue(static_cast<std::int64_t>(pane->session.LineCount()));
