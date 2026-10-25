@@ -50,12 +50,11 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       event.type == runtime_.project_open_dialog_event_type) {
     util::PerformanceTrace::Scope scope(
         "WorkspaceEventDispatcher::Handle::ProjectOpenDialogEvent");
-    // The native folder picker (project) and file picker (font) share this wake
-    // event; both consumes are idempotent no-ops when their result isn't ready.
-    operations_.consume_pending_project_open_dialog_result();
-    if (operations_.consume_pending_font_file_dialog_result) {
-      operations_.consume_pending_font_file_dialog_result();
-    }
+    // Every native picker shares this wake event. Consuming here, not only in
+    // frame prep, is what makes an answer land without some other reason to
+    // paint: Open File… on a welcome page (no caret blinking) used to keep the
+    // picked file until the next unrelated frame.
+    operations_.consume_pending_dialog_results();
     return finish(true);
   }
   if (operations_.plugin_runtime_consume_wake_event(event.type)) {

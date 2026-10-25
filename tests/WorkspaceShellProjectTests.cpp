@@ -2812,7 +2812,9 @@ void TestWorkspaceShellCtrlOOpensNativeFilePicker() {
   const std::filesystem::path picked = root / "picked.cpp";
   WriteFile(picked, "int main() {}\n");
 
+  EnsureDummySdlVideoInitialized();
   WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   std::filesystem::path requested_default;
   int launch_count = 0;
@@ -2832,8 +2834,15 @@ void TestWorkspaceShellCtrlOOpensNativeFilePicker() {
   Expect(WorkspaceShellTestAccess::OpenTabs(shell).empty(),
          "launching the picker should not open a tab on its own");
 
+  // The answer lands through the dialog's wake event alone, as the app delivers
+  // it: it used to be consumed only while preparing a frame, so on a page with
+  // nothing else to paint (the welcome page) the picked file never opened.
   WorkspaceShellTestAccess::QueueOpenFileDialogSelection(shell, picked);
-  WorkspaceShellTestAccess::ConsumePendingOpenFileDialogResult(shell);
+  const Uint32 wake = WorkspaceShellTestAccess::DialogWakeEventType(shell);
+  Expect(wake != 0, "the shell should have registered the dialog wake event");
+  SDL_Event event{};
+  event.type = wake;
+  (void)shell.HandleEvent(event);
 
   Expect(!WorkspaceShellTestAccess::OpenFileDialogActive(shell),
          "the file picker should clear its active state after a selection");

@@ -229,10 +229,12 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .sync_terminal_focus = [shell]() { shell->SyncTerminalFocusState(); },
           .consume_pending_render_invalidation =
               [shell]() { return shell->ConsumePendingRenderInvalidation(); },
-          .consume_pending_project_open_dialog_result =
-              [shell]() { shell->ConsumePendingProjectOpenDialogResult(); },
-          .consume_pending_font_file_dialog_result =
-              [shell]() { shell->ConsumePendingFontFileDialogResult(); },
+          .consume_pending_dialog_results =
+              [shell]() {
+                shell->ConsumePendingProjectOpenDialogResult();
+                shell->ConsumePendingOpenFileDialogResult();
+                shell->ConsumePendingFontFileDialogResult();
+              },
           .reload_plugins_if_assets_changed =
               [shell](bool force_check) {
                 return shell->ReloadPluginsIfPluginAssetsChanged(force_check);

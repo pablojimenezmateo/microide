@@ -720,6 +720,10 @@
   static void ConsumePendingOpenFileDialogResult(WorkspaceShell& shell) {
     shell.ConsumePendingOpenFileDialogResult();
   }
+  // The wake event every native picker posts when its answer is latched.
+  static Uint32 DialogWakeEventType(const WorkspaceShell& shell) {
+    return shell.project_open_dialog_event_type_;
+  }
   static bool SwitchProject(WorkspaceShell& shell,
                             std::size_t index,
                             bool log_feedback = false) {

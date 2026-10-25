@@ -31,8 +31,9 @@ class WorkspaceEventDispatcher {
   struct Operations {
     std::function<void()> sync_terminal_focus;
     std::function<RenderInvalidation()> consume_pending_render_invalidation;
-    std::function<void()> consume_pending_project_open_dialog_result;
-    std::function<void()> consume_pending_font_file_dialog_result;
+    // Every native dialog's result (folder, Open File…, font file): they share one
+    // wake event, and each consume is a no-op when its result is not ready.
+    std::function<void()> consume_pending_dialog_results;
     std::function<bool(bool)> reload_plugins_if_assets_changed;
     std::function<bool(Uint32)> plugin_runtime_consume_wake_event;
     std::function<bool(bool)> reload_project_if_files_changed;
