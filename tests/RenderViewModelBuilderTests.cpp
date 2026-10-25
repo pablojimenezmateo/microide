@@ -146,6 +146,40 @@ void TestBuildOverlaySurfaceOwnsPickerRowsAndChrome() {
          "an out-of-range stored scroll row should be clamped by the builder");
 }
 
+// QA lsp-more (CI, 2026-10-25): a workspace-symbol row's detail ("container ·
+// path") was laid out at its full measured width, so a long one started left of
+// the row -- over its own label and out past the overlay into the editor, where a
+// partial frame clipped to the overlay never repainted it.
+void TestBuildOverlaySurfaceBoundsALongSecondaryColumnToTheRow() {
+  WorkspaceContext context;
+  auto& palette = context.current_project_state.overlay.workflow.command_palette;
+  palette.items.push_back(microide::workspace::CommandPaletteItem{
+      .primary_label = "Open File",
+      .secondary_label = std::string(400, 'x'),
+      .search_text = "open file",
+  });
+  palette.matches = {0};
+  context.current_project_state.overlay.visible = true;
+  context.current_project_state.overlay.mode = microide::workspace::OverlayMode::CommandPalette;
+
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;  // no-backend: deterministic 8px/char
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  microide::workspace::OverlaySurfaceViewModel vm;
+  builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+
+  Expect(vm.rows.size() == 1, "the one match is visible");
+  const auto& row = vm.rows[0];
+  Expect(row.primary == "Open File", "the label keeps its full text beside a long detail");
+  Expect(row.secondary.size() < 400 && !row.secondary.empty(),
+         "a detail wider than its share of the row is truncated, not dropped");
+  Expect(row.secondary_width <= vm.list_layout.row_width - (10.0f + 9 * 8.0f),
+         "the detail column starts right of the label, inside the row");
+  Expect(text_renderer.MeasureWidth(row.secondary) + 12.0f <= row.secondary_width,
+         "the truncated detail fits the column it is drawn in");
+}
+
 void TestBuildOverlaySurfaceComposesProjectSearchAndCompletion() {
   WorkspaceContext context;
   auto& search = context.current_project_state.overlay.workflow.project_search;
@@ -1567,6 +1601,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderConstructsAllSurfaceViewModels);
   AddTest(tests, "RenderViewModelBuilder/OverlayOwnsPickerRowsAndChrome",
           TestBuildOverlaySurfaceOwnsPickerRowsAndChrome);
+  AddTest(tests, "RenderViewModelBuilder/OverlayBoundsALongSecondaryColumnToTheRow",
+          TestBuildOverlaySurfaceBoundsALongSecondaryColumnToTheRow);
   AddTest(tests, "RenderViewModelBuilder/OverlayComposesProjectSearchAndCompletion",
           TestBuildOverlaySurfaceComposesProjectSearchAndCompletion);
   AddTest(tests, "RenderViewModelBuilder/OverlayFindWidgetSubmodel",

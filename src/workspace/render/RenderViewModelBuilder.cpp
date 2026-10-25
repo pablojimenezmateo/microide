@@ -978,14 +978,23 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
   };
   // Two-column picker rows: the muted right column keeps its measured width and
   // the primary is pre-truncated to the space that remains (TD-2026-07-16-33
-  // still holds: only the VISIBLE window is materialized).
+  // still holds: only the VISIBLE window is materialized). The right column is
+  // bounded too: the primary keeps its full width up to half the row, and a
+  // longer secondary (a workspace symbol's "container · path") is truncated to
+  // the rest -- unbounded, it started left of the row and painted over the label
+  // and out past the overlay.
   const auto emit_two_column_rows = [&](auto&& row_at) {
     for_visible([&](std::size_t item_index) {
       const auto [primary, secondary] = row_at(item_index);
       OverlayRowRef row_ref;
       if (!secondary.empty()) {
-        row_ref.secondary = OverlayLabelRef::Direct(secondary);
-        row_ref.secondary_width = tr.MeasureWidth(secondary) + 12.0f;
+        const float primary_room =
+            std::min(tr.MeasureWidth(primary) + 22.0f, row_width * 0.5f);
+        const float secondary_room = std::max(0.0f, row_width - primary_room - 12.0f);
+        row_ref.secondary =
+            AddTruncatedLabel(tr, blob, secondary, secondary_room, /*stable=*/true);
+        const std::string_view shown = row_ref.secondary.Resolve(blob);
+        row_ref.secondary_width = shown.empty() ? 0.0f : tr.MeasureWidth(shown) + 12.0f;
       }
       const float primary_width = std::max(20.0f, row_width - 12.0f - row_ref.secondary_width);
       row_ref.primary = AddTruncatedLabel(tr, blob, primary, primary_width, /*stable=*/true);
