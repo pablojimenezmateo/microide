@@ -1,5 +1,7 @@
 #include "platform/RuntimePaths.h"
 
+#include "platform/AppDirectories.h"
+
 #include <cstdlib>
 #include <string>
 #include <system_error>
@@ -14,15 +16,6 @@
 namespace microide::platform {
 
 namespace {
-
-std::filesystem::path EnvPath(const char* name) {
-  // Plain getenv, not SDL's wrapper: it reads the live environment, so a setenv()
-  // from a test's ScopedEnvVar is visible (SDL's cached copy was not, which is why
-  // the SDL_getenv_unsafe variant was used here).
-  const char* value = std::getenv(name);
-  return value != nullptr && value[0] != '\0' ? std::filesystem::path(value)
-                                              : std::filesystem::path{};
-}
 
 // Directory holding the running executable. This is what SDL_GetBasePath returned;
 // reading /proc/self/exe directly keeps the path resolver out of the windowing
@@ -71,7 +64,7 @@ std::filesystem::path ResolveBundledAssetDirectoryForBasePath(
 
 std::filesystem::path ResolveBundledAssetDirectory() {
   return ResolveBundledAssetDirectoryForBasePath(BasePath(),
-                                                 EnvPath("MICROIDE_ASSET_ROOT"));
+                                                 EnvironmentPath("MICROIDE_ASSET_ROOT"));
 }
 
 std::filesystem::path ResolveBundledAssetPath(std::string_view relative_path) {
@@ -107,7 +100,7 @@ std::string ThisMachineArchitecture() {
 
 std::filesystem::path ResolveBundledServerBinary(std::string_view arch) {
   std::error_code ec;
-  if (const std::filesystem::path explicit_binary = EnvPath("MICROIDE_SERVER_BINARY");
+  if (const std::filesystem::path explicit_binary = EnvironmentPath("MICROIDE_SERVER_BINARY");
       !explicit_binary.empty()) {
     return std::filesystem::is_regular_file(explicit_binary, ec) ? explicit_binary
                                                                  : std::filesystem::path();

@@ -7,23 +7,19 @@
 
 namespace microide::platform {
 
-namespace {
-
-std::filesystem::path EnvPath(const char* name) {
+std::filesystem::path EnvironmentPath(const char* name) {
   const char* value = std::getenv(name);
   return value != nullptr && value[0] != '\0' ? std::filesystem::path(value)
                                               : std::filesystem::path{};
 }
 
-}  // namespace
-
 std::filesystem::path ResolveUserHomeDirectory() {
   switch (CurrentHostPlatform()) {
     case HostPlatform::Windows:
-      if (const std::filesystem::path profile = EnvPath("USERPROFILE"); !profile.empty()) {
+      if (const std::filesystem::path profile = EnvironmentPath("USERPROFILE"); !profile.empty()) {
         return profile;
       }
-      if (const std::filesystem::path home = EnvPath("HOME"); !home.empty()) {
+      if (const std::filesystem::path home = EnvironmentPath("HOME"); !home.empty()) {
         return home;
       }
       if (const char* drive = std::getenv("HOMEDRIVE"),
@@ -34,7 +30,7 @@ std::filesystem::path ResolveUserHomeDirectory() {
       return {};
     case HostPlatform::MacOS:
     case HostPlatform::Linux:
-      if (const std::filesystem::path home = EnvPath("HOME"); !home.empty()) {
+      if (const std::filesystem::path home = EnvironmentPath("HOME"); !home.empty()) {
         return home;
       }
       return {};
@@ -47,14 +43,14 @@ std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
     case HostPlatform::Windows: {
       switch (kind) {
         case UserDirectoryKind::Config:
-          if (const std::filesystem::path config = EnvPath("APPDATA"); !config.empty()) {
+          if (const std::filesystem::path config = EnvironmentPath("APPDATA"); !config.empty()) {
             return config;
           }
           break;
         case UserDirectoryKind::State:
         case UserDirectoryKind::Data:
         case UserDirectoryKind::Cache:
-          if (const std::filesystem::path local = EnvPath("LOCALAPPDATA"); !local.empty()) {
+          if (const std::filesystem::path local = EnvironmentPath("LOCALAPPDATA"); !local.empty()) {
             return local;
           }
           break;
@@ -85,7 +81,7 @@ std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
     case HostPlatform::Linux:
       switch (kind) {
         case UserDirectoryKind::Config:
-          if (const std::filesystem::path config = EnvPath("XDG_CONFIG_HOME"); !config.empty()) {
+          if (const std::filesystem::path config = EnvironmentPath("XDG_CONFIG_HOME"); !config.empty()) {
             return config;
           }
           if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
@@ -93,7 +89,7 @@ std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
           }
           return {};
         case UserDirectoryKind::State:
-          if (const std::filesystem::path state = EnvPath("XDG_STATE_HOME"); !state.empty()) {
+          if (const std::filesystem::path state = EnvironmentPath("XDG_STATE_HOME"); !state.empty()) {
             return state;
           }
           if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
@@ -101,7 +97,7 @@ std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
           }
           return {};
         case UserDirectoryKind::Data:
-          if (const std::filesystem::path data = EnvPath("XDG_DATA_HOME"); !data.empty()) {
+          if (const std::filesystem::path data = EnvironmentPath("XDG_DATA_HOME"); !data.empty()) {
             return data;
           }
           if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
@@ -109,7 +105,7 @@ std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
           }
           return {};
         case UserDirectoryKind::Cache:
-          if (const std::filesystem::path cache = EnvPath("XDG_CACHE_HOME"); !cache.empty()) {
+          if (const std::filesystem::path cache = EnvironmentPath("XDG_CACHE_HOME"); !cache.empty()) {
             return cache;
           }
           if (const std::filesystem::path home = ResolveUserHomeDirectory(); !home.empty()) {
