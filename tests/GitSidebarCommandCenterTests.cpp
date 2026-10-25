@@ -131,7 +131,7 @@ void TestGitSidebarViewModelGrouping() {
          "conflicts should block commit readiness messaging");
   Expect(view_model.selection_summary_line.find("merge resolver") != std::string::npos,
          "selected conflict row should advertise merge as the primary action");
-  Expect(view_model.selection_action_line.find("m merge") != std::string::npos,
+  Expect(view_model.selection_action_line.find("Enter merge") != std::string::npos,
          "selected conflict row should surface merge action hints");
 
   const auto lines = BuildGitSidebarLineSpecs(view_model);
@@ -473,10 +473,10 @@ void TestCommitReadySummaryAppearsWithoutConflicts() {
   const BranchReviewStateService branch_review;
   const GitSidebarViewModel view_model =
       BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
-  Expect(view_model.commit_summary_line == "Commit ready · c commit",
+  Expect(view_model.commit_summary_line == "Commit ready · Git: Commit…",
          "staged changes without conflicts should surface commit readiness");
-  Expect(view_model.selection_action_line.find("s stage") != std::string::npos &&
-             view_model.selection_action_line.find("c commit") != std::string::npos,
+  Expect(view_model.selection_action_line.find("Shift+F10 stage") != std::string::npos &&
+             view_model.selection_action_line.find("Git: Commit…") != std::string::npos,
          "selected unstaged rows should expose both row actions and commit readiness");
 }
 

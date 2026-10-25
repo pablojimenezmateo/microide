@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable
 
 import microide_qa as q
-from flows_common import dismiss, git, open_file, read, step, write
+from flows_common import choose_from_context_menu_by_keys, dismiss, git, open_file, read, step, write
 from flows_coverage import _debug_rows, _show_debug_mode
 from flows_lsp_debug import _require, _state
 
@@ -34,9 +34,11 @@ def _git_selected(app: q.App) -> str | None:
 
 
 def flow_git_view_keys(app: q.App) -> None:
-    """The git view by keys: Down/Up/Home/End over the entries, `s` staging the
-    selected one and `u` unstaging it (the repository says so), `d` and Enter
-    opening its diff, `R` refreshing after a change made outside."""
+    """The git view by keys: Down/Up/Home/End over the entries, typing to navigate
+    by file name (the letters used to stage, discard and diff -- TD-2026-10-16-350),
+    Shift+F10 opening the row's menu where Stage, Unstage, Open Changes and Open
+    File are chosen with the arrows (the repository says what happened), Enter
+    opening the diff, Git: Refresh picking up a change made outside."""
     assert app.project is not None
     for name in ("alpha", "beta", "gamma"):
         write(app, f"keys/{name}.txt", f"{name}\n")
@@ -62,13 +64,30 @@ def flow_git_view_keys(app: q.App) -> None:
     app.key("Up")
     step(app, "Up", 0.15)
     app.expect(_git_selected(app) == "row:git/beta.txt", f"Up moves back up ({_git_selected(app)})")
+    # Typing navigates by name and runs nothing: `s` once staged the row.
+    app.key("g")
+    step(app, "type g", 0.2)
+    app.expect(_git_selected(app) == "row:git/gamma.txt", f"typing g selects gamma.txt ({_git_selected(app)})")
+    app.key("a")
+    app.settle(0.3)
+    app.expect(not any(v.startswith(("M", "A")) for v in _porcelain(app).values()),
+               f"typing in the git view stages nothing ({_porcelain(app)})")
     app.key("Home")
     app.settle(0.15)
     selected = (_git_selected(app) or "").split("/", 1)[-1]
-    app.key("s")
-    app.wait_until(lambda: _porcelain(app).get(f"keys/{selected}", "").startswith("M"), 5.0, f"s to stage {selected}")
-    step(app, "s", 0.3)
-    app.expect(_porcelain(app).get(f"keys/{selected}", "") == "M ", f"s stages the selected entry ({_porcelain(app)})")
+    choose_from_context_menu_by_keys(app, "Stage")
+    app.wait_until(lambda: _porcelain(app).get(f"keys/{selected}", "").startswith("M"), 5.0,
+                   f"Stage from the row's menu to stage {selected}")
+    step(app, "Shift+F10, Stage", 0.3)
+    app.expect(_porcelain(app).get(f"keys/{selected}", "") == "M ", f"Stage stages the selected entry ({_porcelain(app)})")
+    # With something staged, Git: Commit… opens the message editor (the bare `c`
+    # did); Escape closes it and the keys return to the list.
+    app.send("git-commit")
+    app.wait_until(lambda: app.elements("field", prefix="field:git/subject"), 3.0, "Git: Commit… to open the editor")
+    app.expect(bool(app.elements("field", prefix="field:git/subject")), "Git: Commit… opens the commit message editor")
+    app.key("Escape")
+    app.settle(0.2)
+    app.send("focus", "sidebar")
     # The staged entry sits under its own header now: select it (a click also
     # opens its diff and focuses the editor, so the keys go back to the view).
     staged = next((r for r in _git_rows(app) if r["name"].endswith("/" + selected)), None)
@@ -76,14 +95,20 @@ def flow_git_view_keys(app: q.App) -> None:
         app.click(*app.center(staged))
         app.settle(0.2)
         app.send("focus", "sidebar")
-    app.key("u")
-    app.wait_until(lambda: _porcelain(app).get(f"keys/{selected}", "") == " M", 5.0, f"u to unstage {selected}")
-    step(app, "u", 0.3)
-    app.expect(_porcelain(app).get(f"keys/{selected}", "") == " M", f"u unstages it again ({_porcelain(app)})")
-    app.key("d")
-    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "d to open the diff")
-    step(app, "d", 0.3)
-    app.expect((app.active_tab() or {}).get("kind") == "compare", "d opens the entry's diff")
+    choose_from_context_menu_by_keys(app, "Unstage")
+    app.wait_until(lambda: _porcelain(app).get(f"keys/{selected}", "") == " M", 5.0, f"Unstage {selected}")
+    step(app, "Shift+F10, Unstage", 0.3)
+    app.expect(_porcelain(app).get(f"keys/{selected}", "") == " M", f"Unstage unstages it again ({_porcelain(app)})")
+    app.send("focus", "sidebar")
+    choose_from_context_menu_by_keys(app, "Open Changes")
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "Open Changes to open the diff")
+    step(app, "Shift+F10, Open Changes", 0.3)
+    app.expect((app.active_tab() or {}).get("kind") == "compare", "Open Changes opens the entry's diff")
+    app.send("focus", "sidebar")
+    choose_from_context_menu_by_keys(app, "Open File")
+    app.wait_until(lambda: (app.active_tab() or {}).get("kind") != "compare", 5.0, "Open File to open the file")
+    step(app, "Shift+F10, Open File", 0.3)
+    app.expect(selected in (app.active_tab() or {}).get("title", ""), f"Open File opens the working-tree file ({app.active_tab()})")
     app.send("focus", "sidebar")
     app.key("Down")
     app.settle(0.1)
@@ -94,11 +119,10 @@ def flow_git_view_keys(app: q.App) -> None:
     step(app, "Enter", 0.3)
     app.expect(other in (app.active_tab() or {}).get("title", ""), f"Enter opens the selected entry ({app.active_tab()})")
     write(app, "keys/delta.txt", "new\n")
-    app.send("focus", "sidebar")
-    app.key("R")
-    app.wait_until(lambda: any(r["name"].endswith("/delta.txt") for r in _git_rows(app)), 8.0, "R to pick up the new file")
-    step(app, "R", 0.3)
-    app.expect(any(r["name"].endswith("/delta.txt") for r in _git_rows(app)), "R refreshes the view")
+    app.send("git-refresh")
+    app.wait_until(lambda: any(r["name"].endswith("/delta.txt") for r in _git_rows(app)), 8.0,
+                   "Git: Refresh to pick up the new file")
+    step(app, "git-refresh", 0.3)
     dismiss(app)
 
 
@@ -383,9 +407,10 @@ def flow_save_wait(app: q.App) -> None:
 
 def flow_git_view_click_keys(app: q.App) -> None:
     """A click on a git view entry opens its diff and keeps the keyboard on the
-    list (VS Code's source control view): `s` then stages the clicked entry and
-    `u` unstages it, and neither letter reaches the file. A click used to hand the
-    keyboard to the diff, and the `s` was typed into the working copy."""
+    list (VS Code's source control view): Shift+F10 then opens that entry's menu
+    and Stage / Unstage act on it, and no key reaches the file. A click used to hand
+    the keyboard to the diff, and the `s` that staged was typed into the working
+    copy; letters are typing now (TD-2026-10-16-350), and they stage nothing."""
     for name in ("one", "two"):
         write(app, f"click/{name}.txt", f"{name}\n")
     git(app, "add", "click")
@@ -401,19 +426,22 @@ def flow_git_view_click_keys(app: q.App) -> None:
     step(app, "click two.txt", 0.6)
     app.expect(app.ui()["focus"] == "sidebar", f"the click keeps the keyboard on the list ({app.ui()['focus']})")
     app.key("s")
+    app.settle(0.3)
+    app.expect(git(app, "diff", "--cached", "--name-only") == "", "a letter stages nothing")
+    choose_from_context_menu_by_keys(app, "Stage")
     app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "click/two.txt", 5.0,
-                   "s to stage the clicked entry")
+                   "Stage to stage the clicked entry")
     app.expect(git(app, "diff", "--cached", "--name-only") == "click/two.txt",
-               f"s staged two.txt ({git(app, 'diff', '--cached', '--name-only')!r})")
+               f"Stage staged two.txt ({git(app, 'diff', '--cached', '--name-only')!r})")
     # Staged, the entry moved to the Staged section and the selection stayed in
     # Changes (VS Code moves on the same way): click it where it is now.
     app.wait_until(lambda: bool(app.elements("row", prefix="row:git/two.txt")), 3.0, "the staged entry")
     app.click_named("row:git/two.txt")
     step(app, "click the staged two.txt", 0.6)
-    app.key("u")
-    app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "", 5.0, "u to unstage it")
+    choose_from_context_menu_by_keys(app, "Unstage")
+    app.wait_until(lambda: git(app, "diff", "--cached", "--name-only") == "", 5.0, "Unstage to unstage it")
     app.expect(read(app, "click/two.txt") == "two changed\n" and read(app, "click/one.txt") == "one changed\n",
-               "neither letter reached a file on disk")
+               "no key reached a file on disk")
     dirty = [t["title"] for g in app.editor_state()["groups"] for t in g["tabs"] if t.get("dirty")]
     app.expect(not dirty, f"and no buffer took them ({dirty})")
 

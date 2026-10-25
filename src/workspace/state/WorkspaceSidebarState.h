@@ -144,6 +144,8 @@ struct ProblemsSidebarEntry {
 };
 
 struct GitSidebarState {
+  // Typing in the entry list selects by file name (workspace/TypeNavigation.h).
+  TypeNavigationState type_navigation;
   struct RefreshSnapshotEntry {
     GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
     // Generic '/'-separated text, straight from GitRepositoryPathIdentity.

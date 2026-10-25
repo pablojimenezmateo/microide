@@ -1,5 +1,7 @@
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
 
+#include <algorithm>
+
 #include "workspace/SidebarMetrics.h"
 
 #include <utility>
@@ -15,6 +17,15 @@ namespace {
 SDL_FRect PointerAnchor(const SDL_Event& event) {
   return MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
                   1.0f);
+}
+
+// A keyboard-opened menu hangs under the row it is about, a little in from its
+// left edge, where a right-click on the row's text would have put it. A row
+// scrolled out of view anchors at the list's top.
+SDL_FRect RowAnchor(const ScrollableListLayout& list, int row) {
+  const int visible = std::max(0, row - list.scroll_row);
+  const SDL_FRect rect = ScrollableListRowRect(list, visible);
+  return MakeRect(rect.x + 16.0f, rect.y + rect.h, 1.0f, 1.0f);
 }
 
 }  // namespace
@@ -155,6 +166,78 @@ bool SidebarMouseCoordinator::HandleSearchResultContextMenu(const SDL_Event& eve
                                      state_.root / search.results[search.selected_index].relative_path,
                                      PointerAnchor(event));
   return true;
+}
+
+bool SidebarMouseCoordinator::OpenSelectionContextMenu(const WorkspaceLayout& layout) {
+  switch (operations_.active_sidebar_mode()) {
+    case SidebarMode::Search: {
+      const auto& search = state_.overlay.workflow.project_search;
+      if (search.selected_index >= search.results.size()) {
+        return false;
+      }
+      const std::vector<int> line_map = operations_.build_project_search_line_map();
+      const auto line = std::find(line_map.begin(), line_map.end(), static_cast<int>(search.selected_index));
+      const auto list = operations_.compute_project_search_sidebar_list_layout(layout.sidebar, line_map.size());
+      operations_.open_tree_context_menu(
+          TreeContextTargetKind::ResultRow, state_.root / search.results[search.selected_index].relative_path,
+          RowAnchor(list, line == line_map.end() ? 0 : static_cast<int>(line - line_map.begin())));
+      return true;
+    }
+    case SidebarMode::Git: {
+      const auto& git = state_.sidebar.git;
+      if (git.commit_workflow.open || git.selected_index >= git.entries.size()) {
+        return false;
+      }
+      const auto& lines = operations_.build_git_sidebar_lines();
+      const auto line = std::find_if(lines.begin(), lines.end(), [&](const GitSidebarLine& candidate) {
+        return candidate.kind == GitSidebarLine::Kind::Entry &&
+               candidate.entry_index == static_cast<int>(git.selected_index);
+      });
+      const auto list = operations_.compute_git_sidebar_list_layout(layout.sidebar, lines.size());
+      operations_.open_tree_context_menu(
+          TreeContextTargetKind::GitEntry, git.entries[git.selected_index].path,
+          RowAnchor(list, line == lines.end() ? 0 : static_cast<int>(line - lines.begin())));
+      return true;
+    }
+    case SidebarMode::Problems: {
+      const auto& problems = state_.sidebar.problems;
+      if (problems.selected_index >= problems.entries.size()) {
+        return false;
+      }
+      const auto list = operations_.compute_problems_sidebar_list_layout(layout.sidebar, problems.entries.size());
+      operations_.open_tree_context_menu(TreeContextTargetKind::ResultRow,
+                                         problems.entries[problems.selected_index].diagnostic.path,
+                                         RowAnchor(list, static_cast<int>(problems.selected_index)));
+      return true;
+    }
+    case SidebarMode::Tests: {
+      const auto& tests = state_.sidebar.tests;
+      if (tests.selected_index >= tests.entries.size()) {
+        return false;
+      }
+      const auto list = operations_.compute_tests_sidebar_list_layout(layout.sidebar, tests.entries.size());
+      operations_.open_tree_context_menu(TreeContextTargetKind::ResultRow, tests.entries[tests.selected_index].file,
+                                         RowAnchor(list, static_cast<int>(tests.selected_index)));
+      return true;
+    }
+    case SidebarMode::Tree: {
+      const auto& entries = state_.directory_tree.entries();
+      const std::size_t selected = state_.directory_tree.selected_index();
+      const auto list = operations_.compute_tree_sidebar_list_layout(layout.sidebar, entries.size());
+      if (selected >= entries.size()) {
+        operations_.open_tree_context_menu(TreeContextTargetKind::Background, {}, RowAnchor(list, 0));
+        return true;
+      }
+      const auto& entry = entries[selected];
+      const TreeContextTargetKind target = !entry.is_directory     ? TreeContextTargetKind::File
+                                           : entry.path == state_.root ? TreeContextTargetKind::Root
+                                                                       : TreeContextTargetKind::Directory;
+      operations_.open_tree_context_menu(target, entry.path, RowAnchor(list, static_cast<int>(selected)));
+      return true;
+    }
+    default:
+      return false;
+  }
 }
 
 bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,

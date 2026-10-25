@@ -132,6 +132,9 @@ enum class ActionId {
   GitSync,
   GitStash,
   GitStashPop,
+  // Opens the commit message editor (the git view's Commit button; it was the
+  // bare `c` on the git list).
+  GitCommit,
   // VS Code's Stage / Unstage / Revert Selected Ranges, in a diff: the selected
   // lines when there is a selection, else the change at the caret.
   GitStageSelectedRanges,
@@ -142,6 +145,7 @@ enum class ActionId {
   // Git sidebar entry context-menu actions (right-click on a changed-file row).
   // Context-menu only; act on the selected git entry. Not registered as commands.
   GitOpenChanges,
+  GitOpenFileEntry,
   GitStageToggleEntry,
   GitDiscardEntry,
   // Keep one side of a conflicted file whole and stage it (VS Code's Accept
@@ -167,6 +171,15 @@ enum class ActionId {
   ProjectOpen,
   ProjectPrev,
   ProjectSearch,
+  // VS Code's Replace in Files (Ctrl+Shift+H): the search view, the keyboard in its
+  // replace field.
+  ProjectReplace,
+  // The search view's own commands, which were bare letters on its results list
+  // (r, c, i/x) and now are commands (TD-2026-10-16-350): rerun the query, flip
+  // the exact match count, show or hide the include/exclude fields.
+  ProjectSearchRefresh,
+  ProjectSearchToggleCountAll,
+  ProjectSearchToggleDetails,
   PluginsReload,
   Quit,
   RenamePath,

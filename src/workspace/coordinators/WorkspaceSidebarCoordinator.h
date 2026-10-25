@@ -145,6 +145,9 @@ class SidebarCoordinator {
   void RevealSelectedTestsLine();
   void RevealSelectedPluginLine();
   void MoveGitSelection(int delta);
+  // Typing in the git list: the next shown entry whose file name starts with what
+  // has been typed (VS Code's list type navigation). False when none does.
+  bool TypeNavigateGit(char typed, std::uint64_t now_ns);
   void MoveProblemsSelection(int delta);
   void MoveTestsSelection(int delta);
   void MovePluginSelection(int delta);
@@ -167,6 +170,9 @@ class SidebarCoordinator {
   void ReconcileOpenTabsAfterPathDiscard(const std::filesystem::path& path);
 
  private:
+  // The git list's entry rows as shown, top to bottom: collapsed folders hide
+  // theirs. Empty without a line model.
+  std::vector<std::size_t> VisibleGitEntries() const;
   // Applies a refresh's tree badges and repaints a visible tree when any changed:
   // the git view's own repaint decisions (an early return when its selection
   // survives the refresh) say nothing about the tree's rows.

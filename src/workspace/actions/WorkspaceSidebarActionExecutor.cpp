@@ -66,6 +66,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       context_.SetSidebarWidth(request->width);
       return DispatchResult::Handled;
     }
+    case ActionId::GitCommit: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      std::string refusal = context_.OpenGitCommitWorkflow();
+      if (!refusal.empty()) {
+        return reject(std::move(refusal));
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::TreeRefresh:
     case ActionId::GitRefresh:
       if (!context_.HasProjectRoot()) {
@@ -123,6 +133,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::GitOpenChanges:
+    case ActionId::GitOpenFileEntry:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {
       // Git sidebar entry context-menu actions; they act on the selected entry.
@@ -133,8 +144,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
           id == ActionId::GitStageToggleEntry
               ? context_.ToggleStageSelectedGitEntry()
               : context_.DispatchSelectedGitSidebarAction(
-                    id == ActionId::GitOpenChanges ? GitSidebarActionId::DefaultView
-                                                   : GitSidebarActionId::Discard);
+                    id == ActionId::GitOpenChanges     ? GitSidebarActionId::DefaultView
+                    : id == ActionId::GitOpenFileEntry ? GitSidebarActionId::OpenFile
+                                                       : GitSidebarActionId::Discard);
       if (!handled) {
         return reject("Git action is unavailable for this entry");
       }

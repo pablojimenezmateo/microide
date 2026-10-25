@@ -10,6 +10,8 @@
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
+#include "workspace/services/SidebarService.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 
@@ -721,6 +723,11 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
                 quick_pick_service_.Open(QuickPickService::RecentEditors(group, context_.current_project_state.root, back));
                 return true;
               },
+          .open_sidebar_selection_context_menu =
+              [this]() {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value() && MakeSidebarMouseCoordinator().OpenSelectionContextMenu(*layout);
+              },
           .action_enabled = [this](ActionId id) { return MakeActionAvailability().IsEnabled(id); },
           .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
           .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
@@ -736,7 +743,6 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .toggle_buffer_search_option =
               [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },
-          .refresh_project_search = [this]() { RefreshProjectSearch(); },
           .toggle_project_search_pattern_mode = [this]() { ToggleProjectSearchPatternMode(); },
           .cycle_project_search_case_mode = [this]() { CycleProjectSearchCaseMode(); },
           .toggle_project_search_hidden_files = [this]() { ToggleProjectSearchHiddenFiles(); },
@@ -754,6 +760,8 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .seed_buffer_search_from_project_search =
               [this]() { OpenBufferSearchFromProjectSearchResult(); },
           .move_git_sidebar_selection = [this](int delta) { MoveGitSidebarSelection(delta); },
+          .type_navigate_git_sidebar =
+              [this](char typed, std::uint64_t now_ns) { return MakeSidebarService().TypeNavigateGit(typed, now_ns); },
           .dispatch_git_sidebar_action =
               [this](GitSidebarActionId action, std::size_t index) {
                 return DispatchGitSidebarAction(action, index);

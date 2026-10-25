@@ -81,6 +81,11 @@ class WorkspaceActionContext {
     std::function<void()> close_sidebar;
     std::function<void(const std::filesystem::path&)> show_tree_sidebar;
     std::function<void(std::string, bool)> show_search_sidebar;
+    std::function<void(ProjectSearchEditField)> begin_project_search_edit;
+    std::function<void()> refresh_project_search;
+    // The git view's Commit button: whether it is live, and pressing it.
+    std::function<bool()> can_open_git_commit;
+    std::function<bool()> open_git_commit_workflow;
     std::function<void()> show_problems_sidebar;
     std::function<void()> show_git_sidebar;
     std::function<void()> show_tests_sidebar;
@@ -527,6 +532,16 @@ class WorkspaceActionContext {
   void ToggleStatusBar();
   void ToggleLayoutMode();
   void ShowProjectSearchSidebar(std::string query);
+  // Replace in Files: the search view with `query` (unless empty), the keyboard
+  // in its replace field.
+  void ShowProjectReplace(std::string query);
+  // The keyboard into one of the search view's fields.
+  void BeginProjectSearchEdit(ProjectSearchEditField field);
+  // Search: Refresh / Toggle Exact Match Count / Toggle Search Details, on the
+  // search view (shown first).
+  void ApplyProjectSearchViewCommand(ActionId id);
+  // Git: Commit…: the commit message editor, or why it cannot open.
+  std::string OpenGitCommitWorkflow();
   bool ShowCompletionOverlay(std::string* error_message);
   bool ShowInsertSnippetOverlay(std::string* error_message);
   bool ShowCodeActionsOverlay(std::string* error_message);

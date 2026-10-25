@@ -28,16 +28,19 @@ void WaitForProjectSearch(WorkspaceShell& shell) {
   Expect(finished, "workspace project search should finish");
 }
 
-// `/` on the search view's result list edits the query -- and, being a printable
-// key, SDL follows the press with a TEXT_INPUT "/" that typed into the field it
-// had just opened: the query read "alpha/" and the search went empty (found by
-// the QA search-view-keys flow). The press's text is dropped; the next one types.
-void TestWorkspaceShellSearchFieldShortcutsDoNotTypeThemselves() {
+// The search view's results list types to navigate, as VS Code's does: a letter
+// selects the next result whose line starts with what was typed. Its letters used
+// to be commands (`r` reran, `c` flipped the exact count, `i`/`x`/`=`/`/` opened
+// fields, `j`/`k` moved), so a query typed into the list by mistake ran them
+// (TD-2026-10-16-350). They are commands now; Toggle Search Details shows the
+// include/exclude fields.
+void TestWorkspaceShellSearchResultsTypeToNavigate() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
-  WriteFile(root / "visible.txt", "alpha\n");
+  WriteFile(root / "visible.txt", "alpha one\n  beta alpha\ncharlie alpha\n");
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
   WaitForProjectSearch(shell);
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
@@ -45,40 +48,34 @@ void TestWorkspaceShellSearchFieldShortcutsDoNotTypeThemselves() {
     SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
   }
   Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell), "the list, not a field, has the keys");
+  WorkspaceShellTestAccess::SetProjectSearchSelectedIndex(shell, 0);
 
-  const auto press = [&](SDL_Keycode key, const char* text) {
-    SendKeyDown(shell, key, SDL_KMOD_NONE);
-    shell.HandleEvent(TextInputEvent(text));
+  // Typed with a pause between, so each starts a fresh prefix.
+  std::uint64_t now_ns = 10'000'000'000;
+  const auto type = [&](SDL_Keycode key) {
+    SDL_Event event = KeyDownEvent(key, SDL_KMOD_NONE);
+    event.key.timestamp = now_ns;
+    now_ns += 2'000'000'000;
+    return shell.HandleEvent(event).handled;
   };
-  const auto buffer = [&]() { return WorkspaceShellTestAccess::ProjectSearchEditBufferText(shell); };
-  SendKeyDown(shell, SDLK_SLASH, SDL_KMOD_NONE);
-  Expect(WorkspaceShellTestAccess::TextInputSwallowArmed(shell), "the / press arms the swallow");
-  shell.HandleEvent(TextInputEvent("/"));
-  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell) &&
-             WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
-                 microide::workspace::ProjectSearchEditField::Query,
-         "/ opens the query field");
-  Expect(buffer() == "alpha", "the / itself is not typed into it (" + buffer() + ")");
-  shell.HandleEvent(TextInputEvent("z"));
-  Expect(buffer() == "alphaz", "the next character types (" + buffer() + ")");
-  SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
-  for (const auto& [key, text, field] : {
-           std::tuple{SDLK_EQUALS, "=", microide::workspace::ProjectSearchEditField::Replace},
-           std::tuple{SDLK_I, "i", microide::workspace::ProjectSearchEditField::Include},
-           std::tuple{SDLK_X, "x", microide::workspace::ProjectSearchEditField::Exclude}}) {
-    press(key, text);
-    Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell) &&
-               WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) == field,
-           std::string(text) + " opens its field");
-    Expect(buffer().empty(), std::string(text) + " is not typed into it (" + buffer() + ")");
-    SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  // "c" reaches the line that starts with "charlie" (leading spaces ignored).
+  Expect(type(SDLK_C), "a letter in the results list is handled");
+  Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == 2,
+         "typing c selects the result whose line starts with charlie");
+  Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell), "typing opens no field");
+  Expect(type(SDLK_B), "a letter in the results list is handled");
+  Expect(WorkspaceShellTestAccess::ProjectSearchSelectedIndex(shell) == 1,
+         "typing b (a fresh prefix after the pause) selects the indented beta line");
+  for (const SDL_Keycode key : {SDLK_I, SDLK_X, SDLK_EQUALS, SDLK_SLASH}) {
+    (void)type(key);
+    Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell), "a field shortcut letter opens nothing now");
   }
-  // A press that arms but is followed by another KEY_DOWN, not text: the arm is
-  // spent, so the character after it still types.
-  press(SDLK_SLASH, "/");
-  SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE);
-  shell.HandleEvent(TextInputEvent("q"));
-  Expect(buffer() == "alphaq", "a key after the shortcut disarms it (" + buffer() + ")");
+
+  Expect(!WorkspaceShellTestAccess::ProjectSearchScopeExpanded(shell), "the details start hidden");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "search-toggle-details"),
+         "Toggle Search Details should run");
+  Expect(WorkspaceShellTestAccess::ProjectSearchScopeExpanded(shell),
+         "Toggle Search Details shows the include/exclude fields");
 }
 
 void TestWorkspaceShellProjectSearchHiddenToggleReruns() {
@@ -1336,7 +1333,8 @@ void TestWorkspaceShellProjectSearchSearchesOnType() {
 // Replace All rewrites files the user has not opened, and an empty replacement
 // deletes every match, so it confirms first with the counts (VS Code's "Replace
 // N occurrences across M files"). Shift+R in the results list used to run it on
-// the spot. The button beside the replace field and Ctrl+Alt+Enter in it ask too.
+// the spot, and is now just typing. Ctrl+Alt+Enter in the replace field and the
+// button beside it ask.
 void TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -1350,10 +1348,21 @@ void TestWorkspaceShellProjectSearchReplaceAllConfirmsFirst() {
   WaitForProjectSearch(shell);
   WorkspaceShellTestAccess::SetProjectSearchReplaceText(shell, "");
   WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  if (WorkspaceShellTestAccess::ProjectSearchEditing(shell)) {
+    SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);
+  }
 
   (void)shell.HandleEvent(KeyDownEvent(SDLK_R, SDL_KMOD_SHIFT));
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "Shift+R in the results list is typing, not Replace All");
+  Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_CTRL | SDL_KMOD_SHIFT), "Ctrl+Shift+H should be handled");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell) &&
+             WorkspaceShellTestAccess::ProjectSearchEditFieldValue(shell) ==
+                 microide::workspace::ProjectSearchEditField::Replace,
+         "Replace in Files puts the keyboard in the replace field");
+  (void)shell.HandleEvent(KeyDownEvent(SDLK_RETURN, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT)));
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
-         "Shift+R should ask before replacing every match");
+         "Ctrl+Alt+Enter in the replace field should ask before replacing every match");
   const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
   Expect(ui["prompt"]["message"].AsString() ==
              "Replace 3 occurrences across 2 files with nothing (deleting them)?",
@@ -1420,9 +1429,9 @@ void TestWorkspaceShellProjectSearchAltChordsToggleOptions() {
   // Now from inside the query field: type a new query, then chord without
   // committing. The rerun must see the typed text, and the caret must stay in
   // the field rather than being kicked back to the results list.
-  Expect(SendKeyDown(shell, SDLK_SLASH, SDL_KMOD_NONE), "'/' should focus the query field");
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL | SDL_KMOD_SHIFT), "Ctrl+Shift+F should focus the query field");
   Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
-         "'/' should begin editing the query");
+         "Ctrl+Shift+F should begin editing the query");
   Expect(SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL), "Ctrl+A should select the field text");
   SDL_Event text_event{};
   text_event.type = SDL_EVENT_TEXT_INPUT;
@@ -1790,8 +1799,8 @@ void TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree() {
 }
 
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
-  AddTest(tests, "WorkspaceShell/SearchFieldShortcutsDoNotTypeThemselves",
-          TestWorkspaceShellSearchFieldShortcutsDoNotTypeThemselves);
+  AddTest(tests, "WorkspaceShell/SearchResultsTypeToNavigate",
+          TestWorkspaceShellSearchResultsTypeToNavigate);
   AddTest(tests, "WorkspaceShell/WorkbenchShortcutsWorkFromTheTree",
           TestWorkspaceShellWorkbenchShortcutsWorkFromTheTree);
   AddTest(tests, "WorkspaceShell/FindMatchesFollowAnEditUnderTheWidget",

@@ -86,7 +86,8 @@ for what is actually measured, and what is not.
 
 ### Git
 - Sidebar git view: working-tree changes, staged files, merge conflicts, outgoing branch files
-- Per-file stage (`s`), discard (`x`), bulk stage-all, confirmed discard-all
+- Per-file stage, unstage, discard and open from the row's menu (right-click, `Shift+F10`), bulk
+  stage-all, confirmed discard-all
 - Sidebar branch row: current branch opens a filterable switch picker; Sync shows ahead/behind counts
 - Conflict files open directly in the three-way merge tab
 - Branch switch/create, fetch, pull, push, publish, sync, and stash push/pop — each run off the
@@ -669,9 +670,9 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Alt+O` in compare/merge | Open the working-tree file at the corresponding line (bare `o` while reviewing compare rows) |
 | `j` `k` / `a` `A` / `c` `C` / `d` `D` reviewing compare rows | Move / stage hunk or lines / unstage hunk or lines / discard hunk or lines (letters are text while typing in the working side) |
 | `Ctrl+K Ctrl+Alt+S` / `Ctrl+K Ctrl+N` / `Ctrl+K Ctrl+R` in a diff | Stage / unstage / revert the selected lines, else the change at the caret (VS Code's Selected Ranges; also on the Git menu; revert asks first) |
-| `s` in git sidebar | Stage selected file |
-| `x` in git sidebar | Discard selected file |
-| `r` in git sidebar | Refresh |
+| `Shift+F10` / the Menu key in a sidebar list | The selected row's context menu: Stage / Unstage / Discard / Open File in the git view, Reveal / Copy Path on a search hit or problem, the file tree's menu |
+| Typing in the file tree, git view or search results | Select the next row whose name (or matched line) starts with what was typed |
+| `Ctrl+Shift+H` | Replace in Files: the search view, the keyboard in its replace field |
 | `Ctrl+c` in terminal (with selection) | Copy terminal selection |
 | `Ctrl+Shift+v` or `Shift+Insert` in terminal | Paste into terminal |
 | Click a URL or a `path:line:col` in terminal output | Open the link, or the file at that line in the editor |
@@ -761,6 +762,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `git-sync`
 - `git-stash [message]`
 - `git-stash-pop`
+- `git-commit`
 - `git-stage-selected-ranges`
 - `git-unstage-selected-ranges`
 - `git-revert-selected-ranges`
@@ -796,6 +798,10 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `project-open [path]`
 - `project-prev`
 - `project-search [query]`
+- `project-replace [query]`
+- `search-refresh`
+- `search-toggle-count-all`
+- `search-toggle-details`
 - `plugins-reload`
 - `debug-toggle-enabled`
 - `debug-start`

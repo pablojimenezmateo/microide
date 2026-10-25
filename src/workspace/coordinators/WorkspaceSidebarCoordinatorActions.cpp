@@ -1,5 +1,7 @@
 #include "workspace/coordinators/WorkspaceSidebarCoordinator.h"
 
+#include "workspace/TypeNavigation.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <string>
@@ -140,6 +142,42 @@ void SidebarCoordinator::MoveSimpleListSelection(
   }
 }
 
+std::vector<std::size_t> SidebarCoordinator::VisibleGitEntries() const {
+  std::vector<std::size_t> visible;
+  if (!operations_.build_git_sidebar_lines) {
+    return visible;
+  }
+  const std::vector<GitSidebarLine>& lines = operations_.build_git_sidebar_lines();
+  visible.reserve(state_.sidebar.git.entries.size());
+  for (const GitSidebarLine& line : lines) {
+    if (line.kind == GitSidebarLine::Kind::Entry && line.entry_index >= 0) {
+      visible.push_back(static_cast<std::size_t>(line.entry_index));
+    }
+  }
+  return visible;
+}
+
+bool SidebarCoordinator::TypeNavigateGit(char typed, std::uint64_t now_ns) {
+  auto& git = state_.sidebar.git;
+  const std::vector<std::size_t> visible = VisibleGitEntries();
+  const auto current = std::find(visible.begin(), visible.end(), git.selected_index);
+  const auto file_name = [&](std::size_t row) {
+    const std::string_view path = git.entries[visible[row]].relative_path;
+    const std::size_t slash = path.find_last_of('/');
+    return slash == std::string_view::npos ? path : path.substr(slash + 1);
+  };
+  const std::optional<std::size_t> row =
+      TypeNavigate(git.type_navigation, typed, now_ns,
+                   current == visible.end() ? 0 : static_cast<std::size_t>(current - visible.begin()),
+                   visible.size(), file_name);
+  if (!row.has_value()) {
+    return false;
+  }
+  git.selected_index = visible[*row];
+  RevealSelectedGitLine();
+  return true;
+}
+
 void SidebarCoordinator::MoveGitSelection(int delta) {
   // Selection is a flat index into git.entries, but the rendered list is a
   // collapsible tree: entries hidden under a collapsed directory must be skipped,
@@ -149,16 +187,7 @@ void SidebarCoordinator::MoveGitSelection(int delta) {
   if (git.entries.empty() || delta == 0) {
     return;
   }
-  static const std::vector<GitSidebarLine> kEmptyLines;
-  const std::vector<GitSidebarLine>& lines =
-      operations_.build_git_sidebar_lines ? operations_.build_git_sidebar_lines() : kEmptyLines;
-  std::vector<std::size_t> visible;
-  visible.reserve(git.entries.size());
-  for (const GitSidebarLine& line : lines) {
-    if (line.kind == GitSidebarLine::Kind::Entry && line.entry_index >= 0) {
-      visible.push_back(static_cast<std::size_t>(line.entry_index));
-    }
-  }
+  const std::vector<std::size_t> visible = VisibleGitEntries();
   if (visible.empty()) {
     // No tree model available (or nothing visible): fall back to the flat clamp.
     if (MoveSelectionIndex(git.entries, &git.selected_index, delta)) {

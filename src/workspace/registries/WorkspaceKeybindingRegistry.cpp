@@ -761,6 +761,16 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          .id = "project-replace",
+          .action = ActionId::ProjectReplace,
+          .key = SDLK_H,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Global,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "replace",
           .action = ActionId::ReplaceInBuffer,
           .key = SDLK_H,

@@ -114,6 +114,9 @@ class KeyInputCoordinator {
     std::function<void()> quick_pick_selection_changed;
     // Ctrl+Tab: open the recent-editors pick, or step its selection (`back`).
     std::function<bool(bool back)> step_recent_editors;
+    // Shift+F10 / the Menu key in a sidebar list (SidebarMouseCoordinator::
+    // OpenSelectionContextMenu).
+    std::function<bool()> open_sidebar_selection_context_menu;
     // Whether an action can run now: of several bindings on one chord, the first
     // enabled one dispatches (FindKeybinding).
     std::function<bool(ActionId)> action_enabled;
@@ -134,7 +137,6 @@ class KeyInputCoordinator {
     std::function<void(int)> move_buffer_search_selection;
     std::function<void(BufferFindToggle)> toggle_buffer_search_option;
     std::function<void(int)> move_project_search_selection;
-    std::function<void()> refresh_project_search;
     // Alt+R / Alt+C / Alt+H in the search panel — the same three toggles the
     // panel's buttons drive (VSCode binds the equivalent chords in its search
     // box). Each re-runs the search itself.
@@ -154,6 +156,8 @@ class KeyInputCoordinator {
     std::function<void()> restore_previous_sidebar;
     std::function<void()> seed_buffer_search_from_project_search;
     std::function<void(int)> move_git_sidebar_selection;
+    // Typing in the git list (SidebarCoordinator::TypeNavigateGit).
+    std::function<bool(char, std::uint64_t)> type_navigate_git_sidebar;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<void()> close_commit_workflow;
     std::function<bool()> request_commit_workflow_commit;

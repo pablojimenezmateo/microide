@@ -426,6 +426,7 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
   // WorkspaceShell::MenuItemLabel based on the selected entry's staged flag.
   static const auto kGitEntryItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::GitOpenChanges, "Open Changes"),
+      MenuItem(ActionId::GitOpenFileEntry, "Open File"),
       MenuSeparator(),
       MenuItem(ActionId::GitStageToggleEntry, "Stage"),
       MenuItem(ActionId::GitDiscardEntry, "Discard…"),

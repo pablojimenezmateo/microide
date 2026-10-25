@@ -387,6 +387,47 @@ void WorkspaceActionContext::ShowProjectSearchSidebar(std::string query) {
   operations_.show_search_sidebar(std::move(query), true);
 }
 
+void WorkspaceActionContext::ShowProjectReplace(std::string query) {
+  operations_.show_search_sidebar(std::move(query), true);
+  BeginProjectSearchEdit(ProjectSearchEditField::Replace);
+}
+
+void WorkspaceActionContext::BeginProjectSearchEdit(ProjectSearchEditField field) {
+  if (operations_.begin_project_search_edit) {
+    operations_.begin_project_search_edit(field);
+  }
+}
+
+void WorkspaceActionContext::ApplyProjectSearchViewCommand(ActionId id) {
+  if (operations_.active_sidebar_mode() != SidebarMode::Search) {
+    operations_.show_search_sidebar({}, false);
+  }
+  auto& search = state_.overlay.workflow.project_search;
+  switch (id) {
+    case ActionId::ProjectSearchToggleCountAll:
+      search.options.count_all_matches = !search.options.count_all_matches;
+      break;
+    case ActionId::ProjectSearchToggleDetails:
+      search.scope_expanded = !search.scope_expanded;
+      operations_.request_window_redraw();
+      return;  // the fields change, the results do not
+    default:
+      break;
+  }
+  if (operations_.refresh_project_search) {
+    operations_.refresh_project_search();
+  }
+}
+
+std::string WorkspaceActionContext::OpenGitCommitWorkflow() {
+  if (!operations_.can_open_git_commit || !operations_.can_open_git_commit()) {
+    return "Commit needs staged changes and no conflicts";
+  }
+  return operations_.open_git_commit_workflow && operations_.open_git_commit_workflow()
+             ? std::string{}
+             : "Commit is unavailable";
+}
+
 bool WorkspaceActionContext::ShowCompletionOverlay(std::string* error_message) {
   return operations_.show_completion_overlay(error_message);
 }

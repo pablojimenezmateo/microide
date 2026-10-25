@@ -81,6 +81,10 @@ class SidebarMouseCoordinator {
                           Operations operations);
 
   bool HandleButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Shift+F10 / the Menu key: the context menu a right-click on the selected row
+  // opens, anchored under that row. False when the view has no selected row with
+  // a menu (the plugin views, an empty list).
+  bool OpenSelectionContextMenu(const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,

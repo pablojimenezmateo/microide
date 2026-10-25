@@ -228,6 +228,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
              (git.selected_index < git.entries.size() && git.entries[git.selected_index].conflicted);
     }
     case ActionId::GitOpenChanges:
+    case ActionId::GitOpenFileEntry:
     case ActionId::GitStageToggleEntry:
     case ActionId::GitDiscardEntry: {
       // Git sidebar entry context-menu items; gate on the selected entry's
@@ -240,6 +241,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
           git.entries[git.selected_index], git.repo_available, git.supports_mutations);
       if (id == ActionId::GitOpenChanges) {
         return availability.default_view;
+      }
+      if (id == ActionId::GitOpenFileEntry) {
+        return availability.open_file;
       }
       if (id == ActionId::GitStageToggleEntry) {
         return availability.stage || availability.unstage;
@@ -384,6 +388,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::GitSync:
     case ActionId::GitStash:
     case ActionId::GitStashPop:
+    case ActionId::GitCommit:
     case ActionId::Merge:
     case ActionId::ReviewConflicts:
     case ActionId::ReviewBranch:
@@ -392,6 +397,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ProjectClose:
     case ActionId::ProjectCopyAbsolutePath:
     case ActionId::ProjectSearch:
+    case ActionId::ProjectReplace:
+    case ActionId::ProjectSearchRefresh:
+    case ActionId::ProjectSearchToggleCountAll:
+    case ActionId::ProjectSearchToggleDetails:
     case ActionId::Tab:
     case ActionId::Term:
     case ActionId::TerminalFind:

@@ -13,6 +13,19 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
                                                SDL_Keymod modifiers) {
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
 
+  // Shift+F10 and the Menu key open the selected row's context menu, as in VS
+  // Code's lists: the keyboard's way to every row command the menu carries
+  // (Stage, Discard, Reveal, Copy Path...). Not while a field holds the keyboard.
+  const bool field_active =
+      (sidebar_mode == SidebarMode::Search && state_.overlay.workflow.project_search.editing) ||
+      (sidebar_mode == SidebarMode::Git && state_.sidebar.git.commit_workflow.open);
+  const bool context_menu_key =
+      event.key == SDLK_APPLICATION || event.key == SDLK_MENU ||
+      (event.key == SDLK_F10 && NormalizedKeyModifiers(modifiers) == SDL_KMOD_SHIFT);
+  if (context_menu_key && !field_active && operations_.open_sidebar_selection_context_menu) {
+    return operations_.open_sidebar_selection_context_menu();
+  }
+
   // Escape closes an auto-opened (temporary) sidebar from *every* mode. Search,
   // Problems, Tests and the plugin/outline list already did; the file tree and
   // the git sidebar silently ignored it, so the one key users reach for to
@@ -133,60 +146,35 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           operations_.seed_buffer_search_from_project_search();
         }
         return true;
-      case SDLK_R:
-        if (input_character == 'R') {
-          operations_.replace_all_project_search_matches();
-        } else {
-          operations_.refresh_project_search();
-        }
-        return true;
-      case SDLK_C:
-        // Toggle "count all matches" (exact total vs. fast early-stop). The option
-        // lives on the search state and a rerun applies it, so this needs no
-        // dedicated shell entry point.
-        if (input_character == 'c') {
-          auto& options = state_.overlay.workflow.project_search.options;
-          options.count_all_matches = !options.count_all_matches;
-          operations_.refresh_project_search();
-          return true;
-        }
-        return false;
-      // The four field shortcuts are printable keys whose TEXT_INPUT must not land
-      // in the field they open: HandleKeyDown swallows it, as for any key that
-      // moves the keyboard to another text surface.
-      case SDLK_EQUALS:
-        operations_.begin_project_search_edit(ProjectSearchEditField::Replace);
-        return true;
-      case SDLK_SLASH:
-        operations_.begin_project_search_edit(ProjectSearchEditField::Query);
-        return true;
-      case SDLK_I:
-        // "files to include" / "files to exclude" — expand the scope section on
-        // demand so the shortcut works from the collapsed default.
-        if (input_character == 'i') {
-          search_state.scope_expanded = true;
-          operations_.begin_project_search_edit(ProjectSearchEditField::Include);
-            return true;
-        }
-        return false;
-      case SDLK_X:
-        if (input_character == 'x') {
-          search_state.scope_expanded = true;
-          operations_.begin_project_search_edit(ProjectSearchEditField::Exclude);
-            return true;
-        }
-        return false;
       default:
-        if (event.key == SDLK_J && input_character == 'j') {
-          operations_.move_project_search_selection(1);
-          return true;
-        }
-        if (event.key == SDLK_K && input_character == 'k') {
-          operations_.move_project_search_selection(-1);
-          return true;
-        }
-        return false;
+        break;
     }
+    // Typing navigates, as in VS Code's search view: the next result whose line
+    // starts with what was typed. Bare letters used to be commands here (`r`
+    // reran, `R` replaced all, `c` flipped the exact count, `i`/`x`/`=`/`/`
+    // opened fields, `j`/`k` moved), so a query typed into the list by mistake ran
+    // them one letter at a time (TD-2026-10-16-350). They are commands now
+    // (Search: Refresh / Toggle Exact Match Count / Toggle Search Details, Replace
+    // in Files on Ctrl+Shift+H, Find in Project on Ctrl+Shift+F) and buttons.
+    if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 && input_character > ' ' &&
+        input_character < 127) {
+      const auto& results = search_state.results;
+      const auto preview = [&results](std::size_t i) {
+        std::string_view text = results[i].preview;
+        while (!text.empty() && text.front() == ' ') {
+          text.remove_prefix(1);
+        }
+        return text;
+      };
+      if (const auto index = TypeNavigate(search_state.type_navigation, input_character, event.timestamp,
+                                          search_state.selected_index, results.size(), preview);
+          index.has_value()) {
+        operations_.move_project_search_selection(static_cast<int>(*index) -
+                                                  static_cast<int>(search_state.selected_index));
+      }
+      return true;
+    }
+    return false;
   }
 
   if (sidebar_mode == SidebarMode::Git) {
@@ -244,39 +232,25 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_KP_ENTER:
         return operations_.dispatch_git_sidebar_action(GitSidebarActionId::DefaultView,
                                                        selected_index);
-      case SDLK_R:
-        return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Refresh,
-                                                       selected_index);
-      default: {
-        const char input_character = operations_.keycode_to_ascii(event.key, modifiers);
-        if (input_character == 'd') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Diff, selected_index);
+      default:
+        break;
+    }
+    // Typing navigates by file name, as in VS Code's source control view. Bare
+    // letters used to be commands here (`s` staged, `x` discarded, `d`, `u`,
+    // `m`, `c`, `o`, `r`), so a name typed into the list by mistake staged and
+    // discarded files one letter at a time (TD-2026-10-16-350). They are on the
+    // row's context menu (right-click, Shift+F10, the Menu key), the view's
+    // buttons and the palette (Git: Commit…, Git: Refresh).
+    if ((modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0) {
+      const char typed = operations_.keycode_to_ascii(event.key, modifiers);
+      if (typed > ' ' && typed < 127) {
+        if (operations_.type_navigate_git_sidebar) {
+          (void)operations_.type_navigate_git_sidebar(typed, event.timestamp);
         }
-        if (input_character == 's') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Stage, selected_index);
-        }
-        if (input_character == 'u') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Unstage,
-                                                         selected_index);
-        }
-        if (input_character == 'x') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Discard,
-                                                         selected_index);
-        }
-        if (input_character == 'm') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Merge, selected_index);
-        }
-        if (input_character == 'c') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::Commit,
-                                                         selected_index);
-        }
-        if (input_character == 'o') {
-          return operations_.dispatch_git_sidebar_action(GitSidebarActionId::OpenFile,
-                                                         selected_index);
-        }
-        return false;
+        return true;
       }
     }
+    return false;
   }
 
   if (sidebar_mode == SidebarMode::Problems) {

@@ -269,6 +269,9 @@ struct BufferSearchState {
 enum class ProjectSearchRerun { Fresh, InPlace };
 
 struct ProjectSearchState {
+  // Typing in the results list selects by the matched line's text
+  // (workspace/TypeNavigation.h).
+  TypeNavigationState type_navigation;
   editor::SingleLineEditor query;
   project::ProjectSearchOptions options;
   editor::SingleLineEditor edit_buffer;

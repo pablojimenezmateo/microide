@@ -538,6 +538,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
               [this](std::string query, bool temporary) {
                 ShowSearchSidebar(std::move(query), temporary);
               },
+          .begin_project_search_edit = [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
+          .refresh_project_search = [this]() { RefreshProjectSearch(); },
+          .can_open_git_commit = [this]() { return CanOpenGitCommitButton(); },
+          .open_git_commit_workflow = [this]() { return OpenCommitWorkflow(); },
           .show_problems_sidebar = [this]() { ShowProblemsSidebar(); },
           .show_git_sidebar = [this]() { ShowGitSidebar(); },
           .show_tests_sidebar = [this]() { ShowTestsSidebar(); },

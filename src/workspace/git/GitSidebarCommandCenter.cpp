@@ -143,7 +143,7 @@ std::string GitSidebarCommitSummaryLine(const GitSidebarState& git_state,
   if (counts.staged == 0) {
     return "Commit blocked — nothing staged";
   }
-  return "Commit ready · c commit";
+  return "Commit ready · Git: Commit…";
 }
 
 std::string GitSidebarSelectionSummaryLine(const GitSidebarEntry& entry,
@@ -162,32 +162,37 @@ std::string GitSidebarSelectionSummaryLine(const GitSidebarEntry& entry,
 std::string GitSidebarSelectionActionLine(const GitSidebarEntry& entry,
                                           const GitSidebarActionAvailability& actions,
                                           bool commit_ready) {
+  // The row's commands are on its menu (Shift+F10 / the Menu key / a right-click):
+  // the bare letters this line used to name were removed, since a name typed into
+  // the list ran them (TD-2026-10-16-350). Typing selects by file name.
   std::string line;
   if (actions.default_view) {
-    AppendHintSegment(line, "Enter default");
+    // A conflicted row's default is the three-way merge.
+    AppendHintSegment(line, actions.merge ? "Enter merge" : "Enter default");
   }
-  if (actions.diff) {
-    AppendHintSegment(line, "d diff");
-  }
+  std::string menu;
+  const auto add_verb = [&menu](std::string_view verb) {
+    menu += menu.empty() ? "Shift+F10 " : ", ";
+    menu += verb;
+  };
   if (actions.stage) {
-    AppendHintSegment(line, "s stage");
+    add_verb("stage");
   }
   if (actions.unstage) {
-    AppendHintSegment(line, "u unstage");
+    add_verb("unstage");
   }
   if (actions.discard) {
-    AppendHintSegment(line, "x discard");
-  }
-  if (actions.merge) {
-    AppendHintSegment(line, "m merge");
+    add_verb("discard");
   }
   if (actions.open_file) {
-    AppendHintSegment(line, "o open");
+    add_verb("open file");
+  }
+  if (!menu.empty()) {
+    AppendHintSegment(line, menu);
   }
   if (commit_ready && entry.section != GitSidebarEntry::Section::Outgoing) {
-    AppendHintSegment(line, "c commit");
+    AppendHintSegment(line, "Git: Commit…");
   }
-  AppendHintSegment(line, "r refresh");
   return line;
 }
 

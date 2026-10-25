@@ -1576,7 +1576,7 @@ heuristic scan of `src/` for the shape found no other instance, which is not a
 guarantee. Add a `tidy` lane (or a focused check in `clang-build`) for
 `bugprone-use-after-move` and `bugprone-unchecked-optional-access`.
 
-### TD-2026-10-16-350 — the search results list still runs bare-letter commands. [OPEN]
+### TD-2026-10-16-350 — the search results list still runs bare-letter commands. [RESOLVED 2026-10-25]
 
 The tree became type-to-navigate (TD-2026-10-15-342); the search view's results
 list still maps bare letters to commands (`r` rerun, `R` replace all -- now behind
@@ -1585,6 +1585,32 @@ a confirm, 7aef6576 -- `c` count all, `i`/`x` scope fields, `=`/`/` fields,
 `d`, `u`, `m`, `c`, `o`). VS Code's lists type-to-filter. Same decision as 342:
 move the commands to chords, the context menu (which has them) and the buttons,
 and make typing navigate.
+
+RESOLVED 2026-10-25: both lists now type to navigate (`TypeNavigate`). The
+search results match on the hit's line, leading spaces ignored. The git list
+matches on the file name over the visible rows only
+(`SidebarCoordinator::TypeNavigateGit` shares `VisibleGitEntries` with the arrow
+keys). The letters' commands went to:
+
+- Shift+F10 and the Menu key, new in every sidebar list
+  (`SidebarMouseCoordinator::OpenSelectionContextMenu`), which open the selected
+  row's context menu anchored under it. The git row menu gained Open File
+  (`GitOpenFileEntry`).
+- New commands: Git: Commit… (`git-commit`, which says why with nothing
+  staged), Replace in Files (`project-replace`, Ctrl+Shift+H, VS Code's chord),
+  Search: Refresh, Search: Toggle Exact Match Count and Search: Toggle Search
+  Details.
+- Find in Project with no query argument (Ctrl+Shift+F) now always puts the
+  keyboard in the query field, as VS Code's does. Before, it did so only while
+  the query was empty.
+
+The git view's hint lines no longer advertise letters ("Enter merge ·
+Shift+F10 stage, discard, open file", "Commit ready · Git: Commit…"). The `ui`
+query reports a search hit row's matched line as its label. QA:
+`search-view-keys`, `git-view-keys` and `git-view-click-keys` drive the new
+routes, and `choose_from_context_menu_by_keys` is the shared keyboard menu
+helper. Unit tests: `SearchResultsTypeToNavigate` and
+`GitSidebarTypesToNavigate`.
 
 ### TD-2026-10-16-349 — what the QA harness still cannot reach. [OPEN]
 

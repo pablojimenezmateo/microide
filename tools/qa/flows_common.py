@@ -206,3 +206,25 @@ def search_hit_names(app: q.App) -> list[str]:
     """Named match rows only (`row:search/<path>:<line>`), ready to click."""
     return [row["name"] for row in search_rows(app)
             if row["name"].rsplit(":", 1)[-1].isdigit()]
+
+
+def choose_from_context_menu_by_keys(app: q.App, label: str) -> bool:
+    """Shift+F10 opens the focused list's menu for its selected row; Down walks it
+    to `label` and Enter runs it -- the keyboard's way to a row command (the git
+    and search lists' bare letters were removed, TD-2026-10-16-350)."""
+    app.key("shift+F10")
+    try:
+        app.wait_for(f"menu-item:context/{label}", 3.0)
+    except q.QaFailure:
+        app.expect(False, f"Shift+F10 opens a context menu offering {label!r}")
+        return False
+    for _ in range(16):
+        active = next((e for e in app.elements("menu-item", prefix="menu-item:context/") if e.get("active")), None)
+        if active is not None and active.get("label") == label:
+            app.key("Return")
+            return True
+        app.key("Down")
+        app.settle(0.05)
+    app.expect(False, f"Down reaches {label!r} in the context menu")
+    app.key("Escape")
+    return False

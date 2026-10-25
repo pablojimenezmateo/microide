@@ -166,9 +166,13 @@ def _active_field(app: q.App) -> str | None:
 
 
 def flow_search_view_keys(app: q.App) -> None:
-    """The search view driven by keys: Down/Up and j/k over the results, Enter
-    opening one at its line, `/` `=` `i` `x` jumping to a field, Tab cycling the
-    fields, `c` toggling the exact count, Escape leaving the view."""
+    """The search view driven by keys: Down/Up/Home/End over the results, typing to
+    navigate (a letter selects the next result whose line starts with it, as in VS
+    Code -- the letters used to be commands, TD-2026-10-16-350), Enter opening one
+    at its line, Ctrl+Shift+F / Ctrl+Shift+H putting the keyboard in the query /
+    replace field, Search: Toggle Search Details showing the scope fields, Tab
+    cycling the fields, Search: Toggle Exact Match Count rerunning, Escape leaving
+    the view."""
     open_file(app, "src/scheduler.cpp")
     app.send("project-search", "queue")
     app.wait_until(lambda: len(search_rows(app)) >= 2, 8.0, "search results")
@@ -181,12 +185,6 @@ def flow_search_view_keys(app: q.App) -> None:
     step(app, "Down", 0.15)
     second = _selected_search_row(app)
     app.expect(second is not None and second != first, f"Down moves the selection ({first} -> {second})")
-    app.key("k")
-    step(app, "k", 0.15)
-    app.expect(_selected_search_row(app) == first, f"k moves it back up ({_selected_search_row(app)})")
-    app.key("j")
-    step(app, "j", 0.15)
-    app.expect(_selected_search_row(app) == second, "j moves down")
     app.key("Up")
     step(app, "Up", 0.15)
     app.expect(_selected_search_row(app) == first, "Up moves up")
@@ -197,6 +195,27 @@ def flow_search_view_keys(app: q.App) -> None:
     app.key("Home")
     step(app, "Home", 0.15)
     app.expect(_selected_search_row(app) == first, "Home selects the first")
+
+    # Typing navigates: the next hit (after the selection, wrapping) whose line
+    # starts with the letter typed. Pick a letter some other hit starts with.
+    hits = [r for r in search_rows(app) if r["name"].rsplit(":", 1)[-1].split("#")[0].isdigit()]
+    text_of = {r["name"]: (r.get("label") or "").lstrip().lower() for r in hits}  # the matched line
+    current = _selected_search_row(app)
+    order = [r["name"] for r in hits]
+    letter = next((text_of[n][0] for n in order if n != current and text_of[n][:1].isalpha()), None)
+    if letter is not None and current in order:
+        start = order.index(current) + 1
+        expected = next(order[(start + k) % len(order)] for k in range(len(order))
+                        if text_of[order[(start + k) % len(order)]].startswith(letter))
+        app.key(letter)
+        step(app, f"type {letter}", 0.2)
+        app.expect(_selected_search_row(app) == expected,
+                   f"typing {letter!r} selects the next result starting with it ({_selected_search_row(app)}, "
+                   f"expected {expected})")
+        app.expect(_active_field(app) is None, f"typing in the list opens no field ({_active_field(app)})")
+    else:
+        app.expect(False, f"the results offer a line to type-navigate to ({[text_of[n][:12] for n in order]})")
+    app.key("Home")
     app.key("Down")
     app.settle(0.1)
     row = _selected_search_row(app) or ""
@@ -217,25 +236,23 @@ def flow_search_view_keys(app: q.App) -> None:
     app.send("focus", "sidebar")
     app.key("Escape")
     app.settle(0.15)
-    for key, field in (("slash", "field:search/query"), ("equal", "field:search/replace"),
-                       ("i", "field:search/include"), ("x", "field:search/exclude")):
-        app.key(key)
-        step(app, f"{key} in the list", 0.2)
-        app.expect(_active_field(app) == field, f"{key} edits {field} ({_active_field(app)})")
-        # The key opens the field; it must not also type into it.
-        text = app.field_text(field)
-        app.expect(not any(c in text for c in "/=ix"), f"{key} is not typed into the field it opened ({text!r})")
+    for chord, field in (("ctrl+shift+f", "field:search/query"), ("ctrl+shift+h", "field:search/replace")):
+        app.key(chord)
+        step(app, chord, 0.2)
+        app.expect(_active_field(app) == field, f"{chord} edits {field} ({_active_field(app)})")
         app.key("Escape")
         app.settle(0.1)
     app.expect(app.field_text("field:search/query") == "queue", f"the query is intact ({app.field_text('field:search/query')!r})")
-    app.key("slash")
+    app.send("search-toggle-details")
+    app.wait_until(lambda: app.element("field:search/include") is not None, 3.0,
+                   "Toggle Search Details to show the include field")
+    app.key("ctrl+shift+f")
     app.settle(0.1)
     seen = []
     for _ in range(4):
         app.key("Tab")
         app.settle(0.1)
         seen.append(_active_field(app))
-    # The scope fields were opened by i and x above, so all four cycle.
     app.expect(len(set(seen)) == 4 and all(s for s in seen), f"Tab cycles the four fields ({seen})")
     app.key("shift+Tab")
     app.settle(0.1)
@@ -243,11 +260,14 @@ def flow_search_view_keys(app: q.App) -> None:
     app.key("Escape")
     app.settle(0.1)
     app.expect(_active_field(app) is None, f"Escape leaves the field for the list ({_active_field(app)})")
-    app.key("c")
-    step(app, "c toggles the exact count", 0.4)
+    app.send("search-toggle-count-all")
+    step(app, "Toggle Exact Match Count", 0.4)
     app.wait_until(lambda: len(search_rows(app)) >= 2, 5.0, "the results listed again after the recount")
-    app.key("c")
+    app.send("search-toggle-count-all")
     app.wait_until(lambda: len(search_rows(app)) >= 2, 5.0, "and after toggling back")
+    app.send("search-refresh")
+    app.wait_until(lambda: len(search_rows(app)) >= 2, 5.0, "the results listed again after Search: Refresh")
+    app.send("search-toggle-details")
     dismiss(app)
 
 

@@ -307,7 +307,7 @@ def flow_project_search(app: q.App) -> None:
     hit = next((e for e in app.elements("row") if e["name"].startswith("row:search/src/scheduler.cpp:")),
                None)
     if hit:
-        line = int(hit["label"].rsplit(":", 1)[1])
+        line = int(hit["name"].rsplit(":", 1)[1].split("#")[0])  # row:search/<path>:<line>[#n]
         app.click(*app.center(hit))
         step(app, "click a result", 0.4)
         app.wait_until(lambda: active_title(app) == "scheduler.cpp", 3.0, "the hit's file to open")

@@ -103,6 +103,10 @@ void SidebarService::MoveGitSelection(int delta) {
   coordinator_.MoveGitSelection(delta);
 }
 
+bool SidebarService::TypeNavigateGit(char typed, std::uint64_t now_ns) {
+  return coordinator_.TypeNavigateGit(typed, now_ns);
+}
+
 void SidebarService::MoveProblemsSelection(int delta) {
   coordinator_.MoveProblemsSelection(delta);
 }

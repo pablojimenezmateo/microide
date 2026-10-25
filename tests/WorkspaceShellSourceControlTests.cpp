@@ -21,6 +21,19 @@ using microide::workspace::TabEntry;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
+// The git list's row commands by keyboard (they were bare letters, TD-2026-10-16-350):
+// Shift+F10 opens the selected row's menu, Down walks it to `label`, Enter runs it.
+bool ChooseFromGitRowMenu(WorkspaceShell& shell, std::string_view label) {
+  if (!SendKeyDown(shell, SDLK_F10, SDL_KMOD_SHIFT) || !WorkspaceShellTestAccess::GitEntryContextMenuOpen(shell)) {
+    return false;
+  }
+  for (int step = 0; step < 16 && WorkspaceShellTestAccess::TreeContextMenuActiveLabel(shell) != label; ++step) {
+    (void)SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE);
+  }
+  return WorkspaceShellTestAccess::TreeContextMenuActiveLabel(shell) == label &&
+         SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE);
+}
+
 std::optional<microide::editor::EditorBlameOverlay> WaitForActiveEditorBlameOverlay(
     WorkspaceShell& shell,
     std::size_t minimum_line_count = 1) {
@@ -155,10 +168,10 @@ void TestWorkspaceShellGitSidebarEntryRightClickOpensContextMenu() {
          "right-clicking should not open a compare/editor tab on its own");
 
   const auto labels = WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell);
-  const std::vector<std::string> expected = {"Open Changes",       "Stage",
-                                             "Discard…",           "Accept Current",
-                                             "Accept Incoming",    "Copy Relative Path",
-                                             "Copy Absolute Path"};
+  const std::vector<std::string> expected = {"Open Changes",       "Open File",
+                                             "Stage",              "Discard…",
+                                             "Accept Current",     "Accept Incoming",
+                                             "Copy Relative Path", "Copy Absolute Path"};
   Expect(labels == expected,
          "the git entry context menu should expose the expected action labels");
 }
@@ -217,7 +230,7 @@ void TestWorkspaceShellGitSidebarContextMenuActionsActOnSelectedEntry() {
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
 
   // Unstaged entry: the toggle item stages it and reports "Stage".
-  Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[1] == "Stage",
+  Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[2] == "Stage",
          "an unstaged entry's toggle item should read Stage");
   Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GitDiscardEntry),
          "Discard should be enabled for a working-tree entry");
@@ -235,7 +248,7 @@ void TestWorkspaceShellGitSidebarContextMenuActionsActOnSelectedEntry() {
 
   // Now staged: the toggle item flips to "Unstage".
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
-  Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[1] == "Unstage",
+  Expect(WorkspaceShellTestAccess::GitEntryContextMenuLabels(shell)[2] == "Unstage",
          "a staged entry's toggle item should read Unstage");
 
   // Discard opens the confirmation prompt rather than mutating immediately.
@@ -637,12 +650,12 @@ void TestWorkspaceShellGitSidebarDiscardRequiresConfirmation() {
   Expect(WaitForGitSidebarEntryCount(shell, 1),
          "discard fixture should expose one changed row");
 
-  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_NONE),
-         "discard shortcut should be handled by the git sidebar");
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(ChooseFromGitRowMenu(shell, "Discard…"), "Shift+F10, Discard… should run from the git list");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
-         "discard shortcut should open a confirmation prompt");
+         "discard should open a confirmation prompt");
   Expect(ReadFile(source).find("return 2") != std::string::npos,
-         "discard shortcut alone should not revert the working tree");
+         "choosing discard alone should not revert the working tree");
 
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
   Expect(WaitForGitSidebarEntryCount(shell, 0),
@@ -682,8 +695,8 @@ void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
          "the row should be classified as untracked");
 
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
-  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_NONE),
-         "discard shortcut should be handled by the git sidebar");
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(ChooseFromGitRowMenu(shell, "Discard…"), "Shift+F10, Discard… should run from the git list");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
          "discarding an untracked file should open a confirmation prompt");
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
@@ -740,7 +753,8 @@ void TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes() {
          "the row should be a staged Added file");
 
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
-  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_NONE), "discard shortcut should be handled");
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  Expect(ChooseFromGitRowMenu(shell, "Discard…"), "Shift+F10, Discard… should run from the git list");
   Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "discard asks for confirmation");
   WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
 
@@ -791,8 +805,16 @@ void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
   }
   WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, changed_index);
 
-  Expect(SendKeyDown(shell, SDLK_S, SDL_KMOD_NONE),
-         "stage shortcut should be handled by the git sidebar");
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  // `s` is typing now: it selects by file name and stages nothing.
+  Expect(SendKeyDown(shell, SDLK_S, SDL_KMOD_NONE), "a letter in the git list is handled");
+  Expect(std::none_of(WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
+                      WorkspaceShellTestAccess::GitSidebarEntries(shell).end(),
+                      [](const WorkspaceShell::GitSidebarEntry& entry) {
+                        return entry.section == WorkspaceShell::GitSidebarEntry::Section::Staged;
+                      }),
+         "typing s in the git list must not stage anything");
+  Expect(ChooseFromGitRowMenu(shell, "Stage"), "Shift+F10, Stage should run from the git list");
   Expect(WaitForGitSidebarEntryCount(shell, 1),
          "stage shortcut fixture should settle after refresh");
   Expect(std::any_of(WorkspaceShellTestAccess::GitSidebarEntries(shell).begin(),
@@ -800,7 +822,50 @@ void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
                      [](const WorkspaceShell::GitSidebarEntry& entry) {
                        return entry.section == WorkspaceShell::GitSidebarEntry::Section::Staged;
                      }),
-         "stage shortcut should move the row into the staged section");
+         "Stage from the keyboard-opened menu should move the row into the staged section");
+}
+
+// Typing in the git list selects by file name, as VS Code's source control view
+// does; the row commands are on its menu (Shift+F10), Open File among them, and
+// Git: Commit… is a command that says why it cannot open with nothing staged.
+void TestWorkspaceShellGitSidebarTypesToNavigate() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  for (const char* name : {"alpha.cpp", "beta.cpp", "gamma.cpp"}) {
+    WriteFile(root / name, "int v = 1;\n");
+  }
+  InitializeGitRepo(root);
+  CommitAll(root, "type-nav fixture", "type-nav fixture");
+  for (const char* name : {"alpha.cpp", "beta.cpp", "gamma.cpp"}) {
+    WriteFile(root / name, "int v = 2;\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 3), "the fixture should list three changed files");
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
+  WorkspaceShellTestAccess::SetFocusSidebar(shell);
+  const auto selected_name = [&]() {
+    const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+    const std::size_t index = WorkspaceShellTestAccess::GitSidebarSelectedIndex(shell);
+    return index < entries.size() ? std::filesystem::path(entries[index].relative_path).filename().string()
+                                  : std::string{};
+  };
+
+  Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_NONE), "a letter in the git list is handled");
+  Expect(selected_name() == "gamma.cpp", "typing g selects gamma.cpp, got " + selected_name());
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "typing runs no command");
+
+  Expect(ChooseFromGitRowMenu(shell, "Open File"), "Shift+F10, Open File should run from the git list");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path().lexically_normal() == (root / "gamma.cpp").lexically_normal(),
+         "Open File opens the selected row's working-tree file");
+
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "git-commit"),
+         "Git: Commit… is refused with nothing staged");
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("staged") != std::string::npos,
+         "the refusal says why: " + WorkspaceShellTestAccess::CommandFeedbackText(shell));
 }
 
 // QA big-repo: with 300 changes the git view scrolled to its first file showed
@@ -1562,6 +1627,7 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes);
   AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
+  AddTest(tests, "WorkspaceShell/GitSidebarTypesToNavigate", TestWorkspaceShellGitSidebarTypesToNavigate);
   AddTest(tests, "WorkspaceShell/GitSidebarHomeShowsTheListTop", TestWorkspaceShellGitSidebarHomeShowsTheListTop);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllIgnoresUnrelatedDirtyTab",
           TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab);

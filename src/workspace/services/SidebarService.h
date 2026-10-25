@@ -38,6 +38,7 @@ class SidebarService {
   void RevealSelectedTestsLine();
   void RevealSelectedPluginLine();
   void MoveGitSelection(int delta);
+  bool TypeNavigateGit(char typed, std::uint64_t now_ns);
   void MoveProblemsSelection(int delta);
   void MoveTestsSelection(int delta);
   void MovePluginSelection(int delta);

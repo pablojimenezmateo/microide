@@ -114,13 +114,38 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
         return reject("No active project");
       }
       // VS Code seeds Find in Files with the editor's selection (one line of it).
+      // Without a query on the command line it is the search box's key: the
+      // keyboard goes into the query field, whatever was searched last.
       std::string query = JoinCommandArguments(args, 0);
+      const bool focus_query = query.empty();
       if (query.empty()) {
         query = context_.SingleLineSelectionText();
       }
       context_.ShowProjectSearchSidebar(std::move(query));
+      if (focus_query) {
+        context_.BeginProjectSearchEdit(ProjectSearchEditField::Query);
+      }
       return DispatchResult::Handled;
     }
+    case ActionId::ProjectReplace: {
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      std::string query = JoinCommandArguments(args, 0);
+      if (query.empty()) {
+        query = context_.SingleLineSelectionText();
+      }
+      context_.ShowProjectReplace(std::move(query));
+      return DispatchResult::Handled;
+    }
+    case ActionId::ProjectSearchRefresh:
+    case ActionId::ProjectSearchToggleCountAll:
+    case ActionId::ProjectSearchToggleDetails:
+      if (!context_.HasProjectRoot()) {
+        return reject("No active project");
+      }
+      context_.ApplyProjectSearchViewCommand(id);
+      return DispatchResult::Handled;
     case ActionId::Search:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");

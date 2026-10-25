@@ -314,6 +314,12 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                  .relative_path_string
                            : std::string{};
               };
+              // A hit's row as painted is its matched line (what typing in the list
+              // navigates by); a file header's is its path.
+              shown = [line_map, &search, label](std::size_t index) -> std::string {
+                const int result = line_map[index];
+                return result >= 0 ? search.results[static_cast<std::size_t>(result)].preview : label(index);
+              };
             } else if (mode == SidebarMode::Git) {
               const std::vector<GitSidebarLine>& lines = BuildGitSidebarLines();
               count = lines.size();

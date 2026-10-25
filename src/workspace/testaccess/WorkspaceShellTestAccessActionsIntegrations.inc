@@ -312,6 +312,16 @@
     return shell.context_.menu_state.tree_context_menu.open &&
            shell.context_.menu_state.tree_context_menu.target == TreeContextTargetKind::GitEntry;
   }
+  // The label of the open context menu's highlighted item ("" with none).
+  static std::string TreeContextMenuActiveLabel(const WorkspaceShell& shell) {
+    const auto& menu = shell.context_.menu_state.tree_context_menu;
+    const auto items = WorkspaceTreeContextMenuItems(menu.target);
+    if (!menu.open || menu.active_item_index < 0 ||
+        static_cast<std::size_t>(menu.active_item_index) >= items.size()) {
+      return {};
+    }
+    return std::string(shell.MenuItemLabel(items[static_cast<std::size_t>(menu.active_item_index)]));
+  }
   static std::vector<std::string> GitEntryContextMenuLabels(const WorkspaceShell& shell) {
     std::vector<std::string> labels;
     for (const auto& item : WorkspaceTreeContextMenuItems(TreeContextTargetKind::GitEntry)) {
