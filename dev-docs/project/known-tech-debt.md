@@ -768,7 +768,18 @@ for the MSBuild load. Two others were the harness and are fixed:
 a module that defines a name twice) and `tree-collisions` (it counted toasts; a
 refusal replaces the previous refusal's toast).
 
-### TD-2026-10-21-375 — gdb 15.1 sometimes stops answering after a launch under load. [OPEN]
+### TD-2026-10-21-375 — gdb 15.1 sometimes stops answering after a launch under load. [CLOSED 2026-10-25 — not re-found]
+
+**Closed 2026-10-25.** The "next" below was run: a plain `gdb --interpreter=dap`
+driven by a script (initialize, launch, setBreakpoints, configurationDone) eight
+at a time under a 16-way CPU load answered 32 of 32 launches. The debugger flows
+(`dbg-pause`, `dbg-sessions`, `dbg-session`, `dbg-stepping`, `dbg-commands`,
+`dbg-conditions`) ran six at a time twice while an ASan build saturated the box,
+and in five full suites at -j16 the same day, with no wedge. The app-side repairs
+below stay (a pause independent of `threads`, no thread polling while running, a
+stop the adapter does not answer forcing the adapter down). Reopen with the
+`MICROIDE_DAP_LOG` the harness attaches if a launch goes unanswered again.
+
 
 Found by the QA debugger flows (`dbg-pause`, `dbg-sessions`) on a loaded box
 (three to four instances at once): after `launch` and the program's first
