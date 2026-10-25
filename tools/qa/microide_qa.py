@@ -401,9 +401,12 @@ class App:
     def _spawn(self, project: Path | None, extra_args: list[str]) -> None:
         self.log_path = self.work / f"microide-{self._launches}.log" if self._launches else self.work / "microide.log"
         self._launches += 1
-        # Characters typed through X that the app has not been seen to take yet,
-        # and where in its log to look for them: see _await_typed_input.
+        # Input sent through X that the app has not been seen to take yet -- the
+        # characters typed and the count of key presses -- and where in its log to
+        # look for them: see _await_typed_input.
         self._typed_pending = ""
+        self._keys_pending = 0
+        self._keys_sent: list[str] = []  # what the presses were, for a timeout's note
         self._typed_log_offset = 0
         args = [str(self.binary)]
         if project is not None:
@@ -504,6 +507,7 @@ class App:
         # MQA_SLOW_FACTOR stretches every control timeout for an instrumented
         # build (coverage, the sanitizers), whose control client alone can take
         # longer than a fast build's whole query.
+        self._await_typed_input()
         return subprocess.run([str(self.binary), *args], env=self.tool_env, capture_output=True,
                               text=True, errors="replace", timeout=timeout * SLOW_FACTOR)
 
@@ -841,7 +845,11 @@ class App:
     def _await_click_gap(self, x: float, y: float) -> None:
         """SDL folds two presses within its double-click time and radius into a
         double click (a word selection in the editor), so a separate press right
-        after another near it waits that window out first."""
+        after another near it waits that window out first. Near the last PRESS:
+        SDL measures from where the button went down, not where it came up, so a
+        drag records its start -- recording its end let a double-click drag that
+        began where the previous one had become its third click, a line selection
+        (QA word-and-line-drags, on CI)."""
         last_time, last_x, last_y = self._last_click
         if time.monotonic() - last_time < DOUBLE_CLICK_SECONDS and \
                 abs(x - last_x) < DOUBLE_CLICK_RADIUS and abs(y - last_y) < DOUBLE_CLICK_RADIUS:
@@ -869,7 +877,7 @@ class App:
             if before_release is not None:
                 before_release()
             self._pointer("up", x1, y1, 1, modifiers=modifiers)
-            self._last_click = (time.monotonic(), x1, y1)
+            self._last_click = (time.monotonic(), x0, y0)
             return
         for key in modifiers:
             self._xdotool("keydown", key)
@@ -887,7 +895,7 @@ class App:
         self._xdotool("mouseup", "1")
         for key in reversed(modifiers):
             self._xdotool("keyup", key)
-        self._last_click = (time.monotonic(), x1, y1)
+        self._last_click = (time.monotonic(), x0, y0)
 
     def drop(self, x: float, y: float, path: Path | str) -> None:
         """A file dragged in from another application and released at (x, y). Through
@@ -922,6 +930,7 @@ class App:
                     return
             return
         self._focus()
+        self._expect_typed_input("", len(steps), chord)
         self._xdotool("key", "--clearmodifiers", *steps)
 
     def hold(self, modifier: str, chords: list[str]) -> None:
@@ -935,33 +944,67 @@ class App:
             self.expect(False, f"hold {modifier} has no Wayland backend")
             return
         self._focus()
+        self._expect_typed_input("", len(chords), " ".join(chords))
         self._xdotool("keydown", "--clearmodifiers", modifier)
         for chord in chords:
             self._xdotool("key", chord)
         self._xdotool("keyup", modifier)
 
+    def _expect_typed_input(self, chars: str, presses: int, keys: str = "") -> None:
+        """Notes input about to go through X -- `chars` of text and `presses`
+        non-modifier key presses -- for the next _await_typed_input to wait on.
+        Called just before each xdotool call, not once per `type`, so a control
+        command issued part-way through typing waits only for what was sent."""
+        if self.wayland or self.log_path is None:
+            return
+        if not self._typed_pending and not self._keys_pending:
+            with contextlib.suppress(OSError):
+                self._typed_log_offset = self.log_path.stat().st_size
+            self._keys_sent = []
+        self._typed_pending += "".join(c for c in chars if ord(c) <= 0xFF and c.isprintable())
+        self._keys_pending += presses
+        if keys:
+            self._keys_sent.append(keys)
+
     def _await_typed_input(self, timeout: float = 3.0) -> None:
-        """Waits until the app has taken every character typed through X since the
-        last wait: their `microide input: text=` lines (MICROIDE_TRACE_INPUT), in
-        order, after the log offset the typing started at. Keystrokes travel through
-        the X server and a control command through the socket, and nothing orders
-        the two: `type(" more")` then `send("open", other)` once put the last `e`
-        into the OTHER file, and a `project-close` opened its prompt under it (QA
-        save-wait) -- races no person at a keyboard can produce. Bounded."""
-        if self.wayland or not self._typed_pending or self.log_path is None:
+        """Waits until the app has taken every key press and character sent through
+        X since the last wait: as many non-modifier `microide input: key=` lines as
+        presses, and the `text=` lines' characters in order (MICROIDE_TRACE_INPUT),
+        after the log offset the input started at. Keystrokes travel through the X
+        server and a control command through the socket, and nothing orders the two:
+        `type(" more")` then `send("open", other)` once put the last `e` into the
+        OTHER file, and `key("Return")`, `type("x")`, `send("goto", ...)` put the x
+        on the line the goto named (QA doc-comment-enter) -- races no person at a
+        keyboard can produce. Every control command waits here, queries included.
+        Bounded: a timeout is recorded and printed, since what follows may race."""
+        if self.wayland or self.log_path is None or not (self._typed_pending or self._keys_pending):
             return
         deadline = time.monotonic() + timeout * SLOW_FACTOR
-        pattern = re.compile(rb'microide input: text="(.*?)" focus=')
+        text_pattern = re.compile(rb'microide input: text="(.*?)" focus=')
+        key_pattern = re.compile(rb'microide input: key=(.*?) mod=0x[0-9a-f]+ repeat=0 ')
+        modifier = re.compile(rb'(Left|Right) (Ctrl|Shift|Alt|GUI)')
+        taken_presses = 0
+        taken = ""
         while time.monotonic() < deadline:
             with contextlib.suppress(OSError):
                 with open(self.log_path, "rb") as log:
                     log.seek(self._typed_log_offset)
-                    taken = b"".join(pattern.findall(log.read())).decode("utf-8", "replace")
+                    tail = log.read()
+                taken = b"".join(text_pattern.findall(tail)).decode("utf-8", "replace")
+                taken_presses = sum(1 for name in key_pattern.findall(tail) if not modifier.fullmatch(name))
                 want = iter(taken)
-                if all(char in want for char in self._typed_pending):  # an in-order subsequence
+                if (taken_presses >= self._keys_pending
+                        and all(char in want for char in self._typed_pending)):  # an in-order subsequence
                     break
             time.sleep(0.01)
+        else:
+            note = (f"typed input not seen taken after {timeout * SLOW_FACTOR:.0f}s: "
+                    f"{taken_presses} of {self._keys_pending} key presses ({' '.join(self._keys_sent)}), "
+                    f"text {taken!r} of {self._typed_pending!r}")
+            self._record({"note": note})
+            print(f"        note: {note}", flush=True)
         self._typed_pending = ""
+        self._keys_pending = 0
 
     def type(self, text: str) -> None:
         """Types `text`. A newline is a Return press and a tab a Tab press: xdotool
@@ -999,21 +1042,20 @@ class App:
         def flush() -> None:
             nonlocal chunk
             if chunk:
+                self._expect_typed_input(chunk, len(chunk))
                 self._xdotool(*args, "--", chunk)
                 chunk = ""
-        if not self._typed_pending and self.log_path is not None:
-            with contextlib.suppress(OSError):
-                self._typed_log_offset = self.log_path.stat().st_size
-        self._typed_pending += "".join(c for c in text if c not in "\n\t" and ord(c) <= 0xFF and c.isprintable())
         for char in text:
             if char in "\n\t":
                 flush()
+                self._expect_typed_input("", 1)
                 self._xdotool(*key_args, "Return" if char == "\n" else "Tab")
             elif ord(char) < 0x80:
                 chunk += char
             elif ord(char) <= 0xFF:
                 flush()
                 time.sleep(0.08)  # let SDL see the ASCII run's keymap settle first
+                self._expect_typed_input(char, 1)
                 self._xdotool(*key_args, "U%04X" % ord(char))
                 time.sleep(0.08)
             else:

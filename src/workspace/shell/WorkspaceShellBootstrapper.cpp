@@ -59,6 +59,10 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
       ++editor_hover_target_generation_;
     }
     RequestWindowRedraw();
+    // Traced like every other key: the QA driver orders its control commands
+    // after the keys it sent by finding them in this log.
+    const FocusTarget focus = context_.current_project_state.surface.focus;
+    TraceTypedEvent(event, focus, focus, true);
     return EventResult{.handled = true, .redraw = ConsumePendingRenderInvalidation()};
   }
   const FocusTarget focus_before = context_.current_project_state.surface.focus;
