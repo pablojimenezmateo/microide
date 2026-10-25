@@ -1220,7 +1220,19 @@ had the `e` delivered to the editor and still missing from the formatted file
 before it moves on (and reporting both files), 6 of 6 parallel runs pass --
 if it recurs, that evidence says which side lost it.
 
-### TD-2026-10-19-367 — a warm terminal reattach lost what the shell printed while detached, once, under TSan. [OPEN]
+### TD-2026-10-19-367 — a warm terminal reattach lost what the shell printed while detached, once, under TSan. [CLOSED 2026-10-25 — not re-found]
+
+**Closed 2026-10-25, not re-found.** 80 runs of the `RemoteTerminal` suite on the
+TSan build, eight at a time on a loaded box, ran the test clean every time, with
+no ThreadSanitizer report. The suspected window does not lose output: holding the
+test between the drop and the reattach for 0, 300, 900, 1,100, 1,500 and 2,500 ms
+(so `late-42` lands before, during and after the resume point is taken) passes
+each time. The host side agrees with that reading: `TerminalTable::Attach` with a
+resume point resets the client's frame builder, so its first frame carries every
+line from the client's screen top onward, whatever was printed meanwhile. The
+loop found something else, now fixed: the server fixture's `/proc` sweep threw out
+of `~ShortServerDir` when a process exited mid-read (fa6eef16). If this comes
+back, keep the run's output and the resume point, and reopen with them.
 
 `RemoteTerminal/WarmReattachKeepsTheMirrorAndDuplicatesNothing` failed one TSan
 lane run (2026-10-19, `tools/run-checks.sh tsan`, kernel shard 7, the box also
