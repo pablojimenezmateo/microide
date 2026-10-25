@@ -16,6 +16,7 @@
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/git/CompareTabReview.h"
 
 namespace microide::workspace {
 
@@ -528,7 +529,7 @@ bool WorkspaceActionContext::ActiveTabIsCompare() const {
 bool WorkspaceActionContext::ActiveTabIsBranchReview() const {
   const CompareTabState* tab =
       operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
-  return tab != nullptr && tab->review_mode == compare::CompareReviewMode::Branch;
+  return tab != nullptr && CompareTabTakesReviewMarks(*tab);
 }
 
 bool WorkspaceActionContext::ActiveTabIsMerge() const {

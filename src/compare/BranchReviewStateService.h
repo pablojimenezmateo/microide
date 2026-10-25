@@ -54,6 +54,15 @@ class BranchReviewStateService {
                         const BranchReviewHunkIdentity& identity);
   void MarkHunkUnreviewed(const BranchReviewTargetIdentity& target,
                           const BranchReviewHunkIdentity& identity);
+  // The review action on one hunk of a file's diff (`model`), which also keeps
+  // the file's own mark in step: the hunk that leaves no hunk unreviewed marks the
+  // file reviewed -- its row in the git view says so, as when the file is marked
+  // whole -- and unmarking a hunk takes the file's mark back (TD-2026-10-22-381).
+  void SetHunkReviewed(const BranchReviewTargetIdentity& target,
+                       const std::filesystem::path& path,
+                       const CompareModel& model,
+                       int hunk_index,
+                       bool reviewed);
 
   void SetNote(const BranchReviewTargetIdentity& target,
                BranchReviewNoteScope scope,

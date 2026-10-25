@@ -115,7 +115,10 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                                             input.opened_from_commit_picker);
   compare_tab.staging_view =
       compare::InferWorkingTreeStagingView(compare_tab.commit_hash, compare_tab.right_ref);
-  if (compare_tab.review_mode == compare::CompareReviewMode::Branch) {
+  if (CompareTabTakesReviewMarks(compare_tab)) {
+    // A working-tree review's head is the working tree itself ("WORKTREE"): its
+    // marks are per hunk content, so an edit that changes a hunk shows it as
+    // changed since reviewed, as a new commit does on a branch.
     compare_tab.branch_target = compare::MakeBranchReviewTargetIdentity(
         input.repository_root, compare_tab.commit_hash, compare_tab.right_ref,
         input.merge_base_commit, input.snapshot_generation);
@@ -138,10 +141,19 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
   compare_tab.semantic_file = compare::InferCompareSemanticFileMetadata(semantic_input);
 }
 
+bool CompareTabTakesReviewMarks(const CompareTabState& compare_tab) {
+  if (compare_tab.review_mode == compare::CompareReviewMode::Branch) {
+    return true;
+  }
+  const std::string_view base = compare_tab.commit_hash;
+  return compare_tab.review_mode == compare::CompareReviewMode::WorkingTree && !base.empty() && base != "HEAD" &&
+         base != ":0" && base != "INDEX";
+}
+
 void ApplyBranchReviewPresentationMarkers(
     CompareTabState& compare_tab,
     const compare::BranchReviewStateService& review_service) {
-  if (compare_tab.review_mode != compare::CompareReviewMode::Branch) {
+  if (!CompareTabTakesReviewMarks(compare_tab)) {
     compare_tab.review_markers_valid = false;
     return;
   }

@@ -45,6 +45,13 @@ void RefreshCompareTabPresentation(CompareTabState& compare_tab);
 void NormalizeCompareSelectionToModelRow(CompareTabState& compare_tab);
 void RefreshCompareReviewHeader(CompareTabState& compare_tab);
 
+// Whether the review marks and notes act on this diff: a branch review (the git
+// view's Outgoing files), or a working-tree diff against a named ref -- what
+// `review-branch <ref>` opens, whose marks are kept against that ref and the
+// working tree (TD-2026-10-22-381). Not the git view's own Changes diffs (the
+// working tree against HEAD or the index), which are for staging, not review.
+bool CompareTabTakesReviewMarks(const CompareTabState& compare_tab);
+
 void ApplyBranchReviewPresentationMarkers(CompareTabState& compare_tab,
                                           const compare::BranchReviewStateService& review_service);
 

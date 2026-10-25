@@ -617,7 +617,7 @@ without `!`. Deciding: refuse with an Overwrite choice on the editor banner (the
 external-change banner already has the shape), or keep writing and say so. No QA
 flow asserts either yet; `file-vanish` is where one would go.
 
-### TD-2026-10-22-381 — branch-review marks only from the Outgoing list. [OPEN]
+### TD-2026-10-22-381 — branch-review marks only from the Outgoing list. [RESOLVED 2026-10-25]
 
 `review-branch <ref>` ("Review Diff Against Ref") opens a diff per changed file,
 and every review mark refuses those tabs: "Not a branch review: open a file from
@@ -627,6 +627,25 @@ hunk of a file reviewed does not show the file's `[reviewed]` row marker (FileSt
 reads only the file mark), so a fully hunk-reviewed file looks untouched in the git
 view. QA `review-marks` drives both paths; the hunk markers themselves are drawn
 since 4ce82d7f (they were persisted and never shown).
+
+RESOLVED 2026-10-25, both halves:
+
+- The marks and notes act wherever `CompareTabTakesReviewMarks` says they do:
+  a branch diff, or a working-tree diff against a named ref, which is what
+  `review-branch <ref>` opens. The git view's own Changes diffs (against HEAD or
+  the index) are excluded; they are for staging. A review-branch diff gets a
+  review target whose head is the working tree. Its marks are per hunk content,
+  so an edit that changes a hunk shows it as changed since reviewed. The six
+  gates that tested the Branch mode now use the predicate, and the refusal names
+  both ways in.
+- `BranchReviewStateService::SetHunkReviewed` keeps the file's mark in step.
+  The hunk that leaves none unreviewed marks the file reviewed, so its git-view
+  row (which has no diff to read, only the file mark) says so. Unmarking a hunk
+  takes the file's mark back.
+
+Covered by `BranchReviewState/EveryHunkReviewedMarksTheFile` and the QA
+`review-marks` flow, which now marks a review-branch diff's hunk and watches
+two.txt's row light up when its one hunk is marked.
 
 ### TD-2026-10-22-382 — Ctrl+B and Ctrl+1 reach a focused shell. [RESOLVED 2026-10-25 — decided]
 

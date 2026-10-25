@@ -681,7 +681,7 @@ void WorkspaceShell::PersistBranchReviewState() {
 // WorkspaceShellMembers.inc past its hard line cap).
 void WorkspaceShell::SetActiveBranchFileReviewed(bool reviewed) {
   CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+  if (compare_tab == nullptr || !CompareTabTakesReviewMarks(*compare_tab)) {
     return;
   }
   compare::BranchReviewStateService& review = context_.current_project_state.branch_review;
@@ -699,29 +699,24 @@ void WorkspaceShell::SetActiveBranchFileReviewed(bool reviewed) {
 
 void WorkspaceShell::SetActiveBranchHunkReviewed(bool reviewed) {
   CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+  if (compare_tab == nullptr || !CompareTabTakesReviewMarks(*compare_tab)) {
     return;
   }
   const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);
   if (hunk_index < 0) {
     return;
   }
-  const compare::BranchReviewHunkIdentity identity = compare::ComputeBranchReviewHunkIdentity(
-      compare_tab->model, hunk_index, compare_tab->path);
   compare::BranchReviewStateService& review = context_.current_project_state.branch_review;
-  if (reviewed) {
-    review.MarkHunkReviewed(compare_tab->branch_target, identity);
-  } else {
-    review.MarkHunkUnreviewed(compare_tab->branch_target, identity);
-  }
+  review.SetHunkReviewed(compare_tab->branch_target, compare_tab->path, compare_tab->model, hunk_index, reviewed);
   ApplyBranchReviewPresentationMarkers(*compare_tab, review);
   PersistBranchReviewState();
   RequestActiveTabRedraw(true);
+  RequestSidebarRedraw();  // the file's row marker follows its hunks
 }
 
 void WorkspaceShell::ClearActiveBranchReviewState() {
   CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab != nullptr && compare_tab->review_mode == compare::CompareReviewMode::Branch) {
+  if (compare_tab != nullptr && CompareTabTakesReviewMarks(*compare_tab)) {
     context_.current_project_state.branch_review.ClearTarget(compare_tab->branch_target);
     ApplyBranchReviewPresentationMarkers(*compare_tab, context_.current_project_state.branch_review);
     RequestActiveTabRedraw(true);
@@ -737,7 +732,7 @@ void WorkspaceShell::ClearActiveBranchReviewState() {
 
 void WorkspaceShell::EditActiveBranchReviewNote(const std::string& note_text) {
   CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr || compare_tab->review_mode != compare::CompareReviewMode::Branch) {
+  if (compare_tab == nullptr || !CompareTabTakesReviewMarks(*compare_tab)) {
     return;
   }
   const int hunk_index = CompareTabSelectedHunkIndex(*compare_tab);

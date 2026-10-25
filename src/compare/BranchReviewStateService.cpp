@@ -415,6 +415,36 @@ void BranchReviewStateService::PruneForRepository(
   }
 }
 
+void BranchReviewStateService::SetHunkReviewed(const BranchReviewTargetIdentity& target,
+                                               const std::filesystem::path& path,
+                                               const CompareModel& model,
+                                               int hunk_index,
+                                               bool reviewed) {
+  if (hunk_index < 0 || static_cast<std::size_t>(hunk_index) >= model.hunks.size()) {
+    return;
+  }
+  const BranchReviewHunkIdentity identity = ComputeBranchReviewHunkIdentity(model, hunk_index, path);
+  if (!reviewed) {
+    MarkHunkUnreviewed(target, identity);
+    MarkFileUnreviewed(target, path);
+    return;
+  }
+  MarkHunkReviewed(target, identity);
+  const BranchReviewStateQueryInput query{.target = target, .path = path, .model = &model};
+  if (FileStatus(query) == BranchReviewMarkerStatus::Reviewed) {
+    return;  // marked whole already
+  }
+  std::vector<BranchReviewHunkMarker> markers;
+  ResolveHunkMarkers(query, &markers);
+  const bool every_hunk_reviewed =
+      std::all_of(markers.begin(), markers.end(), [](const BranchReviewHunkMarker& marker) {
+        return marker.status == BranchReviewMarkerStatus::Reviewed;
+      });
+  if (every_hunk_reviewed) {
+    MarkFileReviewed(target, path, DiffContentFingerprint(model));
+  }
+}
+
 BranchReviewMarkerStatus BranchReviewStateService::FileStatus(
     const BranchReviewStateQueryInput& input) const {
   const BranchReviewTargetState* target_state = FindTarget(input.target);

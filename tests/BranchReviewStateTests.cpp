@@ -46,6 +46,34 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "removing a real review bumps the revision");
                    }});
 
+  // TD-2026-10-22-381: a file whose every hunk is marked reviewed is reviewed --
+  // its git-view row (which has no diff to look at, only the file's mark) says so
+  // -- and unmarking a hunk takes the file's mark back.
+  tests.push_back({"BranchReviewState/EveryHunkReviewedMarksTheFile",
+                   [] {
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 1);
+                     const auto model = BuildCompareModel("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n",
+                                                          "A\nb\nc\nd\ne\nf\ng\nh\ni\nJ\n");
+                     Expect(model.hunks.size() == 2, "the fixture diff has two hunks");
+                     const std::filesystem::path path("f.txt");
+                     BranchReviewStateService service;
+                     const BranchReviewStateQueryInput file_only{.target = target, .path = path};
+                     service.SetHunkReviewed(target, path, model, 0, true);
+                     Expect(service.FileStatus(file_only) == BranchReviewMarkerStatus::Unreviewed,
+                            "one hunk of two reviewed leaves the file unreviewed");
+                     service.SetHunkReviewed(target, path, model, 1, true);
+                     Expect(service.FileStatus(file_only) == BranchReviewMarkerStatus::Reviewed,
+                            "the last hunk reviewed marks the file reviewed");
+                     service.SetHunkReviewed(target, path, model, 0, false);
+                     Expect(service.FileStatus(file_only) == BranchReviewMarkerStatus::Unreviewed,
+                            "unmarking a hunk takes the file's mark back");
+                     const BranchReviewStateQueryInput hunk1{.target = target, .path = path, .model = &model,
+                                                             .selected_hunk_index = 1};
+                     Expect(service.HunkStatus(hunk1) == BranchReviewMarkerStatus::Reviewed,
+                            "and leaves the other hunk's mark alone");
+                   }});
+
   tests.push_back({"BranchReviewState/HunkIdentityAndChangedMarker",
                    [] {
                      const auto model = BuildCompareModel("old line\n", "new line\n");

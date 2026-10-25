@@ -9,6 +9,7 @@
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/SettingFlags.h"
+#include "workspace/git/CompareTabReview.h"
 
 namespace microide::workspace {
 
@@ -625,7 +626,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::EditBranchReviewNote: {
       const CompareTabState* tab =
           operations_.active_compare_tab != nullptr ? operations_.active_compare_tab() : nullptr;
-      return tab != nullptr && tab->review_mode == compare::CompareReviewMode::Branch;
+      return tab != nullptr && CompareTabTakesReviewMarks(*tab);
     }
     case ActionId::ClearBranchReviewState:
     case ActionId::GitStageSelectedRanges:

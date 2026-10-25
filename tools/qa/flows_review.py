@@ -47,7 +47,8 @@ def flow_review_marks(app: q.App) -> None:
     marker (the diff's pixels change, `reviewedHunks` counts it), a note marks it
     too (`notedHunks`), Unmark puts the diff back exactly; Mark / Unmark Branch
     File Reviewed toggle the git row's marker. Review Diff Against Ref opens one
-    diff per changed file against the ref and says what it opened."""
+    diff per changed file against the ref and says what it opened, and its diffs
+    take marks; every hunk of a file reviewed marks the file's row."""
     app.send("set-setting", "editor.caret_blink.enabled", "false")
     git(app, "checkout", "-q", "-b", "qa-marks")
     write(app, "review/one.txt", "".join(f"line {i}\n" for i in range(20)))
@@ -93,6 +94,26 @@ def flow_review_marks(app: q.App) -> None:
     messages = [n.get("message", "") for n in app.query("notifications")]
     app.expect(any("review-branch main" in m and "one.txt" in m and "two.txt" in m for m in messages),
                f"and says which files it opened ({messages})")
+    # Its diffs take review marks too (TD-2026-10-22-381): they used to refuse
+    # with "Not a branch review".
+    reply = app.send("mark-branch-hunk-reviewed")
+    app.expect(reply.get("ok") is True, f"a review-branch diff takes a hunk mark ({reply})")
+    app.wait_until(lambda: _diff_tab(app).get("reviewedHunks") == 1, 3.0, "the hunk to count as reviewed")
+    app.expect(_diff_tab(app).get("reviewedHunks") == 1, f"and counts it ({_diff_tab(app)})")
+    app.send("unmark-branch-hunk-reviewed")
+
+    # Every hunk of an Outgoing file reviewed marks the file: its row says so.
+    app.key("ctrl+shift+g")
+    app.click_named("row:git/two.txt")
+    app.wait_until(lambda: _diff_tab(app).get("kind") == "compare", 5.0, "two.txt's outgoing diff")
+    app.send("mark-branch-hunk-reviewed")  # two.txt's one hunk
+    app.wait_until(lambda: _row_label(app, "row:git/two.txt").startswith("[reviewed]"), 3.0,
+                   "the row marker once every hunk is reviewed")
+    app.expect(_row_label(app, "row:git/two.txt").startswith("[reviewed]"),
+               f"a file with every hunk reviewed shows as reviewed ({_row_label(app, 'row:git/two.txt')!r})")
+    app.send("unmark-branch-hunk-reviewed")
+    app.wait_until(lambda: not _row_label(app, "row:git/two.txt").startswith("["), 3.0,
+                   "unmarking the hunk to take the file's marker back")
 
 
 def flow_git_unstage_and_push(app: q.App) -> None:

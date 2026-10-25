@@ -19,7 +19,7 @@ namespace microide::workspace {
 namespace {
 // The review marks and notes reported success on any other tab and did nothing.
 constexpr std::string_view kNotABranchReview =
-    "Not a branch review: open a file from the git view's Outgoing list";
+    "Not a review: open a file from the git view's Outgoing list, or review-branch <ref>";
 }  // namespace
 
 namespace {
