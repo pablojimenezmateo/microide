@@ -96,16 +96,21 @@ bool ChromeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 bool ChromeMouseCoordinator::HandleMotion(const SDL_Event& event, const WorkspaceLayout& layout) {
   // The chevron's hover fill follows the pointer; repaint it on the way in and
   // on the way out. Before anything that may consume the motion: a popup open
-  // under the pointer still leaves the chevron drawn from the pointer.
-  if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
-      chevron.has_value()) {
-    const bool hovered = Contains(*chevron, event.motion.x, event.motion.y);
-    if (hovered != menu_state_.chevron_hovered) {
-      menu_state_.chevron_hovered = hovered;
-      operations_.request_redraw_rect(*chevron);
+  // under the pointer still leaves the chevron drawn from the pointer. The chevron
+  // is in the menu bar, so away from it there is nothing to light and, unless it
+  // is lit, nothing to clear -- and its rect costs the bar's whole overflow layout,
+  // which every pointer move over an open menu paid (TD-2026-10-25-391).
+  if (menu_state_.chevron_hovered || Contains(layout.menu_bar, event.motion.x, event.motion.y)) {
+    if (const auto chevron = operations_.menu_overflow_chevron_rect(layout.menu_bar);
+        chevron.has_value()) {
+      const bool hovered = Contains(*chevron, event.motion.x, event.motion.y);
+      if (hovered != menu_state_.chevron_hovered) {
+        menu_state_.chevron_hovered = hovered;
+        operations_.request_redraw_rect(*chevron);
+      }
+    } else {
+      menu_state_.chevron_hovered = false;
     }
-  } else if (menu_state_.chevron_hovered) {
-    menu_state_.chevron_hovered = false;
   }
   if (HandleTreeContextMenuMotion(event)) {
     return true;
@@ -246,12 +251,12 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
 
     if (const auto submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
         submenu_rect.has_value() && Contains(*submenu_rect, event.button.x, event.button.y)) {
-      if (const auto row = operations_.hit_test_popup_row(
-              menu_state_.active_submenu_id, *submenu_rect, event.button.x, event.button.y);
+      const auto items = operations_.menu_items(menu_state_.active_submenu_id);
+      if (const auto row =
+              operations_.hit_test_popup_row(items, *submenu_rect, event.button.x, event.button.y);
           row.has_value()) {
-        const bool enabled =
-            !row->separator &&
-            operations_.is_menu_item_enabled_at(menu_state_.active_submenu_id, row->index);
+        const bool enabled = !row->separator && row->index < items.size() &&
+                             operations_.is_menu_item_enabled(items[row->index]);
         menu_state_.active_submenu_item_index = enabled ? static_cast<int>(row->index) : -1;
         if (enabled) {
           operations_.execute_menu_item(menu_state_.active_submenu_id, row->index);
@@ -264,12 +269,12 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     if (const auto popup_rect =
             operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
-      if (const auto row = operations_.hit_test_popup_row(
-              menu_state_.active_menu_id, *popup_rect, event.button.x, event.button.y);
+      const auto items = operations_.menu_items(menu_state_.active_menu_id);
+      if (const auto row =
+              operations_.hit_test_popup_row(items, *popup_rect, event.button.x, event.button.y);
           row.has_value()) {
-        const bool enabled =
-            !row->separator &&
-            operations_.is_menu_item_enabled_at(menu_state_.active_menu_id, row->index);
+        const bool enabled = !row->separator && row->index < items.size() &&
+                             operations_.is_menu_item_enabled(items[row->index]);
         menu_state_.active_menu_item_index = enabled ? static_cast<int>(row->index) : -1;
         if (enabled) {
           operations_.execute_menu_item(menu_state_.active_menu_id, row->index);
@@ -340,7 +345,7 @@ bool ChromeMouseCoordinator::HandleMenuOverflowPopupMotion(const SDL_Event& even
 // a hover change repaints every row that was or is either one. Repainting only the
 // previously HOVERED row left the first row highlighted beside the hovered one when
 // the pointer entered a freshly opened menu (found by the QA redraw verifier).
-void ChromeMouseCoordinator::RedrawChangedPopupRows(MenuId menu_id,
+void ChromeMouseCoordinator::RedrawChangedPopupRows(std::span<const MenuItemSpec> items,
                                                     const SDL_FRect& popup_rect,
                                                     PopupRowPair previous,
                                                     PopupRowPair current,
@@ -352,7 +357,7 @@ void ChromeMouseCoordinator::RedrawChangedPopupRows(MenuId menu_id,
     if (index >= 0 && index != current.hovered) {
       RequestMenuHoverRowRedraw(
           operations_.request_redraw_rect,
-          operations_.popup_row_rect_by_index(menu_id, popup_rect, static_cast<std::size_t>(index)));
+          operations_.popup_row_rect_by_index(items, popup_rect, static_cast<std::size_t>(index)));
     }
   }
   if (current.hovered >= 0) {
@@ -385,22 +390,22 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
       submenu_rect.has_value() && Contains(*submenu_rect, event.motion.x, event.motion.y)) {
     const int previous_hovered_index = menu_state_.hovered_submenu_row_index;
     const int previous_active_index = menu_state_.active_submenu_item_index;
-    const auto hit = operations_.hit_test_popup_row(menu_state_.active_submenu_id, *submenu_rect,
-                                                     event.motion.x, event.motion.y);
+    const auto items = operations_.menu_items(menu_state_.active_submenu_id);
+    const auto hit =
+        operations_.hit_test_popup_row(items, *submenu_rect, event.motion.x, event.motion.y);
     int hovered_index = -1;
     bool hovered_enabled = false;
     SDL_FRect hovered_rect{};
     if (hit.has_value()) {
       hovered_index = static_cast<int>(hit->index);
       hovered_rect = hit->rect;
-      if (!hit->separator) {
-        hovered_enabled =
-            operations_.is_menu_item_enabled_at(menu_state_.active_submenu_id, hit->index);
+      if (!hit->separator && hit->index < items.size()) {
+        hovered_enabled = operations_.is_menu_item_enabled(items[hit->index]);
       }
     }
     menu_state_.active_submenu_item_index = hovered_enabled ? hovered_index : -1;
     menu_state_.hovered_submenu_row_index = hovered_index;
-    RedrawChangedPopupRows(menu_state_.active_submenu_id, *submenu_rect,
+    RedrawChangedPopupRows(items, *submenu_rect,
                            {previous_hovered_index, previous_active_index},
                            {hovered_index, menu_state_.active_submenu_item_index}, hovered_rect);
     return true;
@@ -413,22 +418,21 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     const int previous_active_index = menu_state_.active_menu_item_index;
     const MenuId previous_submenu_id = menu_state_.active_submenu_id;
     const auto previous_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
-    const auto hit = operations_.hit_test_popup_row(menu_state_.active_menu_id, *popup_rect,
-                                                     event.motion.x, event.motion.y);
+    const auto items = operations_.menu_items(menu_state_.active_menu_id);
+    const auto hit =
+        operations_.hit_test_popup_row(items, *popup_rect, event.motion.x, event.motion.y);
     int hovered_index = -1;
     bool hovered_enabled = false;
     SDL_FRect hovered_rect{};
     if (hit.has_value()) {
       hovered_index = static_cast<int>(hit->index);
       hovered_rect = hit->rect;
-      if (!hit->separator) {
-        hovered_enabled =
-            operations_.is_menu_item_enabled_at(menu_state_.active_menu_id, hit->index);
+      if (!hit->separator && hit->index < items.size()) {
+        hovered_enabled = operations_.is_menu_item_enabled(items[hit->index]);
       }
     }
     const MenuSpec* menu = operations_.find_menu_spec(menu_state_.active_menu_id);
     if (hovered_enabled && menu != nullptr) {
-      const auto items = operations_.menu_items(menu_state_.active_menu_id);
       const MenuItemSpec& spec = items[hovered_index];
       if (spec.submenu != MenuId::None) {
         menu_state_.active_submenu_id = spec.submenu;
@@ -449,7 +453,7 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     }
     menu_state_.active_menu_item_index = hovered_enabled ? hovered_index : -1;
     menu_state_.hovered_popup_row_index = hovered_index;
-    RedrawChangedPopupRows(menu_state_.active_menu_id, *popup_rect,
+    RedrawChangedPopupRows(items, *popup_rect,
                            {previous_hovered_index, previous_active_index},
                            {hovered_index, menu_state_.active_menu_item_index}, hovered_rect);
     const auto current_submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
@@ -479,7 +483,7 @@ bool ChromeMouseCoordinator::HandleMenuMotion(const SDL_Event& event,
     if (const auto popup_rect =
             operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value()) {
-      RedrawChangedPopupRows(menu_state_.active_menu_id, *popup_rect,
+      RedrawChangedPopupRows(operations_.menu_items(menu_state_.active_menu_id), *popup_rect,
                              {menu_state_.hovered_popup_row_index,
                               menu_state_.active_menu_item_index},
                              {-1, -1}, SDL_FRect{});
@@ -681,18 +685,15 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .open_menu_bar_menu = [this](MenuId id) { MakeMenuCoordinator().OpenMenuBarMenu(id); },
           .active_submenu_rect = [this](const SDL_FRect& rect) { return ActiveSubmenuRect(rect); },
           .hit_test_popup_row =
-              [this](MenuId id, const SDL_FRect& popup_rect, float x, float y) {
-                return WorkspaceShell::HitTestPopupRow(MenuItems(id), popup_rect, x, y);
-              },
+              [](std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, float x,
+                 float y) { return WorkspaceShell::HitTestPopupRow(items, popup_rect, x, y); },
           .popup_row_rect_by_index =
-              [this](MenuId id, const SDL_FRect& popup_rect, std::size_t index) {
-                return WorkspaceShell::PopupRowRectByIndex(MenuItems(id), popup_rect, index);
+              [](std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect,
+                 std::size_t index) {
+                return WorkspaceShell::PopupRowRectByIndex(items, popup_rect, index);
               },
-          .is_menu_item_enabled_at =
-              [this](MenuId id, std::size_t index) {
-                const auto items = MenuItems(id);
-                return index < items.size() && IsMenuItemEnabled(items[index]);
-              },
+          .is_menu_item_enabled =
+              [this](const MenuItemSpec& item) { return IsMenuItemEnabled(item); },
           .execute_menu_item =
               [this](MenuId id, std::size_t item_index) {
                 return MakeMenuCoordinator().ExecuteMenuItem(id, item_index);

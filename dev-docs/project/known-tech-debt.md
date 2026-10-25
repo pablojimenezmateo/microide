@@ -449,7 +449,19 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-25-391 — an open menu rebuilds its item list several times per pointer move. [OPEN]
+### TD-2026-10-25-391 — an open menu rebuilds its item list several times per pointer move. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25, without a memo.** Three costs, each removed at its source:
+the menu-chrome mouse operations take the menu's items (`std::span<const
+MenuItemSpec>`), which a handler resolves once per event instead of once per
+operation; `MenuItems` decides each item's visibility once (it evaluated every
+item twice -- the "any hidden" scan, then the assembly); and the overflow
+chevron's hover tracking skips the bar's overflow layout unless the pointer is
+in the menu bar or the chevron is lit. Under all of it, `FindBuiltinSettingSpec`
+-- where every read of a setting with no override lands -- is an index, not a
+scan of the 95 specs. Measured from equal-length checkouts against v2.12.0:
+`menu_popup_hover_rows`' moves 0.096 ms (0.095), `menu_hover_switch` 0.31 (0.41),
+`menu_hover_paint` 87 (112). The remembered-rect approach below stays rejected.
 
 Found comparing against v2.12.0 (2026-10-25): `menu_popup_hover_rows`' phase (160
 pointer moves over an open menu) runs 0.11 ms where v2.12.0 ran 0.09 -- consistent

@@ -42,12 +42,19 @@ class ChromeMouseCoordinator {
     // row, so every mouse path here resolves the row by geometry and asks about
     // that row alone. It dominated per-motion handler time, and over an open
     // menu it was also one heap allocation per event.
+    //
+    // They take the menu's items, which a handler resolves ONCE per event
+    // (`menu_items`): resolving them is the menu's assembly (the LSP-visibility
+    // filter), and each of these asked for it again (TD-2026-10-25-391). The span
+    // is valid until that menu is assembled again, so a handler takes it after
+    // any call that may assemble it (the popup and submenu rects).
     std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
-        MenuId, const SDL_FRect&, float, float)>
+        std::span<const MenuItemSpec>, const SDL_FRect&, float, float)>
         hit_test_popup_row;
-    std::function<std::optional<SDL_FRect>(MenuId, const SDL_FRect&, std::size_t)>
+    std::function<std::optional<SDL_FRect>(std::span<const MenuItemSpec>, const SDL_FRect&,
+                                           std::size_t)>
         popup_row_rect_by_index;
-    std::function<bool(MenuId, std::size_t)> is_menu_item_enabled_at;
+    std::function<bool(const MenuItemSpec&)> is_menu_item_enabled;
     std::function<bool(MenuId, std::size_t)> execute_menu_item;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&, MenuId)> compute_popup_menu_rect;
     std::function<const MenuSpec*(MenuId)> find_menu_spec;
@@ -99,7 +106,7 @@ class ChromeMouseCoordinator {
 
   bool HandleMenuButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleMenuMotion(const SDL_Event& event, const WorkspaceLayout& layout);
-  void RedrawChangedPopupRows(MenuId menu_id,
+  void RedrawChangedPopupRows(std::span<const MenuItemSpec> items,
                               const SDL_FRect& popup_rect,
                               PopupRowPair previous,
                               PopupRowPair current,

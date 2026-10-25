@@ -285,18 +285,6 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     }
   };
 
-  bool any_hidden = false;
-  for (const MenuItemSpec& item : menu->items) {
-    if (is_lsp_hidden(item)) {
-      any_hidden = true;
-      break;
-    }
-  }
-
-  if (contributed.empty() && !any_hidden) {
-    return menu->items;
-  }
-
   auto& entries = dynamic_menu_entries_[MenuSlotIndex(id)];
   auto& items = dynamic_menu_items_[MenuSlotIndex(id)];
   entries.clear();
@@ -313,11 +301,20 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     items.push_back(item);
   };
 
+  // One pass: each item's visibility is decided once (two setting reads for an
+  // LSP item), and the assembled copy is dropped for the static list when nothing
+  // was hidden. The list is assembled several times per pointer move over an open
+  // menu (TD-2026-10-25-391).
+  bool any_hidden = false;
   for (const MenuItemSpec& item : menu->items) {
     if (is_lsp_hidden(item)) {
+      any_hidden = true;
       continue;
     }
     push_item(item);
+  }
+  if (contributed.empty() && !any_hidden) {
+    return menu->items;
   }
   for (const auto& contributed_item : contributed) {
     if (contributed_item.separator_before) {
