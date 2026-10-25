@@ -682,7 +682,7 @@ std::filesystem::path SdlTtfTextBackend::LocateFontFile() {
   // fall through to the next candidate (and ultimately system fonts), never throw
   // std::filesystem_error out of render initialization.
   std::error_code font_ec;
-  const std::filesystem::path bundled_font =
+  std::filesystem::path bundled_font =
       platform::ResolveBundledAssetPath("fonts/JetBrainsMono-Regular.ttf");
   if (!bundled_font.empty() && std::filesystem::exists(bundled_font, font_ec) && !font_ec) {
     return bundled_font;

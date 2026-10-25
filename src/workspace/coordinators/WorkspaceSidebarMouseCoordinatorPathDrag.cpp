@@ -22,7 +22,7 @@ constexpr float kPathDragThresholdPx = 4.0f;
 // else single-quoted with each embedded quote spelled '\'' (what VS Code types
 // into a terminal for a dropped file).
 std::string ShellQuoted(const std::filesystem::path& path) {
-  const std::string text = path.string();
+  std::string text = path.string();
   const bool plain = !text.empty() && text.find_first_not_of(
                                           "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-+=:@%,") ==
                                           std::string::npos;

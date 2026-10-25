@@ -53,7 +53,7 @@ std::string ShortRefLabel(std::string_view ref) {
 std::optional<std::string> ReadTrimmedGitValue(const GitRepository& repo,
                                                std::initializer_list<std::string_view> arguments) {
   const auto result = repo.Execute(arguments);
-  const std::string value = util::TrimAsciiWhitespace(result.output);
+  std::string value = util::TrimAsciiWhitespace(result.output);
   if (!result.success() || value.empty()) {
     return std::nullopt;
   }
@@ -251,7 +251,7 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
     }
   }
 
-  const std::vector<std::optional<GitRepository::BlobLookup>> answers =
+  std::vector<std::optional<GitRepository::BlobLookup>> answers =
       repo.LookupBlobsAtRevisions(requests);
   entries_.reserve(answers.size());
   for (std::size_t i = 0; i < answers.size(); ++i) {

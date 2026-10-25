@@ -233,7 +233,7 @@ std::uint64_t ProjectSearchService::Start(const std::filesystem::path& root,
       nullptr, [](void*) { util::DecrementBackgroundTaskCountAndWake(); });
   task_executor_.Submit(
       [this, root, query = std::move(query), options, indexed_files = std::move(indexed_files),
-       host, run_id, task_guard = std::move(task_guard)](const util::CancellationToken& token) {
+       host, run_id, task_guard = std::move(task_guard)](const util::CancellationToken& token) mutable {
         WorkerMain(root, query, options, std::move(indexed_files), host, run_id, token);
       });
   return run_id;

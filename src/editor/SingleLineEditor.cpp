@@ -353,7 +353,7 @@ std::string SingleLineEditor::CopySelection() const {
 }
 
 std::optional<std::string> SingleLineEditor::CutSelection() {
-  const std::string selection = SelectedText();
+  std::string selection = SelectedText();
   if (selection.empty() || !DeleteSelection()) {
     return std::nullopt;
   }

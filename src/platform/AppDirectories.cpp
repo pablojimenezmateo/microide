@@ -123,7 +123,7 @@ std::filesystem::path ResolveUserDirectory(UserDirectoryKind kind) {
 }
 
 std::filesystem::path ResolveAppDirectory(UserDirectoryKind kind, std::string_view app_name) {
-  const std::filesystem::path root = ResolveUserDirectory(kind);
+  std::filesystem::path root = ResolveUserDirectory(kind);
   if (root.empty()) {
     return {};
   }
@@ -131,7 +131,7 @@ std::filesystem::path ResolveAppDirectory(UserDirectoryKind kind, std::string_vi
     return root;
   }
 
-  const std::filesystem::path app_root = root / std::string(app_name);
+  std::filesystem::path app_root = root / std::string(app_name);
   if (CurrentHostPlatform() != HostPlatform::Windows) {
     return app_root;
   }

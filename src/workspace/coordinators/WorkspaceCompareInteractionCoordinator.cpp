@@ -465,7 +465,7 @@ std::filesystem::path RelativeToRootOrSelf(const std::filesystem::path& path,
     return path;
   }
   std::error_code error;
-  const std::filesystem::path relative = std::filesystem::relative(path, root, error);
+  std::filesystem::path relative = std::filesystem::relative(path, root, error);
   if (error || relative.empty()) {
     return path;
   }

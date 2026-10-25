@@ -579,7 +579,7 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> 
     if (!secondary_carets_.empty() && secondary_carets_.back().position == candidate.position) {
       continue;
     }
-    secondary_carets_.push_back(std::move(candidate));
+    secondary_carets_.push_back(candidate);
   }
   MergeOverlappingCaretRanges();
 }
@@ -1259,7 +1259,13 @@ void TextViewport::ResetState(std::vector<std::string> lines,
                               bool placeholder,
                               bool dirty) {
   EnsureDocument();
-  document_->lines.Reset(lines.empty() ? std::vector<std::string>{""} : std::move(lines));
+  // Reset reads the lines (it joins them into its own buffer), so pass them as is
+  // rather than materializing a temporary vector.
+  if (lines.empty()) {
+    document_->lines.Reset(std::vector<std::string>{""});
+  } else {
+    document_->lines.Reset(lines);
+  }
   ResetMetadataAfterContent(path, line_ending, mixed_line_endings, encoding, placeholder, dirty);
 }
 

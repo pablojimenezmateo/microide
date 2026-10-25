@@ -764,7 +764,7 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
     SDL_ConvertEventToRenderCoordinates(renderer_, &converted_event);
   }
 
-  const auto result = workspace_shell_.HandleEvent(converted_event);
+  auto result = workspace_shell_.HandleEvent(converted_event);
   ConsumeWindowActions();
   if (workspace_shell_.ConsumeQuitRequested()) {
     running_ = false;

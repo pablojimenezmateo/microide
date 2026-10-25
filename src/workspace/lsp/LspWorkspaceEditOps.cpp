@@ -30,7 +30,7 @@ std::optional<std::vector<WorkspaceResourceOp>> FlattenResourceOps(
   std::vector<WorkspaceResourceOp> resolved;
   resolved.reserve(ops.size());
   for (const ProtocolOp& op : ops) {
-    const std::optional<std::filesystem::path> path = PathFromFileUri(op.uri);
+    std::optional<std::filesystem::path> path = PathFromFileUri(op.uri);
     if (!path.has_value()) {
       return std::nullopt;
     }

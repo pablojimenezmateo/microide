@@ -11,7 +11,7 @@ namespace microide::project::remote {
 
 std::optional<std::string> MirrorWriteGate::MirrorRelative(const std::filesystem::path& path) const {
   const std::filesystem::path relative = path.lexically_normal().lexically_relative(store_.tree());
-  const std::string text = relative.generic_string();
+  std::string text = relative.generic_string();
   if (text.empty() || text == "." || !IsSafeRelativePath(text)) {
     return std::nullopt;
   }

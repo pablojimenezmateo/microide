@@ -19,7 +19,7 @@ namespace microide::project {
 namespace {
 
 std::string DisplayName(const std::filesystem::path& path) {
-  const auto name = path.filename().string();
+  auto name = path.filename().string();
   if (!name.empty()) {
     return name;
   }

@@ -438,7 +438,7 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
   if (resolved_.size() >= kMaxEditorConfigResolvedPaths) {
     resolved_.clear();
   }
-  return resolved_.emplace(path_key, std::move(resolved)).first->second;
+  return resolved_.emplace(path_key, resolved).first->second;
 }
 
 }  // namespace microide::project

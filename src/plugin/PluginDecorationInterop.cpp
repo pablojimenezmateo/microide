@@ -124,7 +124,7 @@ bool ReadTextStyles(lua_State* state, int table_index, editor::PluginDecorationD
         if (ReadBoolField(state, entry, "strike")) ts.flags |= editor::kDecorationStrikethrough;
         if (ReadBoolField(state, entry, "bold")) ts.flags |= editor::kDecorationBold;
         if (ReadBoolField(state, entry, "italic")) ts.flags |= editor::kDecorationItalic;
-        data->text_styles.push_back(std::move(ts));
+        data->text_styles.push_back(ts);
       }
     }
     lua_pop(state, 1);  // entry
@@ -171,7 +171,7 @@ bool ReadGutterMarks(lua_State* state, int table_index, editor::PluginDecoration
             mark.priority = static_cast<std::uint8_t>(p < 0 ? 0 : (p > 255 ? 255 : p));
           }
           lua_pop(state, 1);
-          data->gutter_marks.push_back(std::move(mark));
+          data->gutter_marks.push_back(mark);
         }
       }
     }

@@ -231,7 +231,7 @@ std::optional<std::filesystem::path> ResolveGitDirectory(const std::filesystem::
   // Non-throwing probes throughout: this can run against an unmounted network
   // volume or a directory that lost +x, and those must degrade to "no git dir"
   // rather than abort the process (same reasoning as HasGitMarker).
-  const std::filesystem::path marker = root / ".git";
+  std::filesystem::path marker = root / ".git";
   std::error_code error;
   if (std::filesystem::is_directory(marker, error) && !error) {
     return marker;

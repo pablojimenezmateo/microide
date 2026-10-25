@@ -87,7 +87,7 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   }
   state.scale_x = presentation_scale_x_;
   state.scale_y = presentation_scale_y_;
-  window_presentation_ = std::move(state);
+  window_presentation_ = state;
   if (window_presentation_.logical_width != previous_width ||
       window_presentation_.logical_height != previous_height) {
     NoteLayoutInputsChanged();

@@ -182,7 +182,7 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
                 return file_read_service_.Begin({
                     .path = path,
                     .on_worker =
-                        [loaded, path, editor_config = std::move(editor_config), preferences,
+                        [loaded, path, editor_config = editor_config, preferences,
                          detect_on_open = std::move(detect_on_open)](std::string& bytes) {
                           if (!loaded->AdoptFileContent(path, std::move(bytes))) {
                             return;

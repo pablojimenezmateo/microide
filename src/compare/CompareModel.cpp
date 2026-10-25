@@ -1589,8 +1589,18 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     row.right_text = {};
   }
   model.hunks.clear();
-  model.left_source = left_buffer != nullptr ? std::move(left_buffer) : EmptyCompareText();
-  model.right_source = right_buffer != nullptr ? std::move(right_buffer) : EmptyCompareText();
+  // Not a ternary: with EmptyCompareText() as one arm, the other arm's std::move
+  // was converted to a const lvalue and copied.
+  if (left_buffer != nullptr) {
+    model.left_source = std::move(left_buffer);
+  } else {
+    model.left_source = EmptyCompareText();
+  }
+  if (right_buffer != nullptr) {
+    model.right_source = std::move(right_buffer);
+  } else {
+    model.right_source = EmptyCompareText();
+  }
   const std::string& left = *model.left_source;
   const std::string& right = *model.right_source;
 

@@ -673,7 +673,7 @@ void MirrorSyncEngine::RecordHostChangeLocked(const std::string& path, HostChang
   HostChange& change = it->second;
   if (inserted) {
     change.path = path;
-    change.previous = std::move(previous);
+    change.previous = previous;
     change.kind = kind;
   } else {
     // Keep the version the user last had across a run of changes; an add then a

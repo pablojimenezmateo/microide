@@ -891,7 +891,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       if (index >= args.size() || args[index].empty()) {
         return reject("debug-run: a program path is required");
       }
-      const std::string program = args[index];
+      const std::string& program = args[index];
       const std::vector<std::string> program_args(args.begin() + index + 1, args.end());
       const std::string error = context_.StartAdHocDebug(program, program_args, type);
       if (!error.empty()) {

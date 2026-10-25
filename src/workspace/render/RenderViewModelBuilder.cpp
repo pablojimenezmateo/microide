@@ -2540,7 +2540,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   // Font-picker dropdown: a windowed list of matching installed families plus a
   // pinned "Choose file…" entry, anchored to the editing row's value box.
   if (service.EditingFonts() && has_editing_row) {
-    const std::vector<std::string_view> filtered = service.FilteredFontFamilies();
+    const std::vector<std::string_view>& filtered = service.FilteredFontFamilies();
     const int family_count = static_cast<int>(filtered.size());
     const int highlight = service.PickerHighlight();
     // "Choose file…" is pinned after the families, so its index is the family count.

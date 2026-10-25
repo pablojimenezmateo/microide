@@ -390,18 +390,18 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           .pair = bracket_match_pair,
       };
       if (same_viewport_it != bracket_match_cache_entries_.end()) {
-        *same_viewport_it = std::move(updated_entry);
+        *same_viewport_it = updated_entry;
         if (same_viewport_it != bracket_match_cache_entries_.begin()) {
           std::iter_swap(bracket_match_cache_entries_.begin(), same_viewport_it);
         }
       } else if (bracket_match_cache_entries_.size() < kBracketMatchCacheLimit) {
-        bracket_match_cache_entries_.push_back(std::move(updated_entry));
+        bracket_match_cache_entries_.push_back(updated_entry);
         if (bracket_match_cache_entries_.size() > 1) {
           std::iter_swap(bracket_match_cache_entries_.begin(),
                          bracket_match_cache_entries_.end() - 1);
         }
       } else {
-        bracket_match_cache_entries_.back() = std::move(updated_entry);
+        bracket_match_cache_entries_.back() = updated_entry;
         std::iter_swap(bracket_match_cache_entries_.begin(),
                        bracket_match_cache_entries_.end() - 1);
       }

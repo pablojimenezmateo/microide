@@ -363,7 +363,7 @@ std::uint64_t RemoteWorkspace::StreamObjects(std::string_view stream_method, uti
   }
   RemoteServerClient* raw = client.get();
   const std::uint64_t id = client->RequestStream(
-      stream_method, std::move(params), lane,
+      stream_method, params, lane,
       [state, raw](FrameType, std::string bytes) {
         util::ByteReader in(bytes);
         const std::uint64_t index = in.Varint();

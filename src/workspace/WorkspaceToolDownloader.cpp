@@ -113,7 +113,7 @@ std::optional<std::filesystem::path> ToolDownloader::Download(const std::string&
     c = util::ToLowerAsciiChar(static_cast<char>(c));
   }
 
-  const std::filesystem::path cached_path = cache_dir_ / tool_id;
+  std::filesystem::path cached_path = cache_dir_ / tool_id;
   auto compute_sha256_async =
       [this](const std::filesystem::path& path) -> std::optional<std::string> {
     auto promise = std::make_shared<std::promise<std::optional<std::string>>>();
@@ -225,7 +225,7 @@ std::optional<std::filesystem::path> ToolDownloader::GetCachedTool(
   if (cache_dir_.empty() || !IsSafeToolId(tool_id)) {
     return std::nullopt;
   }
-  const auto cached = cache_dir_ / tool_id;
+  auto cached = cache_dir_ / tool_id;
   if (!PathExistsNoThrow(cached)) {
     return std::nullopt;
   }

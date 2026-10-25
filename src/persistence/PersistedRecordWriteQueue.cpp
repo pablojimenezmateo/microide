@@ -33,7 +33,7 @@ void PersistedRecordWriteQueue::Queue(const std::filesystem::path& path, std::ve
   std::string key = MemoKey(path);
   // Coalesce on the path: a burst of saves for the same record collapses to the
   // last one, which is the only one whose bytes matter.
-  queue_.PostLatest(key, [this, path, key, body = std::move(body), capability_flags]() {
+  queue_.PostLatest(key, [this, path, key, body = std::move(body), capability_flags]() mutable {
     {
       std::lock_guard lock(memo_mutex_);
       const auto it = written_body_.find(key);
