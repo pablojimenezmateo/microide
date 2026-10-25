@@ -145,5 +145,73 @@ class SearchRowReaderTests(unittest.TestCase):
         app.elements.assert_called_with("row", prefix="row:search/")
 
 
+class PointerInputBarrierTests(unittest.TestCase):
+    """A control command waits for the pointer input sent before it, as it does
+    for keys: a query right after a click was answered before the click was
+    handled on the slow ASan build (journey-rename-refactor's Discard All)."""
+
+    def setUp(self):
+        backend = patch.object(q, "BACKEND", "x11")
+        backend.start()
+        self.addCleanup(backend.stop)
+
+    def _app(self, log: Path) -> q.App:
+        app = q.App.__new__(q.App)  # the X11 backend: q.BACKEND is pinned in setUp
+        app.log_path = log
+        app.size = (1440, 900)
+        app.origin = (0, 0)
+        app.actions = []
+        app._typed_pending = ""
+        app._keys_pending = 0
+        app._buttons_pending = 0
+        app._wheels_pending = 0
+        app._motion_pending = None
+        app._pointer_at = (5, 5)
+        app._keys_sent = []
+        app._typed_log_offset = 0
+        return app
+
+    def test_a_click_waits_for_its_press_and_release(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "microide.log"
+            log.write_bytes(b"earlier output\n")
+            app = self._app(log)
+            app._expect_pointer_input(buttons=2, at=(100, 200))
+            with open(log, "ab") as out:
+                out.write(b"microide input: button=1 down=1 clicks=1 x=100 y=200 focus=editor->editor handled=1\n"
+                          b"microide input: button=1 down=0 clicks=1 x=100 y=200 focus=editor->editor handled=1\n")
+            app._await_typed_input()
+            self.assertEqual(app.actions, [], "both events seen: no timeout note")
+            self.assertFalse(app._input_pending())
+
+    def test_a_release_not_yet_handled_is_reported(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "microide.log"
+            log.write_bytes(b"")
+            app = self._app(log)
+            app._expect_pointer_input(buttons=2, at=(100, 200))
+            log.write_bytes(b"microide input: button=1 down=1 clicks=1 x=100 y=200 focus=editor->editor handled=1\n")
+            with patch.object(q, "SLOW_FACTOR", 1), \
+                 patch.object(q.time, "monotonic", side_effect=(0, 0, 5, 5)), \
+                 patch.object(q.time, "sleep"), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                app._await_typed_input()
+            self.assertIn("1 of 2 button events", app.actions[-1]["note"])
+
+    def test_a_move_waits_for_its_motion_unless_the_pointer_is_there(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            log = Path(scratch) / "microide.log"
+            log.write_bytes(b"")
+            app = self._app(log)
+            app._expect_pointer_input(motion=(5, 5))
+            self.assertFalse(app._input_pending(), "X sends no motion for a move to where the pointer is")
+            app._expect_pointer_input(motion=(40.4, 60.6))
+            self.assertEqual(app._motion_pending, (40, 61))
+            log.write_bytes(b"microide input: motion x=12 y=13\nmicroide input: motion x=40 y=60\n")
+            app._await_typed_input()
+            self.assertEqual(app.actions, [], "a motion within a pixel of the target counts")
+            self.assertEqual(app._pointer_at, (40, 61))
+
+
 if __name__ == "__main__":
     unittest.main()

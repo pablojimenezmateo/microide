@@ -23,17 +23,45 @@ namespace microide::workspace {
 
 namespace {
 
-// MICROIDE_TRACE_INPUT=1: one log line per key and text event, naming the focus
-// it met, the focus it left, and whether a handler took it. A keystroke the QA
-// suite saw go missing on a slow runner (TD-2026-10-20-368) left a buffer
-// without it and nothing that said where it went.
-void TraceTypedEvent(const SDL_Event& event, FocusTarget before, FocusTarget after, bool handled) {
+// MICROIDE_TRACE_INPUT=1: one log line per key, text and pointer event, naming
+// the focus it met, the focus it left, and whether a handler took it. A keystroke
+// the QA suite saw go missing on a slow runner (TD-2026-10-20-368) left a buffer
+// without it and nothing that said where it went. The QA driver also orders its
+// control commands after the input it sent through X by finding it here
+// (`_await_typed_input`): a query sent right after a click could otherwise be
+// answered before the click was handled.
+bool InputTraceEnabled() {
   static const bool enabled = util::PerformanceTrace::FlagEnabled("MICROIDE_TRACE_INPUT");
-  if (!enabled) {
+  return enabled;
+}
+
+void TraceTypedEvent(const SDL_Event& event, FocusTarget before, FocusTarget after, bool handled) {
+  if (!InputTraceEnabled()) {
     return;
   }
   const std::string_view from = ControlUiFocusName(before);
   const std::string_view to = ControlUiFocusName(after);
+  switch (event.type) {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+      SDL_Log("microide input: button=%d down=%d clicks=%d x=%.0f y=%.0f focus=%.*s->%.*s "
+              "handled=%d",
+              event.button.button, event.button.down ? 1 : 0, event.button.clicks,
+              event.button.x, event.button.y, static_cast<int>(from.size()), from.data(),
+              static_cast<int>(to.size()), to.data(), handled ? 1 : 0);
+      return;
+    case SDL_EVENT_MOUSE_WHEEL:
+      SDL_Log("microide input: wheel=%.0f x=%.0f y=%.0f focus=%.*s->%.*s handled=%d",
+              event.wheel.y, event.wheel.mouse_x, event.wheel.mouse_y,
+              static_cast<int>(from.size()), from.data(), static_cast<int>(to.size()), to.data(),
+              handled ? 1 : 0);
+      return;
+    case SDL_EVENT_MOUSE_MOTION:
+      SDL_Log("microide input: motion x=%.0f y=%.0f", event.motion.x, event.motion.y);
+      return;
+    default:
+      break;
+  }
   if (event.type == SDL_EVENT_TEXT_INPUT) {
     SDL_Log("microide input: text=\"%s\" focus=%.*s->%.*s handled=%d", event.text.text,
             static_cast<int>(from.size()), from.data(), static_cast<int>(to.size()), to.data(),
@@ -80,7 +108,9 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
                                         .message = "Cannot edit in read-only editor"});
   }
   const FocusTarget focus_after = context_.current_project_state.surface.focus;
-  if (typing) {
+  if (typing || event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+      event.type == SDL_EVENT_MOUSE_BUTTON_UP || event.type == SDL_EVENT_MOUSE_WHEEL ||
+      event.type == SDL_EVENT_MOUSE_MOTION) {
     TraceTypedEvent(event, focus_before, focus_after, result.handled);
   }
   // Dividers and scrollbar thumbs paint highlighted while dragged, so a press or
@@ -228,6 +258,7 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
       },
       WorkspaceEventDispatcher::State{
           .window_has_input_focus = shell->context_.interaction_state.window_has_input_focus,
+          .key_modifiers = shell->context_.interaction_state.key_modifiers,
       },
       WorkspaceEventDispatcher::Operations{
           .sync_terminal_focus = [shell]() { shell->SyncTerminalFocusState(); },

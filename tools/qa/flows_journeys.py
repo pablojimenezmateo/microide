@@ -178,12 +178,26 @@ def flow_journey_rename_refactor(app: q.App) -> None:
                     "RENAMED-BUILDS", 40.0), "the renamed project builds")
 
     app.key("ctrl+shift+g")
-    discard = app.wait_for("button:git/discard-all", 5.0)
-    if discard:
+    # Enabled, not just on screen: the git view lists the saved changes once its
+    # status refresh lands, and until then Discard All has nothing to discard and
+    # a click on it does nothing (QA journey-rename-refactor, ASan build).
+    discard = None
+
+    def discard_enabled() -> bool:
+        nonlocal discard
+        discard = next((e for e in app.elements("button", prefix="button:git/discard-all")
+                        if e.get("enabled", True)), None)
+        return discard is not None
+    if app.wait_until(discard_enabled, 5.0, "Discard All to have changes to discard"):
         app.click(*app.center(discard))
-        confirm = next((e for e in app.elements("button", prefix="button:prompt/")
-                        if e.get("label", "").startswith("Discard")), None)
-        if app.expect(confirm is not None, "Discard All asks first"):
+        confirm = None
+
+        def discard_prompt() -> bool:
+            nonlocal confirm
+            confirm = next((e for e in app.elements("button", prefix="button:prompt/")
+                            if e.get("label", "").startswith("Discard")), None)
+            return confirm is not None
+        if app.wait_until(discard_prompt, 3.0, "Discard All to ask first"):
             app.click(*app.center(confirm))
         app.wait_until(lambda: "Scheduler" in read(app, "src/scheduler.cpp")
                        and "Scheduler" in read(app, "include/scheduler.hpp"), 5.0, "Discard All to restore")

@@ -402,10 +402,15 @@ class App:
         self.log_path = self.work / f"microide-{self._launches}.log" if self._launches else self.work / "microide.log"
         self._launches += 1
         # Input sent through X that the app has not been seen to take yet -- the
-        # characters typed and the count of key presses -- and where in its log to
-        # look for them: see _await_typed_input.
+        # characters typed, the count of key presses, of button presses and
+        # releases and of wheel notches, and the point a pointer move lands on --
+        # and where in its log to look for them: see _await_typed_input.
         self._typed_pending = ""
         self._keys_pending = 0
+        self._buttons_pending = 0
+        self._wheels_pending = 0
+        self._motion_pending: tuple[int, int] | None = None
+        self._pointer_at: tuple[int, int] | None = None  # window coordinates, as last sent
         self._keys_sent: list[str] = []  # what the presses were, for a timeout's note
         self._typed_log_offset = 0
         args = [str(self.binary)]
@@ -821,6 +826,7 @@ class App:
         if self.wayland:
             self._pointer("move", x, y)
             return
+        self._expect_pointer_input(motion=(x, y))
         self._xdotool("mousemove", *self._root(x, y))
 
     def click(self, x: float, y: float, button: int = 1, clicks: int = 1,
@@ -836,6 +842,7 @@ class App:
             return
         for key in modifiers:
             self._xdotool("keydown", key)
+        self._expect_pointer_input(buttons=2 * clicks, at=(x, y))
         self._xdotool("mousemove", *self._root(x, y), "click", "--repeat", str(clicks),
                       "--delay", "60", str(button))
         for key in reversed(modifiers):
@@ -881,6 +888,9 @@ class App:
             return
         for key in modifiers:
             self._xdotool("keydown", key)
+        # Every press and release but the last, then the move onto (x1, y1), then
+        # the release: `before_release` may query the app with the button held.
+        self._expect_pointer_input(buttons=2 * clicks - 1, at=(x0, y0))
         if clicks > 1:
             self._xdotool("mousemove", *self._root(x0, y0), "click", "--repeat", str(clicks - 1),
                           "--delay", "60", "1")
@@ -888,10 +898,13 @@ class App:
         for i in range(1, steps + 1):
             x = x0 + (x1 - x0) * i / steps
             y = y0 + (y1 - y0) * i / steps
+            if i == steps:
+                self._expect_pointer_input(motion=(x, y))
             self._xdotool("mousemove", *self._root(x, y))
             time.sleep(0.02)
         if before_release is not None:
             before_release()
+        self._expect_pointer_input(buttons=1)
         self._xdotool("mouseup", "1")
         for key in reversed(modifiers):
             self._xdotool("keyup", key)
@@ -910,6 +923,7 @@ class App:
             self._pointer("wheel", x, y, notches, modifiers=modifiers)
             return
         button = "5" if notches > 0 else "4"
+        self._expect_pointer_input(wheels=abs(notches), at=(x, y))
         self._xdotool("mousemove", *self._root(x, y))
         for key in modifiers:
             self._xdotool("keydown", key)
@@ -957,7 +971,7 @@ class App:
         command issued part-way through typing waits only for what was sent."""
         if self.wayland or self.log_path is None:
             return
-        if not self._typed_pending and not self._keys_pending:
+        if not self._input_pending():
             with contextlib.suppress(OSError):
                 self._typed_log_offset = self.log_path.stat().st_size
             self._keys_sent = []
@@ -965,6 +979,45 @@ class App:
         self._keys_pending += presses
         if keys:
             self._keys_sent.append(keys)
+
+    def _expect_pointer_input(self, buttons: int = 0, wheels: int = 0,
+                              motion: tuple[float, float] | None = None,
+                              at: tuple[float, float] | None = None) -> None:
+        """Notes pointer input about to go through X, as _expect_typed_input does
+        keys: `buttons` press and release events, `wheels` notches, and a `motion`
+        that must be seen to land. A click answered before the app handled it is
+        the same race as a key: Discard All clicked, then the prompt read at once,
+        found none on the slow ASan build (QA journey-rename-refactor). A move
+        waits only when the pointer is not already there (X sends no motion
+        then) and the point is inside the window. `at` is where the input leaves
+        the pointer, for the next move to compare with."""
+        if self.wayland or self.log_path is None:
+            return
+        self._expect_typed_input("", 0)
+        self._buttons_pending += buttons
+        self._wheels_pending += wheels
+        if motion is not None:
+            target = (round(motion[0]), round(motion[1]))
+            w, h = self.size
+            if self._pointer_at is None:
+                self._pointer_at = self._x_pointer_location()
+            if target != self._pointer_at and 0 <= target[0] < w and 0 <= target[1] < h:
+                self._motion_pending = target
+            at = motion
+        if at is not None:
+            self._pointer_at = (round(at[0]), round(at[1]))
+
+    def _x_pointer_location(self) -> tuple[int, int] | None:
+        """Where X has the pointer now, in window coordinates."""
+        result = subprocess.run(["timeout", "5", "xdotool", "getmouselocation", "--shell"],
+                                env=self.tool_env, capture_output=True, text=True)
+        values = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        try:
+            sx, sy = getattr(self, "window_scale", (1.0, 1.0))
+            return (round((int(values["X"]) - self.origin[0]) / sx),
+                    round((int(values["Y"]) - self.origin[1]) / sy))
+        except (KeyError, ValueError):
+            return None
 
     def _await_typed_input(self, timeout: float = 3.0) -> None:
         """Waits until the app has taken every key press and character sent through
@@ -977,13 +1030,19 @@ class App:
         on the line the goto named (QA doc-comment-enter) -- races no person at a
         keyboard can produce. Every control command waits here, queries included.
         Bounded: a timeout is recorded and printed, since what follows may race."""
-        if self.wayland or self.log_path is None or not (self._typed_pending or self._keys_pending):
+        if self.wayland or self.log_path is None or not self._input_pending():
             return
         deadline = time.monotonic() + timeout * SLOW_FACTOR
         text_pattern = re.compile(rb'microide input: text="(.*?)" focus=')
         key_pattern = re.compile(rb'microide input: key=(.*?) mod=0x[0-9a-f]+ repeat=0 ')
         modifier = re.compile(rb'(Left|Right) (Ctrl|Shift|Alt|GUI)')
+        button_pattern = re.compile(rb'microide input: button=')
+        wheel_pattern = re.compile(rb'microide input: wheel=')
+        motion_pattern = re.compile(rb'microide input: motion x=(-?\d+) y=(-?\d+)')
         taken_presses = 0
+        taken_buttons = 0
+        taken_wheels = 0
+        moved = self._motion_pending is None
         taken = ""
         while time.monotonic() < deadline:
             with contextlib.suppress(OSError):
@@ -992,19 +1051,37 @@ class App:
                     tail = log.read()
                 taken = b"".join(text_pattern.findall(tail)).decode("utf-8", "replace")
                 taken_presses = sum(1 for name in key_pattern.findall(tail) if not modifier.fullmatch(name))
+                taken_buttons = len(button_pattern.findall(tail))
+                taken_wheels = len(wheel_pattern.findall(tail))
+                if not moved:
+                    mx, my = self._motion_pending
+                    moved = any(abs(int(x) - mx) <= 1 and abs(int(y) - my) <= 1
+                                for x, y in motion_pattern.findall(tail))
                 want = iter(taken)
                 if (taken_presses >= self._keys_pending
+                        and taken_buttons >= self._buttons_pending
+                        and taken_wheels >= self._wheels_pending and moved
                         and all(char in want for char in self._typed_pending)):  # an in-order subsequence
                     break
             time.sleep(0.01)
         else:
             note = (f"typed input not seen taken after {timeout * SLOW_FACTOR:.0f}s: "
                     f"{taken_presses} of {self._keys_pending} key presses ({' '.join(self._keys_sent)}), "
-                    f"text {taken!r} of {self._typed_pending!r}")
+                    f"text {taken!r} of {self._typed_pending!r}, "
+                    f"{taken_buttons} of {self._buttons_pending} button events, "
+                    f"{taken_wheels} of {self._wheels_pending} wheel notches"
+                    + ("" if moved else f", no motion to {self._motion_pending}"))
             self._record({"note": note})
             print(f"        note: {note}", flush=True)
         self._typed_pending = ""
         self._keys_pending = 0
+        self._buttons_pending = 0
+        self._wheels_pending = 0
+        self._motion_pending = None
+
+    def _input_pending(self) -> bool:
+        return bool(self._typed_pending or self._keys_pending or self._buttons_pending
+                    or self._wheels_pending or self._motion_pending is not None)
 
     def type(self, text: str) -> None:
         """Types `text`. A newline is a Return press and a tab a Tab press: xdotool
