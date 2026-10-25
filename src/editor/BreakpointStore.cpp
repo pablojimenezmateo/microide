@@ -9,6 +9,24 @@
 
 namespace microide::editor {
 
+namespace {
+
+// Breakpoints are kept sorted by line: the first one at or after `line`.
+template <typename Breakpoints>
+auto LowerBoundLine(Breakpoints& breakpoints, std::size_t line) {
+  return std::lower_bound(breakpoints.begin(), breakpoints.end(), line,
+                          [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
+}
+
+// The breakpoint on exactly `line`, or end().
+template <typename Breakpoints>
+auto FindLine(Breakpoints& breakpoints, std::size_t line) {
+  const auto it = LowerBoundLine(breakpoints, line);
+  return it != breakpoints.end() && it->line == line ? it : breakpoints.end();
+}
+
+}  // namespace
+
 std::string BreakpointStore::PathKey(const std::filesystem::path& path) {
   std::string scratch;
   const std::string_view key = PathKeyView(path, scratch);
@@ -49,55 +67,57 @@ std::vector<Breakpoint>* BreakpointStore::MutableForKey(const std::string& key) 
   return it == by_path_.end() ? nullptr : &it->second.breakpoints;
 }
 
-bool BreakpointStore::Toggle(const std::filesystem::path& path, std::size_t line) {
+std::vector<Breakpoint>* BreakpointStore::EnsureFileEntry(const std::filesystem::path& path,
+                                                          std::string* key_out) {
   const std::filesystem::path normalized = path.lexically_normal();
-  const std::string key = PathKey(normalized);
+  std::string key = PathKey(normalized);
   if (key.empty()) {
-    return false;
+    return nullptr;
   }
-  auto& entry = by_path_[key];
+  FileBreakpoints& entry = by_path_[key];
   if (entry.path.empty()) {
     entry.path = normalized;
   }
-  auto& breakpoints = entry.breakpoints;
-  const auto it = std::lower_bound(
-      breakpoints.begin(), breakpoints.end(), line,
-      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
-  if (it != breakpoints.end() && it->line == line) {
-    breakpoints.erase(it);
-    if (breakpoints.empty()) {
+  if (key_out != nullptr) {
+    *key_out = std::move(key);
+  }
+  return &entry.breakpoints;
+}
+
+bool BreakpointStore::Toggle(const std::filesystem::path& path, std::size_t line) {
+  std::string key;
+  std::vector<Breakpoint>* const breakpoints = EnsureFileEntry(path, &key);
+  if (breakpoints == nullptr) {
+    return false;
+  }
+  const auto it = LowerBoundLine(*breakpoints, line);
+  if (it != breakpoints->end() && it->line == line) {
+    breakpoints->erase(it);
+    if (breakpoints->empty()) {
       by_path_.erase(key);
     }
     BumpRevision();
     return false;
   }
-  breakpoints.insert(it, Breakpoint{.line = line});
+  breakpoints->insert(it, Breakpoint{.line = line});
   BumpRevision();
   return true;
 }
 
 void BreakpointStore::Set(const std::filesystem::path& path, std::size_t line, bool enabled) {
-  const std::filesystem::path normalized = path.lexically_normal();
-  const std::string key = PathKey(normalized);
-  if (key.empty()) {
+  std::vector<Breakpoint>* const breakpoints = EnsureFileEntry(path, nullptr);
+  if (breakpoints == nullptr) {
     return;
   }
-  auto& entry = by_path_[key];
-  if (entry.path.empty()) {
-    entry.path = normalized;
-  }
-  auto& breakpoints = entry.breakpoints;
-  const auto it = std::lower_bound(
-      breakpoints.begin(), breakpoints.end(), line,
-      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
-  if (it != breakpoints.end() && it->line == line) {
+  const auto it = LowerBoundLine(*breakpoints, line);
+  if (it != breakpoints->end() && it->line == line) {
     if (it->enabled != enabled) {
       it->enabled = enabled;
       BumpRevision();
     }
     return;
   }
-  breakpoints.insert(it, Breakpoint{.line = line, .enabled = enabled});
+  breakpoints->insert(it, Breakpoint{.line = line, .enabled = enabled});
   BumpRevision();
 }
 
@@ -106,8 +126,7 @@ bool BreakpointStore::ToggleEnabled(const std::filesystem::path& path, std::size
   if (breakpoints == nullptr) {
     return false;
   }
-  const auto it = std::find_if(breakpoints->begin(), breakpoints->end(),
-                               [line](const Breakpoint& bp) { return bp.line == line; });
+  const auto it = FindLine(*breakpoints, line);
   if (it == breakpoints->end()) {
     return false;
   }
@@ -118,23 +137,15 @@ bool BreakpointStore::ToggleEnabled(const std::filesystem::path& path, std::size
 
 Breakpoint* BreakpointStore::MutableBreakpoint(const std::filesystem::path& path,
                                                std::size_t line) {
-  const std::filesystem::path normalized = path.lexically_normal();
-  const std::string key = PathKey(normalized);
-  if (key.empty()) {
+  std::vector<Breakpoint>* const breakpoints = EnsureFileEntry(path, nullptr);
+  if (breakpoints == nullptr) {
     return nullptr;
   }
-  auto& entry = by_path_[key];
-  if (entry.path.empty()) {
-    entry.path = normalized;
-  }
-  auto& breakpoints = entry.breakpoints;
-  const auto it = std::lower_bound(
-      breakpoints.begin(), breakpoints.end(), line,
-      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
-  if (it != breakpoints.end() && it->line == line) {
+  const auto it = LowerBoundLine(*breakpoints, line);
+  if (it != breakpoints->end() && it->line == line) {
     return &(*it);
   }
-  return &(*breakpoints.insert(it, Breakpoint{.line = line}));
+  return &(*breakpoints->insert(it, Breakpoint{.line = line}));
 }
 
 void BreakpointStore::SetOptionalField(const std::filesystem::path& path, std::size_t line,
@@ -175,10 +186,8 @@ void BreakpointStore::Remove(const std::filesystem::path& path, std::size_t line
   if (breakpoints == nullptr) {
     return;
   }
-  const auto it = std::lower_bound(
-      breakpoints->begin(), breakpoints->end(), line,
-      [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
-  if (it == breakpoints->end() || it->line != line) {
+  const auto it = FindLine(*breakpoints, line);
+  if (it == breakpoints->end()) {
     return;
   }
   breakpoints->erase(it);
@@ -208,10 +217,7 @@ bool BreakpointStore::HasBreakpoint(const std::filesystem::path& path, std::size
     return false;
   }
   const auto& breakpoints = it->second.breakpoints;
-  const auto bp = std::lower_bound(
-      breakpoints.begin(), breakpoints.end(), line,
-      [](const Breakpoint& b, std::size_t value) { return b.line < value; });
-  return bp != breakpoints.end() && bp->line == line;
+  return FindLine(breakpoints, line) != breakpoints.end();
 }
 
 const std::vector<Breakpoint>* BreakpointStore::FindByPath(
@@ -270,10 +276,8 @@ void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
     // kept sorted by line, so binary-search each result instead of a linear scan —
     // a file with thousands of breakpoints otherwise pays O(n*results) here.
     const std::size_t line = static_cast<std::size_t>(result.line - 1);
-    const auto it = std::lower_bound(
-        breakpoints->begin(), breakpoints->end(), line,
-        [](const Breakpoint& bp, std::size_t value) { return bp.line < value; });
-    if (it == breakpoints->end() || it->line != line) {
+    const auto it = FindLine(*breakpoints, line);
+    if (it == breakpoints->end()) {
       continue;  // line was removed while the response was in flight
     }
     it->verified = result.verified;
@@ -433,7 +437,7 @@ void BreakpointStore::ReplaceAll(std::vector<FileBreakpoints> files) {
       bp.adapter_id = 0;
       bp.verify_message.clear();
     }
-    by_path_[key] = FileEntry{.path = normalized, .breakpoints = std::move(file.breakpoints)};
+    by_path_[key] = FileBreakpoints{.path = normalized, .breakpoints = std::move(file.breakpoints)};
   }
   BumpRevision();
 }

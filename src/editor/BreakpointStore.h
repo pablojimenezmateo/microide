@@ -170,18 +170,18 @@ class BreakpointStore {
   // unusually spelled path and must outlive the returned view.
   static std::string_view PathKeyView(const std::filesystem::path& path, std::string& scratch);
   std::vector<Breakpoint>* MutableForKey(const std::string& key);
+  // The breakpoints of `path`'s file, creating its (empty) entry; null for an
+  // empty path. `key_out`, when given, receives the entry's key.
+  std::vector<Breakpoint>* EnsureFileEntry(const std::filesystem::path& path,
+                                           std::string* key_out);
   // Find the breakpoint on `path:line`, creating it (sorted) when absent.
   // Returns nullptr only for an empty path.
   Breakpoint* MutableBreakpoint(const std::filesystem::path& path, std::size_t line);
   void BumpRevision();
 
-  struct FileEntry {
-    std::filesystem::path path;
-    std::vector<Breakpoint> breakpoints;  // sorted by line
-  };
   // Transparent hashing lets FindByPathKey() accept a string_view without
   // allocating a throwaway std::string key on every lookup.
-  std::unordered_map<std::string, FileEntry, util::TransparentStringHash, std::equal_to<>>
+  std::unordered_map<std::string, FileBreakpoints, util::TransparentStringHash, std::equal_to<>>
       by_path_;
   std::uint64_t revision_ = 0;
 };

@@ -888,11 +888,9 @@ static void StampSessionRevision(const TextViewport& viewport, SnippetSessionSta
   session.tracked_content_revision = viewport.content_revision();
 }
 
-static void ApplyChoiceForTab(TextViewport& viewport,
-                              SnippetSessionState& session,
-                              int tab,
-                              const std::string& text) {
-  auto& ranges = session.ranges_by_tab[tab];
+// The indices of `ranges` ordered by start position, last first: the order in
+// which mirrors are edited so the earlier ones' recorded columns stay valid.
+static std::vector<std::size_t> MirrorIndicesBottomUp(const std::vector<SelectionRange>& ranges) {
   std::vector<std::size_t> order(ranges.size());
   for (std::size_t i = 0; i < order.size(); ++i) {
     order[i] = i;
@@ -905,6 +903,15 @@ static void ApplyChoiceForTab(TextViewport& viewport,
     }
     return ra.start.column > rb.start.column;
   });
+  return order;
+}
+
+static void ApplyChoiceForTab(TextViewport& viewport,
+                              SnippetSessionState& session,
+                              int tab,
+                              const std::string& text) {
+  auto& ranges = session.ranges_by_tab[tab];
+  const std::vector<std::size_t> order = MirrorIndicesBottomUp(ranges);
   // Apply each mirror's full-range replacement high-to-low (so lower mirrors'
   // recorded columns stay valid), collecting each edit. A choice can change the
   // placeholder's length; the shift origin is the pre-edit end (`r.end`), so a
@@ -1177,18 +1184,7 @@ static std::optional<MirrorEditTarget> FocusedMirrorTarget(const TextViewport& v
 static void ReplaceInMirrors(TextViewport& viewport, SnippetSessionState& session, int tab,
                              const MirrorEditTarget& target, std::string_view text) {
   auto& ranges = session.ranges_by_tab[tab];
-  std::vector<std::size_t> order(ranges.size());
-  for (std::size_t i = 0; i < order.size(); ++i) {
-    order[i] = i;
-  }
-  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-    const auto& ra = ranges[a];
-    const auto& rb = ranges[b];
-    if (ra.start.line != rb.start.line) {
-      return ra.start.line > rb.start.line;
-    }
-    return ra.start.column > rb.start.column;
-  });
+  const std::vector<std::size_t> order = MirrorIndicesBottomUp(ranges);
   std::vector<AppliedMirrorEdit> edits;
   edits.reserve(order.size());
   for (std::size_t idx : order) {
