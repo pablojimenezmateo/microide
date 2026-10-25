@@ -11,9 +11,6 @@ namespace microide::editor {
 
 namespace {
 
-using util::PathEqualsOrWithin;
-using util::ReplacePathPrefix;
-
 // Per-kind render orderings (used both to sort per-owner data at publish and to
 // k-way merge across owners). Each is a strict weak ordering keyed first by line.
 inline bool TextStyleLess(const TextStyleDecoration& a, const TextStyleDecoration& b) {

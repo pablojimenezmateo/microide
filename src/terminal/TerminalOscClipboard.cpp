@@ -11,7 +11,7 @@ std::string SanitizeOscTitle(std::string_view text) {
   std::string sanitized;
   sanitized.reserve(std::min<std::size_t>(text.size(), 256));
   for (unsigned char character : text) {
-    if ((character < 0x20 && character != ' ') || character == 0x7f) {
+    if (character < 0x20 || character == 0x7f) {  // C0 controls and DEL
       continue;
     }
     sanitized.push_back(static_cast<char>(character));

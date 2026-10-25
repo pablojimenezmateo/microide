@@ -125,9 +125,6 @@ std::vector<PublishedDiagnostic> CollectPublishedDiagnostics(std::string_view ow
   return published;
 }
 
-using util::PathEqualsOrWithin;
-using util::ReplacePathPrefix;
-
 }  // namespace
 
 std::string DiagnosticsStore::PathKey(const std::filesystem::path& path) {
