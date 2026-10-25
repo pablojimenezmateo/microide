@@ -449,7 +449,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- ten causes fixed 2026-10-25]
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- twelve causes fixed 2026-10-25]
 
 **2026-10-25, three causes found and fixed:**
 
@@ -545,7 +545,38 @@ all fixed:
   Locally, 8/8 runs of it and `tree-drag` on the ASan binary under a parallel
   QA lane, with retries off.
 
-Close this entry once a run of CI's QA lanes comes back green.
+**2026-10-25, third CI run (e7af0694: `checks` 40229237726, `qa-deep`
+40229237696).** Every job is green, but the logs show two more problems: a flaky
+retry, and waits that timed out. Both are fixed:
+
+- **`journey-feature-branch` (X11 `qa`, flaky) was an app bug: automatic git
+  refreshes were dropped, not paced.** `RequestAutomaticGitSidebarRefresh`
+  returned without a trace when a refresh was already running, and only marked
+  the snapshot stale inside its 750 ms throttle. Nothing asked again, so the git
+  view kept the old state, and a commit waiting on that refresh (it defers
+  itself on a stale snapshot) waited forever. On CI, Ctrl+Return came 0.6 s
+  after Stage All's refresh: the screenshot shows the subject typed, "Commit
+  subject is required" left from the draft's opening, and `greet.o` still
+  staged after the flow's `git reset`. `AutomaticGitRefreshPacer` keeps a
+  turned-away request and issues it when the running refresh's snapshot is
+  consumed or when the interval ends (an SDL timer wakes the loop). Refreshes
+  stay one at a time and 750 ms apart. Separately, a git wake that carried no
+  snapshot (a compare picker's answer, now the pacer's timer) reset the git
+  view's selection to its first row; it no longer does.
+  `QaFlowRegression/AnAutomaticGitRefreshInsideTheIntervalIsKept` (fails when
+  the pacer drops), `GitRepositoryService/AutomaticRefreshPacerKeepsWhatItTurnsAway`.
+- **"0 of 2 button events" notes (X11 `qa`, `qa-asan` monkey: 3 s and 9 s waits)
+  were presses the app can never get.** A press on a resize edge or the title
+  bar's drag area goes to the window manager (SDL's hit test), and one past the
+  window's current size goes nowhere. The monkey resizes the window (maximize,
+  restore), so the driver's own idea of the size was stale. A new control query,
+  `hit-test {x, y}`, answers from the app's own window rect and `WindowHitTest`.
+  The driver asks before every X11 press, wheel and move, after the earlier
+  input is taken, and expects events only where they will arrive. Seeds 1-4
+  then ran with no notes, on the release and ASan builds.
+
+Close this entry once a run of CI's QA lanes comes back green with no flaky
+retries and no driver notes.
 
 Found 2026-10-25 while checking whether TD-368 could close (its condition: "a
 few CI qa lanes stay green"). They have not. From 2026-10-21 to 2026-10-25,
