@@ -4,6 +4,7 @@
 #include <array>
 #include <charconv>
 #include <system_error>
+#include <unordered_map>
 
 #include "plugin/PluginHost.h"
 #include "util/Parse.h"
@@ -1267,10 +1268,21 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
 }
 
 const SettingSpec* FindBuiltinSettingSpec(std::string_view id) {
-  const auto specs = BuiltinSettingSpecs();
-  const auto it = std::find_if(specs.begin(), specs.end(),
-                               [id](const SettingSpec& s) { return s.id == id; });
-  return it == specs.end() ? nullptr : &(*it);
+  // Indexed, not scanned: every read of a setting with no override lands here --
+  // a dozen a frame, several per keystroke, two per LSP item each time a menu's
+  // item list is assembled -- and a scan compared the id against every spec. The
+  // specs are a static array and their ids literals, so the index lives as long.
+  static const std::unordered_map<std::string_view, const SettingSpec*> kIndex = [] {
+    std::unordered_map<std::string_view, const SettingSpec*> index;
+    const auto specs = BuiltinSettingSpecs();
+    index.reserve(specs.size());
+    for (const SettingSpec& spec : specs) {
+      index.emplace(spec.id, &spec);  // first wins, as the scan's did
+    }
+    return index;
+  }();
+  const auto it = kIndex.find(id);
+  return it == kIndex.end() ? nullptr : it->second;
 }
 
 SettingValue DefaultSettingValue(const SettingSpec& spec) {
