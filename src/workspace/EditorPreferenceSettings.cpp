@@ -16,7 +16,7 @@ EditorPreferenceSettings ResolveEditorPreferenceSettings(
   };
 
   resolved.editorconfig_enabled = flag("editor.editorconfig.enabled", true);
-  resolved.trim_trailing_whitespace = flag("editor.save.trim_trailing_whitespace", true);
+  resolved.trim_trailing_whitespace = flag("editor.save.trim_trailing_whitespace", false);
   resolved.ensure_final_newline = flag("editor.save.ensure_final_newline", true);
   resolved.auto_close = flag("editor.brackets.auto_close.enabled", true);
   resolved.surround = flag("editor.brackets.surround.enabled", true);

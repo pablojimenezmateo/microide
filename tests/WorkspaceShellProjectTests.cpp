@@ -969,28 +969,28 @@ void TestWorkspaceShellProjectSwitchPreservesProjectScopedCommandState() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_a, false, false),
          "first project should open");
-  Expect(ExecuteCommand(shell, "soft-tabs on"),
+  Expect(ExecuteCommand(shell, "soft-tabs off"),
          "first project should accept a project-scoped command");
-  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "first project should persist its editor preferences after the command");
 
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
          "second project should open");
-  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
-         "second project should start from default editor preferences");
-  Expect(ExecuteCommand(shell, "soft-tabs off"),
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "second project should start from default editor preferences (spaces)");
+  Expect(ExecuteCommand(shell, "soft-tabs on"),
          "second project should accept its own project-scoped command");
-  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "second project should keep its own editor preferences");
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
          "switching back to the first project should succeed");
-  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching back should restore the first project's editor preferences");
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 1, false),
          "switching to the second project should succeed");
-  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "switching forward should restore the second project's editor preferences");
 }
 
@@ -2148,13 +2148,13 @@ void TestWorkspaceShellCommandPaletteRunsCommandLineVsFuzzyPick() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
 
   // A typed command line with arguments runs through the executor (soft-tabs applies).
-  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
-         "soft tabs should start disabled");
-  Expect(ExecuteCommand(shell, "soft-tabs on"),
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "soft tabs should start enabled (the default indents with spaces)");
+  Expect(ExecuteCommand(shell, "soft-tabs off"),
          "an argument-bearing query should run as a command line");
   Expect(!WorkspaceShellTestAccess::CommandPaletteOpen(shell),
          "running a command line should dismiss the palette");
-  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
          "the soft-tabs command line should apply its argument");
 
   // A single-token fragment that fuzzy-matches a command label keeps matches, so Enter would

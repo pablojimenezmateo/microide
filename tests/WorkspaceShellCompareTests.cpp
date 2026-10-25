@@ -964,8 +964,10 @@ void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
   compare.right_viewport.MoveCursorTo(1, 5, /*extend_selection=*/true);
   Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
          "Tab should be handled on the compare editable pane");
-  Expect(compare.right_viewport.lines().LineView(0).rfind("  alpha", 0) == 0 ||
-             compare.right_viewport.lines().LineView(0).rfind("\talpha", 0) == 0,
+  // One indent step, in whatever unit the pane indents with (spaces by default).
+  const std::string_view indented = compare.right_viewport.lines().LineView(0);
+  Expect(indented.size() > 5 && indented.ends_with("alpha") &&
+             indented.find_first_not_of(" \t") == indented.size() - 5,
          "Tab with a multi-line selection indents the block instead of replacing it");
   Expect(compare.right_viewport.lines().LineView(1).find("bravo") != std::string::npos,
          "the second selected line survives the block indent");

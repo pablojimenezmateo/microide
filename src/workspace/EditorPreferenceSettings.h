@@ -22,7 +22,7 @@ namespace microide::workspace {
 // `settings_change_many_tabs` is the perf scenario that gates it.
 struct EditorPreferenceSettings {
   bool editorconfig_enabled = true;
-  bool trim_trailing_whitespace = true;
+  bool trim_trailing_whitespace = false;
   bool ensure_final_newline = true;
   // Resolved from `editor.line_endings`: nullopt means "auto" (keep the file's
   // detected ending). Resolved here so the string compare is done once, not once

@@ -137,15 +137,17 @@ void TestSettingsCatalogSaveDefaultsAndDedup() {
          "stale editor.trim_trailing_whitespace spec should be gone");
   Expect(FindBuiltinSettingSpec("editor.insert_final_newline") == nullptr,
          "stale editor.insert_final_newline spec should be gone");
-  // The canonical save specs default to true so the shown default matches the
-  // runtime fallback used by the save pipeline (WorkspaceShellEditor.cpp).
-  for (std::string_view id :
-       {"editor.save.trim_trailing_whitespace", "editor.save.ensure_final_newline"}) {
+  // The canonical save specs' defaults match the runtime fallback the save
+  // pipeline resolves (EditorPreferenceSettings.cpp): a final newline on, trailing
+  // whitespace kept (VS Code's files.trimTrailingWhitespace is off; trimming
+  // removes a Markdown hard break -- TD-2026-10-16-354).
+  for (const auto& [id, expected] : {std::pair<std::string_view, bool>{"editor.save.trim_trailing_whitespace", false},
+                                     std::pair<std::string_view, bool>{"editor.save.ensure_final_newline", true}}) {
     const SettingSpec* spec = FindBuiltinSettingSpec(id);
     Expect(spec != nullptr, "canonical save setting should exist");
     const microide::workspace::SettingValue value = DefaultSettingValue(*spec);
     const auto* on = std::get_if<bool>(&value);
-    Expect(on != nullptr && *on, "canonical save setting should default to true");
+    Expect(on != nullptr && *on == expected, std::string(id) + " should default to " + (expected ? "true" : "false"));
   }
 }
 

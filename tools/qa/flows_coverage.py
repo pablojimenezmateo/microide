@@ -106,15 +106,16 @@ def flow_edit_transforms(app: q.App) -> None:
 
 
 def flow_save_transforms(app: q.App) -> None:
-    """Saving trims trailing whitespace and ensures the final newline by default
-    (in the buffer and on disk); each toggle turns its transform off."""
+    """Saving ensures the final newline and keeps trailing whitespace by default
+    (VS Code's defaults, TD-2026-10-16-354), in the buffer and on disk; each
+    toggle flips its transform: trimming on trims, the newline off leaves it out."""
     open_file(app, "notes/trim.txt", "keep  \nlast")
     app.click_text(2, 5)
     app.type("!")
     app.key("ctrl+s")
-    app.wait_until(lambda: read(app, "notes/trim.txt") == "keep\nlast!\n", 3.0,
-                   "the save to trim and add the final newline")
-    expect_text(app, "keep\nlast!\n", "the buffer shows what was saved")
+    app.wait_until(lambda: read(app, "notes/trim.txt") == "keep  \nlast!\n", 3.0,
+                   "the save to keep the spaces and add the final newline")
+    expect_text(app, "keep  \nlast!\n", "the buffer shows what was saved")
     if not (palette(app, "trim trailing whitespace on save")
             and palette(app, "ensure final newline on save")):
         return
@@ -122,9 +123,9 @@ def flow_save_transforms(app: q.App) -> None:
     app.key("BackSpace")
     app.type("  ")
     app.key("ctrl+s")
-    step(app, "save with both transforms off", 0.4)
-    app.wait_until(lambda: read(app, "notes/trim.txt") == "keep\nlast!  ", 3.0,
-                   f"the save to keep the spaces and the missing newline ({read(app, 'notes/trim.txt')!r})")
+    step(app, "save with trimming on and the final newline off", 0.4)
+    app.wait_until(lambda: read(app, "notes/trim.txt") == "keep\nlast!", 3.0,
+                   f"the save to trim and leave the newline out ({read(app, 'notes/trim.txt')!r})")
 
 
 # ---- settings --------------------------------------------------------------

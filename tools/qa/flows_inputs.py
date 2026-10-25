@@ -744,7 +744,8 @@ def flow_editorconfig(app: q.App) -> None:
     app.expect(raw == b"a!\r\nb\r\n", f"end_of_line = crlf writes CRLF ({raw!r})")
 
     open_file(app, "plain/p.txt", "p\n")
-    app.expect(app.buffer().get("tabSize") == 4 and app.buffer().get("softTabs") is False,
+    # The settings' defaults: tabs of 4, indenting with spaces (TD-2026-10-16-354).
+    app.expect(app.buffer().get("tabSize") == 4 and app.buffer().get("softTabs") is True,
                f"`unset` restores the settings' defaults ({app.buffer().get('tabSize')}, {app.buffer().get('softTabs')})")
     open_file(app, "nested/deep.py", "n\n")
     app.expect(app.buffer().get("tabSize") == 3 and app.buffer().get("softTabs") is True,
@@ -753,7 +754,7 @@ def flow_editorconfig(app: q.App) -> None:
     app.send("set-setting", "editor.editorconfig.enabled", "false")
     open_file(app, "cfg/code.py")
     step(app, "editorconfig off", 0.3)
-    app.expect(app.buffer().get("tabSize") == 4 and app.buffer().get("softTabs") is False,
+    app.expect(app.buffer().get("tabSize") == 4 and app.buffer().get("softTabs") is True,
                f"with the switch off the settings rule again ({app.buffer().get('tabSize')}, {app.buffer().get('softTabs')})")
     app.send("set-setting", "editor.editorconfig.enabled", "true")
     open_file(app, "cfg/notes.md")

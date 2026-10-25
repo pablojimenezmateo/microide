@@ -762,7 +762,9 @@ inline std::unique_ptr<TerminalTabState> MakeTerminalTab(std::unique_ptr<Termina
 struct EditorPreferences {
   std::size_t tab_size = 4;
   std::size_t indent_width = 4;
-  bool soft_tabs = false;
+  // Spaces by default, as VS Code's `editor.insertSpaces` (TD-2026-10-16-354);
+  // a file's own indentation still wins when it has one.
+  bool soft_tabs = true;
   bool soft_wrap = false;
   // Editor glyph point size for this project (the `editor.font_size` setting).
   // Applied to the shared text renderer when the project's preferences are

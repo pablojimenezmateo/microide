@@ -1451,7 +1451,7 @@ in the session record through PersistenceService like the open tabs do.
 ClosedEditor` records (an editor-tab record each, capped at 64 on decode); QA
 `session-restore` reopens an editor closed before the quit.
 
-### TD-2026-10-16-354 — two defaults diverge from VS Code: hard tabs and trim-on-save. [OPEN — product decision]
+### TD-2026-10-16-354 — two defaults diverge from VS Code: hard tabs and trim-on-save. [RESOLVED 2026-10-25 — decided]
 
 Found by the QA editing flows (`edit-line-ops`, `edit-auto-close`,
 `edit-external-change`). `editor.soft_tabs` defaults to false, so a new or
@@ -1461,6 +1461,15 @@ removes a typed trailing space (VS Code's `files.trimTrailingWhitespace` default
 to false). The flows read the buffer's own `softTabs` and avoid trailing spaces,
 so they pass either way; flipping the defaults changes what every existing user's
 new files look like, which is why it is not done here.
+
+**Decided: VS Code's defaults.** `editor.soft_tabs` defaults to true (a file's own
+indentation still wins where it has one, so this only shapes new and unindented
+files) and `editor.save.trim_trailing_whitespace` to false: trimming by default
+destroyed meaningful trailing spaces -- a Markdown hard line break is two of
+them -- and surprised anyone arriving from VS Code. `ensure_final_newline` stays
+on (git's convention). The registry, `EditorPreferences` and the save pipeline's
+fallback agree; the settings-registry test, three shell tests and the QA
+`save-transforms` / `editorconfig` flows assert the new defaults.
 
 ### TD-2026-10-16-353 — VS Code shortcuts with no binding here. [OPEN — partly RESOLVED 2026-10-18]
 
