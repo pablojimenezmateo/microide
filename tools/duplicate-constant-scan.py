@@ -26,6 +26,10 @@ import sys
 
 # name -> why these are legitimately separate values, not one question answered twice.
 ACCEPTED_DUPLICATES = {
+    "kDivider": "a layout thickness vs a control-UI element name; unrelated",
+    "kMaxDepth": "JSON formatter recursion guard vs quick-pick tree depth; unrelated limits",
+    "kMaxEntries": "pattern cache, navigation history and action log sizes; unrelated",
+    "kMaxObjectBytes": "server-side object read cap vs mirror object cap; different budgets",
     "kButtonGap": "different buttons: project-search panel, workspace chrome, commit workflow",
     "kButtonHeight": "same -- three unrelated button families with their own metrics",
     "kInset": "panel-specific padding; the sidebar render TU static_asserts its own against the commit field",

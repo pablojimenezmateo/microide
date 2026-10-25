@@ -31,6 +31,14 @@ struct SubprocessOptions {
   SubprocessSandbox sandbox{};
 };
 
+// Per-stream ceiling on captured subprocess output. Uncapped, a child that emits
+// gigabytes (a pathological `git show` of a huge blob, a plugin tool flooding
+// stdout) grows the capture string until the host OOM-aborts; at the ceiling the
+// stream is truncated and the child torn down. 128 MiB is far above any
+// legitimate git/tool output an IDE consumes. The remote launcher uses the same
+// ceiling, so a remote run truncates exactly where a local one would.
+inline constexpr std::size_t kMaxSubprocessCaptureBytes = 128ull * 1024 * 1024;
+
 struct SubprocessResult {
   int exit_code = -1;
   std::string stdout_text;

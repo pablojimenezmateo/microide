@@ -3,6 +3,7 @@
 #include "project/remote/RemoteConnection.h"
 #include "project/remote/RemoteSearchWire.h"
 #include "project/remote/RemoteTerminalChannel.h"
+#include "platform/Subprocess.h"
 
 #include <algorithm>
 #include <atomic>
@@ -25,10 +26,6 @@
 
 namespace microide::project::remote {
 namespace {
-
-// The local subprocess layer's capture ceiling, kept identical so a remote run
-// truncates exactly where a local one would.
-constexpr std::size_t kMaxCaptureBytes = 128ull * 1024 * 1024;
 
 std::vector<std::pair<std::string, std::optional<std::string>>> EnvOf(
     const platform::SubprocessOptions& options) {
@@ -450,7 +447,7 @@ platform::SubprocessResult RemoteProcessLauncher::Run(std::vector<std::string> a
               std::lock_guard lock(collected->mutex);
               std::string& target = is_out ? collected->out : collected->err;
               if ((is_out ? capture_out : capture_err)) {
-                if (target.size() + bytes.size() <= kMaxCaptureBytes) {
+                if (target.size() + bytes.size() <= platform::kMaxSubprocessCaptureBytes) {
                   target.append(bytes);
                 } else if (!collected->truncated) {
                   // As the local layer does at its ceiling: stop the firehose.

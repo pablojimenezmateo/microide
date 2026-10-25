@@ -40,13 +40,6 @@ namespace microide::platform {
 
 namespace {
 
-// Per-stream ceiling on captured stdout/stderr. Without it a child that emits
-// gigabytes (a pathological `git show` of a huge blob, a plugin tool flooding
-// stdout) grows the capture string until the host OOM-aborts. At the ceiling the
-// stream is truncated and the child is torn down. 128 MiB is far above any
-// legitimate git/tool output an IDE consumes.
-constexpr std::size_t kMaxCaptureBytes = 128ull * 1024 * 1024;
-
 // A usable environment-variable name: non-empty and free of '=' and NUL. A name
 // containing '=' would be split by the child (or the environ scan) at the first '=',
 // turning e.g. "LD_PRELOAD=x" into an effective LD_PRELOAD entry; a NUL truncates the
@@ -231,14 +224,14 @@ bool PumpChildIo(UniqueFd* stdin_fd,
 
     if (stdout_index >= 0 &&
         (poll_fds[stdout_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-      if (DrainReadyPipe(stdout_fd, stdout_text, kMaxCaptureBytes)) {
+      if (DrainReadyPipe(stdout_fd, stdout_text, kMaxSubprocessCaptureBytes)) {
         if (out_truncated != nullptr) *out_truncated = true;
         return false;  // capture ceiling hit: stop and let the caller tear down
       }
     }
     if (stderr_index >= 0 &&
         (poll_fds[stderr_index].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
-      if (DrainReadyPipe(stderr_fd, stderr_text, kMaxCaptureBytes)) {
+      if (DrainReadyPipe(stderr_fd, stderr_text, kMaxSubprocessCaptureBytes)) {
         if (out_truncated != nullptr) *out_truncated = true;
         return false;
       }
@@ -488,10 +481,10 @@ void DrainPipeToString(HANDLE handle, std::string* output) {
   DWORD bytes_read = 0;
   while (ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, nullptr) &&
          bytes_read > 0) {
-    if (output->size() >= kMaxCaptureBytes) {
-      break;  // capture ceiling reached: stop growing the buffer (see kMaxCaptureBytes)
+    if (output->size() >= kMaxSubprocessCaptureBytes) {
+      break;  // capture ceiling reached: stop growing the buffer (see kMaxSubprocessCaptureBytes)
     }
-    const std::size_t room = kMaxCaptureBytes - output->size();
+    const std::size_t room = kMaxSubprocessCaptureBytes - output->size();
     output->append(buffer.data(), std::min(room, static_cast<std::size_t>(bytes_read)));
   }
 }
