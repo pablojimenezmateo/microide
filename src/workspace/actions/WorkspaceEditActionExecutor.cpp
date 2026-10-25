@@ -44,12 +44,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                                                                  ActionSource source,
                                                                  std::string* rejection_feedback) {
   (void)source;
-  const auto reject = [&](std::string feedback) {
-    if (rejection_feedback != nullptr) {
-      *rejection_feedback = std::move(feedback);
-    }
-    return DispatchResult::Rejected;
-  };
+  const auto reject = RejectInto(rejection_feedback);
 
   // Settings-backed editor-essentials toggles flip their setting key and nothing
   // else, and EditorEssentialsCapabilitySettingKey already knows which actions

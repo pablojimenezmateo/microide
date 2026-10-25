@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "workspace/actions/WorkspaceActionServices.h"
@@ -23,6 +24,17 @@ class ActionCoordinator {
     Handled,
     Rejected,
   };
+
+  // The `reject(feedback)` every executor uses: hands the feedback to the caller
+  // that asked for it (rejection_feedback may be null) and answers Rejected.
+  static auto RejectInto(std::string* rejection_feedback) {
+    return [rejection_feedback](std::string feedback) {
+      if (rejection_feedback != nullptr) {
+        *rejection_feedback = std::move(feedback);
+      }
+      return DispatchResult::Rejected;
+    };
+  }
 
   DispatchResult ExecuteProject(ActionId id,
                                 const std::vector<std::string>& args,

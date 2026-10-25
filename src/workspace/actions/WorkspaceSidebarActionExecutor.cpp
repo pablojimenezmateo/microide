@@ -18,12 +18,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSidebar(ActionId id,
                                                                     const std::vector<std::string>& args,
                                                                     ActionSource source,
                                                                     std::string* rejection_feedback) {
-  const auto reject = [&](std::string feedback) {
-    if (rejection_feedback != nullptr) {
-      *rejection_feedback = std::move(feedback);
-    }
-    return DispatchResult::Rejected;
-  };
+  const auto reject = RejectInto(rejection_feedback);
 
   switch (id) {
     case ActionId::SidebarToggle: {

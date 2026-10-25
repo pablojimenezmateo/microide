@@ -46,12 +46,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
                                                                   ActionSource source,
                                                                   std::string* rejection_feedback) {
   (void)source;
-  const auto reject = [&](std::string feedback) {
-    if (rejection_feedback != nullptr) {
-      *rejection_feedback = std::move(feedback);
-    }
-    return DispatchResult::Rejected;
-  };
+  const auto reject = RejectInto(rejection_feedback);
   switch (id) {
     case ActionId::CodeActions:
     case ActionId::Completion:
