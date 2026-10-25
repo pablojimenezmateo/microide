@@ -15,7 +15,6 @@
 namespace microide::tests {
 namespace {
 
-using microide::workspace::BuildGitSidebarLineSpecs;
 using microide::workspace::BuildGitSidebarEntryTextModel;
 using microide::workspace::BuildGitSidebarViewModel;
 using microide::workspace::BuildProjectSearchResultLineMap;
@@ -23,7 +22,8 @@ using microide::workspace::FindLiteralSearchMatches;
 using microide::workspace::FindProjectSearchResultLine;
 using microide::workspace::FindSelectedGitSidebarLineIndex;
 using microide::workspace::GitSidebarEntry;
-using microide::workspace::GitSidebarLineKind;
+using microide::workspace::BuildGitSidebarLines;
+using GitSidebarLineKind = microide::workspace::GitSidebarLine::Kind;
 using microide::workspace::GitSidebarState;
 using microide::compare::BranchReviewStateService;
 using microide::workspace::QueryExtendsCaseInsensitive;
@@ -58,7 +58,7 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
                       .provider_label = {}},
   };
   const BranchReviewStateService branch_review;
-  const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+  const auto lines = BuildGitSidebarLines(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
   // Only the two populated groups are emitted; Conflicts/Staged/Untracked are empty
   // and therefore absent, as they are in VSCode's source-control view.
@@ -94,7 +94,7 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
   GitSidebarState clean_state;
   clean_state.repo_available = true;
   const BranchReviewStateService clean_branch_review;
-  const auto clean_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+  const auto clean_lines = BuildGitSidebarLines(BuildGitSidebarViewModel(
       clean_state, std::filesystem::path{"/tmp/project"}, clean_branch_review));
   // A clean tree hides every empty group (VSCode does the same) and says so once.
   // Outgoing is the exception: its header carries the base-branch button.
@@ -111,7 +111,7 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
 
   GitSidebarState no_repo_state;
   const BranchReviewStateService no_repo_branch_review;
-  const auto no_repo_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+  const auto no_repo_lines = BuildGitSidebarLines(BuildGitSidebarViewModel(
       no_repo_state, std::filesystem::path{"/tmp/project"}, no_repo_branch_review));
   Expect(no_repo_lines.size() == 1 && no_repo_lines[0].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
@@ -147,7 +147,7 @@ void TestWorkspaceSharedGitSidebarDirectoryCollapse() {
                       .provider_label = {}},
   };
   const BranchReviewStateService branch_review;
-  const auto expanded_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
+  const auto expanded_lines = BuildGitSidebarLines(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
   std::optional<std::string> src_key;
   for (const auto& line : expanded_lines) {
@@ -160,7 +160,7 @@ void TestWorkspaceSharedGitSidebarDirectoryCollapse() {
          "expanded git tree should expose a collapsible src directory node key");
 
   std::unordered_set<std::string> collapsed{*src_key};
-  const auto collapsed_lines = BuildGitSidebarLineSpecs(
+  const auto collapsed_lines = BuildGitSidebarLines(
       BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review),
       &collapsed);
   Expect(std::none_of(collapsed_lines.begin(), collapsed_lines.end(),

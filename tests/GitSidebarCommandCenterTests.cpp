@@ -17,14 +17,13 @@ namespace {
 
 using microide::project::GitFileStatus;
 using microide::workspace::BuildGitDiscardPreviewSummary;
-using microide::workspace::BuildGitSidebarLineSpecs;
 using microide::workspace::BuildGitSidebarViewModel;
 using microide::workspace::ClassifyGitSidebarSection;
 using microide::workspace::GitSidebarActionAvailabilityForEntry;
 using microide::workspace::GitSidebarActionId;
 using microide::workspace::GitSidebarDisabledActionMessage;
 using microide::workspace::GitSidebarEntry;
-using microide::workspace::GitSidebarLineKind;
+using GitSidebarLineKind = microide::workspace::GitSidebarLine::Kind;
 using microide::workspace::GitSidebarState;
 using microide::workspace::GitSidebarViewModel;
 using microide::compare::BranchReviewStateService;
@@ -134,7 +133,7 @@ void TestGitSidebarViewModelGrouping() {
   Expect(view_model.selection_action_line.find("Enter merge") != std::string::npos,
          "selected conflict row should surface merge action hints");
 
-  const auto lines = BuildGitSidebarLineSpecs(view_model);
+  const auto lines = BuildGitSidebarLines(view_model);
   Expect(lines.size() == 14,
          "line specs should include section headers plus tree directory and file rows");
   Expect(lines[0].kind == GitSidebarLineKind::Header,
@@ -190,7 +189,7 @@ struct Node {
 
 void Emit(const Node& node, int section, int depth, std::vector<Line>* out) {
   for (const auto& [label, child] : node.directories) {
-    out->push_back(Line{.kind = static_cast<int>(microide::workspace::GitSidebarLineKind::Directory),
+    out->push_back(Line{.kind = static_cast<int>(microide::workspace::GitSidebarLine::Kind::Directory),
                         .label = label,
                         .tree_node_key = DirectoryNodeKey(section, child.path),
                         .depth = depth});
@@ -206,7 +205,7 @@ void Emit(const Node& node, int section, int depth, std::vector<Line>* out) {
         leaf = normalized.empty() ? "." : normalized.generic_string();
       }
     }
-    out->push_back(Line{.kind = static_cast<int>(microide::workspace::GitSidebarLineKind::Entry),
+    out->push_back(Line{.kind = static_cast<int>(microide::workspace::GitSidebarLine::Kind::Entry),
                         .label = leaf,
                         .tree_node_key = {},
                         .depth = depth,
@@ -287,7 +286,7 @@ void TestGitSidebarTreeGroupingMatchesPathAlgebra() {
   view_model.sections = {section};
   view_model.sections[0].show_header = false;
 
-  const auto produced = BuildGitSidebarLineSpecs(view_model);
+  const auto produced = BuildGitSidebarLines(view_model);
   const auto expected = tree_reference::Build(view_model.sections[0]);
   Expect(produced.size() == expected.size(),
          "the tree emits the same number of lines as the path-algebra reference (" +
@@ -333,9 +332,9 @@ void TestGitSidebarEntryDisplayLabelCarriesReviewMarker() {
   section.rows = {marked, plain};
   view_model.sections = {section};
 
-  const auto lines = BuildGitSidebarLineSpecs(view_model);
-  const microide::workspace::GitSidebarLineSpec* marked_line = nullptr;
-  const microide::workspace::GitSidebarLineSpec* plain_line = nullptr;
+  const auto lines = BuildGitSidebarLines(view_model);
+  const microide::workspace::GitSidebarLine* marked_line = nullptr;
+  const microide::workspace::GitSidebarLine* plain_line = nullptr;
   for (const auto& line : lines) {
     if (line.kind != GitSidebarLineKind::Entry) {
       continue;

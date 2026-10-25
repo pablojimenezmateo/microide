@@ -64,14 +64,14 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
                              GitSidebarEntry::Section section,
                              int depth,
                              const std::unordered_set<std::string>* collapsed_directory_keys,
-                             std::vector<GitSidebarLineSpec>* lines) {
+                             std::vector<GitSidebarLine>* lines) {
   for (const auto& [label, child] : node.directories) {
     const std::string node_key = DirectoryNodeKey(section, child.path);
     const bool collapsed =
         collapsed_directory_keys != nullptr &&
         collapsed_directory_keys->find(node_key) != collapsed_directory_keys->end();
-    lines->push_back(GitSidebarLineSpec{
-        .kind = GitSidebarLineKind::Directory,
+    lines->push_back(GitSidebarLine{
+        .kind = GitSidebarLine::Kind::Directory,
         .section = section,
         .label = label,
         .display_label = label,
@@ -102,8 +102,8 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
     } else {
       display_label = leaf;
     }
-    lines->push_back(GitSidebarLineSpec{
-        .kind = GitSidebarLineKind::Entry,
+    lines->push_back(GitSidebarLine{
+        .kind = GitSidebarLine::Kind::Entry,
         .section = section,
         .label = std::move(leaf),
         .display_label = std::move(display_label),
@@ -147,14 +147,14 @@ GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(std::string_view relative
   return model;
 }
 
-std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
+std::vector<GitSidebarLine> BuildGitSidebarLines(
     const GitSidebarViewModel& view_model,
     const std::unordered_set<std::string>* collapsed_directory_keys) {
-  std::vector<GitSidebarLineSpec> lines;
+  std::vector<GitSidebarLine> lines;
   for (const GitSidebarSectionViewModel& section : view_model.sections) {
     if (section.show_header) {
-      lines.push_back(GitSidebarLineSpec{
-          .kind = GitSidebarLineKind::Header,
+      lines.push_back(GitSidebarLine{
+          .kind = GitSidebarLine::Kind::Header,
           .section = section.section,
           .label = section.header_label,
           .display_label = section.header_label,
@@ -162,8 +162,8 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
       });
     }
     if (section.rows.empty()) {
-      lines.push_back(GitSidebarLineSpec{
-          .kind = GitSidebarLineKind::Empty,
+      lines.push_back(GitSidebarLine{
+          .kind = GitSidebarLine::Kind::Empty,
           .section = section.section,
           .label = section.empty_label,
           .display_label = section.empty_label,
@@ -225,43 +225,6 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     }
 
     EmitGitSidebarTreeLines(root, section.section, 0, collapsed_directory_keys, &lines);
-  }
-  return lines;
-}
-
-std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
-    const std::vector<GitSidebarLineSpec>& lines,
-    const std::size_t selected_entry_index) {
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (lines[i].kind == GitSidebarLineKind::Entry &&
-        lines[i].entry_index == static_cast<int>(selected_entry_index)) {
-      return i;
-    }
-  }
-  return std::nullopt;
-}
-
-std::vector<GitSidebarLine> BuildGitSidebarLines(
-    const GitSidebarViewModel& view_model,
-    const std::unordered_set<std::string>* collapsed_directory_keys) {
-  const std::vector<GitSidebarLineSpec> specs =
-      BuildGitSidebarLineSpecs(view_model, collapsed_directory_keys);
-  std::vector<GitSidebarLine> lines;
-  lines.reserve(specs.size());
-  for (const GitSidebarLineSpec& spec : specs) {
-    lines.push_back(GitSidebarLine{
-        .kind = spec.kind == GitSidebarLineKind::Header      ? GitSidebarLine::Kind::Header
-                : spec.kind == GitSidebarLineKind::Directory ? GitSidebarLine::Kind::Directory
-                : spec.kind == GitSidebarLineKind::Entry     ? GitSidebarLine::Kind::Entry
-                                                             : GitSidebarLine::Kind::Empty,
-        .section = spec.section,
-        .label = spec.label,
-        .display_label = spec.display_label,
-        .tree_node_key = spec.tree_node_key,
-        .expanded = spec.expanded,
-        .depth = spec.depth,
-        .entry_index = spec.entry_index,
-    });
   }
   return lines;
 }

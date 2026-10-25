@@ -14,43 +14,18 @@
 
 namespace microide::workspace {
 
-enum class GitSidebarLineKind {
-  Header,
-  Directory,
-  Entry,
-  Empty,
-};
-
-struct GitSidebarLineSpec {
-  GitSidebarLineKind kind = GitSidebarLineKind::Empty;
-  GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
-  std::string label;
-  // Render-ready primary text (see GitSidebarLine::display_label): entry rows carry
-  // the "[<marker>] " branch-review prefix; other kinds equal `label`.
-  std::string display_label;
-  std::string tree_node_key;
-  bool expanded = false;
-  int depth = 0;
-  int entry_index = -1;
-};
-
 struct GitSidebarEntryTextModel {
   std::string primary_label;
   std::string secondary_label;
 };
 
-std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
-    const GitSidebarViewModel& view_model,
-    const std::unordered_set<std::string>* collapsed_directory_keys = nullptr);
 // Flatten the git view model into the render-ready `GitSidebarLine` rows the shell
-// stores and the render TU draws. Single owner of the spec->line conversion so the
-// render path, hit-testing, and selection all share one build.
+// stores and the render TU draws, so the render path, hit-testing and selection
+// all share one build. (It used to build an identical `GitSidebarLineSpec` list
+// first and copy every row, strings included, into a line.)
 std::vector<GitSidebarLine> BuildGitSidebarLines(
     const GitSidebarViewModel& view_model,
     const std::unordered_set<std::string>* collapsed_directory_keys = nullptr);
-std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
-    const std::vector<GitSidebarLineSpec>& lines,
-    std::size_t selected_entry_index);
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
     const std::vector<GitSidebarLine>& lines,
     std::size_t selected_entry_index);
