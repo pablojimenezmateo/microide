@@ -103,10 +103,9 @@ std::optional<int> LspClient::TrackedDocumentVersion(const std::string& uri) con
   return it->second;
 }
 
-const std::string& LspClient::LastError() const {
+std::string LspClient::LastError() const {
   std::lock_guard lock(impl_->mutex);
-  impl_->last_error_snapshot = impl_->last_error;
-  return impl_->last_error_snapshot;
+  return impl_->last_error;
 }
 
 LspClient::ReadinessSnapshot LspClient::GetReadinessSnapshot() const {

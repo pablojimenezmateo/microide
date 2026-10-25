@@ -188,7 +188,6 @@ struct DapClient::Impl : StdioJsonRpcClientTransport<DapClient::Impl> {
   int next_seq = 1;
   std::string adapter_id;
   std::string last_error;
-  std::string last_error_snapshot;
   dap_protocol::DapCapabilities capabilities;
 
   void SetLastError(std::string message) {

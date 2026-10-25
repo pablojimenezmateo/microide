@@ -69,7 +69,7 @@ class DapClient {
   void ApplyCapabilitiesUpdate(const util::JsonValue& capabilities_body);
 
   // Last startup/runtime error captured by the client.
-  const std::string& LastError() const;
+  std::string LastError() const;
 
   // Call from the main thread each frame to dispatch pending callbacks/events.
   void DrainCallbacks();

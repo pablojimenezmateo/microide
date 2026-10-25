@@ -451,7 +451,7 @@ class LspClient {
   bool HasOpenDocument(const std::string& uri) const;
 
   // Last startup/runtime error message captured by the LSP client.
-  const std::string& LastError() const;
+  std::string LastError() const;
 
   // Current startup/readiness state for the server.
   ReadinessSnapshot GetReadinessSnapshot() const;

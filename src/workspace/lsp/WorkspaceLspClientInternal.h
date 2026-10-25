@@ -241,7 +241,6 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   util::JsonValue initialization_options;  // LSP initializationOptions (object or Null)
   util::JsonValue settings;                // answers workspace/configuration (object or Null)
   std::string last_error;
-  std::string last_error_snapshot;
   LspClient::ReadinessSnapshot readiness_snapshot;
   std::atomic<bool> supports_incremental_sync{false};
 
@@ -251,11 +250,6 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
     readiness_snapshot.state = LspClient::ReadinessSnapshot::State::Failed;
     readiness_snapshot.message = last_error;
     readiness_snapshot.indexed_count = 0;
-  }
-
-  std::string GetLastErrorCopy() {
-    std::lock_guard lock(mutex);
-    return last_error;
   }
 
   int GetNextId() {

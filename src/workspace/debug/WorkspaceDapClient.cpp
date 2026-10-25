@@ -67,10 +67,9 @@ void DapClient::ApplyCapabilitiesUpdate(const util::JsonValue& capabilities_body
   dap_protocol::MergeCapabilities(impl_->capabilities, capabilities_body);
 }
 
-const std::string& DapClient::LastError() const {
+std::string DapClient::LastError() const {
   std::lock_guard lock(impl_->mutex);
-  impl_->last_error_snapshot = impl_->last_error;
-  return impl_->last_error_snapshot;
+  return impl_->last_error;
 }
 
 void DapClient::DrainCallbacks() { impl_->main_mailbox.Drain(); }
