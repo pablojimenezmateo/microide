@@ -12,6 +12,8 @@ on:
   pull_request:
     paths:
       - '.github/workflows/qa-deep.yml'
+  # A branch can be checked before it lands: the lanes above run only on main.
+  workflow_dispatch:
       - 'tools/run-checks.sh'
       - 'tools/qa/**'
   workflow_dispatch:

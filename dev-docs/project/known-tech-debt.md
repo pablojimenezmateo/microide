@@ -449,7 +449,58 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN]
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN -- three causes fixed 2026-10-25]
+
+**2026-10-25, three causes found and fixed:**
+
+- **`multi-caret-pairs` was an app bug.** `KeyInputCoordinator::HandleKeyDown` (and
+  the prompt surface's handler) read `event.mod`, but fell back to
+  `SDL_GetModState()` when it was empty. The modal handler's letters used the live
+  state outright. SDL updates the live state when it *pumps*, so an app running
+  behind its input read the next chord's modifiers: End, handled while Ctrl+Alt
+  from the following Ctrl+Alt+Down were already pumped, ran as Ctrl+End. That is
+  the caret at EOF, and the three dirty rects End's frame drew on CI. Key events
+  now use only their own modifiers. Mouse paths keep the live state, which is
+  correct there because mouse events carry none. Regression test:
+  `QaFlowRegressionUx/AKeyReadsItsOwnModifiersNotTheNextChords` (it failed with
+  CI's `3:0`). The flow now also checks its own three-caret setup.
+- **`word-and-line-drags` was a driver bug.** After a drag, `_last_click` recorded
+  the release point. SDL folds a press into a multi-click by distance from the
+  previous *press*, so a double-click drag starting where the last one started
+  became its third click, a line selection. Reproduced deterministically with
+  `SDL_MOUSE_DOUBLE_CLICK_TIME=2000`, giving CI's exact finding. The driver now
+  records the press point.
+- **The typed-input ordering guard covered almost nothing.** `_await_typed_input`
+  ran only in `send_line()`, but `send()` (`control-send`: `goto`, `open`,
+  `focus`) and every query went straight to the socket. It also counted only
+  `type()` text, never `key()` presses. On CI, `doc-comment-enter`'s `x` landed
+  where the next `goto 8:8` put the caret. Now every control path waits. Key
+  presses count as non-modifier `key=` lines in the input trace. A timeout is
+  recorded in the action log and printed, rather than passing silently.
+
+- **`RemoteTerminal/PredictionLeadsTheEchoByARoundTrip` was a server race.** The
+  host decided `echo_ack` from `output_generation`, which the output observer
+  bumps *after* the buffer's lock is released. It also recorded the input as
+  written only *after* writing it to the pty. In either window a frame could
+  capture the echo without acking it. The client then re-placed the
+  still-pending prediction one cell past the echo, and the next ack judged it
+  against a blank cell: contradicted, so drawing stopped. A trace at the
+  contradiction showed `line='ready> q'` with the prediction at column 8. Now the
+  session counts applied output under its own lock (`OutputCount`, carried in
+  the capture), the input is recorded before it reaches the pty, and the ack is
+  decided by the capture. Under eight copies on one core: 1/40 and 11/80
+  contradictions before the fix, 0/160 after.
+- **`lsp-diagnostics` was a flow race.** On CI the card *did* gain its symbol
+  section (the saved screenshot shows it), just after the driver read it. The
+  flow re-hovered on every poll, and leaving the card asks the server again on
+  return (by design), so each answer was superseded before it could be read. The
+  flow now hovers once and waits on that card, nudging a pixel within the cell
+  to ask again after a cancelled answer.
+- **The input trace skipped one key.** Escape that put away a hover pinned at
+  the caret returned before the trace, so the new barrier waited 3 s on it
+  (`lsp-show-hover`). It is traced now.
+
+Still open: whatever the next CI run shows with these in.
 
 Found 2026-10-25 while checking whether TD-368 could close (its condition: "a
 few CI qa lanes stay green"). They have not. From 2026-10-21 to 2026-10-25,
@@ -1273,8 +1324,11 @@ in the app's input log (seen: a parallel `undo-save-point` lost End, A and Ctrl+
 The driver now waits for the focus and sends keys through XTEST; 22 keyboard-heavy
 scenarios ran clean 16 at a time. Close this after a few CI qa lanes stay green.
 **2026-10-25: not closable yet.** No CI qa lane has stayed green since then (see
-TD-2026-10-25-392). The surviving failure there is not a lost key, but the
-flaky `doc-comment-enter` still looks like one.
+TD-2026-10-25-392). Two of its causes fit this entry's history. The ordering
+guard below (2026-10-21) never ran for `send()` or for key presses, so a control
+command could still overtake typing. And a key event read the live modifier
+state, which on a loaded runner could make it an unrelated chord. Both are fixed
+under TD-392. Close this once CI's X11 lanes stay green with those changes in.
 
 `lsp-diagnostics` failed both full X11 QA lanes of 2026-10-20 (qa and qa-asan, run
 on an otherwise idle box) the same way: `click_text(16, 19)` placed the caret, then
