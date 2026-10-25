@@ -780,6 +780,31 @@ bool TerminalSession::HasCustomScrollRegionLocked() const {
   return ActiveScrollRegionTopLocked() != 0 || ActiveScrollRegionBottomLocked() != rows_ - 1;
 }
 
+namespace {
+
+// The deque rows a region scroll rotates, and by how much: `top`/`bottom` are
+// screen-relative and clamped to the screen, then offset by `screen_top` (the
+// visible screen's first deque row; 0 on the alt screen). `shift` is 0 when
+// there is nothing to move.
+struct ScrollRotation {
+  std::size_t first_row = 0;
+  std::size_t last_row = 0;
+  std::size_t shift = 0;
+};
+
+ScrollRotation ResolveScrollRotation(std::size_t top, std::size_t bottom, std::size_t count,
+                                     std::size_t terminal_rows, std::size_t screen_top) {
+  const std::size_t rel_top = std::min(top, terminal_rows - 1);
+  const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
+  return ScrollRotation{
+      .first_row = rel_top + screen_top,
+      .last_row = rel_bottom + screen_top,
+      .shift = std::min(count, rel_bottom - rel_top + 1),
+  };
+}
+
+}  // namespace
+
 void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, std::size_t count) {
   if (rows_ == 0) {
     return;
@@ -793,19 +818,13 @@ void TerminalSession::ScrollRegionUpLocked(std::size_t top, std::size_t bottom, 
   if (lines_.size() < screen_top + terminal_rows) {
     lines_.resize(screen_top + terminal_rows);
   }
-
-  const std::size_t rel_top = std::min(top, terminal_rows - 1);
-  const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
-  const std::size_t clamped_top = rel_top + screen_top;
-  const std::size_t clamped_bottom = rel_bottom + screen_top;
-  const std::size_t region_size = clamped_bottom - clamped_top + 1;
-  const std::size_t shift = std::min(count, region_size);
-  if (shift == 0) {
+  const ScrollRotation rotation = ResolveScrollRotation(top, bottom, count, terminal_rows, screen_top);
+  if (rotation.shift == 0) {
     return;
   }
-
-  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_top);
-  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_bottom + 1);
+  const std::size_t shift = rotation.shift;
+  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.first_row);
+  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.last_row + 1);
   std::rotate(begin, begin + static_cast<std::ptrdiff_t>(shift), end);
   // Background Color Erase: lines exposed by the scroll take the current
   // background, matching xterm/VTE (and the ED/EL erase paths above).
@@ -826,19 +845,13 @@ void TerminalSession::ScrollRegionDownLocked(std::size_t top,
   if (lines_.size() < screen_top + terminal_rows) {
     lines_.resize(screen_top + terminal_rows);
   }
-
-  const std::size_t rel_top = std::min(top, terminal_rows - 1);
-  const std::size_t rel_bottom = std::clamp(bottom, rel_top, terminal_rows - 1);
-  const std::size_t clamped_top = rel_top + screen_top;
-  const std::size_t clamped_bottom = rel_bottom + screen_top;
-  const std::size_t region_size = clamped_bottom - clamped_top + 1;
-  const std::size_t shift = std::min(count, region_size);
-  if (shift == 0) {
+  const ScrollRotation rotation = ResolveScrollRotation(top, bottom, count, terminal_rows, screen_top);
+  if (rotation.shift == 0) {
     return;
   }
-
-  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_top);
-  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(clamped_bottom + 1);
+  const std::size_t shift = rotation.shift;
+  auto begin = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.first_row);
+  auto end = lines_.begin() + static_cast<std::ptrdiff_t>(rotation.last_row + 1);
   std::rotate(begin, end - static_cast<std::ptrdiff_t>(shift), end);
   // Background Color Erase: lines exposed by the scroll take the current
   // background, matching xterm/VTE (and the ED/EL erase paths above).
