@@ -103,6 +103,7 @@ void TextViewportUndoHistory::RecordEntry(Entry entry, CoalesceHint hint) {
     // Only the innermost (last) frame may consume `entry` by move: outer frames
     // are processed first and still read it; after the loop `entry` is dead.
     const bool can_move = (fi + 1 == frame_count);
+    // NOLINTNEXTLINE(bugprone-use-after-move): moved on the last iteration only.
     MergeChildIntoDisjoint(frame.disjoint_entries, can_move ? std::move(entry) : entry);
   }
 }

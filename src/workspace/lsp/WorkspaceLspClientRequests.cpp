@@ -33,7 +33,7 @@ void LspClient::SortCompletionItemsByServerRank(std::vector<CompletionItem>& ite
 
 void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.hover, callback, std::move(uri))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.hover, callback, uri)) {
     return;
   }
   // Hover delivers the raw `result` JSON; the consumer parses the contents shape.
@@ -46,7 +46,7 @@ void LspClient::RequestHoverAsync(std::string uri, Position pos, HoverCallback c
 void LspClient::RequestCompletionAsync(std::string uri, Position pos, CompletionCallback callback,
                                        CompletionTrigger trigger, char trigger_character) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.completion, callback, std::move(uri), pos)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.completion, callback, uri, pos)) {
     return;
   }
   util::JsonObject params;
@@ -150,7 +150,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
 void LspClient::RequestSignatureHelpAsync(std::string uri, Position pos,
                                           SignatureHelpCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.signature_help, callback, std::move(uri), pos)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.signature_help, callback, uri, pos)) {
     return;
   }
   impl_->DispatchResultRequest(
@@ -228,7 +228,7 @@ void LspClient::RequestCodeActionAsync(std::string uri, Range range,
 void LspClient::RequestFormattingAsync(std::string uri, int tab_size, bool insert_spaces,
                                        FormattingCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, std::move(uri))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri)) {
     return;
   }
   using namespace util;
@@ -255,7 +255,7 @@ void LspClient::RequestRangeFormattingAsync(std::string uri, Range range, int ta
                                             bool insert_spaces, FormattingCallback callback) {
   if (!callback) return;
   // Range formatting shares the formatting stub handler (same TextEdit[] shape).
-  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, std::move(uri))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.formatting, callback, uri)) {
     return;
   }
   using namespace util;
@@ -315,7 +315,7 @@ void LspClient::RequestGoToDeclarationAsync(std::string uri, Position pos,
 void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
                                            bool include_declaration, LocationCallback callback) {
   using namespace util;
-  if (impl_->DispatchTestStub(impl_->test_handlers.references, callback, std::move(uri), pos)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.references, callback, uri, pos)) {
     return;
   }
   JsonObject context_obj;
@@ -334,7 +334,7 @@ void LspClient::RequestFindReferencesAsync(std::string uri, Position pos,
 void LspClient::RequestPrepareRenameAsync(std::string uri, Position pos,
                                           PrepareRenameCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.prepare_rename, callback, std::move(uri), pos)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.prepare_rename, callback, uri, pos)) {
     return;
   }
   // Skip the round-trip when the server has no prepareRename provider: the caller
@@ -353,8 +353,8 @@ void LspClient::RequestPrepareRenameAsync(std::string uri, Position pos,
 void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string new_name,
                                    RenameCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.rename, callback, std::move(uri),
-                              std::move(new_name))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.rename, callback, uri,
+                              new_name)) {
     return;
   }
   using namespace util;
@@ -375,7 +375,7 @@ void LspClient::RequestRenameAsync(std::string uri, Position pos, std::string ne
 
 void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.document_symbol, callback, std::move(uri))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.document_symbol, callback, uri)) {
     return;
   }
   using namespace util;
@@ -391,7 +391,7 @@ void LspClient::RequestDocumentSymbolAsync(std::string uri, DocumentSymbolCallba
 
 void LspClient::RequestWorkspaceSymbolAsync(std::string query, WorkspaceSymbolCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.workspace_symbol, callback, std::move(query))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.workspace_symbol, callback, query)) {
     return;
   }
   using namespace util;
@@ -407,7 +407,7 @@ void LspClient::RequestWorkspaceSymbolAsync(std::string query, WorkspaceSymbolCa
 
 void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.semantic_tokens, callback, std::move(uri))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.semantic_tokens, callback, uri)) {
     return;
   }
   if (!impl_->supports_semantic_tokens.load(std::memory_order_acquire)) {
@@ -427,7 +427,7 @@ void LspClient::RequestSemanticTokensAsync(std::string uri, SemanticTokensCallba
 
 void LspClient::RequestInlayHintsAsync(std::string uri, Range range, InlayHintCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.inlay_hint, callback, std::move(uri), range)) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.inlay_hint, callback, uri, range)) {
     return;
   }
   if (!impl_->supports_inlay_hints.load(std::memory_order_acquire)) {
@@ -448,7 +448,7 @@ void LspClient::RequestInlayHintsAsync(std::string uri, Range range, InlayHintCa
 void LspClient::RequestDocumentHighlightAsync(std::string uri, Position pos,
                                               DocumentHighlightCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.document_highlight, callback, std::move(uri),
+  if (impl_->DispatchTestStub(impl_->test_handlers.document_highlight, callback, uri,
                               pos)) {
     return;
   }
@@ -469,7 +469,7 @@ void LspClient::RequestDocumentHighlightAsync(std::string uri, Position pos,
 
 void LspClient::RequestCodeLensAsync(std::string uri, CodeLensCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.code_lens, callback, std::move(uri))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.code_lens, callback, uri)) {
     return;
   }
   if (!impl_->supports_code_lens.load(std::memory_order_acquire)) {
@@ -490,7 +490,7 @@ void LspClient::ResolveCodeLensAsync(util::JsonValue unresolved,
                                      ResolveCodeLensCallback callback) {
   if (!callback) return;
   if (impl_->DispatchTestStub(impl_->test_handlers.resolve_code_lens, callback,
-                              std::move(unresolved))) {
+                              unresolved)) {
     return;
   }
   if (!impl_->supports_code_lens_resolve.load(std::memory_order_acquire)) {
@@ -507,8 +507,8 @@ void LspClient::ExecuteServerCommandAsync(std::string command,
                                           std::vector<util::JsonValue> arguments,
                                           ExecuteCommandCallback callback) {
   if (!callback) return;
-  if (impl_->DispatchTestStub(impl_->test_handlers.execute_command, callback, std::move(command),
-                              std::move(arguments))) {
+  if (impl_->DispatchTestStub(impl_->test_handlers.execute_command, callback, command,
+                              arguments)) {
     return;
   }
   using namespace util;
@@ -525,7 +525,7 @@ void LspClient::RequestPrepareCallHierarchyAsync(std::string uri, Position pos,
                                                  PrepareCallHierarchyCallback callback) {
   if (!callback) return;
   if (impl_->DispatchTestStub(impl_->test_handlers.prepare_call_hierarchy, callback,
-                              std::move(uri), pos)) {
+                              uri, pos)) {
     return;
   }
   if (!impl_->supports_call_hierarchy.load(std::memory_order_acquire)) {
@@ -547,7 +547,7 @@ template <typename Impl>
 void DispatchCallHierarchyCalls(Impl* impl, bool incoming, util::JsonValue item,
                                 LspClient::CallHierarchyCallsCallback callback) {
   if (impl->DispatchTestStub(impl->test_handlers.call_hierarchy_calls, callback, incoming,
-                             std::move(item))) {
+                             item)) {
     return;
   }
   if (!impl->supports_call_hierarchy.load(std::memory_order_acquire)) {

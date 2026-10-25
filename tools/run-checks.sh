@@ -12,6 +12,7 @@
 #   tools/run-checks.sh perf-tests # tests with allocation counting -> /tmp/microide-perf-tests.log
 #   tools/run-checks.sh perf-gate  # full gate + dated drift record -> /tmp/microide-perf-gate.log
 #   tools/run-checks.sh hardened # _GLIBCXX_ASSERTIONS build + ctest -> /tmp/microide-hardened.log
+#   tools/run-checks.sh tidy     # clang-tidy use-after-move / unchecked-optional over src/ -> /tmp/microide-tidy.log
 #   tools/run-checks.sh all     # tests, asan, ubsan, tsan in sequence
 #
 # The full console output (build + test) is tee'd to the log file; the script's
@@ -550,6 +551,29 @@ check_hardened() {
   return $rc
 }
 
+# clang-tidy for the checks no compiler warning replaces (TD-2026-10-16-351):
+# bugprone-use-after-move -- the outline asked clangd about "file://" because a
+# sibling argument moved first -- and bugprone-unchecked-optional-access, whose
+# reviewed findings ratchet through tools/tidy-baseline.txt. A clang compile
+# database of its own (no precompiled headers: clang-tidy would need clang's PCH
+# built; no module scanning: GCC's flags are not clang's); only configured, never
+# built. The self-test runs first: a planted case each check must report.
+check_tidy() {
+  local build_dir="build/microide-tidy"
+  local log="${LOG_DIR}/microide-tidy.log"
+  run_logged "$log" bash -c '
+    set -e
+    cmake -S . -B '"$build_dir"' -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
+      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF >/dev/null
+    python3 tools/tidy.py --self-test
+    python3 tools/tidy.py --build '"$build_dir"' --jobs '"$JOBS"'
+  '
+  local rc=$?
+  echo "run-checks: tidy finished (exit $rc); log at $log"
+  return $rc
+}
+
 # The full perf gate, recorded into the dated drift series.
 #
 # Delegates to tools/perf-gate.sh, which owns the record: this lane exists so the
@@ -688,7 +712,7 @@ check_qa_wayland() {
 }
 
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|ci-driver|qa|qa-driver|qa-asan|qa-remote|qa-wayland|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|tidy|ci-driver|qa|qa-driver|qa-asan|qa-remote|qa-wayland|all}" >&2
   echo "       tools/run-checks.sh qa            # GUI QA: scenario suite + 300-step monkey on Xvfb" >&2
   echo "       tools/run-checks.sh qa-asan       # the GUI QA suite + the monkey over seeds on the ASan build" >&2
   echo "       tools/run-checks.sh qa-remote     # remote-project scenarios against a loopback sshd, fast and slow link" >&2
@@ -720,6 +744,7 @@ main() {
     clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
     hardened) check_hardened ;;
+    tidy) check_tidy ;;
     ci-driver) check_ci_driver ;;
     qa-driver) check_qa_driver ;;
     qa) check_qa ;;
@@ -737,6 +762,7 @@ main() {
       # Near release speed and it catches the library-precondition UB the
       # sanitizers cannot (an inverted std::clamp is library UB, not language UB).
       check_hardened         || overall=1
+      check_tidy             || overall=1
       check_sanitizer asan   || overall=1
       check_sanitizer ubsan  || overall=1
       check_sanitizer tsan   || overall=1

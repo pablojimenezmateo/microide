@@ -386,7 +386,11 @@ struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
   // when no handler is installed. Collapses the per-request lock + test_stub_mode
   // check + PostWithoutWake boilerplate. `args` are forwarding references and are
   // consumed ONLY on the stub branch, so `callback`/`uri` remain intact for the real
-  // request path when this returns false.
+  // request path when this returns false. Callers pass their arguments as lvalues
+  // (the stub path copies them): `std::move(uri)` here, as every caller once wrote,
+  // moved only when the stub took the request -- correct, and indistinguishable at
+  // the call from the outline's empty-URI bug (227a2ddf), which is what clang-tidy's
+  // bugprone-use-after-move reports (tools/tidy.py).
   template <typename Handler, typename Callback, typename... Args>
   bool DispatchTestStub(const Handler& handler_member, Callback& callback, Args&&... args) {
     std::lock_guard lock(mutex);

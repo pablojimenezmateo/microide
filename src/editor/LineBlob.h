@@ -57,6 +57,12 @@ class LineBlob {
   }
 
   // ---- build ----------------------------------------------------------
+  // Leaves the blob empty and usable, a moved-from one included: a loop reuses one
+  // blob per region, moving it out at the end of each (clang-tidy's
+  // bugprone-use-after-move learns that only from the attribute).
+#if defined(__clang__)
+  [[clang::reinitializes]]
+#endif
   void clear() {
     data_.clear();
     starts_.clear();

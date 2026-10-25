@@ -674,10 +674,13 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     SaveFormatterService::Request request{
         .command = has_formatter ? formatter->command : std::vector<std::string>{},
         .cwd = context_.current_project_state.root,
+        // Copied when the participants take it below, moved when nothing else does
+        // (designated initializers run in order, so the participants read it after).
         .text = has_save_participants ? text : std::move(text),
         .formatter_id = has_formatter ? formatter->id : std::string(),
         .timeout_ms = kFormatterTimeoutMs,
         .participants = has_save_participants
+                            // NOLINTNEXTLINE(bugprone-use-after-move): .text copied it.
                             ? plugin_runtime_.Host().PrepareSaveParticipants(path, std::move(text))
                             : nullptr,
     };

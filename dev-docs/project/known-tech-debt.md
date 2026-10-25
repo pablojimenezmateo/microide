@@ -1837,7 +1837,24 @@ Other changes:
 - A keypad digit counts as the digit for a chord's second key, as Ctrl+K
   Ctrl+keypad 0 did before.
 
-### TD-2026-10-16-351 — no lane runs clang-tidy's use-after-move check, which would have caught the outline's empty URI. [OPEN]
+### TD-2026-10-16-351 — no lane runs clang-tidy's use-after-move check, which would have caught the outline's empty URI. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** `tools/run-checks.sh tidy` (in `all`, after `hardened`)
+runs `tools/tidy.py`: clang-tidy with `bugprone-use-after-move` and
+`bugprone-unchecked-optional-access` over every translation unit under `src/`, from
+a clang compile database of its own (`build/microide-tidy`, configured only: no
+PCH, no module scanning), with clang-tidy found on PATH or unpacked from the
+distribution package without root. A `--self-test` first proves both checks fire
+on planted cases. First run: 24 use-after-move findings, none a live bug -- 20
+were `DispatchTestStub(..., std::move(uri), ...)`, which moves only when the test
+stub takes the request (the callers now pass lvalues, so the call no longer reads
+like the outline bug), the rest conditional moves (`LineBlob::clear` carries
+`[[clang::reinitializes]]`; three NOLINTs with their reason). 75
+unchecked-optional findings were reviewed -- optionals checked through another
+call or held non-empty by an invariant, none reachable empty -- and recorded in
+`tools/tidy-baseline.txt` (check, file, line text), which only shrinks: a new
+finding fails the lane, and so does an entry nothing reports any more.
+
 
 The outline bug (227a2ddf) was `F(FileUriForPath(path), [path = std::move(path)]
 {...})`: sibling arguments with unspecified evaluation order, GCC moving first.

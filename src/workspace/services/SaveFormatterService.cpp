@@ -52,6 +52,7 @@ void RunSaveStages(SaveFormatterService::Request& request, const platform::Proce
   }
   // A formatter that failed or printed nothing leaves the participants' text.
   if (participants_changed && completion.formatted_text.empty()) {
+    // NOLINTNEXTLINE(bugprone-use-after-move): stdin copied it when participants_changed.
     completion.formatted_text = std::move(text);
   }
 }
