@@ -449,6 +449,42 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-10-25-392 — CI's QA lanes are red on most pushes; `multi-caret-pairs` fails on X11 CI and passes locally. [OPEN]
+
+Found 2026-10-25 while checking whether TD-368 could close (its condition: "a
+few CI qa lanes stay green"). They have not. From 2026-10-21 to 2026-10-25,
+`checks`/`qa` or `qa-deep` (`qa-asan`, `qa-wayland`) failed on most pushes to
+`main`. A different set of scenarios fails each time, and the `--retries`
+pass clears most of them as flaky. The failures that survive the retry, on
+7a46c26c (runs 40185242621 and 40185242527):
+
+- **`multi-caret-pairs` (X11 `qa`)**: failed the first run and the retry
+  (which runs alone). It passes 3/3 locally at 1276c485. **This is not TD-368**:
+  the input trace shows End and both Ctrl+Alt+Down reaching the editor with
+  `handled=1`. Yet the buffer ends `a\nb\nc\n()`, with one caret at Ln 4. That
+  is the result of a caret that sat at EOF when the keys arrived, as if the
+  `goto 1:1` sent just before had not applied, or something moved the caret
+  back. The flow is `open_file` (write, open, wait for `available`, focus) then
+  `goto 1:1`. Next step: log the `goto` reply and the cursor list before the
+  keys, and look for a reload of the freshly written file landing after the
+  goto.
+- **`lsp-diagnostics` (`qa-wayland`)**: failed the run and the retry. The
+  squiggle's card shows the diagnostic and Quick Fix but not the symbol's hover
+  that should follow it.
+
+- **`RemoteTerminal/PredictionLeadsTheEchoByARoundTrip` (`tsan`, 1276c485, run
+  40210292768)**: failed "and still drawn (pending=1 suppressed=1 drawing=0)". This
+  confirms the reading left under TD-2026-10-21-373 (marked resolved, but that
+  part of it was not): a frame judged between `q`'s confirmation and the stall
+  suppresses the overlay while `w` is still pending. It has now been seen on ASan
+  and TSan.
+
+Flaky on the same X11 run (passed alone): `terminal-selection`,
+`doc-comment-enter` (the `x` typed after Enter landed a line late),
+`tab-inactive-close`, `journey-feature-branch`. Earlier `qa-asan` runs
+(39715230919, 39729968627) failed 5–7 scenarios each, plus monkey seed 4.
+Evidence: `gh run download <run> -n logs-qa`.
+
 ### TD-2026-10-25-391 — an open menu rebuilds its item list several times per pointer move. [RESOLVED 2026-10-25]
 
 **Resolved 2026-10-25, without a memo.** Three costs, each removed at its source:
@@ -1236,6 +1272,9 @@ loaded run could press keys before the focus landed and lose every one, with not
 in the app's input log (seen: a parallel `undo-save-point` lost End, A and Ctrl+S).
 The driver now waits for the focus and sends keys through XTEST; 22 keyboard-heavy
 scenarios ran clean 16 at a time. Close this after a few CI qa lanes stay green.
+**2026-10-25: not closable yet.** No CI qa lane has stayed green since then (see
+TD-2026-10-25-392). The surviving failure there is not a lost key, but the
+flaky `doc-comment-enter` still looks like one.
 
 `lsp-diagnostics` failed both full X11 QA lanes of 2026-10-20 (qa and qa-asan, run
 on an otherwise idle box) the same way: `click_text(16, 19)` placed the caret, then

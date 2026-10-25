@@ -41,7 +41,12 @@ Shipped from the groundwork so far, on `main`:
 | **G5** (part) | `SaveFormatterService` runs the formatter on a worker. An interactive save DEFERS — it returns without writing and its completion applies the formatter's output, guarded on the buffer's content revision — while a save whose caller acts on completion blocks. Flushes at tab close, project switch/close and quit keep an in-flight save from being dropped. The lint's spawn allowlist is now the service alone, plus a second half confining the one remaining shell-thread wait. | the blocking callers still wait (TD-2026-09-28-304); participants are still on the shell thread; compare/merge saves are still blocking |
 | **G4** (part) | `editor::AsyncBufferWork` is the guarded completion — an operation id the tab holds (so a completion finds its tab, and finds none if it was closed) plus the `content_revision` it was posted against — and the format-on-save path was moved onto it, so there is one copy of that rule rather than three. `project::FileReadService` is the dedicated reader: one thread, not the serial `ProjectBackgroundExecutor`, with cancellation checked between 1 MiB chunks so closing a tab stops the I/O. `EditorTabState::needs_restore` became `Content{Ready, Deferred, Loading, Failed}`, so the ~40 existing guards ask `content_pending()` and cover a state added later by construction. Files ≥ 4 MiB open off-thread; the WHOLE load runs on the reader's thread through the request's `on_worker` hook — the classification (hash, encoding, line endings, CRLF rewrite) and the buffer build, with a complete `TextViewport` constructed there and moved into the tab by the completion. One file is one read however many panes wait for it: the completion hands its view to every other tab waiting on that path, sharing the buffer. `TextViewport` gained a read-only mode, refused at both edit choke points and at `Save()`, because a keystroke into a tab whose bytes have not arrived would otherwise become a buffer that shadows the file and can be saved over it. A sticky notification reports a read above 48 MiB. | compare/merge still read their sides on the shell thread (TD-2026-09-29-312); the threshold is a size, so a small file on a stalled mount still blocks (TD-2026-09-29-313); — the disk-content hash (G6) is off the shell thread for the watcher sweep, leaving only the save path's own conflict check, which must decide before it writes (TD-2026-09-29-309) |
 
-Not started: **G7** notification actions, **G8** `ProjectId`.
+The right-hand column above records what each item left open *when it landed*.
+As of 2026-10-25 all of it has since shipped: TD-301, TD-304, TD-305, TD-309,
+TD-312 and TD-313 are resolved, the remote project answers G9 with the host's
+pushed `git/metadata`, and the manifest digest is blake3. **G7** notification
+actions shipped too (`openspec/specs/notification-actions`). The only item not
+started is **G8** `ProjectId`, scoped as `openspec/changes/project-identity`.
 
 **G11** (part, 2026-10-07): the parity harness exists — `tests/parity/` holds the
 loopback launcher and gate, the runner with its normalizer, vacuity guards,
@@ -1886,8 +1891,8 @@ File menu (`Remote: Open Folder on Host…` under Open Folder…), the Terminal 
 start button, and `remote-open` on the command line and control channel. The
 `ssh://` CLI form and `Remote: Resync`, `Reinstall Server`, `Open Local Terminal`
 are not built; `Remote: Remove Mirror` is (`remote-remove-mirror`). The durable
-contract is `openspec/changes/remote-project-mirror` (its specs move to
-`openspec/specs/remote-project-mirror` at archive).
+contract is `openspec/specs/remote-project-mirror` (the change is archived as
+`openspec/changes/archive/2026-10-25-remote-project-mirror`).
 
 ### 7.2 The Open Remote overlay
 

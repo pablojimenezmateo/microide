@@ -312,8 +312,8 @@ new terminal behaviour lands there.
 > way to remove a mirror (`remote-remove-mirror`), no remote state on the control
 > channel (`status.remote`), and the host entry points were palette-only (File
 > and Terminal menus, the welcome page). The contract is now a spec:
-> `openspec/changes/remote-project-mirror` (its remaining task is 1.1, mapping
-> each requirement to the test that pins it). Left: TD-2026-10-16-344 (the cpp-lsp
+> `openspec/specs/remote-project-mirror` (change archived 2026-10-25 as
+> `openspec/changes/archive/2026-10-25-remote-project-mirror`). Left: TD-2026-10-16-344 (the cpp-lsp
 > plugin's compile-database check reads the mirror, not the host).
 >
 > **Phase 3 done (2026-10-15).** Tuned on a real host (worky) under simulated
@@ -529,21 +529,15 @@ that file says exactly what, and what each one left):
 - **Bugs found on the way**: the git sidebar could stick "refreshing" forever after
   a refresh during a refresh; a sandboxed plugin could not run git.
 
-Open: the rest of **G4** (the async-open threshold is a size,
-TD-2026-09-29-313), the
-**actions** half of **G7**, **G8** `ProjectId`; **G11**, the local/remote
-parity harness that makes end-to-end QA "the same scenario under a local and a
-non-local launcher, with split host and mirror roots, compared on what the user
-sees and on round-trip counts" (design § 10.1; test code only, ~800 lines, lands
-before Phase 2a; the harness and its first rows shipped 2026-10-07, see the design's
-G11 note); the rest of **G9** (every validity probe, the
-operation-state and MERGE_HEAD readers and the status bar now ask one
-`GitMetadataSource` resolved from the project's launcher, 2026-10-07; only the
-metadata tracker's HEAD/ref sampling still watches a local git directory); the persisted cross-machine
-digest the manifest needs (blake3, the rest of **G6**); and the rest of **G5**
-(TD-2026-09-28-304). Groundwork carries its own perf gates (design
-§ 9) and coverage (§ 10). Sizing is ~17,600 production lines across five phases;
-display forwarding (`xpra`) remains the zero-code answer until Phase 2.
+Open (as of 2026-10-25): only **G8** `ProjectId`. A project is still named by
+its filesystem root, so a remote project is labelled by its mirror's tree
+directory (`tree`) in the project tab, the window title and prompts. It is
+scoped as `openspec/changes/project-identity`. Everything else listed here
+earlier has shipped: G4's size threshold (TD-2026-09-29-313, by the mirror), G5's
+blocking callers (TD-2026-09-28-304), G6's blake3 manifest digest
+(`util/ContentHash`), G7's notification actions (`notification-actions` spec),
+and G11's parity harness. Groundwork carries its own perf gates (design § 9) and
+coverage (§ 10).
 
 Nothing here is remote code, and nothing here depends on remote projects shipping.
 A change that only prepares for remote must not cost anything locally, so each
