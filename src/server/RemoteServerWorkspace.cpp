@@ -25,6 +25,15 @@ namespace {
 constexpr std::uint64_t kMaxObjectBytes = 64u * 1024 * 1024;
 // Objects up to this size are kept for, and sent as, deltas; larger ones stream
 // (and go to disk on the client) whole.
+// The invalid-params reply for a request that needs a workspace: a missing
+// workspace is reported first, else `problem` (what was wrong with the params).
+void ReplyInvalidParams(remote::RemotePeer& peer, std::uint64_t id, bool has_workspace,
+                        std::string_view problem) {
+  peer.ReplyError(id, remote::kErrorInvalidParams,
+                  has_workspace ? std::string(problem)
+                                : std::string("no workspace: send server/hello with a root"));
+}
+
 constexpr std::uint64_t kMaxDeltaBaseBytes = 8u * 1024 * 1024;
 
 // `manifest`: the tree's newest manifest id once the operation is done, so a
@@ -91,8 +100,7 @@ void RemoteServer::InstallTreeHandlers(Connection& connection) {
                  [this, &connection](std::uint64_t id, const util::JsonValue&) {
                    const std::shared_ptr<ServedTree> served = TreeOf(connection);
                    if (!served) {
-                     connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                                "no workspace: send server/hello with a root");
+                     ReplyInvalidParams(connection.peer, id, /*has_workspace=*/false, {});
                      return;
                    }
                    // The raw pointer is safe in the job: ~ServedTree joins the queue
@@ -158,8 +166,7 @@ void RemoteServer::InstallWatchHandlers(Connection& connection) {
                                                                  const util::JsonValue&) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     if (!served) {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, /*has_workspace=*/false, {});
       return;
     }
     {
@@ -210,8 +217,7 @@ void RemoteServer::InstallGitHandlers(Connection& connection) {
                                                                  const util::JsonValue&) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     if (!served) {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, /*has_workspace=*/false, {});
       return;
     }
     {
@@ -252,8 +258,7 @@ void RemoteServer::InstallSearchHandlers(Connection& connection) {
     std::string error;
     auto parsed = remote::ParseSearchRunParams(params, &error);
     if (!served || !parsed.has_value()) {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 served ? error : "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, served != nullptr, error);
       return;
     }
     const std::uint64_t connection_id = connection.id;
@@ -523,9 +528,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     const util::JsonValue& objects = params["objects"];
     if (!served || !objects.IsArray() || objects.AsArray().size() > 4096) {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 served ? "objects must be an array of at most 4096"
-                                        : "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, served != nullptr,
+                         "objects must be an array of at most 4096");
       return;
     }
     std::vector<std::string> paths;
@@ -620,9 +624,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     const std::shared_ptr<ServedTree> served = TreeOf(connection);
     const util::JsonValue& path = params["path"];
     if (!served || !path.IsString() || path.AsString().empty() || path.AsString().front() != '/') {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 served ? "file/read needs an absolute path"
-                                        : "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, served != nullptr,
+                         "file/read needs an absolute path");
       return;
     }
     ServedTree* tree = served.get();
@@ -660,9 +663,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     const util::JsonValue& path = params["path"];
     const util::JsonValue& mode = params["mode"];
     if (!served || !expect.has_value() || !path.IsString() || (!mode.IsNull() && !mode.IsInt())) {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 served ? "file/write needs a path and an expect"
-                                        : "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, served != nullptr,
+                         "file/write needs a path and an expect");
       return;
     }
     std::optional<std::uint32_t> bits;
@@ -699,9 +701,8 @@ void RemoteServer::InstallFileHandlers(Connection& connection) {
     const bool known = op == "mkdir" || op == "rename" || op == "delete";
     if (!served || !known || !path.IsString() || !expect.has_value() ||
         (op == "rename" && !to.IsString())) {
-      connection.peer.ReplyError(id, remote::kErrorInvalidParams,
-                                 served ? "fs/op needs a known op, a path and a valid expect"
-                                        : "no workspace: send server/hello with a root");
+      ReplyInvalidParams(connection.peer, id, served != nullptr,
+                         "fs/op needs a known op, a path and a valid expect");
       return;
     }
     ServedTree* tree = served.get();
