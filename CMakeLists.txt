@@ -634,6 +634,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/state/EditorNavigationHistory.cpp
   src/workspace/state/SaveContinuationState.cpp
   src/workspace/shell/WorkspaceShellInteraction.cpp
+  src/workspace/SystemClipboard.cpp
   src/workspace/shell/WorkspaceShellMenu.cpp
   src/workspace/shell/WorkspaceShellMouse.cpp
   src/workspace/shell/WorkspaceShellMouseMotion.cpp

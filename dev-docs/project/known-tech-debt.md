@@ -1208,7 +1208,20 @@ register, while this test uses the static `Attach` and calls `ReattachHost`
 itself. Next: stress the whole shard under TSan with an artificial delay between
 `peer().Fail` and `Attach`, and log the resume offset against the host's buffer.
 
-### TD-2026-10-19-366 — copy without a fresh input serial is refused on Wayland. [OPEN]
+### TD-2026-10-19-366 — copy without a fresh input serial is refused on Wayland. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25, for the app's own paste.** The clipboard is a
+`SystemClipboard` (`src/workspace/SystemClipboard.h`) in place of the shell's two
+loose reader/writer functions: a copy is read back at once, and one the system does
+not hold is kept and answers the app's own paste for as long as the system still
+holds what it held then -- anything another client copies since takes over. So an
+agent's `copy` then `paste` over the control channel works on Wayland, and
+`edit-selection-clipboard`, `compare-clipboard`, `terminal-clipboard`,
+`undo-semantics` and `terminal-selection` run on weston (all five clean at scale 2)
+instead of being skipped. What stays out of reach is the compositor's side: other
+clients still cannot see a refused copy, and nothing in the process can make the
+compositor take it (that needs real seat input; see below and `tools/qa/README.md`).
+Test: `SystemClipboard/KeepsACopyTheSystemRefused`.
 
 Found running the QA suite on weston (`MQA_BACKEND=wayland`): a Wayland compositor
 accepts a clipboard selection only with the serial of a recent input event on the

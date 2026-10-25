@@ -2328,8 +2328,7 @@
   std::optional<EditorHoverTarget> active_editor_hover_target_;
   std::optional<SignatureHelpPopup> active_signature_help_;
   bool editor_hover_refresh_pending_ = false;
-  std::function<std::optional<std::string>()> clipboard_text_reader_;
-  std::function<bool(std::string_view)> clipboard_text_writer_;
+  mutable SystemClipboard clipboard_;
   std::function<std::optional<std::string>()> primary_selection_text_reader_;
   std::function<bool(std::string_view)> primary_selection_text_writer_;
   std::function<bool(std::string_view)> external_url_opener_;

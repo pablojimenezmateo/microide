@@ -41,6 +41,7 @@
 #include "workspace/EditorPreferenceSettings.h"
 #include "workspace/HoverTooltip.h"
 #include "workspace/ProjectReplaceOutcome.h"
+#include "workspace/SystemClipboard.h"
 #include "workspace/render/SingleLineViewMetrics.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/actions/WorkspaceActionAvailability.h"

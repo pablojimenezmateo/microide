@@ -485,15 +485,12 @@ for _module_name in FLOW_MODULES:
     SCENARIO_ENV.update(getattr(_module, "ENV", {}))
 
 # Scenarios a backend cannot drive, with why. The Wayland backend delivers input
-# through the control channel at SDL's event level, not the seat: no input serial
-# reaches the compositor, so it refuses the clipboard selection (copy and paste
-# between the editor, the shell and the compare view), and kiosk weston owns the
-# window size. The suite reports these as skipped, not as passed.
+# through the control channel at SDL's event level, not the seat, and kiosk weston
+# owns the window size. (No input serial reaches the compositor either, so it
+# refuses a copy's selection; the clipboard flows still run, against the copy the
+# app keeps for its own paste -- SystemClipboard, TD-2026-10-19-366.) The suite
+# reports these as skipped, not as passed.
 UNSUPPORTED: dict[str, dict[str, str]] = {
-    "wayland": {
-        name: "the clipboard needs a seat input serial, which injected input has none of"
-        for name in ("edit-selection-clipboard", "compare-clipboard", "terminal-clipboard", "undo-semantics",
-                     "terminal-selection")
-    } | {name: "kiosk weston owns the window size" for name in ("wb-layouts", "resize-overlays")},
+    "wayland": {name: "kiosk weston owns the window size" for name in ("wb-layouts", "resize-overlays")},
 }
 

@@ -79,7 +79,9 @@ other client, so the driver's mouse and keyboard go through the control channel
 instead of xdotool: `pointer [mods+]<move|down|up|click|wheel> x y ...` and `key
 <chord>` (which types a printable key's character, as a keyboard does). The input
 enters at SDL's event level, not the seat: what that path cannot show -- the
-compositor's keyboard focus, a clipboard serial -- stays X11's to cover.
+compositor's keyboard focus, whether another client sees a copy (the compositor
+refuses a selection without a seat serial, so the clipboard flows check the copy
+the app keeps for its own paste) -- stays X11's to cover.
 Screenshots are blank there (no screen reader without weston's debug protocols);
 the redraw verifier, which renders in process, is what checks the paint.
 `tools/qa/weston.sh` unpacks weston from the distribution's package into

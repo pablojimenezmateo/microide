@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "WorkspaceShellEventHelpers.h"
+#include "workspace/SystemClipboard.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
@@ -154,9 +155,44 @@ void TestFocusedSingleLineFieldOwnsTheKeystroke() {
          "a focused single-line field owns Ctrl+C: the query, not the editor selection");
 }
 
+// TD-2026-10-19-366: a compositor that refuses the selection (Wayland, input with
+// no seat serial) left the app's own paste empty. A copy the system does not hold
+// afterwards is kept for the app's paste, until the system clipboard moves on.
+void TestSystemClipboardKeepsACopyTheSystemRefused() {
+  std::optional<std::string> system = std::string("another app's text");
+  bool refuse = true;
+  workspace::SystemClipboard clipboard(workspace::SystemClipboard::Backend{
+      .set =
+          [&](std::string_view text) {
+            if (!refuse) {
+              system = std::string(text);
+            }
+            return true;  // SDL reports success; the compositor ignores it
+          },
+      .get = [&]() { return system; },
+  });
+
+  Expect(clipboard.Write("copied here"), "a refused copy still lands on the app's clipboard");
+  Expect(clipboard.Read() == std::optional<std::string>("copied here"),
+         "the app's own paste gets the copy the system refused");
+  Expect(clipboard.Read() == std::optional<std::string>("copied here"), "and keeps getting it");
+
+  system = std::string("copied in another app");
+  Expect(clipboard.Read() == std::optional<std::string>("copied in another app"),
+         "once the system clipboard moves on, it answers again");
+
+  refuse = false;
+  Expect(clipboard.Write("accepted") && clipboard.Read() == std::optional<std::string>("accepted"),
+         "a copy the system takes is the system's");
+  system = std::string("later");
+  Expect(clipboard.Read() == std::optional<std::string>("later"), "with nothing held over it");
+}
+
 }  // namespace
 
 void RegisterEditorCopySurfacePriorityTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SystemClipboard/KeepsACopyTheSystemRefused",
+          TestSystemClipboardKeepsACopyTheSystemRefused);
   AddTest(tests, "EditorCopySurfacePriority/MultiCaretSelectionsJoinedByNewline",
           TestMultiCaretSelectionsCopyJoinedByNewline);
   AddTest(tests, "EditorCopySurfacePriority/SingleSelectionCopiesJustThatText",

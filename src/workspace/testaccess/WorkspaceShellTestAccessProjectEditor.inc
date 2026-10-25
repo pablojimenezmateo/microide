@@ -637,11 +637,11 @@
   static void SetClipboardTextReader(
       WorkspaceShell& shell,
       std::function<std::optional<std::string>()> reader) {
-    shell.clipboard_text_reader_ = std::move(reader);
+    shell.clipboard_.SetReaderForTesting(std::move(reader));
   }
   static void SetClipboardTextWriter(WorkspaceShell& shell,
                                      std::function<bool(std::string_view)> writer) {
-    shell.clipboard_text_writer_ = std::move(writer);
+    shell.clipboard_.SetWriterForTesting(std::move(writer));
   }
   static void SetPrimarySelectionTextReader(
       WorkspaceShell& shell,

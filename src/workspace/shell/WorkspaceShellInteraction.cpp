@@ -187,25 +187,11 @@ bool WorkspaceShell::WriteClipboardText(std::string_view text) const {
   if (text.empty()) {
     return false;
   }
-  if (clipboard_text_writer_) {
-    return clipboard_text_writer_(text);
-  }
-  return SDL_SetClipboardText(std::string(text).c_str());
+  return clipboard_.Write(text);
 }
 
 std::optional<std::string> WorkspaceShell::ReadClipboardText() const {
-  if (clipboard_text_reader_) {
-    return clipboard_text_reader_();
-  }
-
-  char* clipboard_text = SDL_GetClipboardText();
-  if (clipboard_text == nullptr) {
-    return std::nullopt;
-  }
-
-  std::string copied_text(clipboard_text);
-  SDL_free(clipboard_text);
-  return copied_text;
+  return clipboard_.Read();
 }
 
 bool WorkspaceShell::WritePrimarySelectionText(std::string_view text) const {
