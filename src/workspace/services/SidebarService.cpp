@@ -71,6 +71,10 @@ bool SidebarService::RefreshProblems() {
   return coordinator_.RefreshProblems();
 }
 
+bool SidebarService::CatchUpSearchResults(const editor::TextViewport& viewport) {
+  return coordinator_.CatchUpSearchResults(viewport);
+}
+
 bool SidebarService::RefreshTests() {
   return coordinator_.RefreshTests();
 }

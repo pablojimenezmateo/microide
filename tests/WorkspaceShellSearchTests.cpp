@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "support/ProjectSearchWait.h"
 #include "TestSupportSdl.h"
 
 #include "platform/FileIndexWatcher.h"
@@ -19,14 +20,6 @@ namespace {
 using microide::platform::IndexUpdateBatch;
 using microide::workspace::WorkspaceShell;
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
-
-void WaitForProjectSearch(WorkspaceShell& shell) {
-  const bool finished = WaitUntil(
-      [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
-      std::chrono::seconds(2), std::chrono::milliseconds(5),
-      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
-  Expect(finished, "workspace project search should finish");
-}
 
 // The search view's results list types to navigate, as VS Code's does: a letter
 // selects the next result whose line starts with what was typed. Its letters used

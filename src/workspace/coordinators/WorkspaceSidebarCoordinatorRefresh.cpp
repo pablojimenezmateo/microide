@@ -9,6 +9,7 @@
 #include "editor/TextViewport.h"
 #include "util/PathMatch.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/ProjectSearchLiveHits.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
@@ -227,6 +228,17 @@ void SidebarCoordinator::RefreshGit() {
   if (state_.sidebar.visible && ActiveSidebarMode() == SidebarMode::Git) {
     operations_.request_sidebar_redraw();
   }
+}
+
+bool SidebarCoordinator::CatchUpSearchResults(const editor::TextViewport& viewport) {
+  ProjectSearchState& search = state_.overlay.workflow.project_search;
+  if (!state_.sidebar.visible || ActiveSidebarMode() != SidebarMode::Search ||
+      !RederiveProjectSearchHitsIfStale(search, state_.root, viewport,
+                                        SearchCandidatesFrom(state_.file_index, search))) {
+    return false;
+  }
+  operations_.request_sidebar_redraw();
+  return true;
 }
 
 bool SidebarCoordinator::RefreshProblems() {

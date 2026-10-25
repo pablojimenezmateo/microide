@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "support/ProjectSearchWait.h"
 #include "TestSupportSdl.h"
 #include "perf/AllocationCounter.h"
 #include "WorkspaceShellEventHelpers.h"
@@ -26,14 +27,6 @@ using microide::workspace::SidebarResizeHandleRect;
 using microide::workspace::SidebarResizeHitRect;
 using microide::workspace::WindowControlButtonHitRect;
 using microide::workspace::WorkspaceShell;
-
-void WaitForProjectSearch(WorkspaceShell& shell) {
-  const bool finished = WaitUntil(
-      [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
-      std::chrono::seconds(2), std::chrono::milliseconds(5),
-      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
-  Expect(finished, "workspace project search should finish");
-}
 
 void TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion() {
   EnsureDummySdlVideoInitialized();

@@ -1,4 +1,4 @@
-#include "workspace/ProjectSearchLiveHits.h"
+#include "workspace/services/SidebarService.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
@@ -387,6 +387,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::SyncTextInputSurface");
     MakeTextInputCoordinator().SyncTextInputSurface(render_window);
   }
+  // The search view's hits follow the active buffer whatever edited it: the
+  // announced edit paths ask after each edit, and this catches the rest (a
+  // reload, a language server's edit). A pointer and a counter when nothing moved.
+  // Before the view models are built: the sidebar's carries the "N matches" line,
+  // and catching up after it painted the old count in the very frame that
+  // repainted the sidebar for the change (QA monkey seed 17).
+  if (const editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+    (void)MakeSidebarService().CatchUpSearchResults(*viewport);
+  }
   const RenderViewModelBuilder view_models(context_);
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::BuildSurfaceViewModels");
@@ -642,19 +651,6 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     // must describe the buffer now in front, not the one it was opened over.
     RefreshBufferSearchIfStale();
     ClampOverlayScrollRow(ComputeOverlayRect(layout.overlay_anchor));
-  }
-  // The search view's hits follow the active buffer whatever edited it: the
-  // announced edit paths ask after each edit, and this catches the rest (a
-  // reload, a language server's edit). A pointer and a counter when nothing moved.
-  if (!project_state.overlay.workflow.project_search.run_query.empty() && project_state.sidebar.visible &&
-      ActiveSidebarMode() == SidebarMode::Search) {
-    if (const editor::TextViewport* viewport = ActiveEditorViewport();
-        viewport != nullptr &&
-        RederiveProjectSearchHitsIfStale(
-            project_state.overlay.workflow.project_search, project_state.root, *viewport,
-            SearchCandidatesFrom(project_state.file_index, project_state.overlay.workflow.project_search))) {
-      RequestSidebarRedraw();
-    }
   }
   // 3) Commit-draft body viewport sizing + caret-keep-visible scroll clamp (the
   //    083 residual): moved out of RenderCommitBodyField so paint stays pure.

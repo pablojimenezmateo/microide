@@ -120,6 +120,11 @@ class SidebarCoordinator {
   void RefreshProjectFiles();
   void RefreshGit();
   bool RefreshProblems();
+  // A finished search's hits in `viewport`'s file follow its edits, while the
+  // search view shows them (re-deriving rescans the buffer, which nobody should
+  // pay for a list that is not on screen). Requests the sidebar's repaint and
+  // returns true when the results changed.
+  bool CatchUpSearchResults(const editor::TextViewport& viewport);
   bool RefreshTests();
   bool RefreshPlugin();
   // Rebuilds the outline rows from the active editable buffer's plugin document

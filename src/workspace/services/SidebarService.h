@@ -30,6 +30,7 @@ class SidebarService {
   void RefreshProjectFiles();
   void RefreshGit();
   bool RefreshProblems();
+  bool CatchUpSearchResults(const editor::TextViewport& viewport);
   bool RefreshTests();
   bool RefreshPlugin();
   void RevealSelectedTreeLine();

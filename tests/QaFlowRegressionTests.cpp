@@ -23,6 +23,7 @@
 #include "WorkspaceShellEventHelpers.h"
 #include "support/GitSidebarWait.h"
 #include "support/MockDapAdapter.h"
+#include "support/ProjectSearchWait.h"
 #include "support/RetainedRedraw.h"
 #include "support/SoftwareCanvas.h"
 #include "editor/FoldingModel.h"
@@ -3323,6 +3324,31 @@ void TestMergeToolbarHoverRepaintsTheButton() {
   }
 }
 
+// QA monkey (seed 17): the search view's "18 matches" stayed on screen after the
+// results followed an edit down to 17. Frame prep caught the hits up with the
+// buffer AFTER building the sidebar's view model, so the frame that repainted the
+// sidebar for it painted the old count, and no later frame damaged it again.
+void TestSearchResultsCaughtUpAtFramePrepRepaintTheirCount() {
+  FlowFixture fixture("notes.txt", "alpha\nalpha beta\n");
+  TestAccess::ShowSearchSidebar(fixture.shell, "alpha", false);
+  WaitForProjectSearch(fixture.shell);
+  TestAccess::SetFocusEditor(fixture.shell);
+  fixture.shell.Render(fixture.canvas.renderer(), FlowFixture::kWidth, FlowFixture::kHeight);
+  (void)fixture.shell.ConsumePendingRenderInvalidation();
+  Expect(TestAccess::ProjectSearchResults(fixture.shell).size() == 2, "the search finds both alphas");
+
+  // An edit no announced path reports (as a reload or a language server's edit
+  // would be): only the next frame's prep notices it.
+  editor::TextViewport& editor = TestAccess::ActiveEditor(fixture.shell);
+  editor.MoveCursorTo(0, 0);
+  editor.InsertText("alpha ");
+  const SDL_FRect editor_surface = TestAccess::CurrentLayout(fixture.shell).editor_surface;
+  fixture.ExpectFresh(workspace::RenderInvalidation{.full = false, .rects = {editor_surface}},
+                      "a frame that catches the search results up with an edit");
+  Expect(TestAccess::ProjectSearchResults(fixture.shell).size() == 3,
+         "the results followed the edit (a third alpha)");
+}
+
 }  // namespace
 
 void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
@@ -3338,6 +3364,8 @@ void RegisterQaFlowRegressionTests(std::vector<TestCase>& tests) {
           TestHoverUnderAStickyBandResolvesThePointersLine);
   AddTest(tests, "QaFlowRegression/MergeToolbarHoverRepaintsTheButton",
           TestMergeToolbarHoverRepaintsTheButton);
+  AddTest(tests, "QaFlowRegression/SearchResultsCaughtUpAtFramePrepRepaintTheirCount",
+          TestSearchResultsCaughtUpAtFramePrepRepaintTheirCount);
   AddTest(tests, "QaFlowRegression/FindWidgetReplaceRepaintsTheDirtyTab",
           TestFindWidgetReplaceRepaintsTheDirtyTab);
   AddTest(tests, "QaFlowRegression/BannerReloadRepaintsTheCleanTab", TestBannerReloadRepaintsTheCleanTab);

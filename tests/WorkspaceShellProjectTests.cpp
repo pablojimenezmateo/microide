@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "support/ProjectSearchWait.h"
 #include "TestSupportSdl.h"
 
 #include "util/PerformanceCounters.h"
@@ -118,13 +119,6 @@ bool WaitForFileIndexSize(WorkspaceShell& shell,
                !WorkspaceShellTestAccess::FileIndexScanIncomplete(shell);
       },
       timeout, std::chrono::milliseconds(10));
-}
-
-bool WaitForProjectSearchCompletion(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
-  return WaitUntil(
-      [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
-      timeout, std::chrono::milliseconds(5),
-      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
 }
 
 // A project search is dispatched asynchronously, so `!running` is also true in the
