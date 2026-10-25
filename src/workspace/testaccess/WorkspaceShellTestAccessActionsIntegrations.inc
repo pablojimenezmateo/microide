@@ -341,6 +341,16 @@
         WorkspaceShell::ActionId::ShowInFileExplorer, {},
         WorkspaceShell::ActionSource::ContextMenu);
   }
+  // `id` run bare as a menu row runs it (no arguments, ActionSource::Menu).
+  static bool ExecuteBareMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return ActionCoordinator(shell.MakeActionContext()).Execute(id, {}, WorkspaceShell::ActionSource::Menu);
+  }
+  static const QuickPickState& QuickPick(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.quick_pick;
+  }
+  static const std::string& FileFinderCompareTitle(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.file_finder_compare_title;
+  }
   static bool ExecuteContextMenuAction(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
     return ActionCoordinator(shell.MakeActionContext())
         .Execute(id, {}, WorkspaceShell::ActionSource::ContextMenu);

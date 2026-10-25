@@ -46,7 +46,10 @@ bool ActionCoordinator::Execute(ActionId id,
     if (const ActionSpec* spec = FindWorkspaceActionSpec(id);
         spec != nullptr && !spec->command_name.empty() &&
         CommandUsageRequiresArgument(spec->command_usage)) {
-      context_.OpenCommandArgumentsPrompt(spec->command_name);
+      // The command's own choices where it has them; a typed answer otherwise.
+      if (!context_.OpenArgumentPicker(id)) {
+        context_.OpenCommandArgumentsPrompt(spec->command_name);
+      }
       return true;
     }
   }

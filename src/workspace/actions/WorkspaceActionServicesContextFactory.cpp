@@ -268,9 +268,9 @@ void WorkspaceActionContext::OpenGoToLinePrompt() {
   }
 }
 
-void WorkspaceActionContext::OpenCommandArgumentsPrompt(std::string_view command_name) {
+void WorkspaceActionContext::OpenCommandArgumentsPrompt(std::string_view command_name, std::string prefill) {
   if (operations_.open_command_arguments_prompt) {
-    operations_.open_command_arguments_prompt(command_name);
+    operations_.open_command_arguments_prompt(command_name, std::move(prefill));
   }
 }
 
@@ -583,10 +583,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 OpenPromptSurface(action, kind, path, std::move(input));
               },
           .open_command_arguments_prompt =
-              [this](std::string_view command_name) {
+              [this](std::string_view command_name, std::string prefill) {
                 OpenPromptSurface(PromptSurfaceState::Action::CommandArguments,
                                   PromptSurfaceState::Kind::TextInput, std::filesystem::path{},
-                                  std::string{});
+                                  std::move(prefill));
                 context_.prompts.surface.command_name.assign(command_name);
               },
           .write_clipboard_text = [this](std::string_view text) { return WriteClipboardText(text); },
@@ -1331,6 +1331,10 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 quick_pick_service_.Open(QuickPickService::ColorThemes(
                     available_colorscheme_names_, context_.current_project_state.active_colorscheme_name));
               },
+          .open_command_choices = [this](QuickPickState pick) { quick_pick_service_.Open(std::move(pick)); },
+          .output_channels = [this]() -> const std::vector<WorkspaceOutputChannels::ChannelInfo>& {
+            return output_channels_.Channels();
+          },
           .open_document_symbol_picker =
               [this](std::string query) {
                 const editor::TextViewport* viewport = ActiveEditorViewport();

@@ -1,4 +1,5 @@
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/services/RemoteHostService.h"
 #include "workspace/shell/ShellGlueCache.h"
 
@@ -240,6 +241,18 @@ WorkspaceShell::WorkspaceShell() {
                     return;
                   }
                 }
+              },
+          .run_command_line =
+              [this](const std::string& command_line) {
+                const ParsedCommandLine parsed = ParseCommandLine(command_line);
+                if (parsed.tokens.empty()) {
+                  return;
+                }
+                std::vector<std::string> args;
+                for (std::size_t i = 1; i < parsed.tokens.size(); ++i) {
+                  args.push_back(parsed.tokens[i].text);
+                }
+                (void)ExecuteCommandName(parsed.tokens.front().text, args, ActionSource::Command);
               },
       });
   tab_strip_chrome_.Configure(

@@ -4,6 +4,7 @@
 #include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
 #include "workspace/ListSelection.h"
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/TabReorder.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
@@ -573,6 +574,67 @@ void TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile() {
   Expect(std::filesystem::exists(root / "dest" / "a.txt"), "the drop moved the file");
   const auto diff = PaintAndDiffWithFullRepaint(shell, canvas, kWidth, kHeight, redraw, pin);
   Expect(diff.count == 0, "the move repaints every pane that shows the file: " + DescribePixelDiff(diff));
+}
+
+// Commands that need an argument, run bare from a menu (TD-2026-10-18-357), offer
+// their own choices: Show Output Channel… a pick of the channels, Move Tab to
+// Group a pick of the other panes, Compare Files… over an open file the file
+// finder, whose pick is compared with it.
+void TestWorkspaceShellBareArgumentCommandsOfferTheirChoices() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "left.txt", "one\ntwo\n");
+  WriteFile(root / "right.txt", "one\nTWO\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowOutputChannelWithLines(shell, "qa-channel", 2);
+  using ActionId = WorkspaceShell::ActionId;
+  using OverlayMode = WorkspaceShell::OverlayMode;
+
+  Expect(WorkspaceShellTestAccess::ExecuteBareMenuAction(shell, ActionId::ShowOutput), "Show Output Channel… runs");
+  Expect(WorkspaceShellTestAccess::ActiveOverlayMode(shell) == OverlayMode::QuickPick &&
+             WorkspaceShellTestAccess::OverlayVisible(shell),
+         "bare, it offers a pick of the channels, not a typed argument");
+  const auto& pick = WorkspaceShellTestAccess::QuickPick(shell);
+  Expect(std::any_of(pick.items.begin(), pick.items.end(),
+                     [](const auto& item) { return item.value == "show-output qa-channel"; }),
+         "with a row per channel that runs show-output for it");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the pick");
+
+  // Move Tab to Group: two panes, the pick offers the other one.
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "left.txt"), "left.txt opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / "right.txt"), "right.txt opens");
+  Expect(SendKeyDown(shell, SDLK_BACKSLASH, SDL_KMOD_CTRL), "Ctrl+\\ splits");
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, 0);
+  Expect(WorkspaceShellTestAccess::ExecuteBareMenuAction(shell, ActionId::TabToGroup), "Move Tab to Group runs");
+  const auto& groups = WorkspaceShellTestAccess::QuickPick(shell);
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) && groups.items.size() == 1 &&
+             groups.items.front().value == "tab-to-group 2",
+         "bare, it offers the other pane");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter chooses it");
+  Expect(WorkspaceShellTestAccess::GroupTabPaths(shell, 1).size() == 2, "the active tab moved to group 2");
+
+  // Compare Files… over the open file: the finder, titled for it; its pick is compared.
+  WorkspaceShellTestAccess::FocusEditorGroup(shell, 1);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "left.txt");
+  Expect(WorkspaceShellTestAccess::ExecuteBareMenuAction(shell, ActionId::CompareFiles), "Compare Files… runs");
+  Expect(WorkspaceShellTestAccess::ActiveOverlayMode(shell) == OverlayMode::FileFinder &&
+             WorkspaceShellTestAccess::FileFinderCompareTitle(shell) == "Compare left.txt With…",
+         "over an open file it opens the file finder, titled for that file");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "right.txt"), "typing narrows the finder");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter picks right.txt");
+  Expect(WorkspaceShellTestAccess::ActiveTabIsCompare(shell), "and compares it with left.txt");
+
+  // Set Breakpoint: the prompt holds the active file and the caret's line.
+  WorkspaceShellTestAccess::OpenFile(shell, root / "left.txt");
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+  Expect(WorkspaceShellTestAccess::ExecuteBareMenuAction(shell, ActionId::BreakpointSet), "Set Breakpoint runs");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell) &&
+             WorkspaceShellTestAccess::PromptSurfaceInput(shell) ==
+                 microide::workspace::QuoteCommandArg((root / "left.txt").lexically_normal().string()) + " 2 ",
+         "bare, its prompt holds the active file and the caret's line: " +
+             WorkspaceShellTestAccess::PromptSurfaceInput(shell));
 }
 
 // The wheel path resolves the cursor before it dispatches too, so scrolling the
@@ -8989,6 +9051,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/ValueCommandsFromTheMenuSeedTheCommandPalette",
           TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette);
   AddTest(tests, "WorkspaceShell/TreeRowDragAndDrop", TestWorkspaceShellTreeRowDragAndDrop);
+  AddTest(tests, "WorkspaceShell/BareArgumentCommandsOfferTheirChoices",
+          TestWorkspaceShellBareArgumentCommandsOfferTheirChoices);
   AddTest(tests, "WorkspaceShell/TreeMoveRepaintsEveryPaneShowingTheFile",
           TestWorkspaceShellTreeMoveRepaintsEveryPaneShowingTheFile);
   AddTest(tests, "WorkspaceShell/TreeExpandRepaintsSidebarWhenCursorChanges",

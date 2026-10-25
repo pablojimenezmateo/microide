@@ -19,6 +19,7 @@
 #include "workspace/state/WorkspacePromptState.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 #include "workspace/state/WorkspaceTabState.h"
+#include "workspace/WorkspaceOutputChannels.h"
 
 namespace microide::workspace {
 
@@ -119,7 +120,8 @@ class WorkspaceActionContext {
                        std::string)>
         open_prompt_surface;
     // Ask for the arguments of `command_name` (a CommandArguments prompt).
-    std::function<void(std::string_view)> open_command_arguments_prompt;
+    // The input prompt for `command`'s arguments, its field holding `prefill`.
+    std::function<void(std::string_view command, std::string prefill)> open_command_arguments_prompt;
     std::function<bool(std::string_view)> write_clipboard_text;
     // The desktop's opener for an http(s) URL (a forwarded port's Open in Browser).
     std::function<bool(std::string_view)> open_external_url;
@@ -349,6 +351,9 @@ class WorkspaceActionContext {
     // launch configs.
     std::function<void()> open_launch_config_picker;
     std::function<void()> open_color_theme_picker;
+    // Show a pick whose rows run command lines (QuickPickKind::RunCommand).
+    std::function<void(QuickPickState)> open_command_choices;
+    std::function<const std::vector<WorkspaceOutputChannels::ChannelInfo>&()> output_channels;
     std::function<void(std::string query)> open_document_symbol_picker;
     // Open the command palette over all built-in + plugin commands, optionally pre-filling
     // the query (e.g. "project-open ") so the user only types the argument.
@@ -766,7 +771,12 @@ class WorkspaceActionContext {
   // Open the single-line "Go to Line" modal prompt (VSCode-style Ctrl+G).
   void OpenGoToLinePrompt();
   // Ask for the arguments a command cannot run without (its usage's `<...>`).
-  void OpenCommandArgumentsPrompt(std::string_view command_name);
+  void OpenCommandArgumentsPrompt(std::string_view command_name, std::string prefill = {});
+  // A command that needs an argument, run bare from a menu, the palette or a key:
+  // the choices it has, where it has a set of them (TD-2026-10-18-357) -- a pick
+  // of the output channels, of the other panes, the file finder to compare the
+  // active file with. False when it has none to offer (the input prompt asks).
+  bool OpenArgumentPicker(ActionId id);
   void OpenRenameSymbolPrompt();
   // Right-side debug pane (toggle / surface switch).
   void ToggleDebugPane();

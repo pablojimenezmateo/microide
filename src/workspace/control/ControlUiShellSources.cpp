@@ -1033,9 +1033,18 @@ ControlUiQuery::Operations WorkspaceShell::MakeControlUiOperations() {
                                                               : kind == QuickPickKind::WorkspaceSymbol ? "workspace-symbol"
                                                               : kind == QuickPickKind::LanguageMode ? "language-mode"
                                                               : kind == QuickPickKind::RecentEditor ? "recent-editor"
+                                                              : kind == QuickPickKind::RunCommand ? "command-choices"
                                                                                                       : "launch-config"));
               }
               overlay["selected"] = util::JsonValue(static_cast<std::int64_t>(OverlaySelectedIndex()));
+              // The card's title where it says what the pick is for (a quick pick's,
+              // the file finder's when Compare Files… opened it).
+              if (state.overlay.mode == OverlayMode::QuickPick) {
+                overlay["title"] = util::JsonValue(state.overlay.workflow.quick_pick.title);
+              } else if (state.overlay.mode == OverlayMode::FileFinder &&
+                         !state.overlay.workflow.file_finder_compare_title.empty()) {
+                overlay["title"] = util::JsonValue(state.overlay.workflow.file_finder_compare_title);
+              }
               if (const editor::SingleLineEditor* query = OverlayQueryEditor(state); query != nullptr) {
                 overlay["query"] = util::JsonValue(query->text());
               }

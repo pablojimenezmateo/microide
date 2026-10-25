@@ -1523,7 +1523,7 @@ diagnostics shifter and the breakpoint shifter applied that older edit a second
 time. Both now clear it, as the other multi-region edits do
 (`TextViewport/ReplaceAllClearsLastAppliedEdit`).
 
-### TD-2026-10-18-357 — commands that need arguments ask for a raw command line. [OPEN]
+### TD-2026-10-18-357 — commands that need arguments ask for a raw command line. [RESOLVED 2026-10-25]
 
 Found by the QA `git-branches` flow. A labelled command whose usage needs an
 argument, run bare from a menu, the palette or a shortcut, now opens an input
@@ -1535,6 +1535,27 @@ paths. VS Code either hides such commands from the palette or asks with context
 Worth doing per command where it is a real UI entry point (Compare Files…, Add
 Function Breakpoint, Show Output Channel…); the breakpoint and remote plumbing
 commands may rather leave the palette.
+
+RESOLVED 2026-10-25: before the generic prompt, `WorkspaceActionContext::
+OpenArgumentPicker` offers a command's own choices where it has a set of them:
+
+- Show Output Channel… opens a pick of the channels, a new quick-pick kind
+  `RunCommand` whose rows each run a command line. It opens even with none yet;
+  the pick says so, where a prompt would ask for a channel name nobody knows.
+- Move Tab to Group opens a pick of the other panes, each with its active tab.
+- Compare Files… over an open file is VS Code's Compare Active File With…: the
+  Ctrl+P finder, titled "Compare <file> With…", and Enter compares the pick
+  with the open file. The purpose rides in `OverlayWorkflowState` and is cleared
+  on any other open or dismissal.
+- The breakpoint commands that take `<file> <line>` (Set, Remove, Enable,
+  Disable, Condition, Hit Condition, Log Message) open their prompt pre-filled
+  with the active file and the caret's line, so Enter acts there and a
+  condition is typed after it.
+
+Add Function Breakpoint keeps its plain prompt, since a function name is free
+text. The `ui` query reports a pick's title. Tests:
+`WorkspaceShell/BareArgumentCommandsOfferTheirChoices` and the QA flow
+`argument-pickers`.
 
 ### TD-2026-10-18-356 — Search Workspace Symbols lists into an output channel, not a live picker. [RESOLVED 2026-10-25]
 

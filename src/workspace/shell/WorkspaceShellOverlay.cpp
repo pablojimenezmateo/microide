@@ -87,6 +87,9 @@ void WorkspaceShell::DismissOverlay(bool focus_editor) {
   if (context_.current_project_state.overlay.mode == OverlayMode::QuickPick) {
     quick_pick_service_.Cancel();
   }
+  // A cancelled Compare Files… pick leaves no purpose behind for the next Ctrl+P.
+  context_.current_project_state.overlay.workflow.file_finder_compare_left.clear();
+  context_.current_project_state.overlay.workflow.file_finder_compare_title.clear();
   const bool preserve_buffer_search_expansions =
       context_.current_project_state.overlay.mode == OverlayMode::BufferSearch &&
       focus_editor;
@@ -358,6 +361,16 @@ bool WorkspaceShell::ActivateOverlaySelection() {
     default:
       if (const auto selected = context_.current_project_state.file_finder.SelectedPath(); selected.has_value()) {
         const std::filesystem::path path = context_.current_project_state.root / *selected;
+        // Compare Files… over an active file: the pick is the file to compare it
+        // with (TD-2026-10-18-357).
+        OverlayWorkflowState& workflow = context_.current_project_state.overlay.workflow;
+        if (!workflow.file_finder_compare_left.empty()) {
+          const std::filesystem::path left = std::exchange(workflow.file_finder_compare_left, {});
+          workflow.file_finder_compare_title.clear();
+          DismissOverlay(true);
+          (void)ExecuteCommandName("compare-files", {left.string(), path.string()}, ActionSource::Command, nullptr);
+          return true;
+        }
         if (const auto target = context_.current_project_state.file_finder.line_target();
             target.has_value()) {
           // `main.cpp:12[:4]`: `reveal` opens it there, also when the read lands later.

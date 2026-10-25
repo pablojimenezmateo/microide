@@ -95,4 +95,56 @@ def flow_commands_run(app: q.App) -> None:
         app.wait_until(lambda: bool(app.query("status")), 30.0, "a status answer at the end")
 
 
-FLOWS: dict[str, Callable[[q.App], None]] = {"commands-run": flow_commands_run}
+def flow_argument_pickers(app: q.App) -> None:
+    """Commands that need an argument, run bare from the palette, offer their own
+    choices (TD-2026-10-18-357): Show Output Channel… a pick of the channels, Move
+    Tab to Group a pick of the other panes, Compare Files… over an open file the
+    file finder titled for it, whose pick is compared with it."""
+    from flows_common import open_file
+    from flows_coverage import palette
+    open_file(app, "notes/left.txt", "one\ntwo\n")
+    open_file(app, "notes/right.txt", "one\nTWO\n")
+    app.key("ctrl+k ctrl+r")  # Revert Selected Ranges outside a diff: refused, logged to "Actions"
+    step(app, "a refused key", 0.3)
+    if palette(app, "Show Output Channel"):
+        app.wait_until(lambda: app.ui()["overlay"].get("kind") == "command-choices", 3.0, "the channel pick")
+        overlay = app.ui()["overlay"]
+        app.expect(overlay.get("kind") == "command-choices" and overlay.get("title") == "Show Output Channel",
+                   f"Show Output Channel… offers a pick of the channels ({overlay})")
+        if (overlay.get("count") or 0) > 0:
+            app.key("Return")
+            app.wait_until(lambda: app.ui()["panel"]["visible"] and app.ui()["panel"]["content"] == "output", 3.0,
+                           "Enter to show the channel")
+            app.expect(app.ui()["panel"]["content"] == "output", f"Enter shows the channel ({app.ui()['panel']})")
+        else:
+            app.key("Escape")
+
+    app.send("focus", "editor")
+    app.key("ctrl+backslash")
+    step(app, "split", 0.3)
+    app.key("ctrl+1")
+    if palette(app, "Move Tab to Group"):
+        app.wait_until(lambda: app.ui()["overlay"].get("kind") == "command-choices", 3.0, "the group pick")
+        app.expect(app.ui()["overlay"].get("count") == 1, f"Move Tab to Group offers the other pane ({app.ui()['overlay']})")
+        app.key("Return")
+        step(app, "move the tab", 0.3)
+        groups = app.editor_state()["groups"]
+        app.expect(len(groups) == 2 and len(groups[1]["tabs"]) == 2,
+                   f"Enter moves the tab to group 2 ({[[t['title'] for t in g['tabs']] for g in groups]})")
+
+    app.key("ctrl+2")
+    open_file(app, "notes/left.txt")
+    if palette(app, "Compare Files"):
+        app.wait_until(lambda: app.ui()["overlay"].get("title") == "Compare left.txt With\u2026", 3.0,
+                       "the file finder titled for left.txt")
+        app.expect(app.ui()["overlay"].get("title") == "Compare left.txt With\u2026",
+                   f"Compare Files… over an open file opens the finder for it ({app.ui()['overlay']})")
+        app.type("right.txt")
+        app.wait_until(lambda: (app.ui()["overlay"].get("count") or 0) > 0, 3.0, "the finder to find right.txt")
+        app.key("Return")
+        app.wait_until(lambda: (app.active_tab() or {}).get("kind") == "compare", 5.0, "the comparison")
+        app.expect((app.active_tab() or {}).get("kind") == "compare", "Enter compares the pick with the open file")
+    dismiss(app)
+
+
+FLOWS: dict[str, Callable[[q.App], None]] = {"commands-run": flow_commands_run, "argument-pickers": flow_argument_pickers}

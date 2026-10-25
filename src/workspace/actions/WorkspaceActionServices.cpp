@@ -17,6 +17,8 @@
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/services/QuickPickService.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 
 namespace microide::workspace {
 
@@ -373,12 +375,95 @@ void WorkspaceActionContext::ShowFileFinderWithQuery(std::string query) {
   state_.file_finder.SetIndex(&state_.file_index);
   state_.file_finder.SetQuery(std::move(query));
   operations_.show_overlay(OverlayMode::FileFinder);
+  state_.overlay.workflow.file_finder_compare_left.clear();
+  state_.overlay.workflow.file_finder_compare_title.clear();
 }
 
 void WorkspaceActionContext::ShowFileFinder() {
   operations_.show_overlay(OverlayMode::FileFinder);
   state_.file_finder.SetIndex(&state_.file_index);
   state_.file_finder.SetQuery("");
+  state_.overlay.workflow.file_finder_compare_left.clear();
+  state_.overlay.workflow.file_finder_compare_title.clear();
+}
+
+bool WorkspaceActionContext::OpenArgumentPicker(ActionId id) {
+  switch (id) {
+    case ActionId::ShowOutput: {
+      if (!operations_.output_channels || !operations_.open_command_choices) {
+        return false;
+      }
+      std::vector<QuickPickItem> items;
+      for (const WorkspaceOutputChannels::ChannelInfo& channel : operations_.output_channels()) {
+        items.push_back(QuickPickItem{.value = "show-output " + QuoteCommandArg(channel.id),
+                                      .primary_label = channel.label,
+                                      .secondary_label = channel.id});
+      }
+      // Open even with none yet: the pick says so, where a prompt would ask for a
+      // channel name nobody could know.
+      operations_.open_command_choices(QuickPickService::CommandChoices("Show Output Channel", "channels", std::move(items)));
+      return true;
+    }
+    case ActionId::TabToGroup: {
+      if (!operations_.open_command_choices || state_.editor_groups.size() < 2) {
+        return false;
+      }
+      std::vector<QuickPickItem> items;
+      for (std::size_t g = 0; g < state_.editor_groups.size(); ++g) {
+        if (g == state_.focused_group_index) {
+          continue;
+        }
+        const EditorGroup& group = state_.editor_groups[g];
+        items.push_back(QuickPickItem{
+            .value = "tab-to-group " + std::to_string(g + 1),
+            .primary_label = "Group " + std::to_string(g + 1),
+            .secondary_label = group.has_active_tab() ? group.active_tab().title : std::string("empty"),
+        });
+      }
+      operations_.open_command_choices(QuickPickService::CommandChoices("Move Tab to Group", "groups", std::move(items)));
+      return true;
+    }
+    case ActionId::CompareFiles: {
+      // VS Code's Compare Active File With…: the file finder, and the file picked
+      // is compared with the active one.
+      const editor::TextViewport* viewport =
+          operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+      if (viewport == nullptr || viewport->path().empty() || !HasProjectRoot()) {
+        return false;
+      }
+      ShowFileFinder();
+      state_.overlay.workflow.file_finder_compare_left = viewport->path();
+      state_.overlay.workflow.file_finder_compare_title =
+          "Compare " + viewport->path().filename().string() + " With\u2026";
+      return true;
+    }
+    case ActionId::BreakpointSet:
+    case ActionId::BreakpointRemove:
+    case ActionId::BreakpointEnable:
+    case ActionId::BreakpointDisable:
+    case ActionId::BreakpointCondition:
+    case ActionId::BreakpointHitCondition:
+    case ActionId::BreakpointLogMessage: {
+      // `<file> <line> ...`: the prompt holds the active file and the caret's line,
+      // so Enter acts there (VS Code's breakpoint commands act on the caret) and a
+      // condition or message is typed after them.
+      const editor::TextViewport* viewport =
+          operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
+      const ActionSpec* spec = FindWorkspaceActionSpec(id);
+      if (viewport == nullptr || viewport->path().empty() || spec == nullptr) {
+        return false;
+      }
+      std::string prefill = QuoteCommandArg(viewport->path().string()) + " " +
+                            std::to_string(viewport->cursor_line() + 1);
+      if (id != ActionId::BreakpointRemove && id != ActionId::BreakpointEnable && id != ActionId::BreakpointDisable) {
+        prefill += " ";
+      }
+      OpenCommandArgumentsPrompt(spec->command_name, std::move(prefill));
+      return true;
+    }
+    default:
+      return false;
+  }
 }
 
 bool WorkspaceActionContext::OverlayVisible() const {

@@ -48,6 +48,8 @@ class QuickPickService {
     std::function<void(const std::string& language)> set_language;
     // QuickPickKind::RecentEditor: activate the focused group's tab with this id.
     std::function<void(std::uint64_t stable_id)> activate_tab;
+    // QuickPickKind::RunCommand: run this command line.
+    std::function<void(const std::string& command_line)> run_command_line;
   };
 
   void Configure(QuickPickState& state, Operations operations);
@@ -88,6 +90,9 @@ class QuickPickService {
   // Change Language Mode: Auto Detect (naming what detection says), Plain Text,
   // then every language the registry highlights; `chosen` (the buffer's language
   // set by hand, "" when detected) selected.
+  // A command's choices (QuickPickKind::RunCommand): each item's `value` is the
+  // command line Enter runs.
+  static QuickPickState CommandChoices(std::string title, std::string noun, std::vector<QuickPickItem> items);
   static QuickPickState LanguageModes(std::span<const std::string> languages, std::string_view chosen,
                                       std::string_view detected);
 

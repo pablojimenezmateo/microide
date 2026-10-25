@@ -105,6 +105,7 @@ void QuickPickService::Preview() {
     case QuickPickKind::WorkspaceSymbol:  // VS Code opens nothing until Enter
     case QuickPickKind::LanguageMode:
     case QuickPickKind::RecentEditor:
+    case QuickPickKind::RunCommand:
       break;
   }
 }
@@ -145,6 +146,11 @@ void QuickPickService::Accept() {
     case QuickPickKind::RecentEditor:
       if (operations_.activate_tab) {
         operations_.activate_tab(item.index);
+      }
+      break;
+    case QuickPickKind::RunCommand:
+      if (operations_.run_command_line) {
+        operations_.run_command_line(item.value);
       }
       break;
   }
@@ -272,6 +278,21 @@ QuickPickState QuickPickService::WorkspaceSymbols(std::string query) {
   picker.noun = "symbols";
   picker.server_filtered = true;
   picker.query.SetText(std::move(query));
+  return picker;
+}
+
+QuickPickState QuickPickService::CommandChoices(std::string title, std::string noun,
+                                                std::vector<QuickPickItem> items) {
+  QuickPickState picker;
+  picker.kind = QuickPickKind::RunCommand;
+  picker.title = std::move(title);
+  picker.noun = std::move(noun);
+  for (QuickPickItem& item : items) {
+    if (item.search_text.empty()) {
+      item.search_text = util::ToLowerAscii(item.primary_label + " " + item.secondary_label);
+    }
+  }
+  picker.items = std::move(items);
   return picker;
 }
 

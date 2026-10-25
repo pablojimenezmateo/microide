@@ -1169,7 +1169,9 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       compose_scratch.clear();
       AppendFilteredCountSummary(compose_scratch, results.size(), finder.indexed_file_count(),
                                  "files");
-      fill_picker_chrome("Find File", std::string_view{}, finder.query_state(),
+      fill_picker_chrome(overlay.workflow.file_finder_compare_title.empty()
+                             ? std::string_view("Find File")
+                             : std::string_view(overlay.workflow.file_finder_compare_title), std::string_view{}, finder.query_state(),
                          TextInputSurface::FileFinder, compose_scratch,
                          /*summary_stable=*/false, "No matching files",
                          /*empty_label_stable=*/true);

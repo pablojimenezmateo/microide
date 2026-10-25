@@ -426,6 +426,10 @@ enum class QuickPickKind : std::uint8_t {
   WorkspaceSymbol,  // open `value` (a path) at `line`, `column` = the server's character
   LanguageMode,     // set the active buffer's language to `value` ("" detects it again)
   RecentEditor,     // activate the focused group's tab whose stable id is `index`
+  // Run the command line `value`: the choices a command that needs an argument
+  // offers when run bare (`show-output <channel>` per channel, `tab-to-group <n>`
+  // per pane -- TD-2026-10-18-357).
+  RunCommand,
 };
 
 struct QuickPickItem {
@@ -620,6 +624,10 @@ inline const std::string& CommandPaletteRecentKey(const CommandPaletteItem& item
 }
 
 struct OverlayWorkflowState {
+  // The file finder opened by Compare Files… over an active file: the file to
+  // compare the one picked with, and the title saying so. Empty for Go to File.
+  std::filesystem::path file_finder_compare_left;
+  std::string file_finder_compare_title;
   BufferSearchState buffer_search;
   ProjectSearchState project_search;
   ComparePickerState compare_picker;
