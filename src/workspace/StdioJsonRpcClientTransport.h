@@ -406,6 +406,12 @@ class StdioJsonRpcClientTransport {
     shutdown_complete.store(true, std::memory_order_release);
   }
 
+  // Whether the peer is up, as the client reports it: a stub-mode client (no
+  // subprocess) counts as connected.
+  bool PeerRunning() {
+    return test_stub_mode.load(std::memory_order_acquire) || proc.IsRunning();
+  }
+
   bool IsShutdownComplete() const {
     return shutdown_started.load(std::memory_order_acquire) &&
            shutdown_complete.load(std::memory_order_acquire);

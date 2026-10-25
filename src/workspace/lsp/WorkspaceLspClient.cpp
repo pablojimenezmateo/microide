@@ -65,12 +65,7 @@ bool LspClient::Start(const platform::ProcessLauncher& launcher,
   return true;
 }
 
-bool LspClient::IsRunning() const {
-  if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-    return true;
-  }
-  return impl_->proc.IsRunning();
-}
+bool LspClient::IsRunning() const { return impl_->PeerRunning(); }
 
 bool LspClient::IsInitializing() const {
   return impl_->initializing.load(std::memory_order_acquire);

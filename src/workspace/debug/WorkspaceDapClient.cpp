@@ -42,12 +42,7 @@ bool DapClient::Start(const platform::ProcessLauncher& launcher,
   return true;
 }
 
-bool DapClient::IsRunning() const {
-  if (impl_->test_stub_mode.load(std::memory_order_acquire)) {
-    return true;
-  }
-  return impl_->proc.IsRunning();
-}
+bool DapClient::IsRunning() const { return impl_->PeerRunning(); }
 
 bool DapClient::IsInitializing() const {
   return impl_->initializing.load(std::memory_order_acquire);
