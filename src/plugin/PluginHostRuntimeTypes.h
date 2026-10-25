@@ -110,12 +110,9 @@ struct CodeActionRuntime {
 // references, signature help, document symbols) share one record shape — a
 // single `provide` callback keyed by language id — so they live in one
 // discriminated vector instead of four near-identical ones.
-enum class LanguageQueryKind {
-  Definition,
-  References,
-  SignatureHelp,
-  DocumentSymbol,
-};
+// The public provider kind, used as is: this was a value-for-value copy that
+// the contribution snapshot translated back with a switch.
+using LanguageQueryKind = PluginHost::ContributedLanguageProvider::Kind;
 
 struct LanguageQueryRuntime {
   LanguageQueryKind kind = LanguageQueryKind::Definition;
