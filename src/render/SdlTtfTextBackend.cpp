@@ -68,6 +68,41 @@ void ReserveRoundedKeyCapacity(std::string& key_text, std::size_t needed) {
   }
   key_text.reserve(std::bit_ceil(std::max<std::size_t>(needed, 32)));
 }
+// The glyphs of an ASCII run drawn from the atlas, placed exactly where the
+// composite surface would put them: each non-space character's atlas slot at the
+// integer cell offset lround(index * cell_width_px), clipped to the run's surface
+// width (see AsciiRunSurfaceWidthPx). Calls `place(cell_left_px, sx, sw, sh)` per
+// glyph with coverage. Returns false -- placing nothing further -- when a glyph has
+// no atlas slot (outside the atlas, or a failed raster) or `place` refuses: the
+// caller then composites the whole run so output stays faithful.
+template <typename Place>
+bool ForEachAtlasGlyph(AsciiGlyphAtlas& atlas, std::string_view text, float cell_width_px,
+                       int run_width_px, Place&& place) {
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const char ch = text[index];
+    if (ch == ' ') {
+      continue;  // spaces contribute no coverage; advance only
+    }
+    int sx = 0;
+    int sw = 0;
+    int sh = 0;
+    if (!atlas.SlotRect(ch, &sx, &sw, &sh)) {
+      return false;
+    }
+    const int cell_left_px =
+        static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
+    sw = std::min(sw, run_width_px - cell_left_px);
+    if (sw <= 0 || sh <= 0) {
+      continue;
+    }
+    if (!place(cell_left_px, sx, sw, sh)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+
 }  // namespace
 
 std::size_t SdlTtfTextBackend::EntryByteCost(int width, int height) {
@@ -1288,24 +1323,8 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
       static_cast<float>(color.a) / 255.0f,
   };
 
-  for (std::size_t index = 0; index < text.size(); ++index) {
-    const char ch = text[index];
-    if (ch == ' ') {
-      continue;  // spaces contribute no coverage; advance only
-    }
-    int sx = 0;
-    int sw = 0;
-    int sh = 0;
-    if (!ascii_atlas_->SlotRect(ch, &sx, &sw, &sh)) {
-      // A glyph outside the atlas (or failed raster): the caller falls back to
-      // the composite path for this whole run so output stays faithful.
-      return false;
-    }
-    const int cell_left_px = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
-    sw = std::min(sw, run_width_px - cell_left_px);
-    if (sw <= 0 || sh <= 0) {
-      continue;
-    }
+  return ForEachAtlasGlyph(*ascii_atlas_, text, cell_width_px, run_width_px,
+                           [&](int cell_left_px, int sx, int sw, int sh) {
     const float glyph_left_dev = origin_x_dev + static_cast<float>(cell_left_px);
     const float left = glyph_left_dev / scale_x;
     const float top = origin_y_dev / scale_y;
@@ -1328,8 +1347,8 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
     geom_indices_.push_back(base + 2);
     geom_indices_.push_back(base + 1);
     geom_indices_.push_back(base + 3);
-  }
-  return true;
+    return true;
+  });
 }
 
 bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
@@ -1354,22 +1373,8 @@ bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
   SDL_SetTextureAlphaMod(atlas_texture_, 255);
 
   std::size_t drawn = 0;
-  for (std::size_t index = 0; index < text.size(); ++index) {
-    const char ch = text[index];
-    if (ch == ' ') {
-      continue;  // spaces contribute no coverage; advance only
-    }
-    int sx = 0;
-    int sw = 0;
-    int sh = 0;
-    if (!ascii_atlas_->SlotRect(ch, &sx, &sw, &sh)) {
-      return false;  // caller composites the whole run so output stays faithful
-    }
-    const int cell_left_px = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
-    sw = std::min(sw, run_width_px - cell_left_px);
-    if (sw <= 0 || sh <= 0) {
-      continue;
-    }
+  const bool placed = ForEachAtlasGlyph(*ascii_atlas_, text, cell_width_px, run_width_px,
+                                        [&](int cell_left_px, int sx, int sw, int sh) {
     const SDL_FRect source{static_cast<float>(sx), 0.0f, static_cast<float>(sw),
                            static_cast<float>(sh)};
     const SDL_FRect destination{
@@ -1383,6 +1388,10 @@ bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
       return false;
     }
     ++drawn;
+    return true;
+  });
+  if (!placed) {
+    return false;
   }
   util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasGlyphs, drawn);
   return true;
