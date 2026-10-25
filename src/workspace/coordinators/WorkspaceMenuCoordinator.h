@@ -61,6 +61,9 @@ class MenuCoordinator {
   int NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const;
 
  private:
+  // Opens `id` (None closes the bar), anchored under `anchor_rect` when given,
+  // otherwise under its menu-bar item.
+  void OpenMenu(MenuId id, std::optional<SDL_FRect> anchor_rect);
   MenuSurfaceState& menu_state_;
   Operations operations_;
 };

@@ -3,6 +3,7 @@
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 
 #include "util/PerformanceTrace.h"
@@ -15,54 +16,56 @@ namespace microide::workspace {
 MenuCoordinator::MenuCoordinator(MenuSurfaceState& menu_state, Operations operations)
     : menu_state_(menu_state), operations_(std::move(operations)) {}
 
-int MenuCoordinator::FirstEnabledMenuItemIndex(MenuId id) const {
-  const auto items = operations_.menu_items(id);
-  if (items.empty()) {
-    return -1;
-  }
+namespace {
 
+// The first item `enabled` accepts, or -1.
+template <typename Items, typename Enabled>
+int FirstEnabledIndex(const Items& items, const Enabled& enabled) {
   for (std::size_t i = 0; i < items.size(); ++i) {
-    if (operations_.is_menu_item_enabled(items[i])) {
+    if (enabled(items[i])) {
       return static_cast<int>(i);
     }
   }
   return -1;
 }
 
-int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const {
-  const auto items = operations_.menu_items(id);
+// The next item `delta` steps from `current_index` that `enabled` accepts,
+// wrapping; with no current item, Down starts at the top and Up at the bottom.
+// `current_index` when nothing else is enabled, -1 for an empty list.
+template <typename Items, typename Enabled>
+int NextEnabledIndex(const Items& items, int current_index, int delta, const Enabled& enabled) {
   if (items.empty() || delta == 0) {
     return -1;
   }
-
   const int item_count = static_cast<int>(items.size());
   int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
   for (int step = 0; step < item_count; ++step) {
     index = (index + delta + item_count) % item_count;
-    if (operations_.is_menu_item_enabled(items[static_cast<std::size_t>(index)])) {
+    if (enabled(items[static_cast<std::size_t>(index)])) {
       return index;
     }
   }
   return current_index;
 }
 
-void MenuCoordinator::OpenMenuBarMenu(MenuId id) {
-  operations_.request_chrome_redraw();
-  if (id == MenuId::None) {
-    CloseMenuBar();
-    return;
-  }
-  CloseTreeContextMenu();
-  menu_state_.menu_bar_open = true;
-  menu_state_.active_menu_id = id;
-  menu_state_.active_menu_item_index = FirstEnabledMenuItemIndex(id);
-  menu_state_.hovered_popup_row_index = -1;
-  menu_state_.active_menu_anchor_rect.reset();
-  CloseSubmenu();
-  operations_.request_chrome_redraw();
+}  // namespace
+
+int MenuCoordinator::FirstEnabledMenuItemIndex(MenuId id) const {
+  return FirstEnabledIndex(operations_.menu_items(id), operations_.is_menu_item_enabled);
 }
 
+int MenuCoordinator::NextEnabledMenuItemIndex(MenuId id, int current_index, int delta) const {
+  return NextEnabledIndex(operations_.menu_items(id), current_index, delta,
+                          operations_.is_menu_item_enabled);
+}
+
+void MenuCoordinator::OpenMenuBarMenu(MenuId id) { OpenMenu(id, std::nullopt); }
+
 void MenuCoordinator::OpenAnchoredMenu(MenuId id, const SDL_FRect& anchor_rect) {
+  OpenMenu(id, anchor_rect);
+}
+
+void MenuCoordinator::OpenMenu(MenuId id, std::optional<SDL_FRect> anchor_rect) {
   operations_.request_chrome_redraw();
   if (id == MenuId::None) {
     CloseMenuBar();
@@ -263,30 +266,13 @@ bool MenuCoordinator::ExecuteTreeContextMenuItem(std::size_t item_index) {
 }
 
 int MenuCoordinator::FirstEnabledTreeContextMenuItemIndex() const {
-  const auto items = WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target);
-  for (std::size_t i = 0; i < items.size(); ++i) {
-    if (operations_.is_menu_item_enabled(items[i])) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
+  return FirstEnabledIndex(WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target),
+                           operations_.is_menu_item_enabled);
 }
 
 int MenuCoordinator::NextEnabledTreeContextMenuItemIndex(int current_index, int delta) const {
-  const auto items = WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target);
-  if (items.empty() || delta == 0) {
-    return -1;
-  }
-
-  const int item_count = static_cast<int>(items.size());
-  int index = current_index < 0 ? (delta > 0 ? -1 : 0) : current_index;
-  for (int step = 0; step < item_count; ++step) {
-    index = (index + delta + item_count) % item_count;
-    if (operations_.is_menu_item_enabled(items[static_cast<std::size_t>(index)])) {
-      return index;
-    }
-  }
-  return current_index;
+  return NextEnabledIndex(WorkspaceTreeContextMenuItems(menu_state_.tree_context_menu.target),
+                          current_index, delta, operations_.is_menu_item_enabled);
 }
 
 MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
