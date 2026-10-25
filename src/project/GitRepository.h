@@ -91,11 +91,7 @@ class GitRepository {
   // The outcome of resolving `<revision>:<relative_path>` to a blob. `exists` is
   // false when git resolved the name to nothing (or to a tree/tag rather than a
   // file); `content`/`truncated` mean what they do on BlobAtRevision.
-  struct BlobLookup {
-    bool exists = false;
-    std::string content;
-    bool truncated = false;
-  };
+  using BlobLookup = GitFileContentAtCommit;
 
   // Existence AND content in ONE git spawn, via `cat-file --batch` with the object
   // name on stdin. The pair this replaces (`cat-file -e` then `show`) cost two

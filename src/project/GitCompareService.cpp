@@ -259,9 +259,7 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
       continue;  // unanswered: the caller falls back to the single-file read
     }
     entries_.emplace(BlobCacheKey(*request_revisions[i], *request_paths[i]),
-                     GitFileContentAtCommit{.exists = answers[i]->exists,
-                                            .content = std::move(answers[i]->content),
-                                            .truncated = answers[i]->truncated});
+                     std::move(*answers[i]));
   }
 }
 
@@ -307,11 +305,11 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
   // `show` — two blocking git processes per side, on the shell thread, per file.
   // See GitRepository::LookupBlobAtRevision.
   std::optional<GitRepository::BlobAtRevision> blob;
-  if (const auto lookup = repo.LookupBlobAtRevision(*relative, hash); lookup.has_value()) {
+  if (auto lookup = repo.LookupBlobAtRevision(*relative, hash); lookup.has_value()) {
     if (!lookup->exists) {
       return GitFileContentAtCommit{.exists = false, .content = ""};
     }
-    blob = GitRepository::BlobAtRevision{.content = lookup->content,
+    blob = GitRepository::BlobAtRevision{.content = std::move(lookup->content),
                                         .truncated = lookup->truncated};
   } else {
     // `--batch` could not express the name (a path containing a newline) or git
@@ -329,7 +327,7 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
   util::AddPerformanceCounter(util::PerfCounterId::GitDiffLoads);
   util::AddPerformanceCounter(util::PerfCounterId::GitDiffBytesRead, blob->content.size());
   return GitFileContentAtCommit{
-      .exists = true, .content = blob->content, .truncated = blob->truncated};
+      .exists = true, .content = std::move(blob->content), .truncated = blob->truncated};
 }
 
 std::optional<GitBranchReference> ResolveGitBaseReference(
