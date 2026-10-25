@@ -44,13 +44,6 @@ constexpr Uint64 kLspRequestTimeoutMs =
 static_assert(kLspRequestTimeoutMs >= 30000,
               "the LSP busy-indicator backstop must not expire before the transport deadline");
 
-std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  // TD-2026-07-17-095: stream directly from the TextBuffer via a zero-copy LineSpan
-  // rather than materializing a whole-document vector of strings with Snapshot().
-  return util::SerializeLinesStreaming(editor::LineSpan(viewport.lines()),
-                                       viewport.line_ending());
-}
-
 // Resolve the open editor viewport backing `path`, or nullptr if the file is not
 // open in an (already-hydrated) editor tab. Used to obtain line text for inbound
 // position-encoding conversion of diagnostics / semantic tokens.
@@ -611,7 +604,7 @@ void LspService::EnsureLspDocumentOpen(const editor::TextViewport& viewport, Lsp
   if (client.HasOpenDocument(uri)) {
     return;
   }
-  client.DidOpen(uri, std::string(language_id), SerializeViewportText(viewport));
+  client.DidOpen(uri, std::string(language_id), viewport.SerializeText());
   synced_content_revision_[uri] = viewport.content_revision();
   // Pull semantic tokens for the freshly-opened document so identifiers recolor.
   RequestLspSemanticTokens(viewport, client);
@@ -1349,7 +1342,7 @@ void LspService::SyncLspForBufferChange(const editor::TextViewport& viewport,
   // for utf-16 servers too. Only when the doc was already open (see
   // ResolveOpenDocumentForSync).
   if (target->was_open) {
-    target->client->DidChange(target->uri, SerializeViewportText(viewport));
+    target->client->DidChange(target->uri, viewport.SerializeText());
   }
   synced_content_revision_[target->uri] = viewport.content_revision();
   // Re-request semantic tokens only when the edit left the buffer clean (e.g. an
@@ -1421,8 +1414,7 @@ void LspService::SyncLspForActiveEditableLastChange() {
     if (!applied_edit.has_value() || !client->SupportsIncrementalSync() || !utf8_positions) {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::FullSync");
-      client->DidChange(uri, util::SerializeLinesStreaming(editor::LineSpan(viewport->lines()),
-                                                           viewport->line_ending()));
+      client->DidChange(uri, viewport->SerializeText());
     } else {
       util::PerformanceTrace::Scope scope(
           "LspService::SyncLspForActiveEditableLastChange::IncrementalSync");

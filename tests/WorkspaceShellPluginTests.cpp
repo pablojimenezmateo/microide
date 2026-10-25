@@ -3750,9 +3750,8 @@ return ide.plugin({
 
 // QA plugins-reload: once a buffer had an unsaved edit no hover card appeared at
 // all -- the plugin hover path returned early on a dirty viewport, and the
-// language server is only asked as that path's fallback. A plugin's provider
-// reads the file from disk (its buffer table carries a path, not the text), so
-// skipping plugins there is right; the server has every edit and must answer.
+// language server is only asked as that path's fallback. With no plugin hover
+// provider, the server (which has every edit) must answer.
 void TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -3817,6 +3816,71 @@ return ide.plugin({
   }
   Expect(hover_text().find("int value") != std::string::npos,
          "an unsaved buffer still gets the language server's hover: '" + hover_text() + "'");
+}
+
+// TD-2026-10-21-374: a plugin hover provider in a buffer with unsaved edits is
+// asked like in any other, and reads the live text through its buffer table --
+// the host used to skip plugins there, since they could only read the disk.
+void TestWorkspaceShellPluginHoverReadsTheUnsavedText() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\nother = 2\n");
+  WritePluginInit(plugins_root, "livehover",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "livehover",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "line",
+      provide = function(buffer, position)
+        return { title = "line", content = "line: " .. buffer:line(position.line) }
+      end,
+    })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false), "the project should open");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
+  SoftwareCanvas canvas{1280, 720};
+  const auto frame = [&] {
+    WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+    (void)shell.HandleScheduledWake();
+    shell.Render(canvas.renderer(), 1280, 720);
+    (void)shell.ConsumePendingRenderInvalidation();
+  };
+  frame();
+  const auto hover_text = [&]() -> std::string {
+    const util::JsonValue ui = WorkspaceShellTestAccess::ControlUi(shell);
+    const util::JsonValue& hover = ui["popups"]["hover"];
+    return hover.IsObject() ? hover["text"].AsString() : std::string();
+  };
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "goto 1:1"), "goto should run");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "type edited_"), "typing should run");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the buffer has an unsaved edit");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "show-hover"), "show-hover should run");
+  for (int i = 0; i < 50 && hover_text().empty(); ++i) {
+    frame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  Expect(hover_text().find("line: edited_value = 1") != std::string::npos,
+         "the plugin's hover reads the unsaved line, got: '" + hover_text() + "'");
 }
 
 // Show Hover (Ctrl+K Ctrl+I) is the hover card by keyboard: for the symbol at the
@@ -7517,6 +7581,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/HoverAsksAgainWhenThePointerReturns",
           TestWorkspaceShellHoverAsksAgainWhenThePointerReturns);
   AddTest(tests, "WorkspaceShell/ShowHoverAtTheCaret", TestWorkspaceShellShowHoverAtTheCaret);
+  AddTest(tests, "WorkspaceShell/PluginHoverReadsTheUnsavedText",
+          TestWorkspaceShellPluginHoverReadsTheUnsavedText);
   AddTest(tests, "WorkspaceShell/HoverInAnUnsavedBufferAsksTheServer",
           TestWorkspaceShellHoverInAnUnsavedBufferAsksTheServer);
   AddTest(tests, "WorkspaceShell/AReloadedStatusItemRepaintsTheBreadcrumb",

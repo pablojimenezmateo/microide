@@ -319,9 +319,9 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     const TextGridInteractionLayout& interaction,
     float x,
     float y) const {
-  // A buffer with unsaved edits still resolves its cell: the kickoff skips the
-  // plugin providers for it (they read the disk) and asks the language server,
-  // which has every edit. Returning early here once meant no hover at all.
+  // A buffer with unsaved edits resolves its cell like any other: a provider reads
+  // the live text through its buffer table. Returning early here once meant no
+  // hover at all.
   if (viewport.path().empty() || !Contains(interaction.rect, x, y)) {
     return std::nullopt;
   }

@@ -166,13 +166,13 @@ class PluginHost {
     std::string plugin_id;
   };
 
-  // A plugin-native definition/references/signature-help provider
-  // (ctx.definition.add / ctx.references.add / ctx.signature_help.add). Published
+  // A plugin-native language provider (ctx.definition.add / ctx.references.add /
+  // ctx.signature_help.add / ctx.document_symbols.add). Published
   // so the UI thread can answer "is Go to Definition available for this buffer?"
   // and "does typing `(` open parameter hints?" without touching the worker-owned
   // provider table; the provide function itself stays behind the query API.
   struct ContributedLanguageProvider {
-    enum class Kind { Definition, References, SignatureHelp };
+    enum class Kind { Definition, References, SignatureHelp, DocumentSymbol };
     Kind kind = Kind::Definition;
     std::string id;
     std::string language_id;
@@ -516,6 +516,12 @@ class PluginHost {
     // Plugin Errors output channel (see WorkspaceShellPlugins.cpp).
     std::function<bool(const OpenFileRequest&)> open_file;
     std::function<std::optional<ActiveBuffer>()> active_buffer;
+    // The live text of the open buffer for `path` (unsaved edits included), or
+    // null when no buffer is open on it. Called on the UI thread when a provider
+    // query is dispatched -- only when a plugin provider of that kind serves the
+    // buffer's language -- so the host can snapshot once per edit and share it.
+    std::function<std::shared_ptr<const std::string>(const std::filesystem::path&)>
+        live_buffer_text;
     std::function<bool(std::string_view)> show_sidebar;
     std::function<void(std::string_view,
                        const std::filesystem::path&,

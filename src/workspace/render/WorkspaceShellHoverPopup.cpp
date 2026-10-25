@@ -669,25 +669,8 @@ void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::
   // inside std::function's inline buffer, so constructing it allocates nothing
   // either — including on the fast-reject path where no provider is registered
   // and the callback is invoked and dropped immediately.
-  // A plugin's provider reads the file from disk (its buffer table carries a path,
-  // not the text), so for a buffer with unsaved edits its answer would describe
-  // other lines; the language server has every edit (didChange) and answers alone.
-  const auto unsaved = [&]() {
-    if (const CompareTabState* compare = ActiveCompareTab();
-        compare != nullptr && compare->right_viewport.path() == path) {
-      return compare->right_viewport.dirty();
-    }
-    if (const MergeTabState* merge = ActiveMergeTab();
-        merge != nullptr && merge->result_viewport.path() == path) {
-      return merge->result_viewport.dirty();
-    }
-    const editor::TextViewport* viewport = ActiveEditorViewport();
-    return viewport != nullptr && viewport->path() == path && viewport->dirty();
-  };
-  if (unsaved()) {
-    KickOffLspHover(path, line, column);
-    return;
-  }
+  // A provider reads the live buffer through its buffer table (buffer:text()), so
+  // a buffer with unsaved edits is asked like any other (TD-2026-10-21-374).
   const std::uint64_t generation = plugin_hover_cache_.generation;
   plugin_runtime_.Host().QueryHoverAsync(
       path, line, column,

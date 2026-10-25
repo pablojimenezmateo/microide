@@ -290,6 +290,57 @@ struct PluginHost::Impl {
     finished.wait();
   }
 
+  // The buffer a provider query is about and its live text, installed on the worker
+  // for the duration of that one query (queries run one at a time there). The
+  // buffer table a provider receives for this path gets text()/line()/line_count()
+  // (lua_buffer_project_interop::PushBufferTextMethods).
+  struct QueryBuffer {
+    std::filesystem::path path;  // normalized
+    std::shared_ptr<const std::string> text;
+  };
+  QueryBuffer query_buffer_;
+  class ScopedQueryBuffer {
+   public:
+    ScopedQueryBuffer(Impl& impl, QueryBuffer buffer) : impl_(impl) {
+      impl_.query_buffer_ = std::move(buffer);
+    }
+    ~ScopedQueryBuffer() { impl_.query_buffer_ = {}; }
+    ScopedQueryBuffer(const ScopedQueryBuffer&) = delete;
+    ScopedQueryBuffer& operator=(const ScopedQueryBuffer&) = delete;
+
+   private:
+    Impl& impl_;
+  };
+  // On the UI thread, as a query is dispatched: the live text of `path`, asked of
+  // the host only when a plugin provider will read it (`has_provider`), since the
+  // host may have to copy the whole buffer to answer.
+  bool HasCompletionProvider(std::string_view language_id) const {
+    return std::any_of(published_.completions.begin(), published_.completions.end(),
+                       [&](const auto& provider) { return provider.language_id == language_id; });
+  }
+  bool HasCodeActionProvider(std::string_view language_id) const {
+    return std::any_of(published_.code_actions.begin(), published_.code_actions.end(),
+                       [&](const auto& provider) { return provider.language_id == language_id; });
+  }
+  QueryBuffer CaptureQueryBuffer(bool has_provider, const std::filesystem::path& path) const {
+    // The raw callback: this runs on the UI thread, never on the worker, so it is
+    // not one of the routed (marshalled) callbacks.
+    if (!has_provider || !raw_callbacks.live_buffer_text) {
+      return {};
+    }
+    std::shared_ptr<const std::string> text = raw_callbacks.live_buffer_text(path);
+    if (text == nullptr) {
+      return {};
+    }
+    return QueryBuffer{.path = path.lexically_normal(), .text = std::move(text)};
+  }
+  const std::shared_ptr<const std::string>* QueryBufferTextFor(
+      const std::filesystem::path& normalized_path) const {
+    return query_buffer_.text != nullptr && query_buffer_.path == normalized_path
+               ? &query_buffer_.text
+               : nullptr;
+  }
+
   // Dispatch a result-returning call onto the worker without blocking the UI.
   // `produce` runs on the worker (reads resolve from the captured snapshot) and
   // returns the POD result; `deliver` runs on the UI thread during the mailbox
@@ -298,27 +349,35 @@ struct PluginHost::Impl {
   // key means every call must run (e.g. command execution), so it is plain-posted.
   // With no worker wired (tests / pre-wire) or when already on the worker, runs
   // inline and delivers synchronously.
+  //
+  // `buffer` is the buffer the query is about, with its live text: a provider's
+  // buffer table for that path carries text() (see query_buffer_).
   template <typename Result>
   void RunQueryAsync(std::string dedup_key,
                      std::function<Result()> produce,
-                     std::function<void(Result)> deliver) {
+                     std::function<void(Result)> deliver,
+                     QueryBuffer buffer = {}) {
     PluginHostSnapshot snapshot = CaptureSnapshot();
     if (worker_ == nullptr || g_exec.executing) {
       // A query never registers contributions: match the worker path's
       // allow_registration=false so a re-entrant query taking this inline branch
       // cannot mutate the contribution registries the UI is reading.
       Result result;
-      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/false,
-                         [&]() { result = produce(); });
+      ExecuteWithContext(&snapshot, /*direct=*/true, /*allow_registration=*/false, [&]() {
+        const ScopedQueryBuffer scope(*this, std::move(buffer));
+        result = produce();
+      });
       deliver(std::move(result));
       return;
     }
     worker_->EnsureStarted();
     auto task = [this, snapshot = std::move(snapshot), produce = std::move(produce),
-                 deliver = std::move(deliver)]() mutable {
+                 deliver = std::move(deliver), buffer = std::move(buffer)]() mutable {
       auto result = std::make_shared<Result>();
-      ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false,
-                         [&]() { *result = produce(); });
+      ExecuteWithContext(&snapshot, /*direct=*/false, /*allow_registration=*/false, [&]() {
+        const ScopedQueryBuffer scope(*this, std::move(buffer));
+        *result = produce();
+      });
       worker_->PostToMain([result, deliver = std::move(deliver)]() mutable {
         deliver(std::move(*result));
       });
@@ -674,7 +733,8 @@ struct PluginHost::Impl {
           kind = Kind::SignatureHelp;
           break;
         case runtime_types::LanguageQueryKind::DocumentSymbol:
-          continue;  // the outline asks the worker directly; nothing gates on it
+          kind = Kind::DocumentSymbol;
+          break;
       }
       snapshot.language_providers.push_back(PluginHost::ContributedLanguageProvider{
           .kind = kind,
@@ -783,6 +843,8 @@ struct PluginHost::Impl {
     if (text.has_value()) {
       lua_pushlstring(state, text->data(), text->size());
       lua_setfield(state, -2, "text");
+    } else if (const auto* live = QueryBufferTextFor(normalized_path)) {
+      lua_buffer_project_interop::PushBufferTextMethods(state, *live);
     }
   }
 

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "editor/SyntaxDefinitionLoader.h"
+#include "editor/TextViewport.h"
 #include "plugin/PluginHost.h"
 #include "plugin/PluginThread.h"
 #include "workspace/WorkspaceOutputChannels.h"
@@ -73,6 +75,18 @@ class WorkspacePluginRuntime {
   void ShutdownHost();
   void Shutdown();
 
+  // The text a plugin provider reads for `viewport` (PluginHost::Callbacks::
+  // live_buffer_text). One copy per content revision: the queries a keystroke
+  // starts (completion, signature help, ...) and a hover share it, and a query
+  // still running on the worker keeps its own copy after the next edit.
+  std::shared_ptr<const std::string> LiveBufferText(const editor::TextViewport& viewport) {
+    if (live_text_ == nullptr || live_text_revision_ != viewport.content_revision()) {
+      live_text_ = std::make_shared<const std::string>(viewport.SerializeText());
+      live_text_revision_ = viewport.content_revision();
+    }
+    return live_text_;
+  }
+
  private:
   // Load runtime syntax definitions after the host reload settles and fold the result
   // into the clean/error bool. Synchronous fallback used only when no plugin worker is
@@ -120,6 +134,10 @@ class WorkspacePluginRuntime {
   std::uint64_t syntax_reload_generation_ = 0;
   // Incremented on the plugin worker each time LoadSyntaxDefinitionsOffThread runs.
   std::atomic<std::uint64_t> off_thread_syntax_load_count_{0};
+  // LiveBufferText's one entry. A content revision is unique across documents, so
+  // it alone identifies the text.
+  std::shared_ptr<const std::string> live_text_;
+  std::uint64_t live_text_revision_ = 0;
 };
 
 }  // namespace microide::workspace

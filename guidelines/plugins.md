@@ -267,6 +267,19 @@ queries every provider matching the active buffer's detected filetype. A non-emp
 plugin result short-circuits the built-in LSP path (mirroring completions / code
 actions). All line/column values are **1-based**.
 
+**The buffer a provider receives is the live buffer.** Every provider query —
+these four, `ctx.hover`, `ctx.completion` and `ctx.code_actions` — hands its
+`provide` a buffer table (`path`, `relative_path`, and for hover `name`) with the
+buffer's text as of the query, unsaved edits included (VS Code's `TextDocument`):
+`buffer:text()` is the whole text, the lines joined with the document's line
+ending; `buffer:line(n)` is line `n` without its ending (nil past the end);
+`buffer:line_count()` is the number of lines. Read these, not
+`ctx.files.read_text(buffer.path)`, which reads the saved file and so describes
+other lines once the buffer has been edited. The host copies the text once per
+edit, and only for a language some provider of the query's kind serves.
+`trigger_characters` (completion, signature help) is a string (`".>"`) or a list
+(`{ ".", ">" }`).
+
 - `ctx.definition.add{ id, language_id, provide = function(buffer, position) }` →
   returns an array of `{ path, line, column }`; the host opens the first target.
 - `ctx.references.add{ id, language_id, provide = function(buffer, position, include_declaration) }`

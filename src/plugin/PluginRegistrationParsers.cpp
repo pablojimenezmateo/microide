@@ -39,10 +39,8 @@ bool ParseCompletionRegistration(lua_State* state,
     }
     return false;
   }
-  std::string trigger_characters;
-  if (auto trigger_opt = ReadStringField(state, table_index, "trigger_characters")) {
-    trigger_characters = std::move(*trigger_opt);
-  }
+  std::string trigger_characters =
+      lua_interop::ReadTriggerCharactersField(state, table_index, "trigger_characters", "");
   const int provide_ref = ReadFunctionRefField(state, table_index, "provide");
   out->contributed = PluginHost::ContributedCompletion{
       .id = plugin_id + "." + *id_opt,

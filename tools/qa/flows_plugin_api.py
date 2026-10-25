@@ -76,8 +76,23 @@ def flow_plugin_api(app: q.App) -> None:
     app.expect(hover is not None and "qa hover line 1" in hover.get("text", ""),
                f"the plugin's hover shows ({hover})")
     _bumped(app, "hover", before, "the hover provider")
+    app.expect(hover is not None and "fn greet(name) {" in hover.get("text", ""),
+               f"the provider reads the line through buffer:line ({hover})")
     x, y, w, h = app.ui()["surfaces"]["sidebar"]
     app.move(x + w / 2, y + h - 20)
+    # In a buffer with unsaved edits the provider is asked too, and reads the live
+    # line (TD-2026-10-21-374: the host used to skip plugins there).
+    app.click_text(1, 1)
+    app.key("Home")
+    app.type("pub ")
+    app.expect(app.buffer().get("dirty") is True, "the buffer has an unsaved edit")
+    hover = _hover(app, 1, 8)
+    app.expect(hover is not None and "pub fn greet(name) {" in hover.get("text", ""),
+               f"the hover reads the unsaved line ({hover})")
+    step(app, "hover in an unsaved buffer", 0.2)
+    app.move(x + w / 2, y + h - 20)
+    app.key("ctrl+z")
+    app.wait_until(lambda: app.buffer().get("text", "").startswith("fn greet"), 4.0, "the edit undone")
 
     # Completion: Ctrl+Space lists the provider's two items; Enter inserts the first.
     before = _seen(app)

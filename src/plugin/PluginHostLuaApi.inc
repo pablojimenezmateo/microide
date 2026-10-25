@@ -1070,6 +1070,9 @@
         state, path, [this](const std::filesystem::path& buffer_path) {
           return RelativePathString(buffer_path);
         });
+    if (const auto* live = QueryBufferTextFor(path.lexically_normal())) {
+      lua_buffer_project_interop::PushBufferTextMethods(state, *live);
+    }
   }
 
   bool SnapshotSidebarProvider(const SidebarProvider& provider,

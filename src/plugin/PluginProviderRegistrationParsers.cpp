@@ -103,7 +103,8 @@ bool ParseLanguageQueryRegistration(lua_State* state,
   // signatureHelpProvider.triggerCharacters; a call's `(` and `,` by default.
   std::string trigger_characters;
   if (kind == runtime_types::LanguageQueryKind::SignatureHelp) {
-    trigger_characters = ReadStringField(state, 1, "trigger_characters").value_or("(,");
+    trigger_characters =
+        lua_interop::ReadTriggerCharactersField(state, 1, "trigger_characters", "(,");
   }
   out->has_runtime = true;
   out->runtime = runtime_types::LanguageQueryRuntime{

@@ -793,7 +793,24 @@ never covered by a later frame's damage. It does not reproduce on the local
 GCC build with the redraw verifier; next: the replay under the ASan build
 (`tools/run-checks.sh qa-asan`, `run.py replay`), and the frame before it.
 
-### TD-2026-10-21-374 — a plugin cannot read a buffer's unsaved text, so its hover is skipped there. [OPEN]
+### TD-2026-10-21-374 — a plugin cannot read a buffer's unsaved text, so its hover is skipped there. [RESOLVED 2026-10-25]
+
+**Resolved 2026-10-25.** A provider's buffer table carries the live text:
+`buffer:text()`, `buffer:line(n)`, `buffer:line_count()`, backed by a userdata
+owning a `shared_ptr<const std::string>` snapshot (so a plugin that keeps the
+table keeps the text). Each async provider query asks the host for the snapshot
+on the UI thread (`PluginHost::Callbacks::live_buffer_text`, a raw -- not routed
+-- callback) only when a plugin provider of that kind serves the language; the
+shell answers from `WorkspacePluginRuntime::LiveBufferText`, one copy per content
+revision shared by every query of that revision. `RunQueryAsync` installs it on
+the worker for the query (`ScopedQueryBuffer`), where both buffer-table builders
+attach the methods. The dirty-buffer hover skip is gone. Found alongside: the two
+copies of `SerializeViewportText` became `TextViewport::SerializeText`; document
+symbol providers are published to the UI-thread snapshot; `trigger_characters`
+written as a list (`{ "." }`, as the plugin-surface coverage fixture does) used to
+register no triggers. Tests: `PluginHost/ProvidersReadTheLiveBufferText`,
+`WorkspaceShell/PluginHoverReadsTheUnsavedText`.
+
 
 Found by the QA `plugins-reload` flow. A plugin provider (hover, completion,
 definition, ...) receives a buffer table with `path`, `name` and

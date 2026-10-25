@@ -573,6 +573,12 @@ class TextViewport {
   // the buffer stands in for the file -- a compare against a git blob, a merge
   // result baseline -- so a BOM file does not read as modified on line 0.
   std::string SerializeDocumentText(std::optional<LineEnding> line_ending = std::nullopt) const;
+  // The text as a reader of the buffer sees it -- a language server, a plugin
+  // provider: the lines joined with the document's line ending, no BOM. Streams
+  // from the buffer without materializing a vector of lines (TD-2026-07-17-095).
+  std::string SerializeText() const {
+    return util::SerializeLinesStreaming(LineSpan(document_->lines), document_->line_ending);
+  }
   std::string LineEndingLabel() const;
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;

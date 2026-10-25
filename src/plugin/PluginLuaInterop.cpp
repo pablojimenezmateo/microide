@@ -218,6 +218,24 @@ int ReadFunctionRefField(lua_State* state, int table_index, const char* field) {
   return luaL_ref(state, LUA_REGISTRYINDEX);
 }
 
+std::string ReadTriggerCharactersField(lua_State* state, int table_index, const char* field,
+                                       std::string_view fallback) {
+  if (std::optional<std::string> characters = ReadOptionalStringField(state, table_index, field)) {
+    return std::move(*characters);
+  }
+  std::optional<std::vector<std::string>> list = ReadStringArrayField(state, table_index, field);
+  if (!list.has_value()) {
+    return std::string(fallback);
+  }
+  std::string characters;
+  for (const std::string& entry : *list) {
+    if (entry.size() == 1) {
+      characters += entry;
+    }
+  }
+  return characters;
+}
+
 std::optional<std::vector<std::string>> ReadStringArrayField(lua_State* state,
                                                              int table_index,
                                                              const char* field) {

@@ -3679,6 +3679,95 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// TD-2026-10-21-374: a provider's buffer table carries the buffer's live text --
+// unsaved edits included -- as buffer:text() / buffer:line(n) / buffer:line_count(),
+// so its answer is about the lines the host's positions describe, not the file on
+// disk. The host is asked for the text only when a provider of the query's kind
+// serves the language.
+void TestPluginHostProvidersReadTheLiveBufferText() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(source, "saved text on disk\n");
+
+  WritePluginInit(
+      global_plugins, "live-text",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "live.text",
+  setup = function(ctx)
+    ctx.hover.add({
+      id = "h",
+      provide = function(buffer, position)
+        return { title = "T", content = buffer:line(position.line) .. "|" ..
+                 buffer:line_count() .. "|" .. tostring(buffer:line(99)) }
+      end,
+    })
+    ctx.completion.add({
+      id = "c", language_id = "javascript",
+      provide = function(buffer, position)
+        return { { label = buffer.line(position.line), insert_text = "x" } }
+      end,
+    })
+    ctx.signature_help.add({
+      id = "s", language_id = "javascript",
+      provide = function(buffer, position)
+        return { signatures = { { label = buffer:text() } } }
+      end,
+    })
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+  PluginHost host;
+  auto callbacks = MakePluginHostCallbacks();
+  int asked = 0;
+  const auto live = std::make_shared<const std::string>("first\r\nsecond line\r\nthird");
+  callbacks.live_buffer_text =
+      [&](const std::filesystem::path& path) -> std::shared_ptr<const std::string> {
+    ++asked;
+    return path.lexically_normal() == source.lexically_normal() ? live : nullptr;
+  };
+  host.SetCallbacks(std::move(callbacks));
+  Expect(host.Reload(project_root), "the live-text fixture should load");
+
+  PluginHost::HoverResult hover;
+  host.QueryHoverAsync(source, 2, 1, [&](bool, PluginHost::HoverResult result) {
+    hover = std::move(result);
+  });
+  Expect(hover.content == "second line|3|nil",
+         "hover reads the live line, the line count and nil past the end, got: " + hover.content +
+             (host.Errors().empty() ? std::string() : " / " + host.Errors().back()));
+
+  std::vector<PluginHost::CompletionCandidate> items;
+  host.QueryCompletionsAsync("javascript", source, 1, 1, "",
+                             [&](std::vector<PluginHost::CompletionCandidate> result, std::string) {
+                               items = std::move(result);
+                             });
+  Expect(items.size() == 1 && items[0].label == "first",
+         "completion reads a live line (buffer.line works without the colon)");
+
+  PluginHost::SignatureHelpResult signature;
+  host.QuerySignatureHelpAsync("javascript", source, 1, 1,
+                               [&](bool, PluginHost::SignatureHelpResult result, std::string) {
+                                 signature = std::move(result);
+                               });
+  Expect(!signature.signatures.empty() && signature.signatures[0].label == *live,
+         "buffer:text() is the whole live text");
+
+  const int asked_before = asked;
+  host.QueryDefinitionAsync("javascript", source, 1, 1,
+                            [](std::vector<PluginHost::LocationResult>, std::string) {});
+  Expect(asked == asked_before,
+         "with no definition provider the host is not asked to copy the buffer");
+}
+
 // QueryHoverAsync dispatches to the worker and delivers on the UI-thread drain.
 // Verified under TSAN.
 void TestPluginHostQueryHoverAsyncDeliversThroughWorker() {
@@ -4549,6 +4638,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostQueryCompletionsAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/QueryHoverAsyncDeliversThroughWorker",
           TestPluginHostQueryHoverAsyncDeliversThroughWorker);
+  AddTest(tests, "PluginHost/ProvidersReadTheLiveBufferText",
+          TestPluginHostProvidersReadTheLiveBufferText);
   AddTest(tests, "PluginHost/QueryHoverAsyncSkipsWorkerWithNoProvider",
           TestPluginHostQueryHoverAsyncSkipsWorkerWithNoProvider);
   AddTest(tests, "PluginHost/ExecuteCommandAsyncDeliversThroughWorker",

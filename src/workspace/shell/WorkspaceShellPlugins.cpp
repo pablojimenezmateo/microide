@@ -669,6 +669,21 @@ WorkspaceShell::WorkspaceShell() {
                 .content_revision = viewport->content_revision(),
             };
           },
+      .live_buffer_text =
+          [this](const std::filesystem::path& path) -> std::shared_ptr<const std::string> {
+            // The buffer under the query is nearly always the one in front (a
+            // compare's or a merge's editable side included); otherwise any open
+            // editor tab on the path.
+            const editor::TextViewport* viewport = ActiveEditableViewport();
+            if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), path)) {
+              viewport = OpenEditorViewOfPath(context_.current_project_state.editor_groups,
+                                              path.lexically_normal());
+            }
+            // A tab still reading its file has no text to give yet.
+            return viewport != nullptr && !viewport->is_placeholder()
+                       ? plugin_runtime_.LiveBufferText(*viewport)
+                       : nullptr;
+          },
       .show_sidebar =
           [this](std::string_view id) {
             return ActionCoordinator(MakeActionContext()).Execute(ActionId::SidebarShow, {std::string(id)},

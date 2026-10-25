@@ -1402,9 +1402,9 @@ return ide.plugin({
   // definition/references providers used to be invisible here, so Go to Definition
   // stayed disabled (menu, Ctrl+click) for languages without a language server.
   using LangKind = PluginHost::ContributedLanguageProvider::Kind;
-  Expect(host.ContributedLanguageProviders().size() == 3,
-         "definition + references + signature-help providers are published to the UI-thread "
-         "snapshot");
+  Expect(host.ContributedLanguageProviders().size() == 4,
+         "definition, references, signature-help and document-symbol providers are published "
+         "to the UI-thread snapshot");
   const auto* signature_provider = host.FindLanguageProvider(LangKind::SignatureHelp, "lua");
   Expect(signature_provider != nullptr && signature_provider->trigger_characters == "(,",
          "a signature-help provider opens on `(` and `,` unless it names its own triggers");

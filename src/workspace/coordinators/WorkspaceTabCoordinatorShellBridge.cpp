@@ -32,10 +32,6 @@ namespace microide::workspace {
 
 namespace {
 
-std::string SerializeViewportText(const editor::TextViewport& viewport) {
-  return util::SerializeLinesStreaming(editor::LineSpan(viewport.lines()), viewport.line_ending());
-}
-
 // Above this a read takes long enough that an editor sitting empty with no
 // explanation reads as a bug rather than as work in progress. Well above the
 // threshold that sends the read off-thread at all (4 MiB, where the wait is a
@@ -662,7 +658,7 @@ SavePreparation WorkspaceShell::PrepareEditorViewportForSave(const std::filesyst
     return SavePreparation::Ready();  // nothing transforms the text; skip serializing
   }
 
-  std::string text = SerializeViewportText(viewport);
+  std::string text = viewport.SerializeText();
   const platform::ProcessLauncher& launcher = context_.current_project_state.launcher();
   if (mode == SaveMode::Deferred) {
     // Both transforms run on SaveFormatterService's worker: the participants'

@@ -115,7 +115,10 @@ return ide.plugin({
       provide = function(buffer, position)
         if buffer.path and buffer.path:match("%.qaapi$") and position.line == 1 then
           bump(ctx, "hover")
-          return { title = "QA API", content = "qa hover line " .. tostring(position.line) }
+          -- The live line (buffer:line), unsaved edits included.
+          return { title = "QA API",
+                   content = "qa hover line " .. tostring(position.line) .. ": " ..
+                             buffer:line(position.line) }
         end
         return nil
       end,

@@ -664,6 +664,8 @@ void PluginHost::QueryCompletionsAsync(
     std::vector<CompletionCandidate> items;
     std::string error;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(
+      impl_->HasCompletionProvider(language_id), path);
   impl_->RunQueryAsync<QueryResult>(
       "query:completions",
       [this, language_id = std::move(language_id), path = std::move(path), line, column,
@@ -680,7 +682,8 @@ void PluginHost::QueryCompletionsAsync(
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(std::move(result.items), std::move(result.error));
-      });
+      },
+      std::move(buffer));
 #else
   (void)language_id;
   (void)path;
@@ -708,6 +711,8 @@ void PluginHost::QueryCodeActionsAsync(
     std::vector<CodeActionCandidate> items;
     std::string error;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(
+      impl_->HasCodeActionProvider(language_id), path);
   impl_->RunQueryAsync<QueryResult>(
       "query:code_actions",
       [this, language_id = std::move(language_id), path = std::move(path), start_line, start_column,
@@ -725,7 +730,8 @@ void PluginHost::QueryCodeActionsAsync(
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(std::move(result.items), std::move(result.error));
-      });
+      },
+      std::move(buffer));
 #else
   (void)language_id;
   (void)path;
@@ -752,6 +758,8 @@ void PluginHost::QueryDefinitionAsync(
     std::vector<LocationResult> items;
     std::string error;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(
+      HasLanguageProvider(ContributedLanguageProvider::Kind::Definition, language_id), path);
   impl_->RunQueryAsync<QueryResult>(
       "query:definition",
       [this, language_id = std::move(language_id), path = std::move(path), line, column]() {
@@ -763,7 +771,8 @@ void PluginHost::QueryDefinitionAsync(
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(std::move(result.items), std::move(result.error));
-      });
+      },
+      std::move(buffer));
 #else
   (void)language_id;
   (void)path;
@@ -789,6 +798,8 @@ void PluginHost::QueryReferencesAsync(
     std::vector<LocationResult> items;
     std::string error;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(
+      HasLanguageProvider(ContributedLanguageProvider::Kind::References, language_id), path);
   impl_->RunQueryAsync<QueryResult>(
       "query:references",
       [this, language_id = std::move(language_id), path = std::move(path), line, column,
@@ -801,7 +812,8 @@ void PluginHost::QueryReferencesAsync(
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(std::move(result.items), std::move(result.error));
-      });
+      },
+      std::move(buffer));
 #else
   (void)language_id;
   (void)path;
@@ -828,6 +840,8 @@ void PluginHost::QuerySignatureHelpAsync(
     SignatureHelpResult result;
     std::string error;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(
+      HasLanguageProvider(ContributedLanguageProvider::Kind::SignatureHelp, language_id), path);
   impl_->RunQueryAsync<QueryResult>(
       "query:signature_help",
       [this, language_id = std::move(language_id), path = std::move(path), line, column]() {
@@ -838,7 +852,8 @@ void PluginHost::QuerySignatureHelpAsync(
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(result.resolved, std::move(result.result), std::move(result.error));
-      });
+      },
+      std::move(buffer));
 #else
   (void)language_id;
   (void)path;
@@ -861,6 +876,8 @@ void PluginHost::QueryDocumentSymbolsAsync(
     std::vector<DocumentSymbolNode> items;
     std::string error;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(
+      HasLanguageProvider(ContributedLanguageProvider::Kind::DocumentSymbol, language_id), path);
   impl_->RunQueryAsync<QueryResult>(
       "query:document_symbols",
       [this, language_id = std::move(language_id), path = std::move(path)]() {
@@ -870,7 +887,8 @@ void PluginHost::QueryDocumentSymbolsAsync(
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(std::move(result.items), std::move(result.error));
-      });
+      },
+      std::move(buffer));
 #else
   (void)language_id;
   (void)path;
@@ -903,6 +921,7 @@ void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
     bool ok = false;
     HoverResult hover;
   };
+  Impl::QueryBuffer buffer = impl_->CaptureQueryBuffer(true, resolved_path);
   impl_->RunQueryAsync<QueryResult>(
       "query:hover",
       [this, resolved_path, line, column]() {
@@ -921,7 +940,8 @@ void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
       },
       [on_result = std::move(on_result)](QueryResult result) {
         on_result(result.ok, std::move(result.hover));
-      });
+      },
+      std::move(buffer));
 #else
   // `resolved_path` is inside the #if above, so naming it here never compiled;
   // no default lane builds with MICROIDE_HAS_LUA_PLUGINS off, which is why it sat.
