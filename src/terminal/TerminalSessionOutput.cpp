@@ -70,6 +70,13 @@ void TerminalSession::EmitProcessExitMarkerLocked() {
   AdvanceSnapshotGenerationLocked();
 }
 
+namespace {
+
+// CAN (0x18) and SUB (0x1A) abort an escape sequence or control string.
+constexpr bool IsCanOrSub(unsigned char byte) { return byte == 0x18 || byte == 0x1a; }
+
+}  // namespace
+
 void TerminalSession::AppendOutputLocked(std::string_view data) {
   // The escape/UTF-8 parser, called per read chunk on the terminal reader
   // thread. Scoped per chunk, not per byte: the whole point of the ASCII bulk
@@ -80,6 +87,19 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }
+
+  // ECMA-48 cancellation inside an escape: ESC starts a fresh escape, CAN/SUB
+  // abort to ground. Either way the partial sequence is dropped.
+  const auto restart_escape = [this]() {
+    escape_sequence_buffer_.clear();
+    escape_mode_ = EscapeMode::AfterEscape;
+    osc_escape_pending_ = false;
+  };
+  const auto abort_to_ground = [this]() {
+    escape_sequence_buffer_.clear();
+    escape_mode_ = EscapeMode::None;
+    osc_escape_pending_ = false;
+  };
 
   // Index-based so a byte can be reprocessed (see the OSC/StringPayload ESC
   // restart below): `--data_index; continue;` re-runs the current byte after the
@@ -199,14 +219,11 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
       // a fresh escape (`ESC ( ESC[2J` must run the CSI, not eat the ESC as the
       // designator), CAN/SUB abort to ground. Mirrors the CSI/OSC abort handling.
       if (byte == 0x1b) {
-        escape_sequence_buffer_.clear();
-        escape_mode_ = EscapeMode::AfterEscape;
-        osc_escape_pending_ = false;
+        restart_escape();
         continue;
       }
-      if (byte == 0x18 || byte == 0x1a) {
-        escape_sequence_buffer_.clear();
-        escape_mode_ = EscapeMode::None;
+      if (IsCanOrSub(byte)) {
+        abort_to_ground();
         continue;
       }
       // ECMA-48: a designation is <designator> I... F — zero or more intermediate
@@ -235,14 +252,11 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
       // ground. Without this the intervening byte was swallowed as a parameter and
       // the next final byte dispatched a corrupt sequence.
       if (byte == 0x1b) {
-        escape_sequence_buffer_.clear();
-        escape_mode_ = EscapeMode::AfterEscape;
-        osc_escape_pending_ = false;
+        restart_escape();
         continue;
       }
-      if (byte == 0x18 || byte == 0x1a) {
-        escape_sequence_buffer_.clear();
-        escape_mode_ = EscapeMode::None;
+      if (IsCanOrSub(byte)) {
+        abort_to_ground();
         continue;
       }
       // ECMA-48: a C0 control other than ESC/CAN/SUB embedded mid-CSI is EXECUTED
@@ -297,10 +311,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
 
     if (escape_mode_ == EscapeMode::Osc) {
       // CAN/SUB abort the control string (ESC is handled below as the ST lead-in).
-      if (byte == 0x18 || byte == 0x1a) {
-        escape_sequence_buffer_.clear();
-        escape_mode_ = EscapeMode::None;
-        osc_escape_pending_ = false;
+      if (IsCanOrSub(byte)) {
+        abort_to_ground();
         continue;
       }
       if (osc_escape_pending_) {
@@ -348,10 +360,8 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
     if (escape_mode_ == EscapeMode::StringPayload) {
       // DCS/SOS/PM/APC payload: discard everything up to the ST (ESC \) or BEL.
       // CAN/SUB abort the control string early (ESC is the ST lead-in, below).
-      if (byte == 0x18 || byte == 0x1a) {
-        escape_sequence_buffer_.clear();
-        escape_mode_ = EscapeMode::None;
-        osc_escape_pending_ = false;
+      if (IsCanOrSub(byte)) {
+        abort_to_ground();
         continue;
       }
       if (osc_escape_pending_) {
