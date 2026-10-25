@@ -592,16 +592,9 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
 
   {
     std::lock_guard lock(mutex_);
-    if (active_run_id_ != run_id) {
+    if (!BeginPendingUpdateLocked(run_id)) {
       return;
     }
-    if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
-      pending_update_ = {};
-    }
-    pending_update_.run_id = run_id;
-    pending_update_.search_id = active_search_id_;
-    pending_update_.searched_files = last_progress_searched_files_;
-    pending_update_.total_files = last_progress_total_files_;
     // The worker stops emitting matches at `kMaxProjectSearchResults` (see `RunProjectSearch`), so
     // we never need to cap here — push the whole batch and let the consumer
     // apply its own display cap.
@@ -612,19 +605,26 @@ void ProjectSearchService::PublishResults(std::uint64_t run_id,
   PushWakeEvent();
 }
 
+bool ProjectSearchService::BeginPendingUpdateLocked(std::uint64_t run_id) {
+  if (active_run_id_ != run_id) {
+    return false;  // a superseded run's late batch
+  }
+  if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
+    pending_update_ = {};
+  }
+  pending_update_.run_id = run_id;
+  pending_update_.search_id = active_search_id_;
+  pending_update_.searched_files = last_progress_searched_files_;
+  pending_update_.total_files = last_progress_total_files_;
+  return true;
+}
+
 void ProjectSearchService::PublishFinished(std::uint64_t run_id, ProjectSearchCompletion completion) {
   {
     std::lock_guard lock(mutex_);
-    if (active_run_id_ != run_id) {
+    if (!BeginPendingUpdateLocked(run_id)) {
       return;
     }
-    if (pending_update_.run_id != 0 && pending_update_.run_id != run_id) {
-      pending_update_ = {};
-    }
-    pending_update_.run_id = run_id;
-    pending_update_.search_id = active_search_id_;
-    pending_update_.searched_files = last_progress_searched_files_;
-    pending_update_.total_files = last_progress_total_files_;
     pending_update_.truncated = pending_update_.truncated || completion.truncated;
     pending_update_.total_matches = completion.total_matches;
     pending_update_.finished = true;

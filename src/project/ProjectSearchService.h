@@ -241,6 +241,10 @@ class ProjectSearchService {
   void WaitForWorkersIdle() { task_executor_.WaitForIdle(); }
 
  private:
+  // Points `pending_update_` at `run_id` (dropping another run's leftovers) and
+  // refreshes its progress counts; false when `run_id` is no longer active.
+  // Caller holds mutex_.
+  bool BeginPendingUpdateLocked(std::uint64_t run_id);
   void WorkerMain(std::filesystem::path root,
                   std::string query,
                   ProjectSearchOptions options,

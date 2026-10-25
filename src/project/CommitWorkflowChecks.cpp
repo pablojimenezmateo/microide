@@ -81,6 +81,17 @@ std::unordered_set<std::string> PartiallyStagedPaths(const GitRepositoryState& r
   return partial;
 }
 
+// The staged entries as path-only summaries: what the summary falls back to when
+// numstat cannot say how many lines each one changes.
+void AppendStagedEntryPaths(const GitRepositoryState& repository_state,
+                            std::vector<CommitStagedFileSummary>& files) {
+  for (const GitRepositoryEntry& entry : repository_state.entries) {
+    if (entry.staged) {
+      files.push_back(CommitStagedFileSummary{.relative_path = entry.path.relative_path});
+    }
+  }
+}
+
 }  // namespace
 
 CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repository_state,
@@ -96,14 +107,7 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
   const GitRepository::CommandResult numstat =
       repo.Execute({"diff", "--cached", "--numstat", "-z"}, true);
   if (!numstat.success() || numstat.output.empty()) {
-    for (const GitRepositoryEntry& entry : repository_state.entries) {
-      if (!entry.staged) {
-        continue;
-      }
-      summary.files.push_back(CommitStagedFileSummary{
-          .relative_path = entry.path.relative_path,
-      });
-    }
+    AppendStagedEntryPaths(repository_state, summary.files);
     summary.file_count = summary.files.size();
     return summary;
   }
@@ -169,14 +173,7 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
       static_cast<int>(std::min<std::int64_t>(deleted_total, std::numeric_limits<int>::max()));
 
   if (summary.files.empty()) {
-    for (const GitRepositoryEntry& entry : repository_state.entries) {
-      if (!entry.staged) {
-        continue;
-      }
-      summary.files.push_back(CommitStagedFileSummary{
-          .relative_path = entry.path.relative_path,
-      });
-    }
+    AppendStagedEntryPaths(repository_state, summary.files);
   }
 
   summary.file_count = summary.files.size();
