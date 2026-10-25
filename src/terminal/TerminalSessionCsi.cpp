@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 #include "util/StringUtil.h"
@@ -18,6 +19,49 @@
 #endif
 
 namespace microide::terminal {
+
+namespace {
+
+// CPR: the answer to `CSI 6 n` (or `CSI ? 6 n` when `private_form`), the cursor's
+// 1-based screen row and column.
+std::string CursorPositionReport(bool private_form, std::size_t cursor_row,
+                                 std::size_t cursor_column, std::size_t screen_top,
+                                 std::size_t columns) {
+  // At the pending-wrap (LCF) column cursor_column == columns; a real terminal
+  // reports the last on-screen column, never one past the edge.
+  const std::size_t reported_column = columns > 0 ? std::min(cursor_column, columns - 1)
+                                                  : cursor_column;
+  // Report the row relative to the visible screen: on the primary buffer the
+  // cursor row is an absolute deque index that includes scrollback, so a raw
+  // cursor_row+1 would grossly overstate the row.
+  const std::size_t reported_row = cursor_row > screen_top ? cursor_row - screen_top : 0;
+  return (private_form ? "\x1b[?" : "\x1b[") + std::to_string(reported_row + 1) + ";" +
+         std::to_string(reported_column + 1) + "R";
+}
+
+// Where IL/DL act: the cursor row and the scroll region's bottom, as
+// ScrollRegionUp/DownLocked take them (relative to `screen_top`).
+struct ScrollSpan {
+  std::size_t top = 0;
+  std::size_t bottom = 0;
+};
+
+// IL and DL are bounded by the scroll region (or the visible screen when no
+// custom region is set), NOT the whole scrollback deque: inserting into the
+// absolute deque and trimming the front shifted the scrollback / visible
+// boundary. Outside the margins both are no-ops (DEC STD 070); on the
+// fixed-height alt grid, acting anyway would grow the deque past rows_ and
+// eventually trim real content off the top. `screen_top` is 0 on the alt
+// screen, so one computation serves both buffers.
+std::optional<ScrollSpan> CursorScrollSpan(std::size_t cursor_row, std::size_t screen_top,
+                                           std::size_t region_top, std::size_t region_bottom) {
+  if (cursor_row < screen_top + region_top || cursor_row > screen_top + region_bottom) {
+    return std::nullopt;
+  }
+  return ScrollSpan{.top = cursor_row - screen_top, .bottom = region_bottom};
+}
+
+}  // namespace
 
 void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
   if (sequence.empty() || sequence.front() != '[') {
@@ -86,18 +130,8 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           continue;
         }
         if (mode == 6) {
-          // At the pending-wrap (LCF) column cursor_column_ == columns_; a real
-          // terminal reports the last on-screen column, never one past the edge.
-          const std::size_t reported_column =
-              columns_ > 0 ? std::min(cursor_column_, columns_ - 1) : cursor_column_;
-          // Report the row relative to the visible screen, mirroring the public CPR
-          // path: on the primary buffer cursor_row_ is an absolute deque index that
-          // includes scrollback, so a raw cursor_row_+1 would grossly overstate the row.
-          const std::size_t screen_top = PrimaryScreenTopLocked();
-          const std::size_t reported_row =
-              cursor_row_ > screen_top ? cursor_row_ - screen_top : 0;
-          SendBytesLocked("\x1b[?" + std::to_string(reported_row + 1) + ";" +
-                          std::to_string(reported_column + 1) + "R");
+          SendBytesLocked(CursorPositionReport(/*private_form=*/true, cursor_row_, cursor_column_,
+                                               PrimaryScreenTopLocked(), columns_));
         }
       }
     }
@@ -135,6 +169,19 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       ClampPendingWrapColumn(cursor_column_, columns_);
       break;
   }
+  // The deque row that row-addressing CSIs (CUP, VPA) count from and that
+  // CUU/CPL stop at: the visible screen's top on the primary buffer; on the
+  // alternate screen 0, or the scroll region's top under origin mode (DECOM).
+  const auto addressing_origin_row = [this]() -> std::size_t {
+    if (use_alternate_screen_) {
+      return origin_mode_ ? ActiveScrollRegionTopLocked() : 0;
+    }
+    return PrimaryScreenTopLocked();
+  };
+  const auto cursor_scroll_span = [this]() {
+    return CursorScrollSpan(cursor_row_, PrimaryScreenTopLocked(), ActiveScrollRegionTopLocked(),
+                            ActiveScrollRegionBottomLocked());
+  };
   switch (final) {
     case 'c':
       SendBytesLocked("\x1b[?1;2c");
@@ -149,9 +196,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       // screen") climb above the visible rows into history and overwrite it. The
       // floor mirrors the origin CUP (`CSI H`) uses.
       const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
-      const std::size_t floor_row =
-          use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
-                                : PrimaryScreenTopLocked();
+      const std::size_t floor_row = addressing_origin_row();
       cursor_row_ = cursor_row_ >= floor_row + count ? cursor_row_ - count : floor_row;
       return;
     }
@@ -166,12 +211,11 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
           columns_ > 0 ? std::min(next_column, columns_ - 1) : next_column;
       return;
     }
-    case 'D':
-      cursor_column_ = cursor_column_ > static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1))
-                           ? cursor_column_ -
-                                 static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1))
-                           : 0;
+    case 'D': {
+      const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
+      cursor_column_ = cursor_column_ > count ? cursor_column_ - count : 0;
       return;
+    }
     case 'E':
       MoveCursorLocked(cursor_row_ + static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1)),
                        0);
@@ -180,9 +224,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
       // CPL: cursor up N lines to column 0, clamped to the visible-screen top (see
       // CUU above) so it cannot climb into scrollback on the primary buffer.
       const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
-      const std::size_t floor_row =
-          use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
-                                : PrimaryScreenTopLocked();
+      const std::size_t floor_row = addressing_origin_row();
       MoveCursorLocked(cursor_row_ >= floor_row + count ? cursor_row_ - count : floor_row, 0);
       return;
     }
@@ -194,8 +236,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     case 'f':
       MoveCursorLocked(
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)) +
-              (use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
-                                     : PrimaryScreenTopLocked()),
+              addressing_origin_row(),
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 1, 1) - 1)));
       return;
     case 'J':
@@ -213,57 +254,20 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         count = std::min(count, rows_);
       }
       EnsureCursorLineExistsLocked();
-      if (use_alternate_screen_) {
-        const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
-        const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
-        if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
-          ScrollRegionDownLocked(cursor_row_, scroll_region_bottom, count);
-        }
-        // On the fixed-height alt grid, IL outside the scroll margins is a no-op
-        // (DEC STD 070). Falling through to the primary insert would grow the alt
-        // deque past rows_ and eventually trim real content off the top.
-        return;
-      }
-      // Primary buffer: IL is bounded by the scroll region (or the visible screen
-      // when no custom region is set), NOT the whole scrollback deque. Inserting
-      // into the absolute deque and trimming the front shifted the scrollback /
-      // visible boundary. ScrollRegionDownLocked opens `count` blank lines at the
-      // cursor and discards lines pushed past the region bottom.
-      {
-        const std::size_t screen_top = PrimaryScreenTopLocked();
-        const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
-        const std::size_t region_top_abs = screen_top + ActiveScrollRegionTopLocked();
-        const std::size_t region_bottom_abs = screen_top + rel_bottom;
-        if (cursor_row_ >= region_top_abs && cursor_row_ <= region_bottom_abs) {
-          ScrollRegionDownLocked(cursor_row_ - screen_top, rel_bottom, count);
-        }
+      // ScrollRegionDownLocked opens `count` blank lines at the cursor and discards
+      // lines pushed past the region bottom.
+      if (const auto span = cursor_scroll_span(); span.has_value()) {
+        ScrollRegionDownLocked(span->top, span->bottom, count);
       }
       return;
     }
     case 'M': {
       const std::size_t count = static_cast<std::size_t>(CsiParamOrDefault(params, 0, 1));
       EnsureCursorLineExistsLocked();
-      if (use_alternate_screen_) {
-        const std::size_t scroll_region_top = ActiveScrollRegionTopLocked();
-        const std::size_t scroll_region_bottom = ActiveScrollRegionBottomLocked();
-        if (cursor_row_ >= scroll_region_top && cursor_row_ <= scroll_region_bottom) {
-          ScrollRegionUpLocked(cursor_row_, scroll_region_bottom, count);
-        }
-        // DL outside the scroll margins is a no-op on the alt grid (see IL above).
-        return;
-      }
-      // Primary buffer: DL is bounded by the scroll region (or the visible screen),
-      // NOT the whole deque. ScrollRegionUpLocked deletes `count` lines at the
-      // cursor and pulls blank lines in at the region bottom, leaving scrollback
-      // and the visible boundary intact.
-      {
-        const std::size_t screen_top = PrimaryScreenTopLocked();
-        const std::size_t rel_bottom = ActiveScrollRegionBottomLocked();
-        const std::size_t region_top_abs = screen_top + ActiveScrollRegionTopLocked();
-        const std::size_t region_bottom_abs = screen_top + rel_bottom;
-        if (cursor_row_ >= region_top_abs && cursor_row_ <= region_bottom_abs) {
-          ScrollRegionUpLocked(cursor_row_ - screen_top, rel_bottom, count);
-        }
+      // ScrollRegionUpLocked deletes `count` lines at the cursor and pulls blank
+      // lines in at the region bottom.
+      if (const auto span = cursor_scroll_span(); span.has_value()) {
+        ScrollRegionUpLocked(span->top, span->bottom, count);
       }
       EnsureCursorLineExistsLocked();
       return;
@@ -391,25 +395,15 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
         if (params.front() == 5) {
           SendBytesLocked("\x1b[0n");
         } else if (params.front() == 6) {
-          // Clamp the pending-wrap column (cursor_column_ == columns_) to the last
-          // on-screen column so CPR never reports one past the right edge.
-          const std::size_t reported_column =
-              columns_ > 0 ? std::min(cursor_column_, columns_ - 1) : cursor_column_;
-          // Report the row relative to the visible screen: on the primary buffer
-          // cursor_row_ is an absolute deque index that includes scrollback.
-          const std::size_t screen_top = PrimaryScreenTopLocked();
-          const std::size_t reported_row =
-              cursor_row_ > screen_top ? cursor_row_ - screen_top : 0;
-          SendBytesLocked("\x1b[" + std::to_string(reported_row + 1) + ";" +
-                          std::to_string(reported_column + 1) + "R");
+          SendBytesLocked(CursorPositionReport(/*private_form=*/false, cursor_row_,
+                                               cursor_column_, PrimaryScreenTopLocked(), columns_));
         }
       }
       return;
     case 'd':
       MoveCursorLocked(
           static_cast<std::size_t>(std::max(0, CsiParamOrDefault(params, 0, 1) - 1)) +
-              (use_alternate_screen_ ? (origin_mode_ ? ActiveScrollRegionTopLocked() : 0)
-                                     : PrimaryScreenTopLocked()),
+              addressing_origin_row(),
           cursor_column_);
       return;
     case 'r': {
