@@ -1109,6 +1109,63 @@ void TestBufferFindScopeFollowsEdits() {
   Expect(!microide::workspace::FollowFindScope(scope, other), "another document drops the scope");
 }
 
+// A finished project search's results follow an open file as it is edited, as VS
+// Code's do (TD-2026-10-24-387): a line typed above a hit moves its row, a match
+// typed in adds one, and a search run over a dirty buffer reports its text, not
+// what is saved on disk.
+void TestWorkspaceShellProjectSearchHitsFollowEdits() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nbeta alpha\n");
+  WriteFile(root / "other.txt", "alpha\n");
+  WriteFile(root / "zeta.txt", "nothing here\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alpha", false);
+  WaitForProjectSearch(shell);
+  const auto lines_of = [&](std::string_view file) {
+    std::vector<std::size_t> lines;
+    for (const auto& hit : WorkspaceShellTestAccess::ProjectSearchResults(shell)) {
+      if (hit.relative_path_string == file) {
+        lines.push_back(hit.line);
+      }
+    }
+    return lines;
+  };
+  Expect(lines_of("notes.txt") == std::vector<std::size_t>{0, 1}, "the search finds both alphas in notes.txt");
+
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter should insert a line above the hits");
+  Expect(lines_of("notes.txt") == std::vector<std::size_t>{1, 2},
+         "a line inserted above moves the hits down with their text");
+  Expect(lines_of("other.txt") == std::vector<std::size_t>{0}, "another file's hits stay as they were");
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"), "typing should be handled");
+  Expect(lines_of("notes.txt") == std::vector<std::size_t>{0, 1, 2}, "a match typed in adds a hit");
+
+  // A file with no hits gains one: it joins the results in the candidates' order
+  // (after notes.txt and other.txt).
+  WorkspaceShellTestAccess::OpenFile(shell, root / "zeta.txt");
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha "), "typing should be handled");
+  Expect(lines_of("zeta.txt") == std::vector<std::size_t>{0}, "a file gaining its first match gets a hit");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).back().relative_path_string == "zeta.txt",
+         "and it sits where the search orders it, after the files before it");
+
+  // A fresh search over the dirty buffer reports the buffer, not the disk.
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "beta", false);
+  WaitForProjectSearch(shell);
+  Expect(lines_of("notes.txt") == std::vector<std::size_t>{2},
+         "the dirty buffer is searched as it stands (beta is on line 3 there, line 2 on disk)");
+}
+
 // The regex Replace All in a scope expands each match against the whole buffer
 // (capture groups work) and touches nothing outside the scope.
 void TestWorkspaceShellBufferFindInSelectionRegexReplace() {
@@ -1835,6 +1892,7 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/BufferFindInSelectionScopesMatchesAndReplace",
           TestWorkspaceShellBufferFindInSelectionScopesMatchesAndReplace);
   AddTest(tests, "BufferFindScope/FollowsEdits", TestBufferFindScopeFollowsEdits);
+  AddTest(tests, "WorkspaceShell/ProjectSearchHitsFollowEdits", TestWorkspaceShellProjectSearchHitsFollowEdits);
   AddTest(tests, "WorkspaceShell/BufferFindInSelectionRegexReplace",
           TestWorkspaceShellBufferFindInSelectionRegexReplace);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",

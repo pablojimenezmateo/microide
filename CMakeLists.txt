@@ -802,6 +802,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceVirtualDocument.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/BufferFindScope.cpp
+  src/workspace/ProjectSearchLiveHits.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/shell/WorkspaceShell.cpp
 )

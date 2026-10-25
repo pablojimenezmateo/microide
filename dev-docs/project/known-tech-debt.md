@@ -533,7 +533,7 @@ sets it directly. Found on the way: a closing buffer's didClose went to the
 server its PATH detects (`LspManager::CloseDocumentEverywhere` now closes it on
 every server holding it). `QaFlowRegressionUx/ChangeLanguageModeSetsTheDocumentsLanguage`.
 
-### TD-2026-10-24-387 — search view results do not follow edits. [OPEN]
+### TD-2026-10-24-387 — search view results do not follow edits. [RESOLVED 2026-10-25]
 
 After a project search, an edit that moves a hit (lines inserted above it) leaves
 the result row naming the old line (`row:search/<path>:3` for a hit now on line
@@ -543,6 +543,31 @@ Code updates the open file's results live as it is edited. Wanted: the results
 of an open, edited file re-derived from its buffer (the find widget's match set
 already does this for one file), or the row marked stale until the next search.
 Found probing the search view in the QA 2026-10-24 pass.
+
+RESOLVED 2026-10-25: a finished search's hits in an open file are re-derived
+from its buffer and spliced over the file's old ones
+(`workspace/ProjectSearchLiveHits`). They come from the search's own matcher,
+now `project::ProjectSearchMatcher`, pulled out of `RunProjectSearch` with
+`MakeProjectSearchResult` and `SearchLines`, so the workers and the live update
+cannot disagree about a line. So:
+
+- A line inserted above a hit moves its row.
+- A typed match adds a hit, and a file with no hits gains its first one at its
+  position among the candidates.
+- When a search finishes, every dirty open buffer is searched as it stands
+  rather than as saved, as VS Code does.
+
+The selection stays on its hit. Updates run after each announced edit and at
+frame prep (a reload, an LSP edit), while the search view is shown. They are
+keyed on the buffer's document and content revision, so an unchanged frame
+costs a pointer and a counter.
+
+One trap: holding the search's candidate snapshot made the next file-index
+change copy all ten thousand paths (the `project_search_start_after_index_change`
+phase went from 34 to 10 037 allocations). The snapshot is now asked for only
+when a file gains its first hit. Covered by
+`WorkspaceShell/ProjectSearchHitsFollowEdits` and the QA `search-view-keys`
+flow (a line typed above an opened hit moves its row; undo moves it back).
 
 ### TD-2026-10-24-386 — the file tree has no drag and drop at all. [OPEN]
 

@@ -69,84 +69,129 @@ bool FindNextRegexMatch(const util::CompiledRegex& pattern,
 
 }  // namespace search_internal
 
-namespace {
-
-class PreparedLiteralQuery {
- public:
-  PreparedLiteralQuery(std::string_view query, ProjectSearchCaseMode case_mode)
-      : query_(query),
-        case_sensitive_(UsesCaseSensitiveSearch(query, case_mode)),
-        // Case fold (not just ASCII-lower) so `É`/`é`, `Δ`/`δ`, `А`/`а` match. The
-        // covered folds are all length-preserving in UTF-8, so folded byte offsets
-        // stay aligned with the original line and reported columns remain correct.
-        lowered_query_(case_sensitive_ ? std::string{} : util::Utf8CaseFold(query)) {
-    if (query_.empty()) {
-      error_ = "Project search query is empty";
-    }
+ProjectSearchMatcher::ProjectSearchMatcher(std::string_view query, const ProjectSearchOptions& options)
+    : query_(query), case_sensitive_(UsesCaseSensitiveSearch(query, options.case_mode)) {
+  if (query_.empty()) {
+    error_ = "Project search query is empty";
+    return;
   }
-
-  bool valid() const { return error_.empty(); }
-  const std::string& error() const { return error_; }
-
-  bool case_sensitive() const { return case_sensitive_; }
-
-  // Lowercases `line` into `out` while reusing `out`'s existing capacity so the
-  // per-line search loop does not allocate/free a fresh string on every line in
-  // case-insensitive mode.
-  void LowerLine(std::string_view line, std::string& out) const {
-    if (case_sensitive_) {
-      // No lowercasing happens in case-sensitive mode (`out` is just cleared), so
-      // do not inflate the lowercase-work counters here.
-      out.clear();
+  if (options.pattern_mode == ProjectSearchPatternMode::Regex) {
+    regex_.emplace(query_, util::SearchRegexCompileOptions(query_, case_sensitive_),
+                   "Invalid project search pattern", util::AsciiTwin::Build);
+    if (!regex_->valid()) {
+      error_ = regex_->error();
       return;
     }
-    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
-    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
-    // Unicode case fold with an ASCII fast path (the common case stays a byte
-    // copy). Length-preserving, so match offsets into the folded line map back to
-    // the original line's byte columns.
-    util::Utf8CaseFoldInto(line, out);
+    // Each scanner allocates its OWN match data; fail here, once, if that cannot
+    // work rather than in every worker.
+    if (!regex_->CreateMatchData().valid()) {
+      error_ = "Failed to initialize project search matcher";
+    }
+    return;
   }
-
-  bool FindNext(std::string_view line,
-                const std::string& lowered_line,
-                std::size_t* search_from,
-                std::size_t* match_start,
-                std::size_t* match_end) const {
-    if (!valid() || search_from == nullptr || match_start == nullptr || match_end == nullptr ||
-        *search_from > line.size()) {
-      return false;
-    }
-
-    if (case_sensitive_) {
-      const std::size_t position = line.find(query_, *search_from);
-      if (position == std::string_view::npos) {
-        return false;
-      }
-      *match_start = position;
-      *match_end = position + query_.size();
-      *search_from = position + query_.size();
-      return true;
-    }
-
-    const std::size_t position = lowered_line.find(lowered_query_, *search_from);
-    if (position == std::string::npos) {
-      return false;
-    }
-    *match_start = position;
-    *match_end = position + query_.size();
-    *search_from = position + query_.size();
-    return true;
+  // Case fold (not just ASCII-lower) so `É`/`é`, `Δ`/`δ`, `А`/`а` match. The
+  // covered folds are all length-preserving in UTF-8, so folded byte offsets
+  // stay aligned with the original line and reported columns remain correct.
+  if (!case_sensitive_) {
+    folded_query_ = util::Utf8CaseFold(query_);
   }
+}
 
- private:
-  std::string query_;
-  bool case_sensitive_ = false;
-  std::string lowered_query_;
-  std::string error_;
-};
+ProjectSearchMatcher::Scanner::Scanner(const ProjectSearchMatcher& matcher)
+    : matcher_(&matcher),
+      match_data_(matcher.regex_.has_value() ? matcher.regex_->CreateMatchData() : util::RegexMatchData{}) {}
 
-}  // namespace
+void ProjectSearchMatcher::Scanner::BeginLine(std::string_view line) {
+  if (matcher_->regex_.has_value()) {
+    subject_ = util::IsAllAscii(line) ? util::RegexSubject::Ascii : util::RegexSubject::Unknown;
+    return;
+  }
+  if (matcher_->case_sensitive_) {
+    return;
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineCalls);
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectLowerLineBytes, line.size());
+  // Unicode case fold with an ASCII fast path (the common case stays a byte
+  // copy), reusing the buffer's capacity line after line. Length-preserving, so
+  // match offsets into the folded line map back to the original line's columns.
+  util::Utf8CaseFoldInto(line, folded_line_);
+}
+
+bool ProjectSearchMatcher::Scanner::Next(std::string_view line,
+                                         std::size_t* search_from,
+                                         std::size_t* match_start,
+                                         std::size_t* match_end,
+                                         const std::atomic_bool& cancel) {
+  if (!matcher_->valid() || *search_from > line.size()) {
+    return false;
+  }
+  if (matcher_->regex_.has_value()) {
+    return search_internal::FindNextRegexMatch(*matcher_->regex_, line, search_from, &match_data_, match_start,
+                                               match_end, cancel, subject_);
+  }
+  const std::string_view haystack = matcher_->case_sensitive_ ? line : std::string_view(folded_line_);
+  const std::string_view needle =
+      matcher_->case_sensitive_ ? std::string_view(matcher_->query_) : std::string_view(matcher_->folded_query_);
+  const std::size_t position = haystack.find(needle, *search_from);
+  if (position == std::string_view::npos) {
+    return false;
+  }
+  *match_start = position;
+  *match_end = position + matcher_->query_.size();
+  *search_from = *match_end;
+  return true;
+}
+
+ProjectSearchResult MakeProjectSearchResult(std::string_view line,
+                                            std::size_t match_start,
+                                            std::size_t match_end,
+                                            const std::string& relative_path_string,
+                                            std::size_t file_index,
+                                            std::size_t line_index) {
+  // Collapse the line for display while mapping this match's byte range into the
+  // collapsed preview so the sidebar can highlight it.
+  std::size_t preview_match_start = 0;
+  std::size_t preview_match_length = 0;
+  std::string preview = util::CollapseAsciiWhitespaceTrackingMatch(line, match_start, match_end,
+                                                                   &preview_match_start, &preview_match_length);
+  return ProjectSearchResult{
+      .relative_path = std::filesystem::path(relative_path_string),
+      .relative_path_string = relative_path_string,
+      .file_index = file_index,
+      .line = line_index,
+      .column = match_start,
+      .preview = std::move(preview),
+      .match_preview_start = preview_match_start,
+      .match_preview_length = preview_match_length,
+  };
+}
+
+std::vector<ProjectSearchResult> SearchLines(const ProjectSearchMatcher& matcher,
+                                             std::size_t line_count,
+                                             const std::function<std::string_view(std::size_t)>& line_at,
+                                             const std::string& relative_path_string,
+                                             std::size_t file_index,
+                                             std::size_t max_results) {
+  std::vector<ProjectSearchResult> results;
+  if (!matcher.valid()) {
+    return results;
+  }
+  static const std::atomic_bool kNeverCancelled{false};
+  ProjectSearchMatcher::Scanner scanner = matcher.NewScanner();
+  for (std::size_t line_index = 0; line_index < line_count && results.size() < max_results; ++line_index) {
+    const std::string_view line = line_at(line_index);
+    scanner.BeginLine(line);
+    std::size_t search_from = 0;
+    std::size_t match_start = 0;
+    std::size_t match_end = 0;
+    while (results.size() < max_results &&
+           scanner.Next(line, &search_from, &match_start, &match_end, kNeverCancelled)) {
+      results.push_back(
+          MakeProjectSearchResult(line, match_start, match_end, relative_path_string, file_index, line_index));
+    }
+  }
+  return results;
+}
 
 ProjectSearchService::~ProjectSearchService() {
   Stop();
@@ -280,33 +325,9 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
     return ProjectSearchCompletion{.error = "Project search pattern is too long"};
   }
 
-  std::optional<util::CompiledRegex> regex_pattern;
-  std::unique_ptr<PreparedLiteralQuery> literal_query;
-
-  if (options.pattern_mode == ProjectSearchPatternMode::Regex) {
-    if (query.empty()) {
-      return ProjectSearchCompletion{.error = "Project search query is empty"};
-    }
-
-    const uint32_t regex_options = util::SearchRegexCompileOptions(
-        query, UsesCaseSensitiveSearch(query, options.case_mode));
-    regex_pattern.emplace(query, regex_options, "Invalid project search pattern",
-                          util::AsciiTwin::Build);
-    if (!regex_pattern->valid()) {
-      return ProjectSearchCompletion{.error = regex_pattern->error()};
-    }
-
-    // The compiled pattern (a JIT'd shared_ptr) is shared read-only by every
-    // worker; each worker allocates its OWN match data below. Validate here that
-    // allocation succeeds before spawning.
-    if (!regex_pattern->CreateMatchData().valid()) {
-      return ProjectSearchCompletion{.error = "Failed to initialize project search matcher"};
-    }
-  } else {
-    literal_query = std::make_unique<PreparedLiteralQuery>(query, options.case_mode);
-    if (!literal_query->valid()) {
-      return ProjectSearchCompletion{.error = literal_query->error()};
-    }
+  const ProjectSearchMatcher matcher(query, options);
+  if (!matcher.valid()) {
+    return ProjectSearchCompletion{.error = matcher.error()};
   }
 
   static const std::vector<std::string> kEmpty;
@@ -345,9 +366,7 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
     // private match-data object (pcre2_match is thread-safe only with distinct
     // match data per thread; the compiled code is shared).
     std::string file_buffer;
-    std::string lowered_line;
-    util::RegexMatchData match_data =
-        regex_pattern ? regex_pattern->CreateMatchData() : util::RegexMatchData{};
+    ProjectSearchMatcher::Scanner scanner = matcher.NewScanner();
     std::vector<ProjectSearchResult> batch;
     // Count-all matches seen after the global display cap is reached. Counted in this
     // per-worker local (folded into `matches_found` once at worker exit) instead of a
@@ -414,21 +433,11 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
           line.remove_suffix(1);
         }
 
-        if (literal_query != nullptr) {
-          literal_query->LowerLine(line, lowered_line);
-        }
-        const util::RegexSubject subject =
-            regex_pattern.has_value() && util::IsAllAscii(line) ? util::RegexSubject::Ascii
-                                                                : util::RegexSubject::Unknown;
-
+        scanner.BeginLine(line);
         std::size_t search_from = 0;
         std::size_t match_start = 0;
         std::size_t match_end = 0;
-        while ((regex_pattern.has_value() &&
-                search_internal::FindNextRegexMatch(*regex_pattern, line, &search_from, &match_data,
-                                                    &match_start, &match_end, cancel, subject)) ||
-               (literal_query != nullptr &&
-                literal_query->FindNext(line, lowered_line, &search_from, &match_start, &match_end))) {
+        while (scanner.Next(line, &search_from, &match_start, &match_end, cancel)) {
           // Count every match globally. The first kMaxProjectSearchResults claims
           // (found 1..cap) keep their match for display; later matches only bump
           // the count and flag truncation, so all workers together store at most
@@ -466,22 +475,8 @@ ProjectSearchCompletion RunProjectSearch(const std::filesystem::path& root,
             }
             continue;
           }
-          // Collapse the line for display while mapping this match's byte range
-          // into the collapsed preview so the sidebar can highlight it.
-          std::size_t preview_match_start = 0;
-          std::size_t preview_match_length = 0;
-          std::string preview = util::CollapseAsciiWhitespaceTrackingMatch(
-              line, match_start, match_end, &preview_match_start, &preview_match_length);
-          batch.push_back(ProjectSearchResult{
-              .relative_path = std::filesystem::path(relative_path_string),
-              .relative_path_string = relative_path_string,
-              .file_index = file_index,
-              .line = line_index,
-              .column = match_start,
-              .preview = std::move(preview),
-              .match_preview_start = preview_match_start,
-              .match_preview_length = preview_match_length,
-          });
+          batch.push_back(MakeProjectSearchResult(line, match_start, match_end, relative_path_string,
+                                                  file_index, line_index));
           if (batch.size() >= kBatchSize) {
             sink.results(std::move(batch));
             batch = {};

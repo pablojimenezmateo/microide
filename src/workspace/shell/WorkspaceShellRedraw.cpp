@@ -1,4 +1,6 @@
 #include "workspace/shell/WorkspaceShell.h"
+
+#include "workspace/ProjectSearchLiveHits.h"
 #include "util/InlineVector.h"
 #include "workspace/services/RemoteHostService.h"
 
@@ -432,6 +434,18 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   // a wrong n-of-m, and a Replace that rewrites the line the old range landed on.
   // Nothing but a bool test while the widget is closed.
   RefreshBufferSearchIfStale();
+  // A finished project search's hits in this file follow the edit too, while the
+  // search view shows them: re-deriving rescans the buffer, which a keystroke
+  // should not pay for a list nobody is looking at (frame prep catches the active
+  // buffer up when the view comes back).
+  if (context_.current_project_state.sidebar.visible && ActiveSidebarMode() == SidebarMode::Search &&
+      RederiveProjectSearchHitsIfStale(
+          context_.current_project_state.overlay.workflow.project_search, context_.current_project_state.root,
+          *viewport,
+          SearchCandidatesFrom(context_.current_project_state.file_index,
+                               context_.current_project_state.overlay.workflow.project_search))) {
+    RequestSidebarRedraw();
+  }
 
   // A snippet session's placeholders are LINE:COLUMN ranges that only the snippet
   // engine's own ops keep in step with the text. Any other edit -- move-line,

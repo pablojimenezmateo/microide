@@ -1,6 +1,7 @@
 #include "project/FileWriteGate.h"
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/ProjectSearchLiveHits.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 
 #include <algorithm>
@@ -279,6 +280,11 @@ void WorkspaceShell::RefreshProjectSearch(ProjectSearchRerun rerun) {
       context_.current_project_state.overlay.workflow.project_search.exclude_globs.text();
   // A remote project searches on its host, over the real tree (§ 6.11); the
   // mirror's index is what it falls back to when the host cannot be reached.
+  // What the open buffers' hits are re-derived under once this run's results
+  // are in (ProjectSearchLiveHits).
+  search.run_query = search.query.text();
+  search.run_options = options;
+  search.live_hits_document = nullptr;
   project_search_runtime_.Start(context_.current_project_state.root,
                                 context_.current_project_state.overlay.workflow.project_search.query.text(),
                                 std::move(options), file_snapshot.files,
@@ -337,6 +343,16 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
     // query reuses the results instead of re-running the search.
     context_.current_project_state.overlay.workflow.project_search.searched_query =
         context_.current_project_state.overlay.workflow.project_search.query.text();
+    // The worker read the files from disk; an open buffer with unsaved edits is
+    // searched as it stands instead, as VS Code searches open editors.
+    for (const EditorGroup& group : context_.current_project_state.editor_groups) {
+      for (const TabEntry& tab : group.open_tabs) {
+        if (tab.editor_state.has_value() && tab.editor_state->viewport.dirty()) {
+          (void)RederiveProjectSearchHits(search, context_.current_project_state.root, tab.editor_state->viewport,
+                                          SearchCandidatesFrom(context_.current_project_state.file_index, search));
+        }
+      }
+    }
   }
   if (context_.current_project_state.overlay.visible && context_.current_project_state.overlay.mode == OverlayMode::ProjectSearch) {
     if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {

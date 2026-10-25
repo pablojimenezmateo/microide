@@ -7,9 +7,11 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "project/FileIndex.h"
+#include "util/RegexUtil.h"
 #include "util/TaskExecutor.h"
 #include "util/Waker.h"
 
@@ -97,6 +99,66 @@ struct ProjectSearchUpdate {
   bool searched_local_copy = false;
   std::string error;
 };
+
+// One search's matching rule: the query compiled under its options (regex or
+// literal, the case mode). The search workers scan files with it, and the open
+// buffers whose hits are re-derived from their text as they are edited scan their
+// lines with it, so the two cannot disagree about what a line matches. Immutable
+// once built and shared read-only; each thread scans through its own Scanner.
+class ProjectSearchMatcher {
+ public:
+  ProjectSearchMatcher(std::string_view query, const ProjectSearchOptions& options);
+
+  bool valid() const { return error_.empty(); }
+  const std::string& error() const { return error_; }
+
+  // A thread's scan state: the regex match data and the case-folded line.
+  class Scanner {
+   public:
+    // Starts a line; then Next() yields its matches left to right.
+    void BeginLine(std::string_view line);
+    bool Next(std::string_view line,
+              std::size_t* search_from,
+              std::size_t* match_start,
+              std::size_t* match_end,
+              const std::atomic_bool& cancel);
+
+   private:
+    friend class ProjectSearchMatcher;
+    explicit Scanner(const ProjectSearchMatcher& matcher);
+    const ProjectSearchMatcher* matcher_;
+    util::RegexMatchData match_data_;
+    std::string folded_line_;
+    util::RegexSubject subject_ = util::RegexSubject::Unknown;
+  };
+  Scanner NewScanner() const { return Scanner(*this); }
+
+ private:
+  std::optional<util::CompiledRegex> regex_;
+  std::string query_;
+  bool case_sensitive_ = false;
+  std::string folded_query_;
+  std::string error_;
+};
+
+// A hit as the search reports it: the line collapsed for display, with the
+// match's span mapped into that preview.
+ProjectSearchResult MakeProjectSearchResult(std::string_view line,
+                                            std::size_t match_start,
+                                            std::size_t match_end,
+                                            const std::string& relative_path_string,
+                                            std::size_t file_index,
+                                            std::size_t line_index);
+
+// The hits of one in-memory text -- an open buffer's lines, `line_at(i)` for
+// i < `line_count` -- exactly as the search reports a file's, at most
+// `max_results` of them.
+std::vector<ProjectSearchResult> SearchLines(const ProjectSearchMatcher& matcher,
+                                             std::size_t line_count,
+                                             const std::function<std::string_view(std::size_t)>& line_at,
+                                             const std::string& relative_path_string,
+                                             std::size_t file_index,
+                                             std::size_t max_results);
 
 struct ProjectSearchCompletion {
   std::string error;

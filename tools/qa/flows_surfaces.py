@@ -231,6 +231,20 @@ def flow_search_view_keys(app: q.App) -> None:
     app.expect(app.field_text("field:find/search") == "queue" and app.ui()["focus"] == "overlay",
                f"the find widget is seeded from the search and focused ({app.ui()['focus']})")
     app.key("Escape")
+    # The results follow the open file as it is edited (TD-2026-10-24-387): a line
+    # typed above the hit moves its row to the hit's new line; undo moves it back.
+    app.send("sidebar-show", "search")
+    app.send("focus", "editor")
+    path = row.split("/", 1)[1].rsplit(":", 1)[0]
+    app.key("Home")
+    app.key("Return")
+    app.wait_until(lambda: app.elements("row", prefix=f"row:search/{path}:{wanted_line + 1}"), 3.0,
+                   "the hit's row to follow the inserted line")
+    app.expect(bool(app.elements("row", prefix=f"row:search/{path}:{wanted_line + 1}")),
+               f"a line typed above a hit moves its row to line {wanted_line + 1}")
+    app.key("ctrl+z")
+    app.wait_until(lambda: app.elements("row", prefix=f"row:search/{path}:{wanted_line}"), 3.0,
+                   "undo to move the row back")
 
     app.send("sidebar-show", "search")
     app.send("focus", "sidebar")

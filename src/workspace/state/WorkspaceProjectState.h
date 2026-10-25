@@ -310,6 +310,16 @@ struct ProjectSearchState {
   // RefreshProjectSearch clears it (a new run invalidates the cache) and
   // ConsumeProjectSearchUpdates sets it when the worker reports `finished`.
   std::string searched_query;
+  // What the run behind `results` searched -- the query and its options with the
+  // scope globs -- so the hits of an open, edited buffer are re-derived from its
+  // text under the same rule (workspace/ProjectSearchLiveHits.h). Not the
+  // candidate list: holding the index's snapshot made the next index change copy
+  // every path instead of updating in place.
+  std::string run_query;
+  project::ProjectSearchOptions run_options;
+  // The buffer state those hits were last re-derived against.
+  const void* live_hits_document = nullptr;
+  std::uint64_t live_hits_content_revision = 0;
   std::size_t selected_index = 0;
   // Latest progress counters from ProjectSearchService — "X of Y files" UX.
   // total_files is the candidate-set size pinned at search start; searched_files
